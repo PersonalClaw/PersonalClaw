@@ -17,7 +17,6 @@ from personalclaw.eval.runner import EvalRunner, format_results, score_by_dimens
 from personalclaw.eval.scenario import AssertionType, load_scenario, load_scenarios
 from personalclaw.hooks import safe_read_file
 from personalclaw.learn import Lesson, LessonStore
-from personalclaw.schedule import ScheduleDefinition, ScheduleService, format_schedule
 from personalclaw.security import (
     BUILTIN_DENY_PATTERNS,
     redact_credentials,
@@ -28,18 +27,6 @@ from personalclaw.security import (
 from personalclaw.sel import sel
 from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 from personalclaw.vector_memory import VectorMemoryStore
-
-
-def _format_schedule(schedule: object) -> str:
-    """Human-readable schedule description (CLI shows full date for 'at' jobs)."""
-
-    if not isinstance(schedule, ScheduleDefinition):
-        return str(schedule)
-    if schedule.kind == "at" and schedule.at_ts:
-
-        dt = datetime.fromtimestamp(schedule.at_ts)
-        return f"at {dt:%Y-%m-%d %H:%M}"
-    return format_schedule(schedule)
 
 
 def _spawn(args: argparse.Namespace) -> None:
@@ -201,20 +188,45 @@ def _automation(args: argparse.Namespace) -> None:
 
 
 def _cron(args: argparse.Namespace) -> None:
-    """Dispatch cron subcommands: list, add, remove, pause, resume."""
+    """Dispatch cron subcommands: list, add, update, remove, pause, resume, trigger.
 
-    svc = ScheduleService(base_dir=config_dir())
+    🔴 S108 — every write here went to `crons.json`, so a cron created from the CLI DID NOT FIRE.
+    The clock engine (`triggers.service.tick`) reads the unified store and nothing else, and the
+    boot migration that imports `crons.json` runs only at gateway startup. Measured: `cron add`
+    wrote the legacy file with `triggers.json` untouched, so the job stayed inert until the user
+    restarted the gateway — a create that reported success and scheduled nothing.
+
+    Writes go through `triggers.tools`, the same functions the chat tools and the API use, so the
+    CLI inherits their contracts rather than re-deriving them: the id-collision guard, arming on
+    creation, the patch allowlist, the refusal to resume a row that failed to parse, and the
+    confirm-before-delete gate.
+    """
+    from personalclaw.triggers import schedule_view as _sv
+    from personalclaw.triggers import tools as _tools
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=config_dir())
 
     action = getattr(args, "cron_action", None)
     if action == "list":
-        jobs = svc.list_jobs(include_disabled=True)
-        if not jobs:
+        rows = store.load()
+        if not rows:
             print("No cron jobs.")
             return
-        for j in jobs:
-            status = "✅" if j.enabled else "⏸️"
-            sched = _format_schedule(j.schedule)
-            print(f"  {status} {j.id}  {j.name}  ({sched})  {j.message[:60]}")
+        for row in rows:
+            trigger = row.trigger
+            # A row that failed to parse is shown as BROKEN rather than omitted: the legacy list
+            # could not represent one at all, and silently hiding a trigger the user created is how
+            # "where did my automation go" happens.
+            status = "⚠️" if not row.ok else ("✅" if trigger.enabled else "⏸️")
+            sched = _sv.describe_cadence(trigger) if row.ok else (row.errors[0].message)
+            # 🔴 The SHARED projection's `message`, not a hand-read config key. Measured: reading
+            # `config["message"]` printed a BLANK column for every `invoke-agent` trigger, because
+            # that provider's key is `task_template` — and `run-prompt`/`notify` differ again.
+            # `to_schedule_row` already resolves all of them (schedule_view.py:171), which is the
+            # whole reason it exists.
+            detail = str(_sv.to_schedule_row(trigger).get("message") or "") if row.ok else ""
+            print(f"  {status} {trigger.id}  {trigger.name}  ({sched})  {detail[:60]}")
 
     elif action == "add":
         every = getattr(args, "every", None)
@@ -222,80 +234,104 @@ def _cron(args: argparse.Namespace) -> None:
         channel = (getattr(args, "channel", None) or "").strip() or None
         approval_mode = getattr(args, "approval_mode", "") or ""
         if channel:
-
             if len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel):
                 print(
                     f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
                 )
                 return
-        from personalclaw.schedule import make_agent_action
-
-        action = make_agent_action(message=args.message, approval_mode=approval_mode)
         if cron_expr:
-            job = svc.add_job(
-                name=args.name,
-                action=action,
-                cron_expr=cron_expr,
-                channel=channel,
-            )
+            spec = {"kind": "cron", "expr": cron_expr}
         elif every:
-            job = svc.add_job(
-                name=args.name,
-                action=action,
-                every_secs=every,
-                channel=channel,
-            )
+            spec = {"kind": "interval", "interval_secs": int(every)}
         else:
             print("Provide --every or --cron")
             return
-        sched_desc = _format_schedule(job.schedule)
 
+        workflow = {
+            "inline": {
+                "provider": "invoke-agent",
+                "config": {
+                    "task_template": args.message,
+                    "agent": "",
+                    "model": "",
+                    "approval_mode": approval_mode,
+                },
+            }
+        }
+        result = _tools.create(
+            store,
+            name=args.name,
+            kind="clock",
+            spec=spec,
+            workflow=workflow,
+            # `created_by="user"`, not "agent": the agent cap (decision 5d) exists to bound what the
+            # ASSISTANT creates unprompted. A human typing the command is the user acting directly,
+            # and capping their own CLI at the agent limit would be a rule aimed at the wrong party.
+            created_by="user",
+        )
+        if not result.ok:
+            print(result.text)
+            sel().log_api_access(
+                caller="cli",
+                operation="cron.add",
+                outcome="denied",
+                source="cli",
+                resources=f"name={args.name}",
+                error=result.text,
+            )
+            return
+        trigger_id = str((result.data.get("trigger") or {}).get("id") or "")
+        if channel:
+            # Delivery is not a `create` parameter, so it is a follow-up patch through the same
+            # allowlist. Done after the create rather than by building the row here, so the CLI
+            # never becomes a second write path with its own validation.
+            _tools.update(store, trigger_id=trigger_id, patch={"delivery": f"channel:{channel}"})
         sel().log_api_access(
             caller="cli",
             operation="cron.add",
             outcome="allowed",
             source="cli",
-            resources=f"job_id={job.id} approval_mode={approval_mode or 'default'}",
+            resources=f"job_id={trigger_id} approval_mode={approval_mode or 'default'}",
         )
-        print(f"Added job: {job.id} ({job.name}) [{sched_desc}]")
+        print(result.text)
 
     elif action == "update":
-        kwargs: dict = {}
+        patch: dict = {}
+        spec_update: dict = {}
         for field in ("name", "message", "every_secs", "cron_expr", "channel"):
             val = getattr(args, field, None)
-            if val is not None:
-                if field == "channel":
-
-                    val = val.strip() or None
-                    if val is None:
-                        continue
-                    if len(val) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(val):
-                        print(
-                            f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
-                        )
-                        return
-                kwargs[field] = val
-        if getattr(args, "approval_mode", None) is not None:
-            kwargs["approval_mode"] = "" if args.approval_mode == "default" else args.approval_mode
-        if not kwargs:
+            if val is None:
+                continue
+            if field == "channel":
+                val = val.strip() or None
+                if val is None:
+                    continue
+                if len(val) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(val):
+                    print(
+                        f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
+                    )
+                    return
+                patch["delivery"] = f"channel:{val}"
+            elif field == "name":
+                patch["name"] = val
+            elif field == "message":
+                patch["message"] = val
+            elif field == "every_secs":
+                spec_update = {"kind": "interval", "interval_secs": int(val)}
+            elif field == "cron_expr":
+                spec_update = {"kind": "cron", "expr": val}
+        approval = getattr(args, "approval_mode", None)
+        if not patch and not spec_update and approval is None:
             print("Provide at least one field to update")
             return
-        if "every_secs" in kwargs and "cron_expr" in kwargs:
+        if getattr(args, "every_secs", None) is not None and (
+            getattr(args, "cron_expr", None) is not None
+        ):
             print("Provide --every or --cron, not both")
             return
-        updated = svc.update_job(args.job_id, **kwargs)
-        if updated:
 
-            sel().log_api_access(
-                caller="cli",
-                operation="cron.update",
-                outcome="allowed",
-                source="cli",
-                resources=f"job_id={args.job_id} fields={','.join(sorted(kwargs))}",
-            )
-            print(f"Updated job: {updated.id} ({updated.name})")
-        else:
-
+        existing = store.get(args.job_id)
+        if existing is None:
             sel().log_api_access(
                 caller="cli",
                 operation="cron.update",
@@ -304,27 +340,81 @@ def _cron(args: argparse.Namespace) -> None:
                 resources=f"job_id={args.job_id} reason=not_found",
             )
             print(f"Job not found: {args.job_id}")
+            return
+
+        if spec_update:
+            # Carry the quietly-losable spec keys (`timezone`/`skip_dates`/`strict`) rather than
+            # replacing the spec wholesale — the contract §1.3 and S101 both record. The re-arm
+            # happens AFTER the patch lands (see below), because `next_fire_at` is engine state the
+            # patch allowlist deliberately refuses.
+            current = existing.trigger.spec if isinstance(existing.trigger.spec, dict) else {}
+            carried = {
+                k: v for k, v in current.items() if k in ("timezone", "skip_dates", "strict")
+            }
+            patch["spec"] = {**carried, **spec_update}
+
+        # `message` and `approval_mode` live inside the action, not on the trigger, so they are
+        # folded into a `workflow` patch. Read-modify-write of the EXISTING action, because
+        # replacing it would drop the agent/model the user set when they created the job.
+        if "message" in patch or approval is not None:
+            action_wf: dict = dict(existing.trigger.workflow or {})
+            inline: dict = dict(action_wf.get("inline") or {})
+            action_cfg: dict = dict(inline.get("config") or {})
+            if "message" in patch:
+                action_cfg["task_template"] = patch.pop("message")
+            if approval is not None:
+                action_cfg["approval_mode"] = "" if approval == "default" else approval
+            inline["config"] = action_cfg
+            inline.setdefault("provider", "invoke-agent")
+            action_wf["inline"] = inline
+            patch["workflow"] = action_wf
+
+        result = _tools.update(store, trigger_id=args.job_id, patch=patch)
+        if result.ok and spec_update:
+            # 🔴 RE-ARM AFTER A CADENCE CHANGE. Found by driving: `--cron "30 7 * * *"` reported
+            # success and the list showed 07:30, but `next_fire_at` still held the OLD 09:00 — so
+            # the job would have fired on the schedule the user had just replaced. `next_fire_at` is
+            # deliberately NOT in `PATCHABLE` (it is engine state, not user input), so the arm is a
+            # separate clear-then-arm — the shape S101 established for the API's PUT.
+            from personalclaw.triggers.arm import arm as _arm
+
+            fresh = store.get(args.job_id)
+            if fresh is not None:
+                fresh.trigger.next_fire_at = ""
+                armed = _arm(fresh.trigger)
+                if armed:
+                    fresh.trigger.next_fire_at = armed
+                store.upsert(fresh.trigger)
+        sel().log_api_access(
+            caller="cli",
+            operation="cron.update",
+            outcome="allowed" if result.ok else "denied",
+            source="cli",
+            resources=f"job_id={args.job_id} fields={','.join(sorted(patch))}",
+            error="" if result.ok else result.text,
+        )
+        print(result.text)
 
     elif action == "remove":
-        if svc.remove_job(args.job_id):
-            print(f"Removed job: {args.job_id}")
-        else:
-            print(f"Job not found: {args.job_id}")
+        # `confirm=True`: the flag exists so a TOOL CALL cannot delete by accident. A human who
+        # typed `cron remove <id>` has already expressed the intent, and prompting again for what
+        # the command literally says would be theatre.
+        result = _tools.delete(store, trigger_id=args.job_id, confirm=True)
+        print(result.text if result.ok else f"Job not found: {args.job_id}")
 
     elif action == "pause":
-        if svc.enable_job(args.job_id, enabled=False):
-            print(f"Paused job: {args.job_id}")
-        else:
-            print(f"Job not found: {args.job_id}")
+        result = _tools.set_paused(store, trigger_id=args.job_id, paused=True)
+        print(result.text if result.ok else f"Job not found: {args.job_id}")
 
     elif action == "resume":
-        if svc.enable_job(args.job_id, enabled=True):
-            print(f"Resumed job: {args.job_id}")
-        else:
-            print(f"Job not found: {args.job_id}")
+        result = _tools.set_paused(store, trigger_id=args.job_id, paused=False)
+        # The text is printed on failure too: `set_paused` REFUSES to resume a row with a parse
+        # error and names the error, which is strictly more useful than "Job not found" — and the
+        # row does exist, so the old message would have been wrong as well as unhelpful.
+        print(result.text)
 
     elif action == "trigger":
-        # Fire via the RUNNING gateway (the local svc has no live timer).
+        # Fire via the RUNNING gateway (a CLI process has no clock loop).
         from personalclaw.schedule_trigger import trigger_schedule_job
 
         ok, message = trigger_schedule_job(args.job_id)

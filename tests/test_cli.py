@@ -80,21 +80,58 @@ class TestSetupWorkspaceDir:
 
 
 class TestCronCli:
+    """The `cron` CLI writes the unified TRIGGER STORE (S108).
+
+    🔴 Every test here used to `patch("personalclaw.cli_commands.ScheduleService")` and assert the
+    `add_job(...)` CALL SHAPE. They passed the whole time a CLI-created cron DID NOT FIRE: the write
+    went to `crons.json`, which the clock engine never reads, so the job stayed inert until the user
+    restarted the gateway. A mock-shape assertion cannot see that — it proves only which
+    function was called, not that anything got scheduled. These drive the store and assert the row.
+
+    They also had no `config_dir` isolation at all (the mock was the only thing between them and
+    the user's real home). The store is a real file, so the fixture now redirects it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _home(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.cli_commands.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.cli_commands.sel", MagicMock())
+        return tmp_path
+
+    def _store(self, tmp_path):
+        from personalclaw.triggers.store import TriggerStore
+
+        return TriggerStore(base_dir=tmp_path)
+
+    def _only(self, tmp_path):
+        rows = self._store(tmp_path).load()
+        assert len(rows) == 1, [r.trigger.id for r in rows]
+        return rows[0]
+
+    def test_cron_add_writes_an_armed_store_trigger(self, tmp_path):
+        """🔴 THE POINT OF THE SESSION: a created cron must be able to fire without a restart.
+        `service.due_ids` only surfaces rows carrying a `next_fire_at`."""
+        _cron(
+            argparse.Namespace(
+                cron_action="add",
+                name="ops",
+                message="check",
+                every=300,
+                cron_expr=None,
+                channel=None,
+                approval_mode="",
+            )
+        )
+        row = self._only(tmp_path)
+        assert row.ok, row.errors
+        assert row.trigger.enabled
+        assert row.trigger.next_fire_at
+        assert row.trigger.spec == {"kind": "interval", "interval_secs": 300}
+        assert not (tmp_path / "crons.json").exists(), "nothing may be written to the legacy file"
+
     def test_cron_add_with_channel(self, tmp_path):
-        with (
-            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
-            patch("personalclaw.cli_commands.sel"),
-        ):
-            mock_svc = mock_svc_cls.return_value
-            mock_job = MagicMock()
-            mock_job.id = "abc"
-            mock_job.name = "test"
-            mock_job.schedule.kind = "every"
-            mock_job.schedule.every_secs = 300
-            mock_job.schedule.cron_expr = None
-            mock_job.schedule.at_ts = None
-            mock_svc.add_job.return_value = mock_job
-            args = argparse.Namespace(
+        _cron(
+            argparse.Namespace(
                 cron_action="add",
                 name="ops",
                 message="check",
@@ -103,102 +140,104 @@ class TestCronCli:
                 channel="C0AP77JJSN6",
                 approval_mode="",
             )
-            _cron(args)
-            from personalclaw.schedule import make_agent_action
+        )
+        # `delivery` is the store's spelling of the legacy `channel=` kwarg.
+        assert self._only(tmp_path).trigger.delivery == "channel:C0AP77JJSN6"
 
-            mock_svc.add_job.assert_called_once_with(
-                name="ops",
-                action=make_agent_action(message="check", approval_mode=""),
-                every_secs=300,
-                channel="C0AP77JJSN6",
-            )
-
-    def test_cron_add_with_cron_expr_and_channel(self, tmp_path):
-        with (
-            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
-            patch("personalclaw.cli_commands.sel"),
-        ):
-            mock_svc = mock_svc_cls.return_value
-            mock_job = MagicMock()
-            mock_job.id = "def"
-            mock_job.name = "daily"
-            mock_job.schedule.kind = "cron"
-            mock_job.schedule.every_secs = None
-            mock_job.schedule.cron_expr = "0 9 * * 1-5"
-            mock_job.schedule.at_ts = None
-            mock_svc.add_job.return_value = mock_job
-            args = argparse.Namespace(
+    def test_cron_add_with_cron_expr(self, tmp_path):
+        _cron(
+            argparse.Namespace(
                 cron_action="add",
-                name="daily",
-                message="brief",
+                name="ops",
+                message="check",
                 every=None,
-                cron_expr="0 9 * * 1-5",
-                channel="C0APAPQ5GSY",
+                cron_expr="0 9 * * MON-FRI",
+                channel="C0AP77JJSN6",
                 approval_mode="",
             )
-            _cron(args)
-            from personalclaw.schedule import make_agent_action
-
-            mock_svc.add_job.assert_called_once_with(
-                name="daily",
-                action=make_agent_action(message="brief", approval_mode=""),
-                cron_expr="0 9 * * 1-5",
-                channel="C0APAPQ5GSY",
-            )
+        )
+        row = self._only(tmp_path)
+        assert row.trigger.spec == {"kind": "cron", "expr": "0 9 * * MON-FRI"}
+        assert row.trigger.delivery == "channel:C0AP77JJSN6"
+        assert row.trigger.next_fire_at
 
     def test_cron_add_with_approval_mode(self, tmp_path):
-        with (
-            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
-            patch("personalclaw.cli_commands.sel") as mock_sel,
-        ):
-            mock_svc = mock_svc_cls.return_value
-            mock_job = MagicMock()
-            mock_job.id = "ghi"
-            mock_job.name = "auto-job"
-            mock_job.schedule.kind = "every"
-            mock_job.schedule.every_secs = 600
-            mock_job.schedule.cron_expr = None
-            mock_job.schedule.at_ts = None
-            mock_svc.add_job.return_value = mock_job
-            args = argparse.Namespace(
+        _cron(
+            argparse.Namespace(
                 cron_action="add",
-                name="auto-job",
-                message="run unattended",
-                every=600,
+                name="ops",
+                message="check",
+                every=300,
                 cron_expr=None,
                 channel=None,
                 approval_mode="auto",
             )
-            _cron(args)
-            from personalclaw.schedule import make_agent_action
+        )
+        inline = (self._only(tmp_path).trigger.workflow or {}).get("inline") or {}
+        config = inline.get("config") or {}
+        assert config.get("approval_mode") == "auto"
+        # `task_template`, NOT `message` — the key `invoke-agent` actually reads.
+        assert config.get("task_template") == "check"
 
-            mock_svc.add_job.assert_called_once_with(
-                name="auto-job",
-                action=make_agent_action(message="run unattended", approval_mode="auto"),
-                every_secs=600,
+    def test_cron_add_is_a_user_creation_not_an_agent_one(self, tmp_path):
+        """`created_by="user"`: the agent cap (decision 5d) bounds what the ASSISTANT creates
+        unprompted. A human typing the command is the user acting directly, and capping their own
+        CLI at the agent limit would aim the rule at the wrong party."""
+        _cron(
+            argparse.Namespace(
+                cron_action="add",
+                name="ops",
+                message="check",
+                every=300,
+                cron_expr=None,
                 channel=None,
+                approval_mode="",
             )
-            mock_sel.return_value.log_api_access.assert_called_once_with(
-                caller="cli",
-                operation="cron.add",
-                outcome="allowed",
-                source="cli",
-                resources="job_id=ghi approval_mode=auto",
+        )
+        assert self._only(tmp_path).trigger.created_by == "user"
+
+    def test_cron_add_without_a_cadence_is_refused(self, tmp_path, capsys):
+        _cron(
+            argparse.Namespace(
+                cron_action="add",
+                name="ops",
+                message="check",
+                every=None,
+                cron_expr=None,
+                channel=None,
+                approval_mode="",
             )
+        )
+        assert "Provide --every or --cron" in capsys.readouterr().out
+        assert self._store(tmp_path).load() == []
+
+    def _seed(self, tmp_path, **over):
+        from personalclaw.triggers.models import Trigger
+
+        store = self._store(tmp_path)
+        trigger = Trigger(
+            id="clock:ops",
+            name="ops",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 300},
+            workflow={
+                "inline": {
+                    "provider": "invoke-agent",
+                    "config": {"task_template": "check", "agent": "helper", "model": "gpt"},
+                }
+            },
+        )
+        for key, value in over.items():
+            setattr(trigger, key, value)
+        store.upsert(trigger)
+        return store
 
     def test_cron_update_approval_mode(self, tmp_path):
-        with (
-            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
-            patch("personalclaw.cli_commands.sel") as mock_sel,
-        ):
-            mock_svc = mock_svc_cls.return_value
-            mock_job = MagicMock()
-            mock_job.id = "abc123"
-            mock_job.name = "existing"
-            mock_svc.update_job.return_value = mock_job
-            args = argparse.Namespace(
+        self._seed(tmp_path)
+        _cron(
+            argparse.Namespace(
                 cron_action="update",
-                job_id="abc123",
+                job_id="clock:ops",
                 name=None,
                 message=None,
                 every_secs=None,
@@ -206,23 +245,87 @@ class TestCronCli:
                 channel=None,
                 approval_mode="auto",
             )
-            _cron(args)
-            mock_svc.update_job.assert_called_once_with("abc123", approval_mode="auto")
-            mock_sel.return_value.log_api_access.assert_called_once_with(
-                caller="cli",
-                operation="cron.update",
-                outcome="allowed",
-                source="cli",
-                resources="job_id=abc123 fields=approval_mode",
+        )
+        config = ((self._only(tmp_path).trigger.workflow or {})["inline"]).get("config") or {}
+        assert config.get("approval_mode") == "auto"
+        # 🔴 The agent + model the user set at creation must SURVIVE an unrelated edit — the action
+        # is read-modify-written, not replaced.
+        assert config.get("agent") == "helper"
+        assert config.get("model") == "gpt"
+
+    def test_cron_update_default_approval_mode_clears_it(self, tmp_path):
+        self._seed(tmp_path)
+        _cron(
+            argparse.Namespace(
+                cron_action="update",
+                job_id="clock:ops",
+                name=None,
+                message=None,
+                every_secs=None,
+                cron_expr=None,
+                channel=None,
+                approval_mode="default",
             )
+        )
+        config = ((self._only(tmp_path).trigger.workflow or {})["inline"]).get("config") or {}
+        assert config.get("approval_mode") == ""
+
+    def test_cron_update_cadence_re_arms(self, tmp_path):
+        """🔴 Found by driving: the cadence changed and the list showed the new time, but
+        `next_fire_at` still held the OLD one — so the job would fire on the schedule the user had
+        just replaced. `next_fire_at` is engine state the patch allowlist refuses, so the re-arm
+        is a separate clear-then-arm."""
+        store = self._seed(tmp_path, next_fire_at="2026-01-01T09:00:00+00:00")
+        _cron(
+            argparse.Namespace(
+                cron_action="update",
+                job_id="clock:ops",
+                name=None,
+                message=None,
+                every_secs=None,
+                cron_expr="30 7 * * *",
+                channel=None,
+                approval_mode=None,
+            )
+        )
+        trigger = store.get("clock:ops").trigger
+        assert trigger.spec["expr"] == "30 7 * * *"
+        assert trigger.next_fire_at.endswith("07:30:00+00:00")
+
+    def test_cron_update_cadence_preserves_the_quietly_losable_keys(self, tmp_path):
+        """`timezone`/`skip_dates`/`strict` survive a cadence change — §1.3's contract. A user
+        changing `0 9 * * *` to `0 10 * * *` must not lose their holidays."""
+        store = self._seed(tmp_path)
+        trigger = store.get("clock:ops").trigger
+        trigger.spec = {
+            **trigger.spec,
+            "timezone": "America/New_York",
+            "skip_dates": ["2026-12-25"],
+        }
+        store.upsert(trigger)
+        _cron(
+            argparse.Namespace(
+                cron_action="update",
+                job_id="clock:ops",
+                name=None,
+                message=None,
+                every_secs=None,
+                cron_expr="0 10 * * *",
+                channel=None,
+                approval_mode=None,
+            )
+        )
+        spec = store.get("clock:ops").trigger.spec
+        assert spec["expr"] == "0 10 * * *"
+        assert spec["timezone"] == "America/New_York"
+        assert spec["skip_dates"] == ["2026-12-25"]
 
     def test_cron_update_whitespace_channel_skipped(self, tmp_path, capsys):
-        with patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls:
-            mock_svc = mock_svc_cls.return_value
-            mock_svc.update_job.return_value = None
-            args = argparse.Namespace(
+        self._seed(tmp_path)
+        _cron(
+            argparse.Namespace(
                 cron_action="update",
-                job_id="job1",
+                job_id="clock:ops",
                 name=None,
                 message=None,
                 every_secs=None,
@@ -230,52 +333,99 @@ class TestCronCli:
                 channel="   ",
                 approval_mode=None,
             )
-            _cron(args)
-            out = capsys.readouterr().out
-            assert "at least one field" in out
+        )
+        assert "Provide at least one field to update" in capsys.readouterr().out
 
     def test_cron_update_every_and_cron_exclusive(self, tmp_path, capsys):
-        with patch("personalclaw.cli_commands.ScheduleService"):
-            args = argparse.Namespace(
+        self._seed(tmp_path)
+        _cron(
+            argparse.Namespace(
                 cron_action="update",
-                job_id="job1",
+                job_id="clock:ops",
                 name=None,
                 message=None,
-                every_secs=300,
+                every_secs=600,
                 cron_expr="0 9 * * *",
                 channel=None,
                 approval_mode=None,
             )
-            _cron(args)
-            out = capsys.readouterr().out
-            assert "not both" in out
+        )
+        assert "Provide --every or --cron, not both" in capsys.readouterr().out
+        # And nothing may have been written on the way to that refusal.
+        assert self._only(tmp_path).trigger.spec == {"kind": "interval", "interval_secs": 300}
 
     def test_cron_update_not_found(self, tmp_path, capsys):
-        with (
-            patch("personalclaw.cli_commands.ScheduleService") as mock_svc_cls,
-            patch("personalclaw.cli_commands.sel") as mock_sel,
-        ):
-            mock_svc = mock_svc_cls.return_value
-            mock_svc.update_job.return_value = None
-            args = argparse.Namespace(
+        _cron(
+            argparse.Namespace(
                 cron_action="update",
-                job_id="nonexist",
+                job_id="nope",
                 name=None,
                 message=None,
                 every_secs=None,
                 cron_expr=None,
-                channel=None,
-                approval_mode="auto",
+                channel="C0AP77JJSN6",
+                approval_mode=None,
             )
-            _cron(args)
-            assert "nonexist" in capsys.readouterr().out
-            mock_sel.return_value.log_api_access.assert_called_once_with(
-                caller="cli",
-                operation="cron.update",
-                outcome="not_found",
-                source="cli",
-                resources="job_id=nonexist reason=not_found",
-            )
+        )
+        assert "Job not found: nope" in capsys.readouterr().out
+
+    def test_cron_pause_and_resume(self, tmp_path):
+        store = self._seed(tmp_path, enabled=True)
+        _cron(argparse.Namespace(cron_action="pause", job_id="clock:ops"))
+        assert store.get("clock:ops").trigger.enabled is False
+        _cron(argparse.Namespace(cron_action="resume", job_id="clock:ops"))
+        assert store.get("clock:ops").trigger.enabled is True
+
+    def test_resuming_a_broken_trigger_names_the_parse_error(self, tmp_path, capsys):
+        """`set_paused` REFUSES to enable a row that failed to parse and says why, which beats the
+        legacy "Job not found" — the row does exist, so that message was wrong as well as unhelpful.
+        """
+        self._seed(tmp_path, spec={}, enabled=False)  # no spec.kind → invalid clock row
+        _cron(argparse.Namespace(cron_action="resume", job_id="clock:ops"))
+        out = capsys.readouterr().out
+        assert "parse error" in out
+        assert self._store(tmp_path).get("clock:ops").trigger.enabled is False
+
+    def test_cron_remove_deletes_the_row(self, tmp_path):
+        store = self._seed(tmp_path)
+        _cron(argparse.Namespace(cron_action="remove", job_id="clock:ops"))
+        assert store.get("clock:ops") is None
+
+    def test_cron_remove_not_found(self, tmp_path, capsys):
+        _cron(argparse.Namespace(cron_action="remove", job_id="nope"))
+        assert "Job not found: nope" in capsys.readouterr().out
+
+    def test_cron_list_renders_the_stores_rows(self, tmp_path, capsys):
+        self._seed(tmp_path)
+        _cron(argparse.Namespace(cron_action="list"))
+        out = capsys.readouterr().out
+        assert "clock:ops" in out
+        # 🔴 The message came out BLANK first: read via the shared projection, because
+        # `invoke-agent`'s key is `task_template` and `run-prompt`/`notify` differ again.
+        assert "check" in out
+
+    def test_cron_list_shows_a_broken_row_rather_than_hiding_it(self, tmp_path, capsys):
+        """The legacy list could not represent a broken row at all, and silently omitting a trigger
+        the user created is how "where did my automation go" happens."""
+        self._seed(tmp_path, spec={})
+        _cron(argparse.Namespace(cron_action="list"))
+        out = capsys.readouterr().out
+        assert "clock:ops" in out
+        assert "⚠️" in out
+
+    def test_cron_list_when_empty(self, tmp_path, capsys):
+        _cron(argparse.Namespace(cron_action="list"))
+        assert "No cron jobs." in capsys.readouterr().out
+
+    def test_the_cli_no_longer_touches_the_legacy_service(self):
+        """🔴 The clean break, pinned at the source: a re-added `ScheduleService` write here would
+        silently stop firing again, and the symptom (a cron that runs only after a restart) is
+        exactly the one that took this long to notice."""
+        import inspect
+
+        from personalclaw import cli_commands
+
+        assert "ScheduleService" not in inspect.getsource(cli_commands._cron)
 
 
 class TestSetupTimezone:

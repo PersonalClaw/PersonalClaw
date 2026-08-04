@@ -2447,3 +2447,74 @@ tests and 5 refresh tests.
   non-facade callers (`suggestions.py`, `messaging.py`, `discover.py`, `app_crons.py`,
   `digest_provider.py`). Then the class, then the `schedule_*` MCP aliases. `ScheduleRunStore`
   survives.
+
+### S108 — Nothing writes the legacy file any more (§6)
+
+**DONE.** Three writers re-pointed at the unified store. Scoped this way deliberately: the facade's
+CRUD fallbacks cannot be deleted while anything still writes `crons.json`, so "no legacy writers
+left" is the atomic unit that makes the deletion safe — and measuring turned it from a cleanup into a
+**user-facing bug fix**.
+
+**🔴 THE DEFECT: a cron created outside the API DID NOT FIRE.** The clock engine
+(`triggers.service.tick`) reads the store and nothing else, and the boot migration that imports
+`crons.json` runs only at gateway startup. Measured for each writer — the job landed in `crons.json`
+with `triggers.json` untouched, so it stayed inert **until the user restarted the gateway**:
+
+| writer | user-visible symptom |
+|---|---|
+| `personalclaw cron add` (CLI) | reports "Added job", schedules nothing until a restart |
+| `app_crons.reconcile` | an app's declared cron is one restart behind its manifest; a freshly INSTALLED app's cron never runs on the session that installed it — the exact restart the lifecycle seam exists to avoid |
+| `digest_provider.reconcile` | the notification digest never runs; a schedule edited in Settings takes TWO restarts |
+
+**And both reconcilers ran BEFORE the migration**, so their writes were stranded twice over. They now
+run after it, against the store — ordered so a reconciler never fights an import over the same id.
+
+**Deterministic ids, so the rows are built directly rather than through `tools.create`.** Both
+reconcilers diff against a fixed id (`app:<app>:<cron>`, `system:notification-digest`) and
+`tools.create` mints its own slug-derived unique id — going through it would leave every restart
+unable to recognize its own previous rows, so the diff would add duplicates forever instead of
+converging. The CLI, which has no such constraint, goes through `tools.py` and inherits its
+contracts: the id-collision guard, arming on creation, the patch allowlist, the refusal to resume a
+row with a parse error, and confirm-before-delete.
+
+**Defects found while driving the new paths:**
+
+- 🔴 **A cadence edit did not re-arm.** `cron update --cron "30 7 * * *"` reported success and the
+  list showed 07:30 — while `next_fire_at` still held the OLD 09:00, so the job would have fired on
+  the schedule the user had just replaced. `next_fire_at` is deliberately NOT in `PATCHABLE` (engine
+  state, not user input), so the arm is a separate clear-then-arm, the shape S101 established for the
+  API's PUT. Same fix in the digest reconciler's convergence path.
+- 🔴 **`cron list` printed a BLANK message for every trigger.** I read `config["message"]`;
+  `invoke-agent`'s key is `task_template` (and `run-prompt`/`notify` differ again). Now reads
+  `schedule_view.to_schedule_row()`, which resolves all of them — the reason that projection exists.
+- The CLI's `_format_schedule` retires with its only caller. Checked before deleting: it rendered a
+  full date for an `at` job, and `describe_cadence` renders "at 06:00 PM PDT" via the SHARED
+  formatter — verified against a real migrated one-shot, whose `spec.at` is an epoch (the numeric
+  form `arm._positive` requires; an ISO string there is simply invalid input).
+- `cron list` now shows a BROKEN row as `⚠️` with its parse error. The legacy list could not
+  represent one at all, and silently omitting a trigger the user created is how "where did my
+  automation go" happens.
+- The `--no-crons` guard on the apps lifecycle seam had to change meaning: it tested "is there a
+  scheduler on `state`", and a store is a FILE, not a service — so the old check would have
+  reconciled happily in a `--no-crons` gateway. Now reads `state.no_crons`.
+
+**DEVIATION — 17 tests rewritten, and the reason matters.** Every one of them passed the entire time
+these three writers were inert, because each asserted against a DOUBLE: `test_cli.py` patched
+`ScheduleService` and asserted the `add_job(...)` call shape (7 tests), `test_notification_rules.py`
+drove a `_FakeCrons` recording `add_job`/`update_job` calls (5), and `test_app_sandbox_p3.py` drove a
+real `ScheduleService` whose writes nothing read (6). A mock-shape assertion proves which function was
+called, never that anything got scheduled. All now drive a real store and assert the row — including
+`next_fire_at`, which is the difference between a registered cron and a running one. The CLI tests
+also had NO `config_dir` isolation: the mock was the only thing between them and the user's real home.
+
+`_FakeCrons`/`_FakeJob` are deleted along with the guard test that pinned their shape against
+`ScheduleJob` — that whole apparatus existed to catch a flat-vs-nested attribute read
+(`job.cron_expr` vs `job.schedule.cron_expr`) that a plain dict key (`spec["expr"]`) cannot get wrong.
+`test_the_loop_lives_in_the_no_crons_else_branch` was anchored on `reconcile_digest_cron` as a proxy
+for "last thing in the else-branch"; re-anchored on the guard itself plus an INDENTATION check, since
+an anchor that moves when unrelated code is reordered tests the layout rather than the contract.
+
+- **REMAINING on the `ScheduleService` retirement:** the `schedule_*` MCP aliases (the last legacy
+  writer — `automation_*` already covers all nine of them), then the facade's CRUD fallbacks, which
+  are only safe to delete once those are gone. Then `suggestions.py` / `messaging.py` / `discover.py`
+  (reads), then the class. `ScheduleRunStore` survives.

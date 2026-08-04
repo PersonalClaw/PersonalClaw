@@ -74,12 +74,19 @@ def _isolate_trigger_store(tmp_path_factory, monkeypatch):
     dashboard tests call that handler with no home isolation. Observed on a full-suite run:
     `clock:t`, `clock:t-2`, `clock:t-3` and `clock:test` landed in the USER's real
     `~/.personalclaw/triggers.json`. Any new path that WRITES a store built from `config_dir()`
-    has to be redirected here too."""
+    has to be redirected here too.
+
+    🔴 The THIRD seam was added in S108: `_init_cron` now runs the app-cron and digest reconcilers
+    against a store built from `gateway.config_dir()`, so `test_gateway`'s unisolated `_init_cron`
+    calls wrote `system:notification-digest` into the USER's real store (reproduced by deleting the
+    file and running that one file). Four occurrences of this hazard now; the rule is the docstring
+    above, and the check is `ls ~/.personalclaw` after any suite run that adds a writer."""
     store_home = tmp_path_factory.mktemp("pclaw-triggers")
     monkeypatch.setattr("personalclaw.triggers.boot_migrate.config_dir", lambda: store_home)
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.triggers.config_dir", lambda: store_home, raising=False
     )
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: store_home, raising=False)
 
 
 @pytest.fixture(autouse=True)

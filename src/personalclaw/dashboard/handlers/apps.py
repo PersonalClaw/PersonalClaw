@@ -120,18 +120,24 @@ def _reconcile_app_crons(request: web.Request) -> None:
     startup, while MCP servers reconcile on every transition — so without this a
     disabled/uninstalled app's cron kept firing agent jobs (and a freshly-enabled
     app's cron didn't register) until the next restart. Reconciliation is
-    idempotent + declarative (diffs desired app:* jobs against registered ones),
+    idempotent + declarative (diffs desired app:* triggers against registered ones),
     so calling it on each transition simply converges the scheduler. Best-effort:
-    a missing scheduler (``--no-crons``) or any error is swallowed, never blocking
-    the lifecycle response."""
+    any error is swallowed, never blocking the lifecycle response.
+
+    Reconciles into the unified TRIGGER STORE (S108). It used to pass `state.crons`, which wrote
+    `crons.json` — a file the clock engine does not read — so a freshly enabled app's cron was inert
+    until the next boot imported it, which is exactly the restart this seam exists to avoid.
+    The `--no-crons` guard moved with it: the store is a file, not a service, so the `state.crons`
+    presence check no longer answers the question. `no_crons` on the dashboard state does."""
     try:
         state = request.app.get("state")
-        crons = getattr(state, "crons", None) if state is not None else None
-        if crons is None:
+        if state is not None and getattr(state, "no_crons", False):
             return
         from personalclaw.apps.app_crons import reconcile_app_crons
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
 
-        reconcile_app_crons(crons)
+        reconcile_app_crons(TriggerStore(base_dir=config_dir()))
     except Exception:
         logger.debug("app cron reconcile after lifecycle transition failed", exc_info=True)
 
