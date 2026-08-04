@@ -794,7 +794,14 @@ def strip_role_tokens(text: str) -> str:
     return _re.sub(pattern, _neutralise, text, flags=_re.IGNORECASE)
 
 
-def fence_untrusted(text: str, *, source: str = "") -> str:
+def fence_untrusted(
+    text: str,
+    *,
+    source: str = "",
+    source_type: str = "",
+    source_id: str = "",
+    transformation_path: str = "",
+) -> str:
     """Wrap externally-sourced text so a model treats it as DATA, not instructions.
 
     Any text that entered from outside the user↔agent trust boundary — a fetched web
@@ -817,7 +824,20 @@ def fence_untrusted(text: str, *, source: str = "") -> str:
     and ``<<SYS>>``, Mistral's ``</s>`` and the bare ``<|endoftext|>`` passed through
     ``fence_untrusted`` intact. Local providers are exactly where that bites: a hosted
     API rejects or escapes stray control tokens, while a local runtime applying its own
-    chat template will happily honour them."""
+    chat template will happily honour them.
+
+    Carries **provenance attributes** (§7/R4 rule c): ``source_type`` (the CLASS of
+    origin — ``web_watch``, ``file``, ``inbox``), ``source_id`` (which one — a url, a
+    path, a message id) and ``transformation_path`` (how it got here — ``poll``,
+    ``digest``, ``extract``). ``source=`` is kept and unchanged, because thirteen call
+    sites pass it and it is what the existing tag-parser in ``learning/hygiene.py``
+    tolerates; the three new attributes are additive and optional.
+
+    Why all three rather than one string: "a web page said this" and "THIS page said
+    this, and we summarised it on the way" are different claims, and only the second
+    lets a reader (or a later audit) tell whether the text a model acted on is the text
+    that arrived. Values are attribute-escaped, so a crafted ``source_id`` cannot close
+    the tag it is inside — the same fence-break defence the body already gets."""
     if not text or not text.strip():
         return text
     # Neutralise any embedded fence markers so the content can't close the fence early
@@ -828,8 +848,35 @@ def fence_untrusted(text: str, *, source: str = "") -> str:
         "</untrusted_content>", "&lt;/untrusted_content&gt;"
     )
     safe = strip_role_tokens(safe)
-    label = f" source={source}" if source else ""
-    return f"{UNTRUSTED_OPEN[:-1]}{label}>\n{safe}\n{UNTRUSTED_CLOSE}"
+    attrs = "".join(
+        f" {name}={_fence_attr(value)}"
+        for name, value in (
+            ("source", source),
+            ("source_type", source_type),
+            ("source_id", source_id),
+            ("transformation_path", transformation_path),
+        )
+        if value
+    )
+    return f"{UNTRUSTED_OPEN[:-1]}{attrs}>\n{safe}\n{UNTRUSTED_CLOSE}"
+
+
+def _fence_attr(value: str) -> str:
+    """One provenance attribute value, safe to sit inside the fence's own tag.
+
+    🔴 The attribute is attacker-influenced: a `source_id` is a url or a file path that
+    came from outside. Without escaping, a crafted value containing `>` would close the
+    open tag early and everything after it would read as un-fenced instructions — the
+    fence-break the body is already protected against, reintroduced through the label.
+
+    Angle brackets and quotes are escaped, and newlines collapse to a space so a value
+    cannot split the tag across lines. Truncated because a tag is metadata: a 4 KB url
+    in the prompt prefix costs tokens on every fenced span.
+    """
+    flat = " ".join(str(value or "").split())[:200]
+    return (
+        flat.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    )
 
 
 def is_denied(tool_name: str, extra_patterns: list[str] | None = None) -> str | None:

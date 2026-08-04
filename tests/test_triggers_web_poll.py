@@ -147,7 +147,14 @@ def test_a_NEW_item_fires_and_names_it(store, tmp_path):
     outcome = web_poll.poll_one(trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages))
     assert outcome.payload is not None
     assert outcome.payload["new_count"] == 1
-    assert outcome.payload["new_items"] == ["post-3"]
+    # FENCED with provenance since S127: the item text came off a third-party page, so the payload
+    # carries the marker AND the origin rather than a bare string a later consumer must know to
+    # distrust. The item itself is still legible inside the fence.
+    (item,) = outcome.payload["new_items"]
+    assert "post-3" in item
+    assert "untrusted_content" in item
+    assert "source_type=web_watch" in item
+    assert "source_id=https://example.com/feed" in item
 
 
 def test_the_SAME_new_item_does_not_fire_TWICE(store, tmp_path):
