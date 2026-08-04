@@ -4501,3 +4501,58 @@ Verified load-bearing: removing the gate call turns 3 tests red. Gate: `make lin
   `max_cost_usd_per_run` need a `run_key` threaded through `SpendMeter.charge` (the machinery exists;
   its one production caller never passes one), and `idempotency` / `threshold` need R12 to pin their
   semantics before anything can enforce them.
+
+### S153 — per-run spend attribution, and the live reader of a total nothing wrote (§3.6)
+
+**DONE.** `SpendMeter.charge` has accepted `run_key=` since the guardrails landed, and its **one**
+production caller — `ModelCallGuard` — never passed it. So `run_totals` was structurally empty and
+every run-scoped cap read zero. That is why `cost_cap`/`max_cost_usd_per_run` have sat in
+`UNMETERED_CAPS` since S133.
+
+**🔴 And it had a LIVE READER all along.** `resilience.remediation` caps its judgment lane with
+`meter.run_totals("doctor").dollars >= max_cost_usd`, and `run_remediation`'s own docstring states it
+*"charges the guardrails SpendMeter under run_key `doctor`"*. Nothing ever charged it. Measured:
+`run_totals("doctor").dollars` is `0.0` on a fresh meter and stays `0.0` after any number of model
+calls — so the Doctor's cost cap has **never bound**, on a path that runs unattended. This is the
+worst inert shape this program keeps finding: not dead code, but a control that runs, reads, and
+always answers "plenty of budget left".
+
+**A ContextVar, not a parameter, and the reason is arithmetic.** The guard is constructed by
+`provider_bridge` from provider config alone and has no run identity; threading one in would touch all
+**33** call sites that reach the bridge. `mcp_core._CURRENT_SESSION_KEY` and
+`builtin_tools._CURRENT_AGENT` are the same pattern for the same ambient-identity problem, so one seam
+sets the scope and one seam reads it. Token-scoped, so a nested run (a trigger fire that spawns a
+subagent) restores its parent rather than losing it.
+
+**Two setters, each at a single point:**
+
+* **The trigger fire seam** (`_fire_store_trigger`), keyed **per FIRE** — `max_cost_usd_per_run` is a
+  per-run cap, and a trigger-scoped key would accumulate across fires and make the second fire of a
+  perfectly healthy automation look over budget. Reset in a `finally` so a raising provider cannot
+  leak the scope into the next fire on the same task.
+* **Each remediation job**, under `"doctor"` — the key its own cap has always read.
+
+**🔴 DISCOVERY — my own bug, caught by my own test.** `reset_current_run_key` first listed
+`(ValueError, LookupError)`; a reused token raises **`RuntimeError`** ("Token has already been used").
+That runs in a `finally` on the fire path, so it would have replaced a real provider error with a
+bookkeeping one — the caller sees the wrong exception for the wrong reason. Now catches `Exception`
+with the reasoning written down, because the narrow tuple looked more careful and was worse.
+
+**A second self-inflicted lesson:** my first test asserted `day_totals().dollars == 0.50` and read
+`8.0`. The day scope is **persisted**, so it carries whatever earlier tests in the process charged —
+the assertion had been passing on test-ordering luck. Now asserts the delta.
+
+**HONEST SCOPE — this ships attribution, not enforcement.** A fire's model spend now accrues to a run
+scope and `check_run` returns a real verdict (measured: `$2.75` against a `$1` cap → `EXCEEDED`). But
+no gate on the fire path yet compares a run's accrued dollars against `cost_cap`, so **both keys stay
+in `UNMETERED_CAPS`**, with that distinction spelled out in the constant. Attribution without
+enforcement is exactly the "user believes their automation is bounded" failure that list exists for,
+and quietly removing them would have been the same lie one layer up.
+
+Verified load-bearing: removing the `run_key=` argument turns a test red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16181 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **The enforcement read is now the only thing between these two caps and closure**, and it is a
+  small session: the fire path already has the run key it bound, so a `cost` gate can ask
+  `check_run(key, budget_from_gates(trigger))`. `idempotency`/`threshold` still need R12 semantics.

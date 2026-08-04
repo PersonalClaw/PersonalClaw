@@ -620,8 +620,11 @@ def _budget_remaining(trigger: Any) -> float | None:
     carried by `LEGACY_FIELD_MAP` — and bounded nothing. Measured: `max_fires: 2` produced 8 fires
     in 8 slots, identical to no cap at all.
 
-    Scoped deliberately to `max_fires`, the one cap with a meter that exists. `cost_cap` /
-    `max_cost_usd_per_run` need per-run spend attribution and `max_runs_per_hour` /
+    Scoped deliberately to `max_fires`. `max_runs_per_hour`/`max_actions_per_hour`/`rate_cap` got
+    their meter at S152 (the `rate` gate) and `cost_cap`/`max_cost_usd_per_run` got per-run spend
+    ATTRIBUTION at S153 — but attribution is not yet enforcement here: nothing on this path reads a
+    run's accrued dollars against the cap, so those two stay in `UNMETERED_CAPS`. Historic note:
+    `cost_cap` / `max_cost_usd_per_run` needed per-run spend attribution and `max_runs_per_hour` /
     `max_actions_per_hour` need a windowed history query — neither exists on this path, and
     inventing a meter to satisfy a cap would be the inverted dependency this program keeps refusing
     (S119's webhook token, S129's rule (e)). A doctor finding names the still-unenforced caps

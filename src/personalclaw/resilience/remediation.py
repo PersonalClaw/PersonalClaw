@@ -246,7 +246,11 @@ def run_remediation(
 
     ``dry_run`` computes the plan + score without running any job (the Doctor preview).
     """
-    from personalclaw.guardrails.budgets import get_meter
+    from personalclaw.guardrails.budgets import (
+        get_meter,
+        reset_current_run_key,
+        set_current_run_key,
+    )
 
     deficits = measure_deficits()
     score_before = health_score(deficits)
@@ -281,7 +285,17 @@ def run_remediation(
             result.jobs.append({"id": job.id, "status": "would_run", "cost": 0.0})
             continue
         try:
-            detail = job.run()
+            # 🔴 BIND the run scope the cap above READS (S153). This function's own docstring has
+            # always said it "charges the SpendMeter under run_key `doctor`" — and nothing ever
+            # did: `run_totals("doctor").dollars` was 0.0 on a fresh meter and stayed 0.0 after any
+            # number of model calls, so the judgment-lane cap never bound. A live reader of a
+            # total nothing writes. Binding it here means a judgment job's model spend actually
+            # accrues, so the `max_cost_usd` break becomes real.
+            token = set_current_run_key("doctor")
+            try:
+                detail = job.run()
+            finally:
+                reset_current_run_key(token)
             state.setdefault(job.id, {})["last_success_ts"] = now
             result.jobs.append({"id": job.id, "status": "ok", "cost": 0.0, "detail": detail[:200]})
         except Exception as exc:

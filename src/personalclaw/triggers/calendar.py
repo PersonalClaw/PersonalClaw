@@ -58,9 +58,12 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #:
 #: What each still needs, so this list shrinks for a reason rather than by guesswork:
 #:
-#: * `cost_cap` / `max_cost_usd_per_run` — per-run spend attribution. `guardrails.SpendMeter` has
-#:   the machinery (`charge(..., run_key=)`, `run_totals`) but its one production caller never
-#:   passes a `run_key`, so run-scope totals are permanently empty.
+#: * `cost_cap` / `max_cost_usd_per_run` — **half-closed at S153.** The attribution gap is fixed:
+#:   `ModelCallGuard` now charges the ambient run scope (`budgets.current_run_key()`), and the
+#:   trigger fire path binds one per fire, so a fire's model spend accrues and `check_run` returns a
+#:   real verdict. Still missing is the ENFORCEMENT read: no gate on the fire path compares a
+#:   run's accrued dollars against the cap. They stay named here until it does — attribution without
+#:   enforcement is exactly the "believes their automation is bounded" failure this list exists for.
 #: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED S152**, so deliberately
 #:   absent. They needed a windowed history query; `ScheduleRunStore.count_since` is it, and
 #:   `firepath`'s `rate` gate delegates the decision to `missed.within_rate_window`.

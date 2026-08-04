@@ -954,7 +954,28 @@ class GatewayOrchestrator:
             # `last_failure_at` and `enabled: True` — criterion 3's "autopause after 5" could not
             # possibly hold, because the whole `autopause` module (13 functions) was imported by NO
             # production code and the counter it spends had no writer.
-            result = await provider.execute(config, ctx, timeout=timeout)
+            # 🔴 BIND the per-fire run scope so model spend is ATTRIBUTABLE (S153).
+            # `SpendMeter.charge` has accepted `run_key=` since guardrails landed and its only
+            # production caller never passed one, so `run_totals` was permanently empty — which is
+            # why `cost_cap`/`max_cost_usd_per_run` sat in `UNMETERED_CAPS` for twenty sessions. A
+            # ContextVar rather than a parameter: the guard is built by `provider_bridge` from
+            # provider config and has no run identity, and threading one in would touch all 33 call
+            # sites that reach the bridge.
+            #
+            # Keyed per FIRE, not per trigger: `max_cost_usd_per_run` is a per-run cap, and a
+            # trigger-scoped key would accumulate across fires and make the second fire of a
+            # healthy automation look over budget. Reset in a `finally` so a raising
+            # provider cannot leak the scope into the next fire on this task.
+            from personalclaw.guardrails.budgets import (
+                reset_current_run_key,
+                set_current_run_key,
+            )
+
+            run_token = set_current_run_key(f"trigger:{trigger.id}:{int(time.time() * 1000)}")
+            try:
+                result = await provider.execute(config, ctx, timeout=timeout)
+            finally:
+                reset_current_run_key(run_token)
             await self._record_fire_outcome(trigger, result=result)
             self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
