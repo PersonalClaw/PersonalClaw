@@ -4,7 +4,7 @@ import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { spring } from '../../design/motion'
 import { SearchField } from '../../ui/SearchField'
 import { IconButton } from '../../ui/IconButton'
-import { findMatches, type FindMatch } from './findMatches'
+import { findInText, findMatches, type FindMatch } from './findMatches'
 import type { ChatTurn } from './chatTypes'
 
 /** Find-in-conversation (CHAT-CRAFT S2) — a compact bar docked under the chat
@@ -54,23 +54,26 @@ export function FindBar({ turns, scrollRef, turnNodes, onClose }: {
     const HighlightCtor = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight
     if (!CSSns?.highlights || !HighlightCtor) return
     const root = scrollRef.current
-    const q = debounced.toLowerCase()
     const clear = () => { CSSns.highlights!.delete('pc-find') }
-    if (!root || !q.trim()) { clear(); return clear }
+    if (!root || !debounced.trim()) { clear(); return clear }
     const ranges: Range[] = []
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
     let node: Node | null
     while ((node = walker.nextNode())) {
       const text = node.nodeValue ?? ''
-      const hay = text.toLowerCase()
-      let from = 0
-      for (;;) {
-        const at = hay.indexOf(q, from)
-        if (at < 0) break
-        const r = document.createRange()
-        r.setStart(node, at); r.setEnd(node, at + q.length)
-        ranges.push(r)
-        from = at + q.length
+      // Same offsets as the scanner, by construction — indexing the original text,
+      // not a case-folded copy whose length can differ (#546).
+      for (const m of findInText(text, debounced)) {
+        // Belt-and-braces: clamp, and never let one pathological node abort the
+        // whole loop — a throw here used to leave the page with zero highlights.
+        const start = Math.min(m.start, text.length)
+        const end = Math.min(m.end, text.length)
+        if (end <= start) continue
+        try {
+          const r = document.createRange()
+          r.setStart(node, start); r.setEnd(node, end)
+          ranges.push(r)
+        } catch { /* skip this occurrence; keep painting the rest */ }
       }
     }
     CSSns.highlights!.set('pc-find', new HighlightCtor(...ranges))
