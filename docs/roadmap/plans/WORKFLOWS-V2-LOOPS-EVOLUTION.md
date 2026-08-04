@@ -1000,3 +1000,58 @@ Verified load-bearing by removing the screen call and confirming the rejection t
   calibration emission + assessment (`judge_verdict`/`judge_divergence`, criterion feeding R6a) — the
   honest back half this session did not take, plus the 3 templates deferred at session 33 and the
   `code-project` product decision.
+
+### S145 — `judge_samples` was declared and read by nothing (criterion 2 / R6a)
+
+**DONE.** `goal-pursuit-open-ended`'s terminal `accept` gate carries `judge_samples: 3`, and its own
+prompt explains why to the model: *"three independent samples of you are being asked — a single
+judgement on a terminal accept was measured to be indistinguishable from noise."* The gate read the
+key **not at all**. Measured before writing a line:
+
+```
+judge_samples=3, model returns PASS, REJECT, REJECT
+  -> model_calls=1  state=done  output={'verdict': 'PASS'}
+```
+
+**A 1-of-3 PASS accepted the run.** The majority verdict the template paid for never happened, and the
+template's own stated reason for sampling — that one judgement is noise — described the behaviour it
+was actually getting. `judge_contract.aggregate_samples` ships the exact median rule (any escalation
+wins; majority pass; else majority reject) and was **also uncalled**, so both halves existed and
+nothing connected them. This is the same declared-but-unread shape as S144's pre-tier, one config key
+over.
+
+**The rule is shared; the TYPE deliberately is not.** `aggregate_samples` types on
+`judge_contract.Verdict` (PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT) while this gate speaks
+`verify.Verdict` (PASS/RETRY/ESCALATE/REJECT) — measured, they differ in three members. Importing the
+aggregator and feeding it gate verdicts would be **exactly** the cross-vocabulary defect S130 found in
+the fail-mode classifier, where a set of cap keys was compared against gate names and every gate read
+"closed". So `_aggregate_gate_verdicts` restates the documented rule over the gate's own enum, and the
+docstring names the reason so a future reader does not "simplify" it back into a shared import.
+
+The split rule needed a decision the contract does not cover: this gate has a RETRY the contract
+lacks. A RETRY/REJECT split resolves to **REJECT**, because a REJECT stops and asks while a RETRY
+spins — the safe reading of a split is the one that does not loop.
+
+**DISCOVERY — my own first draft under-counted tokens 3×.** With sampling wired, the result still
+reported `_estimate_tokens` for the LAST sample: a 3-sample gate read 22 tokens where it had spent
+~66. That silently un-binds the loop breaker's `max_tokens` and the run cost cap **exactly** on the
+path sampling makes most expensive. A meter that reads low on the expensive path is worse than no
+meter, because the cap stops binding without ever saying so. Now summed over every sample, asserted
+(`three.tokens == one.tokens * 3`).
+
+Two guards keep it additive: an absent or invalid `judge_samples` floors to **1** (pre-S145 behaviour
+— a gate that never asked for sampling must not start paying for it), and the count clamps at
+`MAX_JUDGE_SAMPLES = 5` so an author typo (`judge_samples: 30`) cannot quietly cost 30× on a gate that
+runs every loop iteration. An unparseable sample fails the whole gate where it stands rather than
+deciding from the 2 that parsed — a terminal accept decided from 2 of 3 is a quieter version of the
+single-sample bug this session fixes.
+
+Verified load-bearing: forcing `samples = 1` turns 7 of the 14 new tests red. Gate: `make lint`
+(black+isort+flake8+mypy, 691 files) green; `pytest -n 4 --dist worksteal` **16096 passed, 29 skipped,
+13 xfailed**. No `web/` change.
+
+- **STILL REMAINING in LOOPS-EVOLUTION** (unchanged by this session): the middleware/steering
+  run-path consumption (`loop_middleware` is redundant with the shipped `resilience.check_breaker`, so
+  it needs a de-duplication decision, not a wiring), calibration emission + assessment (dead at BOTH
+  ends — nothing emits `judge_verdict` and R6a's default-promotion path does not exist), the 3
+  templates deferred at session 33, and the `code-project` product decision.
