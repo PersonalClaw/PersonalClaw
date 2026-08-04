@@ -920,6 +920,46 @@ class GatewayOrchestrator:
             # cutover a SCHEDULED fire updated no open view: the user watched a stale page until
             # navigating. In a `finally` because a FAILED fire is the one someone is watching for.
             self._push_trigger_refresh()
+            # 🔴 THE CHAIN (S122). `run_completed` was a declared kind with NO firing path: measured,
+            # a `run_completed` trigger pointed at a real clock trigger was reached by nothing — not
+            # the tick, not either poller. So "when my nightly backup finishes, notify me" was
+            # creatable, listed in the UI, and permanently silent.
+            #
+            # Chained HERE because this is the single point every store-backed run completes, so a
+            # chain inherits the same dispatch — and therefore the same gates, including the kill
+            # switch and the capability fence. A chain with its own dispatch path would be a second
+            # place for those controls to be forgotten, which is exactly how the `web_watch` gap
+            # happened. After the refresh, so a slow chain never delays the view update.
+            await self._fire_chained_triggers(trigger, payload)
+
+    async def _fire_chained_triggers(self, trigger: Any, payload: dict[str, Any]) -> None:
+        """Fire every `run_completed` trigger waiting on the run that just finished (S122).
+
+        Never raises: a chain is a convenience layered on a completed run, and letting it fail the
+        run it followed would make chaining strictly worse than not chaining.
+
+        The depth cap and cycle detection live in `chain.next_fires`, which returns refusals as data
+        so they are logged rather than dropped — a chain that stopped silently is indistinguishable
+        from one that was never configured.
+        """
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers import chain
+            from personalclaw.triggers.store import TriggerStore
+
+            workflow = trigger.workflow if isinstance(trigger.workflow, dict) else {}
+            fires, refused = chain.next_fires(
+                TriggerStore(base_dir=config_dir()),
+                source_id=trigger.id,
+                source_payload=payload,
+                source_def=str(workflow.get("ref", "") or ""),
+            )
+            for row in refused:
+                logger.info("chain %s did not fire: %s", row["trigger_id"], row["reason"])
+            for chained, chained_payload in fires:
+                await self._fire_store_trigger(chained, chained_payload, event="trigger.chained")
+        except Exception:  # noqa: BLE001 - a chain must never fail the run it followed
+            logger.warning("chain dispatch failed after %s", trigger.id, exc_info=True)
 
     async def _file_watch_poll_loop(self) -> None:
         """Poll `file` triggers and fire the ones whose watched paths changed (§3 / crit 2 — S93).
