@@ -192,6 +192,24 @@ class FireOutcome:
         return out
 
 
+def _fenced_excerpt(trigger_id: str, key: str, value: str) -> str:
+    """A short fenced excerpt for the context line, with its own provenance.
+
+    Separate from the 2000-char payload fence because the TRANSFORMATION differs — this one is
+    truncated to 200 — and `transformation_path` is only honest if it names the truncation that
+    actually happened.
+    """
+    from personalclaw.security import fence_untrusted
+
+    return fence_untrusted(
+        value[:200],
+        source=f"trigger:{trigger_id}",
+        source_type="event",
+        source_id=key,
+        transformation_path="truncate:200",
+    )
+
+
 async def execute_event_action(
     t: EventTrigger,
     *,
@@ -247,7 +265,17 @@ async def execute_event_action(
     # Fenced for EVERY fire, not only a suspicious one. A memory value is untrusted text by
     # definition, and fencing only the flagged ones would mean the screen's misses arrive as
     # instructions — the exact composition this pair of controls exists to avoid.
-    fenced = fence_untrusted(value[:2000], source=f"trigger:{t.id}:{event_type}")
+    # Provenance (§7/R4 rule c — S127): the CLASS of origin, WHICH one, and HOW it got here are
+    # three different claims. "a memory event said this" and "THIS key said it, truncated to 2000
+    # chars on the way" differ, and only the second lets a reader tell whether the text the model
+    # acted on is the text that arrived.
+    fenced = fence_untrusted(
+        value[:2000],
+        source=f"trigger:{t.id}:{event_type}",
+        source_type=f"event:{event_type}",
+        source_id=key,
+        transformation_path="truncate:2000",
+    )
 
     # Annotated: the literal alone infers `dict[str, str]`, which mypy correctly refuses at the
     # `payload["test"] = True` below. Same two-step the migration path needed (S66).
@@ -261,7 +289,7 @@ async def execute_event_action(
         payload["test"] = True
     ctx = ActionContext(
         event=f"memory.{event_type}",
-        context=f"{key}: {fence_untrusted(value[:200], source=f'trigger:{t.id}')}",
+        context=f"{key}: {_fenced_excerpt(t.id, key, value)}",
         payload=payload,
     )
 
