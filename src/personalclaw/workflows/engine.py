@@ -176,6 +176,70 @@ def resolve_use_case(node: Node, tiers: dict[str, str] | None = None) -> str:
     return table.get(tier, "background")
 
 
+def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
+    """Run the free rule tier on a judge gate's declared `evidence`. Returns a NodeResult to
+    SHORT-CIRCUIT the model call, or None to proceed to the judge (LOOPS-EVOLUTION criterion 2).
+
+    🔴 Gated on the gate DECLARING `evidence`, and that guard is the whole reason this is additive.
+    A judge that binds no evidence (every judge shipped before this) has nothing for the mechanical
+    length check to measure — screening it unconditionally would reject it as "under 20 chars —
+    nothing to judge" and turn a working gate into a permanent REJECT. So: no `evidence` key → no
+    screen → identical behaviour to before. A gate opts INTO the saver by binding the deliverable it
+    judges into `evidence` (e.g. `evidence: "{{nodes.deliverable.output.report}}"`).
+
+    A rejection here is a USER failure carrying the pre-tier's own `failure_class` in the output, so
+    the escalation ladder can route on WHY it was rejected (empty vs stubbed vs a worker give-up)
+    rather than re-deriving it — the routing distinction the ladder was built for.
+    """
+    if "evidence" not in cfg:
+        return None
+    from personalclaw.workflows.judge_pretier import run_pretier
+
+    evidence = cfg.get("evidence")
+    text = evidence if isinstance(evidence, str) else ("" if evidence is None else str(evidence))
+
+    def _int(key: str, default: int = 0) -> int:
+        try:
+            return int(cfg.get(key, default) or default)
+        except (TypeError, ValueError):
+            return default
+
+    # The existence gate (artifacts/commits/changed-files > 0) only makes sense when the template
+    # supplies those counts; default it OFF so a text-only judge is not rejected for producing no
+    # commits. `min_chars` is the author's knob for how much output is substantial enough to judge.
+    result = run_pretier(
+        worker_output=text,
+        artifacts=_int("evidence_artifacts"),
+        commits=_int("evidence_commits"),
+        changed_files=_int("evidence_changed_files"),
+        min_chars=_int("min_chars", 20) or 20,
+        check_existence_gate=any(
+            k in cfg for k in ("evidence_artifacts", "evidence_commits", "evidence_changed_files")
+        ),
+    )
+    if not result.rejected:
+        return None
+    return NodeResult(
+        state=InstanceState.FAILED,
+        output={
+            "verdict": Verdict.REJECT.value,
+            "pretier": True,
+            "failure_class": result.failure_class,
+            "reason": result.reason,
+            "checks_run": result.checks_run,
+        },
+        failure=Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=f"pre-tier rejected before the judge: {result.reason}",
+            remediation=(
+                "the free rule tier proved the work unfinished (empty, stubbed, a tool error, or a "
+                "worker give-up); fix the producing node — no model call was spent"
+            ),
+            recoverable=False,
+        ),
+    )
+
+
 # ── dispatchers ──────────────────────────────────────────────────────────────
 
 
@@ -943,6 +1007,26 @@ async def dispatch_gate(
                 "judge gate has no `prompt`",
                 "add the rubric the judge should apply",
             )
+
+        # 🔴 THE FREE RULE TIER, BEFORE the model call (LOOPS-EVOLUTION §judge / criterion 2).
+        # The plan is explicit: "A free rule tier runs BEFORE any LLM judge call … Anything
+        # rule-solvable never reaches the probabilistic model. Loop judges run every cycle — this
+        # is the single biggest token saver in the plan." `judge_pretier.run_pretier` implements
+        # exactly that (mechanical length, failure-pattern regex, stub markers, structural checks)
+        # and shipped in session 30 with **no caller** — measured: an empty artifact, a whitespace
+        # artifact and a `TODO: implement` stub all reached the judge and spent a reasoning-tier
+        # completion on output there was provably nothing to judge.
+        #
+        # Additive by construction: a judge gate that declares no `evidence` binding gets the same
+        # behaviour as before (the screen sees empty text, and empty text is only rejected when the
+        # author asked for it via `min_chars`/existence — see below). So this is a clean widening of
+        # the gate, not a second judging path. The evidence a judge screens is whatever the template
+        # binds into `evidence` (typically `{{nodes.deliverable.output.report}}`), because the gate
+        # cannot otherwise see the worker output it is judging — it only has this resolved config.
+        pre = _judge_pretier_screen(cfg)
+        if pre is not None:
+            return pre
+
         fn = completion
         if fn is None:
             from personalclaw.llm_helpers import one_shot_completion
