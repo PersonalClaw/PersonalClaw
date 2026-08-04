@@ -3136,3 +3136,48 @@ number here rather than implying broader coverage.
   kind's `token_ref` is validated but has no fire endpoint yet, so the token has nothing to scope —
   it belongs with the webhook runtime. With PathGuard landed, the frozen action sets (S116), the kill
   switch (S117) and the provider chokepoint tests are all in place.
+
+### S119 — the webhook `token_ref` lint (decision 12, token-at-rest half) — DONE
+
+**DISCOVERY: a webhook bearer token was stored verbatim, unflagged.** Decision 12 states webhook
+tokens are "SHA-256-hashed at rest" and R14 states "never verbatim in triggers.json". Driven against
+the real store:
+
+```
+spec: {"token_ref": "sk-LITERAL-SECRET-abc123"}
+  → the token appears VERBATIM in triggers.json,  ok: True,  zero warnings
+```
+
+**Why the existing lint missed it, and why that is the interesting part.** S115 added
+`_inline_credential_issues`, which flags exactly that string shape — but it scans the **`workflow`**
+only, and a webhook's token lives in **`spec`**. So the one field, on the one kind, whose entire
+purpose is authentication was the single field with no credential lint. The guard was built one level
+away from the thing most worth guarding, which is a shape worth remembering: when a check is scoped to
+a container (`workflow`), ask what OTHER containers hold the same class of value.
+
+`_token_ref_issues` reuses `secrets.SECRET_REF_RE` rather than re-deriving credential shapes, and the
+field name is the tell — `token_ref` is a REFERENCE, so a value that is not a `{{secret:KEY}}`
+reference is the token itself. Padded braces (`{{ secret:X }}`) are accepted, matching `resolve()`'s
+own tolerance; a stricter lint would send someone back to pasting the token.
+
+**A WARNING, not an error** — the S115 precedent: refusing would break every webhook a user has
+already authored, which is the population that most needs to keep working while they migrate. The
+pre-existing ERROR for a *missing* `token_ref` is untouched and tested, because an unauthenticated
+fire endpoint is a different and worse thing than a badly-stored token.
+
+**DISCOVERY (second, smaller): a row warning had no surface that names it.** `describe_store`
+aggregates a warning COUNT and nothing else reports which trigger is affected — so the new warning
+would itself have been an inert control. Added a `verbatim_webhook_token` doctor finding, and its fix
+says **rotate**: a lint cannot un-leak a token already written to a snapshotted, UI-rendered file, and
+a fix that only said "use a reference next time" would leave the user believing the exposure was
+handled.
+
+**DEVIATION / scope boundary.** This closes the token-AT-REST half of decision 12. The verification
+half — `POST /api/triggers/{id}/fire` with scoped owner/collaborator/viewer tokens — remains
+genuinely unbuilt: the `webhook` kind has **no fire endpoint at all**, so there is nothing yet to
+authenticate and a token comparison would have no caller. That is new scope for the webhook runtime,
+not a gap-fill, and building an endpoint to justify a token would invert the dependency.
+
+- **REMAINING in decision 12:** the webhook fire endpoint + scoped token verification, as above. With
+  this, decision 7's enforcement chain (frozen action sets S116, kill switch S117, PathGuard S118)
+  and decision 12's at-rest discipline are complete.
