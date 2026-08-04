@@ -17,7 +17,10 @@ both live here side by side.
 
 from __future__ import annotations
 
+import pytest
+
 from personalclaw.workflows.models import (
+    SUCCESS_STATES,
     InstanceState,
     JoinMode,
     Node,
@@ -30,6 +33,7 @@ from personalclaw.workflows.tick import (
     edge_key,
     frontier,
     loop_should_continue,
+    tolerate_failures,
 )
 
 
@@ -531,6 +535,118 @@ class TestContainerOutcome:
             container_outcome([InstanceState.FAILED, InstanceState.CANCELLED])
             == InstanceState.CANCELLED
         )
+
+
+class TestAllowFailure:
+    """🔴 `allow_failure` was DECLARED BY FIVE NODES IN A SHIPPED TEMPLATE, READ BY NOTHING (S148).
+
+    All five of `rich-ingest`'s extraction lenses set it, and they run in a `parallel` with
+    `join: all`. Measured: `container_outcome([DONE]*4 + [FAILED], join=ALL)` is FAILED — so one
+    flaky lens discarded the four that had succeeded. Losing four lenses' extracted knowledge
+    because a fifth timed out is the outcome the key exists to prevent.
+    """
+
+    def _kids(self, *tolerated: bool) -> list[Node]:
+        return [
+            Node.from_dict(
+                {
+                    "kind": "stage",
+                    "id": f"n{i}",
+                    "config": {"allow_failure": True} if flag else {},
+                }
+            )
+            for i, flag in enumerate(tolerated)
+        ]
+
+    def _outcome(self, tolerated, states) -> InstanceState:
+        return container_outcome(
+            tolerate_failures(self._kids(*tolerated), states), join=JoinMode.ALL
+        )
+
+    def test_a_tolerated_failure_degrades_rather_than_fails_the_container(self) -> None:
+        """The defect, as a test: this was FAILED before S148, discarding four good lenses."""
+        assert (
+            self._outcome((True,) * 5, [InstanceState.DONE] * 4 + [InstanceState.FAILED])
+            == InstanceState.DEGRADED
+        )
+
+    def test_DEGRADED_not_DONE_so_partial_never_reads_as_complete(self) -> None:
+        """The whole design decision. `SUCCESS_STATES` includes DEGRADED so the join proceeds, but
+        masking to DONE would make a partial extraction indistinguishable from a complete one — the
+        silent-drop shape: the run reports success and nothing ever says a lens was missing."""
+        got = self._outcome((True, True), [InstanceState.DONE, InstanceState.FAILED])
+        assert got == InstanceState.DEGRADED
+        assert got != InstanceState.DONE
+        assert got in SUCCESS_STATES, "the join must still proceed"
+
+    def test_an_UNtolerated_failure_still_fails_the_container(self) -> None:
+        assert (
+            self._outcome((False,) * 5, [InstanceState.DONE] * 4 + [InstanceState.FAILED])
+            == InstanceState.FAILED
+        )
+
+    def test_tolerance_is_PER_CHILD_not_per_container(self) -> None:
+        """A tolerated lens failing must not excuse an intolerant sibling failing."""
+        assert (
+            self._outcome(
+                (True, False),
+                [InstanceState.FAILED, InstanceState.FAILED],
+            )
+            == InstanceState.FAILED
+        )
+
+    @pytest.mark.parametrize(
+        "state", [InstanceState.CANCELLED, InstanceState.BLOCKED, InstanceState.SKIPPED]
+    )
+    def test_only_FAILED_is_masked(self, state) -> None:
+        """A CANCELLED child is a decision someone made and a BLOCKED one waits on a human —
+        tolerating either would convert a deliberate stop into a shrug."""
+        masked = tolerate_failures(self._kids(True, True), [InstanceState.DONE, state])
+        assert masked[1] == state
+
+    def test_a_length_mismatch_is_returned_unchanged_rather_than_raising(self) -> None:
+        """Defensive: the frontier must not blow up mid-derivation on a shape it did not expect."""
+        states = [InstanceState.FAILED, InstanceState.DONE]
+        assert tolerate_failures(self._kids(True), states) == states
+        assert tolerate_failures([], states) == states
+
+    def test_the_shipped_template_lenses_are_all_tolerated(self) -> None:
+        """Read from the bundled library rather than restated, so it keeps tracking the template it
+        protects. Also asserts the CONSUMERS default their inputs — a tolerated lens yields no
+        output, and a downstream `foreach` without `| default([])` would fail on the missing key,
+        turning the tolerance back into a run failure one node later."""
+        import json
+        import pathlib
+
+        spec = json.loads(
+            pathlib.Path("src/personalclaw/workflows/bundled/rich-ingest/workflow.json").read_text()
+        )
+        lenses: list[str] = []
+        consumers: list[tuple[str, str]] = []
+
+        def walk_spec(node: object) -> None:
+            if isinstance(node, dict):
+                cfg = node.get("config") if isinstance(node.get("config"), dict) else {}
+                node_id = str(node.get("id", "") or "")
+                if node_id.startswith("lens-"):
+                    assert cfg.get("allow_failure") is True, node_id
+                    lenses.append(node_id)
+                items = cfg.get("items")
+                if isinstance(items, str) and "nodes.lens-" in items:
+                    consumers.append((node_id, items))
+                for value in node.values():
+                    walk_spec(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk_spec(value)
+
+        walk_spec(spec)
+        assert len(lenses) == 5, lenses
+        assert consumers, "no lens consumer found — did the template change shape?"
+        for node_id, expr in consumers:
+            assert (
+                "default([])" in expr
+            ), f"{node_id} would fail on a tolerated lens's missing output"
 
 
 class TestNodeKindCoverage:
