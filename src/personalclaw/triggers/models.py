@@ -380,8 +380,24 @@ GATE_KEYS: frozenset[str] = frozenset(
 #: machine. Security fences are absent from this set on purpose: capabilities, the injection screen
 #: and fencing fail CLOSED, because the cost of skipping them is unbounded while the cost of a
 #: skipped budget check is one extra run.
+#: 🔴 TWO VOCABULARIES, and this set has to answer for BOTH (S130).
+#:
+#: MEASURED: `set(firepath.GATE_ORDER) & FAIL_OPEN_GATES` was **empty**. The names here were the
+#: per-trigger CAP KEYS a person edits (`cost_cap`, `rate_cap`, `duty_gate` — the `GATE_KEYS`
+#: vocabulary), while the fire path walks GATE names (`screen`, `quiet`, `duty`, `budget`, `claim`,
+#: `yield`, `capability`, `incident`). So every gate the engine actually runs read "closed",
+#: including
+#: `duty` — which §1.4 and `calendar.evaluate_duty` both require to fail OPEN, and which correctly
+#: DOES fail open in practice. The classifier disagreed with the code it was written to
+#: describe, and
+#: nothing outside tests read it, so nothing caught the drift.
+#:
+#: Both spellings are listed deliberately rather than renaming one side: a person's trigger config
+#: says `duty_gate` and the fire path's gate is `duty`, and both are correct in their own surface. A
+#: test asserts every `GATE_ORDER` entry resolves to the direction its gate actually implements.
 FAIL_OPEN_GATES: frozenset[str] = frozenset(
     {
+        # ── per-trigger cap keys (`GATE_KEYS` vocabulary — what a person edits) ──
         "cost_cap",
         "max_cost_usd_per_run",
         "max_actions_per_hour",
@@ -392,12 +408,33 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # it fail-open explicitly — uninstalling the app that supplied it must not silently stop
         # every automation that referenced it. `evaluate_duty` is time-boxed for the same reason.
         "duty_gate",
+        # ── fire-path gate names (`firepath.GATE_ORDER` vocabulary — what the engine walks) ──
+        # `duty` is the same control as `duty_gate` above, under the name the walk uses.
+        "duty",
+        # `incident` is the kill switch (S117). It inherits `incident_active()`'s own deliberate
+        # fail-open contract: an unreadable flag file must not halt every automation on a filesystem
+        # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
+        # silently stops work the user depends on and looks exactly like a broken scheduler.
+        "incident",
     }
+)
+
+#: Gates whose direction is asserted, not assumed. `budget` is deliberately CLOSED here even though
+#: §1.4's prose groups "budget/storm-guard" as fail-open, because §3.6 is more specific and the code
+#: follows it: "the budget check is fail-closed — an unreadable budget is not an unlimited one".
+#: The per-trigger CAP keys above stay open; the fire path's pre-claim budget READ is closed. Those
+#: are different questions about the same word, which is exactly why this is written down.
+FAIL_CLOSED_GATES: frozenset[str] = frozenset(
+    {"screen", "quiet", "budget", "claim", "yield", "capability", "idempotency"}
 )
 
 
 def gate_failure_mode(gate: str) -> str:
     """`open` or `closed` for one gate, when its own check cannot complete.
+
+    Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `cost_cap`) or a fire-path gate
+    name (`duty`, `budget`) — because callers legitimately hold one or the other and a classifier
+    that silently answered "closed" for the other namespace is what S130 found.
 
     Named as a function rather than left implicit so a caller cannot get it wrong by omission: the
     default for an unknown gate is CLOSED. A new gate that nobody classified should refuse the fire,
