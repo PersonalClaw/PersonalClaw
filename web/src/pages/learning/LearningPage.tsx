@@ -6,13 +6,14 @@ import { QuietButton } from '../../ui/QuietButton'
 import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
-import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { useCachedData } from '../../lib/useCachedData'
 import { api, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
+import { WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
  *
@@ -30,11 +31,14 @@ export function LearningPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
 
-  const { data: inbox, loading } = useCachedData<LearningInbox>(
-    `learning:proposals:${kind}`,
+  const { data: inbox, loading, refresh: refreshProposals } = useCachedData<LearningInbox>(
+    proposalsKey(kind),
     () => api.learningProposals(kind ? { kind } : undefined),
   )
-  const { data: week } = useCachedData<StagingWeek>('learning:week', () => api.learningStagingWeek(7))
+  const { data: week, refresh: refreshWeek } = useCachedData<StagingWeek>(
+    WEEK_KEY,
+    () => api.learningStagingWeek(7),
+  )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
   const kindChips = useMemo(() => {
@@ -51,7 +55,7 @@ export function LearningPage() {
     try {
       if (verb === 'accept') await api.acceptLearningProposal(row.id)
       else await api.rejectLearningProposal(row.id)
-      invalidateCache(`learning:proposals:${kind}`)
+      refreshAfterDecision(refreshProposals)
     } catch (e) {
       // A 403 here is the human-installs gate, not a bug — surface the server's own words rather than
       // a generic failure, because "an agent may propose but never accept" is the actionable message.
@@ -75,10 +79,7 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => {
-              invalidateCache(`learning:proposals:${kind}`)
-              invalidateCache('learning:week')
-            }}
+            onClick={() => refreshEverything(refreshProposals, refreshWeek)}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
