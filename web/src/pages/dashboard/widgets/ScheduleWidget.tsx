@@ -1,5 +1,6 @@
-import { CalendarClock, CheckCircle2, XCircle, PlayCircle } from 'lucide-react'
+import { CalendarClock } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
+import { statusMeta } from '../../schedule/scheduleMeta'
 import { SlotEmptyState, WidgetRow, StatusDot } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
@@ -25,16 +26,19 @@ export function ScheduleWidget({ navigate }: RouteProps) {
     return <SlotEmptyState icon={CalendarClock}>No recent scheduled runs.</SlotEmptyState>
   }
 
-  const outcome = (status?: string) => {
-    if (status === 'success') return { icon: CheckCircle2, tone: 'var(--color-ok)', label: 'succeeded' }
-    if (status === 'error' || status === 'failure' || status === 'timeout') return { icon: XCircle, tone: 'var(--color-danger)', label: status }
-    return { icon: PlayCircle, tone: 'var(--color-info)', label: status || 'ran' }
-  }
+  // 🔴 Uses the SHARED `statusMeta` (S137), not a local mapper (S163). This widget had its own
+  // three-branch `outcome()` keyed on `status` — but `/api/triggers/history` returns FireRecord
+  // rows, which carry no `status` at all: their typed value is `outcome`
+  // (`ran | skipped_gate | blocked_injection | deferred | refused | …`). So every projected row hit
+  // the default branch and a quiet-hours SUPPRESSION rendered as "ran" with an info dot — the feed
+  // reporting that the machine did work it explicitly had not done. `statusMeta` already maps the
+  // whole vocabulary (S132's skipped_*, S136's blocked_injection, T7's launched); a second local
+  // copy is how two surfaces start disagreeing about what an outcome means.
 
   return (
     <div className="flex flex-col gap-xs pt-xs">
       {schedule.slice(0, 6).map((r, i) => {
-        const o = outcome(r.status)
+        const o = statusMeta(r.outcome ?? r.status)
         const when = r.finished_at ?? r.started_at
         return (
           <WidgetRow key={r.run_id ?? `${r.job_id}-${i}`} onClick={() => navigate('triggers')}>
