@@ -491,3 +491,60 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
 
   Tests: 8 new cases in `tests/test_snapshot.py` (62 in that file). Gate: `make lint` green
   · full `pytest -n 4 --dist worksteal` green.
+
+## Execution log — Session 2e (the restore side of the gap closure)
+
+- [2026-08-05][S177] **DONE.** Closed the restore half of criterion 1. S176 found one declared
+  merge strategy with no executor; the obvious next question was whether the *component lists*
+  agreed across capture and restore. They did not.
+
+  **The asymmetry.** S1 widened CAPTURE to the whole inventory (`_everything_paths`), and its own
+  comment records why: before it, "a full backup silently dropped the user's entire task board".
+  **Both restore modes stayed hand-written seven-component lists.** Measured: eight stores captured
+  into the archive — `tasks`, `projects`, `agents`, `prompts`, `workflows`, `artifacts`, `uploads`,
+  `entity_settings` — and **zero of eight recovered** by either `--mode merge` or `--mode replace`,
+  with both printing a success line. Widening only the capture side made the archive *look*
+  complete; a snapshot is worth exactly what its restore returns.
+
+  **Criterion 1's own invocation was rejected.** The criterion says
+  `--components everything followed by wiping ~/.personalclaw and restoring reproduces a
+  byte-equivalent state`. The CLI answered **"❌ Unknown component: everything"** — so there was no
+  way to ask for the task board at all, and the criterion could not have been demonstrated as
+  written.
+
+  🔴 **My own fix shipped half-inert, and eight passing tests did not notice.** Only driving the
+  criterion's actual drill — snapshot, wipe the home, restore — exposed it: `--components
+  everything` restored the task board and **dropped `config.json`, `memory.db`,
+  `notifications.jsonl`, `workspace/` and `skills/`**. Cause: I added `everything` as just another
+  member of the list, so naming it made `_want` answer False for all seven *named* components. A
+  flag whose entire promise is completeness, silently narrowing the restore — on the exact
+  invocation the plan tells a user to type. `everything` is now a superset marker read inside
+  `_want`, so one definition serves both modes. The drill returns **19/19 files, 0 lost**; the only
+  byte deltas are capture-side `config.json` normalisation (pre-existing, verified by hashing the
+  archive copy) and a fresh `security_events.jsonl`.
+
+  **Secrets are deliberately NOT restored through the generic path.** `backup_entries()` includes
+  them on purpose — "losing the credential store is exactly what a backup should prevent" — but
+  re-planting `.env` / `credentials/` / `.local_secret` into a home that may have rotated or
+  removed them is the opposite call. Capture writes a local 0600 archive; restore writes into a
+  live home, so the two directions do not warrant one default. The named `security` component
+  remains the deliberate route (copy-if-missing, `chmod 0600`).
+
+  **Bounded by the inventory allowlist — which matters because `portability.py:305` calls
+  `_do_replace` on the IMPORT path**, and an import archive can be another user's export. The
+  projection iterates declared entries and asks whether each exists in the archive; it never walks
+  the archive copying what it finds. Verified against a tree carrying `evil/payload.sh`,
+  `.ssh/authorized_keys` and credential files: only `tasks` was selected.
+
+  Also verified: merge leaves an existing file alone (local state wins — these entries have no
+  field-level merge executor yet, so copy-if-missing is the honest half rather than a silent
+  overwrite), replace moves the live copy into `pre-restore-<ts>/` before overwriting so the new
+  coverage is as recoverable as the old, a targeted `--components memory` stays targeted, and
+  derived indexes stay out via the same `backup_entries()` call so the reasoning cannot drift
+  between the two directions.
+
+  Tests: 12 new cases in `tests/test_snapshot.py` (74 in that file), including a structural
+  assertion that the capture and restore projections cannot diverge except by the stated secret
+  exclusion. Each of the four halves — merge wiring, replace wiring, the secret exclusion, the
+  `everything` superset — verified load-bearing by unwiring it independently and confirming the
+  intended test failed. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.
