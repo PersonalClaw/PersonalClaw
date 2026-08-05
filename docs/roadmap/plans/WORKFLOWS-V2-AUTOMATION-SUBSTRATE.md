@@ -5200,3 +5200,57 @@ Load-bearing: dropping `attempt_key` turns 4 red.
 
 - **`failure_policy` is now fully read** — `autopause_after` (S160) and `dedupe_hash` (here). Every key
   on the field this sweep opened is wired or honestly named.
+
+### S162 — the evidence slot repeated the sentence beside it (§3.7 / decision 9)
+
+**Started from the last unswept dict on `Trigger`.** `retry` is the only one of the six whose declared
+keys (`{attempts, backoff}`) had never been checked. They have no reader — but this one does **not**
+become a session, for a measured reason recorded below. Following decision 9's *"captured evidence +
+explicit replay"* clause instead led to a live, user-visible defect.
+
+**🔴 THE DEFECT.** `_record_fire_outcome` stored `decision.reason` into `last_error_summary`, and
+`_surface_attention_card` passes that field into `attention_card`'s `last_error` slot. Measured, the
+card an autopaused automation produces:
+
+```
+title: nightly backup paused itself
+body : paused after 5 consecutive failures. Last error: paused after 5 consecutive failures
+```
+
+The one field carrying evidence restated the sentence beside it, and the real exception reached **no**
+surface. `attention_card`'s own docstring names the purpose of the slot: *"'paused after 5 consecutive
+failures' without the error is an alert the user has to go digging to act on."*
+
+**This is a WIRED-AND-WRONG control, not an inert one** — the shape S130 found and
+`wired-but-wrong-controls` records. The field was written on every failure, persisted, round-tripped,
+and rendered. Nothing was missing; the value was wrong. Inert controls announce themselves eventually
+(work stops happening); a wired-and-wrong one produces a confident, useless sentence forever.
+
+**The fix, in preference order:** the exception text (`RuntimeError: backup host unreachable`) →
+`ActionResult.error` for a provider that returns `success=False` without raising (`"exit 2: disk full"`)
+→ the lifecycle reason, only when neither exists. That last fallback is deliberate: a blank evidence
+line reading `"Last error: "` would be worse than a redundant one. A successful fire still writes no
+summary at all, so stale evidence cannot be mistaken for a current problem — verified as a control case.
+
+**Two leads recorded rather than built**, so the next sweep does not re-open them as defects:
+
+- **`Trigger.retry` `{attempts, backoff}` needs a mechanism that does not exist.** Measured:
+  `next_after_completion` is entirely failure-blind (no exit type reaches it), the reschedule happens
+  **before** the fire runs (§3.1 persist-before-execute), and the entity has nowhere to hold an
+  in-flight attempt number. `wakeup.retry_queue` retries wakeup DELIVERY, not a failed fire. So there
+  is no seam to hang a backoff on — building one is a design session touching the tick, the entity and
+  autopause's budget interaction, not a wiring fix.
+- **Decision 9's dead-letter tier is unreachable.** It specifies *"After N similar failures, quarantine
+  the trigger's runs with captured evidence + explicit replay (dead-letter richer than bare
+  autopause)"*. Driven across streaks 1-60: the only states a failure streak can reach are
+  `{active, autopaused}`. `quarantined` is reachable **only** from the injection screen, and its
+  `resume_state` deliberately refuses reinstatement — so the failure-streak dead-letter is a new
+  lifecycle tier, plus the three counters decision 9 names (`suppressed_total`, `executed_total`,
+  `retry_after_ms`), none of which exist anywhere in `src/`. An owner-scoped design, not a sweep.
+
+**Gate:** `make lint` (692 files) green first pass; full `pytest -n 4 --dist worksteal` green. No
+`web/` change. Load-bearing: restoring `decision.reason` turns 3 red.
+
+- **Every dict field on `Trigger` has now been key-swept**: `spec` (S149), `gates` (S150-S152, S154),
+  `capabilities` (S116/S118), `workflow` (S147), `failure_policy` (S160/S161) and `retry` (here,
+  honestly deferred with the reason measured).
