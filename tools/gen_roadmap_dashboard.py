@@ -188,8 +188,11 @@ def git_state() -> dict:
         for p in json.loads(prs_raw or "[]"):
             if p["headRefName"].startswith("feature-wf2-"):
                 stack_prs.append(
-                    (p["number"], p["headRefName"].replace("feature-wf2-", ""),
-                     p["baseRefName"].replace("feature-wf2-", ""))
+                    (
+                        p["number"],
+                        p["headRefName"].replace("feature-wf2-", ""),
+                        p["baseRefName"].replace("feature-wf2-", ""),
+                    )
                 )
     except Exception:
         pass
@@ -267,17 +270,31 @@ def render(plans: list[Plan], queue: QueueStats, git: dict, nxt: list[dict]) -> 
     tiles = [
         ("Plans done", f"{done}/{total}", pct(done, total), KIND_COLOR["done"]),
         ("In progress", str(inprog), None, KIND_COLOR["in_progress"]),
-        ("Engine sessions", f"{queue.done}/{queue.total}", pct(queue.done, queue.total),
-         KIND_COLOR["done"]),
-        ("Awaiting PR merge", str(queue.pending_pr), None,
-         "#d29922" if queue.pending_pr else "#3fb950"),
+        (
+            "Engine sessions",
+            f"{queue.done}/{queue.total}",
+            pct(queue.done, queue.total),
+            KIND_COLOR["done"],
+        ),
+        (
+            "Awaiting PR merge",
+            str(queue.pending_pr),
+            None,
+            "#d29922" if queue.pending_pr else "#3fb950",
+        ),
     ]
     tile_html = ""
     for label, value, p, color in tiles:
-        bar = (f'<div class="mini"><div class="mini-fill" style="width:{p}%;'
-               f'background:{color}"></div></div>' if p is not None else "")
-        tile_html += (f'<div class="tile"><div class="tile-v" style="color:{color}">{esc(value)}'
-                      f'</div><div class="tile-l">{esc(label)}</div>{bar}</div>')
+        bar = (
+            f'<div class="mini"><div class="mini-fill" style="width:{p}%;'
+            f'background:{color}"></div></div>'
+            if p is not None
+            else ""
+        )
+        tile_html += (
+            f'<div class="tile"><div class="tile-v" style="color:{color}">{esc(value)}'
+            f'</div><div class="tile-l">{esc(label)}</div>{bar}</div>'
+        )
 
     # ---- pillar map (grid of cells, colour = completion) ----
     pillar_cards = ""
@@ -290,7 +307,7 @@ def render(plans: list[Plan], queue: QueueStats, git: dict, nxt: list[dict]) -> 
             cells += (
                 f'<button class="cell" style="--c:{c}" '
                 f'data-plan="{x.number}" title="{esc(x.number)}. {esc(x.name)} — '
-                f'{esc(KIND_LABEL.get(x.status_kind,""))}">{esc(x.number)}</button>'
+                f'{esc(KIND_LABEL.get(x.status_kind, ""))}">{esc(x.number)}</button>'
             )
         letter = pillar.split("—")[0].replace("Pillar", "").strip()
         rest = pillar.split("—", 1)[1].strip() if "—" in pillar else ""
@@ -310,8 +327,10 @@ def render(plans: list[Plan], queue: QueueStats, git: dict, nxt: list[dict]) -> 
     for i, sec in enumerate(nxt):
         items = "".join(f"<li>{esc(it)}</li>" for it in sec["items"])
         open_attr = "open" if i < 2 else ""
-        next_html += (f'<details {open_attr}><summary>{esc(sec["title"])}</summary>'
-                      f'<ol>{items}</ol></details>')
+        next_html += (
+            f'<details {open_attr}><summary>{esc(sec["title"])}</summary>'
+            f"<ol>{items}</ol></details>"
+        )
 
     # ---- stacked-PR strip ----
     pr_html = ""
@@ -321,23 +340,34 @@ def render(plans: list[Plan], queue: QueueStats, git: dict, nxt: list[dict]) -> 
             f'target="_blank">#{n} <b>{esc(h)}</b>←{esc(b)}</a>'
             for n, h, b in git["stack_prs"]
         )
-        pr_html = f'<div class="prs"><h3>Stacked PRs open ({len(git["stack_prs"])})</h3>{chips}</div>'
+        pr_html = (
+            f'<div class="prs"><h3>Stacked PRs open ({len(git["stack_prs"])})</h3>{chips}</div>'
+        )
     elif git["ahead"]:
-        pr_html = (f'<div class="prs warn"><h3>⚠ {git["ahead"]} commits ahead of origin/main '
-                   f'with no open PRs</h3><p>Branch <code>{esc(git["branch"])}</code> — '
-                   f'work committed but unpublished.</p></div>')
+        pr_html = (
+            f'<div class="prs warn"><h3>⚠ {git["ahead"]} commits ahead of origin/main '
+            f'with no open PRs</h3><p>Branch <code>{esc(git["branch"])}</code> — '
+            f"work committed but unpublished.</p></div>"
+        )
 
     # ---- per-plan drill-down (hidden panels) ----
     panels = ""
     for p in sorted(plans, key=lambda z: int(z.number)):
-        logs = "".join(f"<li>{esc(l)}</li>" for l in p.log_last) or "<li>No execution log yet.</li>"
-        link = (f'<a href="PersonalClaw/docs/roadmap/plans/{esc(p.slug)}.md" '
-                f'target="_blank">open plan file →</a>' if p.slug else "")
+        logs = (
+            "".join(f"<li>{esc(entry)}</li>" for entry in p.log_last)
+            or "<li>No execution log yet.</li>"
+        )
+        link = (
+            f'<a href="PersonalClaw/docs/roadmap/plans/{esc(p.slug)}.md" '
+            f'target="_blank">open plan file →</a>'
+            if p.slug
+            else ""
+        )
         panels += f"""
         <div class="panel" id="plan-{p.number}">
           <button class="panel-close" data-close>✕</button>
           <div class="panel-tag" style="background:{KIND_COLOR.get(p.status_kind)}">
-            {esc(KIND_LABEL.get(p.status_kind,"?"))}</div>
+            {esc(KIND_LABEL.get(p.status_kind, "?"))}</div>
           <h2>{esc(p.number)}. {esc(p.name)}</h2>
           <div class="panel-meta">{esc(p.pillar)} · ~{esc(p.sessions)} sessions · wave {esc(p.wave)} · {link}</div>
           <p class="panel-status">{esc(p.status_line)}</p>
@@ -433,6 +463,30 @@ TEMPLATE = """<!doctype html>
   .panel-log {{ margin:0; padding-left:18px; font-size:12px; color:var(--muted); }}
   .panel-log li {{ margin-bottom:8px; }}
   code {{ background:#21262d; padding:1px 5px; border-radius:4px; font-size:12px; }}
+  /* execution DAG */
+  .dag-cols {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }}
+  @media (max-width:900px) {{ .dag-cols {{ grid-template-columns:1fr; }} }}
+  .box h3 {{ font-size:12px; margin:0 0 8px; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.06em; }}
+  .ready {{ border-color:#238636; }}
+  .ready-hint {{ font-size:11.5px; color:var(--muted); margin:0 0 9px; }}
+  .ready-list {{ margin:0; padding-left:20px; font-size:12.5px; }}
+  .ready-list li {{ margin-bottom:6px; }}
+  .ready-plan {{ color:var(--muted); font-size:11px; margin-left:6px; }}
+  .prob {{ font-size:12px; margin-bottom:9px; }}
+  .prob b {{ color:#f85149; }}
+  .prob.ok {{ color:#3fb950; }}
+  .prob ul {{ margin:5px 0 0; padding-left:18px; color:var(--muted); }}
+  .tiers .tier {{ display:flex; gap:11px; align-items:flex-start; padding:7px 0;
+    border-top:1px solid var(--border); }}
+  .tiers .tier:first-of-type {{ border-top:none; }}
+  .tier-n {{ flex:0 0 74px; font-size:11px; color:var(--muted);
+    font-variant-numeric:tabular-nums; }}
+  .tier-c {{ display:block; color:var(--text); font-size:14px; font-weight:700; }}
+  .tier-atoms {{ display:flex; flex-wrap:wrap; gap:4px; }}
+  .atom {{ background:var(--c); color:#0d1117; font-weight:700; font-size:10.5px;
+    padding:2px 6px; border-radius:5px; cursor:help;
+    border-bottom:2px solid rgba(0,0,0,.28); }}
 </style></head>
 <body><div class="wrap">
   <h1>PersonalClaw Roadmap</h1>
@@ -482,6 +536,155 @@ TEMPLATE = """<!doctype html>
 </body></html>"""
 
 
+def parse_atoms() -> dict:
+    """The atomic-plan catalog + DAG, when it exists.
+
+    Returns ``{}`` when the decomposition has not landed yet, so the dashboard renders
+    exactly as before rather than failing — the atoms are additive, not a precondition.
+    """
+    dag_path = CORE / "docs/roadmap/atomic/dag.json"
+    if not dag_path.exists():
+        return {}
+    try:
+        data = json.loads(dag_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger_warn(f"could not read {dag_path}")
+        return {}
+    atoms: dict[str, dict] = {}
+    for plan in data.get("plans", []):
+        for atom in plan.get("atoms", []):
+            atom = dict(atom)
+            atom["plan"] = plan.get("plan", "")
+            atom["plan_code"] = plan.get("code", "")
+            atoms[atom.get("id", "")] = atom
+    atoms.pop("", None)
+    # The workflow returns {plans, dag:{...}}; write_atomic_plans.py persists that verbatim.
+    # Read the DAG fields from the nested `dag` object, falling back to the top level so a
+    # hand-flattened dag.json also works.
+    d = data.get("dag") if isinstance(data.get("dag"), dict) else data
+    return {
+        "atoms": atoms,
+        "ready": d.get("ready_frontier", []),
+        "topo": d.get("topo_order", []),
+        "cycles": d.get("cycles", []),
+        "dangling": d.get("dangling", []),
+        "unresolved": d.get("unresolved", []),
+        "counts": d.get("plan_counts", []),
+        "edges": d.get("edge_count", 0),
+    }
+
+
+def logger_warn(msg: str) -> None:
+    print(f"  warning: {msg}", file=sys.stderr)
+
+
+def dag_layers(atoms: dict[str, dict]) -> list[list[dict]]:
+    """Group atoms into dependency tiers (longest-path layering).
+
+    Tier 0 has no unsatisfied deps; tier N depends only on tiers < N. Unknown dep ids are
+    ignored rather than pushing an atom to infinity — a dangling edge is a data problem the
+    validation panel reports, and it must not make the whole graph unrenderable.
+    """
+    depth: dict[str, int] = {}
+
+    def resolve(aid: str, seen: frozenset[str]) -> int:
+        if aid in depth:
+            return depth[aid]
+        if aid in seen or aid not in atoms:
+            return 0  # cycle or dangling → floor it; the panels report the real problem
+        deps = [d for d in (atoms[aid].get("deps") or []) if d in atoms]
+        d = 0 if not deps else 1 + max(resolve(x, seen | {aid}) for x in deps)
+        depth[aid] = d
+        return d
+
+    for aid in atoms:
+        resolve(aid, frozenset())
+    if not depth:
+        return []
+    layers: list[list[dict]] = [[] for _ in range(max(depth.values()) + 1)]
+    for aid, d in sorted(depth.items()):
+        layers[d].append(atoms[aid])
+    return layers
+
+
+def render_dag(dag: dict) -> str:
+    """The DAG section: ready frontier, tiered graph, validation problems."""
+    if not dag:
+        return ""
+    atoms = dag["atoms"]
+    layers = dag_layers(atoms)
+    total = len(atoms)
+    done = sum(1 for a in atoms.values() if a.get("status") == "done")
+
+    ready = dag.get("ready") or []
+    ready_html = (
+        "".join(
+            f'<li><code>{esc(r.get("id", ""))}</code> {esc(r.get("title", ""))}'
+            f'<span class="ready-plan">{esc(r.get("plan", ""))}</span></li>'
+            for r in ready[:14]
+        )
+        or "<li>Nothing startable — every remaining atom is blocked.</li>"
+    )
+
+    tiers = ""
+    for i, layer in enumerate(layers):
+        chips = ""
+        for a in layer:
+            st = a.get("status", "todo")
+            color = {"done": "#3fb950", "in_progress": "#d29922"}.get(st, "#8b949e")
+            deps = ", ".join(a.get("deps") or []) or "no deps"
+            chips += (
+                f'<span class="atom" style="--c:{color}" '
+                f'title="{esc(a.get("title", ""))}\n\nplan: {esc(a.get("plan", ""))}'
+                f'\nstatus: {esc(st)}\ndeps: {esc(deps)}\n\n{esc((a.get("scope") or "")[:260])}">'
+                f'{esc(a.get("id", ""))}</span>'
+            )
+        tiers += (
+            f'<div class="tier"><div class="tier-n">tier {i}'
+            f'<span class="tier-c">{len(layer)}</span></div>'
+            f'<div class="tier-atoms">{chips}</div></div>'
+        )
+
+    problems = ""
+    for label, rows, fmt in (
+        ("Cycles", dag.get("cycles") or [], lambda c: " → ".join(c)),
+        (
+            "Dangling deps",
+            dag.get("dangling") or [],
+            lambda d: f'{d.get("atom", "")} → {d.get("dep", "")}',
+        ),
+        (
+            "Unresolved cross-plan refs",
+            dag.get("unresolved") or [],
+            lambda u: f'{u.get("atom", "")} → {u.get("ext_ref", "")}',
+        ),
+    ):
+        if rows:
+            items = "".join(f"<li>{esc(fmt(r))}</li>" for r in rows[:12])
+            problems += f"<div class='prob'><b>{esc(label)} ({len(rows)})</b><ul>{items}</ul></div>"
+    if not problems:
+        problems = "<div class='prob ok'>No cycles, no dangling edges — the DAG is clean.</div>"
+
+    return f"""
+      <h2 class="section" style="margin-top:26px">Execution DAG — {total} atoms
+        ({done} done, {dag.get('edges', 0)} edges)</h2>
+      <div class="dag-cols">
+        <div class="box ready">
+          <h3>Startable now ({len(ready)})</h3>
+          <p class="ready-hint">Every dependency satisfied — begin any of these without
+             putting another plan in flight.</p>
+          <ol class="ready-list">{ready_html}</ol>
+        </div>
+        <div class="box">
+          <h3>Validation</h3>
+          {problems}
+        </div>
+      </div>
+      <div class="box tiers"><h3>Dependency tiers</h3>
+        <p class="ready-hint">Tier 0 depends on nothing outstanding. Hover an atom for its
+           scope and dependencies.</p>{tiers}</div>"""
+
+
 def main() -> int:
     plans = parse_pillars()
     for p in plans:
@@ -489,12 +692,32 @@ def main() -> int:
     queue = parse_queue()
     git = git_state()
     nxt = parse_next()
-    OUT.write_text(render(plans, queue, git, nxt), encoding="utf-8")
+    dag = parse_atoms()
+    html_out = render(plans, queue, git, nxt)
+    if dag:
+        # Inject the DAG section just before the closing wrapper so it lands under the map.
+        html_out = html_out.replace(
+            "</main>\n    <aside>", f"{render_dag(dag)}</main>\n    <aside>", 1
+        )
+    OUT.write_text(html_out, encoding="utf-8")
     done = sum(1 for p in plans if p.status_kind == "done")
     print(f"wrote {OUT}")
-    print(f"  {len(plans)} plans ({done} done), {queue.done}/{queue.total} engine sessions, "
-          f"{queue.pending_pr} PENDING_PR, {len(git['stack_prs'])} stack PRs, "
-          f"{git['ahead']} commits ahead")
+    print(
+        f"  {len(plans)} plans ({done} done), {queue.done}/{queue.total} engine sessions, "
+        f"{queue.pending_pr} PENDING_PR, {len(git['stack_prs'])} stack PRs, "
+        f"{git['ahead']} commits ahead"
+    )
+    if dag:
+        atoms = dag["atoms"]
+        a_done = sum(1 for a in atoms.values() if a.get("status") == "done")
+        print(
+            f"  DAG: {len(atoms)} atoms ({a_done} done), {dag.get('edges', 0)} edges, "
+            f"{len(dag.get('ready') or [])} startable, "
+            f"{len(dag.get('cycles') or [])} cycles, "
+            f"{len(dag.get('dangling') or [])} dangling"
+        )
+    else:
+        print("  DAG: docs/roadmap/atomic/dag.json not present yet (section omitted)")
     return 0
 
 
