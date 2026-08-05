@@ -627,6 +627,21 @@ def test_create_still_validates_before_writing(home, state):
     assert _store(home).load() == []
 
 
+def test_a_non_numeric_one_shot_at_is_400_not_500(home, state):
+    """🔴 A truthy non-numeric `at` reached a bare `float()` and surfaced as an uncaught 500.
+
+    `""`/`null` were already caught by the no-cadence guard and an epoch already worked, so the
+    bug surface was exactly a truthy string that will not parse — which is what the One-shot form's
+    `<input type="datetime-local">` submits (`"2026-08-10T09:00"`). The `every` branch three lines
+    above has always coerced inside `try/except → 400`; this pins the same shape for `at`.
+    """
+    for bad in ("2026-08-10T09:00", "not-a-date"):
+        resp = _create_schedule(state, name="Once", cron=None, at=bad)
+        assert resp.status == 400
+        assert "'at'" in _body(resp)["error"]
+    assert _store(home).load() == []
+
+
 # ── update ──
 
 
