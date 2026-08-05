@@ -16,7 +16,9 @@ The checker is the seam every capability enforcement consults (untrusted-app
 sandbox). Enforcement status of each method:
 
 * ``can_use_api``   — app-permission middleware (server.py), 403 on undeclared path.
-* ``can_use_agent`` — the app agent-run endpoint (handlers/apps.py).
+* ``can_use_agent`` — the app agent-run endpoints (handlers/apps.py), checked
+  against the CALLING app's identity rather than the ``{name}`` path segment, plus
+  a per-run ownership check so an app only reads runs it spawned.
 * ``can_use_event`` — WS fan-out (state.broadcast_ws) filters an app connection's
   events to its declared set.
 * ``can_use_mcp_tool`` — the direct tool-invoke endpoint (handlers/tools.py).

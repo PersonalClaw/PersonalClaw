@@ -52,7 +52,7 @@ The manifest's `permissions` block is enforced:
 | `memory` | tiered scopes (app-scoped by default) |
 | `cron` | whether manifest crons register |
 | `storage` | a private DATA_DIR handed to the backend |
-| `agent` | two independent gates for agent invocation |
+| `agent` | two independent gates for agent invocation. Both agent-run routes gate on the **calling** app's verified identity (`request["app"]`), never the caller-chosen `{name}` path segment, and a run's data is served only to the app whose spawn stamped it — `SubagentInfo.parent_session_key == "app:<caller>"`. A run owned by any other spawner is `404`, not `403`, so the endpoint is not an id oracle over the shared run table. |
 | `network` | **DECLARATION-ONLY, unenforced by design** — an app backend is its own OS process with its own network stack; there is no chokepoint. The declaration is surfaced honestly at install consent, and gateway-mediated reach is already bounded by `api`. |
 
 The app identity claim is adopted in **all** auth modes — including
