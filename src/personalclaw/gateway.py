@@ -1181,7 +1181,12 @@ class GatewayOrchestrator:
                 trigger_name=str(getattr(trigger, "name", "") or ""),
                 ok=ok,
                 summary=error[:200],
-                destination=str(getattr(trigger, "delivery", "") or ""),
+                # 🔴 The OUTCOME picks the route (R12 / decision 13 — S158). This read
+                # `trigger.delivery` unconditionally, so `failure_delivery` — declared, persisted,
+                # round-tripped and editable — was never consulted, and a `delivery: "none"`
+                # automation that BROKE reported through the silent channel. Its own comment names
+                # the contract: "failures reach the inbox even when `delivery` is none".
+                destination=_delivery.route_for(trigger, ok=ok),
             )
             _delivery.deliver(state, note, delivered_ids=self._delivered_event_ids)
         except Exception:  # noqa: BLE001 - see the docstring

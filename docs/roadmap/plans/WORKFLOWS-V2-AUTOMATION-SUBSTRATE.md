@@ -4925,3 +4925,79 @@ substring guard: the double-wrap test goes red.
 - **The three-round enum sweep is now exhausted** for real defects. What remains is honest:
   `Outcome.SKIPPED_TRIAGE` (triage stage unbuilt), `FailureMode.TOKEN_OVERFLOW` (no provider emits a
   length stop reason), and the local-provider scan-mode asymmetry S156 recorded as an owner call.
+
+### S158 — a muted automation could not say it broke (R12 / decision 13)
+
+**The query shape, generalised.** S97, S116, S133 and S134 each found ONE `FireContext` field that was
+defaulted and never supplied — S134's log already noted that pattern and audited the whole dataclass at
+once. This session turned it into a sweep: for each decision dataclass, which fields does no production
+writer ever set (neither `name=` at a construction site nor `.name =` assignment)?
+
+```
+🔴 FireContext  moment, budget_readable
+🔴 Trigger      failure_delivery, retry, failure_policy, resource_slots
+🔴 FireRecord   mutated, acted_on
+```
+
+Most are honest: `resource_slots` IS read (S135 wired the slot gate), `acted_on` is pre-allocated for
+LEARNING-FLYWHEEL by explicit design, and `FireRecord.mutated` has a reader (`productive`) that itself
+has no production caller — dead, but not answering wrongly. **`failure_delivery` was the live one.**
+
+**🔴 THE DEFECT.** `Trigger.failure_delivery` is declared, persisted, round-tripped by
+`to_dict`/`from_dict`, defaulted to `"inbox"` by the migration, and accepted by `automation_update` —
+and read by **nothing**. Its own comment states the contract:
+
+> *A SEPARATE route for failures (R12). Failures reach the inbox even when `delivery` is none: an
+> automation the user asked to stay quiet still has to be able to say it broke.*
+
+Measured: `_deliver_fire_outcome` passed `destination=trigger.delivery` **unconditionally**. So a
+`delivery: "none"` automation that broke reported its failure through the silent channel — the
+particular failure mode where a user's own mute setting hides the one thing they would want to know.
+
+**🔴 AND A SECOND HALF, found by driving the first.** `Delivery` carries `destination`, and
+`to_notify_kwargs` **drops it entirely** — it returns only `{kind, title, body, meta}`. Measured:
+
+```
+destination='none'   notified=True  destination_in_kwargs=False
+destination='inbox'  notified=True  destination_in_kwargs=False
+```
+
+So `delivery: "none"` silenced nothing. **Two inert layers stacked so they masked each other:** the
+failure route was never consulted, and the mute it was designed to escape was not being applied either
+— which is why nobody noticed the first defect. A muted trigger and a loud one behaved identically, so
+the "failures escape the mute" promise had nothing visible to be wrong about.
+
+**The fix, and why each half sits where it does.**
+
+- `route_for(trigger, ok=)` picks the destination **by outcome**. A success never inherits the failure
+  route: falling back that way would make a quiet automation start announcing its ordinary runs, which
+  is precisely the setting the user turned off. An EMPTY `failure_delivery` falls back to `delivery`, so
+  a trigger predating the field keeps its old single-route behaviour rather than acquiring a channel
+  nobody asked for.
+- `is_muted` is enforced **inside `deliver`**, not at each caller, so a future emitter inherits it — the
+  same reason redaction already lives at that boundary. A per-caller check is a control that works until
+  someone adds the next caller.
+- Per-trigger routing is decided **before** `state.notify`, never inside it. R18: *"the substrate does
+  not build a second notification path."* `notify` owns GLOBAL policy (mute-all, severity, quiet hours)
+  plus per-(source, kind) rules; per-TRIGGER routing is this substrate's own concern.
+- An empty destination is deliberately **not** muted. `from_dict` defaults `delivery` to `"none"`
+  explicitly, so a blank value means a caller built a `Delivery` without one — reading that as silence
+  would turn a bug into missing alerts, the fail-quiet direction this whole session exists to fix.
+
+**Gate:** `make lint` (691 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Both halves verified load-bearing independently: neutering the mute check or the outcome branch each
+turns tests red (3 red between them).
+
+- **Still declared-and-unread, recorded so the next sweep does not re-flag them:** `FireRecord.mutated`
+  (its reader `productive` has no production caller either — a whole materiality view is unbuilt, not a
+  wrong answer), `Trigger.retry` and `Trigger.failure_policy` (R12/R7 policy shapes whose consumers are
+  the retry ladder and autopause's derived counter respectively).
+- **`FireContext.moment` and `budget_readable` are unsupplied and that is CORRECT — verified, not
+  assumed.** My first draft of this log claimed `service.tick` supplied them; reading the single
+  construction site (`service.py:474`) showed it does not, so the claim was wrong and is corrected here.
+  Both are safe by defaulting: `evaluate` does `moment = ctx.moment or datetime.now()`, which is the
+  value a tick would have passed anyway, and `budget_readable=True` is sound because
+  `_budget_remaining` is pure in-memory arithmetic over `gates` and `run_count` — **it has no I/O and
+  therefore cannot fail to read**. The field exists for a caller whose budget lives behind a store; the
+  fail-closed contract in its docstring is a rule for that future caller, not an unmet obligation of
+  this one. A sweep result is a lead, not a finding — this is the one that dissolved on measurement.
