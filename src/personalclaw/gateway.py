@@ -1262,6 +1262,13 @@ class GatewayOrchestrator:
                 exit_type=exit_type,
                 consecutive_failures=prior,
                 now=time.time(),
+                # 🔴 The PER-TRIGGER budget (R7 — S160). `evaluate` has always accepted `budget=` and
+                # this call never passed one, so `failure_policy.autopause_after` had zero readers:
+                # a trigger declaring `{"autopause_after": 2}` ran to the hardcoded 5. A
+                # control that silently WIDENS a tolerance its author narrowed, and so is
+                # invisible — the trigger
+                # keeps running, exactly as a healthy one does.
+                budget=autopause.budget_for(trigger),
                 quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
             )
 
