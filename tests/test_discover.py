@@ -8,12 +8,21 @@ Covers the hand-authored catalog's integrity, the pure visible-selection logic
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from personalclaw.legibility import discover as dc
+
+_APP_TSX = Path("web/src/app/App.tsx")
+
+# Top-level routes the SPA renders but immediately navigates away from, so a tip
+# pointing at one never lands where its label promised:
+#   loops — LoopsSection redirects the bare route to the `loop` composer; it survives
+#           only as the transient plan-review address. The loop LIST is `loops/history`.
+_REDIRECTING_ROUTES = {"loops"}
 
 # ── catalog integrity ────────────────────────────────────────────────────────
 
@@ -36,6 +45,43 @@ def test_every_tip_has_a_deep_link():
         assert tip.try_it.get("route"), f"{tip.id} has no route"
         assert tip.try_it.get("label"), f"{tip.id} has no try-it label"
         assert isinstance(tip.try_it.get("query"), dict)
+
+
+def test_every_deep_link_is_a_real_non_redirecting_address():
+    """Every tip lands where its label promised.
+
+    Two ways a deep link lies, both invisible from Python alone: a route the SPA
+    doesn't render (falls back to the dashboard), and a route it renders but
+    immediately redirects away from (the user arrives somewhere else — this shipped
+    as the `loops` tip landing on the loop composer instead of a list of loops).
+    Pin both against App.tsx's own ROUTABLE set so a future rename breaks here
+    rather than in the user's hands.
+    """
+    routable = _routable_routes()
+    for tip in dc.CATALOG:
+        top = tip.try_it["route"].split("/")[0]
+        assert top in routable, f"{tip.id} → {top!r} is not an App.tsx ROUTABLE route"
+        assert top not in _REDIRECTING_ROUTES or tip.try_it["route"] != top, (
+            f"{tip.id} targets the bare {top!r} route, which the SPA redirects away "
+            f"from — point at the concrete sub-route that owns the surface"
+        )
+
+
+def _routable_routes() -> set[str]:
+    """App.tsx's ROUTABLE set: every `NAV` item id plus the extras spread beside it.
+
+    Parsed from the source (the FE-source-guard idiom — see
+    test_url_navigation_doctrine.py) because the route table lives in TypeScript and
+    the catalog lives here; nothing else keeps the two honest.
+    """
+    src = _APP_TSX.read_text(encoding="utf-8")
+    nav = re.search(r"const NAV: NavItem\[\] = \[(.*?)\n\]", src, re.S)
+    extras = re.search(r"const ROUTABLE = new Set\(\[\.\.\.NAV\.map\(.*?\)(.*?)\]\)", src, re.S)
+    assert nav and extras, "App.tsx NAV / ROUTABLE shape changed — update this parser"
+    ids = set(re.findall(r"\bid: '([^']+)'", nav.group(1)))
+    ids |= set(re.findall(r"'([^']+)'", extras.group(1)))
+    assert "dashboard" in ids and "loops" in ids, f"parsed ROUTABLE looks wrong: {ids}"
+    return ids
 
 
 def test_to_dict_shape_is_frontend_contract():

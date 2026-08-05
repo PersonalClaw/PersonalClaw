@@ -31,6 +31,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   a different app. Both endpoints now gate on the calling app's verified identity, and a run is
   only readable by the app that started it. No app in the Store declares the `agent` permission
   today, so nothing shipped was exposed — this closes the hole before the first app needs it.
+- **Discover's "see goal loops" tip opened a blank new-loop form instead of your loops.** The
+  button pointed at an address the app no longer serves, so it redirected to the composer and
+  asked "What do you want to accomplish?" — the opposite of showing you what already exists. It
+  now opens the loop list.
 - **Changing your embedding model silently stopped the assistant remembering anything.** If the
   embedding model changed after the memory index was built, every attempt to save a new memory
   failed — and nothing said so. Recall and the nightly consolidation pass broke the same way for
