@@ -5752,3 +5752,55 @@ S152's manual-bypass still holds alongside without either exclusion shadowing th
 S163's `statusMeta` already renders every `skipped_*` outcome, and S165's split already folds them, so
 these rows land on surfaces built to receive them. Load-bearing verified by disabling each half at a
 uniquely-matched line: 4 tests red between them.
+
+### S172 — a suppression's reason rendered in danger red (§1.3)
+
+**The direct consequence of S171's own fix**, found by asking what happens to the value that session
+started persisting rather than treating the feature as finished.
+
+**🔴 THE DEFECT.** A suppressed fire's reason lands in `ScheduleRun.error` (that is the field S136's
+shape uses), and `RunTrace` renders `run.error` inside a danger-tinted box. Measured:
+
+```
+quiet-hours skip   dot=gate     tone=--color-on-surface-low   dangerBox=true
+budget skip        dot=budget   tone=--color-on-surface-low   dangerBox=true
+a REAL failure     dot=error    tone=--color-danger           dangerBox=true
+a clean run        dot=ok       tone=--color-ok               dangerBox=false
+```
+
+**The row contradicted itself** — a neutral grey "gate" dot beside its reason in red, byte-identical
+styling to a real `ConnectionError`. And the alarming half is the one a user reacts to, so an
+automation working exactly as configured read as a fault, sending them hunting something that is not
+there. Precisely the failure `statusMeta`'s own comment names for the suppression family: *"a red badge
+would send the user looking for a fault that is not there."*
+
+This is S171's log warning realised one layer down: a visibility fix landing a value on a surface that
+was not built to receive it.
+
+**Fixed with a shared `isInertOutcome` predicate** beside `statusMeta`, so the reason box renders
+neutral for an inert outcome and keeps danger styling for a real failure. The tests assert that **the
+dot and the reason AGREE**, rather than either styling in isolation — the defect was an internal
+contradiction, so consistency is the property worth pinning.
+
+**Derived from the `skipped_` prefix, not a hand-copied list.** All six members of the backend's
+`INERT_OUTCOMES` carry it (verified 6/6 against the Python set), so a future inert outcome is covered
+automatically instead of waiting for someone to update a second list — the same argument `statusMeta`
+already makes by matching that family by prefix, and the same argument S171 made for reusing
+`INERT_OUTCOMES` in `count_since` rather than enumerating `skipped_*` locally.
+
+Anchored at the start, so `was_skipped` is not mistaken for a suppression (the case
+`scheduleMeta.outcomes.test.ts` already guards for `statusMeta`). An **absent** outcome falls to
+NOT-inert: a legacy `ScheduleRun` carries `status` and no `outcome`, and the fail direction must never
+quietly de-emphasise a real error.
+
+**Verified the sibling danger box needs no change.** `ScheduleDetail:232` renders `job.last_error` the
+same way — but S162 placed that write inside the FAILURE branch of `_record_fire_outcome`, so a
+suppression cannot reach it. Checked rather than assumed, since the two boxes are visually identical.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**675 passed, 58 files** · `npm run build` clean · `npm run smoke:render` PASS all 5 routes · full
+`pytest -n 4 --dist worksteal` green.
+
+- **The suppression chain is now honest end to end:** the row is built (S86), typed (S132), persisted
+  (S171), counted correctly by the rate meter (S171), folded out of the default view (S165), and
+  rendered as a non-error (here).

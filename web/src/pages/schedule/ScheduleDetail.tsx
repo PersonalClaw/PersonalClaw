@@ -8,7 +8,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, isInertOutcome, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ScheduleForm, toDraft, draftToPayload, type ScheduleDraft } from './ScheduleForm'
 
@@ -329,6 +329,7 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
     return () => { alive = false }
   }, [triggerId, runId])
   if (!run) return <div className="px-m pb-2 text-on-surface-low text-[0.75rem]">Loading trace…</div>
+  const inert = isInertOutcome(run.outcome ?? run.status)
   return (
     <div className="px-m pb-3 flex flex-col gap-2 text-[0.8125rem]">
       <div className="flex flex-wrap gap-x-m gap-y-0.5 text-on-surface-low text-[0.75rem]">
@@ -336,7 +337,22 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
         {run.finished_at && <span>· finished {absTime(run.finished_at)}</span>}
         {run.duration_ms != null && <span>· {(run.duration_ms / 1000).toFixed(1)}s</span>}
       </div>
-      {run.error && <div className="rounded-md px-m py-1.5" style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>{run.error}</div>}
+      {/* 🔴 A SUPPRESSION'S REASON IS NOT AN ERROR (S172). S171 began persisting a suppressed fire's
+          row, and the reason lands in `ScheduleRun.error` — which this box renders in danger red.
+          Measured: a quiet-hours skip showed a neutral grey "gate" dot beside its reason in RED,
+          identical to a real `ConnectionError`, so the row contradicted itself and the alarming half
+          is the one a user reacts to. An inert outcome means the automation is working exactly as
+          configured; a red badge sends the user hunting a fault that is not there. */}
+      {run.error && (
+        <div
+          className="rounded-md px-m py-1.5"
+          style={
+            inert
+              ? { background: 'var(--color-surface)', color: 'var(--color-on-surface-low)' }
+              : { background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }
+          }
+        >{run.error}</div>
+      )}
       {/* `trace` is the full result; `summary` is just a prefix of it — render the
           richest one we have as markdown, not raw text. */}
       {(run.trace || run.summary) && <div className="rounded-md bg-surface px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{run.trace || run.summary || ''}</Markdown></div>}
