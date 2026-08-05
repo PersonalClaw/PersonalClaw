@@ -443,6 +443,10 @@ export interface ScheduleJob {
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
+  // 🔴 `id` is a FireRecord's OWN key and `did_ids`/`suppressed_ids` are lists of it (S165). A
+  // projected row carries NO `run_id`/`job_id` — measured, `run_id` comes back `''` — so a
+  // consumer matching the split on `run_id` silently matches nothing.
+  id?: string
   run_id?: string; job_id?: string; job_name?: string
   trigger?: string                          // "manual" | "scheduled"
   started_at?: number; finished_at?: number; duration_ms?: number
