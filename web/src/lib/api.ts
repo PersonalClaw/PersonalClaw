@@ -765,6 +765,13 @@ export interface ActionProvider {
 // working hook is dead the moment the backend wires one.
 export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
 export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
+// `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
+// action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
+// guardrail/config outcome is not a malformed request (#395: this used to answer `ok: true` with the
+// failure as prose, so a silent no-op was indistinguishable from a completed run). `refused` carries
+// the kill-switch reason when incident mode suspended the fire.
+export interface TriggerRunResult { ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean }
 // The Proposal Inbox row (GET /api/learning/proposals). `renderable` is the backend's own honesty
 // flag: a row missing provenance cannot be shown weighably, and `bulk_acceptable` already accounts
 // for it — the FE must not re-derive either, or the two will disagree about what is safe to accept.
@@ -2168,7 +2175,7 @@ export const api = {
     put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/schedule:${encodeURIComponent(id)}`, _scheduleBodyToWire(body)),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
-    post(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
+    post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
   enableSchedule: (id: string, enabled: boolean) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`, { enabled }),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
   scheduleHistory: (id: string, limit = 10, offset = 0) => get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history?limit=${limit}&offset=${offset}`),
@@ -2396,7 +2403,7 @@ export const api = {
     post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`, { enabled }),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   runStoreTrigger: (rawId: string, dryRun = false) =>
-    post(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
+    post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
 
   // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),

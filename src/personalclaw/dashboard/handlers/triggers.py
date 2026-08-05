@@ -1152,31 +1152,57 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     refusal = T.manual_refusal()
     if refusal:
         return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
-    note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
+    # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
+    # the failure carried as prose in `result` — so "no action provider configured" arrived as an
+    # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run
+    # buttons, `schedule_trigger`, the `automation_run` MCP runner) read a no-op as a completed run.
+    # Still 200, not 4xx: the request was understood and answered honestly, and a trigger whose
+    # action cannot be resolved is not a malformed request — the same rule the kill-switch refusal
+    # above and the event-trigger `/test` already follow.
+    ran, note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
     paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
-    return web.json_response({"ok": True, "name": row.trigger.name, "result": note + paused_note})
+    return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
 
 
-async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> str:
+async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
     The same path `gateway._fire_file_trigger` uses — a manual Run and an autonomous fire share one
-    dispatch so their behaviour cannot drift. Returns a short status string for the run result.
+    dispatch so their behaviour cannot drift. Returns `(ran, note)`: whether the action actually
+    executed, and a short status string for the run result.
+
+    🔴 BOTH ACTION SHAPES, because a real store holds both (#395). This read the FLAT
+    `workflow["provider"]` only, and every trigger the API/CLI/app-reconciler/digest writes nests
+    its action under `workflow["inline"]` — so `provider_name` was None for essentially every stored
+    row and the Run button was a silent no-op on all of them. The docstring above claimed this path
+    "cannot drift" from the autonomous fire while `gateway._fire_store_trigger` unwrapped `inline`
+    and this one did not. `schedule_view._inline_action` and `screen.requested_capabilities` both
+    document the same two-shape contract; this now matches the idiom all three use.
+
+    Provider AND config come from the SAME resolved dict. Taking the provider from `inline` and the
+    config from the outer dict would run the right action with an empty config — a worse failure
+    than the no-op, because it looks like it worked.
+
+    `ran` is returned rather than folded into the note because the caller answers HTTP `ok` with it:
+    a run that resolved no provider is not a success, and reporting `ok: true` for it is what let
+    this bug hide behind a 200 for a whole release.
     """
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
 
     workflow = trigger.workflow or {}
-    provider_name = str(workflow.get("provider") or "")
+    inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+    action = inline or workflow
+    provider_name = str(action.get("provider") or "")
     if not provider_name:
-        return "no action provider configured"
+        return False, "no action provider configured"
     _ensure_default_providers_registered()
     provider = get_action_provider(provider_name)
     if provider is None:
-        return f"unknown action provider {provider_name!r}"
+        return False, f"unknown action provider {provider_name!r}"
     ctx = ActionContext(event="manual.run", context="", payload=payload)
-    await provider.execute(workflow.get("config") or {}, ctx)
-    return "ran"
+    await provider.execute(action.get("config") or {}, ctx)
+    return True, "ran"
 
 
 async def _run_event(raw: str, request: web.Request) -> web.Response:
