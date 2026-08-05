@@ -5374,3 +5374,54 @@ defect and S163's. Two mappers now, one per vocabulary: run outcomes, and health
 - **Both of the frontend's status vocabularies are now mapped and guarded** by per-value completeness
   tests. The remaining known FE gap is unchanged: `did_ids`/`suppressed_ids` are typed (S163) but no
   surface yet folds the suppressed rows away, which is a UI affordance rather than a correctness bug.
+
+### S165 — the archive split reached no surface (§1.3 / crit 8)
+
+**Closes the gap S163's and S164's own logs both recorded as still open.** §1.3: *"inert outcomes
+collapse to ledger rows and archive out of the default inbox view — the runs inbox is for what the
+machine DID."* The backend has returned `did_ids`, `suppressed_ids` and `suppressed` since S132
+(#454), and S163 typed them onto the API wrapper — but `DashboardLive.loadSchedule` kept only
+`d.runs`, so the widget rendered the raw list.
+
+**🔴 MEASURED.** A minutely trigger inside quiet hours — 11 `skipped_gate` rows and ONE `ran` at
+index 7:
+
+```
+backend: 12 rows | did=['REAL'] | suppressed=11
+widget renders schedule.slice(0, 6):
+  ['s0', 's1', 's2', 's3', 's4', 's5']
+  contains the real fire? False
+```
+
+Six identical "gate" entries, and the one fire that did something never appeared. A user reads that as
+"nothing has run" — the exact failure §1.3's split was written to prevent, with the answer sitting
+unread in the same response.
+
+**ORDERS rather than filters**, and that distinction is the whole design. Suppressed rows still render
+below the real ones, because §7 criterion 8 bans silent drops and *"why did my automation not run"*
+has to stay answerable — a widget that hid them would trade one blindness for another. What changes is
+that work outranks suppression for the six scarce visible slots. A `N suppressed by a gate` line names
+the fold rather than leaving the count implicit.
+
+**Membership comes from the server's `did_ids`, not from re-testing outcomes client-side.** `is_inert`
+is the backend's rule; a second copy in the widget drifts the moment a new `skipped_*` outcome lands —
+which is the same argument S163 and S164 made about status mappers, applied to a predicate.
+
+**🔴 A bug in my own first draft, caught by driving it rather than reading it.** I keyed the split on
+`r.run_id`. A projected `FireRecord` carries **no** `run_id` — measured, it serialises as `''` — and its
+identity is `id`, which `ScheduleRun` did not declare either. Nothing would have matched `did_ids`, so
+the split would have silently no-opped: **the fix itself would have shipped as an inert control**, the
+very shape this program keeps finding. Now keyed on `id`, with `id` added to the wire type.
+
+A row with **no** `id` (a legacy `ScheduleRun` from the schedule store) is treated as NOT suppressed.
+An unknown row is more likely real work than a gate hit, and the fail direction for a visibility fix has
+to be "shown" rather than "hidden" — hiding it would make the widget quietly lose history it used to
+display.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**654 passed, 55 files** · full `pytest -n 4 --dist worksteal` green. No backend change.
+
+- **§1.3 is now honoured end to end**: typed outcomes (S137/S163), health + lifecycle state (S164), and
+  the archive split (here). `suppressed_ids` remains typed-but-unused — `did_ids` is sufficient for the
+  ordering, and adding a second membership test for the complement would be two ways to ask one
+  question.

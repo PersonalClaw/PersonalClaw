@@ -25,6 +25,12 @@ export interface DashboardLiveData {
   loops: Loop[]
   tasks: TaskItem[]
   schedule: ScheduleRun[]
+  /** §1.3's archive split, straight from the server (S165). `didIds` are the fires that DID
+   *  something; everything else was held by a gate. Kept beside the rows rather than re-derived in
+   *  each widget: `is_inert` is the backend's rule and a second copy would drift the moment a new
+   *  `skipped_*` outcome lands. */
+  scheduleDidIds: string[]
+  scheduleSuppressed: number
   status: DashboardStatus | null
   notifications: NotificationItem[]
   /** Live system metrics (cpu/mem/net/disk/load) from /api/system — P27. Polled on
@@ -65,6 +71,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [loops, setLoops] = useState<Loop[]>([])
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [schedule, setSchedule] = useState<ScheduleRun[]>([])
+  const [scheduleDidIds, setScheduleDidIds] = useState<string[]>([])
+  const [scheduleSuppressed, setScheduleSuppressed] = useState(0)
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [system, setSystem] = useState<SystemInfo | null>(null)
@@ -84,7 +92,18 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadProposals = useCallback(() => { api.skillProposals().then(guard(setProposals)).catch(() => {}) }, [])
   const loadLoops = useCallback(() => { api.uLoops().then(guard(setLoops)).catch(() => {}) }, [])
   const loadTasks = useCallback(() => { api.readyTasks().then(guard(setTasks)).catch(() => {}) }, [])
-  const loadSchedule = useCallback(() => { api.triggersHistory(12).then((d) => guard(setSchedule)(d.runs ?? [])).catch(() => {}) }, [])
+  // 🔴 Keeps the archive split, which this call discarded (S165). The backend has returned
+  // `did_ids`/`suppressed` since S132 and S163 typed them — but the widget still saw only
+  // `d.runs`, so a minutely trigger inside quiet hours filled all six visible rows with identical
+  // "gate" entries and the ONE fire that ran (at index 7) never appeared. Measured. The user reads
+  // that as "nothing has run", which is the exact failure §1.3's split exists to prevent.
+  const loadSchedule = useCallback(() => {
+    api.triggersHistory(12).then((d) => {
+      guard(setSchedule)(d.runs ?? [])
+      guard(setScheduleDidIds)(d.did_ids ?? [])
+      guard(setScheduleSuppressed)(d.suppressed ?? 0)
+    }).catch(() => {})
+  }, [])
   const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
   const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
@@ -143,7 +162,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover(); loadDoctor() }, SLOW_POLL)
 
   const value: DashboardLiveData = {
-    approvals, inbox, proposals, loops, tasks, schedule, status, notifications, system,
+    approvals, inbox, proposals, loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
+    status, notifications, system,
     discover, doctor, dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
