@@ -8,6 +8,8 @@
 
 ---
 
+> 📎 **The App Store UI re-layout lives in [SIBLING-PRODUCT-PARITY-KIROCREW](SIBLING-PRODUCT-PARITY-KIROCREW.md) §2 (#68)** — added 2026-08-05: a persistent right-rail (categories+counts + source management, always-open on wide screens) + art-forward card polish, from KiroCrew's `CategoryRail`/`FeatureCard`. #68 §2 **renders** this plan's S2 `quality` manifest badges rather than inventing a second badge system — land the `quality` block here, render it there. Coordinate so the Store card component isn't churned twice.
+
 ## Context (code recon, 2026-07-18)
 
 - **The platform is already deep:** `apps/app_manager.py` (quarantine→scan→install lifecycle), `apps/backend_runtime.py` (subprocess + watchdog + PPID-reaping), `apps/permissions.py` (api/events/mcpTools/memory/cron/storage/agent/network), reverse-proxy credential-stripping + 1-hour app tokens, per-app namespaced MCP servers. UI contribution: `web/src/app/appSdk.tsx` — `AppContext`, `AppPermissions`, `createAppApi`, `createAppEvents`, `AppApiProvider`, `mount(el, ctx)`; host resolves bare `react`/`@personalclaw/app-sdk` imports.

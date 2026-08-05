@@ -8,6 +8,8 @@
 
 ---
 
+> 📎 **A high-value onboarding step lives in [SIBLING-PRODUCT-PARITY-KIROCREW](SIBLING-PRODUCT-PARITY-KIROCREW.md) §3 (#68)** — added 2026-08-05: **import from other local agent tools** (Claude Code, Codex first — detect, review, import instructions/memories/MCP/skills). This plan has no import row; #68 owns it but the *step* belongs in this plan's onboarding flow (it extends the StepStack in C-series). Coordinate placement when #68 §3 executes: the import step slots after the provider step, before first-success. #68 §1's `PresetEmptyState` also rides this plan's T2.1 Starter/Everything progressive disclosure — same family, land compatibly.
+
 ## Context (code recon, 2026-07-18)
 
 Onboarding exists as `web/src/app/Onboarding.tsx` + `onboarding/StepStack.tsx` (step-stack machinery) + `identity.tsx`, backed by `GET /api/onboarding` first-run state — today it covers name capture and points at provider setup (per getting-started: "asks for your name and walks you to provider setup"). The nav is `ui/NavRail.tsx`; shell primitives (TopBar/ListScaffold/SidePanel/HeaderActions) and `CommandPalette.tsx` exist; `useApprovalToasts.ts` + `pages/chat/ApprovalCard.tsx` are the approval surfaces; `PlanningWalkthrough.tsx` is an existing walkthrough-pattern precedent. CLI has `personalclaw setup` (wizard) and `doctor` (verification). Gap: no in-flow provider install/bind (a Settings triple-hop: Apps→install, Providers→key, Models→bind), no first-success moment, no disclosure model over the nav, empty states vary in helpfulness.

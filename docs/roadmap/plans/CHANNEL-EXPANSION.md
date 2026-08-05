@@ -165,6 +165,31 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 - **Telegram MarkdownV2** and **Discord rate buckets** are the two classic correctness traps — both have dedicated table-driven tests by design.
 - **Open:** whether pairing prompts should also appear in channel (canned reply) when `dm_policy=owner_only` — default: no reply at all (silent), documented.
 
+## Amendment (2026-08-05 — KiroCrew study: the shared TurnDriver + added channels)
+
+The KiroCrew sibling study (see [SIBLING-PRODUCT-PARITY-KIROCREW](SIBLING-PRODUCT-PARITY-KIROCREW.md)
+§9) contributes two design inputs to this plan; both land **here**, not in a new plan.
+
+- **Adopt a shared channel-neutral `TurnDriver` before the per-channel work (fold into S1).**
+  KiroCrew factors `messaging/driver.py`: a `TurnDriver` consumes the provider event stream and emits
+  abstract `OutputEvent`s to a per-channel `Renderer`, and it **owns credential/exfiltration
+  redaction and the tool-approval ladder once**, so every channel inherits them rather than
+  re-implementing. Each of their channels is then a uniform thin shape
+  (`client / commands / gateway / renderer / transport / transport_dispatch`), which is why
+  Teams/Webex/WeCom/WeChat are only ~1.3–1.5k LOC each. Our `ChannelTransportProvider`
+  (`channel_transports/base.py`) is comparable but does **not** centralize the turn concerns —
+  adopting a shared driver keeps every future channel thin and means redaction+approval can never
+  drift per channel. **Recommendation:** land the driver as S1's trust-seam companion; Telegram (S2)
+  is then the first consumer that proves it.
+- **More channels are cheap once the driver exists (append to Wave 2).** Beyond the planned
+  Discord/email, Teams/Webex/WeCom/WeChat are small on the shared driver — add them as Wave-2 rows
+  when the driver + Telegram/Discord have proven the shape. Community-tier rules
+  (WhatsApp/Signal/iMessage — official APIs only) are unchanged.
+- **Slack hardening read.** KiroCrew's Slack app is ~21k LOC with dedicated `enterprise.py`,
+  `channel_resolver.py`, `interactions.py`, `blocks.py`, and `retry.py`. Before extending our
+  slack-channel app, read those for enterprise-workspace handling, interaction robustness, and
+  retry/backoff — a hardening pass on the existing app, not a rewrite.
+
 ## Amendment (2026-07-26 — gap analysis round 2, owner decisions)
 
 **The vendor-completeness pattern (owner decision; Slack is the exemplar).** Manifest recon (2026-07-26, `PersonalClawApps/slack-channel/app.json`): today the Slack app registers exactly ONE provider — `provider: {type: "channel", implementation: slack_runtime.transport:create_provider}` with a settingsSchema. It does NOT register an inbox source (core's `inbox_providers/__init__.py` docstring promises channel apps contribute one — "sources (e.g. 'slack') are contributed by their app bundle" — but no `type: "inbox"` provider exists in the manifest), and trigger sources don't exist as a seam yet (the substrate plan owns that). Meanwhile the manifest machinery already supports everything the pattern needs: multiple providers per app (`AppManifest.providers[]` / `all_providers()`), a `ui` manifest block, and `PROVIDER_TYPES` already includes `inbox`.

@@ -13,6 +13,8 @@ library-management capabilities for knowledge articles)
 
 ---
 
+> 📎 **Artifacts-as-a-knowledge-source lives in [SIBLING-PRODUCT-PARITY-KIROCREW](SIBLING-PRODUCT-PARITY-KIROCREW.md) §6 (#68)** — added 2026-08-05: an aggregate `artifact://` source row + an in-process change-listener that auto-ingests content-bearing artifacts (searchable but **not** listed as knowledge items), ported from KiroCrew's `knowledge/artifact_ingest.py`. It plugs into *this* plan's source framework (`knowledge/pipeline/`, `connectors/`, `KnowledgeStore`). If you change the source-type model or the ingestion path here, read #68 §6 so the artifact source type lands compatibly.
+
 ## Context (code recon, 2026-07-18)
 
 The store is already rich (`knowledge/store.py`): `items` table with `title, content, summary, tags(JSON), status, url, word_count, provider, is_pinned, is_archived, created_at, updated_at`; FTS5 `items_fts`; `entities` + `entity_relations` + `mentions` (the knowledge graph); `extracted_contents`; `intent_outcomes`. Retrieval: `retrieval.py::search(query, limit, include_archived=False)`; a P12 "same-type prefilter" for related items. Frontend: `web/src/pages/knowledge/` — List/Detail/Create pages, `KnowledgeGraph.tsx`, `GistEditor`, `AudioRecorder`, `knowledgeStore.ts`.

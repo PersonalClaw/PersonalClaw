@@ -312,6 +312,24 @@ Sessions 1-2 are the load-bearing pair; 4-5 (runner substrate) and 6-7 are indep
 
 ## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
 
+> 🔴 **SUPERSEDED IN MECHANISM (2026-08-04) — do not execute `EI-A1`/`EI-A2`/`EI-A3` as written.**
+> The *intent* below (ceiling everything, audit the bypass) stands and is unchanged. The
+> **delivery mechanism is unsafe**, and its stated justification is factually wrong: `EI-A1`
+> claims "`preexec_fn` is fork-safe here because every seam spawns from the
+> single-threaded-at-fork asyncio path." Verified 2026-08-04 — core has **67 thread-creation
+> sites**; `apps/backend_runtime.py:288`'s watchdog thread **respawns app backends**, and
+> `action_providers/bash_provider.py:216` spawns on the **event loop thread**. A `preexec_fn`
+> forces CPython off `posix_spawn` onto a `fork()` of the whole multi-threaded gateway and runs
+> bytecode in the child pre-`exec`; a lock held by another thread at fork time cannot be released
+> there, so the child can wedge before `exec` — and `Popen._execute_child` then blocks in an
+> **unbounded, un-awaitable `os.read` on the event loop thread** (hanging the gateway) while the
+> wedged child holds duplicates of every inherited fd, `gateway.lock` and the listening socket
+> included. Executing these rows would *introduce* that hazard; we have zero `preexec_fn` uses
+> today. **Corrected mechanism (post-`exec` shim + a four-profile split + a `preexec_fn` AST
+> tripwire), rewritten task rows, and the evidence live in
+> [SIBLING-HARDENING-KIROCREW](SIBLING-HARDENING-KIROCREW.md) §1 (`SH1.1`-`SH1.5`).** Execute
+> those instead; `EI-A1`-`EI-A3` are retained below only as the superseded record.
+
 **What & why.** The sibling "ceiling-everything posture": every agent-influenced child process gets OS resource ceilings, plus a **spawn-audit test** that makes bypass a CI failure. Recon: `sandbox.py` is a path-visibility seatbelt with **zero resource-limit machinery** (no `resource`/`setrlimit`/`preexec_fn` anywhere), and the agent-influenced spawn seams are concrete and enumerable: native bash tool (`agents/native/builtin_tools.py:1456` — already funnels through `wrap_argv`), app backends (`apps/backend_runtime.py:134`), ACP CLIs (`acp/transport.py:347`), MCP stdio servers (`mcp_client.py:301-321` via `StdioServerParameters` + `mcp_discovery.py:577`), cron scripts (`schedule_script.py:270`), loop verify/worktree (`loop/gates.py:48`, `loop/worktree.py:72`), and the bash action provider (`action_providers/bash_provider.py:133`). This slots UNDER §1: `SandboxProvider.kind=none` currently means "seatbelt only" — ceilings give `none` a real floor, and `SandboxSpec` gains the limits field that `docker`/`lima` translate to their native knobs.
 
 **Design (contract level).**
@@ -362,6 +380,18 @@ The website's "Bounded capabilities / untrusted zone" boundary diagram implies c
 | D2 | `permissions.network` decision + implementation: EITHER enforce it for app backends through the existing egress rail, OR mark it advisory in the Store consent UI and the manifest reference. **Not both, and not neither** | `apps/permissions.py`, the Store consent surface, `docs/reference/`, tests | the consent UI's claim matches enforcement reality; the manifest reference documents the chosen posture |
 | D3 | Per-app Python dependency isolation: install an app's `pythonDependencies` to an app-scoped target and launch its backend against it, so an app cannot shadow a core dependency | `src/personalclaw/apps/app_manager.py:154`, `backend_runtime.py`, tests | an app declaring a conflicting version of a core dependency does not affect the gateway (test with a real conflicting pin); existing installed apps continue to work |
 | VD | Validation as a user: install a first-party app; confirm from its own process environment that gateway secrets are absent; confirm a network-declaring and a non-declaring app behave per the D2 decision; install an app pinning a conflicting dependency and confirm the gateway is unaffected; re-read the corrected website copy against `sandbox.py` and confirm every claim is true | — | holds |
+
+**Independently re-derived 2026-08-04** by the KiroCrew comparison, which reached `D1` from the
+other direction (the sibling explicitly "strips sensitive environment variables"). `D1`'s shape is
+**already correct and better than a scrub** — an allowlist, because an app backend is long-lived
+and network-capable — so it needs no redesign. Two additions, both in
+[SIBLING-HARDENING-KIROCREW](SIBLING-HARDENING-KIROCREW.md): §2.5 extends the same allowlist shape
+to the spawn sites `D1` does not name (`hooks.py`, `schedule_script.py`, and confirming
+`bash_provider.py:65`'s `_scrub_env` is the allowlist shape); and §2.1 closes the **other** half of
+this trust boundary, which no plan owned — the app-backend port has no *inbound* authentication, so
+a local process reaching `127.0.0.1:<port>` directly bypasses the gateway proxy, session auth, and
+`app_permission_middleware` entirely. `D1` and §2.1 are complementary: `D1` limits what a backend
+*receives*, §2.1 establishes *who may call it*.
 
 ### Sequencing note
 D0 is documentation and should land immediately — an inaccurate security claim is a live defect, not a backlog item. D1 is small, high-value, and independent. D2 is a decision before it is code. D3 is the largest and can follow §1's provider work. **None of these are blocked by the `docker`/`lima` tiers**, and none of them substitute for that work: the tiers confine *agent commands*, these tasks confine *app backends*, and the product needs both.

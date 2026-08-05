@@ -12,6 +12,8 @@ until T3.2 lands. Proven by API validation and tests, but user-unreachable.
 
 ---
 
+> 📎 **Three adjacent artifact capabilities live in [SIBLING-PRODUCT-PARITY-KIROCREW](SIBLING-PRODUCT-PARITY-KIROCREW.md) (#68), not here** — added 2026-08-05 from the KiroCrew study, kept separate to avoid overloading this plan: **folders** (§4, opaque-`folder_id` membership), **local deploy** of `html`/`react`/`webapp` artifacts served through the gateway with CSP fencing (§5 — note this plan's `kind` already includes `react`/`html`, so the storage side is close), and **artifacts-as-a-knowledge-source** (§6, auto-ingest without listing). This plan keeps iterate/diff/references (S3). If you touch the artifact store, read #68 §4–§6 so the folder field + change-listener land compatibly.
+
 ## Context (code recon, 2026-07-26 — be honest about what exists vs missing)
 
 **Already built (far more than the "evolve toward" list assumed — the store IS the entity):**

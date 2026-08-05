@@ -8,6 +8,8 @@
 
 ---
 
+> 📎 **The first-party app suite in [SIBLING-PRODUCT-PARITY-KIROCREW](SIBLING-PRODUCT-PARITY-KIROCREW.md) §7 (#68) ARE this plan's exemplars** — added 2026-08-05. KiroCrew ships ~11 first-party product apps (Code Review, Research Lab, Design Critique, PPTX/Papyrus, Notes, Issue Radar, Ops, Spec Builder, Companion); #68 §7 designs PersonalClaw equivalents as a phased program, one PR each. This plan's scaffold generates their skeletons and its exemplar list should record them as they ship — they prove the platform far better than the four throwaway exemplars in T3.1. Coordinate: #68 §7 builds the apps; this plan builds the scaffold/registry they're built with.
+
 ## Context (code recon, 2026-07-18)
 
 - CLI uses argparse subparsers (`cli.py:205+`, existing two-level pattern e.g. `cron`/`spawn`/`security` subcommands) — `personalclaw app new` slots in cleanly.

@@ -73,6 +73,21 @@ Images from CI (amd64+arm64). Add `PERSONALCLAW_INSTALL_KIND=container` to both 
 **S4 — Self-update generalization (≈1).** §C behind the gate; per-kind validation: git checkout one-tag-behind updates; pip venv one-version-behind updates; container shows instructions; changelog panel renders the real CHANGELOG. Gate default-on for new installs; flip note in CHANGELOG.
 **S5 — Convenience channels (≈1, post-launch).** Homebrew tap (formula wrapping the wheel via `uv tool` or brew's python@3.12) + Nix flake; each with a per-release smoke checklist; README install matrix updated.
 
+**S5b — Signed release-channel feed (deferred; from the KiroCrew study 2026-08-05, reconciles with
+[SIBLING-HARDENING-KIROCREW](SIBLING-HARDENING-KIROCREW.md) §7.2's channel deferral).** KiroCrew's
+`cli.sh` resolves a **channel feed** (`stable | insider | nightly`), verifies its RSA-SHA256
+signature against an installer-pinned public key, records the channel in the data home, and pins
+each wheel by a published `SHA256SUMS` — **no unsigned fallback**. We already have OIDC
+build-provenance attestation (`release.yml`), which is stronger than a hash file, so the *only*
+missing piece is the **channel concept**: `_installer.py` channel-awareness, a signed feed the
+installer resolves, and `KIROCREW_CHANNEL`-style selection. Value = dogfooding the engine program's
+cadence via a nightly channel without shipping every merge to stable users. **Named gate** (per
+SIBLING-HARDENING §7.2): pick this up when the merge rate makes a nightly worth the release
+machinery — not before. Desktop auto-update detail worth pinning in DESKTOP-CAPABILITIES: distribute
+a **signed + notarized universal DMG** (their `sign-and-notarize.yml`) so OS permission grants stay
+sticky across electron-updater updates; they chose one universal artifact + auto-update onto native
+arm64 over a per-arch feed split.
+
 ## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md); gate/migration per plan 31 §4)
 
 ### C1 — Install-kind detection (`dashboard/handlers/updates.py` or new `updates_kind.py`)
