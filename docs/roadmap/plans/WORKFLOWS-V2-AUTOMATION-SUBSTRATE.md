@@ -4649,3 +4649,71 @@ enforcement read turns 2 red, reverting only the ambient precedence turns 1 red.
 - **Both cost keys are now closed or honestly named**, and the reason each sits where it does is
   written down at `UNMETERED_CAPS`. `idempotency`/`threshold` remain the last two, still waiting on
   R12 to pin their semantics rather than on any missing meter.
+
+### S155 — three success statuses recorded as failures, and the no-op outcome nothing wrote (§1.3 / §3.7)
+
+**The query shape, run one vocabulary further out.** S149/S150 swept `SPEC_KEYS` and `GATE_KEYS`; this
+swept the **`Outcome` enum** for members no production code ever writes:
+
+```
+🔴 SKIPPED_NOOP    (skipped_noop)   — 0 production uses
+🔴 SKIPPED_TRIAGE  (skipped_triage) — 0 production uses
+```
+
+`skipped_triage` is honest: §3.6's fire→spawn triage stage is unbuilt, so nothing can write it yet.
+`skipped_noop` was a real gap — and tracing *who should have written it* found something sharper than
+a missing ledger row.
+
+**🔴 THE DEFECT.** `executor.STATUS_TO_OUTCOME` mapped `ok`/`success`/`launched` and **not**
+`skip`/`done`/`report`. An unmapped status does not default to success — `classify` ends
+`return Outcome.FAILED.value, f"unrecognized runner status {status!r}"`. Measured:
+
+```
+'ok'       -> ('ran', '')
+'done'     -> ('failed', "unrecognized runner status 'done'")
+'report'   -> ('failed', "unrecognized runner status 'report'")
+'skip'     -> ('failed', "unrecognized runner status 'skip'")
+```
+
+And `run_script_provider` names its success statuses in a single tuple —
+`if status in ("ok", "done", "report", "skip"): return ActionResult(success=True, …)`. So **three
+statuses the provider itself calls success were recorded as failures.**
+
+**Why that is not cosmetic.** `autopause` spends a 5-failure budget off exactly these rows. A healthy
+weekly script reporting `skip` would autopause its own automation after five quiet weeks — the machine
+concluding a working automation is broken *because it had nothing to do*. The direction is the worst
+one: a false failure silences real work.
+
+**The mapping, and why each half is what it is.** `skip` → `SKIPPED_NOOP`, the value §1.3 defines as
+"ran and mutated nothing durable", whose reader `history.is_inert` has existed since S132 with nothing
+producing the value — the live-reader-of-an-unwritten-value shape again, in its quietest form.
+`done`/`report` → `RAN`, because both **did the work**: `done` additionally means one-shot ("remove the
+job after this run"), but that is a LIFECYCLE decision belonging to the caller that owns the job, not a
+different account of what this fire did. Folding it into the outcome would make a completed final run
+indistinguishable from one that no-opped.
+
+**Verified the downstream classification is honest, not lucky.** A new outcome value silently
+reclassifying a run is how this program's defects usually compound, so each consumer was driven:
+
+- `TRUE_FAILURE_OUTCOMES` (the single source `counts_toward_autopause` delegates to) excludes it — 5
+  consecutive no-op rows yield `consecutive_failures_from == 0`.
+- `health_delta` reports `settled: 3, succeeded: 0, failed: 0` — the same call `deferred` gets, and the
+  only honest one: counting a no-op as a success lets a script that silently stopped doing anything look
+  healthy, while counting it as a failure pauses one that works.
+- The reason string says what it MEANS ("the action ran and had nothing to do; nothing durable changed")
+  rather than restating the status. `FireRecord.reason` is mandatory for anything but a clean run, and an
+  inert row that folds out of the default view has **only** its reason to explain it.
+
+**No `web/` change needed, verified rather than assumed.** S137 built the outcome renderer generically
+and `scheduleMeta.outcomes.test.ts` already asserts `statusMeta('skipped_noop').label === 'noop'` — the
+UI surface was sitting there waiting for a producer. Ran the frontend test to confirm (9 passed).
+
+**The completeness test derives from the provider's own success tuple** rather than restating it, so a
+fifth success status fails the test instead of silently recording as a failure — the same
+derive-don't-restate discipline S147's template test used.
+
+**Gate:** `make lint` (black+isort+flake8+mypy, 691 files) green; full `pytest -n 4 --dist worksteal`
+green; frontend outcome test green. Load-bearing verified: removing the three map entries turns 3 red.
+
+- **`Outcome` is now fully written except `skipped_triage`**, which waits on §3.6's triage stage rather
+  than on any missing meter — recorded so the next sweep does not re-flag it as a defect.
