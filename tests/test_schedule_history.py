@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from personalclaw.schedule_history import (
+    _MAX_INDEX_PER_JOB,
+    _MAX_INDEX_RECORDS,
     _MAX_RECORDS_PER_JOB,
     _MAX_SUPPRESSED_PER_JOB,
     ScheduleRun,
@@ -363,3 +365,106 @@ async def test_rotation_PRESERVES_file_ORDER(tmp_path: Path):
     # `list_for_job` returns newest-first, so started_at must be monotonically DECREASING.
     stamps = [float(r["started_at"]) for r in rows]
     assert stamps == sorted(stamps, reverse=True), "rotation must not reorder the file"
+
+
+# ── 🔴 one noisy job owned the whole cross-job index (S174) ──
+
+
+@pytest.mark.asyncio
+async def test_a_NOISY_job_does_not_evict_every_OTHER_automation(tmp_path: Path):
+    """🔴 THE DEFECT, and the cross-job half of S173. The index is SHARED — it backs the dashboard's
+    "recent runs across all schedules" — and a flat tail lets the loudest writer own all of it.
+
+    Measured after S171 began persisting suppressions: three well-behaved automations with one run
+    each, plus 1.5 days of one minutely trigger's quiet-hours skips, and the index held **2000 rows
+    from that single trigger and nothing else**. Every other automation vanished from the only
+    cross-job view there is.
+    """
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for name in ("nightly-backup", "weekly-report", "deploy-watch"):
+        await store.append(
+            ScheduleRun(
+                run_id=f"REAL-{name}", job_id=name, trigger="ok", started_at=now, status="success"
+            )
+        )
+    for i in range(1, 2100):
+        await store.append(
+            ScheduleRun(
+                run_id=f"skip-{i}",
+                job_id="clock:noisy",
+                trigger="skipped_gate",
+                started_at=now + i * 60,
+                status="skipped_gate",
+            )
+        )
+    rows, _total = await store.list_all(0, 5000)
+    jobs = {r["job_id"] for r in rows}
+    for name in ("nightly-backup", "weekly-report", "deploy-watch"):
+        assert name in jobs, f"{name} was evicted by the noisy job"
+
+
+@pytest.mark.asyncio
+async def test_no_job_exceeds_its_SHARE_after_a_trim(tmp_path: Path):
+    """The invariant is per-TRIM, not per-append.
+
+    Rotation fires only above the global cap, so between trims a job may exceed its share and
+    is cut back on the next one. What must hold is that after a trim, no job monopolises the
+    index."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    await store.append(
+        ScheduleRun(run_id="REAL", job_id="backup", trigger="ok", started_at=now, status="success")
+    )
+    for i in range(_MAX_INDEX_RECORDS + 50):
+        await store.append(
+            ScheduleRun(
+                run_id=f"s{i}",
+                job_id="noisy",
+                trigger="skipped_gate",
+                started_at=now + i + 1,
+                status="skipped_gate",
+            )
+        )
+    rows, _total = await store.list_all(0, 5000)
+    noisy = [r for r in rows if r["job_id"] == "noisy"]
+    # Trimmed to the share, then regrown by the appends since — bounded either way.
+    assert len(noisy) <= _MAX_INDEX_PER_JOB + 60, len(noisy)
+    assert "REAL" in [r["run_id"] for r in rows], "the quiet job's run must survive"
+
+
+@pytest.mark.asyncio
+async def test_a_store_UNDER_the_cap_is_untouched(tmp_path: Path):
+    """The compatibility guarantee: the per-job bound applies only when trimming is needed, so an
+    install that never hits the global cap keeps every row exactly as before."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i in range(50):
+        await store.append(
+            ScheduleRun(
+                run_id=f"a{i}", job_id="small", trigger="ok", started_at=now + i, status="success"
+            )
+        )
+    _rows, total = await store.list_all(0, 5000)
+    assert total == 50
+
+
+@pytest.mark.asyncio
+async def test_the_index_stays_NEWEST_FIRST(tmp_path: Path):
+    """Order is load-bearing: `list_all` reverses the file, so a file regrouped by job would
+    render the cross-schedule view out of order. Kept rows are re-merged by position."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i in range(_MAX_INDEX_RECORDS + 200):
+        await store.append(
+            ScheduleRun(
+                run_id=f"r{i}",
+                job_id=f"job{i % 7}",
+                trigger="ok",
+                started_at=now + i,
+                status="success",
+            )
+        )
+    rows, _total = await store.list_all(0, 5000)
+    stamps = [float(r["started_at"]) for r in rows]
+    assert stamps == sorted(stamps, reverse=True), "index rotation must not reorder the file"
