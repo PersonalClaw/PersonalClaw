@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -19,7 +20,20 @@ try:
 except ImportError:
     import sqlite3
 
-VALID_COMPONENTS = ("memory", "crons", "config", "skills", "workspace", "notifications", "security")
+VALID_COMPONENTS = (
+    "memory",
+    "crons",
+    "config",
+    "skills",
+    "workspace",
+    "notifications",
+    "security",
+    # Criterion 1 names this invocation verbatim (`--components everything`) and the CLI
+    # REJECTED it: "❌ Unknown component: everything". Covers every inventory entry the seven
+    # named components do not, which is what makes a targeted restore expressible at all —
+    # without it there is no way to ask for the task board.
+    "everything",
+)
 
 
 def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | None:
@@ -169,6 +183,67 @@ def _everything_paths(pc: Path) -> list[str]:
     return out
 
 
+def _extra_restore_paths_for_test_paths() -> list[str]:
+    """Every inventory path the generic restore pass WOULD reach, independent of what exists on
+    disk.
+
+    `_extra_restore_paths` filters by existence, which is right at restore time and useless to a
+    test
+    asking "is this entry reachable at all". Kept beside it so the two cannot drift.
+    """
+    from personalclaw.durability import inventory as inv
+
+    secret = inv.secret_paths()
+    already = {f for files in CORE_FILES.values() for f in files}
+    already |= {"workspace", "plan_memory", "skills"}
+    out: list[str] = []
+    for entry in inv.backup_entries():
+        top = entry.path.split("/", 1)[0]
+        if top in already or top in secret or entry.path in secret or entry.path in out:
+            continue
+        out.append(entry.path)
+    return out
+
+
+def _extra_restore_paths(snap: Path) -> list[str]:
+    """Inventory entries a RESTORE must return, beyond the seven named components (S177).
+
+    🔴 WHY THIS EXISTS. Capture is inventory-derived (:func:`_everything_paths`, which closed
+    the "a full backup silently dropped the user's whole task board" gap); **both restore modes
+    were hand-written seven-component lists**. So the archive held `tasks/`, `projects/`,
+    `agents/`, `prompts/`, `workflows/`, `artifacts/`, `uploads/` and `entity_settings/` and
+    neither `--mode merge` nor `--mode replace` returned any of them, while both printed a
+    success line. The asymmetry is the defect: a snapshot is only as good as the restore, and
+    widening only the capture side made the archive *look* complete.
+
+    Mirrors :func:`_everything_paths` deliberately — same projection, same exclusions — but
+    resolved against the SNAPSHOT rather than the live home, because that is where a restore
+    reads. Keeping the two in one shape is the point: a store added to the inventory later is
+    both captured and restored without touching either function.
+
+    **Secrets are excluded, unlike capture.** ``backup_entries()`` includes them on purpose
+    ("losing the credential store is exactly what a backup should prevent"), but restoring
+    ``.env``/``credentials/``/``.local_secret`` generically would re-plant credential material
+    into a home that may have deliberately rotated or removed it. Capture is a local 0600
+    archive; restore writes into a live home, so the two directions do not warrant the same
+    default. The named ``security`` component remains the deliberate path for key material,
+    copy-if-missing and 0600 exactly as today.
+    """
+    from personalclaw.durability import inventory as inv
+
+    secret = inv.secret_paths()
+    already = {f for files in CORE_FILES.values() for f in files}
+    already |= {"workspace", "plan_memory", "skills"}
+    out: list[str] = []
+    for entry in inv.backup_entries():
+        top = entry.path.split("/", 1)[0]
+        if top in already or top in secret or entry.path in secret or entry.path in out:
+            continue
+        if (snap / entry.path).exists():
+            out.append(entry.path)
+    return out
+
+
 COMPONENT_HELP = {
     "memory": "memory.db, memory_index.db (semantic, episodic, knowledge graph)",
     "crons": "triggers.json + event_triggers.json + crons.json (automations)",
@@ -177,6 +252,7 @@ COMPONENT_HELP = {
     "workspace": "workspace/, plan_memory/ directories",
     "notifications": "notifications.jsonl (notification history)",
     "security": "sel_hmac.key, telemetry_salt",
+    "everything": "every other store: tasks, projects, agents, prompts, workflows, uploads, …",
 }
 
 
@@ -194,7 +270,20 @@ def _fsize(p: Path) -> int:
 
 
 def _want(components: list[str] | None, name: str) -> bool:
-    return components is None or name in components
+    """Is `name` selected? `everything` selects EVERY component, not just the un-named ones.
+
+    🔴 Found by driving criterion 1's own drill (snapshot → wipe the home → restore) rather than
+    trusting the component I had just added. `--components everything` restored the task board and
+    dropped `config.json`, `memory.db`, `notifications.jsonl`, `workspace/` and `skills/` — because
+    "everything" had been just another member of a list, so naming it DESELECTED the seven named
+    components. A flag whose whole promise is completeness, silently narrowing the restore.
+
+    So `everything` is a superset marker, not a peer. Reading it here rather than expanding it at
+    the CLI keeps one definition for both restore modes and for any later caller.
+    """
+    if components is None:
+        return True
+    return name in components or "everything" in components
 
 
 def _list_components() -> None:
@@ -711,6 +800,362 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _merge_json_collection(src: Path, dst: Path, *, wrapper: str | None, key: str) -> int:
+    """Union an id-bearing JSON collection, live rows winning on a key collision (S181).
+
+    Nine file-shaped entries declare `union_by_id` or `lww_by_updated_at` and none had an executor.
+    S177 made them reachable, but reachably copy-if-missing — so a file the live home already had
+    kept
+    its own contents and dropped the snapshot's entirely. Driven: 8 of 8 lost the snapshot side.
+
+    `wrapper` names the envelope key when the collection is nested (`{"hooks": [...]}`,
+    `{"items": [...]}`) and is None for a bare top-level list (`tags.json`). Live rows win because
+    merge mode's contract is that local state wins — the snapshot only fills gaps.
+    """
+    if not src.is_file() or not dst.is_file():
+        return 0
+    try:
+        src_doc = json.loads(src.read_text(encoding="utf-8"))
+        dst_doc = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # A hand-edited or truncated file. Leaving the live copy untouched is the safe direction:
+        # the alternative is overwriting real state with a parse of something we do not understand.
+        return 0
+
+    def _rows(doc: object) -> list | None:
+        if wrapper is None:
+            return doc if isinstance(doc, list) else None
+        if isinstance(doc, dict) and isinstance(doc.get(wrapper), list):
+            return doc[wrapper]
+        return None
+
+    src_rows, dst_rows = _rows(src_doc), _rows(dst_doc)
+    if src_rows is None or dst_rows is None:
+        return 0
+    seen = {r.get(key) for r in dst_rows if isinstance(r, dict)}
+    added = [
+        r for r in src_rows if isinstance(r, dict) and r.get(key) is not None and r[key] not in seen
+    ]
+    if not added:
+        return 0
+    merged = dst_rows + added
+    if wrapper is None:
+        out: object = merged
+    else:
+        out = dict(dst_doc)
+        out[wrapper] = merged
+    atomic_write(dst, json.dumps(out, indent=2))
+    return len(added)
+
+
+def _merge_json_map(src: Path, dst: Path, *, wrapper: str | None = None) -> int:
+    """Union a JSON object keyed by entity, live values winning (S181).
+
+    For the map-shaped entries whose top-level keys ARE the identity: `spend.json` (one key per
+    `%Y-%m-%d`), `tool_usage.json` (per tool), `autonudge.json`'s `loops`, and tokenjuice's rows
+    (keyed `"<month>|<model>|<compressor>"`).
+
+    🔴 Live values win per key rather than being combined. `spend.json` is the counter a budget
+    CEILING is compared against, so adding a snapshot's dollars to today's would move a real-money
+    decision on the basis of spend that already happened on another machine or in another month. A
+    key the live home does not have is pure recovery; a key it has is authoritative.
+    """
+    if not src.is_file() or not dst.is_file():
+        return 0
+    try:
+        src_doc = json.loads(src.read_text(encoding="utf-8"))
+        dst_doc = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(src_doc, dict) or not isinstance(dst_doc, dict):
+        return 0
+
+    if wrapper is not None:
+        src_map, dst_map = src_doc.get(wrapper), dst_doc.get(wrapper)
+        if not isinstance(src_map, dict) or not isinstance(dst_map, dict):
+            return 0
+    else:
+        src_map, dst_map = src_doc, dst_doc
+
+    added = {k: v for k, v in src_map.items() if k not in dst_map}
+    if not added:
+        return 0
+    if wrapper is not None:
+        out = dict(dst_doc)
+        out[wrapper] = {**dst_map, **added}
+    else:
+        out = {**dst_doc, **added}
+    atomic_write(dst, json.dumps(out, indent=2))
+    return len(added)
+
+
+def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
+    """Merge a declared sqlite store table-by-table with `INSERT OR IGNORE` (S180).
+
+    🔴 WHY THIS EXISTS. Seven entries declare `merge=sqlite_attach_ignore` and only `memory.db` had
+    an executor — a hand-written four-table allowlist. S177 made the other six REACHABLE, but
+    reachably copy-if-missing, so a database the live home already had kept its own rows and dropped
+    the snapshot's entirely. Driven across all six (`learning.db`, both `knowledge.db`,
+    `loop/loops.db`, `workflows/runs.db`, `lexicon.db`): a snapshot row and a live row went in, only
+    the live row came out — six stores silently half-restored.
+
+    Generic rather than six allowlists, because the schemas said so: every real table in all six
+    carries a primary key or unique index, so `INSERT OR IGNORE` deduplicates correctly and a
+    repeated restore drill is a no-op. Measured against both a long-lived real home and the dev
+    home.
+
+    🔴 **FTS5 shadow tables are skipped and the index is REBUILT.** Merging them with the rest looks
+    fine once and breaks on the second run: measured 40 documents indexed, then a repeated merge
+    returned **80 rows for 40 documents** — every search result duplicated — because
+    `items_fts_data`/`_idx`/`_docsize` carry segment state `INSERT OR IGNORE` cannot reconcile. A
+    restore drill is exactly the thing a user runs twice.
+
+    Of the two halves, the **rebuild is what fixes it** — verified by removing each independently:
+    without the rebuild the index returns 0 hits for 40 documents, whereas without the skip the
+    trailing rebuild still repairs the shadow tables. The skip is kept because it makes the import
+    honest rather than repaired-after-the-fact: it avoids writing 160 rows of another database's
+    segment state (measured) only to overwrite them, and it means a future caller that rebuilds
+    conditionally cannot reintroduce the doubling.
+
+    `memory.db` keeps its own executor and is NOT routed here: it filters `WHERE is_deleted=0`, so a
+    generic all-tables merge would resurrect memories the user deleted. That filter is the reason
+    the
+    allowlist exists, not an accident of it.
+    """
+    try:
+        check = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
+        try:
+            if check.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
+                print(f"  ⚠️  {label}: source integrity check failed — skipping merge")
+                return 0
+        finally:
+            check.close()
+    except Exception as exc:  # noqa: BLE001 — a corrupt source must not abort the restore
+        print(f"  ⚠️  {label}: source unreadable ({exc}) — skipping merge")
+        return 0
+
+    conn = sqlite3.connect(str(dst_db))
+    imported = 0
+    try:
+        conn.execute("BEGIN")
+        conn.execute("ATTACH DATABASE ? AS src", (str(src_db),))
+        virtual = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM src.sqlite_master WHERE sql LIKE '%VIRTUAL TABLE%'"
+            )
+        ]
+        # A virtual table's shadow tables are `<name>_data`, `_idx`, `_docsize`, `_config`,
+        # `_content`. Matching by prefix covers them without hardcoding FTS5's internals.
+        skip = tuple(virtual) + tuple(v + "_" for v in virtual)
+        local = {
+            r[0] for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type='table'")
+        }
+        for (table,) in conn.execute(
+            "SELECT name FROM src.sqlite_master WHERE type='table'"
+        ).fetchall():
+            if table.startswith("sqlite_") or table in skip or table.startswith(skip):
+                continue
+            if table not in local:
+                # A table the live schema does not have. Creating it here would import a shape this
+                # build's code cannot read; the owning module creates its own tables on open.
+                continue
+            before = conn.total_changes
+            try:
+                conn.execute(f'INSERT OR IGNORE INTO main."{table}" SELECT * FROM src."{table}"')
+            except sqlite3.Error as exc:
+                # A column-set mismatch between snapshot and live schema. Skip the table, keep the
+                # rest — the same call `_merge_memory` makes about its opportunistic `contributor`
+                # column, for the same reason: a partial restore beats an aborted one.
+                print(f"  ⚠️  {label}.{table}: {exc} — skipped")
+                continue
+            imported += conn.total_changes - before
+        for view in virtual:
+            if view in local:
+                conn.execute(f'INSERT INTO main."{view}"("{view}") VALUES(\'rebuild\')')
+        conn.execute("COMMIT")
+    except Exception as exc:  # noqa: BLE001
+        conn.execute("ROLLBACK")
+        print(f"  ⚠️  {label}: merge failed ({exc}) — left unchanged")
+        return 0
+    finally:
+        try:
+            conn.execute("DETACH DATABASE src")
+        except sqlite3.Error:
+            pass
+        conn.close()
+    if imported:
+        print(f"  {label} rows imported: {imported}")
+    return imported
+
+
+def _merge_keyed_jsonl(src: Path, dst: Path, key_field: str, label: str) -> int:
+    """Append rows from `src` that `dst` lacks, deduping on `key_field` (S179).
+
+    Extracted after a THIRD near-identical copy was needed (`model_calls.jsonl`, whose declared
+    `append_dedup` the S178 ratchet demanded an executor for). Three hand-written loops differing
+    only in a key name is how two of them start disagreeing — the duplication S175 deleted from the
+    run store after finding one copy had silently reverted another.
+
+    Deliberately NOT used for `security_events.jsonl`: that one carries an HMAC-key precondition,
+    and folding a security gate into a generic helper is how the gate gets dropped by a later caller
+    who only wanted the dedup.
+    """
+    if not src.is_file() or not dst.is_file():
+        return 0
+    existing: set[str] = set()
+    with open(dst, encoding="utf-8") as f:
+        for line in f:
+            try:
+                existing.add(json.loads(line).get(key_field) or line.strip())
+            except (ValueError, TypeError):
+                pass
+    imported = 0
+    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
+        for line in f:
+            try:
+                key = json.loads(line).get(key_field) or line.strip()
+            except (ValueError, TypeError):
+                continue
+            if key not in existing:
+                out.write(line if line.endswith("\n") else line + "\n")
+                existing.add(key)
+                imported += 1
+    if imported:
+        print(f"  {label} imported: {imported}")
+    return imported
+
+
+def _merge_feedback(src: Path, dst: Path) -> None:
+    """Merge `feedback.jsonl`, deduping on the record's own `id` (S178).
+
+    The third `append_dedup` entry with no executor. Unlike the SEL log this carries no HMAC, so
+    plain dedup is safe — and unlike the run history it is a single flat file, so there are no
+    shards. Keyed on `FeedbackRecord.id` rather than the whole line for the reason
+    `_merge_run_history` is: the same record round-trips through a serializer on both sides.
+
+    Deliberately does NOT trim to `feedback._CAP`. That module owns its own retention ("atomic trim
+    at 2x cap") and re-implementing the bound here is the duplication S175 deleted from the run
+    store after finding one copy had silently reverted the other.
+    """
+    _merge_keyed_jsonl(src, dst, "id", "Feedback")
+
+
+def _merge_security_events(snap: Path, pc: Path) -> None:
+    """Merge the SEL audit log — but ONLY when the HMAC key that will verify it is the same (S178).
+
+    🔴 WHY THE GUARD. `inventory.py` declares `security_events.jsonl` with `merge=append_dedup`, and
+    a generic executor would have appended the snapshot's rows unconditionally. Driven: two homes
+    with different `sel_hmac.key` files, 3 rows imported → `verify_integrity` reported
+    **checked=5, valid=2**, logging "SEL HMAC mismatch" for every imported row. A restore would have
+    made the tamper-evident audit log report tampering — turning the one surface a user consults to
+    ask "was I compromised?" into a false positive they cannot clear except by rotating the chain.
+
+    So the key decides, and it is knowable at restore time because both files are on disk. The
+    `security` component restores `sel_hmac.key` **copy-if-missing**, so:
+
+    * a WIPED home takes the snapshot's key → the snapshot's rows verify (measured 3/3 valid) and
+      merging them recovers audit history that would otherwise be lost;
+    * a LIVE home keeps its own key → the snapshot's rows could never verify under it, so importing
+      them would only manufacture mismatches.
+
+    Fail-CLOSED, unlike the other merges: when the keys differ (or either is unreadable) the rows
+    are skipped and the reason is printed. The alternative failure — a silently importable row that
+    reads as tampering — is strictly worse than a missing row, because an audit trail's value is
+    that a mismatch means something.
+    """
+    src, dst = snap / "security_events.jsonl", pc / "security_events.jsonl"
+    if not src.is_file():
+        return
+
+    def _key(p: Path) -> bytes | None:
+        try:
+            return (p / "sel_hmac.key").read_bytes()
+        except OSError:
+            return None
+
+    snap_key, live_key = _key(snap), _key(pc)
+    if not dst.exists():
+        # Nothing to merge INTO. The generic store pass already copies a missing file; leaving it
+        # to that path keeps one copy-if-missing implementation rather than two.
+        return
+    if snap_key is None or live_key is None or not hmac.compare_digest(snap_key, live_key):
+        print("  Security events: skipped (HMAC key differs — imported rows could not verify)")
+        return
+
+    existing: set[str] = set()
+    with open(dst, encoding="utf-8") as f:
+        for line in f:
+            try:
+                existing.add(json.loads(line).get("event_id") or line.strip())
+            except (ValueError, TypeError):
+                pass
+    imported = 0
+    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
+        for line in f:
+            try:
+                key = json.loads(line).get("event_id") or line.strip()
+            except (ValueError, TypeError):
+                continue
+            if key not in existing:
+                out.write(line if line.endswith("\n") else line + "\n")
+                existing.add(key)
+                imported += 1
+    print(f"  Security events imported: {imported}")
+
+
+def _merge_run_history(src_dir: Path, dst_dir: Path) -> None:
+    """Merge `cron-history/` shard-by-shard, deduping on `run_id` (S176).
+
+    🔴 WHY THIS EXISTS. `inventory.py` declares `cron_history` with `merge=append_dedup`, and
+    `_do_merge` had no branch for it — so a merge restore printed "✅ Merge complete" while
+    recovering **no run history at all**. Driven: a snapshot holding `FROM-SNAPSHOT` merged into a
+    home holding `LIVE-run` left only `LIVE-run`. The declared strategy had no executor, which is
+    this program's signature defect in the durability layer.
+
+    Deduped on `run_id` rather than a whole-line compare: the same run round-trips through
+    `to_dict()`, so key ordering or a re-serialised float could make an identical run look new and
+    double it. Mirrors `_merge_notifications`, which dedupes on `ts` for the same reason.
+
+    Per-shard, because the store is one file per job (`clock:backup.jsonl`) plus a cross-job
+    `_index.jsonl`. A shard present only in the snapshot is copied whole; one present in both is
+    appended-and-deduped, so the live home never loses a row it already had.
+
+    Deliberately does NOT rotate afterwards. `ScheduleRunStore.rotate_all()` runs at gateway boot
+    (S175) and owns that policy; trimming here would apply retention twice with a second copy of the
+    rule — the duplication S175 just removed.
+    """
+    if not src_dir.is_dir():
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shards = imported = 0
+    for src in sorted(src_dir.glob("*.jsonl")):
+        dst = dst_dir / src.name
+        if not dst.is_file():
+            shutil.copy2(str(src), str(dst))
+            shards += 1
+            continue
+        existing: set[str] = set()
+        with open(dst) as f:
+            for line in f:
+                try:
+                    existing.add(str(json.loads(line).get("run_id") or line.strip()))
+                except (ValueError, TypeError):
+                    pass
+        with open(dst, "a") as out, open(src) as f:
+            for line in f:
+                try:
+                    key = str(json.loads(line).get("run_id") or line.strip())
+                except (ValueError, TypeError):
+                    continue
+                if key not in existing:
+                    out.write(line)
+                    existing.add(key)
+                    imported += 1
+        shards += 1
+    print(f"  Run history: {shards} shard(s), {imported} row(s) imported")
+
+
 def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str) -> None:
     for f in CORE_FILES.get(component, ()):
         if (pc / f).is_file():
@@ -761,11 +1206,181 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
             _copytree_safe(snap_sk, sk)
         print("  ✅ skills")
 
+    # 🔴 Every remaining inventory entry (S177) — see `_extra_restore_paths`. Replace mode moves
+    # the live copy into the pre-restore backup FIRST, so the destructive half stays recoverable
+    # exactly as it is for the named components.
+    if _want(components, "everything"):
+        for rel in _extra_restore_paths(snap):
+            src, live = snap / rel, pc / rel
+            if live.exists() and not live.is_symlink():
+                (backup / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(live), str(backup / rel))
+            if src.is_dir():
+                _copytree_safe(src, live)
+            elif src.is_file():
+                live.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(live))
+        print("  ✅ stores")
+
     try:
         backup.rmdir()
     except OSError:
         print(f"  Previous state saved to: {backup}/")
     print("✅ Replace complete.")
+
+
+def home_is_populated(pc: Path) -> list[str]:
+    """Declared entries this home already holds — the non-emptiness test (S184).
+
+    🔴 WHY. Restore mode auto-detected on `memory.db` alone: `"merge" if (pc / "memory.db").is_file()
+    else "replace"`. A home that has never embedded anything has no `memory.db`, so a home full of
+    real state read as EMPTY and defaulted to REPLACE. Driven end to end on a home holding six
+    declared entries — tasks, projects, workflows, entity_settings, inbox.json, triggers.json —
+    `tasks/mine.json` and the user's automation were moved into `pre-restore-<ts>/` and the
+    copies took their place.
+
+    That is recoverable, which is why it is a wrong DEFAULT rather than data loss: the plan's own
+    framing is that "the restore people actually perform is onto a machine that already has state …
+    and replace-mode restores there destroy the newer half".
+
+    Asks the inventory instead, so any declared store counts. `config.json` alone does not — it is
+    written at first boot, so treating it as state would make every fresh install look populated and
+    push a genuine first-time restore onto the merge path.
+    """
+    from personalclaw.durability import inventory as inv
+
+    # `config.json` is written at first boot, so counting it would make every fresh install look
+    # populated and push a genuine first-time restore onto the merge path. The other two are
+    # machine-local bookkeeping, not user state.
+    seeded = {"config.json", "session_map.json", "machine_id"}
+    # Secrets are excluded: this list is surfaced over the API, and naming a credential file is
+    # needless even though only its EXISTENCE would leak. They also say nothing about whether
+    # the home holds work worth protecting, which is the question being asked.
+    secret = inv.secret_paths()
+    return [
+        e.path
+        for e in inv.backup_entries()
+        if e.path not in seeded
+        and not e.derived
+        and not e.secret
+        and e.path.split("/")[0] not in secret
+        and (pc / e.path).exists()
+    ]
+
+
+def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]:
+    """What a merge WOULD do, per declared entry — the plan `--dry-run` prints (S183).
+
+    🔴 WHY. `--dry-run` printed a raw list of files in the archive: no counts, no per-entry
+    strategy, no indication of what is protected. Driven side by side, the dry run listed three
+    filenames while the merge imported one notification and one store and left `config.json`
+    untouched — so the preview answered a different question from the one a user about to merge
+    into their own home is asking. This is gap (2) the plan names against itself: *"`--dry-run`
+    prints a raw file list, not a merge plan (no counts, no per-entry strategy, no conflict
+    preview)"*.
+
+    Computed from the SAME projections `_do_merge` uses (`_attach_merge_paths`,
+    `_extra_restore_paths`, the component gates) rather than by threading a `dry_run` flag through
+    twelve merge helpers. Twelve flags are twelve chances for the preview to drift from the act;
+    one derivation cannot disagree with itself about which entries participate.
+
+    Each row is `{path, strategy, action, detail}`, where `action` is one of `merge` (both sides
+    have it, so rows will be folded), `copy` (only the snapshot has it), or `keep-local` (both have
+    it and local wins).
+    """
+    from personalclaw.durability import inventory as inv
+
+    rows: list[dict] = []
+
+    def _add(path: str, strategy: str, detail: str = "") -> None:
+        src, dst = snap / path, pc / path
+        if not src.exists():
+            return
+        if not dst.exists():
+            action = "copy"
+        elif strategy == inv.MERGE_REPLACE_ONLY:
+            action = "keep-local"
+        else:
+            action = "merge"
+        rows.append({"path": path, "strategy": strategy, "action": action, "detail": detail})
+
+    by_path = {e.path: e for e in inv.INVENTORY}
+
+    if _want(components, "memory"):
+        _add("memory.db", inv.MERGE_SQLITE_ATTACH_IGNORE, "4-table allowlist, is_deleted=0 only")
+    if _want(components, "crons"):
+        for name in ("triggers.json", "event_triggers.json", "crons.json"):
+            _add(name, inv.MERGE_UNION_BY_ID, "by job/trigger id")
+        _add("cron-history", inv.MERGE_APPEND_DEDUP, "per-shard, dedup on run_id")
+    if _want(components, "config"):
+        for name in CORE_FILES["config"]:
+            # The contract gap (3) names: an existing config.json is NEVER overwritten. Saying so in
+            # the plan is the point — it was true but unstated, so a user could not know it.
+            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing; never overwritten")
+    if _want(components, "notifications"):
+        _add("notifications.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on ts")
+        _add("feedback.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on id")
+        _add("model_calls.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on audit_id")
+    if _want(components, "security"):
+        for name in CORE_FILES["security"]:
+            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, chmod 0600")
+        _add("security_events.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on event_id; HMAC-key gated")
+    if _want(components, "workspace"):
+        for name in ("workspace", "plan_memory"):
+            _add(name, inv.MERGE_UNION_BY_ID, "tree, no overwrite")
+    if _want(components, "skills"):
+        _add("skills", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
+    if _want(components, "everything"):
+        for path in _attach_merge_paths():
+            _add(path, inv.MERGE_SQLITE_ATTACH_IGNORE, "every table, INSERT OR IGNORE")
+        for path in _extra_restore_paths(snap):
+            entry = by_path.get(path)
+            strategy = entry.merge if entry else inv.MERGE_UNION_BY_ID
+            _add(path, strategy, "per-file union" if entry and entry.kind else "")
+    return rows
+
+
+def _attach_merge_paths() -> list[str]:
+    """Declared sqlite stores routed to the generic ATTACH merge (S180's call-site list).
+
+    Extracted so `_do_merge` and `merge_plan` cannot disagree about which databases participate — a
+    preview that names a different set from the act is worse than no preview.
+    """
+    try:
+        from personalclaw.durability import inventory as inv
+
+        return [
+            e.path
+            for e in inv.sqlite_entries()
+            if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db"
+        ]
+    except Exception:  # noqa: BLE001 — a restore must work even if this import breaks
+        return []
+
+
+def print_merge_plan(rows: list[dict]) -> None:
+    """Render the plan as a table. Grouped by action so the destructive-looking rows are not buried
+    among dozens of `copy` lines."""
+    if not rows:
+        print("  (nothing in this snapshot matches the selected components)")
+        return
+    order = {"merge": 0, "copy": 1, "keep-local": 2, "skip": 3}
+    label = {
+        "merge": "MERGE   ",
+        "copy": "COPY    ",
+        "keep-local": "KEEP    ",
+        "skip": "SKIP    ",
+    }
+    for row in sorted(rows, key=lambda r: (order.get(r["action"], 9), r["path"])):
+        detail = f" — {row['detail']}" if row["detail"] else ""
+        print(
+            f"  {label.get(row['action'], row['action'])} {row['path']:<28} "
+            f"[{row['strategy']}]{detail}"
+        )
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["action"]] = counts.get(row["action"], 0) + 1
+    print("  " + ", ".join(f"{n} {a}" for a, n in sorted(counts.items())))
 
 
 def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
@@ -813,6 +1428,12 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
                 print(f"  {f}: restored (was missing)")
         print("  ✅ config")
 
+    # 🔴 The run history, whose declared `append_dedup` had no executor (S176). Grouped with
+    # `crons` because it IS the crons' history: a merge restore that recovered the triggers but not
+    # their runs leaves a user with automations and no record of what they ever did.
+    if _want(components, "crons"):
+        _merge_run_history(snap / "cron-history", pc / "cron-history")
+
     if _want(components, "notifications"):
         sn, dn = snap / "notifications.jsonl", pc / "notifications.jsonl"
         if sn.is_file():
@@ -821,6 +1442,15 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             else:
                 shutil.copy2(str(sn), str(dn))
                 print("  Notifications: copied")
+        # `feedback.jsonl`, the third declared `append_dedup` with no executor. Grouped here rather
+        # than given its own component: both are platform-domain append logs, and a new component
+        # name is a CLI surface a user then has to know about.
+        _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+        # `model_calls.jsonl`, the fourth declared `append_dedup` — demanded by S178's own ratchet
+        # the moment S179 declared the entry. Keyed on `AttemptRecord.audit_id`.
+        _merge_keyed_jsonl(
+            snap / "model_calls.jsonl", pc / "model_calls.jsonl", "audit_id", "Model calls"
+        )
         print("  ✅ notifications")
 
     if _want(components, "security"):
@@ -830,6 +1460,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
                 shutil.copy2(str(s), str(d))
                 os.chmod(str(d), 0o600)
                 print(f"  {f}: restored (was missing)")
+        # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
+        # copy above, because whether the imported rows can verify depends on which key won.
+        _merge_security_events(snap, pc)
         print("  ✅ security")
 
     if _want(components, "workspace"):
@@ -847,6 +1480,79 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             _copy_tree_no_overwrite(snap / "skills", pc / "skills")
         print("  ✅ skills")
 
+    # 🔴 Every remaining inventory entry (S177). The capture side stages these; neither restore
+    # mode read them, so a merge recovered the automations and silently dropped the task board.
+    # Gated on `everything` so a targeted `--components memory` stays targeted — but that is also
+    # the default (`components is None`), which is the invocation a user in a recovery actually
+    # types.
+    # 🔴 The six declared sqlite stores whose `sqlite_attach_ignore` had no executor (S180). Runs
+    # BEFORE the generic store pass so a DB the live home already holds is MERGED rather than left
+    # alone; the pass below then copies any that are missing entirely.
+    #
+    # Driven off the inventory, not a hardcoded list, so a store declared later merges by default —
+    # the same reason capture reads `backup_entries()`. `memory.db` is excluded: its own executor
+    # filters `WHERE is_deleted=0`, and a generic all-tables merge would resurrect deleted memories.
+    if _want(components, "everything"):
+        for rel in _attach_merge_paths():
+            s_db, d_db = snap / rel, pc / rel
+            if s_db.is_file() and d_db.is_file():
+                _merge_sqlite_attach(s_db, d_db, rel)
+
+    # 🔴 The nine file-shaped `union_by_id`/`lww_by_updated_at` entries with no executor (S181).
+    # Runs BEFORE the generic store pass so a file the live home already holds is MERGED rather than
+    # left alone; that pass then copies any missing outright.
+    #
+    # Per-file, not generic: the shapes genuinely differ (a wrapped list, a bare list, a map keyed
+    # by
+    # date/tool/composite) and so do the semantics. Read off the owning module's contract, measured
+    # against a real home.
+    if _want(components, "everything"):
+        for rel, wrapper, key in (
+            ("hooks.json", "hooks", "id"),
+            ("inbox.json", "items", "id"),
+            ("tags.json", None, "id"),
+        ):
+            n = _merge_json_collection(snap / rel, pc / rel, wrapper=wrapper, key=key)
+            if n:
+                print(f"  {rel}: {n} imported")
+        for rel, wrapper in (
+            # `spend.json` is date-keyed and `tool_usage.json` tool-keyed; tokenjuice's rows are
+            # keyed "<month>|<model>|<compressor>"; autonudge's live loops sit under `loops`.
+            ("spend.json", None),
+            ("tool_usage.json", None),
+            ("tokenjuice_savings.json", "rows"),
+            ("autonudge.json", "loops"),
+        ):
+            n = _merge_json_map(snap / rel, pc / rel, wrapper=wrapper)
+            if n:
+                print(f"  {rel}: {n} imported")
+        # `durability_state.json` is NOT merged. It holds the scheduler's own last-run marks, and
+        # `_due()` compares them against an interval — driven, a stale snapshot's `last_snapshot`
+        # reads as DUE while the live one does not, so importing it would re-trigger a snapshot
+        # immediately. Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets
+        # its marks back, a live home keeps the ones that describe what actually ran.
+
+    if _want(components, "everything"):
+        restored = []
+        for rel in _extra_restore_paths(snap):
+            src = snap / rel
+            dst = pc / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                _copy_tree_no_overwrite(src, dst)
+                restored.append(rel)
+            elif src.is_file() and not dst.exists():
+                # A file the live home does not have. An EXISTING file is left alone: merge
+                # mode's contract is that local state wins, and these entries have no
+                # field-level merge executor yet (their declared strategies are the 13 the
+                # queue tracks) — so copy-if-missing is the honest half, not a silent overwrite.
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+                restored.append(rel)
+        if restored:
+            print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")
+        print("  ✅ stores")
+
     print("✅ Merge complete.")
 
 
@@ -862,6 +1568,57 @@ def _is_gateway_running() -> bool:
             return True
     except OSError:
         return False
+
+
+def restore_plan(archive: Path, components: list[str] | None) -> dict:
+    """The merge plan for `archive`, as data — the API's read-only half (S184).
+
+    Shares `merge_plan()` with the CLI's `--dry-run`, so the endpoint cannot describe a different
+    restore from the one the terminal describes. Writes nothing.
+    """
+    with tempfile.TemporaryDirectory() as work_str:
+        work = Path(work_str)
+        with tarfile.open(str(archive), "r:gz") as tar:
+            tar.extractall(work, filter=_data_filter)
+        roots = [p for p in work.iterdir() if p.is_dir()]
+        if not roots:
+            return {"ok": False, "error": "invalid snapshot format"}
+        pc = _pc_dir()
+        populated = home_is_populated(pc)
+        return {
+            "ok": True,
+            "snapshot": archive.name,
+            "home_populated": bool(populated),
+            "existing_stores": sorted(populated),
+            "proposed_mode": "merge" if populated else "replace",
+            "plan": merge_plan(roots[0], pc, components),
+        }
+
+
+def restore_apply(archive: Path, mode: str, components: list[str] | None) -> dict:
+    """Perform a restore. Refuses while the gateway runs, exactly as the CLI does.
+
+    No `force` parameter on purpose: overriding the running-gateway guard is a local operator
+    decision at a terminal, not something to expose over HTTP.
+    """
+    if _is_gateway_running():
+        _audit("state_restore_rejected", "reason=gateway_running")
+        return {"ok": False, "error": "gateway is running — stop it before restoring"}
+    with tempfile.TemporaryDirectory() as work_str:
+        work = Path(work_str)
+        with tarfile.open(str(archive), "r:gz") as tar:
+            tar.extractall(work, filter=_data_filter)
+        roots = [p for p in work.iterdir() if p.is_dir()]
+        if not roots:
+            return {"ok": False, "error": "invalid snapshot format"}
+        pc = _pc_dir()
+        pc.mkdir(parents=True, exist_ok=True)
+        if mode == "replace":
+            _do_replace(roots[0], pc, components)
+        else:
+            _do_merge(roots[0], pc, components)
+    _audit("state_restored", f"mode={mode} snapshot={archive.name}")
+    return {"ok": True, "mode": mode, "snapshot": archive.name}
 
 
 def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:
@@ -910,7 +1667,13 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 return 1
 
     pc = _pc_dir()
-    mode = args.mode or ("merge" if (pc / "memory.db").is_file() else "replace")
+    # Inventory-based, not `memory.db`-based: any declared store makes this home populated, and a
+    # populated home must default to MERGE so a restore cannot displace newer local state.
+    populated = home_is_populated(pc)
+    mode = args.mode or ("merge" if populated else "replace")
+    if args.mode is None and populated:
+        print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
+        print("   Use --mode replace to overwrite instead (previous state is kept aside).")
 
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
@@ -938,10 +1701,19 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
 
         if args.dry_run:
             print(f"\n🔍 Dry run — would restore to {pc} in {mode} mode")
-            print("Files in snapshot:")
-            for f in sorted(snap.rglob("*")):
-                if f.is_file():
-                    print(f"  {f.relative_to(snap)}")
+            if mode == "merge":
+                # The PLAN, not a file listing: per-entry strategy and what happens to each. A raw
+                # list answered a different question from the one a user about to merge is asking.
+                print("Merge plan:")
+                print_merge_plan(merge_plan(snap, pc, components))
+            else:
+                # Replace mode is wholesale by definition, so the honest preview is what travels
+                # plus where the current state goes.
+                print("Files in snapshot:")
+                for f in sorted(snap.rglob("*")):
+                    if f.is_file():
+                        print(f"  {f.relative_to(snap)}")
+                print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
             return 0
 
         pc.mkdir(parents=True, exist_ok=True)

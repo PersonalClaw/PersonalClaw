@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, CheckCircle2, XCircle, Circle, Rocket, Pencil, CalendarDays } from 'lucide-react'
+import { Plus, Zap, Clock, Pencil, CalendarDays } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -18,6 +18,7 @@ import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, type Trigger, type TriggerKind } from './triggerMeta'
+import { statusMeta, triggerHealthMeta } from '../schedule/scheduleMeta'
 
 const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'All' },
@@ -26,14 +27,13 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'store', label: 'Automations' },
 ]
 
-function statusDot(s?: string | null) {
-  if (s === 'ok' || s === 'success') return { tone: 'var(--color-ok)', icon: CheckCircle2 }
-  if (s === 'error' || s === 'timeout' || s === 'blocked') return { tone: 'var(--color-danger)', icon: XCircle }
-  // "launched": a fire-and-forget run only started bg work — neutral info tone,
-  // NOT ok-green (honest "started ≠ succeeded", T7).
-  if (s === 'launched') return { tone: 'var(--color-info)', icon: Rocket }
-  return { tone: 'var(--color-on-surface-low)', icon: Circle }
-}
+// 🔴 The local `statusDot` was DELETED (S164). It handled four values and defaulted the rest to a
+// neutral grey circle — and for a store trigger this page feeds it `t.health`, whose vocabulary is
+// `ok | degraded | parked | failing`. Measured: `degraded`, `parked` and `failing` ALL rendered as
+// the same grey circle, so a FAILING automation was pixel-identical to a parked (self-healing) one
+// on the single page a user manages automations from. Second instance of S163's defect shape in a
+// second local copy, which is why the vocabulary now has one mapper: `statusMeta` for run outcomes,
+// `triggerHealthMeta` for health + lifecycle state.
 
 /** Unified Triggers list — schedule + lifecycle triggers in one view, with a
  *  type filter. Detail opens the right inspector per kind (ScheduleDetail reused
@@ -140,7 +140,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
             ) : (
               <div className="flex flex-col gap-s">
                 {triggers.map((t, i) => {
-                  const sd = statusDot(t.lastStatus)
+                  const sd = t.kind === 'store'
+                    ? triggerHealthMeta(t.lastStatus, t.state)
+                    : statusMeta(t.lastStatus)
                   // Right-click / long-press → the scoped actions this list performs on
                   // a row (open the inspector, or open it straight into edit mode). Both
                   // route through the same `setQuery` the row's click uses — destructive

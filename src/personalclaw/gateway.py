@@ -1353,7 +1353,22 @@ class GatewayOrchestrator:
                 live.last_success_at = stamp
             else:
                 live.last_failure_at = stamp
-                live.last_error_summary = decision.reason[:200]
+                # 🔴 THE ERROR, not the lifecycle reason (§3.7 / decision 9 — S162). This stored
+                # `decision.reason`, so `last_error_summary` held "failure 3 of 5" — and the
+                # attention card, which passes that field into its `last_error` slot, rendered
+                # **"paused after 5 consecutive failures. Last error: paused after 5 consecutive
+                # failures."** The one field carrying evidence repeated the sentence beside it, so
+                # the actual exception never reached the user. `attention_card`'s own docstring
+                # says why the slot exists: "'paused after 5 consecutive failures' without the
+                # error is an alert the user has to go digging to act on."
+                #
+                # Falls back to the lifecycle reason only when there is no error text at all (a
+                # provider returning `success=False` without raising) — an empty evidence line
+                # would be worse than a redundant one.
+                detail = f"{type(exc).__name__}: {exc}" if exc is not None else ""
+                if not detail and result is not None:
+                    detail = str(getattr(result, "error", "") or "")
+                live.last_error_summary = (detail or decision.reason)[:200]
             # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
             # needing attention must stop firing. Leaving `enabled` True while labelling the row
             # "autopaused" would be the inert control this program keeps finding.

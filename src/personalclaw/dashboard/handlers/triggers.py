@@ -323,6 +323,14 @@ def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[s
         "spec": dict(trigger.spec or {}),
         "action": dict(trigger.workflow or {}),
         "health": trigger.health_status,
+        # 🔴 THE LIFECYCLE STATE, which this projection omitted (S164). `Trigger.state` carries
+        # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
+        # the list rendered an autopaused automation like a running one, so the states S139
+        # (autopause), S159 (park/unpark) and the injection quarantine all decide were invisible
+        # on the one page a user manages automations from. `health` cannot substitute — a PARKED
+        # trigger is `health: parked` but an AUTOPAUSED one is `health: failing`, and "failing" does
+        # not tell the user the automation has STOPPED.
+        "state": trigger.state,
         "run_count": trigger.run_count,
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": list(broken or []),
@@ -1079,6 +1087,23 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     kind, raw = _split_id(request.match_info["id"])
     if kind == _STORE:
         return await _run_store(raw, request)
+    # 🔴 A STORE trigger DOES have run records (S166). This branch was `kind != _SCHEDULE`, so
+    # every store trigger — web_watch, file, idle, run_completed, view, webhook — was told
+    # `supported: false` with a reason naming LIFECYCLE triggers, a kind it is not. Measured: three
+    # fires of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"` via
+    # `_record_fire_outcome` (S139), and the endpoint reported none, so the detail panel showed "no
+    # runs recorded yet" for an automation that had run three times.
+    #
+    # The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw` for a
+    # store trigger (`store:web_watch:feed` → `web_watch:feed`) — so the same `list_for_job(raw, …)`
+    # call the schedule branch makes already works. Nothing new to plumb; the branch was simply
+    # written before store triggers had a run store.
+    #
+    # No catch-all for an unrecognised kind, deliberately: `_split_id` defaults an unknown prefix to
+    # `_SCHEDULE` (a bare id is a schedule id, for backwards compatibility), so `kind` can only ever
+    # be one of the four constants here — a third branch would be unreachable. Verified by driving
+    # `mystery:x`, which resolves to `("schedule", "mystery:x")` and answers an empty schedule
+    # history rather than a fabricated "unsupported".
     if kind == _LIFECYCLE:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
@@ -1332,7 +1357,7 @@ async def api_trigger_history(request: web.Request) -> web.Response:
                 "last_fired_at": trigger.last_fired_at,
             }
         )
-    if kind != _SCHEDULE:
+    if kind == _LIFECYCLE:
         return web.json_response(
             {
                 "runs": [],
@@ -1361,7 +1386,15 @@ async def api_trigger_history_detail(request: web.Request) -> web.Response:
     `ScheduleService`.
     """
     kind, raw = _split_id(request.match_info["id"])
-    if kind != _SCHEDULE:
+    # 🔴 A STORE trigger's run must open too (S167). This 404'd every non-schedule kind, so the
+    # list route S166 just fixed hands the UI a `run_id` that the detail route then denies — the
+    # expander opens on nothing. Driven: `LIST -> total=1 run_id='fire-…'` followed by
+    # `DETAIL -> 404`. `get_run(raw, run_id)` already works with a store key (verified against a
+    # real `file:notes` row), so the gate was the whole defect.
+    #
+    # A lifecycle/event trigger still 404s, and correctly: it has no run store to open a record
+    # from, and 404 is the honest answer for a record that does not exist.
+    if kind not in (_SCHEDULE, _STORE):
         return web.json_response({"error": "not found"}, status=404)
     run_id = request.match_info["run_id"]
     try:

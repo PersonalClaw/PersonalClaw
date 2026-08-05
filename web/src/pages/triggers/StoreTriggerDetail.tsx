@@ -4,6 +4,8 @@ import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type Trigger as WireTrigger } from '../../lib/api'
+import { RunHistory } from '../schedule/ScheduleDetail'
+import { triggerHealthMeta } from '../schedule/scheduleMeta'
 import { actionLabel } from './triggerMeta'
 
 /** Inspector for a store-backed trigger (file/web_watch/idle/…) in the SidePanel.
@@ -22,6 +24,9 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
 }) {
   const [busy, setBusy] = useState(false)
   const [runFlash, setRunFlash] = useState<string | null>(null)
+  // Bumped after a real run so the history reloads — a fire the user just triggered has to appear
+  // without a manual refresh, or the panel looks like it did nothing.
+  const [histKey, setHistKey] = useState(0)
   const [err, setErr] = useState('')
 
   const broken = trigger.broken ?? []
@@ -42,6 +47,28 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
     }
   }
 
+  // 🔴 The lifecycle state, in words (S169). This panel's only status line was
+  // `enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'`, so an
+  // AUTOPAUSED automation (five consecutive failures) and a QUARANTINED one (a payload matched an
+  // injection pattern) both read as if the USER had paused them. `TriggerState`'s own docstring
+  // names the failure: *"Showing both as 'paused' would make the user look for a switch they never
+  // flipped."* Measured — all three states produced that identical sentence.
+  //
+  // Reuses S164's shared `triggerHealthMeta` for the dot + label rather than inventing a third
+  // vocabulary mapper on a third surface.
+  const lc = triggerHealthMeta(trigger.health, trigger.state)
+  const stopped = trigger.state === 'autopaused' || trigger.state === 'quarantined'
+  const statusLine =
+    trigger.state === 'autopaused'
+      ? 'Stopped by the system after repeated failures'
+      : trigger.state === 'quarantined'
+        ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
+        : trigger.state === 'parked'
+          ? 'Parked — a resource it needs is busy; it resumes on its own'
+          : trigger.enabled
+            ? 'Firing on its own'
+            : 'Paused — it will not fire until re-enabled'
+
   async function run(dry: boolean) {
     setBusy(true)
     setErr('')
@@ -49,6 +76,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
     try {
       await api.runStoreTrigger(trigger.raw_id, dry)
       setRunFlash(dry ? 'Dry run — nothing executed' : 'Ran')
+      if (!dry) setHistKey((k) => k + 1)
       onChanged()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Run failed')
@@ -85,10 +113,20 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
 
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Enabled</div>
-          <div className="text-on-surface-low text-[0.8125rem]">
-            {trigger.enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'}
+          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Status</div>
+          <div className="flex items-center gap-1.5">
+            <lc.icon size={13} style={{ color: lc.tone }} />
+            <span className="text-on-surface text-[0.8125rem]">{statusLine}</span>
           </div>
+          {/* 🔴 The CAUSE, which this panel never showed (S169). `last_error` has been on the wire
+              all along and had no reader here, so an autopaused automation offered no way to learn
+              WHY — the user had to go digging, which is exactly what `attention_card`'s docstring
+              says the error text exists to prevent. */}
+          {stopped && trigger.last_error && (
+            <div className="mt-0.5 font-mono text-on-surface-low text-[0.75rem] break-all">
+              {trigger.last_error}
+            </div>
+          )}
         </div>
         <Toggle on={trigger.enabled} onChange={toggle} disabled={busy} label="Enabled" />
       </div>
@@ -107,6 +145,14 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
       <Section label="What it runs">
         <div className="text-on-surface text-[0.875rem]">{actionLabel(trigger.action?.provider)}</div>
       </Section>
+
+      {/* 🔴 A store trigger's run history, which this panel never showed (S168). The backend has
+          served the list since S166 and the per-run detail since S167, and the only UI for either
+          lived inside `ScheduleDetail` behind a hardcoded `schedule:` id — so a `web_watch` or
+          `file` automation showed "When it runs" and "What it runs" and nothing about whether it
+          ever HAD. Reusing the exported `RunHistory` rather than writing a second one: a duplicate
+          renderer is how two surfaces start disagreeing about what a run looks like. */}
+      <RunHistory triggerId={trigger.id} reloadKey={histKey} />
 
       {trigger.created_by === 'agent' && (
         <div className="text-on-surface-low text-[0.75rem]">Created for you automatically. Manage it here or ask in chat to change it.</div>

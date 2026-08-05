@@ -5200,3 +5200,762 @@ Load-bearing: dropping `attempt_key` turns 4 red.
 
 - **`failure_policy` is now fully read** — `autopause_after` (S160) and `dedupe_hash` (here). Every key
   on the field this sweep opened is wired or honestly named.
+
+### S162 — the evidence slot repeated the sentence beside it (§3.7 / decision 9)
+
+**Started from the last unswept dict on `Trigger`.** `retry` is the only one of the six whose declared
+keys (`{attempts, backoff}`) had never been checked. They have no reader — but this one does **not**
+become a session, for a measured reason recorded below. Following decision 9's *"captured evidence +
+explicit replay"* clause instead led to a live, user-visible defect.
+
+**🔴 THE DEFECT.** `_record_fire_outcome` stored `decision.reason` into `last_error_summary`, and
+`_surface_attention_card` passes that field into `attention_card`'s `last_error` slot. Measured, the
+card an autopaused automation produces:
+
+```
+title: nightly backup paused itself
+body : paused after 5 consecutive failures. Last error: paused after 5 consecutive failures
+```
+
+The one field carrying evidence restated the sentence beside it, and the real exception reached **no**
+surface. `attention_card`'s own docstring names the purpose of the slot: *"'paused after 5 consecutive
+failures' without the error is an alert the user has to go digging to act on."*
+
+**This is a WIRED-AND-WRONG control, not an inert one** — the shape S130 found and
+`wired-but-wrong-controls` records. The field was written on every failure, persisted, round-tripped,
+and rendered. Nothing was missing; the value was wrong. Inert controls announce themselves eventually
+(work stops happening); a wired-and-wrong one produces a confident, useless sentence forever.
+
+**The fix, in preference order:** the exception text (`RuntimeError: backup host unreachable`) →
+`ActionResult.error` for a provider that returns `success=False` without raising (`"exit 2: disk full"`)
+→ the lifecycle reason, only when neither exists. That last fallback is deliberate: a blank evidence
+line reading `"Last error: "` would be worse than a redundant one. A successful fire still writes no
+summary at all, so stale evidence cannot be mistaken for a current problem — verified as a control case.
+
+**Two leads recorded rather than built**, so the next sweep does not re-open them as defects:
+
+- **`Trigger.retry` `{attempts, backoff}` needs a mechanism that does not exist.** Measured:
+  `next_after_completion` is entirely failure-blind (no exit type reaches it), the reschedule happens
+  **before** the fire runs (§3.1 persist-before-execute), and the entity has nowhere to hold an
+  in-flight attempt number. `wakeup.retry_queue` retries wakeup DELIVERY, not a failed fire. So there
+  is no seam to hang a backoff on — building one is a design session touching the tick, the entity and
+  autopause's budget interaction, not a wiring fix.
+- **Decision 9's dead-letter tier is unreachable.** It specifies *"After N similar failures, quarantine
+  the trigger's runs with captured evidence + explicit replay (dead-letter richer than bare
+  autopause)"*. Driven across streaks 1-60: the only states a failure streak can reach are
+  `{active, autopaused}`. `quarantined` is reachable **only** from the injection screen, and its
+  `resume_state` deliberately refuses reinstatement — so the failure-streak dead-letter is a new
+  lifecycle tier, plus the three counters decision 9 names (`suppressed_total`, `executed_total`,
+  `retry_after_ms`), none of which exist anywhere in `src/`. An owner-scoped design, not a sweep.
+
+**Gate:** `make lint` (692 files) green first pass; full `pytest -n 4 --dist worksteal` green. No
+`web/` change. Load-bearing: restoring `decision.reason` turns 3 red.
+
+- **Every dict field on `Trigger` has now been key-swept**: `spec` (S149), `gates` (S150-S152, S154),
+  `capabilities` (S116/S118), `workflow` (S147), `failure_policy` (S160/S161) and `retry` (here,
+  honestly deferred with the reason measured).
+
+### S163 — a failed automation rendered as "never run", in neutral grey (§1.3 / crit 8)
+
+**Three defects in one chain**, each found by driving the layer below rather than reading it. The
+entry point was the last unswept field on `FireRecord`: `incomplete`, which `feed_response` reads to
+emit a `summaries` count — so the backend was correct and the question became what the frontend does
+with it.
+
+**(1) The typed vocabulary was dropped at the TypeScript boundary.** `ScheduleRun` declared
+`status?: string` and no `outcome` at all. But `/api/triggers/history` returns `FireRecord` rows, and
+a FireRecord carries **no `status` field**:
+
+```
+a SUPPRESSED row on the wire:
+  outcome     = 'skipped_gate'
+  reason      = 'quiet window'
+  status      = None            ← what ScheduleWidget switched on
+```
+
+**(2) The widget had its own mapper.** `ScheduleWidget` carried a local three-branch `outcome()` keyed
+on `status`, so every projected row arrived `undefined`, hit the default branch, and a quiet-hours
+suppression rendered as **"ran"** with an info dot. That is the feed reporting the machine did work it
+explicitly had not done — the inverse of criterion 8's "zero silent drops", and worse than showing
+nothing, because the user has no reason to look further. Replaced with the shared `statusMeta` S137
+already built.
+
+**(3) 🔴 And `statusMeta` itself was incomplete — found by my own new test.** Writing
+`expect(statusMeta('ran').label).not.toBe('never run')` failed. S137 mapped the store's `status` words
+(`success`/`failure`/`timeout`/`launched`) and the `skipped_*` family, and missed three of the twelve
+`Outcome` members:
+
+```
+ran_late  -> label="never run"  tone=--color-on-surface-low
+failed    -> label="never run"  tone=--color-on-surface-low
+```
+
+**`statusMeta('failed')` returned "never run" in neutral grey**, so a genuinely broken automation was
+pixel-identical to one that had never run — the single pair a user must never confuse. This is why the
+widget fix alone would have been insufficient: routing the correct value into a mapper that answers
+wrongly just moves the defect.
+
+`ran_late` gets its own warning-toned label rather than folding into `ok`, because §1.3 records
+`scheduled_for` beside `started_at` precisely so lateness is a measurable fact rather than an
+impression — a run 40 minutes after its slot is a different story from one on time.
+
+**Also typed the archive split through the wrapper.** The backend has emitted `did_ids`,
+`suppressed_ids`, `suppressed` and `summaries` since S132 (#454), and `api.triggersHistory` declared
+only `{runs, total}` — so every consumer discarded them at the type boundary. Measured: 11
+suppressions plus 1 real fire come back as one flat list, which `ScheduleWidget` then slices to 6, so
+the fire that mattered can be pushed off the widget entirely. That is the exact failure §1.3's split
+was built to prevent, and the split was reaching no surface.
+
+**Ships a completeness test** restating the closed backend vocabulary and asserting no member renders
+as "never run", plus one pinning `failed` as visually distinct from never-run. Every one of these bugs
+lived in the same place — a default branch swallowing a value nobody had enumerated — so the guard
+enumerates.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**638 passed, 53 files** · full `pytest -n 4 --dist worksteal` green.
+
+- **`FireRecord` is now fully swept.** `acted_on` remains the one unwritten field and is documented as
+  pre-allocated for LEARNING-FLYWHEEL by explicit design, not an oversight.
+
+### S164 — a failing automation looked exactly like a parked one (§3.7 / §1.3)
+
+**S163 fixed one local status mapper; this session asked whether there were others.** There were —
+on the primary automations page, and with a second vocabulary the first fix did not touch.
+
+**🔴 DEFECT 1: the health rollup collapsed to one grey dot.** `TriggersListPage` carried its own
+`statusDot`, handling `ok`/`success`, `error`/`timeout`/`blocked`, `launched`, and defaulting
+everything else. But `triggerMeta.storeToTrigger` sets `lastStatus: t.health`, so what that mapper
+actually receives is `TriggerHealth`:
+
+```
+health=ok        -> ok green, check
+health=degraded  -> grey, circle
+health=parked    -> grey, circle
+health=failing   -> grey, circle     ← identical to parked and degraded
+```
+
+On the one page a user manages automations from, a **failing** automation was pixel-identical to a
+**parked** one — and parking is self-healing (S159's unpark) while failing is not. Three health values
+sharing one dot means the rollup answered nothing.
+
+**🔴 DEFECT 2: the lifecycle state reached no surface at all.** `_serialize_store` emitted `health` and
+not `state`. So `Trigger.state` — `active | paused | autopaused | parked | quarantined | retired` — was
+absent from the wire, absent from the `Trigger` TS interface, and absent from the view-model. Every
+lifecycle transition this program built was invisible: **autopause (S139), park/unpark (S159) and the
+injection quarantine all decided a state nothing could render.**
+
+`health` cannot substitute, and the reason is worth stating: a PARKED trigger is `health: parked`, but
+an AUTOPAUSED one is `health: failing` — and "failing" does not tell the user the automation has
+**stopped**. One says how it has been going, the other whether it will run at all.
+
+**Fixed across all three layers**, and the local mapper deleted in favour of one shared
+`triggerHealthMeta` sitting beside S137's `statusMeta`. A second copy of a vocabulary is how two
+surfaces start disagreeing about what a value means — which is precisely what produced both this
+defect and S163's. Two mappers now, one per vocabulary: run outcomes, and health + lifecycle.
+
+**Decisions inside the mapper:**
+
+- **State outranks health when it is not `active`.** Folding them into one function rather than two
+  avoids making every call site invent a precedence rule, and "stopped" is the more urgent fact than
+  "has been failing".
+- **A healthy rollup must not hide a stopped automation** — `triggerHealthMeta('ok', 'autopaused')`
+  reads `autopaused`, asserted by test as the dangerous direction.
+- **`parked` keeps an INFO tone, not danger.** S159 made it self-healing, so a red badge would send the
+  user hunting a fault that resolves itself. `quarantined` is danger-toned and distinct from a mere
+  pause, because `resume_state` refuses to reinstate it from a button.
+
+**`tsc --noEmit` then caught four now-unused icon imports** (`CheckCircle2`, `XCircle`, `Circle`,
+`Rocket`) — the tail of deleting the local mapper, the same way `flake8` caught `hashlib` in S161.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**648 passed, 54 files** · full `pytest -n 4 --dist worksteal` green. Load-bearing: removing the
+`state` emission turns 3 backend tests red.
+
+- **Both of the frontend's status vocabularies are now mapped and guarded** by per-value completeness
+  tests. The remaining known FE gap is unchanged: `did_ids`/`suppressed_ids` are typed (S163) but no
+  surface yet folds the suppressed rows away, which is a UI affordance rather than a correctness bug.
+
+### S165 — the archive split reached no surface (§1.3 / crit 8)
+
+**Closes the gap S163's and S164's own logs both recorded as still open.** §1.3: *"inert outcomes
+collapse to ledger rows and archive out of the default inbox view — the runs inbox is for what the
+machine DID."* The backend has returned `did_ids`, `suppressed_ids` and `suppressed` since S132
+(#454), and S163 typed them onto the API wrapper — but `DashboardLive.loadSchedule` kept only
+`d.runs`, so the widget rendered the raw list.
+
+**🔴 MEASURED.** A minutely trigger inside quiet hours — 11 `skipped_gate` rows and ONE `ran` at
+index 7:
+
+```
+backend: 12 rows | did=['REAL'] | suppressed=11
+widget renders schedule.slice(0, 6):
+  ['s0', 's1', 's2', 's3', 's4', 's5']
+  contains the real fire? False
+```
+
+Six identical "gate" entries, and the one fire that did something never appeared. A user reads that as
+"nothing has run" — the exact failure §1.3's split was written to prevent, with the answer sitting
+unread in the same response.
+
+**ORDERS rather than filters**, and that distinction is the whole design. Suppressed rows still render
+below the real ones, because §7 criterion 8 bans silent drops and *"why did my automation not run"*
+has to stay answerable — a widget that hid them would trade one blindness for another. What changes is
+that work outranks suppression for the six scarce visible slots. A `N suppressed by a gate` line names
+the fold rather than leaving the count implicit.
+
+**Membership comes from the server's `did_ids`, not from re-testing outcomes client-side.** `is_inert`
+is the backend's rule; a second copy in the widget drifts the moment a new `skipped_*` outcome lands —
+which is the same argument S163 and S164 made about status mappers, applied to a predicate.
+
+**🔴 A bug in my own first draft, caught by driving it rather than reading it.** I keyed the split on
+`r.run_id`. A projected `FireRecord` carries **no** `run_id` — measured, it serialises as `''` — and its
+identity is `id`, which `ScheduleRun` did not declare either. Nothing would have matched `did_ids`, so
+the split would have silently no-opped: **the fix itself would have shipped as an inert control**, the
+very shape this program keeps finding. Now keyed on `id`, with `id` added to the wire type.
+
+A row with **no** `id` (a legacy `ScheduleRun` from the schedule store) is treated as NOT suppressed.
+An unknown row is more likely real work than a gate hit, and the fail direction for a visibility fix has
+to be "shown" rather than "hidden" — hiding it would make the widget quietly lose history it used to
+display.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**654 passed, 55 files** · full `pytest -n 4 --dist worksteal` green. No backend change.
+
+- **§1.3 is now honoured end to end**: typed outcomes (S137/S163), health + lifecycle state (S164), and
+  the archive split (here). `suppressed_ids` remains typed-but-unused — `did_ids` is sufficient for the
+  ordering, and adding a second membership test for the complement would be two ways to ask one
+  question.
+
+### S166 — a store trigger's history was "unsupported", naming the wrong kind (§1.3 / crit 8)
+
+**Found by sweeping the PER-TRIGGER surfaces** after S165 closed the cross-trigger feed. Same
+question, different endpoint: what does a user see when they open one automation?
+
+**🔴 THE DEFECT.** `api_trigger_history` branched on `kind != _SCHEDULE`, so every store trigger —
+`web_watch`, `file`, `idle`, `run_completed`, `view`, `webhook` — received:
+
+```json
+{"runs": [], "total": 0, "supported": false,
+ "reason": "lifecycle triggers run inline with the agent loop and keep no run store"}
+```
+
+A store trigger is not a lifecycle trigger, and it **does** have run records: `_record_fire_outcome`
+has written them to `ScheduleRunStore` under `job_id=trigger.id` since S139. Measured — three fires
+of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"`, and the endpoint
+reported none. The detail panel read *"No runs recorded yet"* for an automation that had run three
+times, and the stated reason sent the user hunting a lifecycle trigger they never created.
+
+**Nothing needed plumbing.** The run-store key is the FULL trigger id, which is exactly what
+`_split_id` already returns as `raw` for a store trigger (`store:web_watch:feed` →
+`web_watch:feed`) — so the schedule branch's own `list_for_job(raw, …)` call works verbatim. The
+branch was simply written before store triggers had a run store, and nothing revisited it when S139
+gave them one.
+
+**🔴 My first draft added a third catch-all branch for an unknown kind. The test proved it dead.**
+`_split_id` defaults an unrecognised prefix to `_SCHEDULE` (a bare id IS a schedule id, for backwards
+compatibility), so `kind` can only ever be one of the four constants and a third branch is
+unreachable. Removed rather than shipped, with the reasoning recorded at the site and pinned by a test
+that drives `mystery:x` and asserts it resolves to an empty *schedule* history rather than a
+fabricated "unsupported".
+
+**🔴 And my first LOAD-BEARING CHECK was the wrong instrument.** `_LIFECYCLE` appears five times in
+this file, so `str.replace(..., 1)` patched a *different* handler and the suite stayed green — which
+reads exactly like "the test does not catch the defect". The test was fine; the revert was wrong.
+Re-run by line number against the history handler specifically, it turns the test red. Worth
+recording: a load-bearing check that mutates the wrong line is a false negative that argues for
+deleting a good test.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change —
+`ScheduleDetail` already renders whatever `runs` the endpoint returns, and already uses the shared
+`statusMeta`, so serving the rows was the whole fix.
+
+- **The lifecycle branch is preserved and now correct for the kind it was about.** A lifecycle trigger
+  genuinely keeps no run store, and a bare `{"runs": []}` would read as "this ran and kept no record"
+  — a different, false claim. That honesty was right; it was simply being given to the wrong kinds.
+
+### S167 — the list handed out a run_id the detail route denied (§1.3 / crit 8)
+
+**Swept the sibling route immediately, instead of stopping at S166's fix.** `api_trigger_history` and
+`api_trigger_history_detail` are the same surface in two halves, and they carried the same gate.
+
+**🔴 THE DEFECT.** `api_trigger_history_detail` began `if kind != _SCHEDULE: return 404`. So the list
+route S166 had *just* fixed handed the UI a real `run_id`, and opening it was denied:
+
+```
+LIST   -> total=1 run_id='fire-1785909121906'
+DETAIL -> 404 {'error': 'not found'}
+```
+
+The history expander opened on nothing, for every store kind. Worse than the S166 state in one
+respect: S166's version at least said "unsupported" up front, whereas this offers a link and then
+refuses it — the user sees a row, clicks, and gets nothing.
+
+**`get_run` already worked.** Verified against a real `file:notes` row: `get_run("file:notes",
+"fire-…")` returns the record, because the run-store key is the full trigger id and `_split_id` hands
+that back as `raw`. The gate was the entire defect, exactly as in S166.
+
+**A lifecycle/event trigger still 404s, and that is correct** — it keeps no run store, so there is no
+record to open. But the two 404s stay **distinguishable**, which the tests pin:
+
+- `"not found"` — this KIND keeps no runs.
+- `"run not found"` — this trigger does keep runs, and that one is not among them.
+
+A caller chasing a stale link needs to tell those apart, and collapsing them would make a missing row
+and an unsupported kind look identical.
+
+**The S166 lesson applied to this session's own verification.** S166's load-bearing check used
+`str.replace(old, new, 1)` and silently patched a *different* handler (`_LIFECYCLE` appears five times
+in the file), producing a false green that read like "the test does not catch the defect". Here the
+revert first asserts the gate string appears **exactly once**, then patches that line number:
+
+```
+occurrences of the new gate: 1 at lines [1392]
+reverted line 1392
+-> 2 failed
+```
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change —
+`api.scheduleRunDetail` hardcodes a `schedule:` prefix, so the FE cannot yet request a store trigger's
+run detail; the backend is now correct and ready, and widening that wrapper is a UI affordance rather
+than a correctness fix.
+
+- **The per-trigger run surface is now complete for store kinds**: the list (S166) and the detail
+  (here). Recorded honestly: the frontend's `scheduleRunDetail` still only builds `schedule:` ids, so
+  the expander is reachable for schedules today and for store triggers once that wrapper is generalised.
+
+### S168 — the backend served a history no UI could ask for (§1.3 / crit 8)
+
+**Closes the gap S167's own log recorded.** S166 made the list route serve store triggers and S167 made
+the detail route open their runs — and the frontend still could not request either.
+
+**🔴 THE DEFECT, in two parts.** `api.scheduleHistory` and `api.scheduleRunDetail` interpolated a
+hardcoded `schedule:` prefix, so no call could ever address `store:file:notes`. And `RunHistory` — the
+only history UI in the codebase — was **private** to `ScheduleDetail` and took a bare job id. Net
+effect: `StoreTriggerDetail` rendered "When it runs" and "What it runs" and nothing at all about
+whether it ever had, for every one of the six store kinds.
+
+Three sessions of backend work reaching no surface is the same shape as S165's archive split, which is
+why the sweep continued past the first fix rather than stopping.
+
+**Reused, not reimplemented.** `RunHistory` is now exported and keyed on the FULL facade id, and
+`StoreTriggerDetail` renders it. A second history renderer is how two surfaces start disagreeing about
+what a run looks like — the argument S163/S164 made about status mappers and S165 made about the
+inert-fold predicate, applied to a component.
+
+**`supported: false` renders as its REASON, not as an empty list.** A lifecycle trigger keeps no run
+store, and "No runs recorded yet" would be a false claim about a kind that records none — the same
+distinction the backend draws, now preserved through to the panel.
+
+**The id ALGEBRA is where the real risk sat**, so it is pinned by test rather than left to a reader:
+
+- the ENDPOINT takes the full facade id — `store:file:notes`;
+- `InvestigateButton` and the run store take the RAW suffix — `file:notes`;
+- the prefix strip is anchored and non-greedy, because a greedy one turns `file:notes` into `notes`
+  and misses every lookup.
+
+That last point is the same near-miss-key class that nearly made S165's fix inert (`run_id` vs `id`),
+so `rawId` is derived once from `triggerId` rather than passed alongside it — two parameters that must
+agree are two parameters that can disagree.
+
+**`histKey` bumps after a real (non-dry) run**, so a fire the user just triggered appears without a
+manual refresh. A dry run deliberately does not bump it: nothing was recorded, and refreshing to show
+no change would read as a failure.
+
+**Verified no import cycle.** `StoreTriggerDetail` → `ScheduleDetail` → `triggers/triggerMeta` →
+`schedule/scheduleMeta` (a leaf). `triggerMeta` does not import `ScheduleDetail`, so the graph stays
+acyclic; confirmed by a clean `npm run build` plus the render-smoke gate passing all 5 routes.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**660 passed, 56 files** · `npm run build` clean · `npm run smoke:render` PASS · full
+`pytest -n 4 --dist worksteal` green.
+
+- **§1.3's per-trigger run surface is now complete end to end** for store kinds: rows written (S139),
+  list served (S166), detail served (S167), and both rendered (here).
+
+### S169 — a machine-stopped automation read as a user-paused one (§3.7)
+
+**Found by auditing which wire fields the store panel actually reads.** Nine of them — and never
+`state`, `health` or `last_error`, the three that answer "is this working?".
+
+**🔴 THE DEFECT.** `StoreTriggerDetail`'s only status line was
+`enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'`. Measured across the
+real lifecycle states:
+
+```
+situation                  state         panel says
+  user paused it           paused        'Paused — it will not fire until re-enabled'
+  AUTOPAUSED: 5 fails      autopaused    'Paused — it will not fire until re-enabled'
+  QUARANTINED: injection   quarantined   'Paused — it will not fire until re-enabled'
+```
+
+`TriggerState`'s own docstring names this failure, which is what makes it worth a session rather than
+a polish item:
+
+> *`autopaused` is separate from `paused` because the two answer different questions: a paused trigger
+> is a user decision, an autopaused one is the system reporting five true failures. Showing both as
+> "paused" would make the user look for a switch they never flipped.*
+
+**And the cause was invisible.** `last_error` has been on the wire all along with no reader in this
+panel, so an autopaused automation gave no route to WHY — exactly the digging `attention_card`'s
+docstring says the error text exists to prevent. S162 fixed what that field *contains*; this fixes
+whether anyone can see it.
+
+**Four distinct sentences now, each earning its wording:**
+
+- **autopaused** — says the SYSTEM stopped it, so the user does not hunt for their own switch.
+- **quarantined** — says **re-author it**, because the toggle genuinely cannot undo quarantine
+  (`resume_state` refuses it from a button; one click is too cheap a gesture for "run the thing that
+  looked like an attack").
+- **parked** — says it **resumes on its own**, because S159 made parking self-healing; telling the user
+  to re-enable it would send them to fix something that fixes itself.
+- **user pause** — keeps the original wording, which was correct for the one state it was written for.
+
+`last_error` renders beneath in monospace, and only for a machine-stopped trigger: showing a stale error
+on a healthy automation would read as a current problem.
+
+**Reuses S164's shared `triggerHealthMeta`** for the status dot rather than inventing a third local
+vocabulary on a third surface. S163 and S164 each found a local copy that had drifted; the pattern is
+now that a vocabulary has one mapper and surfaces consume it.
+
+**Absent `state` falls back to the enabled/disabled reading** — a row projected before S164 added
+`state` still renders something true rather than an empty status.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**668 passed, 57 files** · `npm run build` clean · `npm run smoke:render` PASS all 5 routes · full
+`pytest -n 4 --dist worksteal` green.
+
+- **The store trigger's detail panel now answers all three questions** a user opens it with: what it
+  runs (pre-existing), whether it has been running (S168's history), and whether it is running now,
+  with the cause when it is not (here).
+
+### S170 — a fire 40 minutes past its slot recorded a plain `ran` (§1.3)
+
+**Found by running the reader sweep over `FireRecord`'s wire fields** (the S163–S169 method, applied to
+the other entity). `scheduled_for` had no frontend reader; chasing why led to the outcome it exists to
+support.
+
+**🔴 THE DEFECT.** §1.3 introduced `ran_late` and `scheduled_for` together:
+
+> *`scheduled_for` sits alongside `started_at` so `ran_late` is a measurable fact rather than an
+> impression: a run that started 40 minutes after its slot is a different story from one that started
+> on time and took 40 minutes.*
+
+`FireRecord` carries both stamps, and `validate_record` even **refuses** a `ran_late` row without a
+`scheduled_for` — the model actively defends a pairing nothing produced. The only writer was the
+**manual** missed-fire card (`resolve_missed`). Measured on a real tick:
+
+```
+a fire 40 minutes past its slot:
+  outcome       = 'ran'
+  scheduled_for = 1800000000.0
+  reason        = ''
+measurable lateness on the row: 40 min
+```
+
+Both timestamps present, lateness computable, outcome silent about it.
+
+**🔴 The threshold is DERIVED, not chosen** — which is the part worth defending:
+
+```
+LATE_THRESHOLD_SECS = 2 × (BOOT_STAGGER_BASE_SECS + BOOT_STAGGER_WINDOW_SECS + POLL_CEILING_SECS)
+                    = 2 × (60 + 120 + 30) = 420s = 7 min
+```
+
+On-time scheduling already carries those delays *by design*: a wake sleeps up to a poll ceiling, and a
+boot deliberately pushes overdue fires by the stagger base and spreads them across the window to avoid a
+thundering herd. A threshold below their sum would label the substrate's own correct behaviour as
+lateness — which is how a signal becomes noise and then gets ignored. The test asserts the constant
+against its components, so retuning a stagger carries the threshold along instead of silently
+invalidating it. Measured boundary: 6 min → `ran`, 8 min → `ran_late`.
+
+**Refined in the TICK**, because that is the one place holding both stamps: `scheduled_for` comes from
+the trigger's own `next_fire_at` and `now` is when the fire was granted. `FireContext` has no
+`scheduled_for`, so `firepath` cannot decide this, and adding one there would duplicate a value the tick
+already owns.
+
+**Only `ran` is refined.** Overwriting `failed` with `ran_late` would lose the failure entirely, turning
+a broken automation into a merely tardy one; a suppressed fire keeps its gate reason, because "it was
+late" is not the interesting thing about a fire that never ran. A zero or missing slot returns unchanged
+— with nothing to compare against, lateness is not a fact, and guessing produces exactly the
+"impression" §1.3 warns about.
+
+**Verified both downstream classifications**, since a new outcome value silently reclassifying a run is
+how this program's defects usually compound:
+
+- **not** in `TRUE_FAILURE_OUTCOMES` — 5 consecutive late fires give `consecutive_failures_from == 0`,
+  so a slow automation is not autopaused for being slow.
+- **not** in `INERT_OUTCOMES` — it DID the work, so it stays in the runs feed rather than folding away.
+- Already rendered: S163 mapped `ran_late` to a warning-toned "ran late" label, so the UI was waiting.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by discarding the refinement while keeping the code valid — exactly one test goes
+red. (A first attempt left a `NameError` instead, which is a broken revert rather than a disabled
+behaviour: 19 unrelated failures and no usable signal.)
+
+### S171 — criterion 8 was unmet: a suppressed fire left no trace (§7 crit 8)
+
+**Found by diffing the tick's ledger row against `FireRecord`'s own fields.** Eleven were absent —
+including `id`, which S165's archive split keys on. Chasing that revealed something larger than a
+missing field: the row is **never persisted at all**. `TickResult.ledger_rows` has no consumer outside
+`service.py`.
+
+**🔴 THE DEFECT.** Criterion 8 is unambiguous:
+
+> *every suppressed fire appears as a typed ledger row with a reason — zero silent drops*
+
+And `loop.tick_once` carries a comment asserting it is satisfied: *"`tick` already persisted each next
+fire and wrote a ledger row."* Half true — the next fire was persisted; the row was built, returned,
+and dropped. Measured:
+
+```
+6 ticks of a quiet-hours trigger
+  -> 6 in-memory ledger rows  (outcome='skipped_gate', reason='quiet hours 00:00–23:59…')
+  -> 0 rows PERSISTED to the run store
+```
+
+So the history a user reads had no record any of it happened. That is indistinguishable from a
+scheduler that never woke — and the whole point of §1.3's typed reasons is to make those two
+distinguishable. Every gate this program wired (S150-S154's caps, S151's spacing, S152's rate window,
+S157's screen) produced a reason nobody could read afterwards.
+
+**Persisted following S136's `_record_blocked_fire` shape**, deliberately: that session already
+established that a suppressed fire earns a `ScheduleRun` row keyed by trigger id with the typed outcome
+in `trigger`/`status`. Reusing the shape means the runs feed projects a skip exactly as it already
+projects a blocked payload, rather than needing a second reader.
+
+**Two boundaries, both driven:**
+
+- **`persist`-gated.** `automation doctor`'s dry run reports what a real tick *would* do; a diagnostic
+  that writes history changes the thing it diagnoses. Verified: `persist=False` × 4 ticks → 0 rows.
+- **Suppressions only.** A granted fire's row belongs to `gateway._record_fire_outcome`, written once
+  the run settles. Verified: 3 granted fires → 0 rows from this path.
+
+**🔴 A SECOND-ORDER DEFECT MY OWN FIX INTRODUCED**, caught by driving the consequence rather than
+stopping at the feature. `count_since` counts every row in the window, so the newly-persisted skips
+became fires:
+
+```
+5 suppressions -> count_since: 5
+```
+
+That **inverts** S152's rate cap: a trigger held by its own quiet window would consume the hourly
+allowance it never used, then be refused for "running away". The cap exists to bound work the machine
+DID. Excluded via `INERT_OUTCOMES` — the same set `history.is_inert` reads — so there is one definition
+of "this did nothing" serving both surfaces, and a future inert outcome cannot start counting toward a
+rate cap because nobody updated a second list.
+
+Verified the exclusion is narrow: a real fire **and a failed one** both still count (a failure is work
+— it woke, it ran, it broke — so excluding failures would let a crash-looping trigger fire forever), and
+S152's manual-bypass still holds alongside without either exclusion shadowing the other.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change —
+S163's `statusMeta` already renders every `skipped_*` outcome, and S165's split already folds them, so
+these rows land on surfaces built to receive them. Load-bearing verified by disabling each half at a
+uniquely-matched line: 4 tests red between them.
+
+### S172 — a suppression's reason rendered in danger red (§1.3)
+
+**The direct consequence of S171's own fix**, found by asking what happens to the value that session
+started persisting rather than treating the feature as finished.
+
+**🔴 THE DEFECT.** A suppressed fire's reason lands in `ScheduleRun.error` (that is the field S136's
+shape uses), and `RunTrace` renders `run.error` inside a danger-tinted box. Measured:
+
+```
+quiet-hours skip   dot=gate     tone=--color-on-surface-low   dangerBox=true
+budget skip        dot=budget   tone=--color-on-surface-low   dangerBox=true
+a REAL failure     dot=error    tone=--color-danger           dangerBox=true
+a clean run        dot=ok       tone=--color-ok               dangerBox=false
+```
+
+**The row contradicted itself** — a neutral grey "gate" dot beside its reason in red, byte-identical
+styling to a real `ConnectionError`. And the alarming half is the one a user reacts to, so an
+automation working exactly as configured read as a fault, sending them hunting something that is not
+there. Precisely the failure `statusMeta`'s own comment names for the suppression family: *"a red badge
+would send the user looking for a fault that is not there."*
+
+This is S171's log warning realised one layer down: a visibility fix landing a value on a surface that
+was not built to receive it.
+
+**Fixed with a shared `isInertOutcome` predicate** beside `statusMeta`, so the reason box renders
+neutral for an inert outcome and keeps danger styling for a real failure. The tests assert that **the
+dot and the reason AGREE**, rather than either styling in isolation — the defect was an internal
+contradiction, so consistency is the property worth pinning.
+
+**Derived from the `skipped_` prefix, not a hand-copied list.** All six members of the backend's
+`INERT_OUTCOMES` carry it (verified 6/6 against the Python set), so a future inert outcome is covered
+automatically instead of waiting for someone to update a second list — the same argument `statusMeta`
+already makes by matching that family by prefix, and the same argument S171 made for reusing
+`INERT_OUTCOMES` in `count_since` rather than enumerating `skipped_*` locally.
+
+Anchored at the start, so `was_skipped` is not mistaken for a suppression (the case
+`scheduleMeta.outcomes.test.ts` already guards for `statusMeta`). An **absent** outcome falls to
+NOT-inert: a legacy `ScheduleRun` carries `status` and no `outcome`, and the fail direction must never
+quietly de-emphasise a real error.
+
+**Verified the sibling danger box needs no change.** `ScheduleDetail:232` renders `job.last_error` the
+same way — but S162 placed that write inside the FAILURE branch of `_record_fire_outcome`, so a
+suppression cannot reach it. Checked rather than assumed, since the two boxes are visually identical.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**675 passed, 58 files** · `npm run build` clean · `npm run smoke:render` PASS all 5 routes · full
+`pytest -n 4 --dist worksteal` green.
+
+- **The suppression chain is now honest end to end:** the row is built (S86), typed (S132), persisted
+  (S171), counted correctly by the rate meter (S171), folded out of the default view (S165), and
+  rendered as a non-error (here).
+
+### S173 — a suppression storm evicted the runs that did work (§1.3 retention)
+
+**The third consequence of S171's persistence**, found by asking what a bounded store does when its
+input volume jumps — rather than assuming a cap that was correct yesterday is still correct.
+
+**🔴 THE DEFECT.** `_rotate_job_locked` kept a flat `rows[-_MAX_RECORDS_PER_JOB:]` tail. That is right
+while every row is a run. Once suppressed fires persist, a minutely trigger held by quiet hours writes
+**1440 rows a day** — and `RunWeight`'s own docstring names exactly that number as the volume the
+ledger/full split exists to manage. Measured:
+
+```
+cap = 100 rows/job
+1 real backup run + 129 quiet-hours skips -> stored: 100
+  the real run still present?  False
+  what a user now sees: ['skip-129', 'skip-128', 'skip-127']
+```
+
+The 100-row window held ~100 **minutes** of history instead of ~100 runs, and the rows a user opens the
+history *for* were the first evicted. S171 made suppressions visible; this stopped them from
+crowding out the thing they were meant to explain.
+
+**Per-class quota:** suppressions capped at a quarter of the window, work taking the remainder. A
+quarter is enough that "why did my automation not run last night" stays answerable across a long quiet
+window, while leaving three quarters for runs that did something.
+
+**🔴 My first draft got the direction wrong, and an existing test caught it.** I capped WORK at
+`total − suppressed_cap` unconditionally, which regressed a work-only job from 100 rows to 75 —
+`test_rotation_caps_per_job` (pre-existing, asserting `total == _MAX_RECORDS_PER_JOB`) went red. That
+test was right and my change was wrong: it refused a behaviour change I had not justified. Corrected so
+the suppression cap is a **ceiling** and the work quota is whatever the total leaves, which means a
+trigger that never suppresses retains precisely what it did before this session.
+
+Worth recording as a pattern: when a pre-existing test fails during a retention change, the default
+assumption should be that the test encodes a guarantee, not that it needs updating.
+
+**Verified all three shapes:**
+
+```
+1 work + 129 skips  -> real run SURVIVES
+150 work, 0 skips   -> kept 100   (unchanged from before)
+90 work + 200 skips -> kept 100, of which 75 are work
+```
+
+**Order is preserved on write.** The two classes are partitioned to decide what survives, then the
+kept rows are re-merged by original position — because `list_for_job` reverses the file for
+newest-first and `count_since` walks it, so a file grouped by class would make both misread it.
+Asserted by a test that appends alternating classes and checks the returned timestamps are
+monotonically decreasing.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the flat tail with valid code: exactly the two eviction tests go red
+while the work-only test stays green, which is the pair that matters. (A first revert attempt produced
+a `TypeError` — broken code rather than disabled behaviour, and therefore no usable signal.)
+
+### S174 — one noisy trigger owned the entire cross-job index (§1.3 retention)
+
+**The cross-job half of S173**, found by asking whether the SHARED index carried the same flat tail the
+per-job file did. It did — and the blast radius is worse, because the index is the only view that spans
+automations.
+
+**🔴 THE DEFECT.** `_rotate_index_locked` kept `rows[-_MAX_INDEX_RECORDS:]`. Measured after S171 began
+persisting suppressions:
+
+```
+three well-behaved automations, one run each
+  + 1.5 days of one minutely trigger's quiet-hours skips
+  -> cross-job index rows: 2000
+  -> jobs still represented: ['clock:noisy']
+     nightly-backup   present? False
+     weekly-report    present? False
+     deploy-watch     present? False
+```
+
+Every other automation vanished from the dashboard's *"recent runs across all schedules"* — which is
+the surface S165 had just fixed to show work over suppressions, so that fix was operating on a feed one
+trigger had already emptied.
+
+**Where S173's classes competed, here the JOBS compete.** So the bound is per `job_id`, set to the
+per-job FILE cap: a job cannot usefully contribute more index rows than its own history retains, and
+matching the two means the index never evicts a row whose full record still exists.
+
+**Applied only when trimming is needed, and only to jobs over their share** — verified, a store with 50
+rows keeps 50. An install that never reaches the global cap behaves exactly as before.
+
+**The invariant is per-TRIM, not per-append**, and saying so precisely matters: rotation fires only
+above the global cap, so between trims a job may exceed its share and is cut back on the next one.
+Driven across the boundary:
+
+```
+after skip 1998: index= 102 noisy= 100 jobs=['backup', 'noisy', 'report']
+after skip 2001: index= 105 noisy= 103 jobs=['backup', 'noisy', 'report']
+```
+
+Both quiet automations survive throughout, which is the property that matters; the exact row count
+oscillates by design.
+
+**Order preserved.** `list_all` reverses the file for newest-first, so a file regrouped by job would
+render the cross-schedule view out of order. Asserted by a monotonic-timestamp test over 2200 rows
+across 7 jobs.
+
+One thing deliberately NOT changed: a store of 40 modest jobs × 60 runs keeps 2000 rows spanning 34
+jobs, dropping the oldest-written 6. That is correct for a time-ordered "recent runs" index — the
+defect was one job *monopolising* it, not the global cap existing.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the flat tail: exactly the two fairness tests go red while the other
+20 stay green.
+
+- **Retention is now fair on both axes** — per job across outcome classes (S173) and per job across the
+  shared index (here). The chain S171 started (persist → count → retain → render) is closed.
+
+### S175 — the boot rotation reverted the append rotation (§1.3 retention)
+
+**Found by checking the THIRD rotation path** after fixing the other two. `_rotate_all_sync` — which
+runs once at gateway boot — carried its own inlined `rows[-_MAX_RECORDS_PER_JOB:]`, the pre-S173 flat
+tail, while calling the already-fixed `_rotate_index_locked` on the line below it. One function, two
+retention policies, silently disagreeing.
+
+**🔴 MY FIRST PROBE SAID THE REAL RUN SURVIVED, AND IT WAS WRONG.** Appending 1 run + 129 skips leaves
+the file at 55 rows — under the 100 cap — so the boot trim never fired and the probe reported success.
+The defect is only observable on the state that actually matters: a **pre-S173 install's file as it sits
+on disk when the new build first boots**. Rewritten to write the file directly:
+
+```
+on-disk legacy file: 200 rows (1 real + 199 skips), over the 100 cap
+after rotate_all()  : 100 rows, real run present = False
+  first three: ['skip-199', 'skip-198', 'skip-197']
+```
+
+So the fix shipped in S173 was undone at exactly the moment a user upgrades to it — the one boot where
+the old, unfair file shape meets the new code. Worth recording as a probe lesson: *a probe that builds
+its fixture through the fast path can miss a defect that only the slow path reaches.*
+
+**Now delegates** to `_rotate_job_locked` rather than repeating the trim. A duplicated retention policy
+is how two paths start disagreeing; a source test asserts the trim is not re-implemented here, because
+the defect **was** the duplication and a behavioural test alone would not stop it coming back.
+
+**Verified the delegation is safe:**
+
+- `_job_path(path.stem)` round-trips a job id containing colons — `clock:m`, `web_watch:feed` — which
+  matters because the store keys store triggers by their full `<kind>:<slug>` id.
+- A work-only legacy file is still capped at exactly 100 (the compatibility half — boot rotation must
+  still enforce the window, just fairly).
+- **Every** job file is visited: it globs the directory, so a bug rotating only the first would leave
+  later jobs unbounded. Two over-cap files, both trimmed.
+- Order stays newest-first.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the inlined tail: the eviction test and the structural test go red
+while the work-only and multi-file tests stay green — confirming the revert touched only fairness.
+
+- **All three rotation paths now share one policy**: append-time per job (S173), append-time index
+  (S174), and boot-time both (here). The retention question this chain opened is closed on every path
+  that writes.
