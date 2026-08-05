@@ -87,6 +87,11 @@ class StateEntry:
     secret: bool = False  # never leaves this machine
     derived: bool = False  # rebuildable index/cache — excluded from exports
     tombstones: bool = False  # deletes need markers to survive a sync merge
+    # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
+    # undeclared-DB audit cannot match them by exact path and must accept the whole subtree. Opt-in
+    # per entry, NOT inferred from `kind`: exempting every tree would blind the audit to a DB nested
+    # in `loop/` or `workspace/`, which is the hazard it exists to catch.
+    db_container: bool = False
     help: str = ""  # operator-facing description
     # Sub-paths inside `path` that are themselves derived (indexes, caches,
     # git-owned working copies). Relative to `path`; glob syntax allowed.
@@ -251,13 +256,32 @@ INVENTORY: tuple[StateEntry, ...] = (
         derived=True,  # git-owned clones, re-creatable from their remotes
     ),
     # ── automation ──
+    # 🔴 THE trigger store, and it was never declared here (S184). `triggers/store.py` opens with
+    # "`triggers.json` — the one trigger store … absorbing crons.json / hooks.json /
+    # event_triggers.json / autonudge config", and it is hand-listed in BOTH `snapshot.py` and
+    # `portability.py` — each with a comment about the round trip that lost it. So it travels, but
+    # nothing inventory-derived could see it: it was invisible to `home_is_populated`, to the
+    # ratchet, and to every projection S176-S183 built.
+    #
+    # `audit_home()` WOULD have flagged it — verified, it reports `triggers.json` as unclaimed on a
+    # home that has one. S179 audited both real homes clean because neither migrated to the store
+    # yet, so the guard was right and the population was the gap. That is the same
+    # fixture-versus-reality shape S179 itself was about.
+    StateEntry(
+        id="triggers",
+        kind=KIND_JSON_FILE,
+        path="triggers.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="the one trigger store (automations, event triggers, hooks)",
+    ),
     StateEntry(
         id="crons",
         kind=KIND_JSON_FILE,
         path="crons.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
-        help="scheduled jobs",
+        help="scheduled jobs (legacy; read-only, absorbed by triggers.json)",
     ),
     StateEntry(
         id="hooks",
@@ -400,6 +424,115 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_APPEND_DEDUP,
         help="crash artifacts (rotated)",
+    ),
+    # 🔴 S179 — the ten paths `audit_home()` reports on a REAL home. The guard was correct and had
+    # never been pointed at one: every existing test builds an 8-path synthetic fixture, so a store
+    # added after the manifest was written could not fail it. Driven: `learning.db`,
+    # `session_search.db`, `spend.json`, `model_calls.jsonl` and `inbox.json` were absent from a
+    # real
+    # archive.
+    StateEntry(
+        id="learning_db",
+        kind=KIND_SQLITE,
+        path="learning.db",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="the learning staging log and usage counters",
+    ),
+    StateEntry(
+        id="inbox",
+        kind=KIND_JSON_FILE,
+        path="inbox.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="native inbox items",
+    ),
+    StateEntry(
+        id="spend",
+        kind=KIND_JSON_FILE,
+        path="spend.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="per-day model spend (drives the budget caps)",
+    ),
+    StateEntry(
+        id="model_calls",
+        kind=KIND_JSONL_APPEND,
+        path="model_calls.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        help="one line per model-call attempt",
+    ),
+    # Both index stores declare themselves disposable in their own docstrings — session_search
+    # "holds no truth of its own … better rebuilt than restored", codegraph re-parses on mtime — so
+    # they are DERIVED, which keeps them out of `backup_entries()` while still being claimed. Not
+    # declaring them at all was the bug; declaring them as state would ship a 10552-entry cache in
+    # every snapshot.
+    StateEntry(
+        id="session_search_db",
+        kind=KIND_SQLITE,
+        path="session_search.db",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        help="FTS index over transcripts (rebuilt by reindex_session)",
+    ),
+    # A DIRECTORY of per-workspace databases (`codegraph/<workspace-key>.db`), not one file — so
+    # `kind` is a tree and the DB check needs the glob below rather than an exact path. Derived: the
+    # index re-parses on mtime, and a real home had 5478 of these.
+    StateEntry(
+        id="codegraph",
+        kind=KIND_TREE,
+        path="codegraph",
+        domain=DOMAIN_WORK,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        db_container=True,
+        help="per-workspace symbol index (re-parsed on mtime)",
+    ),
+    # 🔴 A live DB inside a `tree` entry — precisely the hazard the undeclared-DB check exists to
+    # catch ("it gets filesystem-copied while open in WAL mode"). `workflows` is declared
+    # `json_entity_dir`, so its run ledger was being tree-copied rather than staged through the safe
+    # backup API. Declaring it routes it to `_safe_copy_db` and excludes it from the tree copy.
+    StateEntry(
+        id="workflow_runs_db",
+        kind=KIND_SQLITE,
+        path="workflows/runs.db",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="the workflow run ledger",
+    ),
+    StateEntry(
+        id="knowledge_root_db",
+        kind=KIND_SQLITE,
+        path="knowledge/knowledge.db",
+        domain=DOMAIN_KNOWLEDGE,
+        merge=MERGE_SQLITE_ATTACH_IGNORE,
+        help="the home-level knowledge store",
+    ),
+    StateEntry(
+        id="agent_metadata",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="agent-metadata",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="per-agent metadata records",
+    ),
+    StateEntry(
+        id="learning_proposals",
+        kind=KIND_TREE,
+        path="learning",
+        domain=DOMAIN_MEMORY,
+        merge=MERGE_UNION_BY_ID,
+        help="staged learning proposals awaiting review",
+    ),
+    StateEntry(
+        id="durability_state",
+        kind=KIND_JSON_FILE,
+        path="durability_state.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="the durability scheduler's own last-run state",
     ),
     StateEntry(
         id="folders",
@@ -604,6 +737,20 @@ IGNORED: tuple[str, ...] = (
     "agent_pids.txt",
     "doctor",  # remediation run ledger (regenerated)
     ".git",
+    # 🔴 S179 — MACHINE-LOCAL, and deliberately ignored rather than declared. A snapshot is
+    # portable: it is restored onto another machine, or the same one after a wipe, and each of these
+    # identifies or authenticates THIS install. Carrying them would either re-plant a credential
+    # (`session_key`, `sessions.json` hold live auth material) or make two installs claim one
+    # identity (`machine_id` is what `durability/shards.py` stamps shards with, so a restored copy
+    # would masquerade as the machine it came from). Ignored, not `secret=True`: they must not
+    # travel
+    # at all, whereas a secret entry is captured on purpose so a backup can restore the credential
+    # store.
+    "session_key",
+    "sessions.json",
+    "machine_id",
+    "update_check.json",  # last update check — regenerated on the next poll
+    "fixture.yaml",  # test-fixture marker written by `--seed`
 )
 
 
@@ -730,15 +877,35 @@ def audit_home(home: Path) -> AuditResult:
         if claim_for(rel) is not None:
             result.claimed += 1
             continue
+        # A directory whose CONTENTS are declared is claimed by them. `knowledge/` holds only
+        # `knowledge/knowledge.db`, and `claim_for` is longest-prefix, so it can name the child
+        # without naming the parent — reporting the parent as unclaimed would demand a redundant
+        # wrapper entry for every nested store.
+        if child.is_dir() and any(e.path.startswith(rel + "/") for e in INVENTORY):
+            result.claimed += 1
+            continue
         result.unclaimed.append(rel + ("/" if child.is_dir() else ""))
 
     # Every *.db on disk must be declared as a sqlite entry, wherever it lives.
     # A database nested inside a `tree` entry is the exact hazard this plan
     # exists to close: it gets filesystem-copied while open in WAL mode.
     declared = {e.path for e in sqlite_entries()}
+    # A store can be a DIRECTORY of databases rather than one file — `codegraph/<workspace-key>.db`,
+    # of which a real home held 5478, so an exact-path compare can never match them and the check
+    # drowns in thousands of rows (the same over-reporting failure S178 fixed in the coverage
+    # ratchet).
+    #
+    # 🔴 But my first version exempted every `tree`/`derived` prefix, which BLINDED the check to the
+    # exact hazard it exists for: driven, a surprise DB inside the `loop` and `workspace` trees was
+    # no longer reported. A DB nested in a tree entry is the dangerous case — it gets
+    # filesystem-copied while open in WAL mode. So the exemption is opt-in per entry
+    # (`db_container=True`), naming the stores whose whole content IS databases.
+    declared_trees = tuple(e.path + "/" for e in INVENTORY if e.db_container)
     for db in sorted(home.rglob("*.db")):
         rel_db = db.relative_to(home).as_posix()
         if is_ignored(rel_db) or rel_db in declared:
+            continue
+        if rel_db.startswith(declared_trees):
             continue
         result.undeclared_dbs.append(rel_db)
     return result

@@ -41,6 +41,18 @@ export function statusMeta(s?: string | null): StatusMeta {
   // job.last_status is "ok"/"error"; run.status is "success"/"failure"/"timeout"/"launched".
   if (s === 'ok' || s === 'success') return { label: 'ok', tone: 'var(--color-ok)', icon: CheckCircle2 }
   if (s === 'error' || s === 'failure') return { label: 'error', tone: 'var(--color-danger)', icon: XCircle }
+  // 🔴 THE FIRE-RECORD VOCABULARY (S163). S137 mapped the store's `status` words
+  // (`success`/`failure`) and the suppression family, and missed the three `Outcome` members a
+  // FireRecord most often carries. Measured: `statusMeta('failed')` returned **"never run"** in
+  // neutral grey — a genuinely FAILED automation rendered identically to one that had never run,
+  // which is the one pair a user must never confuse. `ran`/`ran_late` were equally invisible.
+  //
+  // `ran_late` keeps a distinct label rather than folding into `ok`: §1.3 records
+  // `scheduled_for` beside `started_at` precisely so lateness is a fact, not an impression, and a
+  // run 40 minutes after its slot is a different story from one on time.
+  if (s === 'ran') return { label: 'ran', tone: 'var(--color-ok)', icon: CheckCircle2 }
+  if (s === 'ran_late') return { label: 'ran late', tone: 'var(--color-warning)', icon: Clock }
+  if (s === 'failed') return { label: 'failed', tone: 'var(--color-danger)', icon: XCircle }
   if (s === 'timeout') return { label: 'timed out', tone: 'var(--color-danger)', icon: Clock }
   // "launched": started a background turn — honest "started ≠ succeeded" (T7).
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
@@ -57,6 +69,69 @@ export function statusMeta(s?: string | null): StatusMeta {
   if (s === 'deferred') return { label: 'deferred', tone: 'var(--color-info)', icon: PauseCircle }
   if (s === 'refused') return { label: 'refused', tone: 'var(--color-warning)', icon: ShieldAlert }
   return { label: 'never run', tone: 'var(--color-on-surface-low)', icon: Circle }
+}
+
+
+
+/** Whether this outcome means "nothing was spent and nothing changed" (§1.3's `INERT_OUTCOMES`).
+ *
+ * 🔴 WHY THIS EXISTS. S171 began PERSISTING a suppressed fire's row so criterion 8's "zero silent
+ * drops" is real — and the reason lands in `ScheduleRun.error`, which `RunTrace` renders in a
+ * danger-tinted box. Measured: a quiet-hours skip showed a neutral grey "gate" dot beside its reason
+ * in **red**, identical to a real `ConnectionError`. The row contradicted itself, and the alarming
+ * half is the one a user reacts to.
+ *
+ * Derived from the `skipped_` prefix rather than a hand-copied list: every member of the backend's
+ * `INERT_OUTCOMES` carries it (verified — 6 of 6), so a new inert outcome is covered automatically
+ * instead of waiting for someone to update a second list. The same reason `statusMeta` matches the
+ * family by prefix rather than enumerating it.
+ */
+export function isInertOutcome(s?: string | null): boolean {
+  return Boolean(s) && String(s).startsWith('skipped_')
+}
+
+// ── trigger lifecycle: health + state (S164) ──
+
+/** How a trigger's HEALTH rollup and lifecycle STATE render.
+ *
+ * 🔴 WHY THIS IS SHARED. `TriggersListPage` carried its own `statusDot` handling four values
+ * (`ok`/`success`, `error`/`timeout`/`blocked`, `launched`) and defaulting everything else to a
+ * neutral grey circle. Measured against the real `TriggerHealth` vocabulary, which is what that
+ * page actually feeds it for a store trigger (`triggerMeta.storeToTrigger` sets
+ * `lastStatus: t.health`):
+ *
+ *     health=ok        -> ok green, check
+ *     health=degraded  -> grey, circle
+ *     health=parked    -> grey, circle
+ *     health=failing   -> grey, circle     ← identical to parked and degraded
+ *
+ * So on the one page a user manages automations from, a FAILING automation was pixel-identical to a
+ * parked (self-healing) one. Same defect shape as S163's `statusMeta` gap, in a second local copy —
+ * which is the argument for one mapper per vocabulary rather than a fix per page.
+ *
+ * `state` is folded in here rather than given its own mapper because the two answer one question
+ * for the user ("is this thing working?") and a surface showing them separately would have to invent
+ * a precedence rule. STATE WINS when it is not `active`: an autopaused trigger's health is `failing`,
+ * but "stopped" is the more urgent fact — `health` says how it has been going, `state` says whether
+ * it will run at all.
+ */
+export function triggerHealthMeta(health?: string | null, state?: string | null): StatusMeta {
+  // A lifecycle state that stops the trigger firing outranks any health rollup.
+  if (state === 'quarantined') {
+    return { label: 'quarantined', tone: 'var(--color-danger)', icon: ShieldAlert }
+  }
+  if (state === 'autopaused') return { label: 'autopaused', tone: 'var(--color-danger)', icon: XCircle }
+  if (state === 'paused') return { label: 'paused', tone: 'var(--color-on-surface-low)', icon: PauseCircle }
+  if (state === 'retired') return { label: 'retired', tone: 'var(--color-on-surface-low)', icon: Circle }
+  // `parked` is NOT an error: it self-heals once the cooldown elapses (S159's unpark), so a red
+  // badge would send the user hunting a fault that resolves itself.
+  if (state === 'parked' || health === 'parked') {
+    return { label: 'parked', tone: 'var(--color-info)', icon: PauseCircle }
+  }
+  if (health === 'failing') return { label: 'failing', tone: 'var(--color-danger)', icon: XCircle }
+  if (health === 'degraded') return { label: 'degraded', tone: 'var(--color-warning)', icon: Clock }
+  if (health === 'ok') return { label: 'ok', tone: 'var(--color-ok)', icon: CheckCircle2 }
+  return { label: '', tone: 'var(--color-on-surface-low)', icon: Circle }
 }
 
 // ── time helpers ──

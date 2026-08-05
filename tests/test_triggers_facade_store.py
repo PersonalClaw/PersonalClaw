@@ -1238,3 +1238,203 @@ def test_the_facade_no_longer_calls_any_run_method_on_the_service():
     src = inspect.getsource(T)
     for method in ("crons.list_runs", "crons.list_all_runs", "crons.get_run", "crons.delete_runs"):
         assert method not in src, method
+
+
+# ── 🔴 the lifecycle state reached no surface (S164) ──
+
+
+def test_the_store_projection_EMITS_the_lifecycle_state():
+    """🔴 THE DEFECT. `_serialize_store` emitted `health` and NOT `state`, so
+    `Trigger.state` — `active | paused | autopaused | parked | quarantined | retired` — reached no
+    surface at all. Every lifecycle transition this program built was therefore invisible on the one
+    page a user manages automations from: autopause (S139), park/unpark (S159) and the injection
+    quarantine all decided a state nothing could render.
+
+    `health` cannot substitute. A PARKED trigger is `health: parked`, but an AUTOPAUSED one is
+    `health: failing` — and "failing" does not tell the user the automation has STOPPED.
+    """
+    from personalclaw.triggers.models import Trigger, TriggerState
+
+    trigger = Trigger(id="clock:x", name="x", kind="clock")
+    trigger.state = TriggerState.AUTOPAUSED.value
+    row = T._serialize_store(trigger)
+    assert row["state"] == TriggerState.AUTOPAUSED.value
+    assert row["health"] == "ok", "health is a separate rollup, not a substitute"
+
+
+def test_health_and_state_are_BOTH_on_the_wire():
+    """Two vocabularies, both needed: `health` says how it has been going, `state` says whether it
+    will run at all. A surface given only one has to guess the other."""
+    from personalclaw.triggers.models import Trigger, TriggerHealth, TriggerState
+
+    trigger = Trigger(id="clock:y", name="y", kind="clock")
+    trigger.state = TriggerState.PARKED.value
+    trigger.health_status = TriggerHealth.PARKED.value
+    row = T._serialize_store(trigger)
+    assert row["state"] == "parked" and row["health"] == "parked"
+
+
+def test_an_ACTIVE_trigger_still_reports_active():
+    """The default path is unchanged — every trigger authored before this session projects the same
+    way, with `state: "active"` added rather than anything reinterpreted."""
+    from personalclaw.triggers.models import Trigger
+
+    row = T._serialize_store(Trigger(id="clock:z", name="z", kind="clock"))
+    assert row["state"] == "active"
+
+
+# ── 🔴 a store trigger's run history was reported as unsupported (S166) ──
+
+
+@pytest.mark.asyncio
+async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
+    """🔴 THE DEFECT. `api_trigger_history` branched on `kind != _SCHEDULE`, so every store trigger —
+    `web_watch`, `file`, `idle`, `run_completed`, `view`, `webhook` — was told `supported: false`
+    with a reason naming LIFECYCLE triggers, a kind it is not.
+
+    But a store trigger DOES have run records: `_record_fire_outcome` has written them to
+    `ScheduleRunStore` under `job_id=trigger.id` since S139. Measured: three fires persisted three
+    rows and the endpoint reported none, so the detail panel read "No runs recorded yet" for an
+    automation that had run three times.
+
+    The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw`
+    for a store trigger — so the schedule branch's own `list_for_job(raw, …)` already worked.
+    The branch was simply written before store triggers had a run store.
+    """
+    import types as _types
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    store.upsert(
+        Trigger(
+            id="web_watch:feed",
+            name="feed watch",
+            kind="web_watch",
+            enabled=True,
+            spec={"url": "https://example.dev"},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = None
+    for _ in range(3):
+        await orch._record_fire_outcome(
+            store.get("web_watch:feed").trigger,
+            result=_types.SimpleNamespace(success=True, error=""),
+        )
+
+    req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history?limit=10")
+    req.match_info["id"] = "store:web_watch:feed"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload["total"] == 3, "the rows the fire path wrote must be served"
+    assert payload.get("supported", True) is True
+    assert len(payload["runs"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_LIFECYCLE_trigger_still_says_unsupported_and_says_WHY():
+    """The honest answer is preserved for the kind it was actually about: a lifecycle trigger runs
+    inline with the agent loop and keeps no run store. A bare `{"runs": []}` would render as "this
+    ran and kept no record", which is a different and false claim."""
+    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history")
+    req.match_info["id"] = "lifecycle:on_start"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload["supported"] is False
+    assert "lifecycle" in payload["reason"]
+
+
+@pytest.mark.asyncio
+async def test_an_UNRECOGNISED_prefix_falls_back_to_SCHEDULE_not_a_fake_reason():
+    """No catch-all branch exists, and that is correct: `_split_id` defaults an unknown prefix
+    to `schedule` (a bare id IS a schedule id, for backwards compatibility), so a third branch
+    would be unreachable. Driven rather than assumed — my first draft added that branch and
+    this test proved it dead."""
+    req = make_mocked_request("GET", "/api/triggers/mystery:x/history")
+    req.match_info["id"] = "mystery:x"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload == {"runs": [], "total": 0}, "an unknown prefix reads as an empty schedule"
+    assert "supported" not in payload, "no fabricated unsupported answer"
+
+
+# ── 🔴 the list handed out a run_id the detail route denied (S167) ──
+
+
+@pytest.mark.asyncio
+async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
+    """🔴 THE DEFECT, one route past S166. `api_trigger_history_detail` gated on
+    `kind != _SCHEDULE` and 404'd everything else — so the list route S166 had just fixed handed the
+    UI a `run_id` that the detail route immediately denied. Driven:
+
+        LIST   -> total=1 run_id='fire-1785909121906'
+        DETAIL -> 404 {'error': 'not found'}
+
+    The expander opens on nothing. `get_run(raw, run_id)` already worked with a store key (verified
+    against a real `file:notes` row), so the gate was the entire defect — the same shape as S166,
+    which is why sweeping the SIBLING route mattered rather than stopping at the first fix.
+    """
+    import types as _types
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    store.upsert(
+        Trigger(
+            id="web_watch:feed",
+            name="feed watch",
+            kind="web_watch",
+            enabled=True,
+            spec={"url": "https://example.dev"},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = None
+    await orch._record_fire_outcome(
+        store.get("web_watch:feed").trigger,
+        result=_types.SimpleNamespace(success=True, error=""),
+    )
+
+    # The id the LIST hands the UI — the exact round trip the expander performs.
+    req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history")
+    req.match_info["id"] = "store:web_watch:feed"
+    listing = json.loads((await T.api_trigger_history(req)).body.decode())
+    run_id = listing["runs"][0]["run_id"]
+    assert run_id
+
+    req2 = make_mocked_request("GET", f"/api/triggers/store:web_watch:feed/history/{run_id}")
+    req2.match_info["id"] = "store:web_watch:feed"
+    req2.match_info["run_id"] = run_id
+    resp = await T.api_trigger_history_detail(req2)
+    assert resp.status == 200, "a run_id the list handed out must be openable"
+    assert json.loads(resp.body.decode())["run"]["run_id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_a_LIFECYCLE_run_detail_still_404s():
+    """Correct, not an oversight: a lifecycle trigger has no run store, so there is no record to
+    open and 404 is the honest answer."""
+    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history/r1")
+    req.match_info["id"] = "lifecycle:on_start"
+    req.match_info["run_id"] = "r1"
+    resp = await T.api_trigger_history_detail(req)
+    assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_an_UNKNOWN_run_on_a_REAL_store_trigger_says_run_not_found(home):
+    """The two 404s stay distinguishable. "not found" means the KIND keeps no runs; "run not found"
+    means this trigger does keep runs and that particular one is not among them — a caller debugging
+    a stale link needs to tell those apart."""
+    req = make_mocked_request("GET", "/api/triggers/store:file:nope/history/r1")
+    req.match_info["id"] = "store:file:nope"
+    req.match_info["run_id"] = "r1"
+    resp = await T.api_trigger_history_detail(req)
+    assert resp.status == 404
+    assert json.loads(resp.body.decode())["error"] == "run not found"

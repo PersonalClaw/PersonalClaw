@@ -443,3 +443,88 @@ def test_an_explicit_key_still_WINS_over_the_derivation():
     row = _real_row(next_at=NOW - HOUR)
     row["last_fire_at"] = NOW - 120
     assert missed_inputs(row, now=NOW)["last_fire_at"] == NOW - 120
+
+
+# ── 🔴 `ran_late` was written only by the manual card (S170) ──
+
+
+def test_an_OVERDUE_fire_is_recorded_as_ran_late():
+    """🔴 THE DEFECT. §1.3 added `ran_late` and `scheduled_for` in the same breath — *"a run that
+    started 40 minutes after its slot is a different story from one that started on time and took 40
+    minutes"* — and `validate_record` even REFUSES a `ran_late` row without a
+    `scheduled_for`. But the only writer was the manual missed-fire card, so the tick
+    recorded a plain `ran` however overdue the fire was, with the lateness computable on
+    that very row."""
+    from personalclaw.triggers.missed import late_outcome
+
+    outcome, reason = late_outcome("ran", scheduled_for=NOW, started_at=NOW + 2400)
+    assert outcome == "ran_late"
+    assert "40 min" in reason
+
+
+def test_ordinary_SCHEDULING_DELAY_is_not_lateness():
+    """The threshold is DERIVED from the scheduler's own delays, not picked.
+
+    A wake can be a poll ceiling behind, and a boot deliberately pushes overdue fires by the
+    stagger base and spreads them across the stagger window. Labelling those as lateness
+    would mark the substrate's own correct behaviour as a fault — which is how a signal
+    becomes noise and then gets ignored."""
+    from personalclaw.triggers.missed import late_outcome
+    from personalclaw.triggers.scheduling import (
+        BOOT_STAGGER_BASE_SECS,
+        BOOT_STAGGER_WINDOW_SECS,
+        LATE_THRESHOLD_SECS,
+        POLL_CEILING_SECS,
+    )
+
+    # The constant is derivable, not magic — if someone retunes a stagger, this follows.
+    assert LATE_THRESHOLD_SECS == 2 * (
+        BOOT_STAGGER_BASE_SECS + BOOT_STAGGER_WINDOW_SECS + POLL_CEILING_SECS
+    )
+    for delay in (0.0, POLL_CEILING_SECS, BOOT_STAGGER_BASE_SECS + BOOT_STAGGER_WINDOW_SECS):
+        assert late_outcome("ran", scheduled_for=NOW, started_at=NOW + delay)[0] == "ran", delay
+
+
+def test_the_threshold_boundary_is_exact():
+    from personalclaw.triggers.missed import late_outcome
+    from personalclaw.triggers.scheduling import LATE_THRESHOLD_SECS
+
+    just_under = late_outcome("ran", scheduled_for=NOW, started_at=NOW + LATE_THRESHOLD_SECS - 1)
+    just_over = late_outcome("ran", scheduled_for=NOW, started_at=NOW + LATE_THRESHOLD_SECS)
+    assert just_under[0] == "ran"
+    assert just_over[0] == "ran_late"
+
+
+def test_a_FAILED_fire_keeps_its_own_outcome():
+    """Only `ran` is refined. "It was late" is not the interesting thing about a fire that
+    never ran, and overwriting `failed` with `ran_late` would lose the failure entirely —
+    turning a broken automation into a merely tardy one."""
+    from personalclaw.triggers.missed import late_outcome
+
+    for outcome in ("failed", "skipped_gate", "deferred", "blocked_injection", "refused"):
+        assert late_outcome(outcome, scheduled_for=NOW, started_at=NOW + 9999)[0] == outcome
+
+
+def test_NO_slot_means_lateness_is_not_a_FACT():
+    """A missing/zero `scheduled_for` returns unchanged. With no slot to compare against, lateness
+    cannot be measured — and guessing one produces exactly the "impression" §1.3 says to avoid.
+    `validate_record` enforces the same pairing from the other side."""
+    from personalclaw.triggers.missed import late_outcome
+
+    assert late_outcome("ran", scheduled_for=0.0, started_at=NOW + 9999)[0] == "ran"
+    assert late_outcome("ran", scheduled_for=NOW, started_at=0.0)[0] == "ran"
+    junk: float = "junk"  # type: ignore[assignment]
+    assert late_outcome("ran", scheduled_for=junk, started_at=NOW)[0] == "ran"
+
+
+def test_ran_late_is_NOT_a_failure_and_NOT_inert():
+    """The two downstream classifications that would make this harmful. `ran_late` DID the work, so
+    counting it toward autopause would pause a working automation for being slow, and folding it out
+    of the runs feed would hide a run that happened."""
+    from personalclaw.triggers.autopause import consecutive_failures_from
+    from personalclaw.triggers.models import INERT_OUTCOMES, TRUE_FAILURE_OUTCOMES, Outcome
+
+    late = Outcome.RAN_LATE.value
+    assert late not in TRUE_FAILURE_OUTCOMES
+    assert late not in INERT_OUTCOMES
+    assert consecutive_failures_from([{"outcome": late, "status": "success"}] * 5) == 0

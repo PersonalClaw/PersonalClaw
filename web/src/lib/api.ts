@@ -443,11 +443,24 @@ export interface ScheduleJob {
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
+  // 🔴 `id` is a FireRecord's OWN key and `did_ids`/`suppressed_ids` are lists of it (S165). A
+  // projected row carries NO `run_id`/`job_id` — measured, `run_id` comes back `''` — so a
+  // consumer matching the split on `run_id` silently matches nothing.
+  id?: string
   run_id?: string; job_id?: string; job_name?: string
   trigger?: string                          // "manual" | "scheduled"
   started_at?: number; finished_at?: number; duration_ms?: number
   status?: string                           // "success" | "error"
   summary?: string; error?: string; trace?: string
+  // 🔴 The TYPED fire outcome (S163). `/api/triggers/history` returns FireRecord rows, whose
+  // vocabulary is `ran | skipped_gate | blocked_injection | deferred | …` on `outcome` — NOT
+  // `status`, which a FireRecord does not carry at all. Absent from this type, every projected
+  // row arrived with `status: undefined` and the Schedule widget's local mapper fell through to
+  // its default branch, rendering a quiet-hours SUPPRESSION as "ran".
+  outcome?: string
+  reason?: string                           // the mandatory one-line why, for any non-clean row
+  weight?: string                           // "ledger" | "full" — a ledger row has no openable run
+  incomplete?: boolean                      // this row SUMMARISES N fires ("at least N")
 }
 // Task entity. The wired-today fields match the backend Task dataclass
 // (open/in_progress/done/cancelled/blocked, flat `project` string, `labels`).
@@ -712,7 +725,12 @@ export interface Trigger {
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
   // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
   store_kind?: string; created_by?: string; spec?: Record<string, unknown>
-  health?: string; broken?: string[]
+  // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
+  // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
+  // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED (S164).
+  // `last_error` (declared with the schedule fields below — one shared interface) carries the
+  // failure the lifecycle acted on; the store panel had no reader for it until S169.
+  health?: string; state?: string; broken?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -2120,8 +2138,16 @@ export const api = {
   inboxPending: () => get<InboxItem[]>('/api/inbox/pending'),
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all
   // schedules, distinct from the per-schedule history the trigger detail uses.
+  // Returns §1.3's archive split alongside the rows: `did_ids` are fires that DID something,
+  // `suppressed_ids` the ones a gate held. Typed here because the backend has computed them since
+  // S132 and this wrapper declared only `{runs, total}`, so every consumer silently dropped them
+  // (S163) — a surface that cannot tell the two apart buries the one fire that mattered under
+  // 1439 skips, which is the exact failure the split exists to prevent.
   triggersHistory: (limit = 20, offset = 0) =>
-    get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
+    get<{
+      runs: ScheduleRun[]; total: number; schedule_total?: number; kinds?: string[]
+      summaries?: number; did_ids?: string[]; suppressed_ids?: string[]; suppressed?: number
+    }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
   unackNotification: (ts: string) => post('/api/notifications/unack', { ts }),
   ackAllNotifications: () => post('/api/notifications/ack-all'),
   deleteNotification: (ts: string) => fetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then((r) => { if (!r.ok) throw new Error('delete failed') }),
@@ -2171,6 +2197,17 @@ export const api = {
     post(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
   enableSchedule: (id: string, enabled: boolean) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`, { enabled }),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
+  // Per-trigger run history. `triggerId` is the FULL facade id (`schedule:abc`, `store:file:notes`)
+  // — these wrappers hardcoded a `schedule:` prefix, so a store trigger's history was unrequestable
+  // even after the backend began serving it (S166/S167). `supported: false` is a real answer here:
+  // a lifecycle trigger keeps no run store, and the caller renders the reason rather than an empty
+  // list, because "no runs" and "this kind records none" are different claims.
+  triggerHistory: (triggerId: string, limit = 10, offset = 0) =>
+    get<{ runs: ScheduleRun[]; total: number; supported?: boolean; reason?: string }>(
+      `/api/triggers/${encodeURIComponent(triggerId)}/history?limit=${limit}&offset=${offset}`),
+  triggerRunDetail: (triggerId: string, runId: string) =>
+    get<{ run: ScheduleRun }>(
+      `/api/triggers/${encodeURIComponent(triggerId)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   scheduleHistory: (id: string, limit = 10, offset = 0) => get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history?limit=${limit}&offset=${offset}`),
   scheduleRunDetail: (id: string, runId: string) => get<{ run: ScheduleRun }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),

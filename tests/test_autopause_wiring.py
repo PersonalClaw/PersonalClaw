@@ -369,3 +369,91 @@ def test_the_PAUSE_still_happens_without_a_dashboard(tmp_path, monkeypatch):
     """A `--no-dashboard` gateway must still autopause, just without announcing it."""
     trigger = _drive(tmp_path, monkeypatch, ["fail"] * 5)
     assert trigger.enabled is False
+
+
+# ── 🔴 the evidence slot repeated the lifecycle reason (S162) ──
+
+
+def test_last_error_summary_holds_the_ERROR_not_the_LIFECYCLE_REASON(tmp_path, monkeypatch):
+    """🔴 THE DEFECT. `_record_fire_outcome` stored `decision.reason` in `last_error_summary`, so
+    the field held "failure 3 of 5" — and `_surface_attention_card` passes that same field into
+    `attention_card`'s `last_error` slot, producing:
+
+        "paused after 5 consecutive failures. Last error: paused after 5 consecutive failures"
+
+    The one field carrying evidence repeated the sentence beside it, so the actual exception never
+    reached the user. `attention_card`'s own docstring says why the slot exists: *"'paused after 5
+    consecutive failures' without the error is an alert the user has to go digging to act on."*
+    """
+    trigger = _drive(tmp_path, monkeypatch, ["raise"])
+    assert "RuntimeError" in trigger.last_error_summary
+    assert "boom" in trigger.last_error_summary
+    assert "consecutive failures" not in trigger.last_error_summary
+
+
+def test_the_ATTENTION_CARD_carries_the_real_cause(tmp_path, monkeypatch):
+    """End to end: the body a user actually reads must name the failure, not restate the state."""
+    trigger = _drive(tmp_path, monkeypatch, ["raise"] * 5)
+    decision = autopause.evaluate(exit_type="failed", consecutive_failures=4)
+    card = autopause.attention_card(
+        trigger_id=trigger.id,
+        trigger_name=trigger.name,
+        decision=decision,
+        last_error=trigger.last_error_summary,
+    )
+    assert "RuntimeError: boom" in card.body
+    assert card.body.count("consecutive failures") == 1, "the reason must appear once, not twice"
+
+
+def test_a_success_FALSE_result_uses_its_error_STRING(tmp_path, monkeypatch):
+    """A provider that returns `success=False` without raising carries no exception, but it does
+    carry `error` — which is the evidence, and was being discarded."""
+    trigger = _drive(tmp_path, monkeypatch, ["fail"])
+    assert trigger.last_error_summary == "nope"
+
+
+def test_an_EMPTY_error_falls_back_to_the_lifecycle_reason(tmp_path, monkeypatch):
+    """A blank evidence line would be worse than a redundant one: the user would see "Last error: "
+    and learn nothing. The fallback keeps the card informative when nothing better exists."""
+    import personalclaw.action_providers as _AP
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(
+        Trigger(
+            id="clock:blank",
+            name="blank",
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+
+    class _Blank:
+        async def execute(self, config, ctx, timeout=30):
+            return types.SimpleNamespace(success=False, error="")
+
+    real = _AP.get_action_provider
+    try:
+        _AP.get_action_provider = lambda name: _Blank()
+        orch = object.__new__(GatewayOrchestrator)
+        asyncio.run(
+            orch._fire_store_trigger(
+                store.get("clock:blank").trigger, {"trigger_id": "clock:blank"}
+            )
+        )
+    finally:
+        _AP.get_action_provider = real
+    summary = store.get("clock:blank").trigger.last_error_summary
+    assert summary, "the evidence line must never be empty"
+    assert "failure" in summary, f"expected the lifecycle reason as fallback, got {summary!r}"
+
+
+def test_a_SUCCESS_writes_no_error_summary(tmp_path, monkeypatch):
+    """The control case: a successful fire must not leave error evidence behind for the next
+    reader to mistake for a current problem."""
+    trigger = _drive(tmp_path, monkeypatch, ["ok"])
+    assert trigger.last_error_summary == ""
+    assert trigger.last_success_at

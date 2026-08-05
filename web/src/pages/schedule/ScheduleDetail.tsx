@@ -8,7 +8,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ScheduleJob, type ScheduleRun } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, isInertOutcome, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ScheduleForm, toDraft, draftToPayload, type ScheduleDraft } from './ScheduleForm'
 
@@ -233,7 +233,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
         {job.last_result && <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{job.last_result}</Markdown></div>}
       </Section>
 
-      <RunHistory jobId={job.id} reloadKey={histKey} />
+      <RunHistory triggerId={`schedule:${job.id}`} reloadKey={histKey} />
     </div>
   )
 }
@@ -242,21 +242,39 @@ function Chip({ children }: { children: React.ReactNode }) {
   return <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var font-mono">{children}</span>
 }
 
-/** Paginated per-job run history; each row expands to its full trace via
- *  /history/{run_id}. */
-function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: number }) {
+/** Paginated per-trigger run history; each row expands to its full trace via
+ *  /history/{run_id}.
+ *
+ *  🔴 EXPORTED and keyed on the FULL facade id (S168). It was private and took a bare schedule id,
+ *  so a store trigger had no history UI at all even after the backend began serving one
+ *  (S166 the list, S167 the detail) — the panel showed "When it runs" and "What it runs" and nothing
+ *  about whether it ever had. Reused rather than reimplemented: a second history renderer is how two
+ *  surfaces start disagreeing about what a run looks like, the same argument S163/S164 made about
+ *  status mappers.
+ *
+ *  `supported: false` is rendered as its REASON, not as an empty list: a lifecycle trigger keeps no
+ *  run store, and "no runs recorded yet" would be a false claim about a kind that records none. */
+export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; reloadKey?: number }) {
   const [runs, setRuns] = useState<ScheduleRun[] | null>(null)
   const [total, setTotal] = useState(0)
   const [limit, setLimit] = useState(5)
   const [openRun, setOpenRun] = useState<string | null>(null)
+  const [unsupported, setUnsupported] = useState<string | null>(null)
+  // `schedule:abc` → `abc`; `store:file:notes` → `file:notes`, which IS the run-store key.
+  const rawId = triggerId.replace(/^(?:schedule|store|lifecycle|event):/, '')
 
   useEffect(() => {
     let alive = true
-    api.scheduleHistory(jobId, limit).then((d) => { if (alive) { setRuns(d.runs); setTotal(d.total) } }).catch(() => { if (alive) setRuns([]) })
+    api.triggerHistory(triggerId, limit).then((d) => {
+      if (!alive) return
+      setUnsupported(d.supported === false ? (d.reason || 'this kind keeps no run records') : null)
+      setRuns(d.runs); setTotal(d.total)
+    }).catch(() => { if (alive) setRuns([]) })
     return () => { alive = false }
-  }, [jobId, limit, reloadKey])
+  }, [triggerId, limit, reloadKey])
 
   if (runs === null) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">Loading…</div></Section>
+  if (unsupported) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">{unsupported}</div></Section>
   if (runs.length === 0) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">No runs recorded yet.</div></Section>
 
   return (
@@ -282,11 +300,14 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
                   index, which addresses nothing server-side. */}
               {r.run_id && (
                 <div className="flex justify-end px-m pb-1.5" onClick={(e) => e.stopPropagation()}>
-                  <InvestigateButton kind="schedule_run" id={`${jobId}:${r.run_id}`}
-                    backLink={`#/triggers?open=schedule:${jobId}`} size={28} />
+                  {/* `kind="schedule_run"` addresses the RUN STORE, whose key is the raw id — the
+                      part after the facade prefix. Derived from `triggerId` rather than passed
+                      separately so the two can never disagree (S168). */}
+                  <InvestigateButton kind="schedule_run" id={`${rawId}:${r.run_id}`}
+                    backLink={`#/triggers?open=${triggerId}`} size={28} />
                 </div>
               )}
-              {expanded && <RunTrace jobId={jobId} runId={id} preview={r} />}
+              {expanded && <RunTrace triggerId={triggerId} runId={id} preview={r} />}
             </div>
           )
         })}
@@ -299,15 +320,16 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
 }
 
 /** Lazy-load one run's full record (with trace) on expand. */
-function RunTrace({ jobId, runId, preview }: { jobId: string; runId: string; preview: ScheduleRun }) {
+function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: string; preview: ScheduleRun }) {
   const [run, setRun] = useState<ScheduleRun | null>(preview.trace ? preview : null)
   useEffect(() => {
     if (run) return
     let alive = true
-    api.scheduleRunDetail(jobId, runId).then((r) => { if (alive) setRun(r) }).catch(() => { if (alive) setRun(preview) })
+    api.triggerRunDetail(triggerId, runId).then((r) => { if (alive) setRun(r) }).catch(() => { if (alive) setRun(preview) })
     return () => { alive = false }
-  }, [jobId, runId])
+  }, [triggerId, runId])
   if (!run) return <div className="px-m pb-2 text-on-surface-low text-[0.75rem]">Loading trace…</div>
+  const inert = isInertOutcome(run.outcome ?? run.status)
   return (
     <div className="px-m pb-3 flex flex-col gap-2 text-[0.8125rem]">
       <div className="flex flex-wrap gap-x-m gap-y-0.5 text-on-surface-low text-[0.75rem]">
@@ -315,7 +337,22 @@ function RunTrace({ jobId, runId, preview }: { jobId: string; runId: string; pre
         {run.finished_at && <span>· finished {absTime(run.finished_at)}</span>}
         {run.duration_ms != null && <span>· {(run.duration_ms / 1000).toFixed(1)}s</span>}
       </div>
-      {run.error && <div className="rounded-md px-m py-1.5" style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>{run.error}</div>}
+      {/* 🔴 A SUPPRESSION'S REASON IS NOT AN ERROR (S172). S171 began persisting a suppressed fire's
+          row, and the reason lands in `ScheduleRun.error` — which this box renders in danger red.
+          Measured: a quiet-hours skip showed a neutral grey "gate" dot beside its reason in RED,
+          identical to a real `ConnectionError`, so the row contradicted itself and the alarming half
+          is the one a user reacts to. An inert outcome means the automation is working exactly as
+          configured; a red badge sends the user hunting a fault that is not there. */}
+      {run.error && (
+        <div
+          className="rounded-md px-m py-1.5"
+          style={
+            inert
+              ? { background: 'var(--color-surface)', color: 'var(--color-on-surface-low)' }
+              : { background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }
+          }
+        >{run.error}</div>
+      )}
       {/* `trace` is the full result; `summary` is just a prefix of it — render the
           richest one we have as markdown, not raw text. */}
       {(run.trace || run.summary) && <div className="rounded-md bg-surface px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{run.trace || run.summary || ''}</Markdown></div>}
