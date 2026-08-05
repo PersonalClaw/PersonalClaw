@@ -330,3 +330,104 @@ def test_the_module_imports_without_a_syntax_warning():
     with warnings.catch_warnings():
         warnings.simplefilter("error", SyntaxWarning)
         importlib.reload(D)
+
+
+# ── 🔴 the failure route was declared and never read (S158) ──
+
+
+def test_a_MUTED_automation_still_reports_a_FAILURE():
+    """🔴 THE DEFECT. `Trigger.failure_delivery` states its own contract: *"A SEPARATE route for
+    failures (R12). Failures reach the inbox even when `delivery` is none: an automation the user
+    asked to stay quiet still has to be able to say it broke."*
+
+    It was declared, persisted, round-tripped by `to_dict`/`from_dict`, defaulted by the migration
+    and editable through `automation_update` — and read by NOTHING. `_deliver_fire_outcome` passed
+    `destination=trigger.delivery` unconditionally, so a quiet automation that BROKE reported its
+    failure through the silent channel.
+    """
+    import types
+
+    from personalclaw.triggers.delivery import route_for
+
+    trigger = types.SimpleNamespace(
+        id="t", name="nightly", delivery="none", failure_delivery="inbox"
+    )
+    assert route_for(trigger, ok=False) == "inbox", "a failure must escape the mute"
+    assert route_for(trigger, ok=True) == "none", "…and a success must still respect it"
+
+
+def test_a_SUCCESS_never_inherits_the_failure_route():
+    """The asymmetry is the point: falling back the other way would make a quiet automation start
+    announcing its ordinary runs, which is the setting the user explicitly turned off."""
+    import types
+
+    from personalclaw.triggers.delivery import route_for
+
+    trigger = types.SimpleNamespace(id="t", name="n", delivery="none", failure_delivery="notify")
+    assert route_for(trigger, ok=True) == "none"
+
+
+def test_an_EMPTY_failure_route_falls_back_to_delivery():
+    """A trigger predating the field (or one that cleared it) keeps its old single-route behaviour
+    rather than acquiring a channel nobody asked for."""
+    import types
+
+    from personalclaw.triggers.delivery import route_for
+
+    trigger = types.SimpleNamespace(id="t", name="n", delivery="none", failure_delivery="")
+    assert route_for(trigger, ok=False) == "none"
+
+
+def test_DESTINATION_none_actually_SILENCES():
+    """🔴 THE SECOND HALF. `Delivery` carried `destination` and `to_notify_kwargs` **dropped it**, so
+    `delivery: "none"` silenced nothing — measured, a `none` trigger notified exactly like an
+    `inbox` one. The field round-tripped and was inert at the one point that could honour it."""
+    from personalclaw.triggers.delivery import build_delivery, deliver
+
+    class _State:
+        def __init__(self):
+            self.sent = []
+
+        def notify(self, **kw):
+            self.sent.append(kw)
+
+    state = _State()
+    note = build_delivery(trigger_id="t", trigger_name="n", ok=True, destination="none")
+    assert deliver(state, note, delivered_ids=set()) is False
+    assert state.sent == [], "a muted destination must not reach state.notify at all"
+
+    state2 = _State()
+    note2 = build_delivery(trigger_id="t", trigger_name="n", ok=True, destination="inbox")
+    assert deliver(state2, note2, delivered_ids=set()) is True
+    assert len(state2.sent) == 1
+
+
+def test_an_EMPTY_destination_is_not_treated_as_MUTED():
+    """`from_dict` defaults `delivery` to `"none"` explicitly, so a BLANK value means a caller built
+    a Delivery without one. Defaulting that to silence would let a bug become missing alerts — the
+    fail-quiet direction, which is exactly what this session fixed."""
+    from personalclaw.triggers.delivery import is_muted
+
+    assert is_muted("none") and is_muted("NONE") and is_muted(" none ")
+    assert not is_muted("") and not is_muted("inbox") and not is_muted("channel:slack")
+
+
+def test_the_mute_is_enforced_in_DELIVER_not_at_each_caller():
+    """Enforced at the boundary so a future emitter inherits it — the same reason redaction lives
+    here. A per-caller check is a control that works until someone adds the next caller."""
+    import inspect
+
+    from personalclaw.triggers import delivery
+
+    assert "is_muted(delivery.destination)" in inspect.getsource(delivery.deliver)
+
+
+def test_the_fire_path_routes_by_OUTCOME():
+    """The wiring: the defect was `destination=trigger.delivery` regardless of `ok`."""
+    import inspect
+
+    from personalclaw import gateway
+
+    source = inspect.getsource(gateway)
+    assert "_delivery.route_for(trigger, ok=ok)" in source
+    assert 'destination=str(getattr(trigger, "delivery", "") or "")' not in source
