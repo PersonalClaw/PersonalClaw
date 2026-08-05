@@ -853,3 +853,53 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   the test file (an unterminated multi-line SQL literal). Recovered by restoring the file from git and
   re-appending only my own block from the stash — recorded because the lesson is that a formatting
   sweep must not touch lines it did not author.
+
+## Execution log — Session 2k (the merge plan)
+
+- [2026-08-05][S183] **DONE.** Closed gap (2), and stated gap (3) where a user can see it.
+
+  **The defect.** `--dry-run` previewed a restore by listing the filenames in the archive, and **0 of
+  12** `_merge_*` helpers took a `dry_run` parameter. Driven side by side on one fixture: the dry run
+  listed three filenames, while the merge imported one notification, recovered two stores, and left
+  `config.json` untouched. The preview answered a different question from the one a user about to
+  merge into their own home is asking.
+
+  That also closes **gap (3)** — "config merge is copy-if-missing per file … this contract must be
+  stated and tested, not incidental". It was true but *unstated*, so nothing told the user their
+  config was protected. The plan now prints
+  `KEEP config.json [replace_only] — copy-if-missing; never overwritten`.
+
+  🔴 **DEVIATION from T2-M2, deliberately.** The task row specifies *"`dry_run` threaded through every
+  `_merge_*`"*. I did not build that. Twelve flags are twelve chances for the preview to drift from
+  the act, and S176–S182 had just added six more executors to thread — the row was written when there
+  were four. Instead `merge_plan()` is **computed from the same projections `_do_merge` uses**, and
+  the sqlite path list was extracted into a shared `_attach_merge_paths()` so the two cannot disagree
+  about which databases participate. Pinned by a test asserting both read that helper.
+
+  The plan's own done-when is met either way: "plan counts match the subsequent real merge exactly on
+  the same fixture; nothing written in plan mode (dir hash unchanged)". Verified plan-vs-act —
+  `MERGE notifications.jsonl [append_dedup]`, `COPY tasks`, `COPY inbox.json`, `KEEP config.json` —
+  and the act did exactly that. Write-freeness is asserted by hashing the home before and after the
+  dry run, not by inspection.
+
+  **Replace mode keeps a wholesale preview**, plus the thing a user actually needs told: where the
+  current state goes (`pre-restore-<timestamp>/`). A per-entry merge table there would be misleading,
+  because replace is wholesale by definition — the recoverability is the safety property.
+
+  🔴 **Two of my own S180 tests went red and were right to.** They asserted on a substring of
+  `_do_merge`'s source, which no longer holds the path list after the extraction. Updated to assert
+  the shared helper's **output** — the behaviour — rather than one caller's text. A test coupled to
+  where code lives rather than what it does will fail every honest refactor.
+
+  Also verified: the plan respects `--components` (a plan for `--components memory` must not list the
+  whole home, or the preview overstates a targeted restore), and only entries the archive actually
+  holds appear (otherwise the plan becomes a manifest of the inventory rather than of this snapshot).
+
+  **Not in scope, recorded:** `durability/shards.py` has `export_shards`, `validate` and
+  `export_and_validate` but **no import/restore function at all** — the hourly shard export that
+  "bounds a loss to one hour" is write-only, so those shards are recoverable only by archaeology. That
+  is Session 3's `pull → merge-import → export-union → push`, not a gap in this one; noted here so it
+  is not rediscovered as a surprise.
+
+  Tests: 6 new cases in `tests/test_snapshot.py` (105 in that file). Both halves verified load-bearing
+  by unwiring each independently. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.

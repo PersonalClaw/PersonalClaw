@@ -1773,9 +1773,11 @@ def test_MEMORY_DB_keeps_its_own_executor(tmp_path: Path) -> None:
 
     from personalclaw import snapshot
 
-    merge_src = inspect.getsource(snapshot._do_merge)
-    assert 'e.path != "memory.db"' in merge_src, "memory.db must be excluded at the call site"
-    assert "_merge_memory(" in merge_src, "memory.db's own executor must still run"
+    # S183 moved the path list into `_attach_merge_paths()` so `_do_merge` and `merge_plan` cannot
+    # disagree. Assert on the SHARED helper's output, which is the behaviour, rather than on a
+    # substring of one caller's source.
+    assert "memory.db" not in snapshot._attach_merge_paths(), "memory.db must not be routed here"
+    assert "_merge_memory(" in inspect.getsource(snapshot._do_merge), "its own executor must run"
 
 
 def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path) -> None:
@@ -1787,9 +1789,10 @@ def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path) -> None:
     from personalclaw import snapshot
     from personalclaw.durability import inventory as inv
 
-    merge_src = inspect.getsource(snapshot._do_merge)
-    assert "sqlite_entries()" in merge_src
-    assert "MERGE_SQLITE_ATTACH_IGNORE" in merge_src
+    helper_src = inspect.getsource(snapshot._attach_merge_paths)
+    assert "sqlite_entries()" in helper_src
+    assert "MERGE_SQLITE_ATTACH_IGNORE" in helper_src
+    assert "_attach_merge_paths()" in inspect.getsource(snapshot._do_merge)
 
     declared = {e.path for e in inv.sqlite_entries() if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE}
     assert (
@@ -2219,4 +2222,146 @@ def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Pat
     assert unexplained == [], (
         f"these replace_only entries reach no copy-if-missing path: {unexplained}. "
         "Give them a restore path or a recorded reason."
+    )
+
+
+# ── 🔴 `--dry-run` printed a file list, not a merge plan (S183, plan gap 2) ──
+
+
+def test_the_DRY_RUN_prints_a_PLAN_not_a_file_list(tmp_path, capsys) -> None:
+    """🔴 THE DEFECT, which the plan names against itself: *"`--dry-run` prints a raw file list, not
+    a
+    merge plan (no counts, no per-entry strategy, no conflict preview)"*.
+
+    Driven side by side before the fix: the dry run listed three filenames while the merge imported
+    one
+    notification and one store and left `config.json` untouched. The preview answered a different
+    question from the one a user about to merge into their own home is asking.
+    """
+    from personalclaw.snapshot import merge_plan
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (pc / "config.json").write_text('{"a":2}', encoding="utf-8")
+    (snap / "notifications.jsonl").write_text('{"ts":"1"}\n{"ts":"2"}\n', encoding="utf-8")
+    (pc / "notifications.jsonl").write_text('{"ts":"1"}\n', encoding="utf-8")
+    (snap / "tasks").mkdir()
+    (snap / "tasks" / "x.json").write_text('{"id":"SNAP"}', encoding="utf-8")
+
+    rows = {r["path"]: r for r in merge_plan(snap, pc, None)}
+
+    assert rows["notifications.jsonl"]["action"] == "merge"
+    assert rows["notifications.jsonl"]["strategy"] == "append_dedup"
+    assert rows["tasks"]["action"] == "copy"
+    # gap (3): the config contract was true but UNSTATED, so a user could not know it.
+    assert rows["config.json"]["action"] == "keep-local"
+    assert "never overwritten" in rows["config.json"]["detail"]
+
+
+def test_the_PLAN_and_the_ACT_name_the_same_sqlite_stores(tmp_path) -> None:
+    """🔴 Why the plan is DERIVED rather than a `dry_run` flag threaded through twelve helpers.
+
+    Twelve flags are twelve chances for the preview to drift from the act. `_do_merge` and
+    `merge_plan` now read the SAME `_attach_merge_paths()`, so they cannot disagree about which
+    databases participate — a preview that names a different set from the act is worse than none.
+    """
+    import inspect
+
+    from personalclaw import snapshot
+
+    merge_src = inspect.getsource(snapshot._do_merge)
+    plan_src = inspect.getsource(snapshot.merge_plan)
+    assert "_attach_merge_paths()" in merge_src
+    assert "_attach_merge_paths()" in plan_src
+    # and the shared helper excludes memory.db, which has its own executor
+    assert "memory.db" not in snapshot._attach_merge_paths()
+
+
+def test_the_dry_run_WRITES_NOTHING(tmp_path, monkeypatch, capsys) -> None:
+    """The plan's own done-when for this task: "nothing written in plan mode (dir hash unchanged)".
+    A preview that mutates the thing it previews is the one failure mode a dry run cannot have."""
+    import hashlib
+
+    from personalclaw.snapshot import restore_main, snapshot_main
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "x.json").write_text('{"id":"SNAP"}', encoding="utf-8")
+    out = tmp_path / "snaps"
+    snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+
+    live = tmp_path / "live"
+    live.mkdir()
+    (live / "memory.db").write_bytes(b"")  # merge mode is the default when this exists
+    (live / "config.json").write_text('{"a":2}', encoding="utf-8")
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(live))
+
+    def _digest(root):
+        h = hashlib.sha256()
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                h.update(path.name.encode())
+                h.update(path.read_bytes())
+        return h.hexdigest()
+
+    before = _digest(live)
+    assert restore_main([str(archive), "--force", "--dry-run"]) == 0
+    assert _digest(live) == before, "the dry run mutated the home it was previewing"
+
+    printed = capsys.readouterr().out
+    assert "Merge plan:" in printed
+    assert "[replace_only]" in printed, "the plan must name each entry's strategy"
+
+
+def test_REPLACE_mode_previews_where_the_current_state_GOES(tmp_path) -> None:
+    """Replace mode is wholesale by definition, so a per-entry merge table would be misleading. The
+    honest preview is what travels PLUS where the existing state is moved — the recoverability that
+    makes replace mode safe is the part a user needs told."""
+    import inspect
+
+    from personalclaw import snapshot
+
+    src = inspect.getsource(snapshot.restore_main)
+    assert "pre-restore-<timestamp>" in src
+
+
+def test_the_plan_respects_the_COMPONENT_filter(tmp_path) -> None:
+    """A plan for `--components memory` must not list the whole home, or the preview overstates what
+    a targeted restore will touch."""
+    from personalclaw.snapshot import merge_plan
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    (snap / "tasks").mkdir()
+    (snap / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+
+    paths = {r["path"] for r in merge_plan(snap, pc, ["memory"])}
+
+    assert "tasks" not in paths
+    assert "config.json" not in paths
+
+
+def test_an_ABSENT_entry_is_not_in_the_plan(tmp_path) -> None:
+    """Only what the archive actually holds. Listing every declared entry would make the plan a
+    manifest of the inventory rather than of this snapshot."""
+    from personalclaw.snapshot import merge_plan
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+
+    paths = {r["path"] for r in merge_plan(snap, pc, None)}
+
+    assert paths == {"config.json"}, (
+        f"expected exactly {{'config.json'}}, got {paths}: "
+        f"extra={paths - {'config.json'}} missing={{'config.json'}} - paths"
     )

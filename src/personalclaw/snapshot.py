@@ -1229,6 +1229,121 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
     print("✅ Replace complete.")
 
 
+def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]:
+    """What a merge WOULD do, per declared entry — the plan `--dry-run` prints (S183).
+
+    🔴 WHY. `--dry-run` printed a raw list of files in the archive: no counts, no per-entry
+    strategy, no indication of what is protected. Driven side by side, the dry run listed three
+    filenames while the merge imported one notification and one store and left `config.json`
+    untouched — so the preview answered a different question from the one a user about to merge
+    into their own home is asking. This is gap (2) the plan names against itself: *"`--dry-run`
+    prints a raw file list, not a merge plan (no counts, no per-entry strategy, no conflict
+    preview)"*.
+
+    Computed from the SAME projections `_do_merge` uses (`_attach_merge_paths`,
+    `_extra_restore_paths`, the component gates) rather than by threading a `dry_run` flag through
+    twelve merge helpers. Twelve flags are twelve chances for the preview to drift from the act;
+    one derivation cannot disagree with itself about which entries participate.
+
+    Each row is `{path, strategy, action, detail}`, where `action` is one of `merge` (both sides
+    have it, so rows will be folded), `copy` (only the snapshot has it), or `keep-local` (both have
+    it and local wins).
+    """
+    from personalclaw.durability import inventory as inv
+
+    rows: list[dict] = []
+
+    def _add(path: str, strategy: str, detail: str = "") -> None:
+        src, dst = snap / path, pc / path
+        if not src.exists():
+            return
+        if not dst.exists():
+            action = "copy"
+        elif strategy == inv.MERGE_REPLACE_ONLY:
+            action = "keep-local"
+        else:
+            action = "merge"
+        rows.append({"path": path, "strategy": strategy, "action": action, "detail": detail})
+
+    by_path = {e.path: e for e in inv.INVENTORY}
+
+    if _want(components, "memory"):
+        _add("memory.db", inv.MERGE_SQLITE_ATTACH_IGNORE, "4-table allowlist, is_deleted=0 only")
+    if _want(components, "crons"):
+        for name in ("triggers.json", "event_triggers.json", "crons.json"):
+            _add(name, inv.MERGE_UNION_BY_ID, "by job/trigger id")
+        _add("cron-history", inv.MERGE_APPEND_DEDUP, "per-shard, dedup on run_id")
+    if _want(components, "config"):
+        for name in CORE_FILES["config"]:
+            # The contract gap (3) names: an existing config.json is NEVER overwritten. Saying so in
+            # the plan is the point — it was true but unstated, so a user could not know it.
+            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing; never overwritten")
+    if _want(components, "notifications"):
+        _add("notifications.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on ts")
+        _add("feedback.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on id")
+        _add("model_calls.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on audit_id")
+    if _want(components, "security"):
+        for name in CORE_FILES["security"]:
+            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, chmod 0600")
+        _add("security_events.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on event_id; HMAC-key gated")
+    if _want(components, "workspace"):
+        for name in ("workspace", "plan_memory"):
+            _add(name, inv.MERGE_UNION_BY_ID, "tree, no overwrite")
+    if _want(components, "skills"):
+        _add("skills", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
+    if _want(components, "everything"):
+        for path in _attach_merge_paths():
+            _add(path, inv.MERGE_SQLITE_ATTACH_IGNORE, "every table, INSERT OR IGNORE")
+        for path in _extra_restore_paths(snap):
+            entry = by_path.get(path)
+            strategy = entry.merge if entry else inv.MERGE_UNION_BY_ID
+            _add(path, strategy, "per-file union" if entry and entry.kind else "")
+    return rows
+
+
+def _attach_merge_paths() -> list[str]:
+    """Declared sqlite stores routed to the generic ATTACH merge (S180's call-site list).
+
+    Extracted so `_do_merge` and `merge_plan` cannot disagree about which databases participate — a
+    preview that names a different set from the act is worse than no preview.
+    """
+    try:
+        from personalclaw.durability import inventory as inv
+
+        return [
+            e.path
+            for e in inv.sqlite_entries()
+            if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db"
+        ]
+    except Exception:  # noqa: BLE001 — a restore must work even if this import breaks
+        return []
+
+
+def print_merge_plan(rows: list[dict]) -> None:
+    """Render the plan as a table. Grouped by action so the destructive-looking rows are not buried
+    among dozens of `copy` lines."""
+    if not rows:
+        print("  (nothing in this snapshot matches the selected components)")
+        return
+    order = {"merge": 0, "copy": 1, "keep-local": 2, "skip": 3}
+    label = {
+        "merge": "MERGE   ",
+        "copy": "COPY    ",
+        "keep-local": "KEEP    ",
+        "skip": "SKIP    ",
+    }
+    for row in sorted(rows, key=lambda r: (order.get(r["action"], 9), r["path"])):
+        detail = f" — {row['detail']}" if row["detail"] else ""
+        print(
+            f"  {label.get(row['action'], row['action'])} {row['path']:<28} "
+            f"[{row['strategy']}]{detail}"
+        )
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["action"]] = counts.get(row["action"], 0) + 1
+    print("  " + ", ".join(f"{n} {a}" for a, n in sorted(counts.items())))
+
+
 def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
     print("🔀 Merge mode — importing...")
 
@@ -1339,17 +1454,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
     # the same reason capture reads `backup_entries()`. `memory.db` is excluded: its own executor
     # filters `WHERE is_deleted=0`, and a generic all-tables merge would resurrect deleted memories.
     if _want(components, "everything"):
-        try:
-            from personalclaw.durability import inventory as _inv
-
-            _attach = [
-                e.path
-                for e in _inv.sqlite_entries()
-                if e.merge == _inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db"
-            ]
-        except Exception:  # noqa: BLE001 — a restore must work even if this import breaks
-            _attach = []
-        for rel in _attach:
+        for rel in _attach_merge_paths():
             s_db, d_db = snap / rel, pc / rel
             if s_db.is_file() and d_db.is_file():
                 _merge_sqlite_attach(s_db, d_db, rel)
@@ -1500,10 +1605,19 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
 
         if args.dry_run:
             print(f"\n🔍 Dry run — would restore to {pc} in {mode} mode")
-            print("Files in snapshot:")
-            for f in sorted(snap.rglob("*")):
-                if f.is_file():
-                    print(f"  {f.relative_to(snap)}")
+            if mode == "merge":
+                # The PLAN, not a file listing: per-entry strategy and what happens to each. A raw
+                # list answered a different question from the one a user about to merge is asking.
+                print("Merge plan:")
+                print_merge_plan(merge_plan(snap, pc, components))
+            else:
+                # Replace mode is wholesale by definition, so the honest preview is what travels
+                # plus where the current state goes.
+                print("Files in snapshot:")
+                for f in sorted(snap.rglob("*")):
+                    if f.is_file():
+                        print(f"  {f.relative_to(snap)}")
+                print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
             return 0
 
         pc.mkdir(parents=True, exist_ok=True)
