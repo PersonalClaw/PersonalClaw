@@ -1087,6 +1087,23 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     kind, raw = _split_id(request.match_info["id"])
     if kind == _STORE:
         return await _run_store(raw, request)
+    # 🔴 A STORE trigger DOES have run records (S166). This branch was `kind != _SCHEDULE`, so
+    # every store trigger — web_watch, file, idle, run_completed, view, webhook — was told
+    # `supported: false` with a reason naming LIFECYCLE triggers, a kind it is not. Measured: three
+    # fires of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"` via
+    # `_record_fire_outcome` (S139), and the endpoint reported none, so the detail panel showed "no
+    # runs recorded yet" for an automation that had run three times.
+    #
+    # The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw` for a
+    # store trigger (`store:web_watch:feed` → `web_watch:feed`) — so the same `list_for_job(raw, …)`
+    # call the schedule branch makes already works. Nothing new to plumb; the branch was simply
+    # written before store triggers had a run store.
+    #
+    # No catch-all for an unrecognised kind, deliberately: `_split_id` defaults an unknown prefix to
+    # `_SCHEDULE` (a bare id is a schedule id, for backwards compatibility), so `kind` can only ever
+    # be one of the four constants here — a third branch would be unreachable. Verified by driving
+    # `mystery:x`, which resolves to `("schedule", "mystery:x")` and answers an empty schedule
+    # history rather than a fabricated "unsupported".
     if kind == _LIFECYCLE:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
@@ -1340,7 +1357,7 @@ async def api_trigger_history(request: web.Request) -> web.Response:
                 "last_fired_at": trigger.last_fired_at,
             }
         )
-    if kind != _SCHEDULE:
+    if kind == _LIFECYCLE:
         return web.json_response(
             {
                 "runs": [],

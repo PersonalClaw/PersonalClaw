@@ -1281,3 +1281,80 @@ def test_an_ACTIVE_trigger_still_reports_active():
 
     row = T._serialize_store(Trigger(id="clock:z", name="z", kind="clock"))
     assert row["state"] == "active"
+
+
+# ── 🔴 a store trigger's run history was reported as unsupported (S166) ──
+
+
+@pytest.mark.asyncio
+async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
+    """🔴 THE DEFECT. `api_trigger_history` branched on `kind != _SCHEDULE`, so every store trigger —
+    `web_watch`, `file`, `idle`, `run_completed`, `view`, `webhook` — was told `supported: false`
+    with a reason naming LIFECYCLE triggers, a kind it is not.
+
+    But a store trigger DOES have run records: `_record_fire_outcome` has written them to
+    `ScheduleRunStore` under `job_id=trigger.id` since S139. Measured: three fires persisted three
+    rows and the endpoint reported none, so the detail panel read "No runs recorded yet" for an
+    automation that had run three times.
+
+    The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw`
+    for a store trigger — so the schedule branch's own `list_for_job(raw, …)` already worked.
+    The branch was simply written before store triggers had a run store.
+    """
+    import types as _types
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    store.upsert(
+        Trigger(
+            id="web_watch:feed",
+            name="feed watch",
+            kind="web_watch",
+            enabled=True,
+            spec={"url": "https://example.dev"},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = None
+    for _ in range(3):
+        await orch._record_fire_outcome(
+            store.get("web_watch:feed").trigger,
+            result=_types.SimpleNamespace(success=True, error=""),
+        )
+
+    req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history?limit=10")
+    req.match_info["id"] = "store:web_watch:feed"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload["total"] == 3, "the rows the fire path wrote must be served"
+    assert payload.get("supported", True) is True
+    assert len(payload["runs"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_LIFECYCLE_trigger_still_says_unsupported_and_says_WHY():
+    """The honest answer is preserved for the kind it was actually about: a lifecycle trigger runs
+    inline with the agent loop and keeps no run store. A bare `{"runs": []}` would render as "this
+    ran and kept no record", which is a different and false claim."""
+    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history")
+    req.match_info["id"] = "lifecycle:on_start"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload["supported"] is False
+    assert "lifecycle" in payload["reason"]
+
+
+@pytest.mark.asyncio
+async def test_an_UNRECOGNISED_prefix_falls_back_to_SCHEDULE_not_a_fake_reason():
+    """No catch-all branch exists, and that is correct: `_split_id` defaults an unknown prefix
+    to `schedule` (a bare id IS a schedule id, for backwards compatibility), so a third branch
+    would be unreachable. Driven rather than assumed — my first draft added that branch and
+    this test proved it dead."""
+    req = make_mocked_request("GET", "/api/triggers/mystery:x/history")
+    req.match_info["id"] = "mystery:x"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload == {"runs": [], "total": 0}, "an unknown prefix reads as an empty schedule"
+    assert "supported" not in payload, "no fabricated unsupported answer"

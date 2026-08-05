@@ -5425,3 +5425,50 @@ display.
   the archive split (here). `suppressed_ids` remains typed-but-unused — `did_ids` is sufficient for the
   ordering, and adding a second membership test for the complement would be two ways to ask one
   question.
+
+### S166 — a store trigger's history was "unsupported", naming the wrong kind (§1.3 / crit 8)
+
+**Found by sweeping the PER-TRIGGER surfaces** after S165 closed the cross-trigger feed. Same
+question, different endpoint: what does a user see when they open one automation?
+
+**🔴 THE DEFECT.** `api_trigger_history` branched on `kind != _SCHEDULE`, so every store trigger —
+`web_watch`, `file`, `idle`, `run_completed`, `view`, `webhook` — received:
+
+```json
+{"runs": [], "total": 0, "supported": false,
+ "reason": "lifecycle triggers run inline with the agent loop and keep no run store"}
+```
+
+A store trigger is not a lifecycle trigger, and it **does** have run records: `_record_fire_outcome`
+has written them to `ScheduleRunStore` under `job_id=trigger.id` since S139. Measured — three fires
+of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"`, and the endpoint
+reported none. The detail panel read *"No runs recorded yet"* for an automation that had run three
+times, and the stated reason sent the user hunting a lifecycle trigger they never created.
+
+**Nothing needed plumbing.** The run-store key is the FULL trigger id, which is exactly what
+`_split_id` already returns as `raw` for a store trigger (`store:web_watch:feed` →
+`web_watch:feed`) — so the schedule branch's own `list_for_job(raw, …)` call works verbatim. The
+branch was simply written before store triggers had a run store, and nothing revisited it when S139
+gave them one.
+
+**🔴 My first draft added a third catch-all branch for an unknown kind. The test proved it dead.**
+`_split_id` defaults an unrecognised prefix to `_SCHEDULE` (a bare id IS a schedule id, for backwards
+compatibility), so `kind` can only ever be one of the four constants and a third branch is
+unreachable. Removed rather than shipped, with the reasoning recorded at the site and pinned by a test
+that drives `mystery:x` and asserts it resolves to an empty *schedule* history rather than a
+fabricated "unsupported".
+
+**🔴 And my first LOAD-BEARING CHECK was the wrong instrument.** `_LIFECYCLE` appears five times in
+this file, so `str.replace(..., 1)` patched a *different* handler and the suite stayed green — which
+reads exactly like "the test does not catch the defect". The test was fine; the revert was wrong.
+Re-run by line number against the history handler specifically, it turns the test red. Worth
+recording: a load-bearing check that mutates the wrong line is a false negative that argues for
+deleting a good test.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change —
+`ScheduleDetail` already renders whatever `runs` the endpoint returns, and already uses the shared
+`statusMeta`, so serving the rows was the whole fix.
+
+- **The lifecycle branch is preserved and now correct for the kind it was about.** A lifecycle trigger
+  genuinely keeps no run store, and a bare `{"runs": []}` would read as "this ran and kept no record"
+  — a different, false claim. That honesty was right; it was simply being given to the wrong kinds.
