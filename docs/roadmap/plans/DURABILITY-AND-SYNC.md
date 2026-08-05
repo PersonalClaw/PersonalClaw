@@ -673,3 +673,61 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   Tests: 8 new cases in `test_durability_inventory.py` (22), 4 in `test_resilience_doctor.py` (17),
   plus the two ratchet updates. Every half verified load-bearing by unwiring it independently. Gate:
   `make lint` green · full `pytest -n 4 --dist worksteal` green.
+
+## Execution log — Session 2h (the six sqlite stores with no ATTACH executor)
+
+- [2026-08-05][S180] **DONE.** Finished the declared-strategy sweep: `sqlite_attach_ignore` had seven
+  declaring entries and one executor.
+
+  **The gap.** Only `memory.db` had a merge — a hand-written four-table allowlist. S177 made the other
+  six reachable, but reachably *copy-if-missing*, so a database the live home already had kept its own
+  rows and dropped the snapshot's entirely. Driven across all six — `learning.db`,
+  `knowledge/knowledge.db`, `workspace/knowledge/knowledge.db`, `loop/loops.db`,
+  `workflows/runs.db`, `workspace/lexicon/lexicon.db` — a snapshot row and a live row went in and
+  **only the live row came out**.
+
+  **Generic, because the schemas said so.** I read the real tables in all six out of a long-lived real
+  home and the dev home before writing anything: every one carries a primary key or unique index, so
+  `INSERT OR IGNORE` deduplicates correctly and a repeated restore drill is a no-op. Six more
+  hand-written allowlists would have been six more places for this defect class to recur, and the
+  executor reads `sqlite_entries()` so a store declared later merges by default.
+
+  🔴 **FTS5 shadow tables are the trap.** Merging them alongside the rest looks correct once and
+  breaks on the second run: 40 documents indexed, then a repeated merge returned **80 rows for 40
+  documents** — every search result duplicated — because `_data`/`_idx`/`_docsize` carry segment state
+  `INSERT OR IGNORE` cannot reconcile. A restore drill is exactly the thing a user runs twice.
+
+  🔴 **Unwiring each half corrected my own account of the fix.** I had credited the SKIP in the
+  docstring; removing it left every test green, because the trailing `rebuild` repairs the shadow
+  tables anyway — so the **rebuild** is the load-bearing half (without it: 0 hits for 40 documents).
+  The skip still earns its place, and now has its own assertion: it stops the merge writing **160
+  rows** of another database's segment state before overwriting them, and it means a future caller
+  that rebuilds conditionally cannot silently reintroduce the doubling. Both halves are separately
+  pinned.
+
+  **`memory.db` stays on its own executor.** It filters `WHERE is_deleted=0`, and a probe confirmed a
+  generic all-tables merge **resurrects a tombstoned row**. That filter is the reason the allowlist
+  exists rather than an accident of it, so the call site excludes it explicitly. The six routed here
+  were checked for soft-delete columns against both homes: none has one.
+
+  **Containment differs from `_merge_memory` deliberately.** That function re-raises and `_do_merge`
+  does not catch it, so a broken `memory.db` aborts the whole restore — correct for the primary store,
+  since continuing past it would let a user believe their memory came back. These six are independent,
+  so one unreadable file must cost that file only: driven with a poisoned `knowledge.db`, the other
+  three merged and the `skills` component still restored afterwards.
+
+  **A locked destination is reachable in production.** `restore_main` refuses while the gateway runs,
+  but `portability.apply_import_zip` → `_do_replace` has **no gateway gate**, and the gateway holds
+  these databases open in WAL mode. Measured: an uncommitted writer holding `BEGIN IMMEDIATE` makes
+  the merge print a skip and import nothing, leaving the destination exactly as it was — the same
+  shape `_merge_memory` uses for a per-table failure, not a crash and not a partial write.
+
+  The integrity pre-check needed its own test to be honest: the corrupt-file case passes **without**
+  it, because `ATTACH` fails and the rollback already protects the destination. The case only the
+  pre-check covers is a file sqlite can open and read while `integrity_check` reports damage, so it is
+  driven by forcing the pragma's answer — a hand-corrupted file either still reports `ok` (damage in
+  free space) or fails to open, and neither reaches that branch.
+
+  Tests: 9 new cases in `tests/test_snapshot.py` (90 in that file). Every half verified load-bearing
+  by unwiring it independently — wiring, rebuild, FTS skip and integrity pre-check each fail their own
+  test alone. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.

@@ -778,6 +778,106 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
+    """Merge a declared sqlite store table-by-table with `INSERT OR IGNORE` (S180).
+
+    🔴 WHY THIS EXISTS. Seven entries declare `merge=sqlite_attach_ignore` and only `memory.db` had
+    an executor — a hand-written four-table allowlist. S177 made the other six REACHABLE, but
+    reachably copy-if-missing, so a database the live home already had kept its own rows and dropped
+    the snapshot's entirely. Driven across all six (`learning.db`, both `knowledge.db`,
+    `loop/loops.db`, `workflows/runs.db`, `lexicon.db`): a snapshot row and a live row went in, only
+    the live row came out — six stores silently half-restored.
+
+    Generic rather than six allowlists, because the schemas said so: every real table in all six
+    carries a primary key or unique index, so `INSERT OR IGNORE` deduplicates correctly and a
+    repeated restore drill is a no-op. Measured against both a long-lived real home and the dev
+    home.
+
+    🔴 **FTS5 shadow tables are skipped and the index is REBUILT.** Merging them with the rest looks
+    fine once and breaks on the second run: measured 40 documents indexed, then a repeated merge
+    returned **80 rows for 40 documents** — every search result duplicated — because
+    `items_fts_data`/`_idx`/`_docsize` carry segment state `INSERT OR IGNORE` cannot reconcile. A
+    restore drill is exactly the thing a user runs twice.
+
+    Of the two halves, the **rebuild is what fixes it** — verified by removing each independently:
+    without the rebuild the index returns 0 hits for 40 documents, whereas without the skip the
+    trailing rebuild still repairs the shadow tables. The skip is kept because it makes the import
+    honest rather than repaired-after-the-fact: it avoids writing 160 rows of another database's
+    segment state (measured) only to overwrite them, and it means a future caller that rebuilds
+    conditionally cannot reintroduce the doubling.
+
+    `memory.db` keeps its own executor and is NOT routed here: it filters `WHERE is_deleted=0`, so a
+    generic all-tables merge would resurrect memories the user deleted. That filter is the reason
+    the
+    allowlist exists, not an accident of it.
+    """
+    try:
+        check = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
+        try:
+            if check.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
+                print(f"  ⚠️  {label}: source integrity check failed — skipping merge")
+                return 0
+        finally:
+            check.close()
+    except Exception as exc:  # noqa: BLE001 — a corrupt source must not abort the restore
+        print(f"  ⚠️  {label}: source unreadable ({exc}) — skipping merge")
+        return 0
+
+    conn = sqlite3.connect(str(dst_db))
+    imported = 0
+    try:
+        conn.execute("BEGIN")
+        conn.execute("ATTACH DATABASE ? AS src", (str(src_db),))
+        virtual = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM src.sqlite_master WHERE sql LIKE '%VIRTUAL TABLE%'"
+            )
+        ]
+        # A virtual table's shadow tables are `<name>_data`, `_idx`, `_docsize`, `_config`,
+        # `_content`. Matching by prefix covers them without hardcoding FTS5's internals.
+        skip = tuple(virtual) + tuple(v + "_" for v in virtual)
+        local = {
+            r[0] for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type='table'")
+        }
+        for (table,) in conn.execute(
+            "SELECT name FROM src.sqlite_master WHERE type='table'"
+        ).fetchall():
+            if table.startswith("sqlite_") or table in skip or table.startswith(skip):
+                continue
+            if table not in local:
+                # A table the live schema does not have. Creating it here would import a shape this
+                # build's code cannot read; the owning module creates its own tables on open.
+                continue
+            before = conn.total_changes
+            try:
+                conn.execute(f'INSERT OR IGNORE INTO main."{table}" SELECT * FROM src."{table}"')
+            except sqlite3.Error as exc:
+                # A column-set mismatch between snapshot and live schema. Skip the table, keep the
+                # rest — the same call `_merge_memory` makes about its opportunistic `contributor`
+                # column, for the same reason: a partial restore beats an aborted one.
+                print(f"  ⚠️  {label}.{table}: {exc} — skipped")
+                continue
+            imported += conn.total_changes - before
+        for view in virtual:
+            if view in local:
+                conn.execute(f'INSERT INTO main."{view}"("{view}") VALUES(\'rebuild\')')
+        conn.execute("COMMIT")
+    except Exception as exc:  # noqa: BLE001
+        conn.execute("ROLLBACK")
+        print(f"  ⚠️  {label}: merge failed ({exc}) — left unchanged")
+        return 0
+    finally:
+        try:
+            conn.execute("DETACH DATABASE src")
+        except sqlite3.Error:
+            pass
+        conn.close()
+    if imported:
+        print(f"  {label} rows imported: {imported}")
+    return imported
+
+
 def _merge_keyed_jsonl(src: Path, dst: Path, key_field: str, label: str) -> int:
     """Append rows from `src` that `dst` lacks, deduping on `key_field` (S179).
 
@@ -1120,6 +1220,29 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
     # Gated on `everything` so a targeted `--components memory` stays targeted — but that is also
     # the default (`components is None`), which is the invocation a user in a recovery actually
     # types.
+    # 🔴 The six declared sqlite stores whose `sqlite_attach_ignore` had no executor (S180). Runs
+    # BEFORE the generic store pass so a DB the live home already holds is MERGED rather than left
+    # alone; the pass below then copies any that are missing entirely.
+    #
+    # Driven off the inventory, not a hardcoded list, so a store declared later merges by default —
+    # the same reason capture reads `backup_entries()`. `memory.db` is excluded: its own executor
+    # filters `WHERE is_deleted=0`, and a generic all-tables merge would resurrect deleted memories.
+    if _want(components, "everything"):
+        try:
+            from personalclaw.durability import inventory as _inv
+
+            _attach = [
+                e.path
+                for e in _inv.sqlite_entries()
+                if e.merge == _inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db"
+            ]
+        except Exception:  # noqa: BLE001 — a restore must work even if this import breaks
+            _attach = []
+        for rel in _attach:
+            s_db, d_db = snap / rel, pc / rel
+            if s_db.is_file() and d_db.is_file():
+                _merge_sqlite_attach(s_db, d_db, rel)
+
     if _want(components, "everything"):
         restored = []
         for rel in _extra_restore_paths(snap):
