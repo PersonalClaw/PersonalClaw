@@ -1,0 +1,52 @@
+import { invalidateCache } from '../../lib/useCachedData'
+
+// ── The Learning page's two cached reads, and what a decision does to them ────
+//
+// Keys live here rather than inline at the call sites because the proposal list is keyed per FACET
+// (the active kind tab): `learning:proposals:` for All, `learning:proposals:skill`, and one more for
+// every tab the user has visited. That split is the whole reason a decision's invalidation has to be
+// a SWEEP rather than a single drop, and spelling the prefix out three times in the component is how
+// one of the three ends up disagreeing with the others.
+
+export const PROPOSALS_KEY_PREFIX = 'learning:proposals:'
+export const WEEK_KEY = 'learning:week'
+
+/** The cache key for one facet of the proposal list. `kind` is `''` for the All tab. */
+export function proposalsKey(kind: string): string {
+  return PROPOSALS_KEY_PREFIX + kind
+}
+
+/** Re-read the proposal list after an accept or a dismiss.
+ *
+ *  Two things have to happen and only one of them used to (#676): dropping the cache entry arms the
+ *  NEXT mount, it does not re-render the live one. So the decided row sat on screen until the user
+ *  navigated away, while the server had already deleted it — and a second Dismiss on that ghost row
+ *  escalates the rejection cooldown (`learning/proposals.py:298-302`), so the stale row is not
+ *  merely cosmetic. `refresh` is the half that refetches what the user is actually looking at.
+ *
+ *  The drop is a PREFIX sweep, not a single key. A row dismissed from the Skill tab is also gone
+ *  from All, so dropping only the active facet leaves every other tab holding a decided row and a
+ *  stale chip count — painted the instant that tab is selected, because the hook seeds a key change
+ *  straight from cache.
+ *
+ *  The capture week is deliberately NOT refetched here. Its numbers all come from the staging
+ *  store's `flush_records` and `staging` tables (`StagingStore.week`), which record what a capture
+ *  PASS did; `accept` and `reject` write neither — they touch the proposal file, the decision
+ *  memory, and the inbox item. A refetch would be a request that provably cannot return anything
+ *  new. */
+export function refreshAfterDecision(refreshProposals: () => void): void {
+  invalidateCache(PROPOSALS_KEY_PREFIX, true)
+  refreshProposals()
+}
+
+/** Re-read everything the page shows, for the explicit Refresh control.
+ *
+ *  Unlike a decision this carries no claim about what changed — the user is asking for current
+ *  server state, and a capture pass may well have run since the page mounted. So the week IS worth
+ *  re-reading here, which is exactly the difference from `refreshAfterDecision`. */
+export function refreshEverything(refreshProposals: () => void, refreshWeek: () => void): void {
+  invalidateCache(PROPOSALS_KEY_PREFIX, true)
+  invalidateCache(WEEK_KEY)
+  refreshProposals()
+  refreshWeek()
+}
