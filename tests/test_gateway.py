@@ -8,16 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from personalclaw.config.loader import AppConfig
-from personalclaw.gateway import (
-    _CRON_MSG_LIMIT,
+from personalclaw.gateway import _MAX_INJECT_ATTEMPTS, GatewayOrchestrator
+from personalclaw.triggers.delivery import (
     _EPOCH_RE,
     _EPOCH_WINDOW_SECS,
-    _FAILURE_REMINDER_SECS,
-    _MAX_INJECT_ATTEMPTS,
-    _SUCCESS_REMINDER_SECS,
     _VOLATILE_RE,
-    GatewayOrchestrator,
-    _result_hash,
+    FAILURE_REMINDER_SECS,
+    failure_hash,
 )
 
 
@@ -161,48 +158,50 @@ class TestGatewayOrchestratorInit:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Tests: _result_hash utility
+# Tests: failure_hash utility (moved from gateway._result_hash — S161)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestResultHash:
-    """Dedup hash strips volatile data."""
+class TestFailureHash:
+    """Dedup hash strips volatile data. MOVED with the function to `triggers.delivery` (S161),
+    where its only reader lives — the gateway copy had zero callers after the legacy
+    failure-dedup control was lost in the migration."""
 
     def test_stable_text_produces_consistent_hash(self):
-        assert _result_hash("hello world") == _result_hash("hello world")
+        assert failure_hash("hello world") == failure_hash("hello world")
 
     def test_different_text_different_hash(self):
-        assert _result_hash("foo") != _result_hash("bar")
+        assert failure_hash("foo") != failure_hash("bar")
 
     def test_strips_iso_timestamps(self):
-        a = _result_hash("deployed at 2026-01-15T10:30:00Z successfully")
-        b = _result_hash("deployed at 2026-05-20T22:00:00+05:00 successfully")
+        a = failure_hash("deployed at 2026-01-15T10:30:00Z successfully")
+        b = failure_hash("deployed at 2026-05-20T22:00:00+05:00 successfully")
         assert a == b
 
     def test_strips_uuids(self):
-        a = _result_hash("id=550e8400-e29b-41d4-a716-446655440000 done")
-        b = _result_hash("id=a1b2c3d4-e5f6-7890-abcd-ef1234567890 done")
+        a = failure_hash("id=550e8400-e29b-41d4-a716-446655440000 done")
+        b = failure_hash("id=a1b2c3d4-e5f6-7890-abcd-ef1234567890 done")
         assert a == b
 
     def test_strips_epoch_within_window(self):
         now_epoch = str(int(time.time()))
-        a = _result_hash(f"ts={now_epoch} ok")
-        b = _result_hash("ts= ok")
+        a = failure_hash(f"ts={now_epoch} ok")
+        b = failure_hash("ts= ok")
         assert a == b
 
     def test_preserves_epoch_outside_window(self):
         old_epoch = str(int(time.time()) - _EPOCH_WINDOW_SECS - 1000)
-        a = _result_hash(f"ts={old_epoch} ok")
-        b = _result_hash("ts= ok")
+        a = failure_hash(f"ts={old_epoch} ok")
+        b = failure_hash("ts= ok")
         assert a != b
 
     def test_hash_length_is_16(self):
-        assert len(_result_hash("anything")) == 16
+        assert len(failure_hash("anything")) == 16
 
     def test_millis_epoch_stripped(self):
         now_ms = str(int(time.time() * 1000))
-        a = _result_hash(f"ts={now_ms} ok")
-        b = _result_hash("ts= ok")
+        a = failure_hash(f"ts={now_ms} ok")
+        b = failure_hash("ts= ok")
         assert a == b
 
 
@@ -894,7 +893,7 @@ class TestInitCron:
         job.acked_items = []
         job.silent = False
         job.thread_ts = None
-        job.last_posted_hash = _result_hash("stable output")
+        job.last_posted_hash = failure_hash("stable output")
         job.consecutive_dupes = 1
         job.last_posted_at = time.time()
         job.last_failure_hash = ""
@@ -1164,10 +1163,11 @@ class TestVolatilePatterns:
 
     def test_constants_values(self):
         assert _MAX_INJECT_ATTEMPTS == 2
-        assert _CRON_MSG_LIMIT == 3000
-        assert _SUCCESS_REMINDER_SECS == 86400
-        assert _FAILURE_REMINDER_SECS == 3600
         assert _EPOCH_WINDOW_SECS == 300
+        # `FAILURE_REMINDER_SECS` moved to `triggers.delivery` with the control that reads it
+        # (S161). `_SUCCESS_REMINDER_SECS` and `_CRON_MSG_LIMIT` were DELETED: both were
+        # orphaned when the legacy cron dedup path was retired, with zero readers left.
+        assert FAILURE_REMINDER_SECS == 3600
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1291,7 +1291,7 @@ class TestCronFailurePaths:
         job.consecutive_dupes = 0
         job.last_posted_at = 0.0
         # Pre-set failure hash to match what will be generated
-        job.last_failure_hash = _result_hash("RuntimeError: boom")
+        job.last_failure_hash = failure_hash("RuntimeError: boom")
         job.last_failure_at = time.time()
         job.consecutive_failures = 1
         job._acp_retried = False
@@ -1630,73 +1630,11 @@ class TestInitApiServer:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestCronSuccessReminder:
-    """Cron dedup reminder after 24h."""
-
-    @pytest.mark.xfail(reason="pre-existing cron-callback red — #7", strict=False)
-    @pytest.mark.asyncio
-    async def test_success_reminder_after_24h(self):
-        """After 24h of same result, re-posts with warning."""
-        orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
-        orch.sessions = _mock_sessions()
-        orch.ctx_builder = MagicMock()
-        orch.ctx_builder.build_message = MagicMock(return_value=("msg", None))
-        orch.ctx_builder.hooks = MagicMock()
-        orch.subagent_mgr = MagicMock()
-        orch.subagent_mgr.running = []
-        orch.dashboard_state = _mock_dashboard_state()
-        orch._channel_delivery = _mock_channel_delivery()
-
-        with patch("personalclaw.gateway.ScheduleService") as mock_cs:
-            mock_cs_inst = MagicMock()
-            mock_cs_inst.start = AsyncMock()
-            mock_cs_inst.load_without_timer = AsyncMock()
-            mock_cs_inst.start_reaper = MagicMock()
-            mock_cs_inst.register_active_session_key = MagicMock()
-            mock_cs_inst.clear_active_session_key = MagicMock()
-            mock_cs.return_value = mock_cs_inst
-            await orch._init_cron()
-
-        callback = mock_cs.call_args[1]["on_job"]
-
-        job = MagicMock()
-        job.id = "j_remind"
-        job.name = "reminder-job"
-        job.persistent_session = True
-        job.command = ""
-        job.script = ""
-        job.provider = "invoke-agent"
-        job.agent_sequence = []
-        job.agent_id = None
-        job.channel = ""
-        job.created_by = "U1"
-        job.approval_mode = "auto"
-        job.env = None
-        job.acked_items = []
-        job.silent = False
-        job.thread_ts = None
-        job.last_posted_hash = _result_hash("same output")
-        job.consecutive_dupes = 5
-        # Posted more than 24h ago
-        job.last_posted_at = time.time() - _SUCCESS_REMINDER_SECS - 100
-        job.last_failure_hash = ""
-        job.last_failure_at = 0.0
-        job.consecutive_failures = 0
-
-        with patch(
-            "personalclaw.gateway.stream_and_collect",
-            new_callable=AsyncMock,
-            return_value="same output",
-        ):
-            with patch(
-                "personalclaw.gateway.build_schedule_session_context",
-                return_value=("cron:j_remind", "run"),
-            ):
-                result = await callback(job)
-
-        # Should have posted (reminder path)
-        orch._channel_delivery.deliver_cron_result.assert_awaited()
-        assert "same result" in result
+# TestCronSuccessReminder was DELETED (S161). It drove the legacy 24h success-dedup reminder by
+# setting `job.last_posted_hash` / `last_posted_at` — fields the gateway no longer reads at all
+# (measured: 0 occurrences in `gateway.py`). It had been `xfail`-marked for a pre-existing red,
+# so it was a permanently-failing test of a retired control: it could neither pass nor catch a
+# regression. Its live half — the hash behaviour — is covered by TestFailureHash above.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
