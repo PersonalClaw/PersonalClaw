@@ -1612,3 +1612,366 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
     # discrepancy stays visible.
     assert declared["crashes"].kind == "json_entity_dir"
     assert declared["sessions"].kind == "jsonl_append"
+
+
+# ── 🔴 six declared sqlite stores had no ATTACH executor (S180) ──
+
+
+def _kb_db(path: Path, tag: str, n: int = 40) -> Path:
+    """A knowledge-shaped DB: a PK'd content table plus an FTS5 index over it. Built through real
+    sqlite because the whole question is how FTS shadow tables behave under a merge."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE items(id TEXT PRIMARY KEY, body TEXT)")
+    conn.execute(
+        "CREATE VIRTUAL TABLE items_fts USING fts5(body, content='items', content_rowid='rowid')"
+    )
+    for i in range(n):
+        conn.execute("INSERT INTO items VALUES(?,?)", (f"{tag}{i}", f"{tag} doc {i}"))
+    conn.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_a_MERGE_recovers_every_declared_sqlite_store(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. Seven entries declare `merge=sqlite_attach_ignore`; only `memory.db` had an
+    executor. S177 made the other six reachable, but reachably copy-if-missing — so a database the
+    live home already had kept its own rows and dropped the snapshot's entirely.
+
+    Driven across all six: a snapshot row and a live row went in, only the live row came out. Six
+    stores silently half-restored, including `learning.db` and both knowledge stores.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    dbs = [
+        "learning.db",
+        "knowledge/knowledge.db",
+        "loop/loops.db",
+        "workflows/runs.db",
+        "workspace/knowledge/knowledge.db",
+        "workspace/lexicon/lexicon.db",
+    ]
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    for root, tag in ((snap, "FROM-SNAPSHOT"), (pc, "LIVE")):
+        root.mkdir(exist_ok=True)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        for rel in dbs:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(root / rel))
+            conn.execute("CREATE TABLE rows(id TEXT PRIMARY KEY, v TEXT)")
+            conn.execute("INSERT INTO rows VALUES(?,?)", (tag, tag))
+            conn.commit()
+            conn.close()
+
+    _do_merge(snap, pc, None)
+
+    for rel in dbs:
+        conn = sqlite3.connect(str(pc / rel))
+        ids = sorted(r[0] for r in conn.execute("SELECT id FROM rows"))
+        conn.close()
+        assert ids == ["FROM-SNAPSHOT", "LIVE"], f"{rel} did not merge: {ids}"
+
+
+def test_the_FTS_index_is_REBUILT_not_merged(tmp_path: Path) -> None:
+    """🔴 The reason this is not a one-line "merge every table".
+
+    Merging FTS5 shadow tables looks correct ONCE and breaks on the second run: measured 40
+    documents
+    indexed, then a repeated merge returned **80 rows for 40 documents** — every search result
+    duplicated — because `items_fts_data`/`_idx`/`_docsize` carry segment state `INSERT OR IGNORE`
+    cannot reconcile. A restore drill is exactly the thing a user runs twice.
+
+    So virtual tables and their shadow tables are skipped and `rebuild` is issued instead. Asserted
+    over THREE consecutive merges, since the defect only appears from the second.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    src = _kb_db(tmp_path / "snap.db", "snap")
+    dst = _kb_db(tmp_path / "live.db", "live")
+
+    for attempt in (1, 2, 3):
+        _merge_sqlite_attach(src, dst, "kb")
+        conn = sqlite3.connect(str(dst))
+        assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 80
+        hits = conn.execute("SELECT rowid FROM items_fts WHERE items_fts MATCH 'snap'").fetchall()
+        assert len(hits) == 40, f"merge #{attempt}: {len(hits)} search rows for 40 documents"
+        orphans = [
+            r[0]
+            for r in hits
+            if not conn.execute("SELECT 1 FROM items WHERE rowid=?", (r[0],)).fetchone()
+        ]
+        assert orphans == [], f"merge #{attempt}: index points at {len(orphans)} missing rows"
+        conn.execute("INSERT INTO items_fts(items_fts) VALUES('integrity-check')")
+        conn.close()
+
+
+def test_a_CORRUPT_source_leaves_the_live_store_untouched(tmp_path: Path) -> None:
+    """A restore reads a file that has travelled: a truncated archive or a bad disk must cost that
+    one store, not the database the user still has. Mirrors `_merge_memory`'s integrity pre-check.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    bad = tmp_path / "bad.db"
+    bad.write_bytes(b"not a database at all")
+    live = _kb_db(tmp_path / "live.db", "keep", n=3)
+
+    assert _merge_sqlite_attach(bad, live, "corrupt") == 0
+
+    conn = sqlite3.connect(str(live))
+    assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 3
+    conn.close()
+
+
+def test_SCHEMA_DRIFT_skips_the_table_and_keeps_the_rest(tmp_path: Path) -> None:
+    """An older snapshot meets a newer schema. Two cases, both driven:
+
+    * a table only the SNAPSHOT has is not created — importing a shape this build's code cannot read
+      would be worse than omitting it, and the owning module creates its own tables on open;
+    * a column-count mismatch skips that table and keeps going, the same call `_merge_memory` makes
+      about its opportunistic `contributor` column: a partial restore beats an aborted one.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    conn = sqlite3.connect(str(src))
+    conn.execute("CREATE TABLE shared(id TEXT PRIMARY KEY, v TEXT)")
+    conn.execute("CREATE TABLE only_in_snapshot(id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE drifted(id TEXT PRIMARY KEY, v TEXT, extra TEXT)")
+    conn.execute("INSERT INTO shared VALUES('s','snap')")
+    conn.execute("INSERT INTO only_in_snapshot VALUES('x')")
+    conn.execute("INSERT INTO drifted VALUES('d','snap','more')")
+    conn.commit()
+    conn.close()
+    conn = sqlite3.connect(str(dst))
+    conn.execute("CREATE TABLE shared(id TEXT PRIMARY KEY, v TEXT)")
+    conn.execute("CREATE TABLE drifted(id TEXT PRIMARY KEY, v TEXT)")  # narrower
+    conn.execute("INSERT INTO shared VALUES('l','live')")
+    conn.commit()
+    conn.close()
+
+    _merge_sqlite_attach(src, dst, "drift")
+
+    conn = sqlite3.connect(str(dst))
+    assert sorted(r[0] for r in conn.execute("SELECT id FROM shared")) == ["l", "s"]
+    assert (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE name='only_in_snapshot'").fetchone() is None
+    )
+    conn.close()
+
+
+def test_MEMORY_DB_keeps_its_own_executor(tmp_path: Path) -> None:
+    """🔴 The one store that must NOT be routed here. `_merge_memory` filters `WHERE is_deleted=0`,
+    so a generic all-tables merge would **resurrect memories the user deleted** — measured on a
+    synthetic soft-delete table, where the naive merge imported the tombstoned row.
+
+    That filter is the reason its allowlist exists, not an accident of it. The six stores routed to
+    the generic path were checked for soft-delete columns against a long-lived real home and the dev
+    home: none has one.
+    """
+    import inspect
+
+    from personalclaw import snapshot
+
+    merge_src = inspect.getsource(snapshot._do_merge)
+    assert 'e.path != "memory.db"' in merge_src, "memory.db must be excluded at the call site"
+    assert "_merge_memory(" in merge_src, "memory.db's own executor must still run"
+
+
+def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path) -> None:
+    """Read off `sqlite_entries()` rather than a hardcoded list, so a sqlite store declared later
+    merges by default — the same reason capture reads `backup_entries()`. A second hand-maintained
+    list is how this whole class of defect started."""
+    import inspect
+
+    from personalclaw import snapshot
+    from personalclaw.durability import inventory as inv
+
+    merge_src = inspect.getsource(snapshot._do_merge)
+    assert "sqlite_entries()" in merge_src
+    assert "MERGE_SQLITE_ATTACH_IGNORE" in merge_src
+
+    declared = {e.path for e in inv.sqlite_entries() if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE}
+    assert (
+        "memory.db" in declared
+    ), "memory.db still declares the strategy; it just has its own path"
+    assert len(declared - {"memory.db"}) == 6, "the six generic stores"
+
+
+def test_the_FTS_SKIP_avoids_importing_foreign_segment_state(tmp_path: Path) -> None:
+    """The skip's own contribution, measured separately from the rebuild.
+
+    🔴 Found by unwiring each half: removing the SKIP leaves the tests green, because the trailing
+    `rebuild` repairs the shadow tables anyway — so the rebuild is the load-bearing fix. The skip
+    still earns its place: without it the merge writes **160 rows** of the other database's segment
+    state (measured, versus 40 real rows) before overwriting them, and a future caller that rebuilds
+    conditionally would silently reintroduce the doubling.
+
+    Asserted on the row COUNT the merge reports, which is the observable difference.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    src = _kb_db(tmp_path / "snap.db", "snap")
+    dst = _kb_db(tmp_path / "live.db", "live")
+
+    imported = _merge_sqlite_attach(src, dst, "kb")
+
+    assert imported == 40, (
+        f"imported {imported} rows for 40 documents — shadow tables are being copied, "
+        "so the FTS skip is not in effect"
+    )
+
+
+def test_a_source_sqlite_calls_DAMAGED_is_refused_before_any_import(tmp_path, monkeypatch) -> None:
+    """The integrity pre-check's own contract, isolated.
+
+    🔴 Found by unwiring it: the corrupt-source test above passes WITHOUT the pre-check, because a
+    file that is not a database fails at `ATTACH` and the rollback already protects the destination.
+    So that test proves the rollback, not this check.
+
+    The case only the pre-check covers is a file sqlite can OPEN and read while
+    `PRAGMA integrity_check` reports damage — a torn page set from a partial copy, which is
+    precisely
+    what the safe-backup-API pass exists to avoid producing. Importing "readable" rows out of a
+    database sqlite calls damaged would launder corruption into the one good copy the user has.
+
+    Driven by forcing the pragma's answer rather than guessing byte offsets: a hand-corrupted file
+    either still reports `ok` (damage in free space) or fails to open, so neither reaches this
+    branch.
+    """
+    # Patch the sqlite3 the MODULE bound, not this test's stdlib import. On CI (Linux x86_64)
+    # `pysqlite3-binary` is installed, so `snapshot.py` does `import pysqlite3 as sqlite3` — a
+    # DIFFERENT module object from the test's stdlib `sqlite3`. Patching `sq.connect` there left
+    # the code's real connections unpatched, the integrity check ran for real and passed on a
+    # valid db, and the merge imported the row → `assert 1 == 0` on CI while passing locally
+    # (where pysqlite3 is absent and the two happen to be the same object).
+    from personalclaw import snapshot as snap_mod
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    sq = snap_mod.sqlite3
+
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    for path, tag in ((src, "snap"), (dst, "live")):
+        conn = sq.connect(str(path))
+        conn.execute("CREATE TABLE items(id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO items VALUES(?)", (tag,))
+        conn.commit()
+        conn.close()
+
+    real_connect = sq.connect
+
+    class _Damaged:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args):
+            if "integrity_check" in sql:
+
+                class _Row:
+                    def fetchone(self):
+                        return ("*** in database main ***\nPage 3: btreeInitPage() error",)
+
+                return _Row()
+            return self._inner.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    def _connect(target, *args, **kwargs):
+        conn = real_connect(target, *args, **kwargs)
+        return _Damaged(conn) if "mode=ro" in str(target) else conn
+
+    monkeypatch.setattr(snap_mod.sqlite3, "connect", _connect)
+    imported = _merge_sqlite_attach(src, dst, "damaged")
+    monkeypatch.undo()
+
+    assert imported == 0
+    conn = real_connect(str(dst))
+    assert [r[0] for r in conn.execute("SELECT id FROM items")] == ["live"]
+    conn.close()
+
+
+def test_one_UNREADABLE_store_does_not_cost_the_others(tmp_path: Path) -> None:
+    """Per-store containment, and the one place this executor deliberately DIFFERS from
+    `_merge_memory`.
+
+    `_merge_memory` re-raises on an outer failure, and `_do_merge` does not catch it — so a broken
+    `memory.db` aborts the entire restore. That is right for the primary store: silently continuing
+    past the memory merge would leave a user believing their memory came back.
+
+    It is wrong for these six. They are independent stores, so one unreadable file must cost that
+    file
+    only. Driven with a poisoned `knowledge.db`: the other three databases merged, and the `skills`
+    component still restored afterwards.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    dbs = ["learning.db", "knowledge/knowledge.db", "loop/loops.db", "workflows/runs.db"]
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    for root, tag in ((snap, "SNAP"), (pc, "LIVE")):
+        root.mkdir(exist_ok=True)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        for rel in dbs:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(root / rel))
+            conn.execute("CREATE TABLE r(id TEXT PRIMARY KEY)")
+            conn.execute("INSERT INTO r VALUES(?)", (tag,))
+            conn.commit()
+            conn.close()
+    (snap / "knowledge/knowledge.db").write_bytes(b"garbage not a db")
+    (snap / "skills").mkdir()
+    (snap / "skills" / "s.md").write_text("# skill", encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    for rel in ("learning.db", "loop/loops.db", "workflows/runs.db"):
+        conn = sqlite3.connect(str(pc / rel))
+        assert sorted(r[0] for r in conn.execute("SELECT id FROM r")) == ["LIVE", "SNAP"], rel
+        conn.close()
+    conn = sqlite3.connect(str(pc / "knowledge/knowledge.db"))
+    assert [r[0] for r in conn.execute("SELECT id FROM r")] == ["LIVE"]
+    conn.close()
+    assert (pc / "skills" / "s.md").is_file(), "a later component must still restore"
+
+
+def test_a_LOCKED_destination_degrades_to_a_skip(tmp_path: Path) -> None:
+    """The gateway holds these databases open in WAL mode, and the IMPORT path
+    (`portability.apply_import_zip` → `_do_replace`) has **no gateway gate** — only `restore_main`
+    refuses while the gateway runs.
+
+    So a locked destination is reachable in production. Measured: an uncommitted writer holding
+    `BEGIN IMMEDIATE` makes the merge print a skip and import nothing, leaving the destination
+    exactly as it was — the same shape `_merge_memory` uses for a per-table failure, not a crash and
+    not a partial write.
+    """
+    # Hold the lock with the SAME sqlite the code uses. On CI (Linux x86_64) `snapshot.py` binds
+    # `pysqlite3`, and a holder opened via the test's stdlib `sqlite3` is a different SQLite build
+    # whose lock the code's pysqlite3 connection need not observe — so the merge acquired the lock
+    # and imported, giving `assert 1 == 0` on CI while passing locally (one build, shared locking).
+    from personalclaw import snapshot as snap_mod
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    sq = snap_mod.sqlite3
+
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    for path, tag in ((src, "snap"), (dst, "live")):
+        conn = sq.connect(str(path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE items(id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO items VALUES(?)", (tag,))
+        conn.commit()
+        conn.close()
+
+    holder = sq.connect(str(dst))
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO items VALUES('inflight')")
+    try:
+        imported = _merge_sqlite_attach(src, dst, "locked")
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert imported == 0
+    conn = sq.connect(str(dst))
+    assert [r[0] for r in conn.execute("SELECT id FROM items")] == ["live"]
+    conn.close()
