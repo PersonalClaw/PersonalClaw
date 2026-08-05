@@ -623,6 +623,22 @@ class Trigger:
     #: field existed cannot strand a trigger forever"), which is also the fail-open direction: a
     #: missing cooldown must not become an infinite one.
     park_retry_after: float = 0.0
+    #: Hash of the LAST failure whose alert went out, and when — what `dedupe_hash` needs (S161).
+    #:
+    #: 🔴 `failure_policy.dedupe_hash` is written by the migration from the legacy
+    #: `last_failure_hash` and was read by nothing: the unified fire path kept the legacy
+    #: reminder-window constant and hash helper, and dropped the check that used them.
+    #: Measured: the SAME error on 6 consecutive fires produced 6 notifications.
+    #:
+    #: Hashed from the ERROR TEXT, not from `last_error_summary` — that field holds
+    #: `PauseDecision.reason` ("failure 1 of 5", "failure 2 of 5"), which changes on every failure
+    #: even when the cause is identical, so hashing it could never dedupe once.
+    #:
+    #: `last_alert_at` is epoch, matching `park_retry_after` and for the same reason: the window
+    #: comparison is float arithmetic, and a conversion at the comparison site is a chance to mix
+    #: units. Absent/0 never suppresses, so the first alert of anything always goes out.
+    last_alert_hash: str = ""
+    last_alert_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -653,6 +669,8 @@ class Trigger:
             "last_failure_at": self.last_failure_at,
             "last_fired_at": self.last_fired_at,
             "park_retry_after": self.park_retry_after,
+            "last_alert_hash": self.last_alert_hash,
+            "last_alert_at": self.last_alert_at,
             "health_status": self.health_status,
             "last_error_summary": self.last_error_summary,
             "state": self.state,
@@ -867,6 +885,8 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         last_failure_at=str(data.get("last_failure_at", "") or ""),
         last_fired_at=str(data.get("last_fired_at", "") or ""),
         park_retry_after=_float(data.get("park_retry_after"), 0.0),
+        last_alert_hash=str(data.get("last_alert_hash", "") or ""),
+        last_alert_at=_float(data.get("last_alert_at"), 0.0),
         health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
         last_error_summary=str(data.get("last_error_summary", "") or ""),
         state=state,
