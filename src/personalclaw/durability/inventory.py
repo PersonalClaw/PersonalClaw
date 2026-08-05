@@ -256,13 +256,32 @@ INVENTORY: tuple[StateEntry, ...] = (
         derived=True,  # git-owned clones, re-creatable from their remotes
     ),
     # ── automation ──
+    # 🔴 THE trigger store, and it was never declared here (S184). `triggers/store.py` opens with
+    # "`triggers.json` — the one trigger store … absorbing crons.json / hooks.json /
+    # event_triggers.json / autonudge config", and it is hand-listed in BOTH `snapshot.py` and
+    # `portability.py` — each with a comment about the round trip that lost it. So it travels, but
+    # nothing inventory-derived could see it: it was invisible to `home_is_populated`, to the
+    # ratchet, and to every projection S176-S183 built.
+    #
+    # `audit_home()` WOULD have flagged it — verified, it reports `triggers.json` as unclaimed on a
+    # home that has one. S179 audited both real homes clean because neither migrated to the store
+    # yet, so the guard was right and the population was the gap. That is the same
+    # fixture-versus-reality shape S179 itself was about.
+    StateEntry(
+        id="triggers",
+        kind=KIND_JSON_FILE,
+        path="triggers.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="the one trigger store (automations, event triggers, hooks)",
+    ),
     StateEntry(
         id="crons",
         kind=KIND_JSON_FILE,
         path="crons.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
-        help="scheduled jobs",
+        help="scheduled jobs (legacy; read-only, absorbed by triggers.json)",
     ),
     StateEntry(
         id="hooks",
