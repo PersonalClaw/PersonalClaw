@@ -37,6 +37,14 @@ _TRACE_CAP = 50_000  # 50 KB of the full last result
 _MAX_RECORDS_PER_JOB = 100
 _MAX_INDEX_RECORDS = 2_000
 
+#: How many SUPPRESSED rows one job may keep, out of `_MAX_RECORDS_PER_JOB` (S173).
+#:
+#: A quarter, deliberately: enough that "why did my automation not run last night" stays answerable
+#: across a long quiet window, while leaving three quarters of it for runs that DID work — the
+#: rows a user opens the history for. Before this split, a suppression storm evicted every real
+#: run within its own duration.
+_MAX_SUPPRESSED_PER_JOB = _MAX_RECORDS_PER_JOB // 4
+
 _HISTORY_DIRNAME = "cron-history"
 _INDEX_NAME = "_index.jsonl"
 _LOCK_NAME = ".history.lock"
@@ -329,10 +337,40 @@ class ScheduleRunStore:
     # ── Rotation + delete ─────────────────────────────────────────────
 
     def _rotate_job_locked(self, job_id: str) -> None:
+        """Trim a job's history, keeping WORK and suppressions on separate quotas (S173).
+
+        🔴 WHY THE SPLIT. A single `[-_MAX_RECORDS_PER_JOB:]` tail is correct while every row is a
+        run — but S171 began persisting suppressed fires (criterion 8's "zero silent drops"), and a
+        minutely trigger held by quiet hours writes 1440 of them a day. `RunWeight`'s own docstring
+        names that number. Measured against the flat tail: **1 real backup run plus 129 quiet-hours
+        skips evicted the backup entirely**, and the 100-row window held ~100 MINUTES of history
+        instead of ~100 runs.
+
+        So the newest `_MAX_SUPPRESSED_PER_JOB` suppressions are kept, and the work quota is
+        computed as the remainder — a job with no skips still keeps its full 100 runs, so nothing
+        regresses for a trigger that never suppresses.
+
+        Order is PRESERVED on write: the two classes are partitioned to decide what survives, then
+        re-merged by their original position, because `list_for_job` reverses the file for
+        newest-first and `count_since` walks it — both would misread a file grouped by class.
+        """
         path = self._job_path(job_id)
         rows = self._read_jsonl(path)
-        if len(rows) > _MAX_RECORDS_PER_JOB:
-            self._write_jsonl(path, rows[-_MAX_RECORDS_PER_JOB:])
+        if len(rows) <= _MAX_RECORDS_PER_JOB:
+            return
+        from personalclaw.triggers.models import INERT_OUTCOMES
+
+        sup_idx = [i for i, r in enumerate(rows) if str(r.get("status") or "") in INERT_OUTCOMES]
+        work_idx = [i for i in range(len(rows)) if i not in set(sup_idx)]
+        # A CEILING on suppressions, not a floor under them — and the work quota is whatever the
+        # total leaves once suppressions are capped, so a job with FEW skips keeps a nearly-full
+        # window of runs. My first draft capped work at `total - suppressed_cap` unconditionally,
+        # which regressed a work-only job from 100 rows to 75 and broke `test_rotation_caps_per_job`
+        # — the existing test correctly refused a change I had not justified.
+        keep_suppressed = sup_idx[-_MAX_SUPPRESSED_PER_JOB:]
+        keep_work = work_idx[-(_MAX_RECORDS_PER_JOB - len(keep_suppressed)) :]
+        keep = sorted(set(keep_suppressed) | set(keep_work))
+        self._write_jsonl(path, [rows[i] for i in keep])
 
     def _rotate_index_locked(self) -> None:
         rows = self._read_jsonl(self._index)

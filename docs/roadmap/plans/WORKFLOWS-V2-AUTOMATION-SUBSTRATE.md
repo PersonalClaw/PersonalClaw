@@ -5804,3 +5804,57 @@ suppression cannot reach it. Checked rather than assumed, since the two boxes ar
 - **The suppression chain is now honest end to end:** the row is built (S86), typed (S132), persisted
   (S171), counted correctly by the rate meter (S171), folded out of the default view (S165), and
   rendered as a non-error (here).
+
+### S173 — a suppression storm evicted the runs that did work (§1.3 retention)
+
+**The third consequence of S171's persistence**, found by asking what a bounded store does when its
+input volume jumps — rather than assuming a cap that was correct yesterday is still correct.
+
+**🔴 THE DEFECT.** `_rotate_job_locked` kept a flat `rows[-_MAX_RECORDS_PER_JOB:]` tail. That is right
+while every row is a run. Once suppressed fires persist, a minutely trigger held by quiet hours writes
+**1440 rows a day** — and `RunWeight`'s own docstring names exactly that number as the volume the
+ledger/full split exists to manage. Measured:
+
+```
+cap = 100 rows/job
+1 real backup run + 129 quiet-hours skips -> stored: 100
+  the real run still present?  False
+  what a user now sees: ['skip-129', 'skip-128', 'skip-127']
+```
+
+The 100-row window held ~100 **minutes** of history instead of ~100 runs, and the rows a user opens the
+history *for* were the first evicted. S171 made suppressions visible; this stopped them from
+crowding out the thing they were meant to explain.
+
+**Per-class quota:** suppressions capped at a quarter of the window, work taking the remainder. A
+quarter is enough that "why did my automation not run last night" stays answerable across a long quiet
+window, while leaving three quarters for runs that did something.
+
+**🔴 My first draft got the direction wrong, and an existing test caught it.** I capped WORK at
+`total − suppressed_cap` unconditionally, which regressed a work-only job from 100 rows to 75 —
+`test_rotation_caps_per_job` (pre-existing, asserting `total == _MAX_RECORDS_PER_JOB`) went red. That
+test was right and my change was wrong: it refused a behaviour change I had not justified. Corrected so
+the suppression cap is a **ceiling** and the work quota is whatever the total leaves, which means a
+trigger that never suppresses retains precisely what it did before this session.
+
+Worth recording as a pattern: when a pre-existing test fails during a retention change, the default
+assumption should be that the test encodes a guarantee, not that it needs updating.
+
+**Verified all three shapes:**
+
+```
+1 work + 129 skips  -> real run SURVIVES
+150 work, 0 skips   -> kept 100   (unchanged from before)
+90 work + 200 skips -> kept 100, of which 75 are work
+```
+
+**Order is preserved on write.** The two classes are partitioned to decide what survives, then the
+kept rows are re-merged by original position — because `list_for_job` reverses the file for
+newest-first and `count_since` walks it, so a file grouped by class would make both misread it.
+Asserted by a test that appends alternating classes and checks the returned timestamps are
+monotonically decreasing.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the flat tail with valid code: exactly the two eviction tests go red
+while the work-only test stays green, which is the pair that matters. (A first revert attempt produced
+a `TypeError` — broken code rather than disabled behaviour, and therefore no usable signal.)

@@ -19,6 +19,7 @@ import pytest
 
 from personalclaw.schedule_history import (
     _MAX_RECORDS_PER_JOB,
+    _MAX_SUPPRESSED_PER_JOB,
     ScheduleRun,
     ScheduleRunStore,
 )
@@ -253,3 +254,112 @@ async def test_the_exclusion_reads_the_SHARED_inert_set(tmp_path: Path):
             ScheduleRun(run_id=f"x{i}", job_id="j", trigger=outcome, started_at=now, status=outcome)
         )
     assert await store.count_since("j", now - 10) == 0, "every inert outcome must be excluded"
+
+
+# ── 🔴 a suppression storm evicted the real runs (S173) ──
+
+
+@pytest.mark.asyncio
+async def test_a_SUPPRESSION_STORM_does_not_evict_the_real_run(tmp_path: Path):
+    """🔴 A regression S171 introduced and this closes. That session began persisting suppressed
+    fires (criterion 8's "zero silent drops"), and rotation kept a flat `[-100:]` tail.
+
+    A minutely trigger held by quiet hours writes 1440 skips a day — `RunWeight`'s own
+    docstring names that number. Measured against the flat tail: **1 real backup run plus
+    129 quiet-hours skips evicted the backup entirely**, so the 100-row window held ~100
+    MINUTES of history instead of ~100 runs, and the rows a user opens the history FOR were
+    the first to go.
+    """
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    await store.append(
+        ScheduleRun(
+            run_id="REAL-backup",
+            job_id="clock:m",
+            trigger="ok",
+            started_at=now,
+            status="success",
+            summary="backed up 4.2 GB",
+        )
+    )
+    for i in range(1, 130):
+        await store.append(
+            ScheduleRun(
+                run_id=f"skip-{i}",
+                job_id="clock:m",
+                trigger="skipped_gate",
+                started_at=now + i * 60,
+                status="skipped_gate",
+                error="inside a quiet window",
+            )
+        )
+    rows, _total = await store.list_for_job("clock:m", 0, 300)
+    assert "REAL-backup" in [r["run_id"] for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_job_that_NEVER_suppresses_keeps_its_FULL_window(tmp_path: Path):
+    """The compatibility guarantee. The work quota is the REMAINDER of the total, not a separate
+    smaller cap, so a trigger that never suppresses retains exactly what it did before S173."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i in range(150):
+        await store.append(
+            ScheduleRun(
+                run_id=f"r{i}", job_id="work", trigger="ok", started_at=now + i, status="success"
+            )
+        )
+    _rows, total = await store.list_for_job("work", 0, 300)
+    assert total > _MAX_RECORDS_PER_JOB * 0.9, f"a work-only job must keep its window, got {total}"
+
+
+@pytest.mark.asyncio
+async def test_work_SURVIVES_a_storm_many_times_its_size(tmp_path: Path):
+    """90 real runs against 200 skips: the work quota holds most of the window rather than being
+    crowded out proportionally."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i in range(90):
+        await store.append(
+            ScheduleRun(
+                run_id=f"w{i}", job_id="mix", trigger="ok", started_at=now + i, status="success"
+            )
+        )
+    for i in range(200):
+        await store.append(
+            ScheduleRun(
+                run_id=f"k{i}",
+                job_id="mix",
+                trigger="skipped_gate",
+                started_at=now + 1000 + i,
+                status="skipped_gate",
+            )
+        )
+    rows, _total = await store.list_for_job("mix", 0, 300)
+    work = [r for r in rows if r["status"] == "success"]
+    assert len(work) >= _MAX_RECORDS_PER_JOB - _MAX_SUPPRESSED_PER_JOB - 1, len(work)
+
+
+@pytest.mark.asyncio
+async def test_rotation_PRESERVES_file_ORDER(tmp_path: Path):
+    """Order is load-bearing: `list_for_job` reverses the file for newest-first and `count_since`
+    walks it. Partitioning by class to decide what survives, then writing the survivors grouped by
+    class, would make both misread the file — so the kept rows are re-merged by original position.
+    """
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i in range(120):
+        inert = i % 2 == 0
+        await store.append(
+            ScheduleRun(
+                run_id=f"x{i}",
+                job_id="ord",
+                trigger="skipped_gate" if inert else "ok",
+                started_at=now + i,
+                status="skipped_gate" if inert else "success",
+            )
+        )
+    rows, _t = await store.list_for_job("ord", 0, 300)
+    # `list_for_job` returns newest-first, so started_at must be monotonically DECREASING.
+    stamps = [float(r["started_at"]) for r in rows]
+    assert stamps == sorted(stamps, reverse=True), "rotation must not reorder the file"
