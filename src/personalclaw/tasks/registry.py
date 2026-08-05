@@ -149,6 +149,26 @@ async def add_comment(
     return None
 
 
+async def delete_comment(task_id: str, comment_id: str, provider_name: str | None = None) -> bool:
+    """Remove one comment. Routes exactly like the other write paths, including the
+    read-only refusal — a projection provider must not be asked to forget a record it
+    does not own."""
+    _ensure_native()
+    if provider_name and provider_name in _providers:
+        prov = _providers[provider_name]
+    else:
+        for p in _providers.values():
+            t = await p.get_task(task_id)
+            if t:
+                prov = p
+                break
+        else:
+            return False
+    if prov.readonly:
+        raise ValueError(f"Provider '{prov.name}' is read-only")
+    return await prov.delete_comment(task_id, comment_id)
+
+
 async def task_graph(provider_filter: str | None = None) -> dict[str, Any]:
     """Adjacency + DependencyAnalysis for the writable native task set (seam S3).
 

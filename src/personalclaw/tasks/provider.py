@@ -50,6 +50,14 @@ class TaskProvider(ABC):
     async def add_comment(self, task_id: str, body: str, author: str = "") -> TaskComment | None:
         return None
 
+    async def delete_comment(self, task_id: str, comment_id: str) -> bool:
+        """Remove one comment; False when there is nothing to remove.
+
+        Non-abstract like its comment siblings: a provider whose backend has no comment
+        concept inherits "nothing to delete" rather than being forced to stub it.
+        """
+        return False
+
     @property
     def readonly(self) -> bool:
         return False
