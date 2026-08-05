@@ -990,3 +990,156 @@ class TestInventoryGapClosure:
             classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError("no config"))),
         )
         assert _default_snapshot_dir() == str(home / "snapshots")
+
+
+# ── 🔴 the run history's declared merge had no executor (S176) ──
+
+
+def _hist_row(run_id: str, job_id: str = "clock:backup") -> str:
+    return json.dumps({"run_id": run_id, "job_id": job_id, "started_at": 1.0, "status": "success"})
+
+
+def _hist(root: Path, shard: str, run_ids: list[str]) -> Path:
+    d = root / "cron-history"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / shard
+    p.write_text("".join(_hist_row(r) + "\n" for r in run_ids), encoding="utf-8")
+    return p
+
+
+def _ids(root: Path, shard: str) -> list[str]:
+    p = root / "cron-history" / shard
+    if not p.is_file():
+        return []
+    return [json.loads(line)["run_id"] for line in p.read_text().strip().splitlines()]
+
+
+def test_a_MERGE_restore_recovers_the_run_history(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. `inventory.py` declares `cron_history` with `merge=append_dedup` and
+    `_do_merge` had no branch for it — so a merge restore printed "✅ Merge complete" while
+    recovering **no run history at all**.
+
+    Driven: a snapshot holding `FROM-SNAPSHOT` merged into a home holding `LIVE-run` left only
+    `LIVE-run`. A declared strategy with no executor, in the durability layer — where the whole
+    promise is that a restore returns what the snapshot holds.
+    """
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "clock:backup.jsonl", ["FROM-SNAPSHOT"])
+    _hist(pc, "clock:backup.jsonl", ["LIVE-run"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+
+    got = _ids(pc, "clock:backup.jsonl")
+    assert "FROM-SNAPSHOT" in got, "the snapshot's run must be recovered"
+    assert "LIVE-run" in got, "and the live run must be preserved"
+
+
+def test_the_merge_DEDUPES_on_run_id(tmp_path: Path) -> None:
+    """Deduped on `run_id`, not a whole-line compare: the same run round-trips through `to_dict()`,
+    so key ordering or a re-serialised float could make an identical run look new and double it.
+    Mirrors `_merge_notifications`, which dedupes on `ts` for the same reason."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "j.jsonl", ["a", "b"])
+    _hist(pc, "j.jsonl", ["a"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert _ids(pc, "j.jsonl") == ["a", "b"]
+
+
+def test_the_merge_is_IDEMPOTENT(tmp_path: Path) -> None:
+    """A restore drill re-run must not grow the history. `_do_merge` is the path a user reaches by
+    re-running a restore, so a non-idempotent merge would double every row each attempt."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "j.jsonl", ["a", "b"])
+    _hist(pc, "j.jsonl", ["a"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    once = _ids(pc, "j.jsonl")
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert _ids(pc, "j.jsonl") == once
+
+
+def test_a_SNAPSHOT_ONLY_shard_is_copied_whole(tmp_path: Path) -> None:
+    """The store is one file per job. A job that exists only in the snapshot — an automation the
+    live home has never run — must come back, not be skipped for having no local counterpart."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "j.jsonl", ["x"])
+    _hist(snap, "other.jsonl", ["z"])
+    _hist(pc, "j.jsonl", ["y"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert _ids(pc, "other.jsonl") == ["z"]
+
+
+def test_a_MALFORMED_line_does_not_abort_the_merge(tmp_path: Path) -> None:
+    """One bad line must not cost the rest of the restore. The same call `count_since` makes about a
+    malformed ledger row: skip it, keep going — a partial recovery beats an aborted one."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    d = snap / "cron-history"
+    d.mkdir(parents=True)
+    (d / "j.jsonl").write_text(
+        _hist_row("ok1") + "\nNOT JSON\n" + _hist_row("ok2") + "\n", encoding="utf-8"
+    )
+    _hist(pc, "j.jsonl", ["live"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    got = _ids(pc, "j.jsonl")
+    assert "ok1" in got and "ok2" in got and "live" in got
+
+
+def test_an_ABSENT_snapshot_history_is_a_NO_OP(tmp_path: Path) -> None:
+    """A snapshot taken before the store existed (or from a home that never scheduled anything) must
+    not create an empty directory or raise — the restore has to stay usable either way."""
+    from personalclaw.snapshot import _merge_run_history
+
+    pc = tmp_path / "home"
+    pc.mkdir()
+    _merge_run_history(tmp_path / "nope" / "cron-history", pc / "cron-history")
+    assert not (pc / "cron-history").exists()
+
+
+def test_the_merge_does_NOT_re_apply_retention(tmp_path: Path) -> None:
+    """`ScheduleRunStore.rotate_all()` owns retention and runs at gateway boot (S175). Trimming here
+    would be a second copy of that policy — the exact duplication S175 removed, which had silently
+    reverted S173."""
+    import inspect
+
+    from personalclaw import snapshot
+
+    source = inspect.getsource(snapshot._merge_run_history)
+    body = source.split('"""')[-1]
+    assert "_MAX_RECORDS_PER_JOB" not in body
+    assert "rotate" not in body
+
+
+def test_the_run_history_merge_is_WIRED_into_do_merge(tmp_path: Path) -> None:
+    """🔴 Caught by my own load-bearing check: disabling the call site left all 61 tests green,
+    because every other test in this group calls `_merge_run_history` DIRECTLY. A helper that works
+    perfectly and is never called is the inert-control shape this whole program keeps finding —
+    and I had just written seven tests that could not tell the difference.
+
+    Drives `_do_merge`, the function a real restore reaches.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    _hist(snap, "clock:backup.jsonl", ["FROM-SNAPSHOT"])
+    _hist(pc, "clock:backup.jsonl", ["LIVE-run"])
+
+    _do_merge(snap, pc, None)
+
+    got = _ids(pc, "clock:backup.jsonl")
+    assert "FROM-SNAPSHOT" in got, "_do_merge must invoke the run-history merge"
+    assert "LIVE-run" in got

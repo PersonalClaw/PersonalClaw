@@ -711,6 +711,58 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _merge_run_history(src_dir: Path, dst_dir: Path) -> None:
+    """Merge `cron-history/` shard-by-shard, deduping on `run_id` (S176).
+
+    🔴 WHY THIS EXISTS. `inventory.py` declares `cron_history` with `merge=append_dedup`, and
+    `_do_merge` had no branch for it — so a merge restore printed "✅ Merge complete" while
+    recovering **no run history at all**. Driven: a snapshot holding `FROM-SNAPSHOT` merged into a
+    home holding `LIVE-run` left only `LIVE-run`. The declared strategy had no executor, which is
+    this program's signature defect in the durability layer.
+
+    Deduped on `run_id` rather than a whole-line compare: the same run round-trips through
+    `to_dict()`, so key ordering or a re-serialised float could make an identical run look new and
+    double it. Mirrors `_merge_notifications`, which dedupes on `ts` for the same reason.
+
+    Per-shard, because the store is one file per job (`clock:backup.jsonl`) plus a cross-job
+    `_index.jsonl`. A shard present only in the snapshot is copied whole; one present in both is
+    appended-and-deduped, so the live home never loses a row it already had.
+
+    Deliberately does NOT rotate afterwards. `ScheduleRunStore.rotate_all()` runs at gateway boot
+    (S175) and owns that policy; trimming here would apply retention twice with a second copy of the
+    rule — the duplication S175 just removed.
+    """
+    if not src_dir.is_dir():
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shards = imported = 0
+    for src in sorted(src_dir.glob("*.jsonl")):
+        dst = dst_dir / src.name
+        if not dst.is_file():
+            shutil.copy2(str(src), str(dst))
+            shards += 1
+            continue
+        existing: set[str] = set()
+        with open(dst) as f:
+            for line in f:
+                try:
+                    existing.add(str(json.loads(line).get("run_id") or line.strip()))
+                except (ValueError, TypeError):
+                    pass
+        with open(dst, "a") as out, open(src) as f:
+            for line in f:
+                try:
+                    key = str(json.loads(line).get("run_id") or line.strip())
+                except (ValueError, TypeError):
+                    continue
+                if key not in existing:
+                    out.write(line)
+                    existing.add(key)
+                    imported += 1
+        shards += 1
+    print(f"  Run history: {shards} shard(s), {imported} row(s) imported")
+
+
 def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str) -> None:
     for f in CORE_FILES.get(component, ()):
         if (pc / f).is_file():
@@ -812,6 +864,12 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
                 shutil.copy2(str(s), str(d))
                 print(f"  {f}: restored (was missing)")
         print("  ✅ config")
+
+    # 🔴 The run history, whose declared `append_dedup` had no executor (S176). Grouped with
+    # `crons` because it IS the crons' history: a merge restore that recovered the triggers but not
+    # their runs leaves a user with automations and no record of what they ever did.
+    if _want(components, "crons"):
+        _merge_run_history(snap / "cron-history", pc / "cron-history")
 
     if _want(components, "notifications"):
         sn, dn = snap / "notifications.jsonl", pc / "notifications.jsonl"
