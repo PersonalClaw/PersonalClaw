@@ -394,14 +394,16 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
     render(query, go) {
       const { data } = useApps()
-      const nonProvider = (data ?? []).filter((a) => !a.isProvider)
-      const configurable = nonProvider.filter((a) => a.hasConfig).length
+      const allApps = data ?? []
+      const nonProvider = allApps.filter((a) => !a.isProvider)
+      const configurableNonProvider = nonProvider.filter((a) => a.hasConfig).length
+      const totalConfigurable = allApps.filter((a) => a.hasConfig).length
       return (
         <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined}>
           {data && <>
-            <BigStat value={nonProvider.length} caption={nonProvider.length === 1 ? 'installed app' : 'installed apps'} />
+            <BigStat value={allApps.length} caption={allApps.length === 1 ? 'installed app' : 'installed apps'} />
             <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
-              {configurable > 0 ? `${configurable} configurable` : 'No configurable settings'}
+              {configurableNonProvider > 0 ? `${configurableNonProvider} configurable here` : totalConfigurable > 0 ? `${totalConfigurable} configurable under Providers` : 'No configurable settings'}
             </div>
           </>}
         </BentoCard>
