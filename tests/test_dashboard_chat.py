@@ -2318,6 +2318,58 @@ class TestApiChatModePropagation:
             assert session._task_mode == "agent"  # unchanged on rejection
 
     @pytest.mark.asyncio
+    async def test_task_mode_requires_explicit_mode(self, tmp_path, monkeypatch):
+        """An absent mode is refused, not read as ``agent`` (issue #553).
+
+        The two defaults compounded: absent mode meant full-execution ``agent`` and
+        absent session meant every session, so a bodiless POST escalated every
+        read-only chat at once. The refusal must leave the posture untouched — a 400
+        that still relaxed the gate would satisfy a status-only assertion.
+        """
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
+        state = _make_state(tmp_path)
+        state.push_sessions_update = MagicMock()
+        s1 = state.get_or_create_session("s1")
+        s2 = state.get_or_create_session("s2")
+        s1._task_mode = "ask"
+        s2._task_mode = "plan"
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/task-mode", json={})
+            assert resp.status == 400
+            assert "invalid task mode" in (await resp.json())["error"]
+            # Nothing moved: neither the session flag nor the runtime's tool gate.
+            assert s1._task_mode == "ask"
+            assert s2._task_mode == "plan"
+            state.sessions.set_task_mode.assert_not_called()
+
+            # A non-string mode is refused on the same path (no truthiness coercion).
+            resp = await client.post("/api/chat/task-mode", json={"mode": None})
+            assert resp.status == 400
+            assert s1._task_mode == "ask"
+            state.sessions.set_task_mode.assert_not_called()
+
+            # An explicit mode still works, and the response names what it changed.
+            resp = await client.post("/api/chat/task-mode", json={"mode": "build", "session": "s1"})
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["task_mode"] == "build"
+            assert data["sessions"] == ["s1"]
+            assert s1._task_mode == "build"
+            assert s2._task_mode == "plan"  # scoped: the sibling is untouched
+            state.sessions.set_task_mode.assert_called_once_with("dashboard:s1", "build")
+
+            # An invalid mode still 400s with the same message.
+            resp = await client.post("/api/chat/task-mode", json={"mode": "bogus"})
+            assert resp.status == 400
+            assert "invalid task mode" in (await resp.json())["error"]
+            assert s1._task_mode == "build"
+            assert s2._task_mode == "plan"
+
+    @pytest.mark.asyncio
     async def test_acp_agent_override_sets_session_fields(self, tmp_path, monkeypatch):
         """POST /acp-agent sets ephemeral provider/provider_agent/model/effort on
         the session (no config write) and surfaces them in to_dict."""
