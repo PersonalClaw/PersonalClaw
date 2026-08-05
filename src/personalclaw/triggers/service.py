@@ -62,7 +62,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.triggers.models import Outcome, Trigger
+from personalclaw.triggers.models import Outcome, Trigger, TriggerHealth, TriggerState
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,11 @@ class TickResult:
     #: "it stopped existing" is the one state change a user most needs to see explained, and leaving
     #: an elapsed `next_fire_at` in place instead would re-fire the same past slot every tick.
     retired: list[str] = field(default_factory=list)
+    #: Trigger ids brought back from PARKED this tick, their cooldown having elapsed (S159). Named
+    #: for the same reason `retired` is: a state change the user did not make must be explainable,
+    #: and a revival that only a log knows about is how "why did this start again?" becomes
+    #: unanswerable.
+    unparked: list[str] = field(default_factory=list)
     #: Set when the store changed under us — the caller should re-read before acting on stale state.
     store_changed: bool = False
 
@@ -140,6 +145,7 @@ class TickResult:
             "next_sleep": self.next_sleep,
             "rescheduled": list(self.rescheduled),
             "retired": list(self.retired),
+            "unparked": list(self.unparked),
             "store_changed": self.store_changed,
             "suppressed": self.suppressed,
         }
@@ -438,6 +444,17 @@ async def tick(
     # triggers wanting `local-llm` in the same wake cannot both be told it is free.
     slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
 
+    # 🔴 UNPARK, before the due set is computed (§3.7 / decision 9 — S159). A parked trigger has
+    # `state != ACTIVE`, so `fires_automatically` is False and `due_ids` filters it out — so
+    # unparking AFTER that walk would never bring anything back. `autopause.unpark_due` has always
+    # implemented this decision and had NO caller, and `retry_after` was never persisted, so a
+    # trigger parked by one transient outage stayed parked forever: measured, 5 fires while active
+    # and 0 over the next 5 slots after a single `transport_unavailable`.
+    #
+    # Driven by the CLOCK rather than by an outcome, exactly as `unpark_due`'s docstring says: a
+    # parked trigger produces no fires, so nothing in the outcome path could ever revive it.
+    result.unparked.extend(_unpark_ready(store, triggers, now=now, persist=persist))
+
     for trigger_id in due_ids(triggers, now=now):
         trigger = by_id.get(trigger_id)
         if trigger is None:
@@ -589,6 +606,51 @@ async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
     except Exception:  # noqa: BLE001 - an unreadable ledger must not break the tick
         logger.debug("could not read the rate window for %s", getattr(trigger, "id", "?"))
         return None
+
+
+def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool) -> list[str]:
+    """Return PARKED triggers to ACTIVE once their cooldown has elapsed (§3.7 / decision 9 — S159).
+
+    🔴 WHY THIS EXISTS. `autopause.unpark_due` implements the clock decision and had **no caller**,
+    and `evaluate`'s `retry_after` was never persisted — so parking was a one-way door.
+    Measured on a real store: a trigger fired 5 times over 5 slots while active, then one
+    `transport_unavailable` parked it and it fired **0 times over the next 5 slots and stayed
+    `parked` indefinitely**. `TriggerState.PARKED`'s own docstring says parking "is not a
+    failure — it is 'the resource this needs is busy', which resolves on its own", and
+    nothing made it resolve.
+
+    Mutates the passed `triggers` list in place as well as the store, because the caller has already
+    built `by_id` from it and computes `due_ids` next: a revived trigger has to be visible to THIS
+    tick, or unparking would always cost an extra full cooldown before anything fired.
+
+    Only `PARKED` is revived. `autopaused` is five true failures and wants a human; `quarantined` is
+    an injection match that `resume_state` refuses even from a button; `paused` is the user's own
+    decision. Reviving any of them on a timer would override a judgement someone made.
+
+    The counter is NOT reset here. Parking never spent the failure budget in the first place (a
+    parking exit leaves `consecutive_failures` untouched, deliberately, so a flapping credential
+    cannot clear a real streak), so clearing it on unpark would hand a genuinely failing trigger a
+    fresh budget every time an unrelated outage parked it.
+    """
+    from personalclaw.triggers import autopause
+
+    unparked: list[str] = []
+    for trigger in triggers:
+        if str(getattr(trigger, "state", "")) != TriggerState.PARKED.value:
+            continue
+        if not autopause.unpark_due(
+            retry_after=float(getattr(trigger, "park_retry_after", 0.0) or 0.0), now=now
+        ):
+            continue
+        trigger.state = TriggerState.ACTIVE.value
+        trigger.health_status = TriggerHealth.OK.value
+        trigger.park_retry_after = 0.0
+        unparked.append(trigger.id)
+        if persist:
+            store.upsert(trigger)
+    if unparked:
+        logger.info("unparked %d trigger(s) whose cooldown elapsed: %s", len(unparked), unparked)
+    return unparked
 
 
 def _since_last_fire(trigger: Any, *, now: float) -> float | None:

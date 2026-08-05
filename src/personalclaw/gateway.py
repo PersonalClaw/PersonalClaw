@@ -1288,6 +1288,18 @@ class GatewayOrchestrator:
                 logger.warning(
                     "trigger %s autopaused: %s", trigger_id, decision.reason or decision.state
                 )
+            # 🔴 PERSIST THE PARK COOLDOWN (§3.7 / decision 9 — S159). `evaluate` has always returned
+            # `retry_after=now + PARK_COOLDOWN_SECS` on a parking exit and this path DROPPED it, so
+            # `unpark_due` — the clock decision that brings a parked trigger back — had nothing to
+            # read and no caller. Measured: one transport outage parked a working trigger,
+            # which then fired 0 times over the next 5 slots and stayed `parked`. A 30-second
+            # network blip permanently disabled the automation.
+            #
+            # Cleared on any NON-parking outcome so a recovered trigger does not carry a stale
+            # cooldown into its next outage.
+            live.park_retry_after = (
+                float(decision.retry_after) if decision.state == TriggerState.PARKED.value else 0.0
+            )
             store.upsert(live)
             # 🔴 Criterion 3's SECOND clause — "and surfaces in the Runs inbox" (S141).
             # `attention_card`, `inbox_fingerprint` and `is_duplicate_card` were all dead: an
