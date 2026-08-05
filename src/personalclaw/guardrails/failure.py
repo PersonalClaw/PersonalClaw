@@ -161,3 +161,25 @@ class SecretLeakBlocked(GuardError):
     def __init__(self, findings: int) -> None:
         self.findings = findings
         super().__init__(f"outbound prompt blocked: {findings} secret/PII finding(s) in block mode")
+
+
+class PromptInjectionBlocked(GuardError):
+    """An outbound prompt was refused because it matched an INJECTION pattern (§2.2 — S156).
+
+    Distinct from :class:`SecretLeakBlocked` on purpose. Both are non-retryable, but for
+    opposite reasons: a secret must not be re-sent, while an injection must not be given a
+    second attempt to brute-force the guard. Collapsing them would leave an operator unable to
+    tell a credential slip from an attack in the audit trail — and ``INJECTION_BLOCKED`` was
+    declared, listed in ``NON_RETRYABLE``, and recordable by nothing until this existed.
+
+    Carries the matched pattern ``group`` because a block that cannot be explained cannot be
+    appealed — the same rule §1.3 sets for the fire-path screen's ledger row.
+    """
+
+    mode = FailureMode.INJECTION_BLOCKED
+
+    def __init__(self, findings: int, group: str = "") -> None:
+        self.findings = findings
+        self.group = group
+        detail = f" (pattern: {group})" if group else ""
+        super().__init__(f"outbound prompt blocked: prompt-injection pattern matched{detail}")
