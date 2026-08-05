@@ -735,13 +735,29 @@ def _app_agent_allowed(name: str) -> bool:
     return checker is not None and checker.can_use_agent()
 
 
+def _agent_run_identity(request: web.Request) -> tuple[str, str]:
+    """Return ``(request_app, name)`` — the caller's verified app identity, and the
+    app identity these routes must gate on.
+
+    The URL's ``{name}`` is caller-chosen, so gating on it checks the WRONG app: an
+    app that legitimately declares ``api: ["/api/apps"]`` (prefix-matched by
+    ``app_permission_middleware``) could name any agent-permitted app in the path and
+    borrow its permission. ``request["app"]`` is the verified identity from the
+    app-scoped token, so it wins whenever it is present. ``request_app`` is empty for
+    owner-initiated calls (dashboard / CLI), which fall back to the path segment —
+    the only identity they carry."""
+    request_app = request.get("app", "")
+    return request_app, (request_app or request.match_info["name"])
+
+
 async def api_app_agent_run(request: web.Request) -> web.Response:
     """POST /api/apps/{name}/agent-run — start a background agent task.
 
     Body: ``{task, agent?, max_turns?}``. Runs a headless subagent (auto-approve,
     silent) on behalf of the app and returns its ``{id}``; the app polls
-    ``/agent-run/{id}`` for the result. Requires the app's ``agent`` permission."""
-    name = request.match_info["name"]
+    ``/agent-run/{id}`` for the result. Requires the ``agent`` permission of the
+    CALLING app, not of the app named in the path."""
+    _, name = _agent_run_identity(request)
     if not _app_agent_allowed(name):
         _sel_log("apps.agent_run", "denied", name, request, error="agent permission not granted")
         return web.json_response(
@@ -788,9 +804,9 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
 async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
     """GET /api/apps/{name}/agent-run/{run_id} — poll a background agent task.
 
-    Returns ``{id, done, result?, error?, turns?, elapsed?}``. Requires the app's
-    ``agent`` permission."""
-    name = request.match_info["name"]
+    Returns ``{id, done, result?, error?, turns?, elapsed?}``. Requires the ``agent``
+    permission of the CALLING app, and the run must belong to that app."""
+    request_app, name = _agent_run_identity(request)
     run_id = request.match_info["run_id"]
     if not _app_agent_allowed(name):
         return web.json_response(
@@ -802,6 +818,23 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": "subagents not available"}, status=503)
     info = state.subagents.get(run_id)
     if not info:
+        return web.json_response({"error": "not found"}, status=404)
+    # SubagentManager keeps ONE flat run table shared by every spawner (chat, cron,
+    # workflow stages, the owner's /api/spawn), so the permission gate alone would
+    # hand an app any run id it can guess. Scope an app to the runs it spawned —
+    # ``api_app_agent_run`` stamps ``parent_session_key`` with the app identity.
+    # 404, not 403: a 403 would confirm the run exists, turning this into an id
+    # oracle over every other spawner's runs. An owner-initiated call carries no app
+    # identity (the dashboard reaches this route when app-token minting failed) and
+    # is not scoped — the owner already sees every run via /api/spawn.
+    if request_app and info.parent_session_key != f"app:{request_app}":
+        _sel_log(
+            "apps.agent_run_status",
+            "denied",
+            f"{name}:{run_id}",
+            request,
+            error="run not owned by this app",
+        )
         return web.json_response({"error": "not found"}, status=404)
     data: dict[str, Any] = {
         "id": info.id,
