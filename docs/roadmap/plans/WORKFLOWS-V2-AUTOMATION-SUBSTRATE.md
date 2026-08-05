@@ -5571,3 +5571,59 @@ acyclic; confirmed by a clean `npm run build` plus the render-smoke gate passing
 
 - **§1.3's per-trigger run surface is now complete end to end** for store kinds: rows written (S139),
   list served (S166), detail served (S167), and both rendered (here).
+
+### S169 — a machine-stopped automation read as a user-paused one (§3.7)
+
+**Found by auditing which wire fields the store panel actually reads.** Nine of them — and never
+`state`, `health` or `last_error`, the three that answer "is this working?".
+
+**🔴 THE DEFECT.** `StoreTriggerDetail`'s only status line was
+`enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'`. Measured across the
+real lifecycle states:
+
+```
+situation                  state         panel says
+  user paused it           paused        'Paused — it will not fire until re-enabled'
+  AUTOPAUSED: 5 fails      autopaused    'Paused — it will not fire until re-enabled'
+  QUARANTINED: injection   quarantined   'Paused — it will not fire until re-enabled'
+```
+
+`TriggerState`'s own docstring names this failure, which is what makes it worth a session rather than
+a polish item:
+
+> *`autopaused` is separate from `paused` because the two answer different questions: a paused trigger
+> is a user decision, an autopaused one is the system reporting five true failures. Showing both as
+> "paused" would make the user look for a switch they never flipped.*
+
+**And the cause was invisible.** `last_error` has been on the wire all along with no reader in this
+panel, so an autopaused automation gave no route to WHY — exactly the digging `attention_card`'s
+docstring says the error text exists to prevent. S162 fixed what that field *contains*; this fixes
+whether anyone can see it.
+
+**Four distinct sentences now, each earning its wording:**
+
+- **autopaused** — says the SYSTEM stopped it, so the user does not hunt for their own switch.
+- **quarantined** — says **re-author it**, because the toggle genuinely cannot undo quarantine
+  (`resume_state` refuses it from a button; one click is too cheap a gesture for "run the thing that
+  looked like an attack").
+- **parked** — says it **resumes on its own**, because S159 made parking self-healing; telling the user
+  to re-enable it would send them to fix something that fixes itself.
+- **user pause** — keeps the original wording, which was correct for the one state it was written for.
+
+`last_error` renders beneath in monospace, and only for a machine-stopped trigger: showing a stale error
+on a healthy automation would read as a current problem.
+
+**Reuses S164's shared `triggerHealthMeta`** for the status dot rather than inventing a third local
+vocabulary on a third surface. S163 and S164 each found a local copy that had drifted; the pattern is
+now that a vocabulary has one mapper and surfaces consume it.
+
+**Absent `state` falls back to the enabled/disabled reading** — a row projected before S164 added
+`state` still renders something true rather than an empty status.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**668 passed, 57 files** · `npm run build` clean · `npm run smoke:render` PASS all 5 routes · full
+`pytest -n 4 --dist worksteal` green.
+
+- **The store trigger's detail panel now answers all three questions** a user opens it with: what it
+  runs (pre-existing), whether it has been running (S168's history), and whether it is running now,
+  with the cause when it is not (here).
