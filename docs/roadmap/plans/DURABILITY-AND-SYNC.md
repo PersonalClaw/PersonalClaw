@@ -794,3 +794,62 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   (`config.json`, `active_models.json`, `mcp.json`, …) reached either by the `config` component —
   verified to copy only `if s.is_file() and not d.is_file()` — or by the generic store pass, which is
   copy-if-missing by construction. So the strategy is satisfied, for a different reason per group.
+
+## Execution log — Session 2j (the export leg)
+
+- [2026-08-05][S182] **DONE.** The S176-S181 sweep covered snapshot/restore. `portability.py` is the
+  other direction, and it reads the inventory **only** for `EXPORT_EXCLUDE`.
+
+  **`export_entries()` had no consumer here.** `create_export_zip` named **18 of 53** exportable
+  entries from three hand-written lists. Driven on a home seeded across the inventory, the zip came
+  out holding **three files** — `config.json`, `memory.db`, `MANIFEST.json` — and **30 stores of the
+  user's own data were absent**: tasks, projects, agents, prompts, workflows, artifacts,
+  entity_settings, sessions, crashes, `inbox.json`, `spend.json`, `security_events.jsonl` and more.
+  This is the feature the plan describes as *"give me everything PersonalClaw knows about me" is one
+  click*.
+
+  The source's own comments record the same defect being closed one entry at a time — `triggers.json`
+  ("a snapshot of a home with two automations … captured `config.json` ALONE"), then `cron-history`.
+  Deriving the remainder from the inventory is what stops the next store being forgotten. The three
+  literal lists are **subtracted, not replaced**: each encodes a per-entry reason (the safe sqlite
+  backup API, the `skills/auto` skip, the `crons.json` read-only note) that a generic pass would lose.
+
+  🔴 **My own widening introduced the WAL hazard, and driving it caught me.** `workflows/runs.db` and
+  `loop/loops.db` sit INSIDE declared trees, so the new tree walk's `rglob` reached them — and a
+  filesystem copy of a live WAL store takes the `.db` without its `-wal`. Measured on a store with
+  2000 committed rows and a 237 KB uncheckpointed WAL, the raw copy was not merely short: it was
+  **unusable** (`no such table: runs`). Every declared database now goes through `_wal_checkpoint` +
+  `_backup_sqlite`, and the tree walk skips `*.db` and its sidecars — the same split the snapshot path
+  makes with `_tree_ignore_dbs`. Re-driven: 2000/2000 rows survive, zero sidecars in the zip.
+
+  🔴 **The IMPORT side was a fourth hand-written list.** Widening the export is only half a round
+  trip: driven end to end, an export carrying `tasks/`, `projects/` and `inbox.json` imported **none
+  of them**, reporting `['memory (copied)', 'config (restored)']`. Now widened too — copy-if-missing,
+  matching `_copy_tree_no_overwrite` beside it, because the archive came from somewhere else and the
+  receiving home's own state is authoritative. The snapshot restore path owns the richer per-store
+  merges; an import is deliberately the conservative direction. The existing per-entry decisions are
+  untouched (`learning.db` copy-only so evidence is not double-counted, `feedback.jsonl` copy-only,
+  `cron-history` no-overwrite).
+
+  **A real asymmetry recorded rather than flipped:** a snapshot carries `uploads/` (verified in both
+  `_everything_paths` and `_extra_restore_paths`) and an export excludes it via `EXCLUDE_DIRS`. That
+  is defensible — a snapshot is a local 0600 archive of this machine, while an export is the artifact
+  a user hands to another machine or attaches to a bug report, and uploads are arbitrary
+  user-supplied binaries of unbounded size. Changing an export's contents is a product decision, not
+  a sweep's, so the reasoning is now written down and pinned by a test instead of being flipped by the
+  next reader.
+
+  **Security.** An export is the artifact most able to leak, so the no-secret assertion is made on the
+  **bytes** of every zip member rather than on filenames: `.env`, `.local_secret`, `sel_hmac.key`,
+  `telemetry_salt`, `session_map.json`, `session_key` and `credentials/` all stay out. The projection
+  reads `export_entries()`, which excludes `secret=True` and `derived=True` by construction, so a
+  credential cannot arrive here by being newly declared.
+
+  Tests: 8 new cases in `tests/test_portability.py` (59 in that file), including a full
+  export→import round trip and a nested live database asserted on ROWS read back, not on a filename.
+  All three halves verified load-bearing by unwiring each independently.
+
+  **Deviation:** a blanket line-rewrapper I used for lint broke pre-existing `# noqa: E501` strings in
+  the test file (an unterminated multi-line SQL literal). Recovered by restoring the file from git and
+  re-appending only my own block from the stash — recorded because the lesson is that a formatting
+  sweep must not touch lines it did not author.
