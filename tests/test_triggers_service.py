@@ -597,3 +597,138 @@ def test_a_future_last_fired_at_clamps_rather_than_going_negative(store):
     assert not result.fires, "clamped to 0s ago, so the debounce still applies"
     row = next(r for r in result.ledger_rows if r.get("trigger_id") == "t1")
     assert row["gate"] == "spacing"
+
+
+# ── 🔴 parking was a one-way door (S159) ──
+
+
+def _parkable(store, tmp_path, tid="clock:sync"):
+    store.upsert(
+        Trigger(
+            id=tid,
+            name=tid,
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            next_fire_at=SVC.to_iso(NOW),
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    return store.get(tid).trigger
+
+
+def _park(store, *, retry_after, state=None, tid="clock:sync"):
+    from personalclaw.triggers.models import TriggerState
+
+    t = store.get(tid).trigger
+    t.state = state or TriggerState.PARKED.value
+    t.park_retry_after = retry_after
+    t.next_fire_at = SVC.to_iso(NOW + 10_000)
+    store.upsert(t)
+
+
+def _slots(store, tmp_path, n, start, tid="clock:sync"):
+    from personalclaw.triggers import claims
+
+    fires, unparked = 0, []
+    for i in range(n):
+        r = asyncio.run(SVC.tick(store, now=start + i * 120, base_dir=tmp_path, persist=True))
+        fires += len(r.fires)
+        unparked += r.unparked
+        claims.release_claim(tid, base_dir=tmp_path)
+    return fires, unparked
+
+
+def test_a_PARKED_trigger_comes_BACK_once_its_cooldown_elapses(store, tmp_path):
+    """🔴 THE DEFECT. `autopause.unpark_due` implements the clock decision and had **no caller**, and
+    `evaluate`'s `retry_after` was never persisted — so parking was a one-way door.
+
+    Measured before the fix: a trigger fired 5 times over 5 slots while active, then ONE
+    `transport_unavailable` parked it and it fired **0 times over the next 5 slots and stayed
+    `parked` indefinitely**. `TriggerState.PARKED`'s own docstring says parking "is not a failure —
+    it is 'the resource this needs is busy', which resolves on its own"; nothing made it resolve.
+    """
+    from personalclaw.triggers.models import TriggerState
+
+    _parkable(store, tmp_path)
+    _park(store, retry_after=NOW + 10_100)
+    fires, unparked = _slots(store, tmp_path, 3, NOW + 10_200)
+    assert unparked == ["clock:sync"], "the cooldown elapsed; it must come back"
+    assert store.get("clock:sync").trigger.state == TriggerState.ACTIVE.value
+    assert fires == 3, "…and it must fire in the SAME tick, not a cooldown later"
+
+
+def test_a_PENDING_cooldown_keeps_it_parked(store, tmp_path):
+    """The control case: unparking on a timer that has not elapsed would make the cooldown
+    decorative, and a flapping resource would be hammered."""
+    from personalclaw.triggers.models import TriggerState
+
+    _parkable(store, tmp_path)
+    _park(store, retry_after=NOW + 20_000)
+    fires, unparked = _slots(store, tmp_path, 3, NOW + 10_000)
+    assert fires == 0 and unparked == []
+    assert store.get("clock:sync").trigger.state == TriggerState.PARKED.value
+
+
+def test_a_LEGACY_park_with_no_cooldown_reads_as_DUE(store, tmp_path):
+    """`unpark_due`'s documented contract: *"a missing/zero `retry_after` reads as due, so
+    a park written before this field existed cannot strand a trigger forever."* Fail-OPEN:
+    a missing cooldown must not become an infinite one, which is the state every row
+    written before S159 is in.
+    """
+    _parkable(store, tmp_path)
+    _park(store, retry_after=0.0)
+    fires, unparked = _slots(store, tmp_path, 3, NOW + 10_200)
+    assert unparked == ["clock:sync"] and fires == 3
+
+
+def test_AUTOPAUSED_and_QUARANTINED_are_NEVER_revived_on_a_timer(store, tmp_path):
+    """Only PARKED is revived. `autopaused` is five true failures and wants a human;
+       `quarantined` is an injection match `resume_state` refuses even from a button.
+    Reviving either on a timer
+       would override a judgement someone made — and for quarantine it would re-run the thing that
+       looked like an attack."""
+    from personalclaw.triggers.models import TriggerState
+
+    for state in (TriggerState.AUTOPAUSED.value, TriggerState.QUARANTINED.value):
+        _parkable(store, tmp_path, tid=f"clock:{state}")
+        _park(store, retry_after=0.0, state=state, tid=f"clock:{state}")
+        fires, unparked = _slots(store, tmp_path, 3, NOW + 10_200, tid=f"clock:{state}")
+        assert unparked == [], f"{state} must not be revived by the clock"
+        assert store.get(f"clock:{state}").trigger.state == state
+
+
+def test_the_park_cooldown_is_PERSISTED_by_the_outcome_path():
+    """The other half of the wiring. `evaluate` has always returned `retry_after`; the outcome path
+    dropped it, so even a caller that asked `unpark_due` had nothing to read."""
+    import inspect
+
+    from personalclaw import gateway
+
+    source = inspect.getsource(gateway)
+    assert "live.park_retry_after = (" in source
+    assert "float(decision.retry_after)" in source
+
+
+def test_the_unpark_runs_BEFORE_the_due_set_is_computed():
+    """Order is load-bearing: a parked trigger has `state != ACTIVE`, so `fires_automatically` is
+    False and `due_ids` filters it out. Unparking after that walk would never bring anything back.
+    """
+    import inspect
+
+    source = inspect.getsource(SVC.tick)
+    assert source.index("_unpark_ready(") < source.index("for trigger_id in due_ids(")
+
+
+def test_unparking_does_NOT_reset_the_failure_counter(store, tmp_path):
+    """Parking never spent the budget in the first place (a parking exit leaves
+    `consecutive_failures` untouched, deliberately, so a flapping credential cannot clear a real
+    streak). Clearing it on unpark would hand a genuinely failing trigger a fresh budget every time
+    an unrelated outage parked it."""
+    import inspect
+
+    source = inspect.getsource(SVC._unpark_ready)
+    assert "consecutive_failures" in source, "the reasoning must be recorded"
+    assert "consecutive_failures = 0" not in source
+    assert "consecutive_failures=0" not in source
