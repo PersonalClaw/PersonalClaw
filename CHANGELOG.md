@@ -17,6 +17,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   nothing looked broken until you tried to test one by hand. Manual runs now execute the
   automation's action, and a run that cannot start says so instead of claiming success.
 
+- **One app could borrow another app's permission to run an agent, and read agent runs that
+  weren't its own.** The permission check on the app agent-run endpoints read the app name out of
+  the URL instead of asking who was actually calling, so an app allowed to reach `/api/apps/*`
+  could name any agent-permitted app in the path and get an auto-approving background agent run.
+  Separately, polling a run's status never checked who owned the run: any app holding the `agent`
+  permission could read the task text and result of runs started by the dashboard, a schedule, or
+  a different app. Both endpoints now gate on the calling app's verified identity, and a run is
+  only readable by the app that started it. No app in the Store declares the `agent` permission
+  today, so nothing shipped was exposed — this closes the hole before the first app needs it.
 - **Changing your embedding model silently stopped the assistant remembering anything.** If the
   embedding model changed after the memory index was built, every attempt to save a new memory
   failed — and nothing said so. Recall and the nightly consolidation pass broke the same way for
