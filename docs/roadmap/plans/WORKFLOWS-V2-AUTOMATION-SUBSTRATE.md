@@ -5472,3 +5472,53 @@ deleting a good test.
 - **The lifecycle branch is preserved and now correct for the kind it was about.** A lifecycle trigger
   genuinely keeps no run store, and a bare `{"runs": []}` would read as "this ran and kept no record"
   — a different, false claim. That honesty was right; it was simply being given to the wrong kinds.
+
+### S167 — the list handed out a run_id the detail route denied (§1.3 / crit 8)
+
+**Swept the sibling route immediately, instead of stopping at S166's fix.** `api_trigger_history` and
+`api_trigger_history_detail` are the same surface in two halves, and they carried the same gate.
+
+**🔴 THE DEFECT.** `api_trigger_history_detail` began `if kind != _SCHEDULE: return 404`. So the list
+route S166 had *just* fixed handed the UI a real `run_id`, and opening it was denied:
+
+```
+LIST   -> total=1 run_id='fire-1785909121906'
+DETAIL -> 404 {'error': 'not found'}
+```
+
+The history expander opened on nothing, for every store kind. Worse than the S166 state in one
+respect: S166's version at least said "unsupported" up front, whereas this offers a link and then
+refuses it — the user sees a row, clicks, and gets nothing.
+
+**`get_run` already worked.** Verified against a real `file:notes` row: `get_run("file:notes",
+"fire-…")` returns the record, because the run-store key is the full trigger id and `_split_id` hands
+that back as `raw`. The gate was the entire defect, exactly as in S166.
+
+**A lifecycle/event trigger still 404s, and that is correct** — it keeps no run store, so there is no
+record to open. But the two 404s stay **distinguishable**, which the tests pin:
+
+- `"not found"` — this KIND keeps no runs.
+- `"run not found"` — this trigger does keep runs, and that one is not among them.
+
+A caller chasing a stale link needs to tell those apart, and collapsing them would make a missing row
+and an unsupported kind look identical.
+
+**The S166 lesson applied to this session's own verification.** S166's load-bearing check used
+`str.replace(old, new, 1)` and silently patched a *different* handler (`_LIFECYCLE` appears five times
+in the file), producing a false green that read like "the test does not catch the defect". Here the
+revert first asserts the gate string appears **exactly once**, then patches that line number:
+
+```
+occurrences of the new gate: 1 at lines [1392]
+reverted line 1392
+-> 2 failed
+```
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change —
+`api.scheduleRunDetail` hardcodes a `schedule:` prefix, so the FE cannot yet request a store trigger's
+run detail; the backend is now correct and ready, and widening that wrapper is a UI affordance rather
+than a correctness fix.
+
+- **The per-trigger run surface is now complete for store kinds**: the list (S166) and the detail
+  (here). Recorded honestly: the frontend's `scheduleRunDetail` still only builds `schedule:` ids, so
+  the expander is reachable for schedules today and for store triggers once that wrapper is generalised.

@@ -1386,7 +1386,15 @@ async def api_trigger_history_detail(request: web.Request) -> web.Response:
     `ScheduleService`.
     """
     kind, raw = _split_id(request.match_info["id"])
-    if kind != _SCHEDULE:
+    # 🔴 A STORE trigger's run must open too (S167). This 404'd every non-schedule kind, so the
+    # list route S166 just fixed hands the UI a `run_id` that the detail route then denies — the
+    # expander opens on nothing. Driven: `LIST -> total=1 run_id='fire-…'` followed by
+    # `DETAIL -> 404`. `get_run(raw, run_id)` already works with a store key (verified against a
+    # real `file:notes` row), so the gate was the whole defect.
+    #
+    # A lifecycle/event trigger still 404s, and correctly: it has no run store to open a record
+    # from, and 404 is the honest answer for a record that does not exist.
+    if kind not in (_SCHEDULE, _STORE):
         return web.json_response({"error": "not found"}, status=404)
     run_id = request.match_info["run_id"]
     try:

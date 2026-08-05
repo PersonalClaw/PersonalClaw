@@ -1358,3 +1358,83 @@ async def test_an_UNRECOGNISED_prefix_falls_back_to_SCHEDULE_not_a_fake_reason()
     payload = json.loads((await T.api_trigger_history(req)).body.decode())
     assert payload == {"runs": [], "total": 0}, "an unknown prefix reads as an empty schedule"
     assert "supported" not in payload, "no fabricated unsupported answer"
+
+
+# ── 🔴 the list handed out a run_id the detail route denied (S167) ──
+
+
+@pytest.mark.asyncio
+async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
+    """🔴 THE DEFECT, one route past S166. `api_trigger_history_detail` gated on
+    `kind != _SCHEDULE` and 404'd everything else — so the list route S166 had just fixed handed the
+    UI a `run_id` that the detail route immediately denied. Driven:
+
+        LIST   -> total=1 run_id='fire-1785909121906'
+        DETAIL -> 404 {'error': 'not found'}
+
+    The expander opens on nothing. `get_run(raw, run_id)` already worked with a store key (verified
+    against a real `file:notes` row), so the gate was the entire defect — the same shape as S166,
+    which is why sweeping the SIBLING route mattered rather than stopping at the first fix.
+    """
+    import types as _types
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    store.upsert(
+        Trigger(
+            id="web_watch:feed",
+            name="feed watch",
+            kind="web_watch",
+            enabled=True,
+            spec={"url": "https://example.dev"},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = None
+    await orch._record_fire_outcome(
+        store.get("web_watch:feed").trigger,
+        result=_types.SimpleNamespace(success=True, error=""),
+    )
+
+    # The id the LIST hands the UI — the exact round trip the expander performs.
+    req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history")
+    req.match_info["id"] = "store:web_watch:feed"
+    listing = json.loads((await T.api_trigger_history(req)).body.decode())
+    run_id = listing["runs"][0]["run_id"]
+    assert run_id
+
+    req2 = make_mocked_request("GET", f"/api/triggers/store:web_watch:feed/history/{run_id}")
+    req2.match_info["id"] = "store:web_watch:feed"
+    req2.match_info["run_id"] = run_id
+    resp = await T.api_trigger_history_detail(req2)
+    assert resp.status == 200, "a run_id the list handed out must be openable"
+    assert json.loads(resp.body.decode())["run"]["run_id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_a_LIFECYCLE_run_detail_still_404s():
+    """Correct, not an oversight: a lifecycle trigger has no run store, so there is no record to
+    open and 404 is the honest answer."""
+    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history/r1")
+    req.match_info["id"] = "lifecycle:on_start"
+    req.match_info["run_id"] = "r1"
+    resp = await T.api_trigger_history_detail(req)
+    assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_an_UNKNOWN_run_on_a_REAL_store_trigger_says_run_not_found(home):
+    """The two 404s stay distinguishable. "not found" means the KIND keeps no runs; "run not found"
+    means this trigger does keep runs and that particular one is not among them — a caller debugging
+    a stale link needs to tell those apart."""
+    req = make_mocked_request("GET", "/api/triggers/store:file:nope/history/r1")
+    req.match_info["id"] = "store:file:nope"
+    req.match_info["run_id"] = "r1"
+    resp = await T.api_trigger_history_detail(req)
+    assert resp.status == 404
+    assert json.loads(resp.body.decode())["error"] == "run not found"
