@@ -1580,6 +1580,9 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
         "notifications.jsonl",
         "security_events.jsonl",
         "feedback.jsonl",
+        # Added by S179 and demanded by THIS test the moment the entry was declared — which is what
+        # the ratchet is for. Keyed on `AttemptRecord.audit_id` via `_merge_keyed_jsonl`.
+        "model_calls.jsonl",
         "crashes",
         "sessions",
     }, "a new append_dedup entry appeared — give it an executor, not copy-if-missing"
@@ -1588,14 +1591,22 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
     # `_merge_run_history`, so a stem-to-symbol guess would pass for the wrong reason.
     merge_src = inspect.getsource(snapshot._do_merge)
     executors = {
-        "cron-history": "_merge_run_history(",
-        "notifications.jsonl": "_merge_notifications(",
-        "security_events.jsonl": "_merge_security_events(",
-        "feedback.jsonl": "_merge_feedback(",
+        "cron-history": "_merge_run_history",
+        "notifications.jsonl": "_merge_notifications",
+        "security_events.jsonl": "_merge_security_events",
+        "feedback.jsonl": "_merge_feedback",
+        # Shares `_merge_keyed_jsonl` with feedback, so the call site is matched by its ARGUMENT —
+        # the symbol alone would pass even if this path were dropped from `_do_merge`.
+        "model_calls.jsonl": "_merge_keyed_jsonl",
     }
-    for path, call in executors.items():
-        assert call in merge_src, f"{path} has no executor reachable from _do_merge"
-        assert hasattr(snapshot, call.rstrip("(")), f"{call} is not defined"
+    for path, symbol in executors.items():
+        assert symbol in merge_src, f"{path} has no executor reachable from _do_merge"
+        assert hasattr(snapshot, symbol), f"{symbol} is not defined"
+    # `_merge_keyed_jsonl` is SHARED (feedback + model calls), so the symbol alone cannot prove both
+    # call sites exist — each is pinned by its filename argument. The dedicated executors take their
+    # paths internally, so there is nothing to pin at their call site.
+    for path in ("feedback.jsonl", "model_calls.jsonl"):
+        assert path in merge_src, f"{path} is not passed at any _do_merge call site"
     # The two directory-shaped ones ride the generic tree pass. `sessions` declares
     # `jsonl_append` while being a tree on disk (see the docstring) — pinned as-is so the
     # discrepancy stays visible.

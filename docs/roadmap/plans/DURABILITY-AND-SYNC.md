@@ -607,3 +607,69 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   load-bearing by unwiring it independently, including the ratchet in both directions (parking a
   non-derived store fails; breaking the store restore fails). Gate: `make lint` green · full
   `pytest -n 4 --dist worksteal` green.
+
+## Execution log — Session 2g (the guard that had never met a real home)
+
+- [2026-08-05][S179] **DONE.** Closed §1's real gap: the manifest was incomplete, and the guard that
+  exists to prevent exactly that had never been run against a real home.
+
+  **How it surfaced.** Chasing the `lww_by_updated_at` entries for an executor, `tool_usage.json`
+  turned out to have **zero writers** — usage moved into `learning.db` (`learning/usage.py`, "this
+  moves it into `learning.db` beside the staging log"). The inventory still declared the retired JSON
+  file and did **not** declare the database that replaced it.
+
+  🔴 **`audit_home()` had no runtime caller.** It is the claims-everything guard — "keeps the manifest
+  honest … which is precisely how nine directories silently escaped backup before the inventory
+  existed" — and every invocation was in `test_durability_inventory.py`, against a hand-built
+  eight-path fixture. So a store added *after* the manifest was written could not fail it. A guard
+  that only ever runs against its own fixture is testing the fixture.
+
+  Pointed at the real home for the first time: **10 unclaimed paths and 5482 undeclared databases**.
+  Driven end to end, `learning.db` (135 KB — the Flywheel's staging log and usage counters),
+  `inbox.json`, `spend.json` (which drives the budget caps), `model_calls.jsonl` and
+  `session_search.db` were **all absent from a real archive**.
+
+  **Ten entries declared, two of them `derived`.** Both index stores argue their own case:
+  `session_search` "holds no truth of its own … better rebuilt than restored", `codegraph` re-parses
+  on mtime — and a real home held **5478** codegraph databases. Declaring them as state would ship a
+  cache in every snapshot; not declaring them at all was the bug.
+
+  **Five machine-local paths IGNORED rather than declared.** `session_key` and `sessions.json` hold
+  live auth material; `machine_id` is what `durability/shards.py` stamps shards with, so a restored
+  copy would masquerade as the machine it came from. Ignored is not `secret=True` — a secret entry is
+  captured *on purpose* so a backup can restore the credential store, whereas these must not travel
+  at all.
+
+  **`workflows/runs.db` was the hazard the DB check exists for.** A live database inside a
+  `json_entity_dir` entry, so it was being filesystem-copied rather than staged through the safe
+  backup API — "it gets filesystem-copied while open in WAL mode", the exact case S1 fixed for
+  knowledge/lexicon/loops. Declaring it routes it to `_safe_copy_db` and excludes it from the tree
+  copy.
+
+  🔴 **My own first fix blinded that check, and driving it caught me.** Codegraph's 5478 rows drowned
+  the report, so I exempted declared prefixes — keyed off `kind`/`derived`, which silenced a surprise
+  DB in `loop/` and `workspace/` too. That is precisely the hazard the check exists for. Narrowed to
+  an opt-in `db_container` flag, pinned by a test to codegraph alone; the **pre-existing**
+  `test_an_undeclared_database_fails_the_audit` also refused the wide version, which is the second
+  time this program's existing tests have judged a draft of mine correctly.
+
+  **The guard now has a caller.** A `durability.inventory` Doctor probe at `CAPABILITY` tier —
+  degraded, not failed, because unclaimed state is a backup-coverage gap the user should act on
+  rather than a reason to call the install broken, and a lower tier would short-circuit the capability
+  packs over an unrelated new file. Read-only (`audit_home` only stats and globs), evidence capped at
+  20 rows per list with exact counts alongside, since an unreadable blob is the same failure as no
+  evidence. Verified through `run_capability("durability")` and the frontend's generic capability
+  card (renders "Durability"; no FE change needed).
+
+  **S178's own ratchets then caught S179 twice**, which is what they were built for: the
+  `append_dedup` sweep demanded an executor for the newly-declared `model_calls.jsonl` (added, keyed
+  on `AttemptRecord.audit_id`), and the coverage ratchet demanded the two new derived indexes be
+  listed with a reason. The third near-identical keyed-JSONL loop was extracted into
+  `_merge_keyed_jsonl` — deliberately NOT used for `security_events.jsonl`, whose HMAC-key
+  precondition must not be foldable into a generic helper a later caller reaches for the dedup alone.
+
+  Both real homes now audit **ok=True, 0 unclaimed, 0 undeclared databases**.
+
+  Tests: 8 new cases in `test_durability_inventory.py` (22), 4 in `test_resilience_doctor.py` (17),
+  plus the two ratchet updates. Every half verified load-bearing by unwiring it independently. Gate:
+  `make lint` green · full `pytest -n 4 --dist worksteal` green.

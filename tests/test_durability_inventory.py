@@ -150,3 +150,144 @@ class TestGapClosure:
         """A 'full backup' that drops the task board is the bug being fixed."""
         backed_up = {e.path for e in inv.backup_entries()}
         assert "tasks" in backed_up and "projects" in backed_up
+
+
+# ── 🔴 the claims-everything guard had never met a real home (S179) ──
+
+
+class TestTheGuardMeetsARealHome:
+    """`audit_home()` is the guard that "keeps the manifest honest". Every test above builds an
+    eight-path synthetic fixture, and the function had **no runtime caller** — so a store added
+    after
+    the manifest was written could not fail it.
+
+    Pointed at a real home for the first time it reported **10 unclaimed paths and 5482 undeclared
+    databases**, and `learning.db` — the learning staging log and usage counters — was verified
+    absent
+    from a real archive.
+    """
+
+    def test_a_declared_store_is_reachable_by_a_snapshot(self, tmp_path):
+        """Each newly declared entry must be CARRIED, not merely declared. Declaring without
+        capturing is the inert half of this fix: the manifest would read complete while the archive
+        stayed short."""
+        import personalclaw.snapshot as snap
+
+        for entry in inv.backup_entries():
+            target = tmp_path / entry.path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if "." in entry.path.split("/")[-1]:
+                target.write_text("{}", encoding="utf-8")
+            else:
+                target.mkdir(exist_ok=True)
+
+        staged = set(snap._everything_paths(tmp_path)) | {
+            f for files in snap.CORE_FILES.values() for f in files
+        }
+        staged |= {"workspace", "plan_memory", "skills"}
+        staged |= set(snap._declared_db_paths())
+
+        for new_id in (
+            "learning_db",
+            "inbox",
+            "spend",
+            "model_calls",
+            "knowledge_root_db",
+            "agent_metadata",
+            "learning_proposals",
+            "durability_state",
+            "workflow_runs_db",
+        ):
+            entry = next(e for e in inv.INVENTORY if e.id == new_id)
+            covered = entry.path in staged or any(
+                "/".join(entry.path.split("/")[:i]) in staged
+                for i in range(1, len(entry.path.split("/")))
+            )
+            assert covered, f"{entry.path} is declared but no snapshot path carries it"
+
+    def test_the_MACHINE_LOCAL_paths_are_ignored_not_declared(self):
+        """🔴 SECURITY / identity. `session_key` and `sessions.json` hold live auth material, and
+        `machine_id` is what `durability/shards.py` stamps shards with — a restored copy would
+        masquerade as the machine it came from.
+
+        Ignored rather than `secret=True`: a secret entry is captured ON PURPOSE so a backup can
+        restore the credential store, whereas these must not travel at all.
+        """
+        for path in ("session_key", "sessions.json", "machine_id"):
+            assert inv.is_ignored(path), f"{path} must not travel in a snapshot"
+            assert inv.claim_for(path) is None, f"{path} must not be a declared entry"
+
+    def test_a_DB_inside_a_TREE_entry_is_still_caught(self, tmp_path):
+        """🔴 MY OWN FIX BLINDED THIS AND A DRIVE CAUGHT IT.
+
+        `codegraph/` holds one database per workspace (5478 in a real home), so an exact-path
+        compare
+        can never match them and the audit drowns — the same over-reporting failure S178 fixed in
+        the
+        coverage ratchet. My first exemption keyed off `kind`/`derived` and therefore skipped every
+        tree prefix, including `loop/` and `workspace/` — silencing the exact hazard the check
+        exists
+        for ("a database nested inside a `tree` entry … gets filesystem-copied while open in WAL
+        mode").
+
+        Narrowed to an opt-in `db_container` flag, so the exemption names the stores whose whole
+        content IS databases and nothing else inherits it.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / "config.json").write_text("{}", encoding="utf-8")
+        for tree in ("loop", "workspace"):
+            (home / tree).mkdir()
+            sqlite3.connect(str(home / tree / "surprise.db")).close()
+
+        result = inv.audit_home(home)
+
+        for tree in ("loop", "workspace"):
+            assert f"{tree}/surprise.db" in result.undeclared_dbs
+
+    def test_a_DB_CONTAINER_absorbs_its_own_databases(self, tmp_path):
+        """The narrow exemption still has to work: `codegraph/<key>.db` must not be reported."""
+        home = tmp_path / "home"
+        (home / "codegraph").mkdir(parents=True)
+        (home / "config.json").write_text("{}", encoding="utf-8")
+        for key in ("ws-a", "ws-b"):
+            sqlite3.connect(str(home / "codegraph" / f"{key}.db")).close()
+
+        result = inv.audit_home(home)
+
+        assert result.undeclared_dbs == []
+        assert "codegraph/" not in result.unclaimed
+
+    def test_only_codegraph_is_a_DB_CONTAINER(self):
+        """Pinned so the flag cannot spread. Every added `db_container` widens the blind spot the
+        test above exists to keep narrow — a second store needs its own argued reason."""
+        containers = sorted(e.id for e in inv.INVENTORY if e.db_container)
+        assert containers == ["codegraph"]
+
+    def test_a_directory_is_claimed_by_its_DECLARED_CONTENTS(self, tmp_path):
+        """`knowledge/` holds only `knowledge/knowledge.db`. `claim_for` is longest-prefix, so it
+        can
+        name the child without naming the parent — and the audit's top-level loop then reported the
+        parent as unclaimed. Requiring a redundant wrapper entry per nested store would make the
+        manifest describe the audit's implementation rather than the state."""
+        home = tmp_path / "home"
+        (home / "knowledge").mkdir(parents=True)
+        (home / "config.json").write_text("{}", encoding="utf-8")
+        sqlite3.connect(str(home / "knowledge" / "knowledge.db")).close()
+
+        result = inv.audit_home(home)
+
+        assert "knowledge/" not in result.unclaimed
+        assert result.undeclared_dbs == []
+
+    def test_the_DERIVED_indexes_stay_out_of_a_backup(self):
+        """Both index stores declare themselves disposable in their own docstrings —
+        `session_search` "holds no truth of its own … better rebuilt than restored", `codegraph`
+        re-parses on mtime. Declaring them as state would ship a 10552-entry cache in every
+        snapshot;
+        not declaring them at all was the bug."""
+        backed_up = {e.id for e in inv.backup_entries()}
+        for derived_id in ("session_search_db", "codegraph"):
+            entry = next(e for e in inv.INVENTORY if e.id == derived_id)
+            assert entry.derived is True
+            assert derived_id not in backed_up
