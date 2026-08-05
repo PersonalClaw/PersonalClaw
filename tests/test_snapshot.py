@@ -1143,3 +1143,262 @@ def test_the_run_history_merge_is_WIRED_into_do_merge(tmp_path: Path) -> None:
     got = _ids(pc, "clock:backup.jsonl")
     assert "FROM-SNAPSHOT" in got, "_do_merge must invoke the run-history merge"
     assert "LIVE-run" in got
+
+
+# ── 🔴 the capture side was widened and the RESTORE side was not (S177) ──
+
+_STORES = ("tasks", "projects", "agents", "prompts", "workflows", "artifacts", "uploads")
+
+
+def _seeded_snapshot(root: Path, *, secrets: bool = False) -> Path:
+    """An extracted snapshot tree holding the stores `_everything_paths` captures."""
+    snap = root / "snap"
+    snap.mkdir(parents=True, exist_ok=True)
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    for d in _STORES:
+        (snap / d).mkdir(parents=True, exist_ok=True)
+        (snap / d / "x.json").write_text('{"v":"FROM-SNAPSHOT"}', encoding="utf-8")
+    (snap / "entity_settings").mkdir(exist_ok=True)
+    (snap / "entity_settings" / "e.json").write_text('{"v":"FROM-SNAPSHOT"}', encoding="utf-8")
+    if secrets:
+        (snap / ".env").write_text("OPENAI_API_KEY=sk-FROM-SNAPSHOT", encoding="utf-8")
+        (snap / ".local_secret").write_text("FROM-SNAPSHOT", encoding="utf-8")
+        (snap / "credentials").mkdir(exist_ok=True)
+        (snap / "credentials" / "c.json").write_text('{"tok":"FROM-SNAPSHOT"}', encoding="utf-8")
+    return snap
+
+
+def test_a_MERGE_restore_recovers_the_task_board(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. `_everything_paths` widened CAPTURE to every inventory entry — its comment
+    says a full backup "silently dropped the user's whole task board". Both restore modes stayed
+    hand-written seven-component lists, so the archive held the board and neither mode gave it back,
+    while both printed a success line.
+
+    Driven: 8 stores in the snapshot, 8 absent from the restored home. The asymmetry IS the bug — a
+    snapshot is only as good as its restore, and widening one side made the archive look complete.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_merge(snap, pc, None)
+
+    missing = [d for d in _STORES if not (pc / d / "x.json").is_file()]
+    assert missing == [], f"a merge restore dropped these stores: {missing}"
+    assert (pc / "entity_settings" / "e.json").is_file()
+
+
+def test_a_REPLACE_restore_recovers_the_task_board(tmp_path: Path) -> None:
+    """The same gap in replace mode. Both are reachable from `--mode`, and a user recovering onto a
+    wiped machine picks replace — the shape where losing the board is total."""
+    from personalclaw.snapshot import _do_replace
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_replace(snap, pc, None)
+
+    missing = [d for d in _STORES if not (pc / d / "x.json").is_file()]
+    assert missing == [], f"a replace restore dropped these stores: {missing}"
+
+
+def test_the_restore_does_NOT_re_plant_SECRETS(tmp_path: Path) -> None:
+    """🔴 SECURITY. `backup_entries()` includes secrets deliberately — "losing the credential store
+    is exactly what a backup should prevent" — so `.env`, `credentials/` and `.local_secret` ARE in
+    the archive. Restoring them through the generic path would re-plant credential material into a
+    home that may have deliberately rotated or removed it.
+
+    Capture writes a local 0600 archive; restore writes into a live home. The two directions do not
+    warrant the same default, so the generic path excludes `secret_paths()` and the named `security`
+    component stays the deliberate route (copy-if-missing, chmod 0600).
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path, secrets=True)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_merge(snap, pc, None)
+
+    for leaked in (".env", ".local_secret", "credentials/c.json"):
+        assert not (pc / leaked).exists(), f"restore re-planted secret material: {leaked}"
+
+
+def test_MERGE_leaves_an_existing_file_ALONE(tmp_path: Path) -> None:
+    """Merge mode's contract is that local state wins. These entries have no field-level merge
+    executor yet, so copy-if-missing is the honest half — overwriting a live task board with an
+    older snapshot's copy is the data loss a merge restore exists to avoid."""
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    (pc / "tasks").mkdir(parents=True)
+    (pc / "tasks" / "x.json").write_text('{"v":"LIVE-EDIT"}', encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    assert json.loads((pc / "tasks" / "x.json").read_text())["v"] == "LIVE-EDIT"
+
+
+def test_REPLACE_keeps_the_overwritten_copy_RECOVERABLE(tmp_path: Path) -> None:
+    """Replace mode is destructive by design, and its existing contract is that the previous state
+    lands in `pre-restore-<ts>/`. Widening it without extending that backup would make the new
+    coverage the one unrecoverable path in the function."""
+    from personalclaw.snapshot import _do_replace
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    (pc / "tasks").mkdir(parents=True)
+    (pc / "tasks" / "x.json").write_text('{"v":"LIVE-EDIT"}', encoding="utf-8")
+
+    _do_replace(snap, pc, None)
+
+    assert json.loads((pc / "tasks" / "x.json").read_text())["v"] == "FROM-SNAPSHOT"
+    backups = [p for p in pc.iterdir() if p.name.startswith("pre-restore-")]
+    assert len(backups) == 1, "replace must leave exactly one pre-restore backup"
+    saved = backups[0] / "tasks" / "x.json"
+    assert saved.is_file(), "the overwritten live copy is not recoverable"
+    assert json.loads(saved.read_text())["v"] == "LIVE-EDIT"
+
+
+def test_a_TARGETED_restore_stays_targeted(tmp_path: Path) -> None:
+    """`--components memory` must not drag in the whole state. The new coverage is gated on
+    `everything`, which is also what `components is None` selects — so the default (the invocation a
+    user in a recovery actually types) is complete, and an explicit narrow ask is still narrow."""
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_merge(snap, pc, ["memory"])
+
+    assert not (pc / "tasks").exists()
+
+
+def test_EVERYTHING_is_a_valid_component(tmp_path: Path) -> None:
+    """🔴 Criterion 1 names this invocation verbatim — "`--components everything` followed by wiping
+    `~/.personalclaw` and restoring reproduces … including tasks, projects, entity_settings" — and
+    the CLI answered **"❌ Unknown component: everything"**. Without it there is no way to ask for
+    the task board at all."""
+    from personalclaw.snapshot import COMPONENT_HELP, VALID_COMPONENTS
+
+    assert "everything" in VALID_COMPONENTS
+    assert "everything" in COMPONENT_HELP, "--list-components must advertise it"
+
+
+def test_DERIVED_entries_are_not_restored(tmp_path: Path) -> None:
+    """`backup_entries()` skips derived indexes because "a stale index paired with a newer store is
+    worse than none". The restore projection reuses that same call rather than re-deciding, so the
+    reasoning cannot drift between the two directions."""
+    from personalclaw.snapshot import _extra_restore_paths
+
+    snap = tmp_path / "snap"
+    (snap / "models").mkdir(parents=True)
+    (snap / "models" / "m.bin").write_text("derived", encoding="utf-8")
+    (snap / "tasks").mkdir()
+    (snap / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+
+    got = _extra_restore_paths(snap)
+    assert "tasks" in got
+    assert "models" not in got, "a derived index must not be restored"
+
+
+def test_the_restore_projection_MIRRORS_the_capture_one(tmp_path: Path) -> None:
+    """The defect was capture and restore disagreeing about what state IS. Both now project the same
+    `backup_entries()` and exclude the same named components, so a store added to the inventory
+    later is captured AND restored without editing either function. Asserted structurally, because
+    the failure mode is the two drifting apart again — not a wrong value today."""
+    from personalclaw.snapshot import _everything_paths, _extra_restore_paths
+
+    home = tmp_path / "home"
+    for d in (*_STORES, "entity_settings"):
+        (home / d).mkdir(parents=True)
+        (home / d / "x.json").write_text("{}", encoding="utf-8")
+
+    captured = set(_everything_paths(home))
+    restorable = set(_extra_restore_paths(home))
+    # Restore excludes secrets by design; nothing else may differ.
+    assert restorable <= captured
+    from personalclaw.durability import inventory as inv
+
+    secret = inv.secret_paths()
+    unexplained = {p for p in captured - restorable if p.split("/", 1)[0] not in secret}
+    assert unexplained == set(), f"captured but not restorable, for no stated reason: {unexplained}"
+
+
+def test_EVERYTHING_selects_the_NAMED_components_too(tmp_path: Path) -> None:
+    """🔴 MY OWN FIX SHIPPED HALF-INERT, and the eight tests above all passed while it did.
+
+    Found by driving criterion 1's actual drill — snapshot, wipe the home, restore — instead of
+    trusting the component I had just added. `--components everything` restored the task board and
+    **dropped `config.json`, `memory.db`, `notifications.jsonl`, `workspace/` and `skills/`**,
+    because `everything` had been added as just another member of the list: naming it made `_want`
+    answer False for all seven NAMED components. A flag whose entire promise is completeness,
+    silently narrowing the restore — and the invocation criterion 1 tells a user to type.
+
+    `everything` is a superset marker, not a peer.
+    """
+    from personalclaw.snapshot import _want
+
+    for named in ("memory", "crons", "config", "skills", "workspace", "notifications", "security"):
+        assert _want(["everything"], named), f"'everything' must select '{named}'"
+    assert _want(["everything"], "everything")
+    # and a narrow ask stays narrow
+    assert _want(["memory"], "memory")
+    assert not _want(["memory"], "everything")
+    assert not _want(["memory"], "crons")
+
+
+def test_a_WIPE_and_restore_returns_every_named_component(tmp_path: Path) -> None:
+    """Criterion 1 end to end, at the `_do_replace` level: the drill is "wipe `~/.personalclaw` and
+    restore", so the test that matters drives an EMPTY home rather than a partially-populated one —
+    the state a user recovering onto a new machine actually has."""
+    from personalclaw.snapshot import _do_replace
+
+    snap = _seeded_snapshot(tmp_path)
+    (snap / "notifications.jsonl").write_text('{"ts":1}\n', encoding="utf-8")
+    (snap / "workspace").mkdir(exist_ok=True)
+    (snap / "workspace" / "w.md").write_text("# ws", encoding="utf-8")
+    (snap / "skills").mkdir(exist_ok=True)
+    (snap / "skills" / "s.md").write_text("# skill", encoding="utf-8")
+    pc = tmp_path / "wiped"
+    pc.mkdir()
+
+    _do_replace(snap, pc, ["everything"])
+
+    for rel in ("config.json", "notifications.jsonl", "workspace/w.md", "skills/s.md"):
+        assert (pc / rel).is_file(), f"'everything' dropped a named component: {rel}"
+    assert (pc / "tasks" / "x.json").is_file()
+
+
+def test_the_widened_restore_is_BOUNDED_by_the_inventory(tmp_path: Path) -> None:
+    """🔴 SECURITY. `portability.py:305` calls `_do_replace(snap, pc, None)` on the IMPORT path, so
+    widening the restore widens what an import writes into a live home — and an import archive can
+    come from someone else's export.
+
+    The projection iterates `backup_entries()` and asks whether each DECLARED path exists in the
+    archive; it never walks the archive and copies what it finds. So an undeclared directory cannot
+    be steered into the home no matter what the tree contains. Asserted with an archive carrying
+    `evil/`, `.ssh/authorized_keys` and credential files: only `tasks` is selected.
+    """
+    from personalclaw.durability import inventory as inv
+    from personalclaw.snapshot import _extra_restore_paths
+
+    snap = tmp_path / "snap"
+    (snap / "tasks").mkdir(parents=True)
+    (snap / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+    for hostile, name in (("evil", "payload.sh"), (".ssh", "authorized_keys")):
+        (snap / hostile).mkdir()
+        (snap / hostile / name).write_text("x", encoding="utf-8")
+    (snap / ".env").write_text("KEY=ATTACKER", encoding="utf-8")
+
+    got = _extra_restore_paths(snap)
+
+    declared = {e.path for e in inv.INVENTORY}
+    assert [p for p in got if p not in declared] == [], "restore must copy only declared paths"
+    for hostile in ("evil", ".ssh", ".env"):
+        assert hostile not in got

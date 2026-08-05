@@ -19,7 +19,20 @@ try:
 except ImportError:
     import sqlite3
 
-VALID_COMPONENTS = ("memory", "crons", "config", "skills", "workspace", "notifications", "security")
+VALID_COMPONENTS = (
+    "memory",
+    "crons",
+    "config",
+    "skills",
+    "workspace",
+    "notifications",
+    "security",
+    # Criterion 1 names this invocation verbatim (`--components everything`) and the CLI
+    # REJECTED it: "❌ Unknown component: everything". Covers every inventory entry the seven
+    # named components do not, which is what makes a targeted restore expressible at all —
+    # without it there is no way to ask for the task board.
+    "everything",
+)
 
 
 def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | None:
@@ -169,6 +182,45 @@ def _everything_paths(pc: Path) -> list[str]:
     return out
 
 
+def _extra_restore_paths(snap: Path) -> list[str]:
+    """Inventory entries a RESTORE must return, beyond the seven named components (S177).
+
+    🔴 WHY THIS EXISTS. Capture is inventory-derived (:func:`_everything_paths`, which closed
+    the "a full backup silently dropped the user's whole task board" gap); **both restore modes
+    were hand-written seven-component lists**. So the archive held `tasks/`, `projects/`,
+    `agents/`, `prompts/`, `workflows/`, `artifacts/`, `uploads/` and `entity_settings/` and
+    neither `--mode merge` nor `--mode replace` returned any of them, while both printed a
+    success line. The asymmetry is the defect: a snapshot is only as good as the restore, and
+    widening only the capture side made the archive *look* complete.
+
+    Mirrors :func:`_everything_paths` deliberately — same projection, same exclusions — but
+    resolved against the SNAPSHOT rather than the live home, because that is where a restore
+    reads. Keeping the two in one shape is the point: a store added to the inventory later is
+    both captured and restored without touching either function.
+
+    **Secrets are excluded, unlike capture.** ``backup_entries()`` includes them on purpose
+    ("losing the credential store is exactly what a backup should prevent"), but restoring
+    ``.env``/``credentials/``/``.local_secret`` generically would re-plant credential material
+    into a home that may have deliberately rotated or removed it. Capture is a local 0600
+    archive; restore writes into a live home, so the two directions do not warrant the same
+    default. The named ``security`` component remains the deliberate path for key material,
+    copy-if-missing and 0600 exactly as today.
+    """
+    from personalclaw.durability import inventory as inv
+
+    secret = inv.secret_paths()
+    already = {f for files in CORE_FILES.values() for f in files}
+    already |= {"workspace", "plan_memory", "skills"}
+    out: list[str] = []
+    for entry in inv.backup_entries():
+        top = entry.path.split("/", 1)[0]
+        if top in already or top in secret or entry.path in secret or entry.path in out:
+            continue
+        if (snap / entry.path).exists():
+            out.append(entry.path)
+    return out
+
+
 COMPONENT_HELP = {
     "memory": "memory.db, memory_index.db (semantic, episodic, knowledge graph)",
     "crons": "triggers.json + event_triggers.json + crons.json (automations)",
@@ -177,6 +229,7 @@ COMPONENT_HELP = {
     "workspace": "workspace/, plan_memory/ directories",
     "notifications": "notifications.jsonl (notification history)",
     "security": "sel_hmac.key, telemetry_salt",
+    "everything": "every other store: tasks, projects, agents, prompts, workflows, uploads, …",
 }
 
 
@@ -194,7 +247,20 @@ def _fsize(p: Path) -> int:
 
 
 def _want(components: list[str] | None, name: str) -> bool:
-    return components is None or name in components
+    """Is `name` selected? `everything` selects EVERY component, not just the un-named ones.
+
+    🔴 Found by driving criterion 1's own drill (snapshot → wipe the home → restore) rather than
+    trusting the component I had just added. `--components everything` restored the task board and
+    dropped `config.json`, `memory.db`, `notifications.jsonl`, `workspace/` and `skills/` — because
+    "everything" had been just another member of a list, so naming it DESELECTED the seven named
+    components. A flag whose whole promise is completeness, silently narrowing the restore.
+
+    So `everything` is a superset marker, not a peer. Reading it here rather than expanding it at
+    the CLI keeps one definition for both restore modes and for any later caller.
+    """
+    if components is None:
+        return True
+    return name in components or "everything" in components
 
 
 def _list_components() -> None:
@@ -813,6 +879,22 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
             _copytree_safe(snap_sk, sk)
         print("  ✅ skills")
 
+    # 🔴 Every remaining inventory entry (S177) — see `_extra_restore_paths`. Replace mode moves
+    # the live copy into the pre-restore backup FIRST, so the destructive half stays recoverable
+    # exactly as it is for the named components.
+    if _want(components, "everything"):
+        for rel in _extra_restore_paths(snap):
+            src, live = snap / rel, pc / rel
+            if live.exists() and not live.is_symlink():
+                (backup / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(live), str(backup / rel))
+            if src.is_dir():
+                _copytree_safe(src, live)
+            elif src.is_file():
+                live.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(live))
+        print("  ✅ stores")
+
     try:
         backup.rmdir()
     except OSError:
@@ -904,6 +986,32 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             (pc / "skills").mkdir(parents=True, exist_ok=True)
             _copy_tree_no_overwrite(snap / "skills", pc / "skills")
         print("  ✅ skills")
+
+    # 🔴 Every remaining inventory entry (S177). The capture side stages these; neither restore
+    # mode read them, so a merge recovered the automations and silently dropped the task board.
+    # Gated on `everything` so a targeted `--components memory` stays targeted — but that is also
+    # the default (`components is None`), which is the invocation a user in a recovery actually
+    # types.
+    if _want(components, "everything"):
+        restored = []
+        for rel in _extra_restore_paths(snap):
+            src = snap / rel
+            dst = pc / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                _copy_tree_no_overwrite(src, dst)
+                restored.append(rel)
+            elif src.is_file() and not dst.exists():
+                # A file the live home does not have. An EXISTING file is left alone: merge
+                # mode's contract is that local state wins, and these entries have no
+                # field-level merge executor yet (their declared strategies are the 13 the
+                # queue tracks) — so copy-if-missing is the honest half, not a silent overwrite.
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+                restored.append(rel)
+        if restored:
+            print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")
+        print("  ✅ stores")
 
     print("✅ Merge complete.")
 
