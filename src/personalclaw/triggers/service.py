@@ -62,7 +62,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.triggers.models import Outcome, Trigger, TriggerHealth, TriggerState
+from personalclaw.triggers.models import (
+    INERT_OUTCOMES,
+    Outcome,
+    Trigger,
+    TriggerHealth,
+    TriggerState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -560,6 +566,12 @@ async def tick(
         if late_reason:
             row["reason"] = late_reason
         result.ledger_rows.append(row)
+        # 🔴 PERSIST the suppression (§7 crit 8 — S171). The row above has always been built and
+        # returned, and nothing stored it, so a suppressed fire left no trace a user could read —
+        # the silent drop the criterion bans. Gated on `persist` so `automation doctor`'s dry run
+        # stays side-effect free, which is the whole point of that flag.
+        if persist and not decision.allowed:
+            await _persist_suppression(row, now=now)
 
         if decision.allowed:
             # Persist the granted claim so the NEXT tick (and any other process — the MCP tools and
@@ -598,6 +610,56 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+async def _persist_suppression(row: dict[str, Any], *, now: float) -> None:
+    """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171).
+
+    🔴 WHY THIS EXISTS. Criterion 8 is *"every suppressed fire appears as a typed ledger row
+    with a reason — zero silent drops"*, and `tick` builds exactly that row for every
+    evaluated trigger. It then returns it, and **no caller persisted it**:
+    `TickResult.ledger_rows` has no consumer outside this module, so `loop.tick_once`'s own
+    comment ("`tick` already persisted each next fire and wrote a ledger row") was half true
+    — the next fire was persisted, the row was not.
+
+    Measured: six ticks of a quiet-hours trigger produced six `skipped_gate` rows in memory
+    and ZERO rows in the store, so the history a user reads had no record any of it
+    happened. That is indistinguishable from a scheduler that never woke, which is the
+    silent drop the criterion bans.
+
+    Follows S136's `_record_blocked_fire` shape deliberately: that session established that
+    a suppressed fire earns a `ScheduleRun` row keyed by trigger id, with the typed outcome
+    in `trigger` and `status`. Reusing the shape means the runs feed projects these exactly
+    as it already projects a blocked one, instead of needing a second reader.
+
+    Only SUPPRESSIONS. A granted fire's row is written by `gateway._record_fire_outcome`
+    once the run settles; writing one here too would double-count every success in
+    `count_since` — the rate meter S152 built, which reads this very store.
+
+    Never raises. The fire's decision has already been made and acted on, so losing its
+    bookkeeping is strictly better than turning a correct suppression into a crashed tick.
+    """
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+        outcome = str(row.get("outcome") or "")
+        trigger_id = str(row.get("trigger_id") or "")
+        if not trigger_id or outcome not in INERT_OUTCOMES:
+            return
+        await ScheduleRunStore(config_dir()).append(
+            ScheduleRun(
+                run_id=f"skip-{int(now * 1000)}",
+                job_id=trigger_id,
+                trigger=outcome,
+                started_at=now,
+                finished_at=now,
+                status=outcome,
+                error=str(row.get("reason") or ""),
+            )
+        )
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not persist the suppression row for %s", row.get("trigger_id"))
 
 
 async def _fires_in_window(trigger: Any, *, now: float) -> int | None:

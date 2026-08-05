@@ -5691,3 +5691,64 @@ how this program's defects usually compound:
 Load-bearing verified by discarding the refinement while keeping the code valid — exactly one test goes
 red. (A first attempt left a `NameError` instead, which is a broken revert rather than a disabled
 behaviour: 19 unrelated failures and no usable signal.)
+
+### S171 — criterion 8 was unmet: a suppressed fire left no trace (§7 crit 8)
+
+**Found by diffing the tick's ledger row against `FireRecord`'s own fields.** Eleven were absent —
+including `id`, which S165's archive split keys on. Chasing that revealed something larger than a
+missing field: the row is **never persisted at all**. `TickResult.ledger_rows` has no consumer outside
+`service.py`.
+
+**🔴 THE DEFECT.** Criterion 8 is unambiguous:
+
+> *every suppressed fire appears as a typed ledger row with a reason — zero silent drops*
+
+And `loop.tick_once` carries a comment asserting it is satisfied: *"`tick` already persisted each next
+fire and wrote a ledger row."* Half true — the next fire was persisted; the row was built, returned,
+and dropped. Measured:
+
+```
+6 ticks of a quiet-hours trigger
+  -> 6 in-memory ledger rows  (outcome='skipped_gate', reason='quiet hours 00:00–23:59…')
+  -> 0 rows PERSISTED to the run store
+```
+
+So the history a user reads had no record any of it happened. That is indistinguishable from a
+scheduler that never woke — and the whole point of §1.3's typed reasons is to make those two
+distinguishable. Every gate this program wired (S150-S154's caps, S151's spacing, S152's rate window,
+S157's screen) produced a reason nobody could read afterwards.
+
+**Persisted following S136's `_record_blocked_fire` shape**, deliberately: that session already
+established that a suppressed fire earns a `ScheduleRun` row keyed by trigger id with the typed outcome
+in `trigger`/`status`. Reusing the shape means the runs feed projects a skip exactly as it already
+projects a blocked payload, rather than needing a second reader.
+
+**Two boundaries, both driven:**
+
+- **`persist`-gated.** `automation doctor`'s dry run reports what a real tick *would* do; a diagnostic
+  that writes history changes the thing it diagnoses. Verified: `persist=False` × 4 ticks → 0 rows.
+- **Suppressions only.** A granted fire's row belongs to `gateway._record_fire_outcome`, written once
+  the run settles. Verified: 3 granted fires → 0 rows from this path.
+
+**🔴 A SECOND-ORDER DEFECT MY OWN FIX INTRODUCED**, caught by driving the consequence rather than
+stopping at the feature. `count_since` counts every row in the window, so the newly-persisted skips
+became fires:
+
+```
+5 suppressions -> count_since: 5
+```
+
+That **inverts** S152's rate cap: a trigger held by its own quiet window would consume the hourly
+allowance it never used, then be refused for "running away". The cap exists to bound work the machine
+DID. Excluded via `INERT_OUTCOMES` — the same set `history.is_inert` reads — so there is one definition
+of "this did nothing" serving both surfaces, and a future inert outcome cannot start counting toward a
+rate cap because nobody updated a second list.
+
+Verified the exclusion is narrow: a real fire **and a failed one** both still count (a failure is work
+— it woke, it ran, it broke — so excluding failures would let a crash-looping trigger fire forever), and
+S152's manual-bypass still holds alongside without either exclusion shadowing the other.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change —
+S163's `statusMeta` already renders every `skipped_*` outcome, and S165's split already folds them, so
+these rows land on surfaces built to receive them. Load-bearing verified by disabling each half at a
+uniquely-matched line: 4 tests red between them.
