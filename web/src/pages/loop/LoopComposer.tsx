@@ -108,6 +108,11 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   const [designUrl, setDesignUrl] = useState('')
   const [designFiles, setDesignFiles] = useState<File[]>([])
 
+  // `initialKind` seeds the slider, but a deep-link that arrives while the composer is
+  // ALREADY mounted (e.g. #/code redirecting to #/loop?kind=code) only changes the prop —
+  // so sync it, or the preselect is silently ignored for the life of the mount.
+  useEffect(() => { if (initialKind) setKind(initialKind) }, [initialKind])
+
   useEffect(() => {
     if (kind !== 'code') { setInheritedWs(''); return }
     if (initialWorkspace) { setInheritedWs(initialWorkspace); setProjectKind('brownfield'); return }
