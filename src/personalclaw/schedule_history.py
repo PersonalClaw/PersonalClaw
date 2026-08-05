@@ -413,15 +413,25 @@ class ScheduleRunStore:
         self._write_jsonl(self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]])
 
     def _rotate_all_sync(self) -> None:
+        """Rotate every job file + the index. Runs once at gateway boot.
+
+        🔴 DELEGATES to `_rotate_job_locked` rather than repeating the trim (S175). This carried its
+        own inlined `rows[-_MAX_RECORDS_PER_JOB:]` — the pre-S173 flat tail — so the BOOT path undid
+        what the append path protects. Measured on the realistic case, an existing install's first
+        boot on the new build: a 200-row legacy file (1 real run + 199 quiet-hours skips) came back
+        as 100 rows with the real run **evicted**, while appending those same rows keeps it.
+
+        A duplicated policy is how two paths start disagreeing, and here the second copy silently
+        reverted the first at exactly the moment a user upgrades. One trim function now, called from
+        both.
+        """
         if not self._dir.exists():
             return
         with self._lock():
             for path in self._dir.glob("*.jsonl"):
                 if path.name == _INDEX_NAME:
                     continue
-                rows = self._read_jsonl(path)
-                if len(rows) > _MAX_RECORDS_PER_JOB:
-                    self._write_jsonl(path, rows[-_MAX_RECORDS_PER_JOB:])
+                self._rotate_job_locked(path.stem)
             self._rotate_index_locked()
 
     async def rotate_all(self) -> None:
