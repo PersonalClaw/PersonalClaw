@@ -438,3 +438,56 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   snapshot or an export. `audit_home()` does not catch them because it has **zero runtime
   callers** and its test builds a synthetic 5-path fixture home. That is a guardrails-store
   question, out of scope for a settings surface.
+
+## Execution log — Session 2d (the declared merge with no executor)
+
+- [2026-08-05][S176] **DONE.** Closed gap (1), which this plan names against itself:
+  *"the §1 inventory's `merge` field is specified but merge-restore isn't listed as a
+  consumer."* It was worse than an unlisted consumer — the field had **no executor at all**.
+
+  **Swept the declared strategies against their readers.** All five `MERGE_*` constants in
+  `durability/inventory.py` have zero readers outside their own declaration, and **14 of the
+  38 entries declaring a merge strategy are never named by `snapshot._do_merge`**.
+  `_do_merge` covers exactly seven components — `memory`, `crons`, `config`,
+  `notifications`, `security`, `workspace`, `skills` — with **no glob or `iterdir`
+  catch-all**, so an unlisted component is not degraded, it is absent.
+
+  **Driven, not read.** A snapshot holding a `FROM-SNAPSHOT` run merged into a home holding
+  `LIVE-run` came back holding only `LIVE-run`, while the CLI printed **"✅ Merge
+  complete"**. That is a durability layer reporting success for a partial recovery — the one
+  failure mode a backup system cannot have, since the user's evidence that it worked is the
+  message it just printed.
+
+  **Scoped to run history, deliberately.** Of the 14, this is the entry whose loss is
+  **unrecoverable**: `config` and `models` can be re-entered by hand, `screenshots` are
+  reproducible, but a run's history has no other source. The remaining 13 are recorded in
+  the queue as follow-on work rather than swept in here, because each needs its own dedup
+  key argued from its own format — a generic line-dedup would be the kind of
+  one-size mechanism that later has to be unpicked per component.
+
+  **Dedup key: `run_id`, not the whole line.** The same run round-trips through `to_dict()`
+  on both sides, so a reordered key or a re-serialised float would make an identical run
+  look new and double it. `_merge_notifications` dedupes on `ts` for the same reason.
+  Per-shard, since the store is one file per job; a shard present only in the snapshot is
+  copied whole, because an automation the live home has never run must still come back.
+
+  🔴 **My own load-bearing check found that seven passing tests could not distinguish the
+  fix from an inert one.** Disabling the call site in `_do_merge` left all 61 tests green —
+  every one of them called `_merge_run_history` **directly**. A helper that works perfectly
+  and is never invoked is this program's signature defect, and the suite I had just written
+  would have shipped it. Added a test that drives `_do_merge` itself; with the wiring
+  disabled it now fails, which is what makes the other seven trustworthy.
+
+  **Does NOT rotate, on purpose.** `ScheduleRunStore.rotate_all()` owns retention and runs
+  at gateway boot (S175). A second trim here would be another copy of that policy — exactly
+  the duplication S175 deleted after finding it had silently reverted S173's per-class
+  quota. Pinned by a source assertion, since the defect class is duplication rather than a
+  wrong value.
+
+  Also verified: idempotence (a re-run of the same merge imports 0 rows, so a repeated
+  restore drill cannot double the history), a malformed line skipped without aborting the
+  rest of the shard (a partial recovery beats an aborted one — the same call `count_since`
+  makes), and an absent source directory as a clean no-op that creates no empty dir.
+
+  Tests: 8 new cases in `tests/test_snapshot.py` (62 in that file). Gate: `make lint` green
+  · full `pytest -n 4 --dist worksteal` green.
