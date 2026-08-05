@@ -605,6 +605,24 @@ class Trigger:
     health_status: str = TriggerHealth.OK.value
     last_error_summary: str = ""
     state: str = TriggerState.ACTIVE.value
+    #: When a PARKED trigger becomes eligible to try again (epoch seconds, 0 = immediately).
+    #:
+    #: 🔴 `autopause.evaluate` has always RETURNED `retry_after=now + PARK_COOLDOWN_SECS` on a
+    #: parking exit, and `unpark_due` has always implemented the clock decision — and this
+    #: entity had nowhere to keep the number, so `_record_fire_outcome` dropped it and it had no
+    #: caller. Measured (S159): one transport outage parked a working trigger and it fired **0 times
+    #: over the next 5 slots and stayed `parked` indefinitely** — a 30-second network blip
+    #: permanently disabling an automation.
+    #:
+    #: Epoch rather than ISO, deliberately breaking this entity's timestamp convention: `unpark_due`
+    #: compares it against `now` as a float, and a conversion at each comparison site is a
+    #: chance to mix units. The ISO fields are the ones a HUMAN reads; only a scheduler reads
+    #: this one.
+    #:
+    #: Absent/0 reads as DUE — `unpark_due`'s own documented contract ("a park written before this
+    #: field existed cannot strand a trigger forever"), which is also the fail-open direction: a
+    #: missing cooldown must not become an infinite one.
+    park_retry_after: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -634,6 +652,7 @@ class Trigger:
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
             "last_fired_at": self.last_fired_at,
+            "park_retry_after": self.park_retry_after,
             "health_status": self.health_status,
             "last_error_summary": self.last_error_summary,
             "state": self.state,
@@ -847,6 +866,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         last_success_at=str(data.get("last_success_at", "") or ""),
         last_failure_at=str(data.get("last_failure_at", "") or ""),
         last_fired_at=str(data.get("last_fired_at", "") or ""),
+        park_retry_after=_float(data.get("park_retry_after"), 0.0),
         health_status=str(data.get("health_status", TriggerHealth.OK.value) or "ok"),
         last_error_summary=str(data.get("last_error_summary", "") or ""),
         state=state,

@@ -5001,3 +5001,75 @@ turns tests red (3 red between them).
   therefore cannot fail to read**. The field exists for a caller whose budget lives behind a store; the
   fail-closed contract in its docstring is a rule for that future caller, not an unmet obligation of
   this one. A sweep result is a lead, not a finding — this is the one that dissolved on measurement.
+
+### S159 — parking was a one-way door (§3.7 / decision 9)
+
+**Found by chasing S158's sweep leads to their end.** `Trigger.retry` and `Trigger.failure_policy` were
+the two remaining never-written fields; investigating them surfaced something bigger than either.
+
+**First, two leads that correctly dissolved** — recorded so the next sweep does not re-open them:
+
+- **`ExitType.PARTIAL` has no producer.** §3.7 promises *"auto-refire on partial"*, and `PARTIAL` is
+  treated identically to `OK` (`outcome_for_exit` returns `ran`, `evaluate` returns `active`). But
+  `classify_exception` never returns it, no provider reports a cursor or resumable stop, and
+  `ActionResult` has no field that could carry one. Building a refire loop for an exit nothing can emit
+  would be inventing the signal — the S146/S156 call.
+- **`failure_policy.dedupe_hash`** is written by the migration from the legacy `last_failure_hash` and
+  read by nothing. The legacy `gateway.py` DID have the control (`is_dup = fh == job.last_failure_hash`
+  plus a 1h reminder window), so this is a genuine migration regression — but measured, the blast radius
+  is bounded: a real `FAILED` streak autopauses at 5, and a parking exit stops the trigger firing
+  entirely. Worth a session, not this one.
+
+**🔴 THE DEFECT this session fixes.** Chasing "what bounds the alerts" led to the park lifecycle:
+
+```
+ACTIVE  : 5 fires over 5 slots
+PARKED  : 0 fires over 5 slots
+…10 days later: state = parked
+```
+
+`autopause.evaluate` has always returned `retry_after=now + PARK_COOLDOWN_SECS` on a parking exit, and
+`unpark_due` has always implemented the clock decision — with **no caller**, and with `retry_after`
+**never persisted**, so even a caller that asked would have had nothing to read. One
+`transport_unavailable` — a 30-second network blip — permanently disabled a working automation.
+
+**And the asymmetry is what made it silent.** A parking exit deliberately does NOT spend the 5-failure
+budget (so a flapping credential cannot clear a real streak), and `needs_attention("parked")` is
+`False`, so parking never escalates into a state a human is told about. It just goes quiet. Compare a
+real `FAILED` streak, which autopauses at 5 and files an attention card.
+
+**The fix, and why each piece is where it is.**
+
+- **`Trigger.park_retry_after`** persists the cooldown. **Epoch, deliberately breaking this entity's
+  ISO-timestamp convention:** `unpark_due` compares it against `now` as a float, and a conversion at
+  each comparison site is a chance to mix units. The ISO fields are the ones a human reads.
+  Cleared on any non-parking outcome, so a recovered trigger carries no stale cooldown into its next
+  outage.
+- **`_unpark_ready` runs BEFORE `due_ids`.** Order is load-bearing and asserted by a test: a parked
+  trigger has `state != ACTIVE`, so `fires_automatically` is False and the due walk filters it out —
+  unparking after that walk would never revive anything. It also mutates the in-memory `triggers` list
+  the caller already built `by_id` from, so a revived trigger fires in the SAME tick instead of waiting
+  another full cooldown.
+- **Only PARKED is revived.** `autopaused` is five true failures and wants a human; `quarantined` is an
+  injection match `resume_state` refuses even from a button; `paused` is the user's own decision.
+  Reviving any of them on a timer would override a judgement someone made — and for quarantine it would
+  re-run the thing that looked like an attack.
+- **The failure counter is NOT reset on unpark.** Parking never spent the budget in the first place, so
+  clearing it would hand a genuinely failing trigger a fresh allowance every time an unrelated outage
+  parked it. Asserted by a test that greps the implementation, because the tempting "clean slate" line
+  is a one-word change someone will add later.
+- **Absent/0 cooldown reads as DUE** — `unpark_due`'s own documented fail-open contract (*"a park
+  written before this field existed cannot strand a trigger forever"*), which is also the state every
+  row written before this session is in. A missing cooldown must not become an infinite one.
+- **`TickResult.unparked`** names the revival, for the same reason `retired` is named: a state change
+  the user did not make must be explainable, and a revival only a log knows about is how "why did this
+  start again?" becomes unanswerable.
+
+**Gate:** `make lint` (black+isort+flake8+mypy, 691 files) green; full `pytest -n 4 --dist worksteal`
+green. No `web/` change. Load-bearing verified: disabling the `_unpark_ready` call turns 3 red. All five
+lifecycle cases driven end-to-end on a real store (pending cooldown, elapsed cooldown, legacy zero,
+autopaused, quarantined).
+
+- **Still open from this session's leads:** `failure_policy.dedupe_hash` (the migration regression named
+  above — a persistent `FAILED` streak alerts 4× before autopause collapses it) and
+  `ExitType.PARTIAL` (needs a provider-side resumable-stop signal that does not exist).
