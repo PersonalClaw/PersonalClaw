@@ -560,39 +560,66 @@ def dirty_entries(home: Path, state_path: Path) -> list[str]:
     return dirty
 
 
+def _fold_wal(db_path: Path) -> None:
+    """Fold committed WAL frames into the main DB file with a passive checkpoint.
+
+    Best-effort and non-destructive: ``PASSIVE`` never blocks on a writer and never
+    truncates, so it cannot itself become the volatile event the fingerprint is trying to
+    avoid. A failure (locked store, missing sidecar, not a database) is swallowed — the
+    caller then fingerprints whatever the main file currently is, which for an actively
+    written store has already moved on its last commit.
+    """
+    if not db_path.with_name(db_path.name + "-wal").exists():
+        return  # no sidecar → nothing to fold, and no need to open a connection
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=0.5)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        logger.debug("shards: passive checkpoint skipped for %s", db_path, exc_info=True)
+
+
 def _fingerprint(path: Path) -> str:
     """A cheap change fingerprint: newest mtime + total size beneath ``path``.
 
-    For a SQLite file the ``-wal`` sidecar is folded in. Every store here runs in WAL
-    mode, where a committed write lands in the sidecar and may not touch the main file
-    for a long time — so fingerprinting the ``.db`` alone reports "unchanged" through an
-    entire session of writes, and the incremental export silently backs up nothing.
-    Found by writing a fact and watching the fingerprint not move.
+    For a SQLite file the committed WAL frames are folded into the MAIN FILE with a
+    passive checkpoint first, and only the main file's ``(mtime, size)`` is fingerprinted.
+    The sidecars are NOT stat'd. Every store here runs in WAL mode, where a committed
+    write lands in the ``-wal`` and may not touch the main file for a long time — so
+    fingerprinting the ``.db`` alone once reported "unchanged" through an entire session
+    of writes, and the incremental export silently backed up nothing (found by writing a
+    fact and watching the fingerprint not move). A passive checkpoint makes that committed
+    content durable in the main file, so the main-file mtime moves exactly when — and only
+    when — durable data changed.
 
-    The ``-shm`` sidecar is deliberately NOT folded in. It is the WAL index: pure
-    ephemeral shared memory, rebuilt from the ``-wal`` on the next open, holding no
-    durable byte (proved by deleting it on a closed store and reading the fact back).
-    Including it made the fingerprint report change where no data had changed, because
-    SQLite mmaps it ``MAP_SHARED`` and its mtime advances at page-writeback time rather
-    than at store time — so it can move on its own, after the last database operation,
-    at a moment the writer does not control. That produced a genuine incremental-export
-    defect (an idle home re-exporting ``memory.db`` forever) and, downstream of it, a
-    load-dependent CI flake in the "dirty detection settles completely" test. A change
-    fingerprint must key on durable content only.
+    Neither sidecar is folded in, and that is the fix, not an optimization. Both are
+    VOLATILE at moments the writer does not control:
+
+    * ``-shm`` is the WAL index — pure ephemeral shared memory, mmap'd ``MAP_SHARED``, its
+      mtime advancing at page-writeback time rather than at store time.
+    * ``-wal`` is truncated to zero by a checkpoint (autocheckpoint at 1000 pages, or the
+      last connection closing, or any other connection running ``wal_checkpoint``). That
+      moves the sidecar's mtime AND size with **no data change at all** — reproduced
+      directly: a ``wal_checkpoint(TRUNCATE)`` shifts an unchanged store's fingerprint.
+
+    Folding either one made the fingerprint report change where no data had changed. The
+    ``-shm`` fold produced an idle home re-exporting ``memory.db`` forever; the ``-wal``
+    fold produced a load-dependent CI flake in the "dirty detection settles completely"
+    test — under load a checkpoint lands between two ``dirty_entries`` calls and the second
+    reports the store dirty though nothing was written. A change fingerprint must key on
+    durable content the writer controls; the passive-checkpoint-then-main-file rule does.
+
+    The checkpoint is best-effort: if the store is locked by an active writer it is a
+    no-op, which is the safe direction — an actively-written store is genuinely dirty, and
+    the main-file mtime will have moved on its last commit regardless.
     """
     if path.is_file():
+        if path.suffix == ".db":
+            _fold_wal(path)
         stat = path.stat()
-        newest = stat.st_mtime_ns
-        total = stat.st_size
-        sidecar = path.with_name(path.name + "-wal")
-        try:
-            side_stat = sidecar.stat()
-        except OSError:
-            pass
-        else:
-            newest = max(newest, side_stat.st_mtime_ns)
-            total += side_stat.st_size
-        return f"{newest}:{total}"
+        return f"{stat.st_mtime_ns}:{stat.st_size}"
     newest = 0
     total = 0
     count = 0
