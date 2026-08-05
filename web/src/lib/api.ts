@@ -721,7 +721,10 @@ export interface Trigger {
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
   // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
   store_kind?: string; created_by?: string; spec?: Record<string, unknown>
-  health?: string; broken?: string[]
+  // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
+  // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
+  // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED (S164).
+  health?: string; state?: string; broken?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null

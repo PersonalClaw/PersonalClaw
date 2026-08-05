@@ -323,6 +323,14 @@ def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[s
         "spec": dict(trigger.spec or {}),
         "action": dict(trigger.workflow or {}),
         "health": trigger.health_status,
+        # 🔴 THE LIFECYCLE STATE, which this projection omitted (S164). `Trigger.state` carries
+        # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
+        # the list rendered an autopaused automation like a running one, so the states S139
+        # (autopause), S159 (park/unpark) and the injection quarantine all decide were invisible
+        # on the one page a user manages automations from. `health` cannot substitute — a PARKED
+        # trigger is `health: parked` but an AUTOPAUSED one is `health: failing`, and "failing" does
+        # not tell the user the automation has STOPPED.
+        "state": trigger.state,
         "run_count": trigger.run_count,
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": list(broken or []),

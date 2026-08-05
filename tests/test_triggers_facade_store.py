@@ -1238,3 +1238,46 @@ def test_the_facade_no_longer_calls_any_run_method_on_the_service():
     src = inspect.getsource(T)
     for method in ("crons.list_runs", "crons.list_all_runs", "crons.get_run", "crons.delete_runs"):
         assert method not in src, method
+
+
+# ── 🔴 the lifecycle state reached no surface (S164) ──
+
+
+def test_the_store_projection_EMITS_the_lifecycle_state():
+    """🔴 THE DEFECT. `_serialize_store` emitted `health` and NOT `state`, so
+    `Trigger.state` — `active | paused | autopaused | parked | quarantined | retired` — reached no
+    surface at all. Every lifecycle transition this program built was therefore invisible on the one
+    page a user manages automations from: autopause (S139), park/unpark (S159) and the injection
+    quarantine all decided a state nothing could render.
+
+    `health` cannot substitute. A PARKED trigger is `health: parked`, but an AUTOPAUSED one is
+    `health: failing` — and "failing" does not tell the user the automation has STOPPED.
+    """
+    from personalclaw.triggers.models import Trigger, TriggerState
+
+    trigger = Trigger(id="clock:x", name="x", kind="clock")
+    trigger.state = TriggerState.AUTOPAUSED.value
+    row = T._serialize_store(trigger)
+    assert row["state"] == TriggerState.AUTOPAUSED.value
+    assert row["health"] == "ok", "health is a separate rollup, not a substitute"
+
+
+def test_health_and_state_are_BOTH_on_the_wire():
+    """Two vocabularies, both needed: `health` says how it has been going, `state` says whether it
+    will run at all. A surface given only one has to guess the other."""
+    from personalclaw.triggers.models import Trigger, TriggerHealth, TriggerState
+
+    trigger = Trigger(id="clock:y", name="y", kind="clock")
+    trigger.state = TriggerState.PARKED.value
+    trigger.health_status = TriggerHealth.PARKED.value
+    row = T._serialize_store(trigger)
+    assert row["state"] == "parked" and row["health"] == "parked"
+
+
+def test_an_ACTIVE_trigger_still_reports_active():
+    """The default path is unchanged — every trigger authored before this session projects the same
+    way, with `state: "active"` added rather than anything reinterpreted."""
+    from personalclaw.triggers.models import Trigger
+
+    row = T._serialize_store(Trigger(id="clock:z", name="z", kind="clock"))
+    assert row["state"] == "active"
