@@ -293,6 +293,53 @@ def review_at_boot(
     return review
 
 
+def late_outcome(outcome: str, *, scheduled_for: float, started_at: float) -> tuple[str, str]:
+    """Refine a granted fire's outcome to `ran_late` when it missed its slot (§1.3 — S170).
+
+    Returns `(outcome, reason)`, unchanged for anything that is not an on-time `ran`.
+
+    🔴 WHY THIS EXISTS. §1.3 added `ran_late` and `scheduled_for` in one breath: *"a run
+    that started 40 minutes after its slot is a different story from one that started on
+    time and took 40 minutes."* `FireRecord` carries both stamps and `validate_record` even
+    refuses a `ran_late` row without a `scheduled_for` — yet only the MANUAL missed-fire
+    card (`resolve_missed`) ever wrote the value. Measured: a minutely trigger fired 40
+    minutes past its slot recorded a plain `ran`, with the lateness computable on that very
+    row.
+
+    The threshold is `scheduling.LATE_THRESHOLD_SECS`, DERIVED from the scheduler's own
+    designed delays rather than picked: a wake can be a poll ceiling behind, and a boot
+    deliberately pushes overdue fires by the stagger base and spreads them across the
+    stagger window. Labelling those as lateness would mark the substrate's own correct
+    behaviour as a fault — how a signal becomes noise and then gets ignored.
+
+    Only refines `ran`. A suppressed or failed fire keeps its own outcome: "it was late" is
+    not the interesting thing about a fire that never ran, and overwriting `failed` with
+    `ran_late` would lose the failure entirely.
+
+    A missing or zero `scheduled_for` returns unchanged. With no slot to compare against
+    lateness is not a fact, and guessing one produces the very impression §1.3 avoids.
+    """
+    from personalclaw.triggers.models import Outcome
+    from personalclaw.triggers.scheduling import LATE_THRESHOLD_SECS
+
+    if outcome != Outcome.RAN.value:
+        return outcome, ""
+    try:
+        slot = float(scheduled_for or 0.0)
+        began = float(started_at or 0.0)
+    except (TypeError, ValueError):
+        return outcome, ""
+    if slot <= 0 or began <= 0:
+        return outcome, ""
+    behind = began - slot
+    if behind < LATE_THRESHOLD_SECS:
+        return outcome, ""
+    return (
+        Outcome.RAN_LATE.value,
+        f"ran {int(behind // 60)} min after its scheduled slot",
+    )
+
+
 def resolve_missed(action: str) -> tuple[str, str]:
     """What a user's decision on a review card records. Returns `(outcome, reason)`.
 

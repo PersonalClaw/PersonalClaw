@@ -732,3 +732,28 @@ def test_unparking_does_NOT_reset_the_failure_counter(store, tmp_path):
     assert "consecutive_failures" in source, "the reasoning must be recorded"
     assert "consecutive_failures = 0" not in source
     assert "consecutive_failures=0" not in source
+
+
+# ── 🔴 the TICK now records lateness (S170) ──
+
+
+def test_the_TICK_records_an_overdue_fire_as_ran_late(store, tmp_path):
+    """🔴 Driven through the real tick, not the pure helper. `scheduled_for` comes from the trigger's
+    own `next_fire_at` and `now` is when the fire was granted, so the tick is the one place holding
+    both stamps — `FireContext` carries no `scheduled_for`, which is why `firepath` cannot decide
+    this and adding one there would duplicate a value the tick already owns."""
+    _parkable(store, tmp_path, tid="clock:late")
+    result = asyncio.run(SVC.tick(store, now=NOW + 2400, base_dir=tmp_path, persist=True))
+    row = next(r for r in result.ledger_rows if r["trigger_id"] == "clock:late")
+    assert row["outcome"] == "ran_late"
+    assert "after its scheduled slot" in row["reason"]
+    assert row["scheduled_for"] == NOW, "the slot must be recorded beside it"
+
+
+def test_the_TICK_leaves_an_ON_TIME_fire_alone(store, tmp_path):
+    """The control case + compatibility guarantee: a punctual fire records exactly as before."""
+    _parkable(store, tmp_path, tid="clock:ontime")
+    result = asyncio.run(SVC.tick(store, now=NOW + 5, base_dir=tmp_path, persist=True))
+    row = next(r for r in result.ledger_rows if r["trigger_id"] == "clock:ontime")
+    assert row["outcome"] == "ran"
+    assert row["reason"] == ""
