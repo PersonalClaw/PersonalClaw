@@ -21,6 +21,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   actually happened — so with no embedding model bound, an item that stored zero vectors still
   showed "Embed ✓". Each step now reports its real outcome: done when it did the work, skipped
   when there was nothing to do (no model bound, no intents defined), failed when it errored.
+- **Accepting a "refine an existing skill" proposal always failed with an error.** When the
+  system proposed refining a skill you already have (rather than creating a brand-new one),
+  clicking Accept returned "could not write skill … (invalid, oversized, or exists)" and the
+  proposal stayed stuck in the queue forever — the only way out was to reject it and lose the
+  improvement. Accept now updates the named skill in place, appending the refinement under a
+  dated heading so the original skill and any earlier refinements are preserved. New-skill
+  proposals are unaffected, and a refine whose target skill was since deleted quietly falls
+  back to creating a new one instead of erroring.
 
 - **One app could borrow another app's permission to run an agent, and read agent runs that
   weren't its own.** The permission check on the app agent-run endpoints read the app name out of
