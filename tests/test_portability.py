@@ -967,6 +967,12 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # platform: local model blobs and generated ACP adapters, both regenerated on demand.
         "models",
         "acp_adapters",
+        # work: the two index stores S179 declared. Both say so in their own docstrings —
+        # `session_search` "holds no truth of its own … better rebuilt than restored", `codegraph`
+        # re-parses on mtime — and a real home held 5478 codegraph databases. Declaring them was the
+        # fix (nothing claimed them); backing them up would ship a cache in every snapshot.
+        "session_search_db",
+        "codegraph",
     }
 )
 

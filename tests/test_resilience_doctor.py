@@ -269,3 +269,82 @@ async def test_serving_fs_probe_flags_copy_shadowing_symlink(tmp_path, monkeypat
     assert res.ok is False
     assert res.evidence["dist"]["kind"] == "copy"
     assert "stale SPA" in res.detail
+
+
+# ── 🔴 the state-inventory guard now has a runtime caller (S179) ──
+
+
+@pytest.mark.asyncio
+async def test_the_inventory_probe_reports_unclaimed_state(tmp_path):
+    """🔴 THE DEFECT this probe closes. `durability.inventory.audit_home()` is the guard that "keeps
+    the manifest honest … which is precisely how nine directories silently escaped backup before the
+    inventory existed" — and it had **no runtime caller**. Its only invocations were in
+    `test_durability_inventory.py`, against a hand-built eight-path fixture, so a store added after
+    the manifest was written could not fail it.
+
+    Pointed at a real home it reported 10 unclaimed paths and 5482 undeclared databases, including
+    `learning.db` — verified absent from a real archive. A guard that only ever runs against its own
+    fixture is testing the fixture.
+    """
+    import sqlite3
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    (home / "brand_new_store").mkdir()
+    (home / "brand_new_store" / "x.json").write_text("{}", encoding="utf-8")
+    sqlite3.connect(str(home / "undeclared.db")).close()
+
+    res = await doctor._probe_state_inventory(DoctorContext(home=home))
+
+    assert res.ok is False
+    assert "brand_new_store/" in res.evidence["unclaimed"]
+    assert "undeclared.db" in res.evidence["undeclared_dbs"]
+    assert "NO snapshot" in res.detail
+
+
+@pytest.mark.asyncio
+async def test_the_inventory_probe_passes_a_fully_claimed_home(tmp_path):
+    """A home whose every path is declared must pass — otherwise the probe is noise the user learns
+    to ignore, and a real gap arrives to an audience that has stopped reading."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "gateway.log").write_text("noise", encoding="utf-8")  # ignored pattern
+
+    res = await doctor._probe_state_inventory(DoctorContext(home=home))
+
+    assert res.ok is True, res.detail
+    assert res.evidence["unclaimed_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_inventory_probe_is_registered_as_a_CAPABILITY_probe(tmp_path):
+    """Registered, not merely defined — the whole finding was a guard nobody called. `CAPABILITY`
+    tier because unclaimed state is a coverage gap to surface, not a reason to call the gateway
+    down:
+    a lower tier would short-circuit the capability packs over an unrelated new file."""
+    ids = {p.id: p for p in doctor.all_probes()}
+    assert "durability.inventory" in ids, "the probe must be registered, not just defined"
+    probe = ids["durability.inventory"]
+    assert probe.tier is Tier.CAPABILITY
+    assert probe.capability == "durability"
+
+
+@pytest.mark.asyncio
+async def test_the_inventory_probe_CAPS_its_evidence(tmp_path):
+    """A `db_container` regression once produced 5478 rows. An unreadable evidence blob is the same
+    failure as no evidence, so both lists are capped while the COUNTS stay exact."""
+    import sqlite3
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    for i in range(30):
+        sqlite3.connect(str(home / f"db{i:02d}.db")).close()
+
+    res = await doctor._probe_state_inventory(DoctorContext(home=home))
+
+    assert len(res.evidence["undeclared_dbs"]) == 20
+    assert res.evidence["undeclared_db_count"] == 30

@@ -778,6 +778,43 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _merge_keyed_jsonl(src: Path, dst: Path, key_field: str, label: str) -> int:
+    """Append rows from `src` that `dst` lacks, deduping on `key_field` (S179).
+
+    Extracted after a THIRD near-identical copy was needed (`model_calls.jsonl`, whose declared
+    `append_dedup` the S178 ratchet demanded an executor for). Three hand-written loops differing
+    only in a key name is how two of them start disagreeing — the duplication S175 deleted from the
+    run store after finding one copy had silently reverted another.
+
+    Deliberately NOT used for `security_events.jsonl`: that one carries an HMAC-key precondition,
+    and folding a security gate into a generic helper is how the gate gets dropped by a later caller
+    who only wanted the dedup.
+    """
+    if not src.is_file() or not dst.is_file():
+        return 0
+    existing: set[str] = set()
+    with open(dst, encoding="utf-8") as f:
+        for line in f:
+            try:
+                existing.add(json.loads(line).get(key_field) or line.strip())
+            except (ValueError, TypeError):
+                pass
+    imported = 0
+    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
+        for line in f:
+            try:
+                key = json.loads(line).get(key_field) or line.strip()
+            except (ValueError, TypeError):
+                continue
+            if key not in existing:
+                out.write(line if line.endswith("\n") else line + "\n")
+                existing.add(key)
+                imported += 1
+    if imported:
+        print(f"  {label} imported: {imported}")
+    return imported
+
+
 def _merge_feedback(src: Path, dst: Path) -> None:
     """Merge `feedback.jsonl`, deduping on the record's own `id` (S178).
 
@@ -790,28 +827,7 @@ def _merge_feedback(src: Path, dst: Path) -> None:
     at 2x cap") and re-implementing the bound here is the duplication S175 deleted from the run
     store after finding one copy had silently reverted the other.
     """
-    if not src.is_file() or not dst.is_file():
-        return
-    existing: set[str] = set()
-    with open(dst, encoding="utf-8") as f:
-        for line in f:
-            try:
-                existing.add(json.loads(line).get("id") or line.strip())
-            except (ValueError, TypeError):
-                pass
-    imported = 0
-    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
-        for line in f:
-            try:
-                key = json.loads(line).get("id") or line.strip()
-            except (ValueError, TypeError):
-                continue
-            if key not in existing:
-                out.write(line if line.endswith("\n") else line + "\n")
-                existing.add(key)
-                imported += 1
-    if imported:
-        print(f"  Feedback imported: {imported}")
+    _merge_keyed_jsonl(src, dst, "id", "Feedback")
 
 
 def _merge_security_events(snap: Path, pc: Path) -> None:
@@ -1065,6 +1081,11 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
         # than given its own component: both are platform-domain append logs, and a new component
         # name is a CLI surface a user then has to know about.
         _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+        # `model_calls.jsonl`, the fourth declared `append_dedup` — demanded by S178's own ratchet
+        # the moment S179 declared the entry. Keyed on `AttemptRecord.audit_id`.
+        _merge_keyed_jsonl(
+            snap / "model_calls.jsonl", pc / "model_calls.jsonl", "audit_id", "Model calls"
+        )
         print("  ✅ notifications")
 
     if _want(components, "security"):
