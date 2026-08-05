@@ -13,20 +13,20 @@ import type { NotificationItem } from '../../lib/api'
 // you add a kind there, add its row here with the SAME label.
 export interface KindMeta { label: string; icon: LucideIcon; tone: string }
 const KINDS: Record<string, KindMeta> = {
-  cron: { label: 'Schedule', icon: Clock, tone: 'var(--color-info)' },
-  schedule: { label: 'Schedule', icon: Clock, tone: 'var(--color-info)' },
+  cron: { label: 'Scheduled job result', icon: Clock, tone: 'var(--color-info)' },
+  schedule: { label: 'Scheduled job result', icon: Clock, tone: 'var(--color-info)' },
   result: { label: 'Scheduled job result', icon: CheckCircle2, tone: 'var(--color-ok)' },
-  hook: { label: 'Trigger', icon: Webhook, tone: 'var(--color-primary)' },
+  hook: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   fired: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
-  agent: { label: 'Agent', icon: Bot, tone: 'var(--color-primary)' },
-  subagent: { label: 'Subagent', icon: Bot, tone: 'var(--color-primary)' },
+  agent: { label: 'Agent message', icon: Bot, tone: 'var(--color-primary)' },
+  subagent: { label: 'Subagent update', icon: Bot, tone: 'var(--color-primary)' },
   message: { label: 'Agent message', icon: MessageSquare, tone: 'var(--color-on-surface-low)' },
   agent_request: { label: 'Agent request', icon: ShieldQuestion, tone: 'var(--color-warn)' },
   heartbeat: { label: 'Heartbeat', icon: HeartPulse, tone: 'var(--color-info)' },
   status: { label: 'Heartbeat', icon: HeartPulse, tone: 'var(--color-info)' },
-  inbox_alert: { label: 'Inbox Alert', icon: BellRing, tone: 'var(--color-warn)' },
+  inbox_alert: { label: 'Inbox alert', icon: BellRing, tone: 'var(--color-warn)' },
   alert: { label: 'Inbox alert', icon: BellRing, tone: 'var(--color-warn)' },
-  loop: { label: 'Goal Loop', icon: Target, tone: 'var(--color-primary)' },
+  loop: { label: 'Loop progress', icon: Target, tone: 'var(--color-primary)' },
   complete: { label: 'Loop complete', icon: CheckCircle2, tone: 'var(--color-ok)' },
   // Registered under BOTH loop/failed ("Loop failed") and cron/failed ("Scheduled job
   // failed"). The loop wording wins: its sibling bare kinds (complete/stalled/progress)
@@ -43,9 +43,9 @@ const KINDS: Record<string, KindMeta> = {
   route_drift: { label: 'App route drift', icon: Route, tone: 'var(--color-primary)' },
   'app.route.drift': { label: 'App route drift', icon: Route, tone: 'var(--color-primary)' },
   success: { label: 'Success', icon: CheckCircle2, tone: 'var(--color-ok)' },
-  warning: { label: 'Warning', icon: AlertTriangle, tone: 'var(--color-warn)' },
-  error: { label: 'Error', icon: AlertTriangle, tone: 'var(--color-danger)' },
-  info: { label: 'Info', icon: Info, tone: 'var(--color-on-surface-low)' },
+  warning: { label: 'System warning', icon: AlertTriangle, tone: 'var(--color-warn)' },
+  error: { label: 'System error', icon: AlertTriangle, tone: 'var(--color-danger)' },
+  info: { label: 'Notice', icon: Info, tone: 'var(--color-on-surface-low)' },
   generic: { label: 'Uncategorized', icon: Bell, tone: 'var(--color-on-surface-low)' },
 }
 // The fallback is KEPT deliberately: the backend registry is fail-OPEN (an unregistered
