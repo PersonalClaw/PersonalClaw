@@ -15,17 +15,22 @@ import {
 import { Markdown } from '../../../ui/Markdown'
 import { fvs } from '../../../design/fontWeight'
 import type { ToolSegment } from '../chatTypes'
-import { RawBlock } from './primitives'
+import { RawBlock, resolveInputObj } from './primitives'
 import type { ToolRenderer } from './registry'
 
 const asObj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {})
 const str = (v: unknown): string => (v == null ? '' : String(v))
+/** The call's structured input, resolved the same way everywhere: live `inputObj`
+ *  on a streamed native frame, else the JSON-string `input` a persisted/ACP
+ *  segment carries. Reading `seg.inputObj` raw would make a renderer correct only
+ *  for live frames — see resolveInputObj in primitives. */
+const inputOf = (seg: ToolSegment): Record<string, unknown> => resolveInputObj(seg) ?? {}
 
 // ── input overrides ──
 
 /** edit_file: show the replacement as an old→new mini-diff (the intent at a glance). */
 function editFileInput(seg: ToolSegment): ReactNode {
-  const o = asObj(seg.inputObj)
+  const o = inputOf(seg)
   const path = str(o.path)
   const oldStr = str(o.old_str)
   const newStr = str(o.new_str)
@@ -39,13 +44,20 @@ function editFileInput(seg: ToolSegment): ReactNode {
   )
 }
 
-/** read/write/glob/grep: lead with the path/pattern as a chip + the rest as fields. */
+/** The arg each chip-style tool leads with, in preference order. ONE list drives
+ *  both the chip value and the leftover-fields filter, so a tool whose primary arg
+ *  is added here can never render its label with an empty chip (web_fetch's `url`
+ *  was missing, which made its "URL" label unreachable). */
+const PRIMARY_INPUT_KEYS = ['path', 'pattern', 'query', 'command', 'url'] as const
+
+/** read/write/glob/grep/bash/web_fetch: lead with the path/pattern/url as a chip +
+ *  the rest as fields. */
 function pathChipInput(label: string) {
   return (seg: ToolSegment): ReactNode => {
-    const o = asObj(seg.inputObj)
-    const primary = str(o.path || o.pattern || o.query || o.command)
+    const o = inputOf(seg)
+    const primary = str(PRIMARY_INPUT_KEYS.map((k) => o[k]).find((v) => v != null && v !== ''))
     if (!primary) return undefined as unknown as ReactNode
-    const rest = Object.entries(o).filter(([k]) => !['path', 'pattern', 'query', 'command'].includes(k))
+    const rest = Object.entries(o).filter(([k]) => !(PRIMARY_INPUT_KEYS as readonly string[]).includes(k))
     return (
       <div className="mb-1.5">
         <div className="mb-0.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
@@ -119,12 +131,15 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
 }
 
 /** web_fetch: render the fetched page as a titled card with its extracted content
- *  as Markdown (the normalized web_fetch output is markdown/text + a title line). */
+ *  as Markdown (the normalized web_fetch output is markdown/text + a title line).
+ *  The URL comes from the call's INPUT, so it resolves the input rather than
+ *  reading `inputObj`: OUTPUT renderers are handed the segment untouched (only the
+ *  input path builds a normalized copy), so a persisted session would otherwise
+ *  lose the URL line the card is titled by. */
 function webFetchOutput(seg: ToolSegment): ReactNode {
   const text = (seg.output ?? '').trim()
   if (!text || text.startsWith('{') || text.startsWith('[')) return undefined as unknown as ReactNode
-  const o = asObj(seg.inputObj)
-  const url = str(o.url)
+  const url = str(inputOf(seg).url)
   return (
     <RawBlock label="Fetched page">
       {url && <div className="mb-1 truncate text-primary text-[0.75rem]">{url}</div>}

@@ -16,7 +16,7 @@
 import { type ReactNode } from 'react'
 import type { ToolSegment } from '../chatTypes'
 import { ToolOutput } from '../../tools/ToolOutput'
-import { RawBlock, KeyValueFields, ContentTypeOutput } from './primitives'
+import { RawBlock, KeyValueFields, ContentTypeOutput, resolveInputObj } from './primitives'
 import { NATIVE_RENDERERS } from './native'
 
 /** A native per-tool override: either or both of input/output renderers. */
@@ -30,26 +30,6 @@ export interface ToolRenderer {
 function findNative(seg: ToolSegment): ToolRenderer | undefined {
   const name = (seg.tool || '').toLowerCase()
   return NATIVE_RENDERERS.find((r) => r.match(name))
-}
-
-/** Resolve the structured input OBJECT for a segment, from either the live
- *  `inputObj` (native frames) OR by parsing a JSON-string `input` (the common
- *  case: persisted history, ACP, and the `input_preview` string). Returns null
- *  when there's no object to render (scalar/empty/non-JSON string). This is what
- *  makes schema-driven field rendering work for OLD sessions + ACP, not just
- *  freshly-streamed native frames — the gap that left raw JSON in old cards. */
-export function resolveInputObj(seg: ToolSegment): Record<string, unknown> | null {
-  if (seg.inputObj && typeof seg.inputObj === 'object' && !Array.isArray(seg.inputObj)) {
-    return seg.inputObj as Record<string, unknown>
-  }
-  const raw = (seg.input ?? '').trim()
-  if (raw.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
-    } catch { /* not JSON → fall through */ }
-  }
-  return null
 }
 
 /** Render the tool's INPUT region (everything but the raw fallback is optional). */
@@ -150,3 +130,4 @@ function safe(fn: () => ReactNode): ReactNode | undefined {
 }
 
 export { iconForTool, labelForTool } from './native'
+export { resolveInputObj } from './primitives'
