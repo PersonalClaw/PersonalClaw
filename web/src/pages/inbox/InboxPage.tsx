@@ -9,6 +9,7 @@ import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { confirm } from '../../ui/dialog'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -78,7 +79,15 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   }, [openId, open])
 
   const reload = () => { invalidateCache('inbox:items'); invalidateCache('inbox:status'); refreshItems(); refreshStatus() }
-  async function dismissAll() { setBusy(true); try { await api.dismissAllInbox(); reload() } finally { setBusy(false) } }
+  // Dismiss all sweeps EVERY pending item of every kind (proposals, messages, digests
+  // alike) with no undo, so it gets the same danger confirm as the analogous
+  // Notifications → "Clear all". The count comes from the same status the header shows,
+  // so the blast radius is on screen before the click lands.
+  async function dismissAll() {
+    const n = status?.pending_count ?? 0
+    if (!(await confirm({ title: `Dismiss all ${n} pending item${n === 1 ? '' : 's'}?`, body: 'Every pending item of every kind is dismissed at once. There is no undo.', danger: true, confirmLabel: 'Dismiss all' }))) return
+    setBusy(true); try { await api.dismissAllInbox(); reload() } finally { setBusy(false) }
+  }
   async function restart() { setBusy(true); try { await api.restartInbox(); setTimeout(reload, 800) } finally { setBusy(false) } }
   // Generate a catch-up digest for a channel → arrives as a new inbox item (also
   // pushed live over the WS); open it so the user lands on the summary.
@@ -167,7 +176,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
               )}
               <HeaderActions>
                 {(status?.pending_count ?? 0) > 0 && (
-                  <HeaderControl icon={CheckCheck} label="Dismiss all" priority="primary" onClick={dismissAll} disabled={busy} />
+                  <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} />
                 )}
                 <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} />
                 <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} />
