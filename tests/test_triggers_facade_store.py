@@ -322,6 +322,201 @@ def test_a_real_run_dispatches_the_action(home, state, monkeypatch):
     assert seen["event"] == "manual.run"
 
 
+# ── 🔴 #395: Run now was a silent no-op for every NESTED action ──
+
+
+def _notify_spy(monkeypatch):
+    """Register a spy on the `notify` provider, returning the list of calls it receives.
+
+    Records the ACTION CONFIG as well as the context, because the two halves of this bug fail
+    differently: reading the provider from `inline` while leaving the config on the outer dict runs
+    the right action with an empty config, which looks like success and is worse than the no-op.
+    """
+    from personalclaw.action_providers.registry import (
+        _ensure_default_providers_registered,
+        get_action_provider,
+    )
+
+    _ensure_default_providers_registered()
+    calls: list[dict] = []
+
+    async def spy(action_config, ctx, timeout=30):
+        calls.append({"config": dict(action_config or {}), "event": ctx.event})
+
+    monkeypatch.setattr(get_action_provider("notify"), "execute", spy)
+    return calls
+
+
+def _upsert_nested(home, *, tid="file:notes", title="nested-title"):
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id=tid,
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            # The MIGRATED shape, which is what the API create path, the CLI, the app-cron
+            # reconciler and the digest reconciler all write — i.e. essentially every real row.
+            workflow={"inline": {"provider": "notify", "config": {"title_template": title}}},
+        )
+    )
+
+
+def test_a_NESTED_action_actually_REACHES_its_provider(home, state, monkeypatch):
+    """🔴 THE #395 REGRESSION. `_dispatch_store_action` read the FLAT `workflow["provider"]` only, so
+    for every row written as `workflow["inline"]` the lookup returned None and the handler answered
+    "no action provider configured" — inside an HTTP 200 `{"ok": true}`. Nothing executed.
+
+    Asserts the PROVIDER WAS INVOKED, not that the response was 200: the broken code returned a
+    success-shaped 200, so a status-only assertion passes against the defect and proves nothing.
+    """
+    _upsert_nested(home)
+    calls = _notify_spy(monkeypatch)
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+
+    assert len(calls) == 1, "the nested action never reached its provider"
+    assert _body(resp)["result"].startswith("ran")
+    assert _body(resp)["ok"] is True
+
+
+def test_a_nested_action_carries_its_OWN_config(home, state, monkeypatch):
+    """Provider AND config come from the SAME resolved dict. Taking the provider from `inline` and
+    the config from the outer dict would dispatch the right action with an empty config — a run that
+    reports success and does the wrong thing, which is worse than the no-op it replaced."""
+    _upsert_nested(home, title="nested-title")
+    calls = _notify_spy(monkeypatch)
+
+    _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+
+    assert calls[0]["config"] == {"title_template": "nested-title"}
+
+
+def test_BOTH_action_shapes_dispatch(home, state, monkeypatch):
+    """A real store holds both spellings (`screen.requested_capabilities` documents exactly this),
+    so the manual path must read both — the property `gateway._fire_store_trigger` and
+    `schedule_view._inline_action` already have and this one had lost."""
+    from personalclaw.triggers.models import Trigger
+
+    _upsert_nested(home, tid="file:nested", title="from-inline")
+    _store(home).upsert(
+        Trigger(
+            id="file:flat",
+            name="Flat",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"provider": "notify", "config": {"title_template": "from-flat"}},
+        )
+    )
+    calls = _notify_spy(monkeypatch)
+
+    for tid in ("file:nested", "file:flat"):
+        _run(
+            T.api_trigger_run(
+                _req(
+                    "POST", "/api/triggers/x/run", state, body={}, match_info={"id": f"store:{tid}"}
+                )
+            )
+        )
+
+    assert [c["config"]["title_template"] for c in calls] == ["from-inline", "from-flat"]
+
+
+def test_an_unresolvable_action_is_ok_FALSE_not_a_success_shaped_200(home, state):
+    """🔴 The second half of #395: the handler answered `ok: true` regardless of what happened, with
+    the failure carried as prose in `result`. So a caller checking a status code or an `ok` flag
+    read a no-op as a completed run, which is what let this hide for a release.
+
+    Still 200 — the request was understood and answered honestly. A trigger whose action cannot be
+    resolved is not a malformed request (the rule the kill-switch refusal already follows).
+    """
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:ghost",
+            name="Ghost",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"inline": {"provider": "no-such-provider", "config": {}}},
+        )
+    )
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:ghost"}
+            )
+        )
+    )
+
+    assert resp.status == 200
+    assert _body(resp)["ok"] is False
+    assert "unknown action provider" in _body(resp)["result"]
+
+
+def test_an_actionless_trigger_is_ok_FALSE(home, state):
+    """A row carrying no action at all reports honestly too, rather than "ran"."""
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:empty",
+            name="Empty",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={},
+        )
+    )
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:empty"}
+            )
+        )
+    )
+
+    assert _body(resp)["ok"] is False
+    assert _body(resp)["result"].startswith("no action provider configured")
+
+
+def test_the_manual_path_reads_the_SAME_shapes_as_the_autonomous_one(home, state, monkeypatch):
+    """A STRUCTURAL guard on the property `_dispatch_store_action`'s docstring claims: "a manual Run
+    and an autonomous fire share one dispatch so their behaviour cannot drift". They HAD drifted —
+    the gateway unwrapped `inline` and the manual path did not — and a behavioural test on one row
+    shape cannot catch the next divergence. So this asserts both functions resolve the action
+    through the same `(inline or workflow)` idiom.
+    """
+    import inspect
+
+    from personalclaw import gateway
+    from personalclaw.dashboard.handlers import triggers as handlers
+
+    manual = inspect.getsource(handlers._dispatch_store_action)
+    autonomous = inspect.getsource(gateway.GatewayOrchestrator._fire_store_trigger)
+    for name, src in (("manual", manual), ("autonomous", autonomous)):
+        assert 'workflow.get("inline")' in src, f"{name} no longer unwraps the nested action shape"
+        assert "inline or workflow" in src, f"{name} no longer falls back to the flat shape"
+
+
 def test_a_paused_store_trigger_still_runs_by_hand(home, state, monkeypatch):
     """Pausing means "stop firing on its own"; a hand-driven run is how you test before re-enabling.
     The result notes it does not re-enable."""

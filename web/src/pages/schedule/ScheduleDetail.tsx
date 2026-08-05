@@ -95,7 +95,16 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     setBusy(true); setErr(''); setNote('')
     runStartRef.current = job.last_run_ts ?? null
     try {
-      await api.runSchedule(job.id)
+      const r = await api.runSchedule(job.id)
+      // 🔴 A 200 is not a success (#395). `ok: false` means the fire was refused (incident mode) or
+      // the action could not be resolved — and `triggered` starts the completion watcher, which
+      // waits on a `last_run_ts` that will never advance because nothing ran. That is exactly the
+      // "Running…" pill that stuck forever. Surface the reason instead of waiting on a run that
+      // does not exist.
+      if (r.ok === false) {
+        setErr(r.refused || (typeof r.result === 'string' && r.result) || 'This schedule did not run.')
+        return
+      }
       // Accepted: the run is now executing in the background. Flip the local
       // flag so the user sees an immediate, persistent "running" state; the
       // completion-watcher effect clears it and confirms when the run lands.
