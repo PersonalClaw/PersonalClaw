@@ -244,8 +244,17 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     >
       <>
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-          {groups === null ? <ListSkeleton rows={6} /> : groups.length === 0 && importable.length === 0 ? (
-            <EmptyState icon={Wrench} title={filtered ? 'No matching tools' : 'No tools'} hint={filtered ? (risk !== 'all' && !q ? `No ${risk} tools.` : 'Try a different search term.') : 'Tools are the capabilities agents can invoke — built-in actions plus anything from connected MCP servers.'} />
+          {groups === null ? <ListSkeleton rows={6} /> : groups.length === 0 ? (
+            // No group survived: nothing matched the filter, or (unfiltered) there are no
+            // tools at all. `importable` must NOT gate this — importable servers are ones
+            // you COULD add, never search results, so gating on them made the state
+            // unreachable on any install with a discoverable MCP config and left a blank
+            // body on every no-match search. Import suggestions still render underneath,
+            // so on a genuinely empty install adding a server stays one click away.
+            <div className="flex flex-col gap-2xl">
+              <EmptyState icon={Wrench} title={filtered ? 'No matching tools' : 'No tools'} hint={filtered ? (risk !== 'all' && !q ? `No ${risk} tools.` : 'Try a different search term.') : 'Tools are the capabilities agents can invoke — built-in actions plus anything from connected MCP servers.'} />
+              {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
+            </div>
           ) : (
             <div className="flex flex-col gap-2xl">
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
