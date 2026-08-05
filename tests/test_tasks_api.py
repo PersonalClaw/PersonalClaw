@@ -1,7 +1,9 @@
 """HTTP-level tests for the task API: project/task-list CRUD, ready, search,
 bulk ops, repeatable reset, and the exit-criteria complete-gate."""
 
+import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -187,6 +189,112 @@ async def test_default_project_undeletable(tmp_path):
         assert (await client.delete(f"/api/projects/{personal['id']}")).status == 400
 
 
+# ── Update: the allowlist + the workspace path gate ──
+
+
+@pytest.mark.asyncio
+async def test_project_update_refuses_sensitive_workspace_dir(tmp_path):
+    # A bound workspace is the cwd for an unsandboxed worker, and a chat opened under the
+    # project inherits it — so a credential dir must be refused on the SAME two helpers
+    # the terminal endpoint uses, and the previous value must survive the refusal.
+    async with _client(tmp_path) as client:
+        pid = (
+            await (
+                await client.post(
+                    "/api/projects", json={"name": "Bound", "workspace_dir": "/tmp/repo"}
+                )
+            ).json()
+        )["id"]
+        # ~/.ssh + ~/.aws are is_sensitive_path; a bare /tmp and /etc are is_system_path —
+        # both helpers have to be consulted, as terminal.py and loop/validation.py do.
+        for unsafe in (str(Path.home() / ".ssh"), str(Path.home() / ".aws"), "/etc", "/tmp"):
+            r = await client.put(f"/api/projects/{pid}", json={"workspace_dir": unsafe})
+            assert r.status == 403, unsafe
+            assert "system or sensitive" in (await r.json())["error"]
+            # NOT persisted — the refusal has to be a refusal, not a 403 after the write.
+            stored = (await (await client.get(f"/api/projects/{pid}")).json())["workspace_dir"]
+            assert stored == "/tmp/repo", unsafe
+        # a safe dir still binds, and clearing the binding still works
+        r = await client.put(f"/api/projects/{pid}", json={"workspace_dir": "/tmp/other"})
+        assert r.status == 200 and (await r.json())["workspace_dir"] == "/tmp/other"
+        r = await client.put(f"/api/projects/{pid}", json={"workspace_dir": ""})
+        assert r.status == 200 and (await r.json())["workspace_dir"] == ""
+
+
+@pytest.mark.asyncio
+async def test_project_create_refuses_sensitive_workspace_dir(tmp_path):
+    # Create binds the same field, so it carries the same gate — else the refused value
+    # just moves to POST.
+    async with _client(tmp_path) as client:
+        r = await client.post(
+            "/api/projects", json={"name": "Creds", "workspace_dir": str(Path.home() / ".ssh")}
+        )
+        assert r.status == 403
+        names = {p["name"] for p in (await (await client.get("/api/projects")).json())["projects"]}
+        assert "Creds" not in names
+
+
+@pytest.mark.asyncio
+async def test_project_update_rejects_unknown_and_reserved_keys(tmp_path):
+    # Unknown keys are REPORTED, not dropped (a silent drop answers 200 for a write that
+    # did not happen), and a key colliding with the store method's own parameters is a 400
+    # naming the field — it used to reach the **kwargs splat as a bare 500.
+    async with _client(tmp_path) as client:
+        pid = (await (await client.post("/api/projects", json={"name": "Strict"})).json())["id"]
+        for key, value in (
+            ("id", "p-hijack"),
+            ("is_default", True),
+            ("created_at", "1999-01-01T00:00:00Z"),
+            ("nope", "x"),
+            ("self", "x"),
+            ("project_id", "x"),
+        ):
+            r = await client.put(f"/api/projects/{pid}", json={key: value})
+            assert r.status == 400, key
+            assert key in (await r.json())["error"], key
+        # a rejected body changes NOTHING, and the legitimate fields still write
+        assert (await (await client.get(f"/api/projects/{pid}")).json())["name"] == "Strict"
+        r = await client.put(
+            f"/api/projects/{pid}",
+            json={
+                "name": "Renamed",
+                "name_locked": True,
+                "status": "archived",
+                "brief": "the why",
+                "agent_instructions_template": "be brief",
+                "workspace_dir": "/tmp/repo",
+            },
+        )
+        assert r.status == 200
+        body = await r.json()
+        assert body["name"] == "Renamed" and body["name_locked"] is True
+        assert body["status"] == "archived" and body["brief"] == "the why"
+        assert body["agent_instructions_template"] == "be brief"
+        assert body["workspace_dir"] == "/tmp/repo"
+
+
+@pytest.mark.asyncio
+async def test_task_list_update_rejects_unknown_and_reserved_keys(tmp_path):
+    # Same splat, same shape: `list_id` collided with the store method's parameter.
+    async with _client(tmp_path) as client:
+        pid = (await (await client.post("/api/projects", json={"name": "Holder"})).json())["id"]
+        tl = await (
+            await client.post("/api/task-lists", json={"name": "L", "project_id": pid})
+        ).json()
+        for key in ("self", "list_id", "id", "created_at", "nope"):
+            r = await client.put(f"/api/task-lists/{tl['id']}", json={key: "x"})
+            assert r.status == 400, key
+            assert key in (await r.json())["error"], key
+        assert (await (await client.get(f"/api/task-lists/{tl['id']}")).json())["name"] == "L"
+        r = await client.put(
+            f"/api/task-lists/{tl['id']}",
+            json={"name": "Renamed", "project_id": pid, "agent_instructions_template": "go"},
+        )
+        assert r.status == 200
+        body = await r.json()
+        assert body["name"] == "Renamed" and body["agent_instructions_template"] == "go"
+
+
 # ── Task lists ──
 
 
@@ -299,6 +407,159 @@ async def test_comment_count_in_list_and_get(tmp_path):
         listed = await (await client.get("/api/tasks")).json()
         assert listed["tasks"][0]["comment_count"] == 2
         assert (await (await client.get(f"/api/tasks/{t['id']}")).json())["comment_count"] == 2
+
+
+# ── Comment attribution + deletion (#554) ──
+#
+# The endpoint used to pass the caller's `author` string straight to the store, so any
+# authenticated client could sign a comment as anyone, and there was no DELETE to take
+# a forged one back. These assert stored state, not just status codes.
+
+
+def _comments_on_disk(tmp_path, task_id):
+    """The comment sidecar as persisted — the store, not the response echo."""
+    f = tmp_path / "tasks" / f"_comments_{task_id}.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+
+
+@pytest.mark.asyncio
+async def test_comment_author_is_server_derived_not_caller_supplied(tmp_path):
+    """The whole point of #554: the stored author is the server's handle."""
+    with patch("personalclaw.tasks.handlers._owner_username", return_value="keyur-golani"):
+        async with _client(tmp_path) as client:
+            t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+            r = await client.post(f"/api/tasks/{t['id']}/comments", json={"body": "mine"})
+            assert r.status == 201
+            assert (await r.json())["author"] == "keyur-golani"
+            stored = _comments_on_disk(tmp_path, t["id"])
+            assert [c["author"] for c in stored] == ["keyur-golani"]
+
+
+@pytest.mark.asyncio
+async def test_supplied_comment_author_is_refused_and_stores_nothing(tmp_path):
+    """A body-supplied author is rejected outright rather than silently dropped: a 201
+    that stored a different author than asked would tell a forging client it worked."""
+    with patch("personalclaw.tasks.handlers._owner_username", return_value="keyur-golani"):
+        async with _client(tmp_path) as client:
+            t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+            r = await client.post(
+                f"/api/tasks/{t['id']}/comments",
+                json={"body": "looks good", "author": "Keyur Golani <keyur@example.com>"},
+            )
+            assert r.status == 400
+            assert "author" in (await r.json())["error"]
+            # Refused means nothing was written — not "written under a different name".
+            assert _comments_on_disk(tmp_path, t["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_supplied_comment_author_refused_even_when_it_matches_the_owner(tmp_path):
+    """The field is refused on principle. Accepting the ones that happen to match would
+    make the endpoint's contract depend on the current username."""
+    with patch("personalclaw.tasks.handlers._owner_username", return_value="keyur-golani"):
+        async with _client(tmp_path) as client:
+            t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+            r = await client.post(
+                f"/api/tasks/{t['id']}/comments",
+                json={"body": "hi", "author": "keyur-golani"},
+            )
+            assert r.status == 400
+            assert _comments_on_disk(tmp_path, t["id"]) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", [42, {}, [], True, 1.5, {"nested": "obj"}])
+async def test_non_string_comment_body_is_400_not_500(tmp_path, shape):
+    """`body.get("body", "").strip()` raised AttributeError on every non-string —
+    a 500 for what is plainly a client bug (same class as #591/#441)."""
+    async with _client(tmp_path) as client:
+        t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+        r = await client.post(f"/api/tasks/{t['id']}/comments", json={"body": shape})
+        assert r.status == 400
+        assert "string" in (await r.json())["error"]
+        assert _comments_on_disk(tmp_path, t["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_null_and_absent_comment_body_stay_400_body_required(tmp_path):
+    """null/absent are legitimately "you forgot the body", not a type error — they must
+    keep reaching the emptiness guard rather than being swallowed by the shape check."""
+    async with _client(tmp_path) as client:
+        t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+        for payload in ({"body": None}, {}, {"body": "   "}):
+            r = await client.post(f"/api/tasks/{t['id']}/comments", json=payload)
+            assert r.status == 400
+            assert (await r.json())["error"] == "body required"
+
+
+@pytest.mark.asyncio
+async def test_non_object_comment_body_is_400(tmp_path):
+    """A top-level array/scalar has no .get() at all."""
+    async with _client(tmp_path) as client:
+        t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+        for payload in ([1, 2, 3], "hello", 5):
+            r = await client.post(f"/api/tasks/{t['id']}/comments", json=payload)
+            assert r.status == 400
+
+
+@pytest.mark.asyncio
+async def test_comment_delete_removes_it_from_the_store(tmp_path):
+    """DELETE is the recoverability half: without it a bad comment was permanent
+    through the API and only removable by hand-editing the sidecar."""
+    async with _client(tmp_path) as client:
+        t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+        first = await (
+            await client.post(f"/api/tasks/{t['id']}/comments", json={"body": "keep me"})
+        ).json()
+        doomed = await (
+            await client.post(f"/api/tasks/{t['id']}/comments", json={"body": "delete me"})
+        ).json()
+        r = await client.delete(f"/api/tasks/{t['id']}/comments/{doomed['id']}")
+        assert r.status == 200
+        assert (await r.json()) == {"ok": True, "id": doomed["id"]}
+        # Gone from the store, and the sibling survived.
+        stored = _comments_on_disk(tmp_path, t["id"])
+        assert [c["id"] for c in stored] == [first["id"]]
+        listed = (await (await client.get(f"/api/tasks/{t['id']}/comments")).json())["comments"]
+        assert [c["body"] for c in listed] == ["keep me"]
+        # And the derived badge count follows.
+        assert (await (await client.get(f"/api/tasks/{t['id']}")).json())["comment_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_comment_delete_unknown_id_is_404(tmp_path):
+    async with _client(tmp_path) as client:
+        t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+        await client.post(f"/api/tasks/{t['id']}/comments", json={"body": "one"})
+        r = await client.delete(f"/api/tasks/{t['id']}/comments/c-nope")
+        assert r.status == 404
+        # A HANDLED 404, not aiohttp's unrouted text/plain one — an absent route also
+        # answers 404, so status alone cannot tell "no such comment" from "no such
+        # endpoint" (which is exactly the pre-fix state this asserts against).
+        assert (await r.json()) == {"error": "not found"}
+        # A miss must not take the real comment with it.
+        assert len(_comments_on_disk(tmp_path, t["id"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_comment_delete_unknown_task_is_404(tmp_path):
+    async with _client(tmp_path) as client:
+        r = await client.delete("/api/tasks/t-nope/comments/c-nope")
+        assert r.status == 404
+        assert (await r.json()) == {"error": "not found"}
+
+
+@pytest.mark.asyncio
+async def test_comment_delete_is_not_captured_by_the_task_id_matcher(tmp_path):
+    """The new route sits under the dynamic /{task_id} prefix; assert aiohttp resolves
+    it rather than treating "comments" as a task id (the ordering trap this file's
+    register_task_routes comment warns about)."""
+    async with _client(tmp_path) as client:
+        t = await (await client.post("/api/tasks", json={"title": "T"})).json()
+        c = await (await client.post(f"/api/tasks/{t['id']}/comments", json={"body": "x"})).json()
+        assert (await client.delete(f"/api/tasks/{t['id']}/comments/{c['id']}")).status == 200
+        # The task itself is untouched by a comment delete.
+        assert (await client.get(f"/api/tasks/{t['id']}")).status == 200
 
 
 # ── Bulk ──

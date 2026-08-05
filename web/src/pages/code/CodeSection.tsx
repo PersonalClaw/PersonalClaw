@@ -56,7 +56,7 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
   // and internal onBack target). The reuse-workspace flow is
   // #/loop?kind=code&ws=<dir> (the cockpit's "New target").
   useEffect(() => {
-    if (!seg && !review && !planningId) navigate('loop', { replace: true })
+    if (!seg && !review && !planningId) navigate('loop?kind=code', { replace: true })
   }, [seg, review, planningId, navigate])
 
   // Resume the right PRE-EXECUTION surface on a direct URL/refresh/deep-link/list-

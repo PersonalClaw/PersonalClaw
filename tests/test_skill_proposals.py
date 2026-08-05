@@ -30,8 +30,18 @@ def _enqueue(slug="release-flow", **kw):
         procedure_md=kw.get("procedure_md", "1. tag\n2. build\n3. publish"),
         session_key=kw.get("session_key", "sess:1"),
         created_at=kw.get("created_at", "2026-07-03T00:00:00+00:00"),
+        kind=kw.get("kind", "new"),
+        refine_target=kw.get("refine_target", ""),
         source_excerpt=kw.get("source_excerpt", ""),
     )
+
+
+def _seed_skill(home, name, content):
+    """Write a real SKILL.md under the temp home so refine has a target to update."""
+    d = home / "skills" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(content, encoding="utf-8")
+    return d / "SKILL.md"
 
 
 def test_enqueue_and_list(home):
@@ -75,6 +85,50 @@ def test_accept_applies_edits(home):
     content = SkillsLoader(install_builtins=False).load_skill("auto/release-flow")
     assert "edited steps here" in content
     assert "Edited desc" in content
+
+
+def test_accept_refine_updates_target_not_creates(home):
+    # Issue #303: a kind="refine" proposal names an EXISTING skill; accept must
+    # UPDATE that skill in place, not route through create-new (which 409'd because
+    # the slug already existed). This bites: before the fix, accept() raises
+    # AcceptError and the target is left byte-identical.
+    original = (
+        "---\nname: task-and-project\ndescription: manage tasks\n---\n\n"
+        "# task and project\n\nOriginal body.\n"
+    )
+    target = _seed_skill(home, "task-and-project", original)
+    p = _enqueue(
+        slug="task-and-project",
+        kind="refine",
+        refine_target="task-and-project",
+        description="Always link the design doc",
+        procedure_md="When creating a task, attach the design doc link.",
+    )
+    name = proposals.accept(p.id)
+    assert name == "task-and-project"
+    updated = target.read_text(encoding="utf-8")
+    # The original survives and the refinement is appended (least-destructive merge).
+    assert "Original body." in updated
+    assert "attach the design doc link" in updated
+    assert updated != original  # the target actually changed
+    # No stray auto/ skill was minted, and the proposal left the queue as handled.
+    assert SkillsLoader(install_builtins=False).load_skill("auto/task-and-project") is None
+    assert proposals.list_pending() == []
+
+
+def test_accept_refine_missing_target_falls_back_to_create(home):
+    # A refine whose target was deleted must NOT 500 — it falls back to create-new
+    # so the Accept button still resolves the proposal.
+    p = _enqueue(
+        slug="gone-target",
+        kind="refine",
+        refine_target="no-such-skill",
+        procedure_md="steps for a skill whose target vanished",
+    )
+    name = proposals.accept(p.id)
+    assert name == "auto/gone-target"
+    assert SkillsLoader(install_builtins=False).load_skill("auto/gone-target") is not None
+    assert proposals.list_pending() == []
 
 
 def test_reject_drops_without_installing(home):

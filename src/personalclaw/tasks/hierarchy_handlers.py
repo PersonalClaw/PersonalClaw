@@ -5,13 +5,70 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.security import is_sensitive_path, is_system_path
 from personalclaw.tasks.hierarchy import HierarchyStore
 
 logger = logging.getLogger(__name__)
 
+# The body keys a caller may write through the PUT routes. An ALLOWLIST, not a denylist:
+# these handlers used to splat the raw body into the store as ``**body``, so every field
+# ever added to Project/TaskList became writable the moment it existed, and a denylist
+# would have to be edited in lockstep with the model to stay correct. An allowlist fails
+# closed instead. Both sets are the fields the matching ``HierarchyStore.update_*`` method
+# actually reads, minus the ones no client should name: ``id`` (identity — the URL path
+# carries it), ``is_default`` (a delete-protection flag recomputed from the project name),
+# and ``created_at``/``updated_at`` (store-owned; ``update_*`` stamps them itself).
+_PROJECT_UPDATABLE = frozenset(
+    {
+        "name",
+        "name_locked",
+        "status",
+        "brief",
+        "workspace_dir",
+        "agent_instructions_template",
+    }
+)
+_TASK_LIST_UPDATABLE = frozenset({"name", "project_id", "agent_instructions_template"})
+
 
 def _store() -> HierarchyStore:
     return HierarchyStore()
+
+
+def _unwritable_field(body: dict, allowed: frozenset[str]) -> str | None:
+    """The first key in *body* outside *allowed*, or None when every key is writable.
+
+    A rejected key is REPORTED, never dropped: silently ignoring it answers 200 for a
+    write that did not happen, so the caller reasonably believes its change landed.
+    Screening here is also what keeps a key that collides with the store method's own
+    parameters (``self``, ``project_id``, ``list_id``) from reaching the ``**fields``
+    splat, where it surfaced as a TypeError and a bare 500 with nothing for the caller.
+    """
+    for key in body:
+        if key not in allowed:
+            return key
+    return None
+
+
+def _workspace_refusal(workspace_dir: str) -> web.Response | None:
+    """A 403 when *workspace_dir* names a credential dir or an OS system tree, else None.
+
+    A bound workspace becomes the cwd for an UNSANDBOXED worker that reads, writes and
+    runs commands there, and a chat session opened under the project inherits the path —
+    so it needs the gate the terminal endpoint already applies before spawning a PTY
+    (``dashboard/handlers/terminal.py``), on the same two security helpers. Without it
+    this route stored verbatim (200) exactly what that route refuses (403) for the
+    identical path. Callers pass the already-stripped value the store would persist, so
+    surrounding whitespace cannot carry a sensitive path past the check.
+    """
+    if not workspace_dir:
+        return None  # clearing the binding — the project's context dir becomes the workspace
+    if is_sensitive_path(workspace_dir) or is_system_path(workspace_dir):
+        return web.json_response(
+            {"error": "Workspace directory points to a system or sensitive location."},
+            status=403,
+        )
+    return None
 
 
 def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None = None) -> dict:
@@ -49,6 +106,9 @@ async def api_projects_create(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     store = _store()
+    refusal = _workspace_refusal(str(body.get("workspace_dir") or "").strip())
+    if refusal is not None:
+        return refusal
     try:
         project = store.create_project(
             name=body.get("name", ""),
@@ -148,6 +208,15 @@ async def api_projects_update(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    rejected = _unwritable_field(body, _PROJECT_UPDATABLE)
+    if rejected is not None:
+        return web.json_response({"error": f"'{rejected}' is not an updatable field"}, status=400)
+    if "workspace_dir" in body:
+        refusal = _workspace_refusal(str(body["workspace_dir"] or "").strip())
+        if refusal is not None:
+            return refusal
     store = _store()
     try:
         project = store.update_project(request.match_info["project_id"], **body)
@@ -319,6 +388,11 @@ async def api_task_lists_update(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    rejected = _unwritable_field(body, _TASK_LIST_UPDATABLE)
+    if rejected is not None:
+        return web.json_response({"error": f"'{rejected}' is not an updatable field"}, status=400)
     try:
         tl = _store().update_task_list(request.match_info["list_id"], **body)
     except ValueError as e:

@@ -10,7 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **"Run now" did nothing for almost every automation, while reporting success.**
+- **Knowledge ingest reported steps as finished that never ran.**
+- **Accepting a "refine an existing skill" proposal always failed with an error.**
+- **Importing a memory file that wasn't a JSON object failed with an unhelpful server error.**
+- **A request that named no task mode relaxed every chat to full execution.**
+- **A project could be pointed at your credential directories.**
+- **The dashboard could be tricked into handing over your secrets by changing the case of a filename.**
+
+- **One app could borrow another app's permission to run an agent, and read agent runs that weren't its own.**
+- **Discover's "see goal loops" tip opened a blank new-loop form instead of your loops.**
 - **Changing your embedding model silently stopped the assistant remembering anything.**
+- **A task comment could be signed as anyone, and never taken back.**
 
 ## [0.1.3] — 2026-07-30
 

@@ -8,6 +8,7 @@ import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../.
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { fmtElapsed, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import { useWorkflowStream } from './useWorkflowStream'
 import { DagView } from '../tasks/DagView'
@@ -115,11 +116,9 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   const StatusIcon = look?.icon
 
   // Sorted by instance path so the list reads in the spec's own order, and indented to its
-  // tree shape — a flat list of twenty node ids is unreadable on a real workflow.
-  const nodes = useMemo(
-    () => [...(run?.nodes ?? [])].sort((a, b) => a.instance_path.localeCompare(b.instance_path)),
-    [run],
-  )
+  // tree shape — a flat list of twenty node ids is unreadable on a real workflow. Numerically,
+  // matching the engine: a string sort puts item 10 ahead of item 2 (issue #568).
+  const nodes = useMemo(() => [...(run?.nodes ?? [])].sort(byInstancePath), [run])
 
   // Collapsible containers (WF2 Slice 10b). The `deep-research` template expands to 21 rows and 18
   // of them are one untaken subgraph — the three that matter are buried in the ones that did not

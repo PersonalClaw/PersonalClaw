@@ -463,5 +463,26 @@ class NativeTaskProvider(TaskProvider):
 
         return await asyncio.to_thread(_add)
 
+    async def delete_comment(self, task_id: str, comment_id: str) -> bool:
+        def _delete() -> bool:
+            comments_file = self._ensure_dir() / f"_comments_{task_id}.json"
+            if not comments_file.exists():
+                return False
+            try:
+                data = json.loads(comments_file.read_text(encoding="utf-8"))
+            except Exception:
+                return False
+            if not isinstance(data, list):
+                return False
+            kept = [c for c in data if isinstance(c, dict) and c.get("id") != comment_id]
+            if len(kept) == len(data):
+                return False
+            # The sidecar stays on disk when it empties: `_comment_count` reads its
+            # length, and an absent file already means zero, so both spellings agree.
+            comments_file.write_text(json.dumps(kept, indent=2), encoding="utf-8")
+            return True
+
+        return await asyncio.to_thread(_delete)
+
 
 Provider = NativeTaskProvider

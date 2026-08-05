@@ -760,6 +760,9 @@ def _memory_cmd(args: argparse.Namespace) -> None:
                 print(f"File not found: {import_file}")
                 return
             data = json.loads(safe_read_file(str(path)))
+            if not isinstance(data, dict):
+                print(f"Error: {import_file} must contain a JSON object", file=sys.stderr)
+                return
             counts = store.import_memory(data)
             print("Import complete:")
             print(f"  Semantic: {counts['semantic']}")

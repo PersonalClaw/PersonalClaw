@@ -322,6 +322,201 @@ def test_a_real_run_dispatches_the_action(home, state, monkeypatch):
     assert seen["event"] == "manual.run"
 
 
+# ── 🔴 #395: Run now was a silent no-op for every NESTED action ──
+
+
+def _notify_spy(monkeypatch):
+    """Register a spy on the `notify` provider, returning the list of calls it receives.
+
+    Records the ACTION CONFIG as well as the context, because the two halves of this bug fail
+    differently: reading the provider from `inline` while leaving the config on the outer dict runs
+    the right action with an empty config, which looks like success and is worse than the no-op.
+    """
+    from personalclaw.action_providers.registry import (
+        _ensure_default_providers_registered,
+        get_action_provider,
+    )
+
+    _ensure_default_providers_registered()
+    calls: list[dict] = []
+
+    async def spy(action_config, ctx, timeout=30):
+        calls.append({"config": dict(action_config or {}), "event": ctx.event})
+
+    monkeypatch.setattr(get_action_provider("notify"), "execute", spy)
+    return calls
+
+
+def _upsert_nested(home, *, tid="file:notes", title="nested-title"):
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id=tid,
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            # The MIGRATED shape, which is what the API create path, the CLI, the app-cron
+            # reconciler and the digest reconciler all write — i.e. essentially every real row.
+            workflow={"inline": {"provider": "notify", "config": {"title_template": title}}},
+        )
+    )
+
+
+def test_a_NESTED_action_actually_REACHES_its_provider(home, state, monkeypatch):
+    """🔴 THE #395 REGRESSION. `_dispatch_store_action` read the FLAT `workflow["provider"]` only, so
+    for every row written as `workflow["inline"]` the lookup returned None and the handler answered
+    "no action provider configured" — inside an HTTP 200 `{"ok": true}`. Nothing executed.
+
+    Asserts the PROVIDER WAS INVOKED, not that the response was 200: the broken code returned a
+    success-shaped 200, so a status-only assertion passes against the defect and proves nothing.
+    """
+    _upsert_nested(home)
+    calls = _notify_spy(monkeypatch)
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+
+    assert len(calls) == 1, "the nested action never reached its provider"
+    assert _body(resp)["result"].startswith("ran")
+    assert _body(resp)["ok"] is True
+
+
+def test_a_nested_action_carries_its_OWN_config(home, state, monkeypatch):
+    """Provider AND config come from the SAME resolved dict. Taking the provider from `inline` and
+    the config from the outer dict would dispatch the right action with an empty config — a run that
+    reports success and does the wrong thing, which is worse than the no-op it replaced."""
+    _upsert_nested(home, title="nested-title")
+    calls = _notify_spy(monkeypatch)
+
+    _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+
+    assert calls[0]["config"] == {"title_template": "nested-title"}
+
+
+def test_BOTH_action_shapes_dispatch(home, state, monkeypatch):
+    """A real store holds both spellings (`screen.requested_capabilities` documents exactly this),
+    so the manual path must read both — the property `gateway._fire_store_trigger` and
+    `schedule_view._inline_action` already have and this one had lost."""
+    from personalclaw.triggers.models import Trigger
+
+    _upsert_nested(home, tid="file:nested", title="from-inline")
+    _store(home).upsert(
+        Trigger(
+            id="file:flat",
+            name="Flat",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"provider": "notify", "config": {"title_template": "from-flat"}},
+        )
+    )
+    calls = _notify_spy(monkeypatch)
+
+    for tid in ("file:nested", "file:flat"):
+        _run(
+            T.api_trigger_run(
+                _req(
+                    "POST", "/api/triggers/x/run", state, body={}, match_info={"id": f"store:{tid}"}
+                )
+            )
+        )
+
+    assert [c["config"]["title_template"] for c in calls] == ["from-inline", "from-flat"]
+
+
+def test_an_unresolvable_action_is_ok_FALSE_not_a_success_shaped_200(home, state):
+    """🔴 The second half of #395: the handler answered `ok: true` regardless of what happened, with
+    the failure carried as prose in `result`. So a caller checking a status code or an `ok` flag
+    read a no-op as a completed run, which is what let this hide for a release.
+
+    Still 200 — the request was understood and answered honestly. A trigger whose action cannot be
+    resolved is not a malformed request (the rule the kill-switch refusal already follows).
+    """
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:ghost",
+            name="Ghost",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"inline": {"provider": "no-such-provider", "config": {}}},
+        )
+    )
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:ghost"}
+            )
+        )
+    )
+
+    assert resp.status == 200
+    assert _body(resp)["ok"] is False
+    assert "unknown action provider" in _body(resp)["result"]
+
+
+def test_an_actionless_trigger_is_ok_FALSE(home, state):
+    """A row carrying no action at all reports honestly too, rather than "ran"."""
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:empty",
+            name="Empty",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={},
+        )
+    )
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:empty"}
+            )
+        )
+    )
+
+    assert _body(resp)["ok"] is False
+    assert _body(resp)["result"].startswith("no action provider configured")
+
+
+def test_the_manual_path_reads_the_SAME_shapes_as_the_autonomous_one(home, state, monkeypatch):
+    """A STRUCTURAL guard on the property `_dispatch_store_action`'s docstring claims: "a manual Run
+    and an autonomous fire share one dispatch so their behaviour cannot drift". They HAD drifted —
+    the gateway unwrapped `inline` and the manual path did not — and a behavioural test on one row
+    shape cannot catch the next divergence. So this asserts both functions resolve the action
+    through the same `(inline or workflow)` idiom.
+    """
+    import inspect
+
+    from personalclaw import gateway
+    from personalclaw.dashboard.handlers import triggers as handlers
+
+    manual = inspect.getsource(handlers._dispatch_store_action)
+    autonomous = inspect.getsource(gateway.GatewayOrchestrator._fire_store_trigger)
+    for name, src in (("manual", manual), ("autonomous", autonomous)):
+        assert 'workflow.get("inline")' in src, f"{name} no longer unwraps the nested action shape"
+        assert "inline or workflow" in src, f"{name} no longer falls back to the flat shape"
+
+
 def test_a_paused_store_trigger_still_runs_by_hand(home, state, monkeypatch):
     """Pausing means "stop firing on its own"; a hand-driven run is how you test before re-enabling.
     The result notes it does not re-enable."""
@@ -624,6 +819,21 @@ def test_create_still_validates_before_writing(home, state):
     assert _create_schedule(state, cron=None).status == 400  # no cadence
     assert _create_schedule(state, timezone="Mars/Olympus").status == 400
     assert _create_schedule(state, channel="not a channel id").status == 400
+    assert _store(home).load() == []
+
+
+def test_a_non_numeric_one_shot_at_is_400_not_500(home, state):
+    """🔴 A truthy non-numeric `at` reached a bare `float()` and surfaced as an uncaught 500.
+
+    `""`/`null` were already caught by the no-cadence guard and an epoch already worked, so the
+    bug surface was exactly a truthy string that will not parse — which is what the One-shot form's
+    `<input type="datetime-local">` submits (`"2026-08-10T09:00"`). The `every` branch three lines
+    above has always coerced inside `try/except → 400`; this pins the same shape for `at`.
+    """
+    for bad in ("2026-08-10T09:00", "not-a-date"):
+        resp = _create_schedule(state, name="Once", cron=None, at=bad)
+        assert resp.status == 400
+        assert "'at'" in _body(resp)["error"]
     assert _store(home).load() == []
 
 
@@ -1223,3 +1433,203 @@ def test_the_facade_no_longer_calls_any_run_method_on_the_service():
     src = inspect.getsource(T)
     for method in ("crons.list_runs", "crons.list_all_runs", "crons.get_run", "crons.delete_runs"):
         assert method not in src, method
+
+
+# ── 🔴 the lifecycle state reached no surface ──
+
+
+def test_the_store_projection_EMITS_the_lifecycle_state():
+    """🔴 THE DEFECT. `_serialize_store` emitted `health` and NOT `state`, so
+    `Trigger.state` — `active | paused | autopaused | parked | quarantined | retired` — reached no
+    surface at all. Every lifecycle transition this program built was therefore invisible on the one
+    page a user manages automations from: autopause, park/unpark and the injection
+    quarantine all decided a state nothing could render.
+
+    `health` cannot substitute. A PARKED trigger is `health: parked`, but an AUTOPAUSED one is
+    `health: failing` — and "failing" does not tell the user the automation has STOPPED.
+    """
+    from personalclaw.triggers.models import Trigger, TriggerState
+
+    trigger = Trigger(id="clock:x", name="x", kind="clock")
+    trigger.state = TriggerState.AUTOPAUSED.value
+    row = T._serialize_store(trigger)
+    assert row["state"] == TriggerState.AUTOPAUSED.value
+    assert row["health"] == "ok", "health is a separate rollup, not a substitute"
+
+
+def test_health_and_state_are_BOTH_on_the_wire():
+    """Two vocabularies, both needed: `health` says how it has been going, `state` says whether it
+    will run at all. A surface given only one has to guess the other."""
+    from personalclaw.triggers.models import Trigger, TriggerHealth, TriggerState
+
+    trigger = Trigger(id="clock:y", name="y", kind="clock")
+    trigger.state = TriggerState.PARKED.value
+    trigger.health_status = TriggerHealth.PARKED.value
+    row = T._serialize_store(trigger)
+    assert row["state"] == "parked" and row["health"] == "parked"
+
+
+def test_an_ACTIVE_trigger_still_reports_active():
+    """The default path is unchanged — every trigger authored before this session projects the same
+    way, with `state: "active"` added rather than anything reinterpreted."""
+    from personalclaw.triggers.models import Trigger
+
+    row = T._serialize_store(Trigger(id="clock:z", name="z", kind="clock"))
+    assert row["state"] == "active"
+
+
+# ── 🔴 a store trigger's run history was reported as unsupported ──
+
+
+@pytest.mark.asyncio
+async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
+    """🔴 THE DEFECT. `api_trigger_history` branched on `kind != _SCHEDULE`, so every store trigger —
+    `web_watch`, `file`, `idle`, `run_completed`, `view`, `webhook` — was told `supported: false`
+    with a reason naming LIFECYCLE triggers, a kind it is not.
+
+    But a store trigger DOES have run records: `_record_fire_outcome` has written them to
+    `ScheduleRunStore` under `job_id=trigger.id`. Three fires persisted three
+    rows and the endpoint reported none, so the detail panel read "No runs recorded yet" for an
+    automation that had run three times.
+
+    The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw`
+    for a store trigger — so the schedule branch's own `list_for_job(raw, …)` already worked.
+    The branch was simply written before store triggers had a run store.
+    """
+    import types as _types
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    store.upsert(
+        Trigger(
+            id="web_watch:feed",
+            name="feed watch",
+            kind="web_watch",
+            enabled=True,
+            spec={"url": "https://example.dev"},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = None
+    for _ in range(3):
+        await orch._record_fire_outcome(
+            store.get("web_watch:feed").trigger,
+            result=_types.SimpleNamespace(success=True, error=""),
+        )
+
+    req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history?limit=10")
+    req.match_info["id"] = "store:web_watch:feed"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload["total"] == 3, "the rows the fire path wrote must be served"
+    assert payload.get("supported", True) is True
+    assert len(payload["runs"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_LIFECYCLE_trigger_still_says_unsupported_and_says_WHY():
+    """The honest answer is preserved for the kind it was actually about: a lifecycle trigger runs
+    inline with the agent loop and keeps no run store. A bare `{"runs": []}` would render as "this
+    ran and kept no record", which is a different and false claim."""
+    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history")
+    req.match_info["id"] = "lifecycle:on_start"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload["supported"] is False
+    assert "lifecycle" in payload["reason"]
+
+
+@pytest.mark.asyncio
+async def test_an_UNRECOGNISED_prefix_falls_back_to_SCHEDULE_not_a_fake_reason():
+    """No catch-all branch exists, and that is correct: `_split_id` defaults an unknown prefix
+    to `schedule` (a bare id IS a schedule id, for backwards compatibility), so a third branch
+    would be unreachable. Driven rather than assumed — my first draft added that branch and
+    this test proved it dead."""
+    req = make_mocked_request("GET", "/api/triggers/mystery:x/history")
+    req.match_info["id"] = "mystery:x"
+    payload = json.loads((await T.api_trigger_history(req)).body.decode())
+    assert payload == {"runs": [], "total": 0}, "an unknown prefix reads as an empty schedule"
+    assert "supported" not in payload, "no fabricated unsupported answer"
+
+
+# ── 🔴 the list handed out a run_id the detail route denied ──
+
+
+@pytest.mark.asyncio
+async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
+    """🔴 THE DEFECT, one route past S166. `api_trigger_history_detail` gated on
+    `kind != _SCHEDULE` and 404'd everything else — so the list route S166 had just fixed handed the
+    UI a `run_id` that the detail route immediately denied. Driven:
+
+        LIST   -> total=1 run_id='fire-1785909121906'
+        DETAIL -> 404 {'error': 'not found'}
+
+    The expander opens on nothing. `get_run(raw, run_id)` already worked with a store key (verified
+    against a real `file:notes` row), so the gate was the entire defect — the same shape as S166,
+    which is why sweeping the SIBLING route mattered rather than stopping at the first fix.
+    """
+    import types as _types
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    store.upsert(
+        Trigger(
+            id="web_watch:feed",
+            name="feed watch",
+            kind="web_watch",
+            enabled=True,
+            spec={"url": "https://example.dev"},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    orch = object.__new__(GatewayOrchestrator)
+    orch.dashboard_state = None
+    await orch._record_fire_outcome(
+        store.get("web_watch:feed").trigger,
+        result=_types.SimpleNamespace(success=True, error=""),
+    )
+
+    # The id the LIST hands the UI — the exact round trip the expander performs.
+    req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history")
+    req.match_info["id"] = "store:web_watch:feed"
+    listing = json.loads((await T.api_trigger_history(req)).body.decode())
+    run_id = listing["runs"][0]["run_id"]
+    assert run_id
+
+    req2 = make_mocked_request("GET", f"/api/triggers/store:web_watch:feed/history/{run_id}")
+    req2.match_info["id"] = "store:web_watch:feed"
+    req2.match_info["run_id"] = run_id
+    resp = await T.api_trigger_history_detail(req2)
+    assert resp.status == 200, "a run_id the list handed out must be openable"
+    assert json.loads(resp.body.decode())["run"]["run_id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_a_LIFECYCLE_run_detail_still_404s():
+    """Correct, not an oversight: a lifecycle trigger has no run store, so there is no record to
+    open and 404 is the honest answer."""
+    req = make_mocked_request("GET", "/api/triggers/lifecycle:on_start/history/r1")
+    req.match_info["id"] = "lifecycle:on_start"
+    req.match_info["run_id"] = "r1"
+    resp = await T.api_trigger_history_detail(req)
+    assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_an_UNKNOWN_run_on_a_REAL_store_trigger_says_run_not_found(home):
+    """The two 404s stay distinguishable. "not found" means the KIND keeps no runs; "run not found"
+    means this trigger does keep runs and that particular one is not among them — a caller debugging
+    a stale link needs to tell those apart."""
+    req = make_mocked_request("GET", "/api/triggers/store:file:nope/history/r1")
+    req.match_info["id"] = "store:file:nope"
+    req.match_info["run_id"] = "r1"
+    resp = await T.api_trigger_history_detail(req)
+    assert resp.status == 404
+    assert json.loads(resp.body.decode())["error"] == "run not found"

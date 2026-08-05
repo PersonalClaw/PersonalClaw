@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { X } from 'lucide-react'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import type { PromptVariable, PromptVarType } from '../../lib/api'
@@ -37,10 +37,36 @@ export function VariableRow({ v, onChange, onRemove, descriptionPlaceholder = 'D
         <input value={v.default == null ? '' : String(v.default)} onChange={(e) => onChange({ default: e.target.value })} placeholder="default" aria-label="Variable default value" name={`var-default-${rid}`}
           className="w-28 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       </div>
-      {v.type === 'select' && (
-        <input value={(v.options ?? []).join(', ')} onChange={(e) => onChange({ options: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} placeholder="Choices, comma-separated" aria-label="Variable choices" name={`var-opts-${rid}`}
-          className="h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      )}
+      {v.type === 'select' && <ChoicesInput options={v.options} onChange={onChange} name={`var-opts-${rid}`} />}
     </div>
+  )
+}
+
+/** The comma-separated choices field for a `select` variable.
+ *
+ *  Held as raw draft text while focused, normalized to `string[]` on blur. The
+ *  normalization (`trim` + drop empties) is right for the PERSISTED list but
+ *  destroys the intermediate states typing produces: as a controlled field it
+ *  round-tripped `options` back through `join(', ')` on every keystroke, so
+ *  "red," normalized to ["red"] and re-rendered as "red" — the comma vanished
+ *  before the next character could be typed, and a select could never hold more
+ *  than one option (#594). `trim` was the same class of bug for the space after
+ *  a comma. Do not move either back onto the keystroke path.
+ *
+ *  The parent still owns the value; the draft only shadows it between focus and
+ *  blur, and re-syncs whenever the committed list changes from outside. */
+function ChoicesInput({ options, onChange, name }: {
+  options?: string[]
+  onChange: (patch: Partial<PromptVariable>) => void
+  name: string
+}) {
+  const committed = (options ?? []).join(', ')
+  const [draft, setDraft] = useState(committed)
+  useEffect(() => { setDraft(committed) }, [committed])
+  return (
+    <input value={draft} onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onChange({ options: draft.split(',').map((s) => s.trim()).filter(Boolean) })}
+      placeholder="Choices, comma-separated" aria-label="Variable choices" name={name}
+      className="h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
   )
 }

@@ -323,6 +323,14 @@ def _serialize_store(trigger: Any, *, broken: list[str] | None = None) -> dict[s
         "spec": dict(trigger.spec or {}),
         "action": dict(trigger.workflow or {}),
         "health": trigger.health_status,
+        # 🔴 THE LIFECYCLE STATE, which this projection omitted. `Trigger.state` carries
+        # `active | paused | autopaused | parked | quarantined | retired` and reached NO surface:
+        # the list rendered an autopaused automation like a running one, so the states S139
+        # (autopause), S159 (park/unpark) and the injection quarantine all decide were invisible
+        # on the one page a user manages automations from. `health` cannot substitute — a PARKED
+        # trigger is `health: parked` but an AUTOPAUSED one is `health: failing`, and "failing" does
+        # not tell the user the automation has STOPPED.
+        "state": trigger.state,
         "run_count": trigger.run_count,
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": list(broken or []),
@@ -655,7 +663,12 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     elif cron_expr:
         spec = {"kind": "cron", "expr": str(cron_expr).strip()}
     elif at_ts:
-        spec = {"kind": "at", "at": float(at_ts), "delete_after_run": True}
+        try:
+            spec = {"kind": "at", "at": float(at_ts), "delete_after_run": True}
+        except (ValueError, TypeError):
+            return web.json_response(
+                {"error": "'at' must be a Unix timestamp in seconds"}, status=400
+            )
     else:
         return web.json_response({"error": "every, cron, or at required"}, status=400)
 
@@ -1074,6 +1087,23 @@ async def api_trigger_run(request: web.Request) -> web.Response:
     kind, raw = _split_id(request.match_info["id"])
     if kind == _STORE:
         return await _run_store(raw, request)
+    # 🔴 A STORE trigger DOES have run records. This branch was `kind != _SCHEDULE`, so
+    # every store trigger — web_watch, file, idle, run_completed, view, webhook — was told
+    # `supported: false` with a reason naming LIFECYCLE triggers, a kind it is not. Three
+    # fires of a `web_watch` trigger persisted three rows under `job_id="web_watch:feed"` via
+    # `_record_fire_outcome`, and the endpoint reported none, so the detail panel showed "no
+    # runs recorded yet" for an automation that had run three times.
+    #
+    # The store key is the FULL trigger id, which is exactly what `_split_id` returns as `raw` for a
+    # store trigger (`store:web_watch:feed` → `web_watch:feed`) — so the same `list_for_job(raw, …)`
+    # call the schedule branch makes already works. Nothing new to plumb; the branch was simply
+    # written before store triggers had a run store.
+    #
+    # No catch-all for an unrecognised kind, deliberately: `_split_id` defaults an unknown prefix to
+    # `_SCHEDULE` (a bare id is a schedule id, for backwards compatibility), so `kind` can only ever
+    # be one of the four constants here — a third branch would be unreachable. Verified by driving
+    # `mystery:x`, which resolves to `("schedule", "mystery:x")` and answers an empty schedule
+    # history rather than a fabricated "unsupported".
     if kind == _LIFECYCLE:
         return web.json_response(
             {"error": "lifecycle triggers fire on events; use /test"}, status=400
@@ -1147,31 +1177,57 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     refusal = T.manual_refusal()
     if refusal:
         return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
-    note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
+    # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
+    # the failure carried as prose in `result` — so "no action provider configured" arrived as an
+    # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run
+    # buttons, `schedule_trigger`, the `automation_run` MCP runner) read a no-op as a completed run.
+    # Still 200, not 4xx: the request was understood and answered honestly, and a trigger whose
+    # action cannot be resolved is not a malformed request — the same rule the kill-switch refusal
+    # above and the event-trigger `/test` already follow.
+    ran, note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
     paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
-    return web.json_response({"ok": True, "name": row.trigger.name, "result": note + paused_note})
+    return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
 
 
-async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> str:
+async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
     The same path `gateway._fire_file_trigger` uses — a manual Run and an autonomous fire share one
-    dispatch so their behaviour cannot drift. Returns a short status string for the run result.
+    dispatch so their behaviour cannot drift. Returns `(ran, note)`: whether the action actually
+    executed, and a short status string for the run result.
+
+    🔴 BOTH ACTION SHAPES, because a real store holds both (#395). This read the FLAT
+    `workflow["provider"]` only, and every trigger the API/CLI/app-reconciler/digest writes nests
+    its action under `workflow["inline"]` — so `provider_name` was None for essentially every stored
+    row and the Run button was a silent no-op on all of them. The docstring above claimed this path
+    "cannot drift" from the autonomous fire while `gateway._fire_store_trigger` unwrapped `inline`
+    and this one did not. `schedule_view._inline_action` and `screen.requested_capabilities` both
+    document the same two-shape contract; this now matches the idiom all three use.
+
+    Provider AND config come from the SAME resolved dict. Taking the provider from `inline` and the
+    config from the outer dict would run the right action with an empty config — a worse failure
+    than the no-op, because it looks like it worked.
+
+    `ran` is returned rather than folded into the note because the caller answers HTTP `ok` with it:
+    a run that resolved no provider is not a success, and reporting `ok: true` for it is what let
+    this bug hide behind a 200 for a whole release.
     """
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
 
     workflow = trigger.workflow or {}
-    provider_name = str(workflow.get("provider") or "")
+    inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
+    action = inline or workflow
+    provider_name = str(action.get("provider") or "")
     if not provider_name:
-        return "no action provider configured"
+        return False, "no action provider configured"
     _ensure_default_providers_registered()
     provider = get_action_provider(provider_name)
     if provider is None:
-        return f"unknown action provider {provider_name!r}"
+        return False, f"unknown action provider {provider_name!r}"
     ctx = ActionContext(event="manual.run", context="", payload=payload)
-    await provider.execute(workflow.get("config") or {}, ctx)
-    return "ran"
+    await provider.execute(action.get("config") or {}, ctx)
+    return True, "ran"
 
 
 async def _run_event(raw: str, request: web.Request) -> web.Response:
@@ -1327,7 +1383,7 @@ async def api_trigger_history(request: web.Request) -> web.Response:
                 "last_fired_at": trigger.last_fired_at,
             }
         )
-    if kind != _SCHEDULE:
+    if kind == _LIFECYCLE:
         return web.json_response(
             {
                 "runs": [],
@@ -1356,7 +1412,15 @@ async def api_trigger_history_detail(request: web.Request) -> web.Response:
     `ScheduleService`.
     """
     kind, raw = _split_id(request.match_info["id"])
-    if kind != _SCHEDULE:
+    # 🔴 A STORE trigger's run must open too. This 404'd every non-schedule kind, so the
+    # list route S166 just fixed hands the UI a `run_id` that the detail route then denies — the
+    # expander opens on nothing. `LIST -> total=1 run_id='fire-…'` followed by
+    # `DETAIL -> 404`. `get_run(raw, run_id)` already works with a store key (verified against a
+    # real `file:notes` row), so the gate was the whole defect.
+    #
+    # A lifecycle/event trigger still 404s, and correctly: it has no run store to open a record
+    # from, and 404 is the honest answer for a record that does not exist.
+    if kind not in (_SCHEDULE, _STORE):
         return web.json_response({"error": "not found"}, status=404)
     run_id = request.match_info["run_id"]
     try:

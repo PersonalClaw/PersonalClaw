@@ -46,7 +46,12 @@ export interface ApprovalSegment {
   input?: string
   purpose?: string
   risk?: 'safe' | 'caution' | 'destructive'  // effective per-invocation risk indicator
-  resolved?: 'approved' | 'rejected'
+  // The settled outcome, as the backend persisted it. Typed as the raw wire `string`
+  // (not the ApprovalResolution union) because a session persisted by another build
+  // can carry an outcome this one doesn't know — approvalOutcome() maps the known set
+  // explicitly and renders an unknown value honestly rather than as a denial.
+  // Absent = still pending → the actionable card.
+  resolved?: string
 }
 
 /** Coarse activity line — the native loop emits `activity_event {kind,text}`
@@ -278,9 +283,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // pending — persisted before the await — so render an actionable card
       // rather than falsely showing it approved. The card posts back by
       // approval_id/request_id, so prefer that for the segment id.
-      const resolved = m.meta?.resolved === 'rejected' ? 'rejected'
-        : m.meta?.resolved === 'approved' ? 'approved'
-        : undefined
+      //
+      // Pass the outcome through verbatim: only ABSENCE means pending. Matching an
+      // allowlist here silently dropped `trust`/`trust_reads`/`yolo` to undefined, so a
+      // reloaded transcript re-armed live Allow/Deny buttons for a call that had already
+      // run. approvalOutcome() owns interpreting the value, in one place, for both paths.
+      const resolved = m.meta?.resolved || undefined
       lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.

@@ -443,11 +443,24 @@ export interface ScheduleJob {
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
+  // 🔴 `id` is a FireRecord's OWN key and `did_ids`/`suppressed_ids` are lists of it. A
+  // projected row carries NO `run_id`/`job_id` — measured, `run_id` comes back `''` — so a
+  // consumer matching the split on `run_id` silently matches nothing.
+  id?: string
   run_id?: string; job_id?: string; job_name?: string
   trigger?: string                          // "manual" | "scheduled"
   started_at?: number; finished_at?: number; duration_ms?: number
   status?: string                           // "success" | "error"
   summary?: string; error?: string; trace?: string
+  // 🔴 The TYPED fire outcome. `/api/triggers/history` returns FireRecord rows, whose
+  // vocabulary is `ran | skipped_gate | blocked_injection | deferred | …` on `outcome` — NOT
+  // `status`, which a FireRecord does not carry at all. Absent from this type, every projected
+  // row arrived with `status: undefined` and the Schedule widget's local mapper fell through to
+  // its default branch, rendering a quiet-hours SUPPRESSION as "ran".
+  outcome?: string
+  reason?: string                           // the mandatory one-line why, for any non-clean row
+  weight?: string                           // "ledger" | "full" — a ledger row has no openable run
+  incomplete?: boolean                      // this row SUMMARISES N fires ("at least N")
 }
 // Task entity. The wired-today fields match the backend Task dataclass
 // (open/in_progress/done/cancelled/blocked, flat `project` string, `labels`).
@@ -712,7 +725,12 @@ export interface Trigger {
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
   // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
   store_kind?: string; created_by?: string; spec?: Record<string, unknown>
-  health?: string; broken?: string[]
+  // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
+  // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
+  // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED.
+  // `last_error` (declared with the schedule fields below — one shared interface) carries the
+  // failure the lifecycle acted on; the store panel had no reader for it.
+  health?: string; state?: string; broken?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -765,6 +783,13 @@ export interface ActionProvider {
 // working hook is dead the moment the backend wires one.
 export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
 export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
+// `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
+// action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
+// guardrail/config outcome is not a malformed request (#395: this used to answer `ok: true` with the
+// failure as prose, so a silent no-op was indistinguishable from a completed run). `refused` carries
+// the kill-switch reason when incident mode suspended the fire.
+export interface TriggerRunResult { ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean }
 // The Proposal Inbox row (GET /api/learning/proposals). `renderable` is the backend's own honesty
 // flag: a row missing provenance cannot be shown weighably, and `bulk_acceptable` already accounts
 // for it — the FE must not re-derive either, or the two will disagree about what is safe to accept.
@@ -2120,8 +2145,16 @@ export const api = {
   inboxPending: () => get<InboxItem[]>('/api/inbox/pending'),
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all
   // schedules, distinct from the per-schedule history the trigger detail uses.
+  // Returns the archive split alongside the rows: `did_ids` are fires that DID something,
+  // `suppressed_ids` the ones a gate held. Typed here because the backend has computed them since
+  // S132 and this wrapper declared only `{runs, total}`, so every consumer silently dropped them
+  // — a surface that cannot tell the two apart buries the one fire that mattered under
+  // 1439 skips, which is the exact failure the split exists to prevent.
   triggersHistory: (limit = 20, offset = 0) =>
-    get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
+    get<{
+      runs: ScheduleRun[]; total: number; schedule_total?: number; kinds?: string[]
+      summaries?: number; did_ids?: string[]; suppressed_ids?: string[]; suppressed?: number
+    }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
   unackNotification: (ts: string) => post('/api/notifications/unack', { ts }),
   ackAllNotifications: () => post('/api/notifications/ack-all'),
   deleteNotification: (ts: string) => fetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then((r) => { if (!r.ok) throw new Error('delete failed') }),
@@ -2168,9 +2201,20 @@ export const api = {
     put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/schedule:${encodeURIComponent(id)}`, _scheduleBodyToWire(body)),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
-    post(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
+    post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
   enableSchedule: (id: string, enabled: boolean) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`, { enabled }),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
+  // Per-trigger run history. `triggerId` is the FULL facade id (`schedule:abc`, `store:file:notes`)
+  // — these wrappers hardcoded a `schedule:` prefix, so a store trigger's history was unrequestable
+  // even after the backend began serving it. `supported: false` is a real answer here:
+  // a lifecycle trigger keeps no run store, and the caller renders the reason rather than an empty
+  // list, because "no runs" and "this kind records none" are different claims.
+  triggerHistory: (triggerId: string, limit = 10, offset = 0) =>
+    get<{ runs: ScheduleRun[]; total: number; supported?: boolean; reason?: string }>(
+      `/api/triggers/${encodeURIComponent(triggerId)}/history?limit=${limit}&offset=${offset}`),
+  triggerRunDetail: (triggerId: string, runId: string) =>
+    get<{ run: ScheduleRun }>(
+      `/api/triggers/${encodeURIComponent(triggerId)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   scheduleHistory: (id: string, limit = 10, offset = 0) => get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history?limit=${limit}&offset=${offset}`),
   scheduleRunDetail: (id: string, runId: string) => get<{ run: ScheduleRun }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),
@@ -2196,6 +2240,7 @@ export const api = {
   deleteTask: (id: string, provider?: string) => del(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskComments: (id: string, provider?: string) => get<{ comments: TaskComment[] }>(`/api/tasks/${encodeURIComponent(id)}/comments${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`).then((d) => d.comments),
   addTaskComment: (id: string, body: string, provider?: string) => post<TaskComment>(`/api/tasks/${encodeURIComponent(id)}/comments`, { body, provider }),
+  deleteTaskComment: (id: string, commentId: string, provider?: string) => del(`/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   readyTasks: (opts: { project?: string; task_list_id?: string } = {}) => {
     const qs = new URLSearchParams()
     if (opts.project) qs.set('project', opts.project)
@@ -2396,7 +2441,7 @@ export const api = {
     post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`, { enabled }),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   runStoreTrigger: (rawId: string, dryRun = false) =>
-    post(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
+    post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
 
   // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),

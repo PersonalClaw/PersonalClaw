@@ -62,7 +62,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.triggers.models import Outcome, Trigger
+from personalclaw.triggers.models import (
+    INERT_OUTCOMES,
+    Outcome,
+    Trigger,
+    TriggerHealth,
+    TriggerState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +132,11 @@ class TickResult:
     #: "it stopped existing" is the one state change a user most needs to see explained, and leaving
     #: an elapsed `next_fire_at` in place instead would re-fire the same past slot every tick.
     retired: list[str] = field(default_factory=list)
+    #: Trigger ids brought back from PARKED this tick, their cooldown having elapsed. Named
+    #: for the same reason `retired` is: a state change the user did not make must be explainable,
+    #: and a revival that only a log knows about is how "why did this start again?" becomes
+    #: unanswerable.
+    unparked: list[str] = field(default_factory=list)
     #: Set when the store changed under us — the caller should re-read before acting on stale state.
     store_changed: bool = False
 
@@ -140,6 +151,7 @@ class TickResult:
             "next_sleep": self.next_sleep,
             "rescheduled": list(self.rescheduled),
             "retired": list(self.retired),
+            "unparked": list(self.unparked),
             "store_changed": self.store_changed,
             "suppressed": self.suppressed,
         }
@@ -432,11 +444,23 @@ async def tick(
     by_id = {t.id: t for t in triggers}
 
     from personalclaw.triggers import firepath as fp
+    from personalclaw.triggers.missed import late_outcome
 
     # Named resource slots, read ONCE per tick. Per-trigger would re-scan every claim
     # for every due trigger; once per tick also makes the answer consistent within a tick, so two
     # triggers wanting `local-llm` in the same wake cannot both be told it is free.
     slot_map = claims.slot_holders(store, now=now, base_dir=base_dir)
+
+    # 🔴 UNPARK, before the due set is computed (§3.7 / decision 9). A parked trigger has
+    # `state != ACTIVE`, so `fires_automatically` is False and `due_ids` filters it out — so
+    # unparking AFTER that walk would never bring anything back. `autopause.unpark_due` has always
+    # implemented this decision and had NO caller, and `retry_after` was never persisted, so a
+    # trigger parked by one transient outage stayed parked forever: measured, 5 fires while active
+    # and 0 over the next 5 slots after a single `transport_unavailable`.
+    #
+    # Driven by the CLOCK rather than by an outcome, exactly as `unpark_due`'s docstring says: a
+    # parked trigger produces no fires, so nothing in the outcome path could ever revive it.
+    result.unparked.extend(_unpark_ready(store, triggers, now=now, persist=persist))
 
     for trigger_id in due_ids(triggers, now=now):
         trigger = by_id.get(trigger_id)
@@ -525,7 +549,29 @@ async def tick(
         decision = await fp.evaluate(ctx)
         row = fp.ledger_row(decision, ctx)
         row["scheduled_for"] = scheduled_for
+        # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote. §1.3 added
+        # the outcome and `scheduled_for` together — "a run that started 40 minutes after its
+        # slot is a different story from one on time that took 40 minutes" — and
+        # `validate_record` even refuses a `ran_late` row without a slot. But the tick recorded a
+        # plain `ran` however overdue the fire was: measured, 40 minutes past its slot with the
+        # lateness computable on that very row.
+        #
+        # Refined HERE because this is the one place holding both stamps: `scheduled_for` comes from
+        # the trigger's own `next_fire_at`, and `now` is when the fire was granted.
+        # `FireContext` has no `scheduled_for`, so `firepath` cannot decide it — and adding one
+        # there would duplicate a value the tick already owns.
+        row["outcome"], late_reason = late_outcome(
+            row["outcome"], scheduled_for=scheduled_for, started_at=now
+        )
+        if late_reason:
+            row["reason"] = late_reason
         result.ledger_rows.append(row)
+        # 🔴 PERSIST the suppression (§7 crit 8). The row above has always been built and
+        # returned, and nothing stored it, so a suppressed fire left no trace a user could read —
+        # the silent drop the criterion bans. Gated on `persist` so `automation doctor`'s dry run
+        # stays side-effect free, which is the whole point of that flag.
+        if persist and not decision.allowed:
+            await _persist_suppression(row, now=now)
 
         if decision.allowed:
             # Persist the granted claim so the NEXT tick (and any other process — the MCP tools and
@@ -566,6 +612,56 @@ async def tick(
     return result
 
 
+async def _persist_suppression(row: dict[str, Any], *, now: float) -> None:
+    """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171).
+
+    🔴 WHY THIS EXISTS. Criterion 8 is *"every suppressed fire appears as a typed ledger row
+    with a reason — zero silent drops"*, and `tick` builds exactly that row for every
+    evaluated trigger. It then returns it, and **no caller persisted it**:
+    `TickResult.ledger_rows` has no consumer outside this module, so `loop.tick_once`'s own
+    comment ("`tick` already persisted each next fire and wrote a ledger row") was half true
+    — the next fire was persisted, the row was not.
+
+    Measured: six ticks of a quiet-hours trigger produced six `skipped_gate` rows in memory
+    and ZERO rows in the store, so the history a user reads had no record any of it
+    happened. That is indistinguishable from a scheduler that never woke, which is the
+    silent drop the criterion bans.
+
+    Follows S136's `_record_blocked_fire` shape deliberately: that session established that
+    a suppressed fire earns a `ScheduleRun` row keyed by trigger id, with the typed outcome
+    in `trigger` and `status`. Reusing the shape means the runs feed projects these exactly
+    as it already projects a blocked one, instead of needing a second reader.
+
+    Only SUPPRESSIONS. A granted fire's row is written by `gateway._record_fire_outcome`
+    once the run settles; writing one here too would double-count every success in
+    `count_since` — the rate meter S152 built, which reads this very store.
+
+    Never raises. The fire's decision has already been made and acted on, so losing its
+    bookkeeping is strictly better than turning a correct suppression into a crashed tick.
+    """
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+        outcome = str(row.get("outcome") or "")
+        trigger_id = str(row.get("trigger_id") or "")
+        if not trigger_id or outcome not in INERT_OUTCOMES:
+            return
+        await ScheduleRunStore(config_dir()).append(
+            ScheduleRun(
+                run_id=f"skip-{int(now * 1000)}",
+                job_id=trigger_id,
+                trigger=outcome,
+                started_at=now,
+                finished_at=now,
+                status=outcome,
+                error=str(row.get("reason") or ""),
+            )
+        )
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not persist the suppression row for %s", row.get("trigger_id"))
+
+
 async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
     """Fires recorded in the last hour, or None when the ledger could not be read (S152).
 
@@ -589,6 +685,51 @@ async def _fires_in_window(trigger: Any, *, now: float) -> int | None:
     except Exception:  # noqa: BLE001 - an unreadable ledger must not break the tick
         logger.debug("could not read the rate window for %s", getattr(trigger, "id", "?"))
         return None
+
+
+def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool) -> list[str]:
+    """Return PARKED triggers to ACTIVE once their cooldown has elapsed (§3.7 / decision 9 — S159).
+
+    🔴 WHY THIS EXISTS. `autopause.unpark_due` implements the clock decision and had **no caller**,
+    and `evaluate`'s `retry_after` was never persisted — so parking was a one-way door.
+    Measured on a real store: a trigger fired 5 times over 5 slots while active, then one
+    `transport_unavailable` parked it and it fired **0 times over the next 5 slots and stayed
+    `parked` indefinitely**. `TriggerState.PARKED`'s own docstring says parking "is not a
+    failure — it is 'the resource this needs is busy', which resolves on its own", and
+    nothing made it resolve.
+
+    Mutates the passed `triggers` list in place as well as the store, because the caller has already
+    built `by_id` from it and computes `due_ids` next: a revived trigger has to be visible to THIS
+    tick, or unparking would always cost an extra full cooldown before anything fired.
+
+    Only `PARKED` is revived. `autopaused` is five true failures and wants a human; `quarantined` is
+    an injection match that `resume_state` refuses even from a button; `paused` is the user's own
+    decision. Reviving any of them on a timer would override a judgement someone made.
+
+    The counter is NOT reset here. Parking never spent the failure budget in the first place (a
+    parking exit leaves `consecutive_failures` untouched, deliberately, so a flapping credential
+    cannot clear a real streak), so clearing it on unpark would hand a genuinely failing trigger a
+    fresh budget every time an unrelated outage parked it.
+    """
+    from personalclaw.triggers import autopause
+
+    unparked: list[str] = []
+    for trigger in triggers:
+        if str(getattr(trigger, "state", "")) != TriggerState.PARKED.value:
+            continue
+        if not autopause.unpark_due(
+            retry_after=float(getattr(trigger, "park_retry_after", 0.0) or 0.0), now=now
+        ):
+            continue
+        trigger.state = TriggerState.ACTIVE.value
+        trigger.health_status = TriggerHealth.OK.value
+        trigger.park_retry_after = 0.0
+        unparked.append(trigger.id)
+        if persist:
+            store.upsert(trigger)
+    if unparked:
+        logger.info("unparked %d trigger(s) whose cooldown elapsed: %s", len(unparked), unparked)
+    return unparked
 
 
 def _since_last_fire(trigger: Any, *, now: float) -> float | None:

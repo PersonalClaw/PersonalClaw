@@ -173,6 +173,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/doctor/remediation/run` — run the engine now (confirm-gated). SEL-audited.
 - `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
+- `POST /api/durability/restore` — {snapshot, mode?, components?} — the CLI's restore, mirrored.
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/snapshots` — the archive list with the retention plan.
 - `GET /api/durability/status` — schedule state + what's due.
@@ -533,6 +534,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/tasks/{task_id}` — _(no summary)_
 - `GET /api/tasks/{task_id}/comments` — _(no summary)_
 - `POST /api/tasks/{task_id}/comments` — _(no summary)_
+- `DELETE /api/tasks/{task_id}/comments/{comment_id}` — _(no summary)_
 - `GET /api/terminal/sessions` — list active terminal sessions.
 - `POST /api/terminal/sessions` — create a new terminal session (returns session_id).
 - `DELETE /api/terminal/sessions/{session_id}` — kill a terminal session.

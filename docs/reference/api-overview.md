@@ -159,7 +159,7 @@ per-route contract.
 | `GET/POST /api/tasks` · `GET/PUT/DELETE /api/tasks/{task_id}` | Task CRUD. |
 | `GET /api/tasks/graph` · `.../ready` · `.../providers` | Dependency graph; unblocked tasks; task providers. |
 | `POST /api/tasks/search` · `POST /api/tasks/bulk` | Search; bulk operations. |
-| `GET/POST /api/tasks/{task_id}/comments` | Task comments. |
+| `GET/POST /api/tasks/{task_id}/comments` · `DELETE .../comments/{comment_id}` | Task comments. The author is server-derived from the configured username; supplying `author` in the body is rejected. |
 | `GET/POST /api/projects` · `GET/PUT/DELETE /api/projects/{project_id}` · `GET .../linked` | Project CRUD + linked entities. |
 | `GET/POST /api/task-lists` · `GET/PUT/DELETE .../{list_id}` · `POST .../{list_id}/reset` | Task lists (checklists) + reset. |
 | `GET/POST /api/workflows` · `GET/PUT/DELETE /api/workflows/{workflow_id}` | Workflow (SOP) CRUD. |

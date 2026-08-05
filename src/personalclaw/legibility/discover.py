@@ -66,7 +66,8 @@ def _try(route: str, label: str, query: dict[str, str] | None = None) -> dict[st
 
 # ── The curated catalog ──────────────────────────────────────────────────────
 # Ordered by area, then by the order a new user would naturally meet each part.
-# Every ``route`` is a real SPA destination (App.tsx ROUTABLE); Memory has no page
+# Every ``route`` is a real SPA destination (App.tsx ROUTABLE) that the SPA does not
+# redirect away from — a tip must LAND where its label promised; Memory has no page
 # of its own, so its tip points at the Memory settings panel that owns it.
 CATALOG: tuple[DiscoverTip, ...] = (
     DiscoverTip(
@@ -88,7 +89,14 @@ CATALOG: tuple[DiscoverTip, ...] = (
             "A goal loop keeps working toward an outcome across many turns while you're "
             "away, checking in only when it needs you. Launch one from a project."
         ),
-        try_it=_try("loops", "See goal loops"),
+        # ``loops/history`` — NOT the bare ``loops`` route, which LoopsSection
+        # unconditionally redirects to the ``loop`` composer (it survives only as the
+        # transient plan-review address). A "see what exists" tip that lands on a
+        # blank "What do you want to accomplish?" form answers a question the user
+        # didn't ask. The label says "loops", not "goal loops", because the list is
+        # every non-code kind (goal, general, design) — the destination is wider than
+        # the lesson, and the label must not promise the narrower thing.
+        try_it=_try("loops/history", "Open Loops"),
         engaged_key="loops",
     ),
     DiscoverTip(

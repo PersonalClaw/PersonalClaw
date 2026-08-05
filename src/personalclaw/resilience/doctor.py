@@ -714,6 +714,62 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
 # ── Register the initial probe set ───────────────────────────────────────────
 
 
+async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
+    """durability — is every path under the home claimed by the state manifest? (S179)
+
+    🔴 WHY THIS EXISTS. `durability.inventory.audit_home()` is the claims-everything guard — the
+    thing that "keeps the manifest honest … which is precisely how nine directories silently escaped
+    backup before the inventory existed". It had **no runtime caller**: the only invocations were in
+    `test_durability_inventory.py`, against a hand-built eight-path fixture. A store added after the
+    manifest was written therefore could not fail it.
+
+    Pointed at a REAL home for the first time it reported **10 unclaimed paths and 5482 undeclared
+    databases**, including `learning.db` (the learning staging log and usage counters, 135 KB of
+    live
+    state) — verified absent from a real archive. A guard that only ever runs against its own
+    fixture
+    is testing the fixture.
+
+    So the Doctor runs it on the actual home. Read-only: `audit_home` only stats and globs. Reports
+    **degraded, not failed** — unclaimed state is a backup-coverage gap the user should see and act
+    on, not a reason to declare the install broken, and failing hard here would make an unrelated
+    new file look like an outage.
+    """
+    home = ctx.home
+
+    def _read() -> dict[str, Any]:
+        from personalclaw.durability.inventory import audit_home
+
+        res = audit_home(home)
+        return {
+            "claimed": res.claimed,
+            "ignored": res.ignored,
+            # Capped: a `db_container` regression once produced 5478 rows, and an unreadable
+            # evidence blob is the same failure as no evidence.
+            "unclaimed": res.unclaimed[:20],
+            "unclaimed_count": len(res.unclaimed),
+            "undeclared_dbs": res.undeclared_dbs[:20],
+            "undeclared_db_count": len(res.undeclared_dbs),
+        }
+
+    try:
+        ev = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(ok=False, detail=f"inventory audit failed: {exc}", evidence={})
+
+    gaps = ev["unclaimed_count"] + ev["undeclared_db_count"]
+    if not gaps:
+        return ProbeResult(ok=True, detail=f"all {ev['claimed']} state paths claimed", evidence=ev)
+    return ProbeResult(
+        ok=False,
+        detail=(
+            f"{ev['unclaimed_count']} unclaimed path(s) and {ev['undeclared_db_count']} "
+            "undeclared database(s) — these are in NO snapshot"
+        ),
+        evidence=ev,
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -732,6 +788,15 @@ def _register_builtin_probes() -> None:
             Tier.CHEAP_RPC,
             _probe_status_snapshot,
             "Status snapshot readable",
+        )
+    )
+    register_probe(
+        Probe(
+            "durability.inventory",
+            "durability",
+            Tier.CAPABILITY,
+            _probe_state_inventory,
+            "Every state path is claimed by the manifest",
         )
     )
     register_probe(

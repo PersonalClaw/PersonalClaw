@@ -11,6 +11,31 @@ import { Markdown } from '../../../ui/Markdown'
 import { ToolOutput } from '../../tools/ToolOutput'
 import type { ToolSegment } from '../chatTypes'
 
+/** Resolve the structured input OBJECT for a segment, from either the live
+ *  `inputObj` (native frames) OR by parsing a JSON-string `input` (the common
+ *  case: persisted history, ACP, and the `input_preview` string). Returns null
+ *  when there's no object to render (scalar/empty/non-JSON string). This is what
+ *  makes schema-driven field rendering work for OLD sessions + ACP, not just
+ *  freshly-streamed native frames — the gap that left raw JSON in old cards.
+ *
+ *  It lives HERE, beside the primitives both sides already import, because every
+ *  renderer needs it: the input path, the native overrides, and the output
+ *  renderers that read the call's input (web_fetch's URL line). Homing it in the
+ *  registry instead would force `native.tsx` to import back from its own importer. */
+export function resolveInputObj(seg: ToolSegment): Record<string, unknown> | null {
+  if (seg.inputObj && typeof seg.inputObj === 'object' && !Array.isArray(seg.inputObj)) {
+    return seg.inputObj as Record<string, unknown>
+  }
+  const raw = (seg.input ?? '').trim()
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    } catch { /* not JSON → fall through */ }
+  }
+  return null
+}
+
 /** The raw monospace block — the floor every renderer falls back to. Accepts a
  *  string or a rendered child (so richer renderers can nest under the label). */
 export function RawBlock({ label, children }: { label: string; children: ReactNode }) {

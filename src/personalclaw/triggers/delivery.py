@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -241,6 +243,136 @@ def build_delivery(
     )
 
 
+def route_for(trigger: Any, *, ok: bool) -> str:
+    """The destination this OUTCOME routes to (decision 13 / R12 — S158).
+
+    🔴 WHY THIS EXISTS. `Trigger.failure_delivery` is declared, persisted, round-tripped by
+    `to_dict`/`from_dict`, defaulted by the migration and accepted by `automation_update` — and read
+    by NOTHING. Its own comment states the contract it was meant to enforce: *"A SEPARATE route for
+    failures (R12). Failures reach the inbox even when `delivery` is none: an automation the user
+    asked to stay quiet still has to be able to say it broke."*
+
+    Measured before writing: `_deliver_fire_outcome` passed `destination=trigger.delivery`
+    unconditionally, so the failure route was never consulted — and a `delivery: "none"` automation
+    that broke reported its failure through the silent channel.
+
+    Falls back to `delivery` when `failure_delivery` is empty, and only for a FAILURE — a success
+    must never inherit the failure route, or a quiet automation would start announcing its ordinary
+    runs through the inbox.
+    """
+    if ok:
+        return str(getattr(trigger, "delivery", "") or "none")
+    failure = str(getattr(trigger, "failure_delivery", "") or "")
+    return failure or str(getattr(trigger, "delivery", "") or "none")
+
+
+#: Volatile patterns stripped before hashing a failure for dedup: ISO timestamps and UUIDs. Without
+#: this, the same outage produces a fresh hash every minute simply because its message carries the
+#: clock, and dedup never fires.
+_VOLATILE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"  # ISO timestamps
+    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",  # UUIDs
+    re.IGNORECASE,
+)
+_EPOCH_RE = re.compile(r"\b\d{10,13}\b")
+_EPOCH_WINDOW_SECS = 300  # strip epoch values within ±5 min of now
+
+
+def failure_hash(text: str) -> str:
+    """Normalize volatile data and return a 16-hex-char SHA-256 prefix.
+
+    Strips ISO timestamps, UUIDs, and any 10-13 digit number that looks like an epoch within ±5
+    minutes of now. Non-epoch numeric ids (account ids, build ids) are preserved because they fall
+    outside the window — two failures differing only in a build id are genuinely different failures.
+
+    Truncated to 64 bits: sufficient for a 1:1 comparison against a single previous hash.
+
+    MOVED here from `gateway._result_hash` (S161), which had been left with **zero callers**
+    when the legacy failure-dedup control was lost in the migration — along with four other
+    orphaned constants. It lives beside its only reader now rather than in the orchestrator,
+    so a `triggers` module does not have to import the gateway.
+    """
+    now = time.time()
+    lo = now - _EPOCH_WINDOW_SECS
+    hi = now + _EPOCH_WINDOW_SECS
+
+    def _strip_epoch(m: "re.Match[str]") -> str:
+        v = int(m.group())
+        ts = v / 1000 if v > 9_999_999_999 else v  # 13 digits → millis
+        return "" if lo <= ts <= hi else m.group()
+
+    text = _VOLATILE_RE.sub("", text)
+    text = _EPOCH_RE.sub(_strip_epoch, text)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+#: How long an IDENTICAL failure stays deduped before it re-alerts (R7's `dedupe_hash`).
+#:
+#: 3600s, carried over verbatim from the legacy scheduler's `_FAILURE_REMINDER_SECS` — a
+#: constant that survived the migration in `gateway.py` and had **no reader left**, because the
+#: control it belonged to was lost. Preserved rather than re-chosen: an operator who learned
+#: "a broken cron nags me hourly" should not have that change silently.
+FAILURE_REMINDER_SECS = 3600.0
+
+
+def suppress_repeat_failure(
+    *, error: str, last_hash: str, last_at: float, now: float
+) -> tuple[bool, str]:
+    """Whether this failure repeats the last one inside the reminder window (R7 — S161).
+
+    Returns `(suppress, hash_of_this_error)`. The caller persists the hash either way, so a
+    NEW error resets the window rather than inheriting the old one's.
+
+    🔴 WHY THIS EXISTS. `failure_policy.dedupe_hash` is written by the migration from the
+    legacy `last_failure_hash` and read by nothing — the last unread key on that field. The
+    legacy `gateway.py` had the whole control (`is_dup = fh == job.last_failure_hash` inside a
+    1h window, with `consecutive_failures` still advancing so autopause was unaffected); the
+    unified fire path kept the constant and dropped the check. Measured: a trigger failing with
+    the SAME error on 6 consecutive fires produced **6 notifications**, because `event_id`
+    dedupes the same event REDELIVERED (same `run_id`), not different fires with one error.
+
+    **Hashed from the ERROR TEXT, not from `last_error_summary`.** That field holds
+    `PauseDecision.reason` — `"failure 1 of 5"`, `"failure 2 of 5"` — which changes on every
+    failure even when the cause is identical, so hashing it could never dedupe once.
+
+    Volatile data is normalised by `failure_hash` (timestamps, UUIDs, epoch-looking numbers),
+    so one outage does not mint a fresh hash every minute because its message carries a clock.
+
+    **Suppression is capped by the window, never unbounded**: a still-broken automation
+    re-alerts hourly, because "it stopped telling me" and "it got fixed" must not look alike.
+    An empty error or a missing prior hash never suppresses — the first alert always goes out.
+    """
+    text = (error or "").strip()
+    if not text:
+        return False, ""
+    digest = failure_hash(text)
+    if not last_hash or digest != last_hash:
+        return False, digest
+    if last_at <= 0:
+        return False, digest
+    return (now - last_at) < FAILURE_REMINDER_SECS, digest
+
+
+def is_muted(destination: str) -> bool:
+    """Whether this destination means "do not notify" (decision 13's `none`).
+
+    🔴 THE SECOND HALF. `Delivery` carried `destination` and `to_notify_kwargs` **dropped it**, so
+    `delivery: "none"` silenced nothing: measured, a `none` trigger notified exactly like an `inbox`
+    one. The field existed, round-tripped, and was inert at the only point that could honour it.
+
+    Checked HERE rather than by teaching `state.notify` about triggers. R18 says *"the
+    substrate does not build a second notification path"*, and `notify` owns GLOBAL policy
+    (mute-all, severity, quiet hours) plus per-(source, kind) rules. Per-TRIGGER routing is
+    this substrate's own concern, so it is decided before the shared chokepoint is called,
+    never inside it.
+
+    An empty destination is NOT muted: `from_dict` defaults `delivery` to `"none"` explicitly, so a
+    blank value means a caller built a `Delivery` without one, and defaulting that to silence would
+    let a bug turn into missing alerts.
+    """
+    return str(destination or "").strip().lower() == "none"
+
+
 def is_duplicate(delivery: Delivery, delivered_ids: "set[str] | list[str] | None") -> bool:
     """Whether this delivery has already gone out — the "does not double-ping" half.
 
@@ -264,6 +396,12 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     raises: a notification failure must not fail the run that completed, which already happened.
     """
     if state is None:
+        return False
+    # 🔴 HONOUR `destination: none`. `to_notify_kwargs` drops `destination`, so before this
+    # check a muted automation notified exactly like an `inbox` one. Enforced HERE rather than at
+    # each caller so a future emitter inherits it — as redaction already does at this boundary.
+    if is_muted(delivery.destination):
+        logger.debug("delivery %s suppressed: destination is none", delivery.event_id)
         return False
     if is_duplicate(delivery, delivered_ids if isinstance(delivered_ids, (set, list)) else None):
         logger.debug("delivery %s already sent; not double-pinging", delivery.event_id)

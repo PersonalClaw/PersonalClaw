@@ -426,6 +426,7 @@ async def start_dashboard(
     app.router.add_get("/api/durability/status", handlers.api_durability_status)
     app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
     app.router.add_post("/api/durability/run", handlers.api_durability_run)
+    app.router.add_post("/api/durability/restore", handlers.api_durability_restore)
     app.router.add_get("/api/doctor", handlers.api_doctor)
     # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
     # registration order — otherwise "fixes"/"crash"/"remediation" bind as a capability).

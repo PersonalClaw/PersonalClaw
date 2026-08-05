@@ -1,4 +1,5 @@
 import type { WorkflowNodeState } from '../../lib/api'
+import { byInstancePath } from './instancePathOrder'
 import { nodeDepth } from './workflowMeta'
 
 /** Grouping a flat node list into collapsible containers (WF2 Slice 10b).
@@ -45,7 +46,7 @@ const TERMINAL = new Set([
  *  the projection carries — asking the FE to re-parse the spec tree to render its own rows would
  *  put two sources of truth on screen. */
 export function buildTree(nodes: WorkflowNodeState[]): TreeRow[] {
-  const sorted = [...nodes].sort((a, b) => a.instance_path.localeCompare(b.instance_path))
+  const sorted = [...nodes].sort(byInstancePath)
   return sorted.map((node) => {
     const prefix = `${node.instance_path}.`
     const descendants = sorted

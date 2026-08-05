@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 import pytest
 
@@ -350,6 +351,69 @@ def _frontend_kind_keys():
         if key and (key.isidentifier() or "." in key):
             keys.add(key)
     return keys
+
+
+def _frontend_kind_labels():
+    """The SPA display map's ``key -> label``, or None when ``web/`` is absent.
+
+    Same block/line parse as `_frontend_kind_keys`, extended to the `label:` string, so the
+    two halves of the map (which keys exist, what each is CALLED) are checked by the same
+    reader against the same source.
+    """
+    meta = SRC.parent.parent / "web" / "src" / "pages" / "notifications" / "notificationMeta.ts"
+    if not meta.exists():
+        return None
+    text = meta.read_text(encoding="utf-8")
+    block = text.split("const KINDS", 1)[1].split("}\n", 1)[0]
+    labels = {}
+    for line in block.splitlines():
+        stripped = line.strip()
+        if ":" not in line or "{" not in line or stripped.startswith("//"):
+            continue
+        key = line.split(":", 1)[0].strip().strip("'\"")
+        found = re.search(r"label:\s*'([^']*)'", line)
+        if key and found and (key.isidentifier() or "." in key):
+            labels[key] = found.group(1)
+    return labels
+
+
+def _registry_labels_for(key: str) -> set[str]:
+    """Every label the registry declares for a frontend map key.
+
+    Normally one: a wire string resolves to exactly one registration. Returns MORE than one
+    only for a bare `kind` registered under two sources — `failed` is the sole such case
+    (`cron/failed` "Scheduled job failed" and `loop/failed` "Loop failed"), and since the FE
+    map is keyed by bare kind alone it cannot express both. Either is accepted here rather
+    than picking a winner in the test; the map's own comment records which it chose and why.
+    """
+    pair = nk._WIRE_TO_PAIR.get(key)
+    if pair is not None:
+        return {nk.resolve_kind(*pair).label}
+    return {k.label for k in nk.all_kinds() if k.kind == key}
+
+
+def test_frontend_labels_are_the_registry_declared_labels():
+    """The display map's own header calls the registry "the authority for the wording" and
+    says to add a row "with the SAME label" — this is the assertion that holds it to that.
+
+    The colocated vitest suite can only check a label is not the raw wire key
+    (`label !== 'info'`), which `info -> 'Info'` passes while being exactly the forbidden
+    drift. Only this tier can read the registry, so this is where the contract lives.
+    """
+    labels = _frontend_kind_labels()
+    if labels is None:
+        pytest.skip("web/ not present in this checkout")
+    assert labels, "failed to parse any labels out of the frontend kind map"
+    drift = {
+        key: (label, sorted(expected))
+        for key, label in labels.items()
+        if (expected := _registry_labels_for(key)) and label not in expected
+    }
+    assert not drift, (
+        "frontend labels disagree with the registry's declared display names "
+        f"(key: frontend vs registry): {drift}. notification_kinds.py owns the wording — "
+        "copy its label verbatim rather than inventing one here."
+    )
 
 
 def _wire_vocabulary():
