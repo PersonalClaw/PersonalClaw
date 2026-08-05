@@ -1402,3 +1402,202 @@ def test_the_widened_restore_is_BOUNDED_by_the_inventory(tmp_path: Path) -> None
     assert [p for p in got if p not in declared] == [], "restore must copy only declared paths"
     for hostile in ("evil", ".ssh", ".env"):
         assert hostile not in got
+
+
+# ── 🔴 the remaining append_dedup entries, and the one that must NOT merge (S178) ──
+
+
+def _sel_home(root: Path, tools: list[str], *, key: bytes | None = None) -> Path:
+    """A home with a real HMAC-signed SEL log. Signed through the real writer, because the whole
+    question is whether imported rows verify — a hand-built fixture could not answer it."""
+    import importlib
+
+    root.mkdir(parents=True, exist_ok=True)
+    if key is not None:
+        (root / "sel_hmac.key").write_bytes(key)
+    os.environ["PERSONALCLAW_HOME"] = str(root)
+    from personalclaw import sel as sel_mod
+
+    importlib.reload(sel_mod)
+    sel_mod.SecurityEventLog._instance = None
+    sel_mod.SecurityEventLog._initialized = False
+    log = sel_mod.SecurityEventLog()
+    for t in tools:
+        log.log_tool_invocation(tool_name=t, outcome="completed", session_key="s")
+    return root
+
+
+def _sel_verify(root: Path) -> tuple[int, int]:
+    import importlib
+
+    os.environ["PERSONALCLAW_HOME"] = str(root)
+    from personalclaw import sel as sel_mod
+
+    importlib.reload(sel_mod)
+    sel_mod.SecurityEventLog._instance = None
+    sel_mod.SecurityEventLog._initialized = False
+    return sel_mod.SecurityEventLog().verify_integrity(max_entries=None)
+
+
+@pytest.fixture(autouse=False)
+def _restore_home():
+    prev = os.environ.get("PERSONALCLAW_HOME")
+    yield
+    if prev is None:
+        os.environ.pop("PERSONALCLAW_HOME", None)
+    else:
+        os.environ["PERSONALCLAW_HOME"] = prev
+
+
+def test_the_SEL_merge_is_SKIPPED_when_the_HMAC_KEY_DIFFERS(tmp_path, _restore_home) -> None:
+    """🔴 SECURITY, and the reason a generic `append_dedup` executor would have been wrong.
+
+    `inventory.py` declares `security_events.jsonl` with `merge=append_dedup`. Appending the
+    snapshot's rows unconditionally was measured against two homes with different `sel_hmac.key`
+    files: `verify_integrity` reported **checked=5, valid=2**, logging "SEL HMAC mismatch" for every
+    imported row. A restore would have made the tamper-EVIDENT log report tampering — turning the
+    surface a user consults to ask "was I compromised?" into a false positive they cannot clear
+    except by rotating the chain.
+
+    Fail-CLOSED here, unlike the other merges: a missing row is strictly better than an
+    unverifiable one, because an audit trail's whole value is that a mismatch means something.
+    """
+    from personalclaw.snapshot import _merge_security_events
+
+    snap = _sel_home(tmp_path / "snap", ["snapX", "snapY", "snapZ"])
+    live = _sel_home(tmp_path / "live", ["liveX"])  # its own, different key
+
+    _merge_security_events(snap, live)
+
+    checked, valid = _sel_verify(live)
+    assert checked == valid, f"{checked - valid} row(s) now report tampering"
+    assert "snapX" not in (live / "security_events.jsonl").read_text()
+
+
+def test_the_SEL_merge_RECOVERS_history_when_the_KEY_MATCHES(tmp_path, _restore_home) -> None:
+    """The case worth merging, and why the guard is a key comparison rather than a blanket refusal.
+
+    `security`'s key restore is copy-if-missing, so a WIPED home takes the snapshot's key — and then
+    the snapshot's rows verify under it. Skipping unconditionally would discard recoverable audit
+    history in exactly the scenario a restore exists for.
+    """
+    from personalclaw.snapshot import _merge_security_events
+
+    snap = _sel_home(tmp_path / "snap", ["snapA", "snapB", "snapC"])
+    key = (snap / "sel_hmac.key").read_bytes()
+    live = _sel_home(tmp_path / "live", ["liveA"], key=key)
+
+    _merge_security_events(snap, live)
+
+    checked, valid = _sel_verify(live)
+    assert checked == 4, "the snapshot's 3 rows must be recovered beside the live one"
+    assert valid == checked, "every recovered row must verify under the shared key"
+    assert "snapA" in (live / "security_events.jsonl").read_text()
+
+
+def test_the_SEL_merge_is_IDEMPOTENT(tmp_path, _restore_home) -> None:
+    """Deduped on `event_id`, so a repeated restore drill cannot double the audit log."""
+    from personalclaw.snapshot import _merge_security_events
+
+    snap = _sel_home(tmp_path / "snap", ["a", "b"])
+    key = (snap / "sel_hmac.key").read_bytes()
+    live = _sel_home(tmp_path / "live", ["c"], key=key)
+
+    _merge_security_events(snap, live)
+    once = (live / "security_events.jsonl").read_text()
+    _merge_security_events(snap, live)
+    assert (live / "security_events.jsonl").read_text() == once
+
+
+def test_the_FEEDBACK_merge_recovers_rows_and_dedupes_on_id(tmp_path: Path) -> None:
+    """🔴 The third `append_dedup` entry with no executor. Carries no HMAC, so plain dedup is
+    safe — keyed on `FeedbackRecord.id` rather than the whole line, because the record round-trips
+    through a serializer on both sides."""
+    from personalclaw.snapshot import _merge_feedback
+
+    snap, pc = tmp_path / "s", tmp_path / "p"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "feedback.jsonl").write_text(
+        '{"id":"f1","verdict":"up"}\n{"id":"f2","verdict":"down"}\n', encoding="utf-8"
+    )
+    (pc / "feedback.jsonl").write_text(
+        '{"id":"f1","verdict":"up"}\n{"id":"live","verdict":"up"}\n', encoding="utf-8"
+    )
+
+    _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+
+    ids = [json.loads(ln)["id"] for ln in (pc / "feedback.jsonl").read_text().splitlines() if ln]
+    assert ids == ["f1", "live", "f2"], "f1 must dedupe, f2 must arrive, live must survive"
+
+    _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+    ids2 = [json.loads(ln)["id"] for ln in (pc / "feedback.jsonl").read_text().splitlines() if ln]
+    assert ids2 == ids, "a repeated restore must not grow the log"
+
+
+def test_the_feedback_merge_does_NOT_re_apply_its_CAP(tmp_path: Path) -> None:
+    """`feedback.py` owns its own retention ("atomic trim at 2x cap"). Re-implementing the bound
+    here would be the duplication S175 deleted from the run store after one copy silently reverted
+    the other."""
+    import inspect
+
+    from personalclaw import snapshot
+
+    body = inspect.getsource(snapshot._merge_feedback).split('"""')[-1]
+    assert "_CAP" not in body
+    assert "trim" not in body
+
+
+def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> None:
+    """The sweep's closing assertion. Six entries declare `append_dedup`; each must now be handled,
+    and by a REASON rather than by accident:
+
+    * `cron-history` — `_merge_run_history` (S176)
+    * `notifications.jsonl` — `_merge_notifications` (pre-existing)
+    * `security_events.jsonl` — `_merge_security_events`, key-gated (S178)
+    * `feedback.jsonl` — `_merge_feedback` (S178)
+    * `crashes`, `sessions` — directories on disk, so the generic per-file tree copy (S177) already
+      gives them entity-level union; a line-dedup executor would be the wrong shape entirely.
+
+    🔴 **A declaration discrepancy found while asserting this:** `sessions` is declared
+    `kind=jsonl_append`, but on disk it is a nested tree (`sessions/<key>/tool_results/*.json`),
+    verified against both the dev home and the real one. The `kind` is wrong, not the merge — the
+    tree copy is the right executor either way, which is why this is recorded rather than "fixed"
+    by changing a declaration whose other readers I have not swept. Asserted as-declared so the
+    discrepancy is visible instead of silently encoded.
+
+    Pinned as a test because the failure mode is a SEVENTH entry being added later and silently
+    inheriting copy-if-missing.
+    """
+    import inspect
+
+    from personalclaw import snapshot
+    from personalclaw.durability import inventory as inv
+
+    declared = {e.path: e for e in inv.INVENTORY if e.merge == inv.MERGE_APPEND_DEDUP}
+    assert set(declared) == {
+        "cron-history",
+        "notifications.jsonl",
+        "security_events.jsonl",
+        "feedback.jsonl",
+        "crashes",
+        "sessions",
+    }, "a new append_dedup entry appeared — give it an executor, not copy-if-missing"
+
+    # Named explicitly rather than derived from the path: `cron-history`'s executor is
+    # `_merge_run_history`, so a stem-to-symbol guess would pass for the wrong reason.
+    merge_src = inspect.getsource(snapshot._do_merge)
+    executors = {
+        "cron-history": "_merge_run_history(",
+        "notifications.jsonl": "_merge_notifications(",
+        "security_events.jsonl": "_merge_security_events(",
+        "feedback.jsonl": "_merge_feedback(",
+    }
+    for path, call in executors.items():
+        assert call in merge_src, f"{path} has no executor reachable from _do_merge"
+        assert hasattr(snapshot, call.rstrip("(")), f"{call} is not defined"
+    # The two directory-shaped ones ride the generic tree pass. `sessions` declares
+    # `jsonl_append` while being a tree on disk (see the docstring) — pinned as-is so the
+    # discrepancy stays visible.
+    assert declared["crashes"].kind == "json_entity_dir"
+    assert declared["sessions"].kind == "jsonl_append"
