@@ -379,7 +379,7 @@ def test_cleanup_orphaned_artifacts_removes_derived_only(tmp_path, monkeypatch):
 
 def test_runner_persists_node_phases(store):
     # The ground-truth per-node phase map is persisted so the UI shows what actually
-    # ran on reload (not a reconstruction). A clean note run → every node 'done'.
+    # ran on reload (not a reconstruction). A clean note run → the graph node is 'done'.
     ensure_nodes_registered()
     iid = store.create_typed_item(item_type="note", title="N", content="hi there")
     _run(ingest_item(store, iid))
@@ -387,7 +387,83 @@ def test_runner_persists_node_phases(store):
     assert phases.get("passthrough") == "done"
     # terminal stages recorded too
     assert phases.get("insights") in ("done", "failed")
+    # No embedder was passed, so `embed` wrote no vector — it must NOT claim 'done'.
+    assert phases.get("embed") == "skipped"
+
+
+class _VectorEmbedder:
+    """An embedder that actually yields a vector, so `embed` has something to write."""
+
+    def is_available(self):
+        return True
+
+    def embed_for_item(self, title, summary, content=None):
+        return [0.5, 0.25, 0.125, 0.0625]
+
+
+def test_embed_phase_is_skipped_when_no_vector_is_written(store):
+    """The regression this locks (#481): the terminal phases were force-set to 'done'
+    regardless of outcome, so an instance with embeddings OFF reported `embed: done` for
+    every item while storing zero vectors — the ingest view showed a disabled, model-less
+    step as healthy. The phase must follow the vector.
+
+    Measured on a live instance before the fix: embedding/status `{"enabled": false,
+    "embedded_items": 0}` yet all 26 items carried `node_phases.embed == 'done'`.
+    """
+    ensure_nodes_registered()
+
+    # No embedder at all (embeddings disabled) → skipped, and no vector on the item.
+    off = store.create_typed_item(item_type="note", title="Off", content="body text")
+    _run(ingest_item(store, off, embedder=None))
+    phases = (store.get_item(off).get("file_metadata") or {}).get("node_phases") or {}
+    assert phases.get("embed") == "skipped"
+    assert not store.get_item(off).get("has_embedding")
+
+    # An embedder that is present but yields nothing (unbound/unavailable model returns
+    # None rather than raising) is equally a no-op → still not 'done'.
+    class _NoVector(_VectorEmbedder):
+        def embed_for_item(self, title, summary, content=None):
+            return None
+
+    none_vec = store.create_typed_item(item_type="note", title="None", content="body text")
+    _run(ingest_item(store, none_vec, embedder=_NoVector()))
+    phases = (store.get_item(none_vec).get("file_metadata") or {}).get("node_phases") or {}
+    assert phases.get("embed") == "skipped"
+    assert not store.get_item(none_vec).get("has_embedding")
+
+    # And the positive control: a real vector WAS written → 'done' is the truthful phase,
+    # so the fix reports the outcome rather than merely never saying 'done'.
+    on = store.create_typed_item(item_type="note", title="On", content="body text")
+    _run(ingest_item(store, on, embedder=_VectorEmbedder()))
+    phases = (store.get_item(on).get("file_metadata") or {}).get("node_phases") or {}
     assert phases.get("embed") == "done"
+    assert store.get_item(on).get("has_embedding")
+
+
+def test_terminal_stage_phases_reflect_each_stage_outcome(store):
+    """The other two forced phases (#481). `intents` is wholly model-dependent — with no
+    pool it cannot match, so it reports 'skipped'. `entities` is NOT: its alias pre-pass is
+    a deliberate model-free guarantee that still links, so it reports 'done'. The two must
+    not be collapsed into one blanket value."""
+    ensure_nodes_registered()
+    iid = store.create_typed_item(item_type="note", title="N", content="Redis caches sessions.")
+    _run(ingest_item(store, iid, insights_pool=None))
+    phases = (store.get_item(iid).get("file_metadata") or {}).get("node_phases") or {}
+    assert phases.get("intents") == "skipped"  # no pool → nothing matched
+    assert phases.get("entities") == "done"  # the pre-pass ran without a model
+
+    # A stage that ERRORS is reported as failed, not silently 'done'.
+    from personalclaw.knowledge import extractor as extractor_mod
+
+    async def _boom(*a, **k):
+        raise RuntimeError("extractor exploded")
+
+    other = store.create_typed_item(item_type="note", title="N2", content="Redis caches.")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(extractor_mod.EntityExtractor, "extract", _boom)
+        _run(ingest_item(store, other, insights_pool=object()))
+    phases = (store.get_item(other).get("file_metadata") or {}).get("node_phases") or {}
+    assert phases.get("entities") == "failed"
 
 
 def test_runner_document_reads_file(store, tmp_path):
