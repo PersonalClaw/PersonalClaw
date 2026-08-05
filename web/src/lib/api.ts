@@ -448,6 +448,15 @@ export interface ScheduleRun {
   started_at?: number; finished_at?: number; duration_ms?: number
   status?: string                           // "success" | "error"
   summary?: string; error?: string; trace?: string
+  // 🔴 The TYPED fire outcome (S163). `/api/triggers/history` returns FireRecord rows, whose
+  // vocabulary is `ran | skipped_gate | blocked_injection | deferred | …` on `outcome` — NOT
+  // `status`, which a FireRecord does not carry at all. Absent from this type, every projected
+  // row arrived with `status: undefined` and the Schedule widget's local mapper fell through to
+  // its default branch, rendering a quiet-hours SUPPRESSION as "ran".
+  outcome?: string
+  reason?: string                           // the mandatory one-line why, for any non-clean row
+  weight?: string                           // "ledger" | "full" — a ledger row has no openable run
+  incomplete?: boolean                      // this row SUMMARISES N fires ("at least N")
 }
 // Task entity. The wired-today fields match the backend Task dataclass
 // (open/in_progress/done/cancelled/blocked, flat `project` string, `labels`).
@@ -2120,8 +2129,16 @@ export const api = {
   inboxPending: () => get<InboxItem[]>('/api/inbox/pending'),
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all
   // schedules, distinct from the per-schedule history the trigger detail uses.
+  // Returns §1.3's archive split alongside the rows: `did_ids` are fires that DID something,
+  // `suppressed_ids` the ones a gate held. Typed here because the backend has computed them since
+  // S132 and this wrapper declared only `{runs, total}`, so every consumer silently dropped them
+  // (S163) — a surface that cannot tell the two apart buries the one fire that mattered under
+  // 1439 skips, which is the exact failure the split exists to prevent.
   triggersHistory: (limit = 20, offset = 0) =>
-    get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
+    get<{
+      runs: ScheduleRun[]; total: number; schedule_total?: number; kinds?: string[]
+      summaries?: number; did_ids?: string[]; suppressed_ids?: string[]; suppressed?: number
+    }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
   unackNotification: (ts: string) => post('/api/notifications/unack', { ts }),
   ackAllNotifications: () => post('/api/notifications/ack-all'),
   deleteNotification: (ts: string) => fetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then((r) => { if (!r.ok) throw new Error('delete failed') }),

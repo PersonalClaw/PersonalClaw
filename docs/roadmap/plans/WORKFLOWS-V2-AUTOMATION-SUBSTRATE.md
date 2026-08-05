@@ -5254,3 +5254,65 @@ summary at all, so stale evidence cannot be mistaken for a current problem — v
 - **Every dict field on `Trigger` has now been key-swept**: `spec` (S149), `gates` (S150-S152, S154),
   `capabilities` (S116/S118), `workflow` (S147), `failure_policy` (S160/S161) and `retry` (here,
   honestly deferred with the reason measured).
+
+### S163 — a failed automation rendered as "never run", in neutral grey (§1.3 / crit 8)
+
+**Three defects in one chain**, each found by driving the layer below rather than reading it. The
+entry point was the last unswept field on `FireRecord`: `incomplete`, which `feed_response` reads to
+emit a `summaries` count — so the backend was correct and the question became what the frontend does
+with it.
+
+**(1) The typed vocabulary was dropped at the TypeScript boundary.** `ScheduleRun` declared
+`status?: string` and no `outcome` at all. But `/api/triggers/history` returns `FireRecord` rows, and
+a FireRecord carries **no `status` field**:
+
+```
+a SUPPRESSED row on the wire:
+  outcome     = 'skipped_gate'
+  reason      = 'quiet window'
+  status      = None            ← what ScheduleWidget switched on
+```
+
+**(2) The widget had its own mapper.** `ScheduleWidget` carried a local three-branch `outcome()` keyed
+on `status`, so every projected row arrived `undefined`, hit the default branch, and a quiet-hours
+suppression rendered as **"ran"** with an info dot. That is the feed reporting the machine did work it
+explicitly had not done — the inverse of criterion 8's "zero silent drops", and worse than showing
+nothing, because the user has no reason to look further. Replaced with the shared `statusMeta` S137
+already built.
+
+**(3) 🔴 And `statusMeta` itself was incomplete — found by my own new test.** Writing
+`expect(statusMeta('ran').label).not.toBe('never run')` failed. S137 mapped the store's `status` words
+(`success`/`failure`/`timeout`/`launched`) and the `skipped_*` family, and missed three of the twelve
+`Outcome` members:
+
+```
+ran_late  -> label="never run"  tone=--color-on-surface-low
+failed    -> label="never run"  tone=--color-on-surface-low
+```
+
+**`statusMeta('failed')` returned "never run" in neutral grey**, so a genuinely broken automation was
+pixel-identical to one that had never run — the single pair a user must never confuse. This is why the
+widget fix alone would have been insufficient: routing the correct value into a mapper that answers
+wrongly just moves the defect.
+
+`ran_late` gets its own warning-toned label rather than folding into `ok`, because §1.3 records
+`scheduled_for` beside `started_at` precisely so lateness is a measurable fact rather than an
+impression — a run 40 minutes after its slot is a different story from one on time.
+
+**Also typed the archive split through the wrapper.** The backend has emitted `did_ids`,
+`suppressed_ids`, `suppressed` and `summaries` since S132 (#454), and `api.triggersHistory` declared
+only `{runs, total}` — so every consumer discarded them at the type boundary. Measured: 11
+suppressions plus 1 real fire come back as one flat list, which `ScheduleWidget` then slices to 6, so
+the fire that mattered can be pushed off the widget entirely. That is the exact failure §1.3's split
+was built to prevent, and the split was reaching no surface.
+
+**Ships a completeness test** restating the closed backend vocabulary and asserting no member renders
+as "never run", plus one pinning `failed` as visually distinct from never-run. Every one of these bugs
+lived in the same place — a default branch swallowing a value nobody had enumerated — so the guard
+enumerates.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**638 passed, 53 files** · full `pytest -n 4 --dist worksteal` green.
+
+- **`FireRecord` is now fully swept.** `acted_on` remains the one unwritten field and is documented as
+  pre-allocated for LEARNING-FLYWHEEL by explicit design, not an oversight.

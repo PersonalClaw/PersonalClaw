@@ -41,6 +41,18 @@ export function statusMeta(s?: string | null): StatusMeta {
   // job.last_status is "ok"/"error"; run.status is "success"/"failure"/"timeout"/"launched".
   if (s === 'ok' || s === 'success') return { label: 'ok', tone: 'var(--color-ok)', icon: CheckCircle2 }
   if (s === 'error' || s === 'failure') return { label: 'error', tone: 'var(--color-danger)', icon: XCircle }
+  // 🔴 THE FIRE-RECORD VOCABULARY (S163). S137 mapped the store's `status` words
+  // (`success`/`failure`) and the suppression family, and missed the three `Outcome` members a
+  // FireRecord most often carries. Measured: `statusMeta('failed')` returned **"never run"** in
+  // neutral grey — a genuinely FAILED automation rendered identically to one that had never run,
+  // which is the one pair a user must never confuse. `ran`/`ran_late` were equally invisible.
+  //
+  // `ran_late` keeps a distinct label rather than folding into `ok`: §1.3 records
+  // `scheduled_for` beside `started_at` precisely so lateness is a fact, not an impression, and a
+  // run 40 minutes after its slot is a different story from one on time.
+  if (s === 'ran') return { label: 'ran', tone: 'var(--color-ok)', icon: CheckCircle2 }
+  if (s === 'ran_late') return { label: 'ran late', tone: 'var(--color-warning)', icon: Clock }
+  if (s === 'failed') return { label: 'failed', tone: 'var(--color-danger)', icon: XCircle }
   if (s === 'timeout') return { label: 'timed out', tone: 'var(--color-danger)', icon: Clock }
   // "launched": started a background turn — honest "started ≠ succeeded" (T7).
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
