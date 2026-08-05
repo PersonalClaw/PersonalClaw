@@ -193,6 +193,47 @@ class TestChangeDetection:
         finally:
             conn.close()
 
+    def test_a_wal_checkpoint_does_NOT_dirty_a_store(self, tmp_path):
+        """🔴 The `-wal` sidecar used to be folded in too, and a CHECKPOINT truncates it
+        to zero with no data change — moving its mtime AND size at a moment the writer
+        does not control (an autocheckpoint at 1000 pages, the last connection closing, or
+        any other connection running `wal_checkpoint`).
+
+        Reproduced directly here: a `wal_checkpoint(TRUNCATE)` from a second connection
+        between two `_fingerprint` calls used to shift the fingerprint of a store nobody
+        wrote to. Under loaded CI that checkpoint lands between the two `dirty_entries`
+        calls in `test_dirty_detection_settles_completely_without_audit_writes`, and the
+        second call reports `['memory_db']` dirty though nothing changed — a real,
+        load-dependent flake that broke five stacked PRs' CI. The fix folds committed WAL
+        frames into the main file with a passive checkpoint and fingerprints the main file
+        alone, so a later foreign checkpoint is invisible.
+        """
+        from personalclaw.durability.shards import _fingerprint
+
+        db_path = tmp_path / "store.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t (x TEXT)")
+        for i in range(200):
+            conn.execute("INSERT INTO t VALUES (?)", (f"row {i}",))
+        conn.commit()
+        try:
+            before = _fingerprint(db_path)
+            # A DIFFERENT connection truncates the WAL — exactly the foreign checkpoint
+            # that lands mid-run on loaded CI. No data changes.
+            other = sqlite3.connect(db_path)
+            other.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            other.close()
+            assert _fingerprint(db_path) == before, "a foreign WAL checkpoint is not a data change"
+            # And a real committed write must still be seen.
+            conn.execute("INSERT INTO t VALUES ('genuinely new')")
+            conn.commit()
+            assert (
+                _fingerprint(db_path) != before
+            ), "a committed write must still move the fingerprint"
+        finally:
+            conn.close()
+
 
 # ── Jobs ──
 
