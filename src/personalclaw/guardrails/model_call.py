@@ -46,6 +46,7 @@ from personalclaw.guardrails.failure import (
     CircuitOpenError,
     FailureMode,
     ModelCallTimeout,
+    PromptInjectionBlocked,
     SecretLeakBlocked,
 )
 from personalclaw.guardrails.scan import scan_outbound
@@ -134,12 +135,20 @@ class ModelCallGuard(ModelProvider):
     def _prescan(self, text: str) -> str:
         """Scan an outbound prompt for secrets/PII and apply the mode ladder.
 
-        Returns the (possibly redacted) text to send. Raises ``SecretLeakBlocked``
-        in block mode when there are findings — audited as ``secret_leak`` and never
-        retried (retrying would let a payload brute-force the scan)."""
+        Returns the (possibly redacted) text to send. Raises in block mode when there are
+        findings — audited and never retried (retrying would let a payload brute-force the
+        scan).
+
+        🔴 The failure mode is now CHOSEN, not assumed (S156). Every block recorded
+        ``secret_leak``, so ``FailureMode.INJECTION_BLOCKED`` — declared, listed in
+        ``NON_RETRYABLE``, and carrying its own retry semantics — could never be recorded by
+        anything. §2.2's taxonomy separates the two deliberately: they are both non-retryable
+        for *different* reasons, and an operator reading the audit trail cannot tell a
+        credential slip from an attack if both say ``secret_leak``."""
         result = scan_outbound(text, mode=self._scan_mode)
         if result.blocked:
-            self._audit(_new_audit_id(), 1, FailureMode.SECRET_LEAK, 0.0, 0, 0, False, "direct")
+            mode = FailureMode.INJECTION_BLOCKED if result.injection else FailureMode.SECRET_LEAK
+            self._audit(_new_audit_id(), 1, mode, 0.0, 0, 0, False, "direct")
             from personalclaw.sel import sel
 
             try:
@@ -151,10 +160,15 @@ class ModelCallGuard(ModelProvider):
                     resources=(
                         f"provider={self._provider_name} "
                         f"categories={','.join(result.categories)}"
+                        + (f" pattern={result.injection_group}" if result.injection else "")
                     ),
                 )
             except Exception:
                 logger.debug("SEL scan-block audit failed", exc_info=True)
+            if result.injection:
+                # Names the matched pattern: §1.3's rule for the fire-path screen applies here
+                # too — a block nobody can appeal against is a block nobody can debug.
+                raise PromptInjectionBlocked(result.findings, result.injection_group)
             raise SecretLeakBlocked(result.findings)
         return result.text
 
