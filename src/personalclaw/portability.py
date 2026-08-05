@@ -79,8 +79,20 @@ EXPORT_EXCLUDE = frozenset(
 
 EXCLUDE_DIRS = frozenset(
     {
+        # Backup/sync OUTPUT. Exporting these would nest an archive inside an archive, and their
+        # contents are reproducible from the state that travels beside them.
         "snapshots",
         "outbox",
+        # 🔴 A DELIBERATE ASYMMETRY WITH THE SNAPSHOT PATH, recorded here in S182 because it was
+        # unwritten and looks like an oversight once the export becomes inventory-derived: a
+        # SNAPSHOT carries `uploads/` (verified: it is in both `_everything_paths` and
+        # `_extra_restore_paths`) and an EXPORT does not.
+        #
+        # That is defensible rather than a bug — a snapshot is a local 0600 archive of this machine,
+        # while an export is the artifact a user hands to another machine or attaches to a bug
+        # report, and uploads are arbitrary user-supplied binaries of unbounded size. Kept as-is
+        # because changing an export's contents is a product decision, not a sweep's to make; the
+        # asymmetry is now stated so the next reader does not "fix" it by accident.
         "uploads",
         "__pycache__",
     }
@@ -134,6 +146,57 @@ def _backup_sqlite(src: Path, dst_buffer: io.BytesIO) -> None:
         mem_conn.close()
 
 
+#: Database files never travel as a filesystem copy — see the tree walk in `create_export_zip`.
+_DB_SUFFIXES = frozenset({".db"})
+_DB_SIDECARS = ("-wal", "-shm")
+
+
+def _remaining_export_paths(pc: Path) -> list[str]:
+    """Declared entries the hand-written export lists do not already carry (S182).
+
+    Derived from `durability.inventory.export_entries()` — which excludes `secret=True` and
+    `derived=True` by construction, so a credential cannot arrive here by being newly declared. The
+    three literal lists in `create_export_zip` are subtracted rather than replaced: they encode
+    per-entry reasons (the safe sqlite backup API for the databases, the `skills/auto` skip, the
+    `crons.json` note) that a generic pass would lose.
+
+    Databases are deliberately NOT returned. They are already staged through `_backup_sqlite`, and a
+    filesystem copy of a live WAL store can capture a torn page set — the hazard the snapshot path
+    fixed by routing every declared DB through the backup API.
+    """
+    from personalclaw.durability import inventory as inv
+
+    already = {
+        "config.json",
+        "hooks.json",
+        "triggers.json",
+        "crons.json",
+        "event_triggers.json",
+        "notifications.jsonl",
+        "feedback.jsonl",
+        "project_dir",
+        "workspace_dir",
+        "memory.db",
+        "memory_index.db",
+        "learning.db",
+        "workspace",
+        "plan_memory",
+        "skills",
+        "cron-history",
+    }
+    db_paths = {e.path for e in inv.sqlite_entries()}
+    out: list[str] = []
+    for entry in inv.export_entries():
+        if entry.path in already or entry.path in db_paths:
+            continue
+        top = entry.path.split("/", 1)[0]
+        if top in already or top in out:
+            continue
+        if (pc / entry.path).exists():
+            out.append(entry.path)
+    return out
+
+
 def create_export_zip() -> tuple[bytes, dict]:
     """Create a zip archive of PersonalClaw state. Returns (zip_bytes, manifest_dict)."""
     pc = _pc_dir()
@@ -179,11 +242,37 @@ def create_export_zip() -> tuple[bytes, dict]:
         # move — a restored home that reports "no capture activity" because the log
         # was left behind is indistinguishable from a broken capture path, which is
         # the exact ambiguity the outcome records exist to remove.
-        for db_name in ("memory.db", "memory_index.db", "learning.db"):
+        # 🔴 Every DECLARED database, not just the three named here (S182). `workflows/runs.db`,
+        # `loop/loops.db`, both `knowledge.db` and `lexicon.db` are declared `kind=sqlite` and were
+        # reachable only as a raw filesystem copy inside their parent tree — measured UNUSABLE ("no
+        # such table") when the store had a 237 KB uncheckpointed WAL. Routing every declared DB
+        # through the backup API is what the snapshot path already does.
+        try:
+            from personalclaw.durability import inventory as _inv
+
+            _export_paths = {e.path for e in _inv.export_entries()}
+            db_names: list[str] = ["memory.db", "memory_index.db", "learning.db"]
+            db_names += sorted(
+                e.path
+                for e in _inv.sqlite_entries()
+                if e.path in _export_paths and e.path not in db_names
+            )
+        except Exception:  # noqa: BLE001 — an export must work even if this import breaks
+            db_names = ["memory.db", "memory_index.db", "learning.db"]
+        for db_name in db_names:
             src = pc / db_name
             if src.is_file() and not src.is_symlink():
+                if is_sensitive_path(str(src)):
+                    continue
                 db_buf = io.BytesIO()
-                _backup_sqlite(src, db_buf)
+                try:
+                    _wal_checkpoint(src)
+                    _backup_sqlite(src, db_buf)
+                except Exception:  # noqa: BLE001
+                    # One unreadable store must not cost the whole export. Skipping it is honest;
+                    # writing a torn copy would put corruption in the artifact a user trusts.
+                    logger.warning("export: skipping unreadable database %s", db_name)
+                    continue
                 zf.writestr(f"{prefix}/{db_name}", db_buf.getvalue())
                 contents_summary[db_name] = db_buf.tell()
 
@@ -216,6 +305,47 @@ def create_export_zip() -> tuple[bytes, dict]:
         contents_summary["plan_memory_files"] = dir_counts.get("plan_memory", 0)
         contents_summary["skill_count"] = dir_counts.get("skills", 0)
         contents_summary["run_history_files"] = dir_counts.get("cron-history", 0)
+
+        # 🔴 EVERY REMAINING DECLARED ENTRY (S182). The three lists above are hand-written, and
+        # `export_entries()` had no consumer here — so the export named 18 of 53 exportable entries
+        # and the zip came out holding **three files**: `config.json`, `memory.db`, `MANIFEST.json`.
+        # Driven on a home seeded across the inventory, 30 stores of the user's own data were absent
+        # from the feature whose whole promise is "give me everything PersonalClaw knows about me".
+        #
+        # This is the same defect the `triggers.json` and `cron-history` comments above record,
+        # closed one entry at a time. Deriving the rest from the inventory is what stops the next
+        # store from being forgotten — the snapshot side already does exactly this.
+        extra_counts: dict[str, int] = {}
+        for entry in _remaining_export_paths(pc):
+            src = pc / entry
+            if src.is_symlink() or is_sensitive_path(str(src)):
+                continue
+            if src.is_file():
+                zf.write(str(src), f"{prefix}/{entry}")
+                contents_summary[entry] = src.stat().st_size
+            elif src.is_dir():
+                count = 0
+                for fpath in src.rglob("*"):
+                    if fpath.is_symlink() or not fpath.is_file():
+                        continue
+                    rel = fpath.relative_to(pc)
+                    if _is_excluded(PurePosixPath(str(rel))) or is_sensitive_path(str(fpath)):
+                        continue
+                    # 🔴 Never raw-copy a live database out of a tree. `workflows/runs.db` and
+                    # `loop/loops.db` sit INSIDE declared trees, so `rglob` reaches them — and a
+                    # filesystem copy of a WAL store captures the `.db` without its `-wal`.
+                    # Measured on a store with 2000 committed rows and a 237 KB uncheckpointed WAL:
+                    # the raw copy was not merely short, it was UNUSABLE ("no such table: runs").
+                    # The declared databases travel through `_backup_sqlite` below instead; this is
+                    # the same split the snapshot path makes with `_tree_ignore_dbs`.
+                    if fpath.suffix in _DB_SUFFIXES or fpath.name.endswith(_DB_SIDECARS):
+                        continue
+                    zf.write(str(fpath), f"{prefix}/{rel}")
+                    count += 1
+                if count:
+                    extra_counts[entry] = count
+        if extra_counts:
+            contents_summary["store_files"] = extra_counts
 
         # Manifest
         manifest = {
@@ -403,6 +533,34 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                         shutil.copytree(str(item), str(target))
                     elif item.is_file() and not target.exists():
                         shutil.copy2(str(item), str(target))
+
+            # 🔴 EVERY REMAINING DECLARED STORE (S182). Widening the EXPORT is only half a round
+            # trip: driven end to end, an export carrying `tasks/`, `projects/` and `inbox.json`
+            # imported **none of them**, because this branch is a fourth hand-written list — the
+            # same
+            # shape as the export's own, and the same defect. The blocks above are kept as-is: each
+            # encodes a per-entry decision (learning.db copy-only so evidence is not double-counted,
+            # feedback copy-only, cron-history no-overwrite) that a generic pass would erase.
+            #
+            # Copy-if-missing, matching `_copy_tree_no_overwrite` above: an import must not
+            # overwrite
+            # state the receiving home already has. The snapshot restore path owns the richer
+            # per-store merges; an import is the conservative direction because the archive came
+            # from
+            # somewhere else.
+            imported_stores = 0
+            for entry in _remaining_export_paths(snap):
+                sp, dp = snap / entry, pc / entry
+                if sp.is_dir():
+                    dp.mkdir(parents=True, exist_ok=True)
+                    _copy_tree_no_overwrite(sp, dp)
+                    imported_stores += 1
+                elif sp.is_file() and not dp.exists():
+                    dp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(sp), str(dp))
+                    imported_stores += 1
+            if imported_stores:
+                summary["items"].append(f"{imported_stores} stores (merged)")
                 summary["items"].append("skills (merged, auto/ skipped)")
 
     return summary

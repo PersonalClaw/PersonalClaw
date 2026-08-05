@@ -1078,3 +1078,323 @@ def test_the_snapshot_coverage_gap_list_can_only_shrink(tmp_path: Path):
         if gap not in {e.id for e in inv.INVENTORY} or gap not in uncovered
     }
     assert not stale, f"these gaps are closed or gone — remove them from the list: {sorted(stale)}"
+
+
+# ── 🔴 the export named 18 of 53 declared entries (S182) ──
+
+
+def _seeded_home(tmp_path: Path) -> Path:
+    """A home populated across the inventory, plus a live WAL database inside a declared tree."""
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    conn = sqlite3.connect(str(home / "memory.db"))
+    conn.execute(
+        "CREATE TABLE semantic_memory (key TEXT PRIMARY KEY, value_json TEXT, confidence REAL, "
+        "source TEXT, created_at TEXT, updated_at TEXT, embedding BLOB, is_deleted INTEGER "
+        "DEFAULT 0)"
+    )
+    conn.commit()
+    conn.close()
+    for name in (
+        "tasks",
+        "projects",
+        "agents",
+        "prompts",
+        "workflows",
+        "artifacts",
+        "entity_settings",
+        "sessions",
+        "subagents",
+        "screenshots",
+        "extensions",
+        "prompt_snippets",
+        "apps",
+        "crashes",
+        "agent-metadata",
+    ):
+        (home / name).mkdir(parents=True, exist_ok=True)
+        (home / name / "x.json").write_text('{"id":"MY-DATA"}', encoding="utf-8")
+    for name in (
+        "inbox.json",
+        "tags.json",
+        "tool_usage.json",
+        "spend.json",
+        "model_calls.jsonl",
+        "security_events.jsonl",
+        "autonudge.json",
+        "mcp.json",
+        "tool_prefs.json",
+        "active_models.json",
+        "tokenjuice_savings.json",
+    ):
+        (home / name).write_text('{"v":"MY-DATA"}', encoding="utf-8")
+    return home
+
+
+class TestExportCarriesEveryDeclaredStore:
+    """🔴 THE DEFECT. `create_export_zip` named **18 of 53** exportable inventory entries and
+    `export_entries()` had no consumer here at all.
+
+    Driven on a home seeded across the inventory, the zip came out holding **three files** —
+    `config.json`, `memory.db`, `MANIFEST.json` — with 30 stores of the user's own data absent from
+    the feature whose whole promise is "give me everything PersonalClaw knows about me".
+
+    The same defect was closed one entry at a time before this (the `triggers.json` and
+    `cron-history` comments in the source record two rounds of it). Deriving the remainder from the
+    inventory is what stops the next store being forgotten.
+    """
+
+    def test_the_export_carries_the_users_stores(self, tmp_path, monkeypatch):
+        home = _seeded_home(tmp_path)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: home)
+
+        zip_bytes, _ = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+
+        missing = [
+            d
+            for d in (
+                "tasks",
+                "projects",
+                "agents",
+                "prompts",
+                "workflows",
+                "artifacts",
+                "entity_settings",
+                "sessions",
+                "crashes",
+                "agent-metadata",
+            )
+            if not any(f"/{d}/" in n for n in names)
+        ]
+        assert missing == [], f"the export dropped these stores: {missing}"
+        missing_files = [
+            f
+            for f in (
+                "inbox.json",
+                "tags.json",
+                "spend.json",
+                "mcp.json",
+                "model_calls.jsonl",
+                "security_events.jsonl",
+            )
+            if not any(n.endswith(f) for n in names)
+        ]
+        assert missing_files == [], f"the export dropped these files: {missing_files}"
+
+    def test_UPLOADS_stays_excluded_and_the_asymmetry_is_deliberate(self, tmp_path, monkeypatch):
+        """🔴 A real asymmetry with the snapshot path, which was unwritten until S182: a SNAPSHOT
+        carries `uploads/` and an EXPORT does not.
+
+        Defensible rather than a bug — a snapshot is a local 0600 archive of this machine, while an
+        export is the artifact a user hands to another machine or attaches to a bug report, and
+        uploads are arbitrary user-supplied binaries of unbounded size. Pinned so the next reader
+        does not "fix" it by accident once the export became inventory-derived.
+        """
+        from personalclaw import snapshot as snap_mod
+        from personalclaw.portability import EXCLUDE_DIRS
+
+        home = _seeded_home(tmp_path)
+        (home / "uploads").mkdir()
+        (home / "uploads" / "big.bin").write_bytes(b"x" * 64)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: home)
+
+        zip_bytes, _ = create_export_zip()
+        names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+
+        assert "uploads" in EXCLUDE_DIRS
+        assert not any("/uploads/" in n for n in names)
+        # ...while the snapshot side DOES carry it. If this flips, the asymmetry was changed and the
+        # comment in EXCLUDE_DIRS needs revisiting rather than the test.
+        assert "uploads" in snap_mod._everything_paths(home)
+
+    def test_NO_SECRET_reaches_the_export(self, tmp_path, monkeypatch):
+        """🔴 SECURITY. An export is the artifact a user hands to someone else, so widening it is the
+        change most able to leak. The projection reads `export_entries()`, which excludes
+        `secret=True` and `derived=True` by construction — a credential cannot arrive by being newly
+        declared. Asserted on the BYTES of every zip member, not on the filenames."""
+        home = _seeded_home(tmp_path)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: home)
+        (home / ".env").write_text("OPENAI_API_KEY=sk-LEAK", encoding="utf-8")
+        (home / ".local_secret").write_text("LEAK-local", encoding="utf-8")
+        (home / "sel_hmac.key").write_text("LEAK-hmac", encoding="utf-8")
+        (home / "telemetry_salt").write_text("LEAK-salt", encoding="utf-8")
+        (home / "session_map.json").write_text('{"s":"LEAK-map"}', encoding="utf-8")
+        (home / "session_key").write_text("LEAK-session-key", encoding="utf-8")
+        (home / "credentials").mkdir()
+        (home / "credentials" / "c.json").write_text('{"tok":"LEAK-token"}', encoding="utf-8")
+
+        zip_bytes, _ = create_export_zip()
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        blob = b"".join(zf.read(n) for n in zf.namelist())
+
+        for token in (
+            b"sk-LEAK",
+            b"LEAK-local",
+            b"LEAK-hmac",
+            b"LEAK-salt",
+            b"LEAK-map",
+            b"LEAK-session-key",
+            b"LEAK-token",
+        ):
+            assert token not in blob, f"the export leaked {token!r}"
+
+    def test_a_NESTED_live_database_survives_the_export_INTACT(self, tmp_path, monkeypatch):
+        """🔴 MY OWN WIDENING INTRODUCED THIS AND A DRIVE CAUGHT IT.
+
+        `workflows/runs.db` and `loop/loops.db` sit INSIDE declared trees, so the new tree walk's
+        `rglob` reached them — and a filesystem copy of a WAL store takes the `.db` without its
+        `-wal`. Measured on a store with 2000 committed rows and a 237 KB uncheckpointed WAL, the
+        raw
+        copy was not merely short: it was **unusable** (`no such table: runs`).
+
+        Every declared database now goes through `_wal_checkpoint` + `_backup_sqlite`, and the tree
+        walk skips `*.db` and its sidecars — the same split the snapshot path makes with
+        `_tree_ignore_dbs`.
+        """
+        home = _seeded_home(tmp_path)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: home)
+        live = sqlite3.connect(str(home / "workflows" / "runs.db"))
+        live.execute("PRAGMA journal_mode=WAL")
+        live.execute("CREATE TABLE runs(id INTEGER PRIMARY KEY, v TEXT)")
+        for i in range(2000):
+            live.execute("INSERT INTO runs VALUES(?,?)", (i, "x" * 100))
+        live.commit()  # deliberately NOT checkpointed, and the connection stays open
+
+        try:
+            zip_bytes, _ = create_export_zip()
+        finally:
+            live.close()
+
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        member = next(n for n in zf.namelist() if n.endswith("workflows/runs.db"))
+        out = tmp_path / "restored.db"
+        out.write_bytes(zf.read(member))
+        conn = sqlite3.connect(f"file:{out}?mode=ro", uri=True)
+        assert conn.execute("SELECT count(*) FROM runs").fetchone()[0] == 2000
+        conn.close()
+        assert [n for n in zf.namelist() if n.endswith(("-wal", "-shm"))] == []
+
+    def test_the_export_projection_is_INVENTORY_DERIVED(self, tmp_path):
+        """Read off `export_entries()` rather than a fourth hand-written list, so a store declared
+        later travels by default. The three literal lists are SUBTRACTED, not replaced: they encode
+        per-entry reasons (the safe backup API, the `skills/auto` skip, the `crons.json` note) a
+        generic pass would lose."""
+        from personalclaw.durability import inventory as inv
+        from personalclaw.portability import _remaining_export_paths
+
+        home = tmp_path / "home"
+        for entry in inv.export_entries():
+            target = home / entry.path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if "." in entry.path.split("/")[-1]:
+                target.write_text("{}", encoding="utf-8")
+            else:
+                target.mkdir(exist_ok=True)
+
+        got = set(_remaining_export_paths(home))
+        declared = {e.path for e in inv.export_entries()}
+        assert got <= declared, "the projection must not invent paths"
+        assert "tasks" in got and "projects" in got
+        # Databases are excluded here on purpose — they travel through the backup API.
+        assert not any(p.endswith(".db") for p in got)
+
+
+class TestImportReadsTheWidenedExport:
+    """🔴 Widening the export was only half a round trip.
+
+    `apply_import_zip`'s merge branch is a FOURTH hand-written list — the same shape as the export's
+    own, and the same defect. Driven end to end before the fix: an export carrying `tasks/`,
+    `projects/` and `inbox.json` imported **none of them**, reporting only
+    `['memory (copied)', 'config (restored)']`.
+    """
+
+    def test_a_full_round_trip_carries_the_users_stores(self, tmp_path, monkeypatch):
+        """Export from one home, import into another — the move this feature exists for."""
+        src = _seeded_home(tmp_path / "src")
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: src)
+        zip_bytes, _ = create_export_zip()
+        archive = tmp_path / "export.zip"
+        archive.write_bytes(zip_bytes)
+
+        dst = tmp_path / "dst"
+        dst.mkdir()
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: dst)
+
+        ok, why, _ = validate_import_zip(archive)
+        assert ok, why
+        apply_import_zip(archive, mode="merge")
+
+        for rel in (
+            "tasks/x.json",
+            "projects/x.json",
+            "agents/x.json",
+            "entity_settings/x.json",
+            "inbox.json",
+            "tags.json",
+            "mcp.json",
+        ):
+            assert (dst / rel).exists(), f"the import dropped {rel}"
+
+    def test_an_import_does_NOT_overwrite_local_state(self, tmp_path, monkeypatch):
+        """Copy-if-missing, matching `_copy_tree_no_overwrite` beside it. The archive came from
+        somewhere else, so the receiving home's own state is authoritative — the snapshot restore
+        path
+        owns the richer per-store merges, an import is the conservative direction."""
+        src = _seeded_home(tmp_path / "src")
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: src)
+        zip_bytes, _ = create_export_zip()
+        archive = tmp_path / "export.zip"
+        archive.write_bytes(zip_bytes)
+
+        dst = tmp_path / "dst"
+        (dst / "tasks").mkdir(parents=True)
+        (dst / "tasks" / "x.json").write_text('{"id":"LOCAL"}', encoding="utf-8")
+        (dst / "inbox.json").write_text('{"v":"LOCAL"}', encoding="utf-8")
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: dst)
+
+        apply_import_zip(archive, mode="merge")
+
+        assert json.loads((dst / "tasks" / "x.json").read_text())["id"] == "LOCAL"
+        assert json.loads((dst / "inbox.json").read_text())["v"] == "LOCAL"
+
+    def test_a_nested_database_arrives_INTACT_through_the_round_trip(self, tmp_path, monkeypatch):
+        """The export stages it through the backup API; the import must actually place it. Asserted
+        on
+        ROWS read back from the imported file, not on the filename."""
+        src = _seeded_home(tmp_path / "src")
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: src)
+        live = sqlite3.connect(str(src / "workflows" / "runs.db"))
+        live.execute("PRAGMA journal_mode=WAL")
+        live.execute("CREATE TABLE runs(id INTEGER PRIMARY KEY)")
+        for i in range(500):
+            live.execute("INSERT INTO runs VALUES(?)", (i,))
+        live.commit()
+        try:
+            zip_bytes, _ = create_export_zip()
+        finally:
+            live.close()
+        archive = tmp_path / "export.zip"
+        archive.write_bytes(zip_bytes)
+
+        dst = tmp_path / "dst"
+        dst.mkdir()
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
+        monkeypatch.setattr("personalclaw.portability.config_dir", lambda: dst)
+        apply_import_zip(archive, mode="merge")
+
+        imported = dst / "workflows" / "runs.db"
+        assert imported.is_file(), "the nested database never arrived"
+        conn = sqlite3.connect(f"file:{imported}?mode=ro", uri=True)
+        assert conn.execute("SELECT count(*) FROM runs").fetchone()[0] == 500
+        conn.close()
