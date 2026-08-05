@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -777,6 +778,105 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _merge_feedback(src: Path, dst: Path) -> None:
+    """Merge `feedback.jsonl`, deduping on the record's own `id` (S178).
+
+    The third `append_dedup` entry with no executor. Unlike the SEL log this carries no HMAC, so
+    plain dedup is safe — and unlike the run history it is a single flat file, so there are no
+    shards. Keyed on `FeedbackRecord.id` rather than the whole line for the reason
+    `_merge_run_history` is: the same record round-trips through a serializer on both sides.
+
+    Deliberately does NOT trim to `feedback._CAP`. That module owns its own retention ("atomic trim
+    at 2x cap") and re-implementing the bound here is the duplication S175 deleted from the run
+    store after finding one copy had silently reverted the other.
+    """
+    if not src.is_file() or not dst.is_file():
+        return
+    existing: set[str] = set()
+    with open(dst, encoding="utf-8") as f:
+        for line in f:
+            try:
+                existing.add(json.loads(line).get("id") or line.strip())
+            except (ValueError, TypeError):
+                pass
+    imported = 0
+    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
+        for line in f:
+            try:
+                key = json.loads(line).get("id") or line.strip()
+            except (ValueError, TypeError):
+                continue
+            if key not in existing:
+                out.write(line if line.endswith("\n") else line + "\n")
+                existing.add(key)
+                imported += 1
+    if imported:
+        print(f"  Feedback imported: {imported}")
+
+
+def _merge_security_events(snap: Path, pc: Path) -> None:
+    """Merge the SEL audit log — but ONLY when the HMAC key that will verify it is the same (S178).
+
+    🔴 WHY THE GUARD. `inventory.py` declares `security_events.jsonl` with `merge=append_dedup`, and
+    a generic executor would have appended the snapshot's rows unconditionally. Driven: two homes
+    with different `sel_hmac.key` files, 3 rows imported → `verify_integrity` reported
+    **checked=5, valid=2**, logging "SEL HMAC mismatch" for every imported row. A restore would have
+    made the tamper-evident audit log report tampering — turning the one surface a user consults to
+    ask "was I compromised?" into a false positive they cannot clear except by rotating the chain.
+
+    So the key decides, and it is knowable at restore time because both files are on disk. The
+    `security` component restores `sel_hmac.key` **copy-if-missing**, so:
+
+    * a WIPED home takes the snapshot's key → the snapshot's rows verify (measured 3/3 valid) and
+      merging them recovers audit history that would otherwise be lost;
+    * a LIVE home keeps its own key → the snapshot's rows could never verify under it, so importing
+      them would only manufacture mismatches.
+
+    Fail-CLOSED, unlike the other merges: when the keys differ (or either is unreadable) the rows
+    are skipped and the reason is printed. The alternative failure — a silently importable row that
+    reads as tampering — is strictly worse than a missing row, because an audit trail's value is
+    that a mismatch means something.
+    """
+    src, dst = snap / "security_events.jsonl", pc / "security_events.jsonl"
+    if not src.is_file():
+        return
+
+    def _key(p: Path) -> bytes | None:
+        try:
+            return (p / "sel_hmac.key").read_bytes()
+        except OSError:
+            return None
+
+    snap_key, live_key = _key(snap), _key(pc)
+    if not dst.exists():
+        # Nothing to merge INTO. The generic store pass already copies a missing file; leaving it
+        # to that path keeps one copy-if-missing implementation rather than two.
+        return
+    if snap_key is None or live_key is None or not hmac.compare_digest(snap_key, live_key):
+        print("  Security events: skipped (HMAC key differs — imported rows could not verify)")
+        return
+
+    existing: set[str] = set()
+    with open(dst, encoding="utf-8") as f:
+        for line in f:
+            try:
+                existing.add(json.loads(line).get("event_id") or line.strip())
+            except (ValueError, TypeError):
+                pass
+    imported = 0
+    with open(dst, "a", encoding="utf-8") as out, open(src, encoding="utf-8") as f:
+        for line in f:
+            try:
+                key = json.loads(line).get("event_id") or line.strip()
+            except (ValueError, TypeError):
+                continue
+            if key not in existing:
+                out.write(line if line.endswith("\n") else line + "\n")
+                existing.add(key)
+                imported += 1
+    print(f"  Security events imported: {imported}")
+
+
 def _merge_run_history(src_dir: Path, dst_dir: Path) -> None:
     """Merge `cron-history/` shard-by-shard, deduping on `run_id` (S176).
 
@@ -961,6 +1061,10 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             else:
                 shutil.copy2(str(sn), str(dn))
                 print("  Notifications: copied")
+        # `feedback.jsonl`, the third declared `append_dedup` with no executor. Grouped here rather
+        # than given its own component: both are platform-domain append logs, and a new component
+        # name is a CLI surface a user then has to know about.
+        _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
         print("  ✅ notifications")
 
     if _want(components, "security"):
@@ -970,6 +1074,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
                 shutil.copy2(str(s), str(d))
                 os.chmod(str(d), 0o600)
                 print(f"  {f}: restored (was missing)")
+        # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
+        # copy above, because whether the imported rows can verify depends on which key won.
+        _merge_security_events(snap, pc)
         print("  ✅ security")
 
     if _want(components, "workspace"):

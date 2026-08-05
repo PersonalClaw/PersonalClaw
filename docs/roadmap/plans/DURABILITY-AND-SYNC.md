@@ -548,3 +548,62 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   exclusion. Each of the four halves — merge wiring, replace wiring, the secret exclusion, the
   `everything` superset — verified load-bearing by unwiring it independently and confirming the
   intended test failed. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.
+
+## Execution log — Session 2f (the audit log's merge, and a stale ratchet)
+
+- [2026-08-05][S178] **DONE.** Closed the remaining `append_dedup` entries and re-measured the
+  coverage ratchet that had been guarding them.
+
+  **Reachable is not merged.** S177 made every store reachable, but reachably *copy-if-missing* — so
+  a file the live home already had was left entirely alone. Measured: `security_events.jsonl` and
+  `feedback.jsonl` recovered **zero** snapshot rows on a merge into a populated home.
+
+  🔴 **The obvious fix was the dangerous one.** `security_events.jsonl` is the SEL — HMAC-signed,
+  with the key living per-home in `sel_hmac.key`. A generic executor appending the snapshot's rows
+  was driven across two homes with different keys: `verify_integrity` returned
+  **checked=5, valid=2**, logging "SEL HMAC mismatch" for every imported row. A restore would have
+  made the *tamper-evident* audit log report tampering — turning the one surface a user consults to
+  ask "was I compromised?" into a false positive they cannot clear except by rotating the chain.
+
+  So the merge is **key-gated and fail-CLOSED**, deliberately unlike the others here. `security`
+  restores the key copy-if-missing, which makes the two cases decidable at restore time:
+
+  * a **wiped** home takes the snapshot's key → its rows verify under it (measured 3/3 valid), and
+    skipping unconditionally would discard recoverable audit history in the exact scenario a restore
+    exists for;
+  * a **live** home keeps its own key → the snapshot's rows could never verify, so importing them
+    would only manufacture mismatches.
+
+  A missing row beats an unverifiable one, because an audit trail's whole value is that a mismatch
+  means something.
+
+  `feedback.jsonl` carries no HMAC, so plain dedup on `FeedbackRecord.id` is safe. Neither executor
+  re-applies retention — `feedback._CAP` and `ScheduleRunStore.rotate_all()` own theirs, and a second
+  copy is the duplication S175 deleted after finding one had silently reverted S173. `crashes` and
+  `sessions` are directories on disk, already union-merged per-file by S177's tree copy; a
+  line-dedup executor would be the wrong shape for them.
+
+  🔴 **A pre-existing ratchet caught the change, and was itself stale.**
+  `test_the_snapshot_coverage_gap_list_can_only_shrink` correctly flagged `security_events` as closed
+  (its own comment said the entry waited on "the dedup story S2 defines" — this is that story). But
+  its detection *greps `snapshot.py` for each literal path*, which went blind the moment coverage
+  became inventory-derived. Re-measured by driving real archive round-trips: **18 of its 24 "gaps"
+  were already covered** — `tags.json`, `crashes`, `sessions`, `loop/loops.db`, `autonudge.json`,
+  `mcp.json` and more — and 3 further entries are carried by an ancestor's tree copy.
+
+  On those 3 I asserted in a draft comment that `workspace/knowledge/knowledge.db` and
+  `lexicon.db` were captured-but-not-restored, drove it, and was **wrong**: the `workspace` tree copy
+  restores all three. They were listed only because neither projection *enumerates* them (nested
+  under an already-staged top level), which the ratchet now accounts for.
+
+  The list goes **24 → 4**, and every survivor is `derived=True` — pinned by a new test, so a
+  genuinely uncovered non-derived store can no longer be parked there for a reason nobody re-checks.
+  A ratchet that over-reports is not the safe direction: the list becomes noise and the one real gap
+  hides among eighteen that are not.
+
+  Tests: 6 new cases in `tests/test_snapshot.py` (86 in that file) driving the SEL through its REAL
+  writer — a hand-built fixture could not answer whether imported rows verify — plus the rewritten
+  ratchet and its new derived-only assertion in `tests/test_portability.py` (51). Every half verified
+  load-bearing by unwiring it independently, including the ratchet in both directions (parking a
+  non-derived store fails; breaking the store restore fails). Gate: `make lint` green · full
+  `pytest -n 4 --dist worksteal` green.

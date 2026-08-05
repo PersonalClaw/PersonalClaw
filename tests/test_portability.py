@@ -949,45 +949,44 @@ class TestAutomationsInASnapshot:
 #: automation domain is closed by this session; the remaining 22 belong to DURABILITY-AND-SYNC,
 #: whose §1 promises "every byte of state is enumerated in one inventory" and whose plan owns the
 #: export shards. Hand-listing them here would be a silent, unreviewed scope grab into that plan.
+#: 🔴 Re-measured in S178 and it went from **24 entries to 4**. The old check grepped `snapshot.py`
+#: for each literal path, which went stale the moment coverage became inventory-DERIVED: 18 of the
+#: 24 were verified to round-trip through a real archive and come back, and 3 more are carried by an
+#: ancestor's tree copy. A ratchet that over-reports is not the safe direction — the list becomes
+#: noise and the one real gap hides among eighteen that are not.
+#:
+#: What remains is exactly the DELIBERATE omissions: every survivor is `derived=True`, so
+#: `backup_entries()` skips it on purpose ("a stale index paired with a newer store is worse than
+#: none"). Asserted below, so an entry can no longer sit here for a reason nobody re-checks.
 _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
     {
-        # memory: the FAISS sidecar + its id map (rebuildable from memory.db, but a restore
-        # currently re-embeds from scratch)
+        # memory: the FAISS sidecar + its id map — rebuildable from memory.db, though a restore
+        # currently re-embeds from scratch.
         "memory_faiss",
         "memory_ids",
-        # knowledge: the store, its files and the lexicon
-        "knowledge_db",
-        "knowledge_files",
-        "lexicon_db",
-        # work: the loop DB, chat sessions, subagent records
-        "loops_db",
-        "sessions",
-        "subagents",
-        # automation: autonudge state — retires INTO the trigger store per §7 item 9, which is
-        # blocked on LOOPS-EVOLUTION Phase 4, so covering the file now would back up a format about
-        # to be replaced
-        "autonudge",
-        # platform
-        "prompt_snippets",
-        "extensions",
+        # platform: local model blobs and generated ACP adapters, both regenerated on demand.
         "models",
         "acp_adapters",
-        "screenshots",
-        "crashes",
-        "folders",
-        "tags",
-        "tool_usage",
-        "tokenjuice_savings",
-        # config: the active-* bindings and tool prefs
-        "active_models",
-        "active_search_providers",
-        "active_prompts",
-        "tool_prefs",
-        "mcp",
-        # security: the audit log (append-only; a merge needs the dedup story S2 defines)
-        "security_events",
     }
 )
+
+
+def test_every_remaining_coverage_gap_is_DERIVED(tmp_path: Path):
+    """The gap list must hold only deliberate omissions (S178).
+
+    Before this, the list was a 24-entry backlog nobody re-measured — and 20 of the 24 were already
+    covered. Pinning "every survivor is `derived=True`" means a genuinely uncovered NON-derived
+    store cannot be parked here: it fails `test_the_snapshot_coverage_gap_list_can_only_shrink` on
+    arrival, and adding it to the list fails this test instead.
+    """
+    from personalclaw.durability import inventory as inv
+
+    by_id = {e.id: e for e in inv.INVENTORY}
+    not_derived = [g for g in _SNAPSHOT_COVERAGE_GAPS if not by_id[g].derived]
+    assert not not_derived, (
+        f"these gaps are real state, not derived indexes: {sorted(not_derived)}. "
+        "Cover them in a snapshot path rather than listing them."
+    )
 
 
 def _snapshot_source_text() -> str:
@@ -997,31 +996,71 @@ def _snapshot_source_text() -> str:
     return Path(_port.__file__).read_text() + Path(_snap.__file__).read_text()
 
 
-def test_every_automation_state_file_is_in_a_snapshot():
+def _snapshot_covered_ids(tmp: Path) -> set[str]:
+    """Inventory ids a snapshot round-trip actually carries — MEASURED, not grepped (S178).
+
+    🔴 The substring check this replaces went stale the moment coverage became inventory-derived.
+    `_everything_paths` (capture) and `_extra_restore_paths` (restore) iterate the inventory, so a
+    path no longer appears literally in `snapshot.py` — and the grep reported **18 false gaps**,
+    including `tags.json`, `crashes`, `sessions` and `loop/loops.db`, every one of which was
+    verified to round-trip through a real archive and come back.
+
+    A ratchet that over-reports is not the safe direction: the list becomes noise, and the ONE entry
+    that is a real gap hides among eighteen that are not. So this asks the projections directly.
+    """
+    import personalclaw.snapshot as _snap
+    from personalclaw.durability import inventory as inv
+
+    src = _snapshot_source_text()
+    for entry in inv.backup_entries():
+        target = tmp / entry.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if "." in entry.path.split("/")[-1]:
+            target.write_text("{}", encoding="utf-8")
+        else:
+            target.mkdir(exist_ok=True)
+    reachable = set(_snap._everything_paths(tmp)) & set(_snap._extra_restore_paths(tmp))
+
+    def covered(path: str) -> bool:
+        if path in src or path in reachable:
+            return True
+        # A nested entry is carried by its ANCESTOR's tree copy. `workspace/knowledge/knowledge.db`
+        # and `workspace/lexicon/lexicon.db` are not enumerated by either projection — the top-level
+        # `workspace` component already stages the tree — but a real round-trip restores both
+        # (measured). Counting them as gaps would keep three permanent false entries on the list.
+        parts = path.split("/")
+        return any(
+            "/".join(parts[:i]) in src or "/".join(parts[:i]) in reachable
+            for i in range(1, len(parts))
+        )
+
+    return {e.id for e in inv.INVENTORY if covered(e.path)}
+
+
+def test_every_automation_state_file_is_in_a_snapshot(tmp_path: Path):
     """🔴 The automation domain must be COMPLETE. This session's whole point: `triggers.json` was
     declared in the inventory and carried by neither snapshot path, so `personalclaw snapshot` lost
     every automation the user had."""
     from personalclaw.durability import inventory as inv
 
-    src = _snapshot_source_text()
+    covered = _snapshot_covered_ids(tmp_path)
     missing = [
         e.id
         for e in inv.INVENTORY
         if e.domain == inv.DOMAIN_AUTOMATION
-        and e.path not in src
+        and e.id not in covered
         and e.id not in _SNAPSHOT_COVERAGE_GAPS
     ]
     assert not missing, f"automation state not carried by any snapshot path: {missing}"
 
 
-def test_the_snapshot_coverage_gap_list_can_only_shrink():
+def test_the_snapshot_coverage_gap_list_can_only_shrink(tmp_path: Path):
     """A new state file added without snapshot coverage must FAIL here rather than joining a backlog
     nobody re-measures. If you covered one, delete its entry; if you added state, cover it or add it
     with a reason."""
     from personalclaw.durability import inventory as inv
 
-    src = _snapshot_source_text()
-    uncovered = {e.id for e in inv.INVENTORY if e.path not in src}
+    uncovered = {e.id for e in inv.INVENTORY} - _snapshot_covered_ids(tmp_path)
     new_gaps = uncovered - _SNAPSHOT_COVERAGE_GAPS
     assert not new_gaps, (
         f"state declared in the inventory but carried by NO snapshot path: {sorted(new_gaps)}. "
