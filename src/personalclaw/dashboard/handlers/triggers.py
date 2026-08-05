@@ -655,7 +655,12 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     elif cron_expr:
         spec = {"kind": "cron", "expr": str(cron_expr).strip()}
     elif at_ts:
-        spec = {"kind": "at", "at": float(at_ts), "delete_after_run": True}
+        try:
+            spec = {"kind": "at", "at": float(at_ts), "delete_after_run": True}
+        except (ValueError, TypeError):
+            return web.json_response(
+                {"error": "'at' must be a Unix timestamp in seconds"}, status=400
+            )
     else:
         return web.json_response({"error": "every, cron, or at required"}, status=400)
 
