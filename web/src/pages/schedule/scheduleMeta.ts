@@ -72,6 +72,24 @@ export function statusMeta(s?: string | null): StatusMeta {
 }
 
 
+
+/** Whether this outcome means "nothing was spent and nothing changed" (§1.3's `INERT_OUTCOMES`).
+ *
+ * 🔴 WHY THIS EXISTS. S171 began PERSISTING a suppressed fire's row so criterion 8's "zero silent
+ * drops" is real — and the reason lands in `ScheduleRun.error`, which `RunTrace` renders in a
+ * danger-tinted box. Measured: a quiet-hours skip showed a neutral grey "gate" dot beside its reason
+ * in **red**, identical to a real `ConnectionError`. The row contradicted itself, and the alarming
+ * half is the one a user reacts to.
+ *
+ * Derived from the `skipped_` prefix rather than a hand-copied list: every member of the backend's
+ * `INERT_OUTCOMES` carries it (verified — 6 of 6), so a new inert outcome is covered automatically
+ * instead of waiting for someone to update a second list. The same reason `statusMeta` matches the
+ * family by prefix rather than enumerating it.
+ */
+export function isInertOutcome(s?: string | null): boolean {
+  return Boolean(s) && String(s).startsWith('skipped_')
+}
+
 // ── trigger lifecycle: health + state (S164) ──
 
 /** How a trigger's HEALTH rollup and lifecycle STATE render.
