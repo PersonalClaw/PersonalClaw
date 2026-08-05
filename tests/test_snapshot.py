@@ -1975,3 +1975,248 @@ def test_a_LOCKED_destination_degrades_to_a_skip(tmp_path: Path) -> None:
     conn = sq.connect(str(dst))
     assert [r[0] for r in conn.execute("SELECT id FROM items")] == ["live"]
     conn.close()
+
+
+# ── 🔴 nine file-shaped union/lww entries had no executor (S181) ──
+
+
+def test_a_MERGE_recovers_every_file_shaped_store(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. Nine file-shaped entries declare `union_by_id` or `lww_by_updated_at` and none
+    had an executor. S177 made them reachable, but reachably copy-if-missing — so a file the live
+    home
+    already had kept its contents and dropped the snapshot's entirely.
+
+    Driven with each file's REAL shape, read out of a long-lived home: **8 of 8 lost the snapshot
+    side**, including `hooks.json` (the message-pipeline hooks a user configured) and `inbox.json`.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    shapes = {
+        "hooks.json": ({"hooks": [{"id": "snap-h"}]}, {"hooks": [{"id": "live-h"}]}),
+        "inbox.json": ({"items": [{"id": "snap-i"}]}, {"items": [{"id": "live-i"}]}),
+        "tags.json": ([{"id": "snap-t"}], [{"id": "live-t"}]),
+        "spend.json": ({"2026-08-01": 1.5}, {"2026-08-05": 2.5}),
+        "tool_usage.json": ({"snapTool": {"count": 3}}, {"liveTool": {"count": 9}}),
+        "tokenjuice_savings.json": (
+            {"schema": 1, "rows": {"2026-07|m|log": {"count": 3}}},
+            {"schema": 1, "rows": {"2026-08|m|log": {"count": 9}}},
+        ),
+        "autonudge.json": (
+            {"version": 1, "loops": {"snap": {}}},
+            {"version": 1, "loops": {"live": {}}},
+        ),
+    }
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    for name, (a, b) in shapes.items():
+        (snap / name).write_text(json.dumps(a), encoding="utf-8")
+        (pc / name).write_text(json.dumps(b), encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    for name, (a, _) in shapes.items():
+        got = json.dumps(json.loads((pc / name).read_text()))
+        marker = next(
+            t
+            for t in (
+                "snap-h",
+                "snap-i",
+                "snap-t",
+                "2026-08-01",
+                "snapTool",
+                "2026-07|m|log",
+                '"snap"',
+            )
+            if t in json.dumps(a)
+        )
+        assert marker in got, f"{name} dropped the snapshot side"
+
+
+def test_DURABILITY_STATE_is_deliberately_NOT_merged(tmp_path: Path) -> None:
+    """🔴 The one file that must abstain, and why it is not an oversight.
+
+    `durability_state.json` holds the scheduler's OWN last-run marks, and `service._due()` compares
+    them against an interval. Driven against the real function: a stale snapshot's `last_snapshot`
+    reads as **due** while the live home's does not — so importing it would re-trigger a snapshot
+    immediately, and a union or min would make the service permanently believe it is overdue.
+
+    Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets its marks back, a
+    live home keeps the ones that describe what actually ran.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    (snap / "durability_state.json").write_text('{"last_snapshot": 1}', encoding="utf-8")
+    (pc / "durability_state.json").write_text('{"last_snapshot": 999}', encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    assert json.loads((pc / "durability_state.json").read_text())["last_snapshot"] == 999
+
+
+def test_a_snapshots_SPEND_never_moves_the_live_counter(tmp_path: Path) -> None:
+    """🔴 REAL MONEY. `spend.json` is the counter a budget CEILING is compared against, keyed one
+    entry per `%Y-%m-%d`. Combining a snapshot's dollars into a day the live home already has would
+    move a spend decision on the basis of money spent on another machine — either pausing a run that
+    had budget left, or the reverse.
+
+    So the map merge is per-key with live winning: a day the live home lacks is pure recovery, a day
+    it has is authoritative.
+    """
+    from personalclaw.snapshot import _merge_json_map
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"2026-08-05": 99.0, "2026-08-01": 1.0}), encoding="utf-8")
+    dst.write_text(json.dumps({"2026-08-05": 2.5}), encoding="utf-8")
+
+    _merge_json_map(src, dst)
+
+    got = json.loads(dst.read_text())
+    assert got["2026-08-05"] == 2.5, "the live day must not be overwritten or summed"
+    assert got["2026-08-01"] == 1.0, "a day only the snapshot has is recoverable"
+
+
+def test_LIVE_ROWS_WIN_on_a_key_collision(tmp_path: Path) -> None:
+    """Merge mode's contract is that local state wins; the snapshot only fills gaps. A hook the user
+    has since edited must not revert to the archived version."""
+    from personalclaw.snapshot import _merge_json_collection
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"hooks": [{"id": "same", "cmd": "SNAPSHOT"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"hooks": [{"id": "same", "cmd": "LIVE"}]}), encoding="utf-8")
+
+    _merge_json_collection(src, dst, wrapper="hooks", key="id")
+
+    rows = json.loads(dst.read_text())["hooks"]
+    assert rows == [{"id": "same", "cmd": "LIVE"}]
+
+
+def test_the_json_merges_are_IDEMPOTENT(tmp_path: Path) -> None:
+    """A restore drill is run twice. Both executors must import on the first pass and nothing
+    after."""
+    from personalclaw.snapshot import _merge_json_collection, _merge_json_map
+
+    src, dst = tmp_path / "c_s.json", tmp_path / "c_d.json"
+    src.write_text(json.dumps({"hooks": [{"id": "s"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"hooks": [{"id": "l"}]}), encoding="utf-8")
+    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 1
+    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 0
+
+    msrc, mdst = tmp_path / "m_s.json", tmp_path / "m_d.json"
+    msrc.write_text(json.dumps({"a": 1}), encoding="utf-8")
+    mdst.write_text(json.dumps({"b": 2}), encoding="utf-8")
+    assert _merge_json_map(msrc, mdst) == 1
+    assert _merge_json_map(msrc, mdst) == 0
+
+
+def test_a_MALFORMED_json_file_leaves_the_live_copy_untouched(tmp_path: Path) -> None:
+    """These are hand-editable files, so a truncated or half-written one is reachable. Overwriting
+    real state with a parse of something we do not understand is the worse direction."""
+    from personalclaw.snapshot import _merge_json_collection, _merge_json_map
+
+    bad, live = tmp_path / "bad.json", tmp_path / "live.json"
+    bad.write_text("{not json", encoding="utf-8")
+    live.write_text(json.dumps({"hooks": [{"id": "keep"}]}), encoding="utf-8")
+
+    assert _merge_json_collection(bad, live, wrapper="hooks", key="id") == 0
+    assert _merge_json_map(bad, live) == 0
+    assert json.loads(live.read_text())["hooks"] == [{"id": "keep"}]
+
+
+def test_a_row_with_NO_ID_is_skipped(tmp_path: Path) -> None:
+    """A row carrying no identity cannot be deduplicated, so importing it would double on the next
+    drill — the exact non-idempotence the FTS shadow tables showed in S180."""
+    from personalclaw.snapshot import _merge_json_collection
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"hooks": [{"cmd": "no-id"}, {"id": "ok"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"hooks": []}), encoding="utf-8")
+
+    _merge_json_collection(src, dst, wrapper="hooks", key="id")
+
+    assert json.loads(dst.read_text())["hooks"] == [{"id": "ok"}]
+
+
+def test_a_WRAPPER_MISMATCH_is_a_no_op(tmp_path: Path) -> None:
+    """The wrapper key is read from the owning module's real shape (`{"hooks": [...]}`,
+    `{"items": [...]}`, `{"rows": {...}}`). If a future version changes the envelope, the merge must
+    do nothing rather than guess — a wrong guess writes a document the owning module cannot read."""
+    from personalclaw.snapshot import _merge_json_collection
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"entries": [{"id": "s"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"entries": [{"id": "l"}]}), encoding="utf-8")
+
+    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 0
+    assert json.loads(dst.read_text()) == {"entries": [{"id": "l"}]}
+
+
+def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Path) -> None:
+    """The sweep's closing assertion (S176-S181). Each of the five `MERGE_*` strategies must be
+    satisfied, and `replace_only` was checked entry-by-entry rather than waved through:
+
+    * `append_dedup` — `_merge_run_history`, `_merge_notifications`, `_merge_security_events`
+      (key-gated), `_merge_keyed_jsonl`; `crashes`/`sessions` are directories.
+    * `sqlite_attach_ignore` — `_merge_sqlite_attach`, plus `memory.db`'s own `_merge_memory`.
+    * `union_by_id` / `lww_by_updated_at` — `_merge_json_collection` / `_merge_json_map` for the
+      file-shaped entries; the directory-shaped ones union per-file via the tree copy.
+    * `replace_only` — every entry is `derived` (excluded from a backup), `secret` (restored
+      copy-if-missing by the `security` component), or plain config reached by a copy-if-missing
+      path.
+
+    Pinned because the failure mode is a SIXTH strategy, or a new entry declaring an existing one,
+    silently inheriting copy-if-missing — which is exactly how this six-session run started.
+    """
+    from personalclaw import snapshot
+    from personalclaw.durability import inventory as inv
+
+    strategies = {v for k, v in vars(inv).items() if k.startswith("MERGE_")}
+    assert strategies == {
+        "append_dedup",
+        "lww_by_updated_at",
+        "replace_only",
+        "sqlite_attach_ignore",
+        "union_by_id",
+    }, "a new merge strategy appeared — give it an executor and add it here"
+
+    for executor in (
+        "_merge_run_history",
+        "_merge_notifications",
+        "_merge_security_events",
+        "_merge_keyed_jsonl",
+        "_merge_sqlite_attach",
+        "_merge_memory",
+        "_merge_json_collection",
+        "_merge_json_map",
+    ):
+        assert hasattr(snapshot, executor), f"{executor} is missing"
+
+    # `replace_only` per entry: each must fall in exactly one group that already reaches a
+    # copy-if-missing path. An `or True` here would make the assertion vacuous, so the groups are
+    # enumerated and the entry must match one — a NEW plain entry that no component copies fails.
+    secret = inv.secret_paths()
+    core_files = {f for files in snapshot.CORE_FILES.values() for f in files}
+    generic_reach = set(snapshot._extra_restore_paths_for_test_paths())
+    unexplained = []
+    for entry in inv.INVENTORY:
+        if entry.merge != inv.MERGE_REPLACE_ONLY:
+            continue
+        top = entry.path.split("/")[0]
+        if entry.derived:
+            continue  # backup_entries() excludes it, so there is nothing to merge
+        if entry.path in secret or top in secret:
+            continue  # the `security` component restores these copy-if-missing at 0600
+        if entry.path in core_files:
+            continue  # the `config`/`security` components copy only when the target is missing
+        if entry.path in generic_reach:
+            continue  # the generic store pass, which is copy-if-missing by construction
+        unexplained.append(entry.path)
+    assert unexplained == [], (
+        f"these replace_only entries reach no copy-if-missing path: {unexplained}. "
+        "Give them a restore path or a recorded reason."
+    )
