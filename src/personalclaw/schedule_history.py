@@ -247,6 +247,8 @@ class ScheduleRunStore:
         return await asyncio.to_thread(self._list_for_job_sync, job_id, offset, limit)
 
     def _count_since_sync(self, job_id: str, since: float, *, manual: bool) -> int:
+        from personalclaw.triggers.models import INERT_OUTCOMES
+
         rows = self._read_jsonl(self._job_path(job_id))
         total = 0
         for row in rows:
@@ -261,6 +263,16 @@ class ScheduleRunStore:
             # clicking Run is not the machine running away. Counting their clicks toward the cap
             # would let a user lock themselves out of their own automation.
             if not manual and str(row.get("trigger") or "") == "manual":
+                continue
+            # 🔴 A SUPPRESSION IS NOT A FIRE (S171). Since suppressed fires began persisting their
+            # typed row here (§7 crit 8's "zero silent drops"), this window would otherwise count
+            # them — measured, 5 quiet-hours skips read as 5 fires, so a trigger held by its own
+            # quiet window would consume the hourly cap it never used and then be refused for
+            # "running away". The cap exists to bound work the machine DID.
+            #
+            # Keyed on `INERT_OUTCOMES`, the same set `history.is_inert` uses, rather than a local
+            # list of `skipped_*` strings: one definition of "this did nothing" for both surfaces.
+            if str(row.get("status") or "") in INERT_OUTCOMES:
                 continue
             total += 1
         return total

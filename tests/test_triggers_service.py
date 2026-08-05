@@ -757,3 +757,70 @@ def test_the_TICK_leaves_an_ON_TIME_fire_alone(store, tmp_path):
     row = next(r for r in result.ledger_rows if r["trigger_id"] == "clock:ontime")
     assert row["outcome"] == "ran"
     assert row["reason"] == ""
+
+
+# ── 🔴 the suppressed-fire row was built and never stored (S171) ──
+
+
+def _quiet(store, tmp_path, tid="clock:q"):
+    store.upsert(
+        Trigger(
+            id=tid,
+            name=tid,
+            kind="clock",
+            enabled=True,
+            spec={"kind": "interval", "interval_secs": 60},
+            next_fire_at=SVC.to_iso(NOW),
+            gates={"quiet_hours": [{"start": "00:00", "end": "23:59"}]},
+            capabilities={"providers": ["notify"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+
+
+def _stored(tmp_path, tid):
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    async def _go():
+        return await ScheduleRunStore(tmp_path).list_for_job(tid, 0, 50)
+
+    return asyncio.run(_go())[1]
+
+
+def test_a_SUPPRESSED_fire_is_PERSISTED_not_only_returned(store, tmp_path, monkeypatch):
+    """🔴 THE DEFECT. §7 criterion 8 is "every suppressed fire appears as a typed ledger row with a
+    reason — zero silent drops", and `tick` builds exactly that row. It then RETURNS it, and nothing
+    stored it: `TickResult.ledger_rows` has no consumer outside `service.py`.
+
+    Measured: six ticks of a quiet-hours trigger produced six `skipped_gate` rows in memory and ZERO
+    rows in the store, so the history a user reads had no record any of it happened —
+    indistinguishable from a scheduler that never woke."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _quiet(store, tmp_path)
+    for i in range(6):
+        asyncio.run(SVC.tick(store, now=NOW + i * 120, base_dir=tmp_path, persist=True))
+    assert _stored(tmp_path, "clock:q") == 6
+
+
+def test_a_DRY_RUN_persists_nothing(store, tmp_path, monkeypatch):
+    """`persist=False` is what `automation doctor` uses to report what a real tick WOULD do. Writing
+    history from a dry run would make the diagnostic change the thing it diagnoses."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _quiet(store, tmp_path, tid="clock:dry")
+    for i in range(4):
+        asyncio.run(SVC.tick(store, now=NOW + i * 120, base_dir=tmp_path, persist=False))
+    assert _stored(tmp_path, "clock:dry") == 0
+
+
+def test_a_GRANTED_fire_is_NOT_written_here(store, tmp_path, monkeypatch):
+    """`gateway._record_fire_outcome` owns the row for a fire that actually ran, once it settles.
+    Writing one here too would double-count every success in `count_since` — the rate meter S152
+    built, which reads this very store."""
+    from personalclaw.triggers import claims
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _parkable(store, tmp_path, tid="clock:ok")
+    for i in range(3):
+        asyncio.run(SVC.tick(store, now=NOW + i * 120, base_dir=tmp_path, persist=True))
+        claims.release_claim("clock:ok", base_dir=tmp_path)
+    assert _stored(tmp_path, "clock:ok") == 0

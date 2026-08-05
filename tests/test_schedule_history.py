@@ -171,3 +171,85 @@ async def test_a_malformed_row_is_skipped_not_counted(tmp_path: Path) -> None:
 async def test_an_unknown_job_counts_zero_rather_than_raising(tmp_path: Path) -> None:
     """A trigger that has never fired has no history file; that is normal, not an error."""
     assert await ScheduleRunStore(tmp_path).count_since("never-ran", 0) == 0
+
+
+# ── 🔴 a suppression is not a fire (S171) ──
+
+
+@pytest.mark.asyncio
+async def test_a_SUPPRESSION_does_not_count_toward_the_RATE_WINDOW(tmp_path: Path):
+    """🔴 A second-order defect S171 introduced and this closes. Once suppressed fires began
+    persisting their typed row here (§7 crit 8's "zero silent drops"), `count_since` counted them —
+    measured, 5 quiet-hours skips read as 5 fires.
+
+    That inverts the cap: a trigger held by its OWN quiet window would consume the hourly
+    allowance it never used, then be refused for "running away". The cap exists to bound
+    work the machine DID.
+    """
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i in range(5):
+        await store.append(
+            ScheduleRun(
+                run_id=f"skip-{i}",
+                job_id="j",
+                trigger="skipped_gate",
+                started_at=now,
+                status="skipped_gate",
+            )
+        )
+    assert await store.count_since("j", now - 10) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_REAL_fire_and_a_FAILED_one_both_still_count(tmp_path: Path):
+    """The control case. A failure IS work the machine did — it woke, it ran, it broke — so the cap
+    must still bound it. Excluding failures would let a crash-looping trigger fire forever."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    await store.append(
+        ScheduleRun(run_id="r1", job_id="j", trigger="ok", started_at=now, status="success")
+    )
+    await store.append(
+        ScheduleRun(run_id="r2", job_id="j", trigger="failed", started_at=now, status="failure")
+    )
+    assert await store.count_since("j", now - 10) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_MANUAL_exclusion_still_holds_alongside(tmp_path: Path):
+    """S152's rule is unchanged: §3.6 says manual fires bypass the hourly cap, because a person
+    clicking Run is not the machine running away. Both exclusions now apply and neither shadows the
+    other."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    await store.append(
+        ScheduleRun(run_id="a", job_id="j", trigger="ok", started_at=now, status="success")
+    )
+    await store.append(
+        ScheduleRun(run_id="b", job_id="j", trigger="manual", started_at=now, status="success")
+    )
+    await store.append(
+        ScheduleRun(
+            run_id="c", job_id="j", trigger="skipped_quiet", started_at=now, status="skipped_gate"
+        )
+    )
+    assert await store.count_since("j", now - 10) == 1
+    assert await store.count_since("j", now - 10, manual=True) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_exclusion_reads_the_SHARED_inert_set(tmp_path: Path):
+    """Keyed on `INERT_OUTCOMES` — the same set `history.is_inert` uses — not a local list of
+    `skipped_*` strings. One definition of "this did nothing" for both surfaces, so a new
+    inert outcome cannot start counting toward a rate cap because nobody updated a second
+    list."""
+    from personalclaw.triggers.models import INERT_OUTCOMES
+
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for i, outcome in enumerate(sorted(INERT_OUTCOMES)):
+        await store.append(
+            ScheduleRun(run_id=f"x{i}", job_id="j", trigger=outcome, started_at=now, status=outcome)
+        )
+    assert await store.count_since("j", now - 10) == 0, "every inert outcome must be excluded"
