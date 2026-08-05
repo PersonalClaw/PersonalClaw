@@ -181,6 +181,35 @@ def classify_exception(exc: BaseException | None) -> str:
     return ExitType.FAILED.value
 
 
+def budget_for(trigger: Any) -> int:
+    """The failure budget this trigger declares, or the shipped default (R7 — S160).
+
+    🔴 WHY THIS EXISTS. §1.1 declares `failure_policy: {autopause_after: 5, dedupe_hash: true}` and
+    `evaluate` has always accepted a `budget=` parameter — and the fire path never passed one, so
+    `autopause_after` had **zero readers anywhere in the tree**. Measured: a trigger declaring
+    `{"autopause_after": 2}` stayed ACTIVE at streaks 1, 2 and 3 and paused at 4 (the shipped
+    `FAILURE_BUDGET = 5` minus `evaluate`'s own +1). An author who asked to stop after two failures
+    got five.
+
+    The direction matters: this is a control that silently *widens* a tolerance its author
+    deliberately narrowed, so the failure is invisible — the trigger keeps running, which is what a
+    working trigger also does.
+
+    A malformed or non-positive value falls back to the DEFAULT, not to 1. `evaluate` already floors
+    at `max(1, budget)`, so a `0` would mean "pause on the first failure" — turning a typo into an
+    automation that stops the first time anything goes wrong. Falling back to the shipped
+    tolerance is the reading that cannot surprise; reporting the bad shape is a separate concern.
+    """
+    block = getattr(trigger, "failure_policy", None)
+    if not isinstance(block, dict):
+        return FAILURE_BUDGET
+    try:
+        declared = int(block.get("autopause_after", 0) or 0)
+    except (TypeError, ValueError):
+        return FAILURE_BUDGET
+    return declared if declared > 0 else FAILURE_BUDGET
+
+
 def counts_toward_autopause(outcome: str) -> bool:
     """Whether this outcome spends a unit of the failure budget.
 
