@@ -728,6 +728,8 @@ export interface Trigger {
   // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
   // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
   // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED (S164).
+  // `last_error` (declared with the schedule fields below — one shared interface) carries the
+  // failure the lifecycle acted on; the store panel had no reader for it until S169.
   health?: string; state?: string; broken?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
