@@ -4650,6 +4650,65 @@ enforcement read turns 2 red, reverting only the ambient precedence turns 1 red.
   written down at `UNMETERED_CAPS`. `idempotency`/`threshold` remain the last two, still waiting on
   R12 to pin their semantics rather than on any missing meter.
 
+### S143 — criterion 12's first clause: the system-scheduler handoff (crit 12)
+
+**DONE.** Criterion 12 — *"An agent attempting `crontab -e` is prompted and offered the substrate;
+`automation doctor` flags an orphaned workflow ref and a broad file-watch glob"* — was **half met**.
+The second clause shipped in S110 and was verified still working here (`calendar.diagnose` returns
+`orphaned_workflow_ref` + `broad_watch_glob`, reached from `GET /api/triggers/doctor`). The first
+clause was unmet, measured before writing a line:
+
+```
+is_sensitive_bash_command("crontab -e")                          -> None
+denied_command_reason("crontab -e")                              -> None
+is_sensitive_bash_command("echo '* * * * * x' | crontab -")      -> None
+is_sensitive_bash_command("launchctl load …LaunchAgents/x.plist") -> None
+is_sensitive_bash_command("systemctl --user enable t.timer")      -> None
+```
+
+So an agent could install a cron in the user's real crontab and **nothing said a word**.
+
+**The near-miss worth recording.** `grep -rn crontab src/` DOES find a hit — in
+`supply_chain.py`'s `_WARNING_SCRIPT` table. But that scanner reads an app bundle's FILES at install
+time; it never sees a command the agent runs. A symbol matching the right word on the wrong surface
+reads as coverage, which is why the criterion looked met for 65 sessions. **Grep for the word, then
+check the SURFACE.**
+
+Why it matters more than tidiness: a job in the system crontab is invisible to everything this
+program built — no ledger row, no autopause, no quiet window, no capability fence, no kill switch,
+no run history — and it survives uninstall. It is the one way for unattended work to escape the
+substrate entirely, so an agent reaching for it is exactly when to name the supported path.
+
+**Shipped as PROMPTED-AND-OFFERED, not blocked**, because the criterion says "prompted and offered"
+and the distinction is load-bearing in both directions. Blocking would break the migration path this
+seam recommends (`crontab -l` is how you enumerate existing jobs to bring in) and would make
+reproducing a user's cron bug impossible. Silence is what shipped. So: **writes** decline with an
+observation naming `automation_create`; **reads** pass silently. The read/write split is the whole
+predicate.
+
+**Wired at BOTH dispatch seams** — the native `bash` tool (`agents/native/builtin_tools.py`) and the
+ACP `hooks.on_tool_call` path — with one shared predicate and a test asserting the two agree on all
+31 sampled commands. A control on one of two seams is a control the other silently skips: that is
+exactly how `web_watch` went unscreened until S134.
+
+**Fail-OPEN by design, and this is not a security fence.** Its output is a prompt and a suggestion,
+so a false positive is the expensive failure: it nags about a legitimate command and teaches the user
+to click through prompts, degrading every *real* approval on the machine. The first draft produced
+one — `grep -rn crontab docs/` flagged, because the pattern read `docs/` as the file being installed.
+Fixed by anchoring `crontab` to a command position (string start or after `;`/`&&`/`||`/`|`/`(`). The
+capability fence, PathGuard and the denylist remain the fail-CLOSED controls.
+
+**DISCOVERY — reverting the wiring made a test HANG for 120s** rather than fail fast: `crontab -e`
+without the gate opens a real editor and blocks on it. That is a second, unadvertised cost of the gap
+(an agent that runs it in an unattended session waits forever), and it is why the load-bearing check
+was worth running.
+
+- **REMAINING in AUTOMATION-SUBSTRATE:** the E4-blocked webhook fire endpoint (queue S123), `idle`'s
+  loop-ticker absorption (LOOPS-EVOLUTION Phase 4 — note the plan says `kind:idle` itself may ship
+  early for user automations), `web_watch`'s headless tier, a chat-turn event source reading
+  `agent_scope`, meters for the four unmetered caps, §3.5's undeclared `skip_if_active` / `acting_on`,
+  and the §5 did/suppressed fold affordance. **Criteria 3, 7 and 12 are now complete in every clause.**
+
 ### S155 — three success statuses recorded as failures, and the no-op outcome nothing wrote (§1.3 / §3.7)
 
 **The query shape, run one vocabulary further out.** S149/S150 swept `SPEC_KEYS` and `GATE_KEYS`; this
