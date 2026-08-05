@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { ShieldQuestion, Check, Ban, Clock, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
 import { messageEnter } from '../../design/motion'
+import { approvalOutcome } from './approvalOutcome'
 import type { ApprovalSegment } from './chatTypes'
 
 // Risk indicator (tool risk taxonomy): a purely INFORMATIONAL chip so the human
@@ -40,11 +41,15 @@ type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
  *  collapses to a quiet outcome line. */
 export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id: string, action: Action) => void }) {
   if (seg.resolved) {
-    const ok = seg.resolved === 'approved'
+    // Every outcome the backend persists is mapped EXPLICITLY (approvalOutcome), not
+    // inferred from `!== 'approved'`: the trust/YOLO grants are approvals, and testing
+    // inequality against one value collapsed all three into "denied" — the transcript
+    // misreporting a security decision it is the permanent record of.
+    const { label, icon: Icon, tone } = approvalOutcome(seg.resolved)
     return (
-      <div className="my-1 flex items-center gap-1.5 text-[0.75rem]" style={{ color: ok ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }}>
-        {ok ? <Check size={13} aria-hidden /> : <Ban size={13} aria-hidden />}
-        <span>{seg.tool} — {ok ? 'approved' : 'denied'}</span>
+      <div className="my-1 flex items-center gap-1.5 text-[0.75rem]" style={{ color: tone }}>
+        <Icon size={13} aria-hidden />
+        <span>{seg.tool} — {label}</span>
       </div>
     )
   }
