@@ -16,6 +16,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   waiting for a run that had never started. Automations still fired on their own schedule, so
   nothing looked broken until you tried to test one by hand. Manual runs now execute the
   automation's action, and a run that cannot start says so instead of claiming success.
+- **Knowledge ingest reported steps as finished that never ran.** The per-item ingest view marked
+  entity extraction, intent matching, and embedding as done on every item regardless of what
+  actually happened — so with no embedding model bound, an item that stored zero vectors still
+  showed "Embed ✓". Each step now reports its real outcome: done when it did the work, skipped
+  when there was nothing to do (no model bound, no intents defined), failed when it errored.
 
 - **Changing your embedding model silently stopped the assistant remembering anything.** If the
   embedding model changed after the memory index was built, every attempt to save a new memory

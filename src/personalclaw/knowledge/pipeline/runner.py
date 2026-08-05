@@ -161,19 +161,21 @@ async def ingest_item(
         # Entity/relation extraction over the consolidated text → the entity graph
         # (one logical doc = one extraction; no per-chunk fan-out).
         _emit("node", node="entities", phase="running")
-        await _run_entities_stage(store, item_id, consolidated, insights_pool)
-        _emit("node", node="entities", phase="done")
+        entities_phase = await _run_entities_stage(store, item_id, consolidated, insights_pool)
+        _emit("node", node="entities", phase=entities_phase)
 
         # Tier-3 intent matching — natural-language user intents run against the
         # consolidated text; relevant matches are recorded as intent_outcomes by value.
         _emit("node", node="intents", phase="running")
-        await _run_intents_stage(store, item_id, item_type, consolidated, insights_pool)
-        _emit("node", node="intents", phase="done")
+        intents_phase = await _run_intents_stage(
+            store, item_id, item_type, consolidated, insights_pool
+        )
+        _emit("node", node="intents", phase=intents_phase)
 
         # Terminal: embed (title + summary), reusing the existing embedder path.
         _emit("node", node="embed", phase="running")
-        _embed(store, item_id, embedder)
-        _emit("node", node="embed", phase="done")
+        embed_phase = _embed(store, item_id, embedder)
+        _emit("node", node="embed", phase=embed_phase)
 
         # P12 TIER-2 semantic dedup — must run AFTER embed (the vector doesn't exist at
         # create time). Fuzzy-matches this item against same-type neighbours (filename +
@@ -245,10 +247,16 @@ async def ingest_item(
     for nt in result.skipped:
         node_phases[nt] = "skipped"
     for nt in getattr(graph, "nodes", {}):
-        node_phases.setdefault(nt, "skipped")  # never reached (branch not taken)
+        node_phases.setdefault(nt, "skipped")
+    # The terminal stages are NOT graph nodes, so nothing above ever supplies them —
+    # each one reports the phase its own run returned. These were previously forced to
+    # "done" unconditionally, which reported a step that never ran as healthy: with no
+    # embedding model bound, `embed` claimed "done" while writing zero vectors. A stage
+    # that legitimately had nothing to do says "skipped", not "done".
     node_phases["insights"] = "done" if insights_ok else "failed"
-    for nt in ("entities", "intents", "embed"):
-        node_phases[nt] = "done"
+    node_phases["entities"] = entities_phase
+    node_phases["intents"] = intents_phase
+    node_phases["embed"] = embed_phase
     _merge_file_metadata(store, item_id, {"node_phases": node_phases})
 
     store.update_item(item_id, processing_status=status, processing_error=proc_error, touch=False)
@@ -391,7 +399,7 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
         store.db.commit()
 
 
-async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
+async def _run_entities_stage(store, item_id: str, content: str, pool) -> str:
     """Link + extract entities for the item, writing to the entity graph.
 
     Two passes, deliberately in this order:
@@ -410,9 +418,14 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
     Re-runs cleanly: the extraction path clears this item's prior mentions/relations first so
     a re-ingest doesn't dup — and the pre-pass is re-applied after that clear, so its links
     survive the very stage that wipes them.
+
+    Returns the phase to report. Unlike the intents stage, this one is NOT wholly
+    model-dependent: pass 1 is the deliberate model-free guarantee, so with no pool the stage
+    still ran and linked — ``done``, not ``skipped``. Only a contentless item skips outright;
+    an errored extraction reports ``failed`` (pass 1's links stand regardless).
     """
     if not content.strip():
-        return
+        return "skipped"
 
     # Pass 1 runs unconditionally — no model required, and no reason to make linking wait on
     # one. Best-effort: a failure here must not stop extraction from running.
@@ -424,18 +437,18 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
         logger.debug("alias pre-pass failed for %s", item_id, exc_info=True)
 
     if pool is None:
-        return
+        return "done"  # pass 1 (the model-free half) ran — the stage did its work
     try:
         from personalclaw.knowledge.extractor import EntityExtractor
 
         extraction = await EntityExtractor(pool=pool).extract(content)
     except Exception:
         logger.debug("entity extraction failed for %s", item_id, exc_info=True)
-        return
+        return "failed"
     entities = extraction.get("entities") or []
     relations = extraction.get("relations") or []
     if not entities:
-        return
+        return "done"  # extraction ran and found nothing new to add
     try:
         # SNAPSHOT the pre-pass links before clearing, then restore them after.
         #
@@ -505,8 +518,10 @@ async def _run_entities_stage(store, item_id: str, content: str, pool) -> None:
         store.db.commit()
         # Rebuild the in-memory graph so cleared edges drop and the new ones show.
         store._load_graph()
+        return "done"
     except Exception:
         logger.debug("entity graph write failed for %s", item_id, exc_info=True)
+        return "failed"
 
 
 async def _run_insights(store, item_id: str, content: str, pool) -> bool:
@@ -609,29 +624,39 @@ def _intents_path(store):
     return Path(db_path).parent / "intents.json" if db_path else Path("intents.json")
 
 
-async def _run_intents_stage(store, item_id: str, item_type: str, content: str, pool) -> None:
+async def _run_intents_stage(store, item_id: str, item_type: str, content: str, pool) -> str:
     """Run Tier-3 user intents over the consolidated content. Each relevant match is
     persisted as an outcome BY VALUE in the intent_outcomes table, with only a soft
-    back-reference to this item — so the gathered insight survives item deletion."""
+    back-reference to this item — so the gathered insight survives item deletion.
+
+    Returns the phase to report: ``skipped`` when the stage had nothing to run (no
+    content, no user intents defined, or no model to match with — matching is the whole
+    stage, so without a pool nothing happened), ``failed`` when the run errored,
+    ``done`` when intents were actually matched against the content."""
     if not content.strip():
-        return
+        return "skipped"
     try:
         from personalclaw.knowledge.intents import IntentStore, run_intents
 
         intents = IntentStore(_intents_path(store)).load()
         if not intents:
-            return
+            return "skipped"
+        # `run_intents` returns [] both for "no model bound" and "no intent matched".
+        # Only the former is a step that did not run, so check the pool here rather than
+        # inferring it from an empty match list.
+        if not pool:
+            return "skipped"
         matches = await run_intents(intents, item_type, content, pool=pool)
     except Exception:
         logger.debug("intent stage failed for %s", item_id, exc_info=True)
-        return
+        return "failed"
     # Clear this item's prior outcomes before recording the current matches, so a
     # re-ingest of edited content can't leave a stale outcome from the old content
     # (e.g. an item that no longer matches an intent it once did). Outcomes orphaned
     # by a deleted item (item_id NULL) are preserved — only THIS item's are cleared.
     store.clear_item_intent_outcomes(item_id)
     if not matches:
-        return
+        return "done"  # the intents ran; nothing this item matched
     item = store.get_item(item_id)
     item_title = (item or {}).get("title") or (item or {}).get("ai_title") or ""
     by_id = {i.id: i for i in intents}
@@ -647,17 +672,25 @@ async def _run_intents_stage(store, item_id: str, item_type: str, content: str, 
             )
         except Exception:
             logger.debug("recording outcome for intent %s failed", m.intent_id, exc_info=True)
+    return "done"
 
 
-def _embed(store, item_id: str, embedder) -> None:
+def _embed(store, item_id: str, embedder) -> str:
+    """Embed the item and return the phase to report: ``done`` only when a vector was
+    actually written, ``skipped`` when there was no embedder / no vector to write (the
+    common case — no embedding model bound), ``failed`` when the attempt errored.
+
+    The phase is the item's ONLY record that this step ran, so it must reflect whether a
+    vector exists. Reporting "done" for a no-op made an item with no embedding look
+    fully processed, hiding the missing-vector condition from the ingest view."""
     if not embedder:
-        return
+        return "skipped"
     try:
         from personalclaw.knowledge.embedder import floats_to_bytes
 
         item = store.get_item(item_id)
         if not item:
-            return
+            return "skipped"
         # Embed title + summary, anchored by a body slice when the summary is thin —
         # a title-only vector gives poor semantic recall (see compose_item_text).
         vec = embedder.embed_for_item(
@@ -665,13 +698,18 @@ def _embed(store, item_id: str, embedder) -> None:
             item.get("summary"),
             item.get("content"),
         )
-        if vec:
-            store.db.execute(
-                "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id)
-            )
-            store.db.commit()
+        if not vec:
+            # An unavailable/unbound embedding model returns None rather than raising —
+            # a graceful degradation, not a fault. No vector was written either way.
+            return "skipped"
+        store.db.execute(
+            "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id)
+        )
+        store.db.commit()
+        return "done"
     except Exception:
         logger.debug("knowledge embed failed for %s", item_id, exc_info=True)
+        return "failed"
 
 
 def _dedup(store, item_id: str, embedder) -> dict | None:
