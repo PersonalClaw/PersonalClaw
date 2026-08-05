@@ -418,7 +418,7 @@ class TaskComment:
 
 # The two protected, always-present projects. ``Personal`` is the catch-all for
 # work created without a chosen project; ``Repeatable`` hosts resettable lists.
-DEFAULT_PROJECTS = ("Personal", "Repeatable")
+BUILTIN_PROJECTS = ("Personal", "Repeatable")
 
 
 @dataclass
