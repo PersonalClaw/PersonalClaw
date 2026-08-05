@@ -45,6 +45,14 @@ _MAX_INDEX_RECORDS = 2_000
 #: run within its own duration.
 _MAX_SUPPRESSED_PER_JOB = _MAX_RECORDS_PER_JOB // 4
 
+#: How many rows one job may hold in the SHARED cross-job index when it must be trimmed (S174).
+#:
+#: Set to the per-job file cap: a job cannot usefully contribute more index rows than its own
+#: history retains, and matching the two means the index never evicts a row whose full record
+#: still exists. Without this bound, one noisy trigger owned all 2000 index rows and every other
+#: automation vanished from the dashboard's cross-schedule view.
+_MAX_INDEX_PER_JOB = _MAX_RECORDS_PER_JOB
+
 _HISTORY_DIRNAME = "cron-history"
 _INDEX_NAME = "_index.jsonl"
 _LOCK_NAME = ".history.lock"
@@ -373,9 +381,36 @@ class ScheduleRunStore:
         self._write_jsonl(path, [rows[i] for i in keep])
 
     def _rotate_index_locked(self) -> None:
+        """Trim the cross-job index, bounding how much of it ONE job may hold (S174).
+
+        🔴 WHY A PER-JOB BOUND. The index is SHARED — it backs the dashboard's "recent runs across
+        all schedules" — and a flat tail lets the loudest writer own all of it. Measured after S171
+        began persisting suppressions: three well-behaved automations with one run each, plus 1.5
+        days of one minutely trigger's quiet-hours skips, and the index held **2000 rows from that
+        single trigger and nothing else**. Every other automation was evicted from the only
+        cross-job view.
+
+        S173 fixed the same shape per job; this is the cross-job half. There the classes competed
+        (work vs suppressions), here the JOBS compete, so the bound is per `job_id`: no job may hold
+        more than `_MAX_INDEX_PER_JOB` rows while others are being dropped.
+
+        Applied only when trimming is needed, and only to jobs OVER their share — a store with a few
+        busy jobs and room to spare keeps everything, so nothing regresses for an install that never
+        hits the cap.
+        """
         rows = self._read_jsonl(self._index)
-        if len(rows) > _MAX_INDEX_RECORDS:
-            self._write_jsonl(self._index, rows[-_MAX_INDEX_RECORDS:])
+        if len(rows) <= _MAX_INDEX_RECORDS:
+            return
+        # Newest-first per job, so each job's own tail is what survives its share.
+        per_job: dict[str, list[int]] = {}
+        for i, r in enumerate(rows):
+            per_job.setdefault(str(r.get("job_id") or ""), []).append(i)
+        keep: set[int] = set()
+        for idxs in per_job.values():
+            keep.update(idxs[-_MAX_INDEX_PER_JOB:])
+        # Then the global cap, on the fair-shared set. Order preserved: `list_all` reverses the
+        # file for newest-first, so a file regrouped by job would render out of order.
+        self._write_jsonl(self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]])
 
     def _rotate_all_sync(self) -> None:
         if not self._dir.exists():

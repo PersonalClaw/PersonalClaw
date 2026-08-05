@@ -5858,3 +5858,60 @@ monotonically decreasing.
 Load-bearing verified by restoring the flat tail with valid code: exactly the two eviction tests go red
 while the work-only test stays green, which is the pair that matters. (A first revert attempt produced
 a `TypeError` — broken code rather than disabled behaviour, and therefore no usable signal.)
+
+### S174 — one noisy trigger owned the entire cross-job index (§1.3 retention)
+
+**The cross-job half of S173**, found by asking whether the SHARED index carried the same flat tail the
+per-job file did. It did — and the blast radius is worse, because the index is the only view that spans
+automations.
+
+**🔴 THE DEFECT.** `_rotate_index_locked` kept `rows[-_MAX_INDEX_RECORDS:]`. Measured after S171 began
+persisting suppressions:
+
+```
+three well-behaved automations, one run each
+  + 1.5 days of one minutely trigger's quiet-hours skips
+  -> cross-job index rows: 2000
+  -> jobs still represented: ['clock:noisy']
+     nightly-backup   present? False
+     weekly-report    present? False
+     deploy-watch     present? False
+```
+
+Every other automation vanished from the dashboard's *"recent runs across all schedules"* — which is
+the surface S165 had just fixed to show work over suppressions, so that fix was operating on a feed one
+trigger had already emptied.
+
+**Where S173's classes competed, here the JOBS compete.** So the bound is per `job_id`, set to the
+per-job FILE cap: a job cannot usefully contribute more index rows than its own history retains, and
+matching the two means the index never evicts a row whose full record still exists.
+
+**Applied only when trimming is needed, and only to jobs over their share** — verified, a store with 50
+rows keeps 50. An install that never reaches the global cap behaves exactly as before.
+
+**The invariant is per-TRIM, not per-append**, and saying so precisely matters: rotation fires only
+above the global cap, so between trims a job may exceed its share and is cut back on the next one.
+Driven across the boundary:
+
+```
+after skip 1998: index= 102 noisy= 100 jobs=['backup', 'noisy', 'report']
+after skip 2001: index= 105 noisy= 103 jobs=['backup', 'noisy', 'report']
+```
+
+Both quiet automations survive throughout, which is the property that matters; the exact row count
+oscillates by design.
+
+**Order preserved.** `list_all` reverses the file for newest-first, so a file regrouped by job would
+render the cross-schedule view out of order. Asserted by a monotonic-timestamp test over 2200 rows
+across 7 jobs.
+
+One thing deliberately NOT changed: a store of 40 modest jobs × 60 runs keeps 2000 rows spanning 34
+jobs, dropping the oldest-written 6. That is correct for a time-ordered "recent runs" index — the
+defect was one job *monopolising* it, not the global cap existing.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the flat tail: exactly the two fairness tests go red while the other
+20 stay green.
+
+- **Retention is now fair on both axes** — per job across outcome classes (S173) and per job across the
+  shared index (here). The chain S171 started (persist → count → retain → render) is closed.
