@@ -152,7 +152,9 @@ jobs:
     # Pure-git check (no external action): diff the PR range against its base and
     # fail on any commit missing sign-off. PR-only — a feature-branch push has no
     # base to diff, and the merge to main preserves the signed commits.
-    if: github.event_name == 'pull_request'
+    # Dependabot is exempt: its bot commits cannot carry a Signed-off-by trailer,
+    # and dependency bumps are provenance-clear by construction.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
