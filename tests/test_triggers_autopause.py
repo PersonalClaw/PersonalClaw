@@ -398,3 +398,77 @@ def test_an_unknown_exit_type_still_fails_closed():
 # spending the budget (`test_a_policy_refusal_never_spends_the_budget`) — which is the DEFECT the
 # legacy pair carried: one counter incremented at four call sites with no way to tell a policy
 # block from a real failure.
+
+
+# ── 🔴 the per-trigger failure budget was declared and never read (S160) ──
+
+
+def _with_policy(policy):
+    from personalclaw.triggers.models import Trigger
+
+    t = Trigger(id="t", name="t", kind="clock")
+    t.failure_policy = policy
+    return t
+
+
+def test_a_DECLARED_autopause_after_is_HONOURED():
+    """🔴 THE DEFECT. §1.1 declares `failure_policy: {autopause_after: 5, dedupe_hash: true}` and
+    `evaluate` has always accepted `budget=` — the fire path never passed one, so `autopause_after`
+    had **zero readers anywhere in the tree**.
+
+    Measured: a trigger declaring `{"autopause_after": 2}` stayed ACTIVE at streaks 1, 2 and 3 and
+    paused at 4. An author who asked to stop after two failures got five. The direction is
+    what makes it invisible: it silently WIDENS a tolerance its author narrowed, and a
+    trigger that keeps running looks exactly like a healthy one.
+    """
+    from personalclaw.triggers.autopause import budget_for, evaluate
+
+    trigger = _with_policy({"autopause_after": 2})
+    assert budget_for(trigger) == 2
+    budget = budget_for(trigger)
+    assert evaluate(exit_type="failed", consecutive_failures=0, budget=budget).state == "active"
+    assert evaluate(exit_type="failed", consecutive_failures=1, budget=budget).state == "autopaused"
+
+
+def test_NO_policy_keeps_the_shipped_default():
+    """The control case, and the compatibility guarantee: every trigger authored before this session
+    behaves exactly as it did."""
+    from personalclaw.triggers.autopause import FAILURE_BUDGET, budget_for
+
+    assert budget_for(_with_policy({})) == FAILURE_BUDGET
+    assert budget_for(_with_policy(None)) == FAILURE_BUDGET
+    assert budget_for(_with_policy("nope")) == FAILURE_BUDGET
+
+
+def test_a_MALFORMED_budget_falls_back_to_the_DEFAULT_not_to_ONE():
+    """🔴 The direction that matters. `evaluate` floors at `max(1, budget)`, so coercing a bad value
+    to 0 would mean "pause on the FIRST failure" — turning a typo into an automation that stops the
+    first time anything goes wrong. Falling back to the shipped tolerance is the only reading that
+    cannot surprise."""
+    from personalclaw.triggers.autopause import FAILURE_BUDGET, budget_for
+
+    for junk in ("two", None, [], {}, 0, -3, 0.0):
+        assert budget_for(_with_policy({"autopause_after": junk})) == FAILURE_BUDGET, junk
+    # …and a well-formed narrow value still binds, so failing back is not a blanket excuse.
+    assert budget_for(_with_policy({"autopause_after": 1})) == 1
+
+
+def test_the_fire_path_PASSES_the_per_trigger_budget():
+    """The wiring — the defect was a missing argument, which source inspection sees exactly."""
+    import inspect
+
+    from personalclaw import gateway
+
+    assert "budget=autopause.budget_for(trigger)" in inspect.getsource(gateway)
+
+
+def test_the_reason_string_reports_the_REAL_budget():
+    """`evaluate`'s reasons already interpolate the budget (`failure 1 of 5`), so before the wiring
+    they confidently quoted a number the trigger had not asked for. The user is being told why their
+    automation stopped; that sentence has to be true."""
+    from personalclaw.triggers.autopause import evaluate
+
+    degraded = evaluate(exit_type="failed", consecutive_failures=0, budget=3)
+    assert "of 3" in degraded.reason
+    paused = evaluate(exit_type="failed", consecutive_failures=2, budget=3)
+    assert "3 consecutive failures" in paused.reason

@@ -5073,3 +5073,58 @@ autopaused, quarantined).
 - **Still open from this session's leads:** `failure_policy.dedupe_hash` (the migration regression named
   above — a persistent `FAILED` streak alerts 4× before autopause collapses it) and
   `ExitType.PARTIAL` (needs a provider-side resumable-stop signal that does not exist).
+
+### S160 — a trigger's own failure tolerance was ignored (R7)
+
+**Taken from S159's recorded lead**, which named `failure_policy` as still-unread. Sweeping its two
+declared KEYS rather than the field found the sharper half: `autopause_after` has **zero occurrences
+anywhere in `src/`** outside the plan text.
+
+**🔴 THE DEFECT.** §1.1 declares `failure_policy: {autopause_after: 5, dedupe_hash: true}`, and
+`autopause.evaluate` has **always** accepted `budget=`, floored it at `max(1, budget)`, and
+interpolated it into both reason strings (`"failure 1 of 5"`, `"paused after N consecutive
+failures"`). The fire path never passed one. Measured:
+
+```
+failure_policy = {"autopause_after": 2}     budget evaluate() used = 5
+  streak=1 -> active
+  streak=2 -> active      ← the author asked to stop here
+  streak=3 -> active
+  streak=4 -> autopaused
+```
+
+An author who asked to stop after two failures got five — and was told so in a reason string quoting a
+number they had never chosen.
+
+**The direction is what made it invisible.** This control silently **widens** a tolerance its author
+deliberately narrowed, so the symptom is *a trigger that keeps running* — indistinguishable from a
+healthy one. Every other inert control this program has found failed the other way: work not
+happening, a fire not fired, an alert not sent. Those announce themselves eventually. This one never
+would.
+
+**Wired.** `budget_for(trigger)` reads the key; `_record_fire_outcome` passes it. Driven end-to-end
+through the real fire path: a `{"autopause_after": 2}` trigger autopauses on its **second** failure
+and is disabled, and the reason string now quotes 2.
+
+**🔴 A malformed value falls back to the DEFAULT, deliberately not to 1.** `evaluate` floors at
+`max(1, budget)`, so coercing a typo to `0` would mean "pause on the FIRST failure" — turning
+`autopause_after: "two"` into an automation that stops the first time anything hiccups. Falling back to
+the shipped tolerance is the only reading that cannot surprise, and it is the fail-OPEN direction for a
+control whose stuck-closed form silences real work. Note this is the OPPOSITE call to `max_fires`
+(S133, fail-closed) and the same call as `max_cost_usd_per_run` (S154) — the discriminator is whether
+the malformed value's failure mode is "runs unbounded" or "never runs", and here it is the latter.
+
+**Compatibility is exact:** absent, empty, non-dict or non-positive `failure_policy` all resolve to
+`FAILURE_BUDGET = 5`, so every trigger authored before this session keeps its precise prior behaviour.
+
+**Gate:** `make lint` (691 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified both ways: dropping the `budget=` argument turns 1 red; changing the malformed
+fallback from `FAILURE_BUDGET` to `1` turns 2 red — so the fail-safe DIRECTION is pinned, not just the
+wiring.
+
+- **`failure_policy.dedupe_hash` remains open** and is now the last unread key on this field. It is a
+  genuine migration regression (the legacy `gateway.py` had `is_dup = fh == job.last_failure_hash`
+  inside a 1h reminder window) and needs a new persisted hash field plus a delivery-time check — a
+  session, not a follow-on. Its blast radius is bounded by this session's fix: a persistent identical
+  failure now alerts at most `autopause_after` times before the trigger is paused, which for a
+  narrowed budget is 1–2 alerts rather than 4.
