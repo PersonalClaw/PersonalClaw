@@ -5522,3 +5522,52 @@ than a correctness fix.
 - **The per-trigger run surface is now complete for store kinds**: the list (S166) and the detail
   (here). Recorded honestly: the frontend's `scheduleRunDetail` still only builds `schedule:` ids, so
   the expander is reachable for schedules today and for store triggers once that wrapper is generalised.
+
+### S168 — the backend served a history no UI could ask for (§1.3 / crit 8)
+
+**Closes the gap S167's own log recorded.** S166 made the list route serve store triggers and S167 made
+the detail route open their runs — and the frontend still could not request either.
+
+**🔴 THE DEFECT, in two parts.** `api.scheduleHistory` and `api.scheduleRunDetail` interpolated a
+hardcoded `schedule:` prefix, so no call could ever address `store:file:notes`. And `RunHistory` — the
+only history UI in the codebase — was **private** to `ScheduleDetail` and took a bare job id. Net
+effect: `StoreTriggerDetail` rendered "When it runs" and "What it runs" and nothing at all about
+whether it ever had, for every one of the six store kinds.
+
+Three sessions of backend work reaching no surface is the same shape as S165's archive split, which is
+why the sweep continued past the first fix rather than stopping.
+
+**Reused, not reimplemented.** `RunHistory` is now exported and keyed on the FULL facade id, and
+`StoreTriggerDetail` renders it. A second history renderer is how two surfaces start disagreeing about
+what a run looks like — the argument S163/S164 made about status mappers and S165 made about the
+inert-fold predicate, applied to a component.
+
+**`supported: false` renders as its REASON, not as an empty list.** A lifecycle trigger keeps no run
+store, and "No runs recorded yet" would be a false claim about a kind that records none — the same
+distinction the backend draws, now preserved through to the panel.
+
+**The id ALGEBRA is where the real risk sat**, so it is pinned by test rather than left to a reader:
+
+- the ENDPOINT takes the full facade id — `store:file:notes`;
+- `InvestigateButton` and the run store take the RAW suffix — `file:notes`;
+- the prefix strip is anchored and non-greedy, because a greedy one turns `file:notes` into `notes`
+  and misses every lookup.
+
+That last point is the same near-miss-key class that nearly made S165's fix inert (`run_id` vs `id`),
+so `rawId` is derived once from `triggerId` rather than passed alongside it — two parameters that must
+agree are two parameters that can disagree.
+
+**`histKey` bumps after a real (non-dry) run**, so a fire the user just triggered appears without a
+manual refresh. A dry run deliberately does not bump it: nothing was recorded, and refreshing to show
+no change would read as a failure.
+
+**Verified no import cycle.** `StoreTriggerDetail` → `ScheduleDetail` → `triggers/triggerMeta` →
+`schedule/scheduleMeta` (a leaf). `triggerMeta` does not import `ScheduleDetail`, so the graph stays
+acyclic; confirmed by a clean `npm run build` plus the render-smoke gate passing all 5 routes.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**660 passed, 56 files** · `npm run build` clean · `npm run smoke:render` PASS · full
+`pytest -n 4 --dist worksteal` green.
+
+- **§1.3's per-trigger run surface is now complete end to end** for store kinds: rows written (S139),
+  list served (S166), detail served (S167), and both rendered (here).

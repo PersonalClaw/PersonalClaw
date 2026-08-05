@@ -233,7 +233,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
         {job.last_result && <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{job.last_result}</Markdown></div>}
       </Section>
 
-      <RunHistory jobId={job.id} reloadKey={histKey} />
+      <RunHistory triggerId={`schedule:${job.id}`} reloadKey={histKey} />
     </div>
   )
 }
@@ -242,21 +242,39 @@ function Chip({ children }: { children: React.ReactNode }) {
   return <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var font-mono">{children}</span>
 }
 
-/** Paginated per-job run history; each row expands to its full trace via
- *  /history/{run_id}. */
-function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: number }) {
+/** Paginated per-trigger run history; each row expands to its full trace via
+ *  /history/{run_id}.
+ *
+ *  🔴 EXPORTED and keyed on the FULL facade id (S168). It was private and took a bare schedule id,
+ *  so a store trigger had no history UI at all even after the backend began serving one
+ *  (S166 the list, S167 the detail) — the panel showed "When it runs" and "What it runs" and nothing
+ *  about whether it ever had. Reused rather than reimplemented: a second history renderer is how two
+ *  surfaces start disagreeing about what a run looks like, the same argument S163/S164 made about
+ *  status mappers.
+ *
+ *  `supported: false` is rendered as its REASON, not as an empty list: a lifecycle trigger keeps no
+ *  run store, and "no runs recorded yet" would be a false claim about a kind that records none. */
+export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; reloadKey?: number }) {
   const [runs, setRuns] = useState<ScheduleRun[] | null>(null)
   const [total, setTotal] = useState(0)
   const [limit, setLimit] = useState(5)
   const [openRun, setOpenRun] = useState<string | null>(null)
+  const [unsupported, setUnsupported] = useState<string | null>(null)
+  // `schedule:abc` → `abc`; `store:file:notes` → `file:notes`, which IS the run-store key.
+  const rawId = triggerId.replace(/^(?:schedule|store|lifecycle|event):/, '')
 
   useEffect(() => {
     let alive = true
-    api.scheduleHistory(jobId, limit).then((d) => { if (alive) { setRuns(d.runs); setTotal(d.total) } }).catch(() => { if (alive) setRuns([]) })
+    api.triggerHistory(triggerId, limit).then((d) => {
+      if (!alive) return
+      setUnsupported(d.supported === false ? (d.reason || 'this kind keeps no run records') : null)
+      setRuns(d.runs); setTotal(d.total)
+    }).catch(() => { if (alive) setRuns([]) })
     return () => { alive = false }
-  }, [jobId, limit, reloadKey])
+  }, [triggerId, limit, reloadKey])
 
   if (runs === null) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">Loading…</div></Section>
+  if (unsupported) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">{unsupported}</div></Section>
   if (runs.length === 0) return <Section label="History"><div className="text-on-surface-low text-[0.8125rem]">No runs recorded yet.</div></Section>
 
   return (
@@ -282,11 +300,14 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
                   index, which addresses nothing server-side. */}
               {r.run_id && (
                 <div className="flex justify-end px-m pb-1.5" onClick={(e) => e.stopPropagation()}>
-                  <InvestigateButton kind="schedule_run" id={`${jobId}:${r.run_id}`}
-                    backLink={`#/triggers?open=schedule:${jobId}`} size={28} />
+                  {/* `kind="schedule_run"` addresses the RUN STORE, whose key is the raw id — the
+                      part after the facade prefix. Derived from `triggerId` rather than passed
+                      separately so the two can never disagree (S168). */}
+                  <InvestigateButton kind="schedule_run" id={`${rawId}:${r.run_id}`}
+                    backLink={`#/triggers?open=${triggerId}`} size={28} />
                 </div>
               )}
-              {expanded && <RunTrace jobId={jobId} runId={id} preview={r} />}
+              {expanded && <RunTrace triggerId={triggerId} runId={id} preview={r} />}
             </div>
           )
         })}
@@ -299,14 +320,14 @@ function RunHistory({ jobId, reloadKey = 0 }: { jobId: string; reloadKey?: numbe
 }
 
 /** Lazy-load one run's full record (with trace) on expand. */
-function RunTrace({ jobId, runId, preview }: { jobId: string; runId: string; preview: ScheduleRun }) {
+function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: string; preview: ScheduleRun }) {
   const [run, setRun] = useState<ScheduleRun | null>(preview.trace ? preview : null)
   useEffect(() => {
     if (run) return
     let alive = true
-    api.scheduleRunDetail(jobId, runId).then((r) => { if (alive) setRun(r) }).catch(() => { if (alive) setRun(preview) })
+    api.triggerRunDetail(triggerId, runId).then((r) => { if (alive) setRun(r) }).catch(() => { if (alive) setRun(preview) })
     return () => { alive = false }
-  }, [jobId, runId])
+  }, [triggerId, runId])
   if (!run) return <div className="px-m pb-2 text-on-surface-low text-[0.75rem]">Loading trace…</div>
   return (
     <div className="px-m pb-3 flex flex-col gap-2 text-[0.8125rem]">

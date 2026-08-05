@@ -2195,6 +2195,17 @@ export const api = {
     post(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
   enableSchedule: (id: string, enabled: boolean) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`, { enabled }),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
+  // Per-trigger run history. `triggerId` is the FULL facade id (`schedule:abc`, `store:file:notes`)
+  // — these wrappers hardcoded a `schedule:` prefix, so a store trigger's history was unrequestable
+  // even after the backend began serving it (S166/S167). `supported: false` is a real answer here:
+  // a lifecycle trigger keeps no run store, and the caller renders the reason rather than an empty
+  // list, because "no runs" and "this kind records none" are different claims.
+  triggerHistory: (triggerId: string, limit = 10, offset = 0) =>
+    get<{ runs: ScheduleRun[]; total: number; supported?: boolean; reason?: string }>(
+      `/api/triggers/${encodeURIComponent(triggerId)}/history?limit=${limit}&offset=${offset}`),
+  triggerRunDetail: (triggerId: string, runId: string) =>
+    get<{ run: ScheduleRun }>(
+      `/api/triggers/${encodeURIComponent(triggerId)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   scheduleHistory: (id: string, limit = 10, offset = 0) => get<{ runs: ScheduleRun[]; total: number }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history?limit=${limit}&offset=${offset}`),
   scheduleRunDetail: (id: string, runId: string) => get<{ run: ScheduleRun }>(`/api/triggers/schedule:${encodeURIComponent(id)}/history/${encodeURIComponent(runId)}`).then((d) => d.run),
   triggerVariables: () => get<TriggerVariables>('/api/triggers/variables'),
