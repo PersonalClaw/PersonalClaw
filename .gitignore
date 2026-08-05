@@ -97,3 +97,4 @@ playwright-responses/
 # Owner-provided local secrets — never committed. The real file lives at the
 # workspace root (outside every repo); this rule is belt-and-braces.
 .secrets.env
+docs/design/consistency-audit.json

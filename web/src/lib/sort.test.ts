@@ -1,4 +1,5 @@
 import { compareInstancePaths } from './sort';
+import { describe, it, expect } from 'vitest'
 
 describe('compareInstancePaths', () => {
     it('sorts fan-out paths naturally rather than lexically', () => {

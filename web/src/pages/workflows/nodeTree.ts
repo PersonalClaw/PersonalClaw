@@ -1,6 +1,7 @@
 import type { WorkflowNodeState } from '../../lib/api'
 import { nodeDepth } from './workflowMeta'
-import { compareInstancePaths } from "../../lib/sort";
+import { compareInstancePaths } from '../../lib/sort'
+
 /** Grouping a flat node list into collapsible containers (WF2 Slice 10b).
  *
  *  The run view renders one row per node INSTANCE, which is right until a spec fans out: the
