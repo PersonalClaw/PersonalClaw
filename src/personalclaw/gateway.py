@@ -15,7 +15,6 @@ gateway runs dashboard-only.
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -130,18 +129,6 @@ _CYCLE_REPROMPT_MSG = (
 
 # Conservative per-message chunk limit for channel delivery (fits Slack's
 # 3000-char Block Kit section.text bound, the tightest known transport).
-_CRON_MSG_LIMIT = 3000
-
-# Volatile patterns stripped before hashing cron results for dedup.
-_VOLATILE_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"  # ISO timestamps
-    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",  # UUIDs
-    re.IGNORECASE,
-)
-_EPOCH_RE = re.compile(r"\b\d{10,13}\b")
-_EPOCH_WINDOW_SECS = 300  # strip epoch values within ±5 min of now
-_SUCCESS_REMINDER_SECS = 86400  # post "still succeeding w/ same result" reminder every 24h
-_FAILURE_REMINDER_SECS = 3600  # re-alert still-failing cron every 1h (louder than success dedup)
 
 
 # Tool-name prefixes treated as read-only by the --approval reads flag.
@@ -235,32 +222,6 @@ def _is_read_only_tool(event_title: str) -> bool:
     if any(token in _WRITE_INDICATORS for token in tokens):
         return False
     return True
-
-
-def _result_hash(text: str) -> str:
-    """Normalize volatile data and return a 16-hex-char SHA-256 prefix.
-
-    Strips ISO timestamps, UUIDs, and any 10–13 digit number that looks
-    like an epoch timestamp (within ±5 minutes of now).  Non-epoch numeric
-    IDs (account IDs, build IDs) are likely preserved because they would
-    likely fall outside the time window.
-
-    Truncated to 64 bits — sufficient for 1:1 comparison against a single
-    previous hash (collision probability ~1/2^64 per comparison).
-    """
-    now = time.time()
-    lo = now - _EPOCH_WINDOW_SECS
-    hi = now + _EPOCH_WINDOW_SECS
-
-    def _strip_epoch(m: re.Match) -> str:
-        v = int(m.group())
-        # 13 digits → millis, convert to seconds for comparison
-        ts = v / 1000 if v > 9_999_999_999 else v
-        return "" if lo <= ts <= hi else m.group()
-
-    text = _VOLATILE_RE.sub("", text)
-    text = _EPOCH_RE.sub(_strip_epoch, text)
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 class GatewayOrchestrator:
@@ -1148,6 +1109,84 @@ class GatewayOrchestrator:
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not surface the attention card for %s", trigger, exc_info=True)
 
+    def _next_delivery_attempt(self) -> str:
+        """A monotonically increasing per-fire key for `event_id` (S161).
+
+        Each FIRE is a distinct event, so its delivery needs a distinct id — otherwise
+        `is_duplicate` reads the second fire of a healthy automation as a redelivery of the first
+        and drops it. A counter rather than a timestamp because a millisecond stamp collides for
+        fires in the same tick: measured, 5 rapid `int(time.time() * 1000)` reads returned ONE
+        distinct value, so 5 fires still produced only 2 notifications.
+
+        Process-local, and that is sufficient: `is_duplicate`'s seen-set is process-local too
+        (`_delivered_event_ids`), so the id only has to be unique against ids this process has
+        already delivered. A restart clears both together.
+        """
+        n = int(getattr(self, "_delivery_attempt_seq", 0)) + 1
+        self._delivery_attempt_seq = n
+        return f"a{n}"
+
+    def _dedupe_repeat_failure(self, trigger: Any, *, error: str) -> bool:
+        """True when this failure repeats the last alerted one inside the reminder window (S161).
+
+        Persists the hash + timestamp on the trigger either way, so a NEW error resets the window
+        rather than inheriting the previous one's remaining time.
+
+        Gated on `failure_policy.dedupe_hash` because that is what §1.1 declares. Coalescing alerts
+        for a user who did not ask for it would be the opposite failure — a broken automation going
+        quieter than they expect.
+
+        **The autopause counter is untouched.** The legacy control advanced `consecutive_failures`
+        while suppressing the notification, and that separation is the point: dedup is about how
+        loudly the user is told, never about whether the failure counted. Coupling them would let a
+        repeating error escape autopause entirely — the worst possible reading.
+
+        Never raises: a bookkeeping failure must not swallow a real alert, so any error falls
+        through to delivering (fail-LOUD, the safe direction for a notification).
+        """
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers import delivery as _delivery
+            from personalclaw.triggers.store import TriggerStore
+
+            policy = getattr(trigger, "failure_policy", None)
+            if not isinstance(policy, dict) or not policy.get("dedupe_hash"):
+                return False
+            trigger_id = str(getattr(trigger, "id", "") or "")
+            if not trigger_id:
+                return False
+            # 🔴 READ THE DEDUP STATE FROM THE STORE, not from the passed-in trigger. Caught by
+            # driving it: the fire path hands `_deliver_fire_outcome` the in-memory row the TICK
+            # built, and this method writes the hash back to disk — so the object the next fire
+            # arrives with is stale, its `last_alert_hash` still empty, and nothing ever matched.
+            # A dedup control whose state the reader cannot see is the inert shape again, one layer
+            # in. `_record_fire_outcome` re-reads the store for exactly this reason.
+            store = TriggerStore(base_dir=config_dir())
+            row = store.get(trigger_id)
+            live = row.trigger if row is not None else trigger
+            suppress, digest = _delivery.suppress_repeat_failure(
+                error=error,
+                last_hash=str(getattr(live, "last_alert_hash", "") or ""),
+                last_at=float(getattr(live, "last_alert_at", 0.0) or 0.0),
+                now=time.time(),
+            )
+            if not digest:
+                return False
+            if not suppress:
+                if row is not None:
+                    live.last_alert_hash = digest
+                    live.last_alert_at = time.time()
+                    store.upsert(live)
+                return False
+            logger.info(
+                "trigger %s: duplicate failure suppressed (same error within the reminder window)",
+                trigger_id,
+            )
+            return True
+        except Exception:  # noqa: BLE001 - see the docstring: fall through to delivering
+            logger.debug("failure dedup check failed for %s", trigger, exc_info=True)
+            return False
+
     def _deliver_fire_outcome(self, trigger: Any, *, ok: bool, error: str = "") -> None:
         """Notify the user about a completed fire, with a deep link (§R18 / crit 10 — S140).
 
@@ -1176,11 +1215,39 @@ class GatewayOrchestrator:
                 return
             if not hasattr(self, "_delivered_event_ids"):
                 self._delivered_event_ids: set[str] = set()
+            # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (R7's `dedupe_hash` — S161). The legacy
+            # scheduler had this control; the unified path kept its constant and helper and dropped
+            # the check. Measured: the same error on 6 consecutive fires produced 6 notifications,
+            # because `event_id` dedupes the same event REDELIVERED (same run_id), not different
+            # fires carrying an identical error.
+            #
+            # Opt-in via `failure_policy.dedupe_hash`, matching the declared schema — a user who did
+            # not ask for coalescing keeps every alert. Capped by a 1h window, so a still-broken
+            # automation re-alerts: "it stopped telling me" and "it got fixed" must not look alike.
+            if not ok and self._dedupe_repeat_failure(trigger, error=error):
+                return
             note = _delivery.build_delivery(
                 trigger_id=str(getattr(trigger, "id", "") or ""),
                 trigger_name=str(getattr(trigger, "name", "") or ""),
                 ok=ok,
                 summary=error[:200],
+                # 🔴 EACH FIRE IS A NEW EVENT (R18 / crit 10 — S161). This passed neither `run_id`
+                # nor `attempt_key`, so `event_id` — derived from exactly those three parts —
+                # produced the SAME id for every fire of a trigger, and `is_duplicate` then dropped
+                # every notification after the first. Measured: a healthy daily digest with
+                # `delivery: "inbox"` notified the user ONCE, EVER; fires 2-5 were silently
+                # discarded as "already sent".
+                #
+                # `event_id`'s own docstring names the fix: "`attempt_key` is for the case where a
+                # re-run genuinely IS a new event … Callers pass the run's epoch". Criterion 10's
+                # dedup is for the SAME event REDELIVERED (a transport retry), and applying it to
+                # distinct fires inverted it into a mute.
+                #
+                # A COUNTER, not the clock: my first fix used `int(time.time() * 1000)` and
+                # measured 5 fires producing only 2 notifications, because a millisecond stamp
+                # collides for anything firing in the same tick (5 rapid reads returned one
+                # distinct value). The counter is monotonic whatever the clock's resolution.
+                attempt_key=self._next_delivery_attempt(),
                 # 🔴 The OUTCOME picks the route (R12 / decision 13 — S158). This read
                 # `trigger.delivery` unconditionally, so `failure_delivery` — declared, persisted,
                 # round-tripped and editable — was never consulted, and a `delivery: "none"`

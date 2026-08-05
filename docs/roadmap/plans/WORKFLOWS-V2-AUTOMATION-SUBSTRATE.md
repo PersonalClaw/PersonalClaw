@@ -5128,3 +5128,75 @@ wiring.
   session, not a follow-on. Its blast radius is bounded by this session's fix: a persistent identical
   failure now alerts at most `autopause_after` times before the trigger is paused, which for a
   narrowed budget is 1–2 alerts rather than 4.
+
+### S161 — a healthy automation notified the user once, ever (R18 crit 10 / R7)
+
+**Set out to wire `failure_policy.dedupe_hash`** — the last unread key on that field, named as open by
+S159 and S160. Driving it exposed something much worse sitting underneath.
+
+**🔴 THE DEFECT.** `_deliver_fire_outcome` passed neither `run_id` nor `attempt_key`, and `event_id` is
+derived from exactly `(trigger_id, run_id, attempt_key)`. So every fire of a trigger produced the
+**same** event id, and `is_duplicate` — S140's retry guard — dropped every delivery after the first:
+
+```
+A HEALTHY daily digest, 5 successful fires, delivery=inbox:
+  fire 0: notifications = 1
+  fire 1: notifications = 1
+  fire 2: notifications = 1
+  fire 3: notifications = 1
+  fire 4: notifications = 1
+```
+
+Criterion 10's dedup exists for the same event **redelivered** (a transport retry). Applied to distinct
+fires it inverted into a permanent mute — and this hit *successes*, so it silenced working automations,
+not just failures. `event_id`'s own docstring names the fix: *"`attempt_key` is for the case where a
+re-run genuinely IS a new event … Callers pass the run's epoch."*
+
+**🔴 My first fix was also wrong.** `attempt_key=str(int(time.time() * 1000))` collides for anything
+firing in the same tick — measured, 5 rapid reads returned **one** distinct value, so 5 fires still
+produced only 2 notifications. Replaced with a monotonic per-process counter, which is correct whatever
+the clock's resolution. Process-local is sufficient because `_delivered_event_ids` is process-local too;
+a restart clears both together.
+
+**The original scope, also delivered.** `dedupe_hash`: the legacy scheduler suppressed a repeated
+IDENTICAL failure inside a 1h window while still advancing `consecutive_failures`. The migration kept
+`_FAILURE_REMINDER_SECS` **and** `_result_hash` and dropped the check that used them — so five things
+were orphaned in `gateway.py` (`_result_hash`, `_FAILURE_REMINDER_SECS`, `_SUCCESS_REMINDER_SECS`,
+`_VOLATILE_RE`, `_EPOCH_RE`), every one with zero callers. `failure_hash` now lives in `delivery.py`
+beside its only reader, so a `triggers` module need not import the orchestrator, and the dead constants
+are deleted (clean break). `flake8` then caught `hashlib` becoming unused — the tail of the same removal.
+
+**Hashed from the ERROR TEXT, not `last_error_summary`.** That field holds `PauseDecision.reason` —
+`"failure 1 of 5"`, `"failure 2 of 5"` — which changes on every failure even when the cause is
+identical. Hashing it could never dedupe once. Measured before writing.
+
+**🔴 A THIRD bug, which my own probe had MASKED.** The check first read `last_alert_hash` off the
+**passed-in** trigger. But the fire path hands `_deliver_fire_outcome` the in-memory row the TICK built,
+while this method writes the hash to disk — so the next fire always arrived with stale state and nothing
+ever matched. My probe reloaded from the store on each iteration and reported success; the test reused a
+single object, the way production does, and caught it. **The lesson: a probe that refreshes state the
+caller does not refresh is testing a system nobody runs.** Now reads the live row, exactly as
+`_record_fire_outcome` already does for the same reason.
+
+**Behaviour, driven end to end:**
+
+```
+dedupe_hash=True,  6x SAME error         -> 1 notification
+no policy,         6x SAME error         -> 6   (opt-in)
+dedupe_hash=False, 6x SAME error         -> 6
+dedupe_hash=True,  6x DIFFERENT errors   -> 6   (per-error, not per-trigger)
+dedupe_hash=True,  A,A,B,B,A             -> 3   (a new error resets the window)
+```
+
+**Deliberate boundaries:** opt-in per §1.1's schema (coalescing for a user who did not ask would be a
+broken automation going quieter than they expect); the autopause counter is **untouched** (dedup governs
+how loudly the user is told, never whether the failure counted — coupling them would let a repeating
+error escape autopause entirely, the worst reading); suppression is capped by the window so a
+still-broken automation re-alerts hourly, because "it stopped telling me" and "it got fixed" must not
+look alike; and the check fails **LOUD** — any bookkeeping error falls through to delivering.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing: dropping `attempt_key` turns 4 red.
+
+- **`failure_policy` is now fully read** — `autopause_after` (S160) and `dedupe_hash` (here). Every key
+  on the field this sweep opened is wired or honestly named.

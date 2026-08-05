@@ -233,3 +233,158 @@ def test_the_FIRE_PATH_delivers():
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
     assert "_deliver_fire_outcome" in src
+
+
+# ── 🔴 every fire shared one event id, so a healthy automation notified ONCE (S161) ──
+
+
+def _gw():
+    from personalclaw.gateway import GatewayOrchestrator
+
+    gw = GatewayOrchestrator.__new__(GatewayOrchestrator)
+    gw.dashboard_state = _State()
+    return gw
+
+
+def _trigger(tmp_path, *, policy=None, tid="clock:daily"):
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=tmp_path)
+    t = Trigger(
+        id=tid,
+        name="daily digest",
+        kind="clock",
+        enabled=True,
+        spec={"kind": "interval", "interval_secs": 60},
+        capabilities={"providers": ["notify"]},
+        workflow={"inline": {"provider": "notify", "config": {}}},
+    )
+    t.delivery = "inbox"
+    t.failure_delivery = "inbox"
+    if policy is not None:
+        t.failure_policy = policy
+    store.upsert(t)
+    return store, store.get(tid).trigger
+
+
+def test_a_HEALTHY_automation_notifies_on_EVERY_fire(tmp_path, monkeypatch):
+    """🔴 THE DEFECT, and it is severe. `_deliver_fire_outcome` passed neither `run_id` nor
+    `attempt_key`, and `event_id` is derived from exactly those three parts — so every fire of a
+    trigger produced the SAME id and `is_duplicate` dropped everything after the first.
+
+    Measured: a healthy daily digest with `delivery: "inbox"` notified the user **once,
+    ever**; fires 2-5 were silently discarded as "already sent". Criterion 10's dedup is for
+    the same event REDELIVERED (a transport retry); applied to distinct fires it became a mute.
+    """
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _store, trigger = _trigger(tmp_path)
+    gw = _gw()
+    for _ in range(5):
+        gw._deliver_fire_outcome(trigger, ok=True)
+    assert len(gw.dashboard_state.sent) == 5, "each fire is a distinct event"
+
+
+def test_the_attempt_key_is_a_COUNTER_not_a_TIMESTAMP(tmp_path, monkeypatch):
+    """🔴 A bug in my own first fix. `int(time.time() * 1000)` collides for fires in the same tick —
+    measured, 5 rapid reads returned ONE distinct value, so 5 fires still produced only 2
+    notifications. A counter is monotonic whatever the clock's resolution."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    gw = _gw()
+    keys = [gw._next_delivery_attempt() for _ in range(5)]
+    assert len(set(keys)) == 5, f"attempt keys must be distinct, got {keys}"
+
+
+def test_a_REPEATED_identical_failure_is_SUPPRESSED(tmp_path, monkeypatch):
+    """🔴 `failure_policy.dedupe_hash` was written by the migration and read by nothing — the unified
+    path kept the legacy `_FAILURE_REMINDER_SECS` constant and `_result_hash` helper and dropped the
+    check that used them. `event_id` cannot cover this: it dedupes the same event redelivered, not
+    different fires carrying an identical error."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _store, trigger = _trigger(tmp_path, policy={"dedupe_hash": True})
+    gw = _gw()
+    for _ in range(6):
+        gw._deliver_fire_outcome(trigger, ok=False, error="ConnectionError: host unreachable")
+    assert len(gw.dashboard_state.sent) == 1
+
+
+def test_dedup_is_OPT_IN(tmp_path, monkeypatch):
+    """Gated on the declared key. Coalescing alerts for a user who did not ask would be the opposite
+    failure — a broken automation going quieter than they expect."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    for policy in ({}, {"dedupe_hash": False}):
+        _store, trigger = _trigger(tmp_path, policy=policy, tid=f"clock:{policy!r}")
+        gw = _gw()
+        for _ in range(6):
+            gw._deliver_fire_outcome(trigger, ok=False, error="ConnectionError: host unreachable")
+        assert len(gw.dashboard_state.sent) == 6, policy
+
+
+def test_a_DIFFERENT_error_always_alerts(tmp_path, monkeypatch):
+    """Dedup is per-error, not per-trigger: a second, different fault is news."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _store, trigger = _trigger(tmp_path, policy={"dedupe_hash": True})
+    gw = _gw()
+    for i in range(6):
+        gw._deliver_fire_outcome(trigger, ok=False, error=f"ConnectionError: host-{i} down")
+    assert len(gw.dashboard_state.sent) == 6
+
+
+def test_a_NEW_error_RESETS_the_window(tmp_path, monkeypatch):
+    """A,A,B,B,A → 3 alerts. The hash is persisted on every non-suppressed alert, so a new
+    error starts its own window instead of inheriting the previous one's remaining time — and
+    a RETURN to the first error is news again, because the last alert the user saw was B."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    _store, trigger = _trigger(tmp_path, policy={"dedupe_hash": True})
+    gw = _gw()
+    for err in ("A: one", "A: one", "B: two", "B: two", "A: one"):
+        gw._deliver_fire_outcome(trigger, ok=False, error=err)
+    assert len(gw.dashboard_state.sent) == 3
+
+
+def test_the_reminder_window_lets_a_still_broken_automation_RE_ALERT():
+    """Suppression is capped, never unbounded: "it stopped telling me" and "it got fixed" must not
+    look the same. Driven on the pure decision so the clock is an argument."""
+    from personalclaw.triggers.delivery import FAILURE_REMINDER_SECS, suppress_repeat_failure
+
+    _first, digest = suppress_repeat_failure(error="X: boom", last_hash="", last_at=0.0, now=1000.0)
+    inside, _ = suppress_repeat_failure(
+        error="X: boom", last_hash=digest, last_at=1000.0, now=1000.0 + FAILURE_REMINDER_SECS - 1
+    )
+    outside, _ = suppress_repeat_failure(
+        error="X: boom", last_hash=digest, last_at=1000.0, now=1000.0 + FAILURE_REMINDER_SECS + 1
+    )
+    assert inside is True and outside is False
+
+
+def test_dedup_does_NOT_touch_the_autopause_counter():
+    """The legacy control advanced `consecutive_failures` while suppressing the notification,
+    and that separation is the point: dedup is about how loudly the user is told, never about
+    whether the failure counted. Coupling them lets a repeating error escape autopause."""
+    import inspect
+
+    from personalclaw.gateway import GatewayOrchestrator
+
+    source = inspect.getsource(GatewayOrchestrator._dedupe_repeat_failure)
+    assert "consecutive_failures" in source, "the reasoning must be recorded"
+    assert "consecutive_failures =" not in source and "consecutive_failures=" not in source
+
+
+def test_the_hash_normalises_VOLATILE_data():
+    """The same outage must not produce a fresh hash every minute just because its message carries
+    the clock — otherwise dedup never fires on the errors most likely to repeat."""
+    from personalclaw.triggers.delivery import failure_hash
+
+    a = "ConnectionError: host down at 2026-08-04T19:00:00Z"
+    b = "ConnectionError: host down at 2026-08-04T20:00:00Z"
+    assert failure_hash(a) == failure_hash(b)
+    assert failure_hash(a) != failure_hash("ConnectionError: OTHER host down")
+
+
+def test_an_EMPTY_error_never_suppresses():
+    """The first alert of anything always goes out; a missing error text is not evidence of a
+    repeat. Fail-LOUD, the safe direction for a notification."""
+    from personalclaw.triggers.delivery import suppress_repeat_failure
+
+    suppress, digest = suppress_repeat_failure(error="", last_hash="abc", last_at=1.0, now=2.0)
+    assert suppress is False and digest == ""
