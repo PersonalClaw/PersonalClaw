@@ -74,7 +74,15 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
     setErr('')
     setRunFlash(null)
     try {
-      await api.runStoreTrigger(trigger.raw_id, dry)
+      const r = await api.runStoreTrigger(trigger.raw_id, dry)
+      // 🔴 A 200 is not a success (#395). The backend answers `ok: false` when the fire was refused
+      // (incident mode) or the action could not be resolved — flashing "Ran" for those is how a
+      // silent no-op looked like a completed run for a whole release. `result`/`refused` carry the
+      // reason, so show it instead of inventing one.
+      if (!dry && r.ok === false) {
+        setErr(r.refused || (typeof r.result === 'string' && r.result) || 'This automation did not run.')
+        return
+      }
       setRunFlash(dry ? 'Dry run — nothing executed' : 'Ran')
       if (!dry) setHistKey((k) => k + 1)
       onChanged()

@@ -10,6 +10,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **"Run now" did nothing for almost every automation, while reporting success.** Clicking Run now
+  (or dry-run's live counterpart) on a schedule or automation reported that it had run, but no
+  action executed and nothing appeared in the run history — the Run button just sat on "Running…"
+  waiting for a run that had never started. Automations still fired on their own schedule, so
+  nothing looked broken until you tried to test one by hand. Manual runs now execute the
+  automation's action, and a run that cannot start says so instead of claiming success.
+
 - **Changing your embedding model silently stopped the assistant remembering anything.** If the
   embedding model changed after the memory index was built, every attempt to save a new memory
   failed — and nothing said so. Recall and the nightly consolidation pass broke the same way for
