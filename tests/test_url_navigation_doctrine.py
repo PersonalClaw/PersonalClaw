@@ -124,6 +124,29 @@ def test_replace_keys_use_replace_semantics():
     )
 
 
+def test_tasks_deep_links_use_a_key_the_tasks_route_reads():
+    """A `navigate('tasks?<key>=<id>')` producer must name a query key TasksSection
+    actually reads. The project hub sent `?task=<id>` while the reader binds
+    `?open=<id>`, so clicking a task in a project's task-list panel landed on the
+    Tasks list with no detail panel open — a dead deep link with no error anywhere.
+    The reader's key set is DERIVED from TasksSection.tsx rather than duplicated
+    here, so renaming the contract can't leave this guard asserting a stale name."""
+    reader = Path("web/src/pages/tasks/TasksSection.tsx").read_text(encoding="utf-8")
+    read_keys = set(re.findall(r"query\.([a-zA-Z_]+)", reader))
+    assert "open" in read_keys, "TasksSection should still read the ?open=<id> deep link"
+    offenders: list[str] = []
+    for f in _PAGES.rglob("*.tsx"):
+        for lineno, raw in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            for key in re.findall(r"navigate\(`tasks\?([a-zA-Z_]+)=", _uncommented(raw)):
+                if key not in read_keys:
+                    offenders.append(f"{f}:{lineno}  tasks?{key}=")
+    assert not offenders, (
+        "A tasks deep link names a query key TasksSection does not read, so it lands "
+        f"on the list with nothing selected (it reads: {', '.join(sorted(read_keys))}):"
+        "\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_router_still_owns_history_mechanics():
     """Sanity: the one allowed place (the router) still performs the hash/history
     writes — so the guard above is banning *bypasses*, not the mechanism itself."""

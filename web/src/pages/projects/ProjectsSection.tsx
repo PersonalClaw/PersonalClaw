@@ -559,7 +559,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       icon={panel.kind === 'tasks' ? <ListChecks size={18} className="text-primary" /> : <FolderTree size={18} className="text-primary" />}
       title={panel.kind === 'tasks' ? panel.list.name : panel.label}>
       {panel.kind === 'tasks'
-        ? <TaskListPanel list={panel.list} onOpenTask={(tid) => navigate(`tasks?task=${encodeURIComponent(tid)}`)} />
+        ? <TaskListPanel list={panel.list} onOpenTask={(tid) => navigate(`tasks?open=${encodeURIComponent(tid)}`)} />
         : <DirTreePanel path={panel.path} onOpenInFiles={() => navigate(`files?dir=${encodeURIComponent(panel.path)}`)} />}
     </SidePanel>
   )
