@@ -122,6 +122,7 @@ from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
 
 # ── Durability: scheduled backups + retention (handlers/durability.py) ──
 from personalclaw.dashboard.handlers.durability import (  # noqa: E402, F401
+    api_durability_restore,
     api_durability_run,
     api_durability_snapshots,
     api_durability_status,

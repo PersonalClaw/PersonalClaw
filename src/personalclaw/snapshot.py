@@ -1229,6 +1229,45 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
     print("✅ Replace complete.")
 
 
+def home_is_populated(pc: Path) -> list[str]:
+    """Declared entries this home already holds — the non-emptiness test (S184).
+
+    🔴 WHY. Restore mode auto-detected on `memory.db` alone: `"merge" if (pc / "memory.db").is_file()
+    else "replace"`. A home that has never embedded anything has no `memory.db`, so a home full of
+    real state read as EMPTY and defaulted to REPLACE. Driven end to end on a home holding six
+    declared entries — tasks, projects, workflows, entity_settings, inbox.json, triggers.json —
+    `tasks/mine.json` and the user's automation were moved into `pre-restore-<ts>/` and the
+    copies took their place.
+
+    That is recoverable, which is why it is a wrong DEFAULT rather than data loss: the plan's own
+    framing is that "the restore people actually perform is onto a machine that already has state …
+    and replace-mode restores there destroy the newer half".
+
+    Asks the inventory instead, so any declared store counts. `config.json` alone does not — it is
+    written at first boot, so treating it as state would make every fresh install look populated and
+    push a genuine first-time restore onto the merge path.
+    """
+    from personalclaw.durability import inventory as inv
+
+    # `config.json` is written at first boot, so counting it would make every fresh install look
+    # populated and push a genuine first-time restore onto the merge path. The other two are
+    # machine-local bookkeeping, not user state.
+    seeded = {"config.json", "session_map.json", "machine_id"}
+    # Secrets are excluded: this list is surfaced over the API, and naming a credential file is
+    # needless even though only its EXISTENCE would leak. They also say nothing about whether
+    # the home holds work worth protecting, which is the question being asked.
+    secret = inv.secret_paths()
+    return [
+        e.path
+        for e in inv.backup_entries()
+        if e.path not in seeded
+        and not e.derived
+        and not e.secret
+        and e.path.split("/")[0] not in secret
+        and (pc / e.path).exists()
+    ]
+
+
 def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]:
     """What a merge WOULD do, per declared entry — the plan `--dry-run` prints (S183).
 
@@ -1531,6 +1570,57 @@ def _is_gateway_running() -> bool:
         return False
 
 
+def restore_plan(archive: Path, components: list[str] | None) -> dict:
+    """The merge plan for `archive`, as data — the API's read-only half (S184).
+
+    Shares `merge_plan()` with the CLI's `--dry-run`, so the endpoint cannot describe a different
+    restore from the one the terminal describes. Writes nothing.
+    """
+    with tempfile.TemporaryDirectory() as work_str:
+        work = Path(work_str)
+        with tarfile.open(str(archive), "r:gz") as tar:
+            tar.extractall(work, filter=_data_filter)
+        roots = [p for p in work.iterdir() if p.is_dir()]
+        if not roots:
+            return {"ok": False, "error": "invalid snapshot format"}
+        pc = _pc_dir()
+        populated = home_is_populated(pc)
+        return {
+            "ok": True,
+            "snapshot": archive.name,
+            "home_populated": bool(populated),
+            "existing_stores": sorted(populated),
+            "proposed_mode": "merge" if populated else "replace",
+            "plan": merge_plan(roots[0], pc, components),
+        }
+
+
+def restore_apply(archive: Path, mode: str, components: list[str] | None) -> dict:
+    """Perform a restore. Refuses while the gateway runs, exactly as the CLI does.
+
+    No `force` parameter on purpose: overriding the running-gateway guard is a local operator
+    decision at a terminal, not something to expose over HTTP.
+    """
+    if _is_gateway_running():
+        _audit("state_restore_rejected", "reason=gateway_running")
+        return {"ok": False, "error": "gateway is running — stop it before restoring"}
+    with tempfile.TemporaryDirectory() as work_str:
+        work = Path(work_str)
+        with tarfile.open(str(archive), "r:gz") as tar:
+            tar.extractall(work, filter=_data_filter)
+        roots = [p for p in work.iterdir() if p.is_dir()]
+        if not roots:
+            return {"ok": False, "error": "invalid snapshot format"}
+        pc = _pc_dir()
+        pc.mkdir(parents=True, exist_ok=True)
+        if mode == "replace":
+            _do_replace(roots[0], pc, components)
+        else:
+            _do_merge(roots[0], pc, components)
+    _audit("state_restored", f"mode={mode} snapshot={archive.name}")
+    return {"ok": True, "mode": mode, "snapshot": archive.name}
+
+
 def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:
     if parsed is None:
         p = argparse.ArgumentParser(
@@ -1577,7 +1667,13 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 return 1
 
     pc = _pc_dir()
-    mode = args.mode or ("merge" if (pc / "memory.db").is_file() else "replace")
+    # Inventory-based, not `memory.db`-based: any declared store makes this home populated, and a
+    # populated home must default to MERGE so a restore cannot displace newer local state.
+    populated = home_is_populated(pc)
+    mode = args.mode or ("merge" if populated else "replace")
+    if args.mode is None and populated:
+        print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
+        print("   Use --mode replace to overwrite instead (previous state is kept aside).")
 
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)

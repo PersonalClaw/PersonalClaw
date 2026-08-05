@@ -2365,3 +2365,161 @@ def test_an_ABSENT_entry_is_not_in_the_plan(tmp_path) -> None:
         f"expected exactly {{'config.json'}}, got {paths}: "
         f"extra={paths - {'config.json'}} missing={{'config.json'}} - paths"
     )
+
+
+# ── 🔴 restore mode auto-detected on memory.db alone (S184, T2-M3) ──
+
+
+def test_a_POPULATED_home_without_memory_db_proposes_MERGE(tmp_path, monkeypatch) -> None:
+    """🔴 THE DEFECT. Mode auto-detected as `"merge" if (pc / "memory.db").is_file() else "replace"`.
+    A home that has never embedded anything has no `memory.db`, so a home FULL of real state read as
+    empty and defaulted to REPLACE.
+
+    Driven end to end before the fix, on a home holding tasks, projects, workflows and
+    `triggers.json`: the user's task and their automation were moved into `pre-restore-<ts>/`
+    and the snapshot's copies took their place. Recoverable, which is why this is a wrong
+    DEFAULT rather than
+    data loss — but the plan's own framing is that "the restore people actually perform is onto a
+    machine that already has state … and replace-mode restores there destroy the newer half".
+    """
+    from personalclaw.snapshot import home_is_populated
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    for name in ("tasks", "projects", "workflows"):
+        (home / name).mkdir()
+        (home / name / "mine.json").write_text('{"id":"MY-WORK"}', encoding="utf-8")
+    (home / "triggers.json").write_text('{"triggers":[{"id":"a"}]}', encoding="utf-8")
+
+    assert not (home / "memory.db").exists()
+    populated = home_is_populated(home)
+    assert "tasks" in populated and "triggers.json" in populated
+
+
+def test_a_FRESH_install_still_takes_the_REPLACE_path(tmp_path, monkeypatch) -> None:
+    """The other direction, and why `config.json` is not counted: it is written at first boot,
+    so treating it as state would make every fresh install look populated and push a genuine
+    first-time restore onto the merge path."""
+    from personalclaw.snapshot import home_is_populated
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    (home / "machine_id").write_text("abc", encoding="utf-8")
+
+    assert home_is_populated(home) == []
+
+
+def test_the_populated_list_names_NO_SECRET(tmp_path, monkeypatch) -> None:
+    """🔴 Found by driving the API response: `sel_hmac.key` appeared in `existing_stores`. Only its
+    EXISTENCE would be disclosed, and the caller is already authenticated — but naming a credential
+    file in an API response is needless, and a key says nothing about whether the home holds work
+    worth protecting, which is the question being asked."""
+    from personalclaw.snapshot import home_is_populated
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "sel_hmac.key").write_text("k", encoding="utf-8")
+    (home / "telemetry_salt").write_text("s", encoding="utf-8")
+    (home / ".env").write_text("K=v", encoding="utf-8")
+    (home / "credentials").mkdir()
+    (home / "credentials" / "c.json").write_text("{}", encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+
+    assert home_is_populated(home) == ["tasks"]
+
+
+def test_a_MERGE_restore_into_a_populated_home_keeps_local_work(tmp_path, monkeypatch) -> None:
+    """The behaviour the default now produces, end to end through `restore_main`."""
+    from personalclaw.snapshot import restore_main, snapshot_main
+
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
+    (src / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (src / "tasks").mkdir()
+    (src / "tasks" / "from-snap.json").write_text('{"id":"FROM-SNAP"}', encoding="utf-8")
+    out = tmp_path / "snaps"
+    snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+
+    live = tmp_path / "live"
+    live.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(live))
+    (live / "tasks").mkdir()
+    (live / "tasks" / "mine.json").write_text('{"id":"MINE"}', encoding="utf-8")
+    (live / "triggers.json").write_text('{"triggers":[{"id":"a"}]}', encoding="utf-8")
+
+    assert restore_main([str(archive), "--force"]) == 0
+
+    assert (live / "tasks" / "mine.json").is_file(), "local work must survive the default restore"
+    assert (live / "triggers.json").is_file(), "the user's automation must survive"
+    assert (live / "tasks" / "from-snap.json").is_file(), "the snapshot's row must arrive too"
+    assert [p for p in live.iterdir() if p.name.startswith("pre-restore-")] == []
+
+
+def test_RESTORE_PLAN_writes_nothing_and_shares_the_CLI_plan(tmp_path, monkeypatch) -> None:
+    """The API's read-only half. Omitting `mode` returns the plan and changes nothing — the safe
+    default for an endpoint that can overwrite a home, so `mode=replace` is always deliberate.
+
+    Shares `merge_plan()` with the CLI's `--dry-run`, so the endpoint cannot describe a different
+    restore from the one the terminal describes.
+    """
+    import hashlib
+
+    from personalclaw.snapshot import restore_plan, snapshot_main
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "x.json").write_text('{"id":"T"}', encoding="utf-8")
+    out = tmp_path / "snaps"
+    snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+    (home / "projects").mkdir()
+    (home / "projects" / "mine.json").write_text('{"id":"MINE"}', encoding="utf-8")
+
+    def _digest():
+        h = hashlib.sha256()
+        for path in sorted(home.rglob("*")):
+            if path.is_file() and "snaps" not in str(path):
+                h.update(path.name.encode())
+                h.update(path.read_bytes())
+        return h.hexdigest()
+
+    before = _digest()
+    result = restore_plan(archive, None)
+
+    assert result["ok"] is True
+    assert result["home_populated"] is True
+    assert result["proposed_mode"] == "merge"
+    assert "projects" in result["existing_stores"]
+    assert any(r["path"] == "tasks" for r in result["plan"])
+    assert _digest() == before, "a plan request mutated the home"
+
+
+def test_RESTORE_APPLY_refuses_while_the_gateway_runs(tmp_path, monkeypatch) -> None:
+    """The CLI's guard, mirrored. This handler IS the gateway, so a restore under it would rewrite
+    state the running process holds open. There is no `force` mirror on purpose: overriding is a
+    local operator decision at a terminal, not something to expose over HTTP."""
+    from personalclaw import snapshot as snap_mod
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "snaps"
+    snap_mod.snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+
+    monkeypatch.setattr(snap_mod, "_is_gateway_running", lambda: True)
+    result = snap_mod.restore_apply(archive, "merge", None)
+
+    assert result["ok"] is False
+    assert "gateway is running" in result["error"]

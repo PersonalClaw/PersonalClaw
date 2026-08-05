@@ -903,3 +903,47 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
 
   Tests: 6 new cases in `tests/test_snapshot.py` (105 in that file). Both halves verified load-bearing
   by unwiring each independently. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.
+
+## Execution log — Session 2l (the restore endpoint, and the non-emptiness test that was wrong)
+
+- **DONE (T2-M3 + the API restore leg).** Two defects, each found by driving a real home rather than
+  reading the code.
+
+  🔴 **The auto-detect default was keyed on one file.** `restore_main` chose its mode with
+  `"merge" if (pc / "memory.db").is_file() else "replace"`. Measured on a home holding six declared
+  stores but no embeddings (tasks, projects, workflows, entity_settings, inbox.json, triggers.json):
+  the home read as EMPTY and defaulted to REPLACE, so `tasks/mine.json` and the user's automation were
+  moved into `pre-restore-<ts>/` and the snapshot's copies took their place. Recoverable, so a wrong
+  DEFAULT rather than data loss — which is exactly the plan's stated fear ("replace-mode restores
+  there destroy the newer half"). Fixed with `home_is_populated()`, which asks the inventory: any
+  non-derived, non-secret declared store present counts, so the home's emptiness no longer hinges on
+  whether it ever embedded anything. `config.json`/`session_map.json`/`machine_id` are excluded — the
+  first is written at first boot, so counting it would push a genuine first-time restore onto the
+  merge path; the other two are machine-local bookkeeping. Secrets are excluded because the list is
+  surfaced over the API.
+
+  **The API had no restore.** `POST /api/durability/restore` was named in T2-M3 and absent — the
+  dashboard could take a backup and could not restore one. Added, mirroring the CLI exactly by sharing
+  `merge_plan()`: omitting `mode` returns the plan and writes nothing (safe default for an endpoint
+  that can overwrite a home — replace is therefore always deliberate), and `restore_apply` refuses
+  while the gateway runs just as the CLI does. No `--force`/`force` mirror on purpose: overriding the
+  running-gateway guard is a local operator decision at a terminal, not an HTTP surface. Path
+  containment on the archive name (must resolve inside the snapshot dir) so a caller cannot point a
+  restore at an arbitrary tar.
+
+  🔴 **`triggers.json` was never in the inventory.** `triggers/store.py` is "the one trigger store …
+  absorbing crons.json / hooks.json / event_triggers.json", hand-listed in both `snapshot.py` and
+  `portability.py`, yet no inventory entry declared it — so it was invisible to `home_is_populated`,
+  the coverage ratchet, and every projection S176-S183 built. `audit_home()` WOULD have flagged it
+  (verified: it reports `triggers.json` unclaimed on a home that has one); S179 audited both real
+  homes clean only because neither has migrated to the store yet, so the guard was right and the
+  population was the gap — the same fixture-versus-reality shape S179 was about. Added as
+  `union_by_id`; `crons`/`hooks`/`event_triggers` re-annotated legacy read-only.
+
+  Tests: 6 new cases in `tests/test_snapshot.py` (111 in that file) — populated-without-memory.db
+  proposes MERGE, fresh install still REPLACE, the populated list names no secret, a MERGE into a
+  populated home keeps local work, the plan writes nothing (home hashed before/after), apply refuses
+  under a running gateway. DEVIATION: regenerated `src/personalclaw/reference/{index,routes}.md` — the
+  offline reference is route-derived and the new endpoint is a real route, so `test_agent_reference`
+  correctly went red until regenerated. Gate: `make lint` green (1337 files) · full
+  `pytest -n 4 --dist worksteal` → 16401 passed, 29 skipped, 12 xfailed.
