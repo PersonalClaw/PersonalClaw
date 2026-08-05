@@ -241,6 +241,49 @@ def build_delivery(
     )
 
 
+def route_for(trigger: Any, *, ok: bool) -> str:
+    """The destination this OUTCOME routes to (decision 13 / R12 — S158).
+
+    🔴 WHY THIS EXISTS. `Trigger.failure_delivery` is declared, persisted, round-tripped by
+    `to_dict`/`from_dict`, defaulted by the migration and accepted by `automation_update` — and read
+    by NOTHING. Its own comment states the contract it was meant to enforce: *"A SEPARATE route for
+    failures (R12). Failures reach the inbox even when `delivery` is none: an automation the user
+    asked to stay quiet still has to be able to say it broke."*
+
+    Measured before writing: `_deliver_fire_outcome` passed `destination=trigger.delivery`
+    unconditionally, so the failure route was never consulted — and a `delivery: "none"` automation
+    that broke reported its failure through the silent channel.
+
+    Falls back to `delivery` when `failure_delivery` is empty, and only for a FAILURE — a success
+    must never inherit the failure route, or a quiet automation would start announcing its ordinary
+    runs through the inbox.
+    """
+    if ok:
+        return str(getattr(trigger, "delivery", "") or "none")
+    failure = str(getattr(trigger, "failure_delivery", "") or "")
+    return failure or str(getattr(trigger, "delivery", "") or "none")
+
+
+def is_muted(destination: str) -> bool:
+    """Whether this destination means "do not notify" (decision 13's `none`).
+
+    🔴 THE SECOND HALF. `Delivery` carried `destination` and `to_notify_kwargs` **dropped it**, so
+    `delivery: "none"` silenced nothing: measured, a `none` trigger notified exactly like an `inbox`
+    one. The field existed, round-tripped, and was inert at the only point that could honour it.
+
+    Checked HERE rather than by teaching `state.notify` about triggers. R18 says *"the
+    substrate does not build a second notification path"*, and `notify` owns GLOBAL policy
+    (mute-all, severity, quiet hours) plus per-(source, kind) rules. Per-TRIGGER routing is
+    this substrate's own concern, so it is decided before the shared chokepoint is called,
+    never inside it.
+
+    An empty destination is NOT muted: `from_dict` defaults `delivery` to `"none"` explicitly, so a
+    blank value means a caller built a `Delivery` without one, and defaulting that to silence would
+    let a bug turn into missing alerts.
+    """
+    return str(destination or "").strip().lower() == "none"
+
+
 def is_duplicate(delivery: Delivery, delivered_ids: "set[str] | list[str] | None") -> bool:
     """Whether this delivery has already gone out — the "does not double-ping" half.
 
@@ -264,6 +307,12 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     raises: a notification failure must not fail the run that completed, which already happened.
     """
     if state is None:
+        return False
+    # 🔴 HONOUR `destination: none` (S158). `to_notify_kwargs` drops `destination`, so before this
+    # check a muted automation notified exactly like an `inbox` one. Enforced HERE rather than at
+    # each caller so a future emitter inherits it — as redaction already does at this boundary.
+    if is_muted(delivery.destination):
+        logger.debug("delivery %s suppressed: destination is none", delivery.event_id)
         return False
     if is_duplicate(delivery, delivered_ids if isinstance(delivered_ids, (set, list)) else None):
         logger.debug("delivery %s already sent; not double-pinging", delivery.event_id)
