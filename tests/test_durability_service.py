@@ -198,28 +198,64 @@ class TestChangeDetection:
 
 
 class TestIncrementalExport:
+    """🔴 Every seeded store here is CLOSED before any fingerprint is taken.
+
+    A `VectorMemoryStore` participates in a reference cycle, so dropping the last
+    name for one does not close its SQLite connection — only the cyclic collector
+    does, at a moment nothing in the test controls. That close checkpoints the
+    `-wal` and DELETES the sidecar, and `_fingerprint` folds the `-wal` in (it must:
+    a committed write can sit there without touching the `.db` for a long time). So
+    a settled fingerprint measured while the connection was still open was measuring
+    a value with a pending expiry: whenever the collector next ran, `memory_db` went
+    dirty again with no data having changed.
+
+    That is the load-dependent CI flake in the settle test below — CPU/allocation
+    pressure moves cyclic collection, which is why the same commit produced a red
+    and a green run 23s apart while passing locally every time. Closing the store
+    before measuring is the fix, not a retry: the sidecar reaches its terminal state
+    before the measurement window opens, so there is no perturbation left to race.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _seeded_stores(self):
+        """Closes every store `_seed` handed out, so no test leaks a live
+        connection whose eventual collection perturbs a LATER test's fingerprints."""
+        self._stores = []
+        yield
+        for store in self._stores:
+            store.close()  # idempotent, so an explicit close in a test is fine
+
     def _seed(self):
         from personalclaw.vector_memory import VectorMemoryStore
 
         store = VectorMemoryStore()
         store.init()
         store.set_semantic("user.note.a", "a fact worth keeping", 0.9, "user_explicit")
+        self._stores.append(store)
         return store
+
+    def _seed_and_close(self):
+        """Seed, then close — for the tests that only need the DATA, not the store.
+
+        Teardown alone cannot fix those: the collector can fire mid-test, between the
+        two measurements. The close has to happen before the first one.
+        """
+        self._seed().close()
 
     def test_exports_then_settles_to_almost_nothing(self):
         """A quiet hour must not re-export the world.
 
         It does not settle to exactly zero, and that is honest rather than a bug: the
-        export's own SEL audit line dirties `security_events` for the next run, and a
-        SQLite store may flush its WAL as a side effect of being read. Which stores
-        self-dirty depends on the platform — an earlier `<= 1` encoded what macOS
-        happened to do and failed on CI with 2.
+        export's own SEL audit line dirties `security_events` for the next run. Which
+        stores self-dirty depends on the platform — an earlier `<= 1` encoded what
+        macOS happened to do and failed on CI with 2, so the bound stays loose here
+        and the exact-zero claim is proved by the sibling test below instead.
 
         So assert the actual invariant: the second pass is strictly SMALLER than the
         first (the bulk settled) and small in absolute terms (it is bookkeeping, not a
         re-export).
         """
-        self._seed()
+        self._seed_and_close()
         first = service.run_incremental_export()
         assert first.ok
         first_count = first.extra["entries_exported"]
@@ -233,16 +269,26 @@ class TestIncrementalExport:
 
     def test_dirty_detection_settles_completely_without_audit_writes(self):
         """The underlying change detection DOES reach zero — proving the residual
-        churn above is the audit log and nothing else."""
+        churn above is the audit log and nothing else.
+
+        EXACTLY zero is the point; do not relax this to `<= 1` to quiet a flake. A
+        residual of one here would mean an idle home re-exports a store forever, which
+        is the whole defect the incremental export exists to avoid. If it goes red,
+        the store being measured still has an open connection (see the class docstring)
+        or change detection has genuinely broken.
+        """
         from personalclaw.durability.shards import default_shard_dir, dirty_entries
 
-        self._seed()
+        self._seed_and_close()
         home = Path(service._home())
         state_path = default_shard_dir(home) / "export_state.json"
         dirty_entries(home, state_path)
         assert dirty_entries(home, state_path) == []
 
     def test_a_new_fact_is_picked_up(self):
+        # Keeps the store open on purpose — it has to write. Safe here because the
+        # assertion is a LOWER bound, so the sidecar can only help it; the fixture
+        # closes it in teardown so it cannot perturb the next test.
         store = self._seed()
         service.run_incremental_export()
         service.run_incremental_export()  # settle
@@ -251,7 +297,7 @@ class TestIncrementalExport:
 
     def test_reports_work_done_not_manifest_size(self):
         """Quoting the manifest length made an idle hour look like a full backup."""
-        self._seed()
+        self._seed_and_close()
         service.run_incremental_export()
         result = service.run_incremental_export()
         assert "store(s)" in result.detail or result.detail == "nothing changed"
