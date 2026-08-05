@@ -1,0 +1,197 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, renderHook, act, waitFor } from '@testing-library/react'
+import { useCachedData, invalidateCache, peekCache } from '../../lib/useCachedData'
+import { PROPOSALS_KEY_PREFIX, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { LearningPage } from './LearningPage'
+import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
+
+// ── #676: a decided proposal must leave the screen ───────────────────────────
+//
+// Measured before the fix: DELETE /api/learning/proposals/{id} returned 200, the server's own list
+// went to `rows: 0`, and the row was still on screen at 7.5s with no second request. `decide()`
+// dropped the cache entry and stopped there — that arms the next MOUNT, it does not re-render the
+// live one. The row was not merely cosmetic either: a second Dismiss on the ghost escalates the
+// rejection cooldown (learning/proposals.py:298-302), so the user's own retry compounds the damage.
+//
+// The first describe drives the REAL page, because that is the only thing that proves the row is
+// gone from the DOM — a helper test can only prove the helper. The second pins the cache reasoning
+// the helper carries (facet sweep, week left alone), which the page cannot show.
+
+const row = (over: Partial<LearningRow> = {}): LearningRow => ({
+  id: 'skill-f6fab94955e7', kind: 'skill', title: 'summarize before filing', provenance: 'refiner',
+  source_cadence: 'run_end', source_excerpt: '', evidence_refs: ['r1'],
+  reinforcements: 2, confidence: 0.7, manifest_valid: true, manifest_issues: [],
+  risk_tier: 'low', status: 'pending', renderable: true, bulk_acceptable: true,
+  ...over,
+})
+
+const inboxOf = (rows: LearningRow[]): LearningInbox => ({
+  rows, total: rows.length,
+  by_kind: rows.reduce<Record<string, number>>((a, r) => ({ ...a, [r.kind]: (a[r.kind] ?? 0) + 1 }), {}),
+  by_tier: {}, flagged: 0, unrenderable: [], bulk_acceptable: rows.length,
+})
+
+const WEEK: StagingWeek = {
+  days: 7, buckets: [], silent_days: [], error_days: [], produced_total: 3, cost_usd: 0,
+}
+
+// Only the four calls this page makes. Mocked at the api module rather than at fetch: the page's
+// contract is with these four functions, and a fetch-level fake would re-implement api.ts's URL
+// building just to assert on it.
+const learningProposals = vi.fn<() => Promise<LearningInbox>>()
+const learningStagingWeek = vi.fn<() => Promise<StagingWeek>>()
+const acceptLearningProposal = vi.fn<() => Promise<{ ok: boolean }>>()
+const rejectLearningProposal = vi.fn<() => Promise<void>>()
+
+vi.mock('../../lib/api', () => ({
+  api: {
+    learningProposals: () => learningProposals(),
+    learningStagingWeek: () => learningStagingWeek(),
+    acceptLearningProposal: () => acceptLearningProposal(),
+    rejectLearningProposal: () => rejectLearningProposal(),
+  },
+}))
+
+describe('LearningPage drops a decided row from the screen (#676)', () => {
+  beforeEach(() => {
+    invalidateCache('', true)
+    sessionStorage.clear()
+    vi.clearAllMocks()
+    learningStagingWeek.mockResolvedValue(WEEK)
+    acceptLearningProposal.mockResolvedValue({ ok: true })
+    rejectLearningProposal.mockResolvedValue(undefined)
+  })
+
+  /** Mount the page with one row, click `label`, and report what the list shows afterwards. */
+  async function decideOnly(label: 'Accept' | 'Dismiss') {
+    // The server truth from the bug report: one row, then zero.
+    learningProposals
+      .mockResolvedValueOnce(inboxOf([row()]))
+      .mockResolvedValue(inboxOf([]))
+
+    const { findByText, getByText, queryByText } = render(<LearningPage />)
+    const title = await findByText('summarize before filing')
+    expect(title).toBeInTheDocument()
+
+    await act(async () => { getByText(label).click() })
+    await waitFor(() => expect(queryByText('summarize before filing')).not.toBeInTheDocument())
+    return { getByText, queryByText }
+  }
+
+  it('removes the row after Dismiss and shows the empty state', async () => {
+    const { getByText } = await decideOnly('Dismiss')
+    // `rows: 0` means the page must now say so. Before the fix this assertion failed at 7.5s.
+    expect(getByText('Nothing to review')).toBeInTheDocument()
+    // The refetch is the mechanism: two list reads, the second one AFTER the DELETE.
+    expect(rejectLearningProposal).toHaveBeenCalledTimes(1)
+    expect(learningProposals.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('removes the row after Accept too', async () => {
+    await decideOnly('Accept')
+    expect(acceptLearningProposal).toHaveBeenCalledTimes(1)
+    expect(learningProposals.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('keeps the row when the decision FAILS, and says why', async () => {
+    // The 403 human-installs gate. A page that optimistically removed the row would tell the user
+    // the proposal was dismissed when the server refused — the reason `decide` refetches instead of
+    // splicing local state.
+    learningProposals.mockResolvedValue(inboxOf([row()]))
+    rejectLearningProposal.mockRejectedValue(new Error('only a human reviewer may reject proposals'))
+
+    const { findByText, getByText } = render(<LearningPage />)
+    await findByText('summarize before filing')
+    await act(async () => { getByText('Dismiss').click() })
+
+    await waitFor(() => expect(getByText('only a human reviewer may reject proposals')).toBeInTheDocument())
+    expect(getByText('summarize before filing')).toBeInTheDocument()
+  })
+
+  it('does not re-read the capture week on a decision', async () => {
+    // The week's numbers come from the staging store's flush/staging tables — what a capture PASS
+    // did. Neither accept nor reject writes either, so a decision-time refetch would be a request
+    // that provably cannot return anything new.
+    await decideOnly('Dismiss')
+    expect(learningStagingWeek).toHaveBeenCalledTimes(1)
+  })
+
+  it('DOES re-read the capture week on an explicit Refresh', async () => {
+    // A Refresh makes no claim about what changed — the user is asking for current server state,
+    // and a capture pass may well have run since the page mounted. That is the whole difference.
+    learningProposals.mockResolvedValue(inboxOf([row()]))
+    const { findByText, getByText } = render(<LearningPage />)
+    await findByText('summarize before filing')
+    expect(learningStagingWeek).toHaveBeenCalledTimes(1)
+
+    await act(async () => { getByText('Refresh').click() })
+    await waitFor(() => expect(learningStagingWeek).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('refreshAfterDecision sweeps every facet, not just the active one', () => {
+  beforeEach(() => {
+    invalidateCache('', true)
+    sessionStorage.clear()
+  })
+
+  it('refetches the live view instead of only arming the next mount', async () => {
+    // The bug, isolated: `invalidateCache` alone leaves `data` exactly as it was.
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(inboxOf([row()]))
+      .mockResolvedValue(inboxOf([]))
+    const { result } = renderHook(() => useCachedData<LearningInbox>(proposalsKey('skill'), fetcher))
+    await waitFor(() => expect(result.current.data?.total).toBe(1))
+
+    act(() => { refreshAfterDecision(result.current.refresh) })
+    await waitFor(() => expect(result.current.data?.total).toBe(0))
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops the OTHER facets too, so selecting a tab cannot paint a decided row', async () => {
+    // Facet keys are per-tab (`learning:proposals:` for All, `learning:proposals:skill`, …). A row
+    // dismissed from the Skill tab is also gone from All, and the hook seeds a key change straight
+    // from cache — so a single-key drop would repaint the ghost the instant All is selected.
+    const skillFetch = vi.fn().mockResolvedValue(inboxOf([row()]))
+    const allFetch = vi.fn().mockResolvedValue(inboxOf([row()]))
+    // Both facets mounted AND settled inside one act(): the All tab is the entry that must not
+    // survive the sweep, so it has to be genuinely warm first. Settling inside act also keeps each
+    // initial fetch from resolving into the tree after the assertions have run.
+    const skill = await act(async () => {
+      const active = renderHook(() => useCachedData<LearningInbox>(proposalsKey('skill'), skillFetch))
+      renderHook(() => useCachedData<LearningInbox>(proposalsKey(''), allFetch))
+      return active
+    })
+    expect(peekCache(proposalsKey('skill'))).toBeTruthy()
+    expect(peekCache(proposalsKey(''))).toBeTruthy()
+
+    await act(async () => { refreshAfterDecision(skill.result.current.refresh) })
+    // The inactive facet's entry is GONE — its next mount refetches rather than seeding the ghost.
+    // Checked AFTER the active facet's own refetch has landed, so this is the settled state and not
+    // a window that the in-flight request closes.
+    expect(peekCache(proposalsKey(''))).toBeUndefined()
+    expect(peekCache(proposalsKey('skill'))).toBeTruthy()
+  })
+
+  it('leaves the capture week cached, and refreshEverything does not', async () => {
+    const weekFetch = vi.fn().mockResolvedValue(WEEK)
+    const listFetch = vi.fn().mockResolvedValue(inboxOf([]))
+    const { result } = renderHook(() => useCachedData(WEEK_KEY, weekFetch))
+    const list = renderHook(() => useCachedData(proposalsKey(''), listFetch))
+    await waitFor(() => expect(peekCache(WEEK_KEY)).toBeTruthy())
+
+    act(() => { refreshAfterDecision(list.result.current.refresh) })
+    expect(peekCache(WEEK_KEY)).toBeTruthy()
+
+    act(() => { refreshEverything(list.result.current.refresh, result.current.refresh) })
+    await waitFor(() => expect(weekFetch).toHaveBeenCalledTimes(2))
+  })
+
+  it('keys every facet under one prefix, so the sweep can find them', () => {
+    // The sweep is a prefix match; a facet key that did not start with it would survive silently.
+    for (const kind of ['', 'skill', 'lesson_batch', 'template_diff']) {
+      expect(proposalsKey(kind).startsWith(PROPOSALS_KEY_PREFIX)).toBe(true)
+    }
+    expect(WEEK_KEY.startsWith(PROPOSALS_KEY_PREFIX)).toBe(false)
+  })
+})
