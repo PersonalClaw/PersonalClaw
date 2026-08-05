@@ -1459,6 +1459,29 @@ class NativeBuiltinToolProvider(ToolProvider):
                 ],
             )
 
+        # 3. a SYSTEM-SCHEDULER write — offer the substrate instead (§7 criterion 12 — S143).
+        #
+        # 🔴 Measured before writing: `is_sensitive_bash_command("crontab -e")` and
+        # `denied_command_reason("crontab -e")` both returned None, as did the `| crontab -` idiom,
+        # `launchctl load` and `systemctl --user enable …timer`. So an agent could install a cron in
+        # the user's real crontab and nothing said a word — and such a job is invisible to every
+        # surface this program built: no ledger row, no autopause, no quiet window, no capability
+        # fence, no kill switch, and it survives uninstall.
+        #
+        # Declined-with-an-offer, not silently blocked, because criterion 12 says "prompted and
+        # OFFERED the substrate": the observation names `automation_create` so the model takes the
+        # supported path rather than working around the refusal with `at` or a hand-written plist.
+        # READS (`crontab -l`) pass, deliberately — that is how you migrate existing jobs IN.
+        from personalclaw.triggers import handoff as trigger_handoff
+
+        offer = trigger_handoff.detect(command)
+        if offer is not None:
+            return ToolResult(
+                success=False,
+                error=offer.reason,
+                recovery_hints=[trigger_handoff.HANDOFF_HINT],
+            )
+
         argv = ["bash", "-lc", command]
         wrapped, cleanup = wrap_argv(argv, mode=self._sandbox_mode)
         try:
