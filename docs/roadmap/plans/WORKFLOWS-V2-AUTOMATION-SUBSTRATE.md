@@ -5627,3 +5627,67 @@ now that a vocabulary has one mapper and surfaces consume it.
 - **The store trigger's detail panel now answers all three questions** a user opens it with: what it
   runs (pre-existing), whether it has been running (S168's history), and whether it is running now,
   with the cause when it is not (here).
+
+### S170 — a fire 40 minutes past its slot recorded a plain `ran` (§1.3)
+
+**Found by running the reader sweep over `FireRecord`'s wire fields** (the S163–S169 method, applied to
+the other entity). `scheduled_for` had no frontend reader; chasing why led to the outcome it exists to
+support.
+
+**🔴 THE DEFECT.** §1.3 introduced `ran_late` and `scheduled_for` together:
+
+> *`scheduled_for` sits alongside `started_at` so `ran_late` is a measurable fact rather than an
+> impression: a run that started 40 minutes after its slot is a different story from one that started
+> on time and took 40 minutes.*
+
+`FireRecord` carries both stamps, and `validate_record` even **refuses** a `ran_late` row without a
+`scheduled_for` — the model actively defends a pairing nothing produced. The only writer was the
+**manual** missed-fire card (`resolve_missed`). Measured on a real tick:
+
+```
+a fire 40 minutes past its slot:
+  outcome       = 'ran'
+  scheduled_for = 1800000000.0
+  reason        = ''
+measurable lateness on the row: 40 min
+```
+
+Both timestamps present, lateness computable, outcome silent about it.
+
+**🔴 The threshold is DERIVED, not chosen** — which is the part worth defending:
+
+```
+LATE_THRESHOLD_SECS = 2 × (BOOT_STAGGER_BASE_SECS + BOOT_STAGGER_WINDOW_SECS + POLL_CEILING_SECS)
+                    = 2 × (60 + 120 + 30) = 420s = 7 min
+```
+
+On-time scheduling already carries those delays *by design*: a wake sleeps up to a poll ceiling, and a
+boot deliberately pushes overdue fires by the stagger base and spreads them across the window to avoid a
+thundering herd. A threshold below their sum would label the substrate's own correct behaviour as
+lateness — which is how a signal becomes noise and then gets ignored. The test asserts the constant
+against its components, so retuning a stagger carries the threshold along instead of silently
+invalidating it. Measured boundary: 6 min → `ran`, 8 min → `ran_late`.
+
+**Refined in the TICK**, because that is the one place holding both stamps: `scheduled_for` comes from
+the trigger's own `next_fire_at` and `now` is when the fire was granted. `FireContext` has no
+`scheduled_for`, so `firepath` cannot decide this, and adding one there would duplicate a value the tick
+already owns.
+
+**Only `ran` is refined.** Overwriting `failed` with `ran_late` would lose the failure entirely, turning
+a broken automation into a merely tardy one; a suppressed fire keeps its gate reason, because "it was
+late" is not the interesting thing about a fire that never ran. A zero or missing slot returns unchanged
+— with nothing to compare against, lateness is not a fact, and guessing produces exactly the
+"impression" §1.3 warns about.
+
+**Verified both downstream classifications**, since a new outcome value silently reclassifying a run is
+how this program's defects usually compound:
+
+- **not** in `TRUE_FAILURE_OUTCOMES` — 5 consecutive late fires give `consecutive_failures_from == 0`,
+  so a slow automation is not autopaused for being slow.
+- **not** in `INERT_OUTCOMES` — it DID the work, so it stays in the runs feed rather than folding away.
+- Already rendered: S163 mapped `ran_late` to a warning-toned "ran late" label, so the UI was waiting.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by discarding the refinement while keeping the code valid — exactly one test goes
+red. (A first attempt left a `NameError` instead, which is a broken revert rather than a disabled
+behaviour: 19 unrelated failures and no usable signal.)

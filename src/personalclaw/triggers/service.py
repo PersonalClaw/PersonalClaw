@@ -438,6 +438,7 @@ async def tick(
     by_id = {t.id: t for t in triggers}
 
     from personalclaw.triggers import firepath as fp
+    from personalclaw.triggers.missed import late_outcome
 
     # Named resource slots, read ONCE per tick (§3.5 — S135). Per-trigger would re-scan every claim
     # for every due trigger; once per tick also makes the answer consistent within a tick, so two
@@ -542,6 +543,22 @@ async def tick(
         decision = await fp.evaluate(ctx)
         row = fp.ledger_row(decision, ctx)
         row["scheduled_for"] = scheduled_for
+        # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote (§1.3 — S170). §1.3 added
+        # the outcome and `scheduled_for` together — "a run that started 40 minutes after its
+        # slot is a different story from one on time that took 40 minutes" — and
+        # `validate_record` even refuses a `ran_late` row without a slot. But the tick recorded a
+        # plain `ran` however overdue the fire was: measured, 40 minutes past its slot with the
+        # lateness computable on that very row.
+        #
+        # Refined HERE because this is the one place holding both stamps: `scheduled_for` comes from
+        # the trigger's own `next_fire_at`, and `now` is when the fire was granted.
+        # `FireContext` has no `scheduled_for`, so `firepath` cannot decide it — and adding one
+        # there would duplicate a value the tick already owns.
+        row["outcome"], late_reason = late_outcome(
+            row["outcome"], scheduled_for=scheduled_for, started_at=now
+        )
+        if late_reason:
+            row["reason"] = late_reason
         result.ledger_rows.append(row)
 
         if decision.allowed:

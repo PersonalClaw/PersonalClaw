@@ -50,6 +50,21 @@ BOOT_STAGGER_BASE_SECS = 60.0
 #: The window overdue fires are spread across at boot.
 BOOT_STAGGER_WINDOW_SECS = 120.0
 
+#: How late a fire must be before it is recorded as `ran_late` rather than `ran` (§1.3 — S170).
+#:
+#: DERIVED, not chosen. Ordinary on-time scheduling already carries two known delays: a wake
+#: can be up to `POLL_CEILING_SECS` behind (the tick sleeps up to 30s), and a boot pushes
+#: overdue fires by
+#: `BOOT_STAGGER_BASE_SECS` and spreads them across `BOOT_STAGGER_WINDOW_SECS` to avoid a thundering
+#: herd. A threshold below their sum would label the substrate's OWN designed behaviour as lateness,
+#: which is how a signal becomes noise and then gets ignored.
+#:
+#: So: base + window + one poll, doubled for headroom against a slow provider registration on the
+#: same boot. Anything under this is scheduling; anything over it is a story — the lid was shut, the
+#: machine was asleep, a run overran its interval.
+LATE_THRESHOLD_SECS = 2 * (BOOT_STAGGER_BASE_SECS + BOOT_STAGGER_WINDOW_SECS + POLL_CEILING_SECS)
+
+
 #: A fire claim's self-expiry. Beyond this the claim is considered abandoned and another fire may
 #: take it — so a process killed mid-run cannot wedge a trigger forever.
 #: One hour matches the lease
