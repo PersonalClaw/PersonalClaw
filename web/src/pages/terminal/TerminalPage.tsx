@@ -3,6 +3,7 @@ import { Terminal as TermIcon, Plus, X, Loader2, SplitSquareHorizontal, Anchor }
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { EmptyState } from '../../ui/ListScaffold'
+import { InlineError } from '../../ui/InlineError'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { api } from '../../lib/api'
 import { TerminalView } from './TerminalView'
@@ -33,6 +34,10 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   const split = splitRaw || null
   const setSplit = (id: string | null) => setSplitQ(id ?? '')
   const [busy, setBusy] = useState(false)
+  // A refused create (e.g. the server's 3-session cap → 429 "Max 3 sessions")
+  // must be visible on the page, not only in devtools — same contract as the
+  // drawer. Cleared on the next attempt.
+  const [error, setError] = useState('')
   const [restored, setRestored] = useState(false)
   // P25: opt-in tmux-backed persistence — when on, terminal sessions survive a
   // gateway restart (the shell lives in a detached tmux daemon, re-attached on
@@ -75,7 +80,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   }, [])
 
   const newSession = useCallback(async (intoSplit = false) => {
-    setBusy(true)
+    setBusy(true); setError('')
     try {
       const r = await api.createTerminal()
       setTabs((t) => {
@@ -84,7 +89,9 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       })
       if (intoSplit) setSplit(r.session_id)
       else setActive(r.session_id)
-    } catch { /* ignore */ } finally { setBusy(false) }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open a terminal session.')
+    } finally { setBusy(false) }
   }, [])
 
   const closeSession = useCallback(async (id: string) => {
@@ -123,6 +130,8 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
           <HeaderControl icon={busy ? Loader2 : Plus} label="New terminal session" priority="primary" onClick={() => newSession(false)} />
         </HeaderActions>}
       />
+
+      {error && <InlineError icon className="mx-2 mt-2" onDismiss={() => setError('')}>{error}</InlineError>}
 
       {tabs.length > 0 && (
         <div className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">
