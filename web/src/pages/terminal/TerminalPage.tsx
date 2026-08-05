@@ -6,6 +6,7 @@ import { EmptyState } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { api } from '../../lib/api'
+import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
 
 export interface TermTab { id: string; label: string; cwd?: string; shell?: string; custom?: boolean }
@@ -33,6 +34,11 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   const [splitRaw, setSplitQ] = useQueryParam(query, setQuery, 'split', '')
   const split = splitRaw || null
   const setSplit = (id: string | null) => setSplitQ(id ?? '')
+  // Both panes in ONE patch. Closing a tab can move both, and writing them as two
+  // sequential setQuery calls pushes an intermediate history entry holding the
+  // half-updated pair — so Back would land the user on exactly the collapsed
+  // ?active=X&split=X state the close is resolving.
+  const setPanes = (p: PaneSelection) => setQuery({ active: p.active || null, split: p.split || null })
   const [busy, setBusy] = useState(false)
   // A refused create (e.g. the server's 3-session cap → 429 "Max 3 sessions")
   // must be visible on the page, not only in devtools — same contract as the
@@ -98,8 +104,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
     await api.deleteTerminal(id).catch(() => {})
     const next = tabs.filter((x) => x.id !== id)
     setTabs(next)
-    if (active === id) setActive(next.length ? next[next.length - 1].id : '')
-    if (split === id) setSplit(null)
+    setPanes(panesAfterClose(next.map((x) => x.id), id, { active, split }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs, active, split])
 
