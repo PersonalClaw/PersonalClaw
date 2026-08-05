@@ -183,6 +183,28 @@ def _everything_paths(pc: Path) -> list[str]:
     return out
 
 
+def _extra_restore_paths_for_test_paths() -> list[str]:
+    """Every inventory path the generic restore pass WOULD reach, independent of what exists on
+    disk.
+
+    `_extra_restore_paths` filters by existence, which is right at restore time and useless to a
+    test
+    asking "is this entry reachable at all". Kept beside it so the two cannot drift.
+    """
+    from personalclaw.durability import inventory as inv
+
+    secret = inv.secret_paths()
+    already = {f for files in CORE_FILES.values() for f in files}
+    already |= {"workspace", "plan_memory", "skills"}
+    out: list[str] = []
+    for entry in inv.backup_entries():
+        top = entry.path.split("/", 1)[0]
+        if top in already or top in secret or entry.path in secret or entry.path in out:
+            continue
+        out.append(entry.path)
+    return out
+
+
 def _extra_restore_paths(snap: Path) -> list[str]:
     """Inventory entries a RESTORE must return, beyond the seven named components (S177).
 
@@ -778,6 +800,95 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _merge_json_collection(src: Path, dst: Path, *, wrapper: str | None, key: str) -> int:
+    """Union an id-bearing JSON collection, live rows winning on a key collision (S181).
+
+    Nine file-shaped entries declare `union_by_id` or `lww_by_updated_at` and none had an executor.
+    S177 made them reachable, but reachably copy-if-missing — so a file the live home already had
+    kept
+    its own contents and dropped the snapshot's entirely. Driven: 8 of 8 lost the snapshot side.
+
+    `wrapper` names the envelope key when the collection is nested (`{"hooks": [...]}`,
+    `{"items": [...]}`) and is None for a bare top-level list (`tags.json`). Live rows win because
+    merge mode's contract is that local state wins — the snapshot only fills gaps.
+    """
+    if not src.is_file() or not dst.is_file():
+        return 0
+    try:
+        src_doc = json.loads(src.read_text(encoding="utf-8"))
+        dst_doc = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # A hand-edited or truncated file. Leaving the live copy untouched is the safe direction:
+        # the alternative is overwriting real state with a parse of something we do not understand.
+        return 0
+
+    def _rows(doc: object) -> list | None:
+        if wrapper is None:
+            return doc if isinstance(doc, list) else None
+        if isinstance(doc, dict) and isinstance(doc.get(wrapper), list):
+            return doc[wrapper]
+        return None
+
+    src_rows, dst_rows = _rows(src_doc), _rows(dst_doc)
+    if src_rows is None or dst_rows is None:
+        return 0
+    seen = {r.get(key) for r in dst_rows if isinstance(r, dict)}
+    added = [
+        r for r in src_rows if isinstance(r, dict) and r.get(key) is not None and r[key] not in seen
+    ]
+    if not added:
+        return 0
+    merged = dst_rows + added
+    if wrapper is None:
+        out: object = merged
+    else:
+        out = dict(dst_doc)
+        out[wrapper] = merged
+    atomic_write(dst, json.dumps(out, indent=2))
+    return len(added)
+
+
+def _merge_json_map(src: Path, dst: Path, *, wrapper: str | None = None) -> int:
+    """Union a JSON object keyed by entity, live values winning (S181).
+
+    For the map-shaped entries whose top-level keys ARE the identity: `spend.json` (one key per
+    `%Y-%m-%d`), `tool_usage.json` (per tool), `autonudge.json`'s `loops`, and tokenjuice's rows
+    (keyed `"<month>|<model>|<compressor>"`).
+
+    🔴 Live values win per key rather than being combined. `spend.json` is the counter a budget
+    CEILING is compared against, so adding a snapshot's dollars to today's would move a real-money
+    decision on the basis of spend that already happened on another machine or in another month. A
+    key the live home does not have is pure recovery; a key it has is authoritative.
+    """
+    if not src.is_file() or not dst.is_file():
+        return 0
+    try:
+        src_doc = json.loads(src.read_text(encoding="utf-8"))
+        dst_doc = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(src_doc, dict) or not isinstance(dst_doc, dict):
+        return 0
+
+    if wrapper is not None:
+        src_map, dst_map = src_doc.get(wrapper), dst_doc.get(wrapper)
+        if not isinstance(src_map, dict) or not isinstance(dst_map, dict):
+            return 0
+    else:
+        src_map, dst_map = src_doc, dst_doc
+
+    added = {k: v for k, v in src_map.items() if k not in dst_map}
+    if not added:
+        return 0
+    if wrapper is not None:
+        out = dict(dst_doc)
+        out[wrapper] = {**dst_map, **added}
+    else:
+        out = {**dst_doc, **added}
+    atomic_write(dst, json.dumps(out, indent=2))
+    return len(added)
+
+
 def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
     """Merge a declared sqlite store table-by-table with `INSERT OR IGNORE` (S180).
 
@@ -1242,6 +1353,40 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             s_db, d_db = snap / rel, pc / rel
             if s_db.is_file() and d_db.is_file():
                 _merge_sqlite_attach(s_db, d_db, rel)
+
+    # 🔴 The nine file-shaped `union_by_id`/`lww_by_updated_at` entries with no executor (S181).
+    # Runs BEFORE the generic store pass so a file the live home already holds is MERGED rather than
+    # left alone; that pass then copies any missing outright.
+    #
+    # Per-file, not generic: the shapes genuinely differ (a wrapped list, a bare list, a map keyed
+    # by
+    # date/tool/composite) and so do the semantics. Read off the owning module's contract, measured
+    # against a real home.
+    if _want(components, "everything"):
+        for rel, wrapper, key in (
+            ("hooks.json", "hooks", "id"),
+            ("inbox.json", "items", "id"),
+            ("tags.json", None, "id"),
+        ):
+            n = _merge_json_collection(snap / rel, pc / rel, wrapper=wrapper, key=key)
+            if n:
+                print(f"  {rel}: {n} imported")
+        for rel, wrapper in (
+            # `spend.json` is date-keyed and `tool_usage.json` tool-keyed; tokenjuice's rows are
+            # keyed "<month>|<model>|<compressor>"; autonudge's live loops sit under `loops`.
+            ("spend.json", None),
+            ("tool_usage.json", None),
+            ("tokenjuice_savings.json", "rows"),
+            ("autonudge.json", "loops"),
+        ):
+            n = _merge_json_map(snap / rel, pc / rel, wrapper=wrapper)
+            if n:
+                print(f"  {rel}: {n} imported")
+        # `durability_state.json` is NOT merged. It holds the scheduler's own last-run marks, and
+        # `_due()` compares them against an interval — driven, a stale snapshot's `last_snapshot`
+        # reads as DUE while the live one does not, so importing it would re-trigger a snapshot
+        # immediately. Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets
+        # its marks back, a live home keeps the ones that describe what actually ran.
 
     if _want(components, "everything"):
         restored = []

@@ -731,3 +731,66 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   Tests: 9 new cases in `tests/test_snapshot.py` (90 in that file). Every half verified load-bearing
   by unwiring it independently — wiring, rebuild, FTS skip and integrity pre-check each fail their own
   test alone. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.
+
+## Execution log — Session 2i (the file-shaped stores, and the sweep's end)
+
+- [2026-08-05][S181] **DONE.** Closed the last two declared strategies. `union_by_id` (25 entries) and
+  `lww_by_updated_at` (8) had **zero executors** between them.
+
+  **Only the file-shaped entries were broken.** The directory-shaped ones already get entity-level
+  union from S177's per-file tree copy, which is the right shape for them. The nine FILE-shaped entries
+  were copy-if-missing, so a file the live home already had kept its contents and dropped the
+  snapshot's. Driven with each file's real shape, read out of a long-lived home rather than guessed:
+  **8 of 8 lost the snapshot side**, including `hooks.json` (the message-pipeline hooks a user
+  configured) and `inbox.json`.
+
+  **Per-file, not one generic merge.** The shapes differ — a wrapped list (`{"hooks": [...]}`,
+  `{"items": [...]}`), a bare top-level list (`tags.json`), and maps keyed by date (`spend.json`), by
+  tool (`tool_usage.json`) or by a composite (`"<month>|<model>|<compressor>"`). More importantly the
+  *semantics* differ, so two executors with an explicit per-file wiring beats one that has to infer
+  intent from structure.
+
+  🔴 **`durability_state.json` deliberately abstains.** It holds the scheduler's own last-run marks and
+  `service._due()` compares them against an interval. Driven against the real function: a stale
+  snapshot's `last_snapshot` reads as **due** while the live home's does not, so importing it would
+  re-trigger a snapshot immediately, and a union or min would leave the service permanently believing
+  it is overdue. Copy-if-missing is the correct semantic here — a wiped home gets its marks back, a
+  live home keeps the ones that describe what actually ran.
+
+  🔴 **`spend.json` is real money.** It is the counter a budget ceiling is compared against, one key
+  per `%Y-%m-%d`. Combining a snapshot's dollars into a day the live home already has would move a
+  spend decision on the basis of money spent on another machine or in another month — pausing a run
+  that had budget left, or the reverse. The map merge is per-key with live winning: a day the live home
+  lacks is pure recovery, a day it has is authoritative.
+
+  Live rows win throughout, because merge mode's contract is that local state wins and the snapshot
+  only fills gaps — a hook the user has since edited must not revert to the archived version.
+
+  🔴 **My probe fixture was wrong, and the code was right.** `tokenjuice_savings.json`'s `rows` is a
+  **dict** in production — verified in both homes and against `savings.py` ("Rows are keyed
+  `<month>|<model>|<compressor>`") — but my fixture built a list, which made a correct executor look
+  inert. The S180 lesson in reverse: check the fixture against the real writer before believing a
+  probe's red, not just before believing its green.
+
+  Also covered: idempotence (import once, then zero), a malformed source or destination leaving the
+  live copy untouched (these are hand-editable files, so a half-written one is reachable), a row
+  carrying no id skipped (it cannot be deduplicated, so importing it would double on the next drill —
+  the same non-idempotence the FTS shadow tables showed in S180), and a wrapper mismatch as a no-op
+  rather than a guess that writes a document the owning module cannot read.
+
+  Tests: 8 new cases in `tests/test_snapshot.py` (98 in that file). Both wirings verified load-bearing
+  by unwiring each independently. Gate: `make lint` green · full `pytest -n 4 --dist worksteal` green.
+
+  **The declared-strategy sweep is now complete.** All five `MERGE_*` strategies have executors or a
+  recorded reason not to: `append_dedup` (S176/S178/S179), `sqlite_attach_ignore` (S180), and
+  `union_by_id` + `lww_by_updated_at` (this session).
+
+  `replace_only`'s 20 entries were checked individually rather than waved through as
+  "copy-if-missing by definition". They split three ways and every group already lands on
+  copy-if-missing: **6 derived** (`memory_index.db`, `memory.faiss`, `codegraph`, …) which
+  `backup_entries()` excludes from a backup at all; **6 secret** (`.env`, `credentials`,
+  `sel_hmac.key`, …) which the named `security` component restores copy-if-missing at 0600 and which
+  S177 deliberately excluded from the generic path; and **8 plain config** files
+  (`config.json`, `active_models.json`, `mcp.json`, …) reached either by the `config` component —
+  verified to copy only `if s.is_file() and not d.is_file()` — or by the generic store pass, which is
+  copy-if-missing by construction. So the strategy is satisfied, for a different reason per group.
