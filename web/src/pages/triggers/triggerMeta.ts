@@ -116,6 +116,8 @@ export interface Trigger {
   actionIcon: LucideIcon
   lastRunTs: number | null
   lastStatus: string | null
+  /** Lifecycle state, store triggers only — `active | paused | autopaused | parked | …` (S164). */
+  state?: string | null
   runCount: number | null
   usedBy: string[]           // lifecycle only
   storeKind?: string         // store only: file | web_watch | idle | …
@@ -176,7 +178,8 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     whenLabel: km.label, whenIcon: km.icon, whenTone: 'var(--color-primary)',
     actionLabel: provider ? actionLabel(provider) : 'Action',
     actionIcon: provider ? actionIcon(provider) : Zap,
-    lastRunTs: null, lastStatus: t.health || null, runCount: t.run_count ?? null, usedBy: [],
+    lastRunTs: null, lastStatus: t.health || null, state: t.state || null,
+    runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], store: t,
   }
 }

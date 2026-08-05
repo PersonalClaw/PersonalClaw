@@ -5316,3 +5316,61 @@ enumerates.
 
 - **`FireRecord` is now fully swept.** `acted_on` remains the one unwritten field and is documented as
   pre-allocated for LEARNING-FLYWHEEL by explicit design, not an oversight.
+
+### S164 — a failing automation looked exactly like a parked one (§3.7 / §1.3)
+
+**S163 fixed one local status mapper; this session asked whether there were others.** There were —
+on the primary automations page, and with a second vocabulary the first fix did not touch.
+
+**🔴 DEFECT 1: the health rollup collapsed to one grey dot.** `TriggersListPage` carried its own
+`statusDot`, handling `ok`/`success`, `error`/`timeout`/`blocked`, `launched`, and defaulting
+everything else. But `triggerMeta.storeToTrigger` sets `lastStatus: t.health`, so what that mapper
+actually receives is `TriggerHealth`:
+
+```
+health=ok        -> ok green, check
+health=degraded  -> grey, circle
+health=parked    -> grey, circle
+health=failing   -> grey, circle     ← identical to parked and degraded
+```
+
+On the one page a user manages automations from, a **failing** automation was pixel-identical to a
+**parked** one — and parking is self-healing (S159's unpark) while failing is not. Three health values
+sharing one dot means the rollup answered nothing.
+
+**🔴 DEFECT 2: the lifecycle state reached no surface at all.** `_serialize_store` emitted `health` and
+not `state`. So `Trigger.state` — `active | paused | autopaused | parked | quarantined | retired` — was
+absent from the wire, absent from the `Trigger` TS interface, and absent from the view-model. Every
+lifecycle transition this program built was invisible: **autopause (S139), park/unpark (S159) and the
+injection quarantine all decided a state nothing could render.**
+
+`health` cannot substitute, and the reason is worth stating: a PARKED trigger is `health: parked`, but
+an AUTOPAUSED one is `health: failing` — and "failing" does not tell the user the automation has
+**stopped**. One says how it has been going, the other whether it will run at all.
+
+**Fixed across all three layers**, and the local mapper deleted in favour of one shared
+`triggerHealthMeta` sitting beside S137's `statusMeta`. A second copy of a vocabulary is how two
+surfaces start disagreeing about what a value means — which is precisely what produced both this
+defect and S163's. Two mappers now, one per vocabulary: run outcomes, and health + lifecycle.
+
+**Decisions inside the mapper:**
+
+- **State outranks health when it is not `active`.** Folding them into one function rather than two
+  avoids making every call site invent a precedence rule, and "stopped" is the more urgent fact than
+  "has been failing".
+- **A healthy rollup must not hide a stopped automation** — `triggerHealthMeta('ok', 'autopaused')`
+  reads `autopaused`, asserted by test as the dangerous direction.
+- **`parked` keeps an INFO tone, not danger.** S159 made it self-healing, so a red badge would send the
+  user hunting a fault that resolves itself. `quarantined` is danger-toned and distinct from a mere
+  pause, because `resume_state` refuses to reinstate it from a button.
+
+**`tsc --noEmit` then caught four now-unused icon imports** (`CheckCircle2`, `XCircle`, `Circle`,
+`Rocket`) — the tail of deleting the local mapper, the same way `flake8` caught `hashlib` in S161.
+
+**Gate:** `make lint` (692 files) green · `npm run typecheck:web` clean · `npm run test:web`
+**648 passed, 54 files** · full `pytest -n 4 --dist worksteal` green. Load-bearing: removing the
+`state` emission turns 3 backend tests red.
+
+- **Both of the frontend's status vocabularies are now mapped and guarded** by per-value completeness
+  tests. The remaining known FE gap is unchanged: `did_ids`/`suppressed_ids` are typed (S163) but no
+  surface yet folds the suppressed rows away, which is a UI affordance rather than a correctness bug.
