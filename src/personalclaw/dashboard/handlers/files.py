@@ -991,12 +991,17 @@ def _validate_dashboard_path(raw: str) -> str | None:
 
     # Even within allowed roots, block known-sensitive filenames (e.g. HMAC
     # keys, telemetry salt, app secrets) to prevent credential disclosure
-    # via /api/file-read.
+    # via /api/file-read. Extensionless names must be listed here explicitly —
+    # ``blocked_suffixes`` below cannot reach them.
     blocked_basenames = {
         "sel_hmac.key",
         ".local_secret",
         "telemetry_salt",
         ".env",
+        # The session signing key: reading it forges any session token.
+        "session_key",
+        # The minted-nonce records: reading them leaks live session nonces.
+        "sessions.json",
     }
     blocked_suffixes = (".key", ".pem", ".secret")
     base = os.path.basename(canonical)

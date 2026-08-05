@@ -19,6 +19,7 @@ from personalclaw.dashboard.handlers import (
     api_file_write,
     api_send_message,
 )
+from personalclaw.dashboard.session_store import KEY_FILE, SESSIONS_FILE
 
 
 def _make_app() -> web.Application:
@@ -128,6 +129,23 @@ class TestFileRead:
         key_file.write_text("secret")
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get(f"/api/file-read?path={key_file}")
+            assert resp.status == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", [KEY_FILE, SESSIONS_FILE])
+    async def test_read_session_state_blocked(self, name, mock_sel, home_patch):
+        """The session signing key and its nonce records are never readable.
+
+        Both live in the config dir, which IS an allowed root, and ``session_key``
+        has no extension — so neither the allowlist nor ``blocked_suffixes``
+        catches it. The basename blocklist is the only thing standing here.
+        The filenames come from ``session_store`` so a rename there fails this
+        test instead of silently exposing the file.
+        """
+        secret = home_patch / name
+        secret.write_bytes(b"\x00" * 32)
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get(f"/api/file-read?path={secret}")
             assert resp.status == 400
 
     @pytest.mark.asyncio
