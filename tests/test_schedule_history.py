@@ -13,6 +13,7 @@ remains here.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -468,3 +469,98 @@ async def test_the_index_stays_NEWEST_FIRST(tmp_path: Path):
     rows, _total = await store.list_all(0, 5000)
     stamps = [float(r["started_at"]) for r in rows]
     assert stamps == sorted(stamps, reverse=True), "index rotation must not reorder the file"
+
+
+# ── 🔴 the BOOT rotation reverted the append rotation (S175) ──
+
+
+def _write_legacy(store: ScheduleRunStore, job_id: str, rows: list[dict]) -> None:
+    """Write a job file DIRECTLY, bypassing append-time rotation.
+
+    That is the state a PRE-S173 install has on disk when the new build first boots — which is the
+    only way to reach the boot trim with an over-cap file, and therefore the only way this defect is
+    observable. Appending the same rows would rotate them on the way in and hide it.
+    """
+    path = store._job_path(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def _row(run_id: str, job_id: str, status: str, started: float) -> dict:
+    return {
+        "run_id": run_id,
+        "job_id": job_id,
+        "trigger": "ok" if status == "success" else status,
+        "started_at": started,
+        "finished_at": started,
+        "duration_ms": 0,
+        "status": status,
+        "summary": "",
+        "error": "",
+        "trace": "",
+    }
+
+
+@pytest.mark.asyncio
+async def test_BOOT_rotation_does_not_evict_what_APPEND_rotation_protects(tmp_path: Path):
+    """🔴 THE DEFECT. `_rotate_all_sync` carried its own inlined `rows[-_MAX_RECORDS_PER_JOB:]` — the
+    pre-S173 flat tail — so the BOOT path undid what the append path protects.
+
+    Measured on the realistic case, an existing install's first boot on the new build: a
+    200-row legacy file (1 real run + 199 quiet-hours skips) came back as 100 rows with the
+    real run **evicted**, while appending those same rows keeps it. A duplicated policy is
+    how two paths start disagreeing, and this copy reverted the other at exactly the moment
+    a user upgrades.
+    """
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    rows = [_row("REAL-backup", "clock:m", "success", now)]
+    rows += [_row(f"skip-{i}", "clock:m", "skipped_gate", now + i * 60) for i in range(1, 200)]
+    _write_legacy(store, "clock:m", rows)
+
+    await store.rotate_all()
+    kept, _total = await store.list_for_job("clock:m", 0, 300)
+    assert "REAL-backup" in [r["run_id"] for r in kept]
+
+
+@pytest.mark.asyncio
+async def test_BOOT_rotation_still_caps_a_WORK_only_file(tmp_path: Path):
+    """The compatibility half: boot rotation must still enforce the window, just fairly. A work-only
+    legacy file is trimmed to the cap exactly as before."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    _write_legacy(store, "work", [_row(f"r{i}", "work", "success", now + i) for i in range(150)])
+    await store.rotate_all()
+    _kept, total = await store.list_for_job("work", 0, 300)
+    assert total == _MAX_RECORDS_PER_JOB
+
+
+@pytest.mark.asyncio
+async def test_BOOT_rotation_visits_EVERY_job_file(tmp_path: Path):
+    """It globs the directory, so a bug that rotated only the first file would leave later jobs
+    unbounded. Two over-cap files, both trimmed."""
+    store = ScheduleRunStore(tmp_path)
+    now = 1_800_000_000.0
+    for job in ("alpha", "beta"):
+        _write_legacy(store, job, [_row(f"{job}{i}", job, "success", now + i) for i in range(140)])
+    await store.rotate_all()
+    for job in ("alpha", "beta"):
+        _kept, total = await store.list_for_job(job, 0, 300)
+        assert total == _MAX_RECORDS_PER_JOB, job
+
+
+@pytest.mark.asyncio
+async def test_BOOT_rotation_delegates_rather_than_DUPLICATING(tmp_path: Path):
+    """Pinned by source, because the defect WAS the duplication: two copies of a retention policy
+    drift, and the second silently reverted the first. One trim function, called from both paths."""
+    import inspect
+
+    from personalclaw import schedule_history
+
+    source = inspect.getsource(schedule_history.ScheduleRunStore._rotate_all_sync)
+    assert "self._rotate_job_locked(" in source
+    # The docstring names the constant when explaining the defect, so assert on the CODE: no slice
+    # of `rows` may be written here. That is the shape the duplication took.
+    body = source.split('"""')[-1]
+    assert "_MAX_RECORDS_PER_JOB" not in body, "the trim must not be re-implemented here"
+    assert "_write_jsonl" not in body, "boot rotation must not write job files itself"

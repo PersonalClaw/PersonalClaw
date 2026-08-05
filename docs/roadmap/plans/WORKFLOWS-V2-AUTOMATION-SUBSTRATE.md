@@ -5915,3 +5915,47 @@ Load-bearing verified by restoring the flat tail: exactly the two fairness tests
 
 - **Retention is now fair on both axes** — per job across outcome classes (S173) and per job across the
   shared index (here). The chain S171 started (persist → count → retain → render) is closed.
+
+### S175 — the boot rotation reverted the append rotation (§1.3 retention)
+
+**Found by checking the THIRD rotation path** after fixing the other two. `_rotate_all_sync` — which
+runs once at gateway boot — carried its own inlined `rows[-_MAX_RECORDS_PER_JOB:]`, the pre-S173 flat
+tail, while calling the already-fixed `_rotate_index_locked` on the line below it. One function, two
+retention policies, silently disagreeing.
+
+**🔴 MY FIRST PROBE SAID THE REAL RUN SURVIVED, AND IT WAS WRONG.** Appending 1 run + 129 skips leaves
+the file at 55 rows — under the 100 cap — so the boot trim never fired and the probe reported success.
+The defect is only observable on the state that actually matters: a **pre-S173 install's file as it sits
+on disk when the new build first boots**. Rewritten to write the file directly:
+
+```
+on-disk legacy file: 200 rows (1 real + 199 skips), over the 100 cap
+after rotate_all()  : 100 rows, real run present = False
+  first three: ['skip-199', 'skip-198', 'skip-197']
+```
+
+So the fix shipped in S173 was undone at exactly the moment a user upgrades to it — the one boot where
+the old, unfair file shape meets the new code. Worth recording as a probe lesson: *a probe that builds
+its fixture through the fast path can miss a defect that only the slow path reaches.*
+
+**Now delegates** to `_rotate_job_locked` rather than repeating the trim. A duplicated retention policy
+is how two paths start disagreeing; a source test asserts the trim is not re-implemented here, because
+the defect **was** the duplication and a behavioural test alone would not stop it coming back.
+
+**Verified the delegation is safe:**
+
+- `_job_path(path.stem)` round-trips a job id containing colons — `clock:m`, `web_watch:feed` — which
+  matters because the store keys store triggers by their full `<kind>:<slug>` id.
+- A work-only legacy file is still capped at exactly 100 (the compatibility half — boot rotation must
+  still enforce the window, just fairly).
+- **Every** job file is visited: it globs the directory, so a bug rotating only the first would leave
+  later jobs unbounded. Two over-cap files, both trimmed.
+- Order stays newest-first.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the inlined tail: the eviction test and the structural test go red
+while the work-only and multi-file tests stay green — confirming the revert touched only fairness.
+
+- **All three rotation paths now share one policy**: append-time per job (S173), append-time index
+  (S174), and boot-time both (here). The retention question this chain opened is closed on every path
+  that writes.
