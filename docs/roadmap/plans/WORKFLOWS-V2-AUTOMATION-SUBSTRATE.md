@@ -5804,3 +5804,158 @@ suppression cannot reach it. Checked rather than assumed, since the two boxes ar
 - **The suppression chain is now honest end to end:** the row is built (S86), typed (S132), persisted
   (S171), counted correctly by the rate meter (S171), folded out of the default view (S165), and
   rendered as a non-error (here).
+
+### S173 — a suppression storm evicted the runs that did work (§1.3 retention)
+
+**The third consequence of S171's persistence**, found by asking what a bounded store does when its
+input volume jumps — rather than assuming a cap that was correct yesterday is still correct.
+
+**🔴 THE DEFECT.** `_rotate_job_locked` kept a flat `rows[-_MAX_RECORDS_PER_JOB:]` tail. That is right
+while every row is a run. Once suppressed fires persist, a minutely trigger held by quiet hours writes
+**1440 rows a day** — and `RunWeight`'s own docstring names exactly that number as the volume the
+ledger/full split exists to manage. Measured:
+
+```
+cap = 100 rows/job
+1 real backup run + 129 quiet-hours skips -> stored: 100
+  the real run still present?  False
+  what a user now sees: ['skip-129', 'skip-128', 'skip-127']
+```
+
+The 100-row window held ~100 **minutes** of history instead of ~100 runs, and the rows a user opens the
+history *for* were the first evicted. S171 made suppressions visible; this stopped them from
+crowding out the thing they were meant to explain.
+
+**Per-class quota:** suppressions capped at a quarter of the window, work taking the remainder. A
+quarter is enough that "why did my automation not run last night" stays answerable across a long quiet
+window, while leaving three quarters for runs that did something.
+
+**🔴 My first draft got the direction wrong, and an existing test caught it.** I capped WORK at
+`total − suppressed_cap` unconditionally, which regressed a work-only job from 100 rows to 75 —
+`test_rotation_caps_per_job` (pre-existing, asserting `total == _MAX_RECORDS_PER_JOB`) went red. That
+test was right and my change was wrong: it refused a behaviour change I had not justified. Corrected so
+the suppression cap is a **ceiling** and the work quota is whatever the total leaves, which means a
+trigger that never suppresses retains precisely what it did before this session.
+
+Worth recording as a pattern: when a pre-existing test fails during a retention change, the default
+assumption should be that the test encodes a guarantee, not that it needs updating.
+
+**Verified all three shapes:**
+
+```
+1 work + 129 skips  -> real run SURVIVES
+150 work, 0 skips   -> kept 100   (unchanged from before)
+90 work + 200 skips -> kept 100, of which 75 are work
+```
+
+**Order is preserved on write.** The two classes are partitioned to decide what survives, then the
+kept rows are re-merged by original position — because `list_for_job` reverses the file for
+newest-first and `count_since` walks it, so a file grouped by class would make both misread it.
+Asserted by a test that appends alternating classes and checks the returned timestamps are
+monotonically decreasing.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the flat tail with valid code: exactly the two eviction tests go red
+while the work-only test stays green, which is the pair that matters. (A first revert attempt produced
+a `TypeError` — broken code rather than disabled behaviour, and therefore no usable signal.)
+
+### S174 — one noisy trigger owned the entire cross-job index (§1.3 retention)
+
+**The cross-job half of S173**, found by asking whether the SHARED index carried the same flat tail the
+per-job file did. It did — and the blast radius is worse, because the index is the only view that spans
+automations.
+
+**🔴 THE DEFECT.** `_rotate_index_locked` kept `rows[-_MAX_INDEX_RECORDS:]`. Measured after S171 began
+persisting suppressions:
+
+```
+three well-behaved automations, one run each
+  + 1.5 days of one minutely trigger's quiet-hours skips
+  -> cross-job index rows: 2000
+  -> jobs still represented: ['clock:noisy']
+     nightly-backup   present? False
+     weekly-report    present? False
+     deploy-watch     present? False
+```
+
+Every other automation vanished from the dashboard's *"recent runs across all schedules"* — which is
+the surface S165 had just fixed to show work over suppressions, so that fix was operating on a feed one
+trigger had already emptied.
+
+**Where S173's classes competed, here the JOBS compete.** So the bound is per `job_id`, set to the
+per-job FILE cap: a job cannot usefully contribute more index rows than its own history retains, and
+matching the two means the index never evicts a row whose full record still exists.
+
+**Applied only when trimming is needed, and only to jobs over their share** — verified, a store with 50
+rows keeps 50. An install that never reaches the global cap behaves exactly as before.
+
+**The invariant is per-TRIM, not per-append**, and saying so precisely matters: rotation fires only
+above the global cap, so between trims a job may exceed its share and is cut back on the next one.
+Driven across the boundary:
+
+```
+after skip 1998: index= 102 noisy= 100 jobs=['backup', 'noisy', 'report']
+after skip 2001: index= 105 noisy= 103 jobs=['backup', 'noisy', 'report']
+```
+
+Both quiet automations survive throughout, which is the property that matters; the exact row count
+oscillates by design.
+
+**Order preserved.** `list_all` reverses the file for newest-first, so a file regrouped by job would
+render the cross-schedule view out of order. Asserted by a monotonic-timestamp test over 2200 rows
+across 7 jobs.
+
+One thing deliberately NOT changed: a store of 40 modest jobs × 60 runs keeps 2000 rows spanning 34
+jobs, dropping the oldest-written 6. That is correct for a time-ordered "recent runs" index — the
+defect was one job *monopolising* it, not the global cap existing.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the flat tail: exactly the two fairness tests go red while the other
+20 stay green.
+
+- **Retention is now fair on both axes** — per job across outcome classes (S173) and per job across the
+  shared index (here). The chain S171 started (persist → count → retain → render) is closed.
+
+### S175 — the boot rotation reverted the append rotation (§1.3 retention)
+
+**Found by checking the THIRD rotation path** after fixing the other two. `_rotate_all_sync` — which
+runs once at gateway boot — carried its own inlined `rows[-_MAX_RECORDS_PER_JOB:]`, the pre-S173 flat
+tail, while calling the already-fixed `_rotate_index_locked` on the line below it. One function, two
+retention policies, silently disagreeing.
+
+**🔴 MY FIRST PROBE SAID THE REAL RUN SURVIVED, AND IT WAS WRONG.** Appending 1 run + 129 skips leaves
+the file at 55 rows — under the 100 cap — so the boot trim never fired and the probe reported success.
+The defect is only observable on the state that actually matters: a **pre-S173 install's file as it sits
+on disk when the new build first boots**. Rewritten to write the file directly:
+
+```
+on-disk legacy file: 200 rows (1 real + 199 skips), over the 100 cap
+after rotate_all()  : 100 rows, real run present = False
+  first three: ['skip-199', 'skip-198', 'skip-197']
+```
+
+So the fix shipped in S173 was undone at exactly the moment a user upgrades to it — the one boot where
+the old, unfair file shape meets the new code. Worth recording as a probe lesson: *a probe that builds
+its fixture through the fast path can miss a defect that only the slow path reaches.*
+
+**Now delegates** to `_rotate_job_locked` rather than repeating the trim. A duplicated retention policy
+is how two paths start disagreeing; a source test asserts the trim is not re-implemented here, because
+the defect **was** the duplication and a behavioural test alone would not stop it coming back.
+
+**Verified the delegation is safe:**
+
+- `_job_path(path.stem)` round-trips a job id containing colons — `clock:m`, `web_watch:feed` — which
+  matters because the store keys store triggers by their full `<kind>:<slug>` id.
+- A work-only legacy file is still capped at exactly 100 (the compatibility half — boot rotation must
+  still enforce the window, just fairly).
+- **Every** job file is visited: it globs the directory, so a bug rotating only the first would leave
+  later jobs unbounded. Two over-cap files, both trimmed.
+- Order stays newest-first.
+
+**Gate:** `make lint` (692 files) green; full `pytest -n 4 --dist worksteal` green. No `web/` change.
+Load-bearing verified by restoring the inlined tail: the eviction test and the structural test go red
+while the work-only and multi-file tests stay green — confirming the revert touched only fairness.
+
+- **All three rotation paths now share one policy**: append-time per job (S173), append-time index
+  (S174), and boot-time both (here). The retention question this chain opened is closed on every path
+  that writes.

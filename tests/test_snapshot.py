@@ -990,3 +990,1536 @@ class TestInventoryGapClosure:
             classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError("no config"))),
         )
         assert _default_snapshot_dir() == str(home / "snapshots")
+
+
+# ── 🔴 the run history's declared merge had no executor (S176) ──
+
+
+def _hist_row(run_id: str, job_id: str = "clock:backup") -> str:
+    return json.dumps({"run_id": run_id, "job_id": job_id, "started_at": 1.0, "status": "success"})
+
+
+def _hist(root: Path, shard: str, run_ids: list[str]) -> Path:
+    d = root / "cron-history"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / shard
+    p.write_text("".join(_hist_row(r) + "\n" for r in run_ids), encoding="utf-8")
+    return p
+
+
+def _ids(root: Path, shard: str) -> list[str]:
+    p = root / "cron-history" / shard
+    if not p.is_file():
+        return []
+    return [json.loads(line)["run_id"] for line in p.read_text().strip().splitlines()]
+
+
+def test_a_MERGE_restore_recovers_the_run_history(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. `inventory.py` declares `cron_history` with `merge=append_dedup` and
+    `_do_merge` had no branch for it — so a merge restore printed "✅ Merge complete" while
+    recovering **no run history at all**.
+
+    Driven: a snapshot holding `FROM-SNAPSHOT` merged into a home holding `LIVE-run` left only
+    `LIVE-run`. A declared strategy with no executor, in the durability layer — where the whole
+    promise is that a restore returns what the snapshot holds.
+    """
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "clock:backup.jsonl", ["FROM-SNAPSHOT"])
+    _hist(pc, "clock:backup.jsonl", ["LIVE-run"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+
+    got = _ids(pc, "clock:backup.jsonl")
+    assert "FROM-SNAPSHOT" in got, "the snapshot's run must be recovered"
+    assert "LIVE-run" in got, "and the live run must be preserved"
+
+
+def test_the_merge_DEDUPES_on_run_id(tmp_path: Path) -> None:
+    """Deduped on `run_id`, not a whole-line compare: the same run round-trips through `to_dict()`,
+    so key ordering or a re-serialised float could make an identical run look new and double it.
+    Mirrors `_merge_notifications`, which dedupes on `ts` for the same reason."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "j.jsonl", ["a", "b"])
+    _hist(pc, "j.jsonl", ["a"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert _ids(pc, "j.jsonl") == ["a", "b"]
+
+
+def test_the_merge_is_IDEMPOTENT(tmp_path: Path) -> None:
+    """A restore drill re-run must not grow the history. `_do_merge` is the path a user reaches by
+    re-running a restore, so a non-idempotent merge would double every row each attempt."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "j.jsonl", ["a", "b"])
+    _hist(pc, "j.jsonl", ["a"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    once = _ids(pc, "j.jsonl")
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert _ids(pc, "j.jsonl") == once
+
+
+def test_a_SNAPSHOT_ONLY_shard_is_copied_whole(tmp_path: Path) -> None:
+    """The store is one file per job. A job that exists only in the snapshot — an automation the
+    live home has never run — must come back, not be skipped for having no local counterpart."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    _hist(snap, "j.jsonl", ["x"])
+    _hist(snap, "other.jsonl", ["z"])
+    _hist(pc, "j.jsonl", ["y"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    assert _ids(pc, "other.jsonl") == ["z"]
+
+
+def test_a_MALFORMED_line_does_not_abort_the_merge(tmp_path: Path) -> None:
+    """One bad line must not cost the rest of the restore. The same call `count_since` makes about a
+    malformed ledger row: skip it, keep going — a partial recovery beats an aborted one."""
+    from personalclaw.snapshot import _merge_run_history
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    d = snap / "cron-history"
+    d.mkdir(parents=True)
+    (d / "j.jsonl").write_text(
+        _hist_row("ok1") + "\nNOT JSON\n" + _hist_row("ok2") + "\n", encoding="utf-8"
+    )
+    _hist(pc, "j.jsonl", ["live"])
+
+    _merge_run_history(snap / "cron-history", pc / "cron-history")
+    got = _ids(pc, "j.jsonl")
+    assert "ok1" in got and "ok2" in got and "live" in got
+
+
+def test_an_ABSENT_snapshot_history_is_a_NO_OP(tmp_path: Path) -> None:
+    """A snapshot taken before the store existed (or from a home that never scheduled anything) must
+    not create an empty directory or raise — the restore has to stay usable either way."""
+    from personalclaw.snapshot import _merge_run_history
+
+    pc = tmp_path / "home"
+    pc.mkdir()
+    _merge_run_history(tmp_path / "nope" / "cron-history", pc / "cron-history")
+    assert not (pc / "cron-history").exists()
+
+
+def test_the_merge_does_NOT_re_apply_retention(tmp_path: Path) -> None:
+    """`ScheduleRunStore.rotate_all()` owns retention and runs at gateway boot (S175). Trimming here
+    would be a second copy of that policy — the exact duplication S175 removed, which had silently
+    reverted S173."""
+    import inspect
+
+    from personalclaw import snapshot
+
+    source = inspect.getsource(snapshot._merge_run_history)
+    body = source.split('"""')[-1]
+    assert "_MAX_RECORDS_PER_JOB" not in body
+    assert "rotate" not in body
+
+
+def test_the_run_history_merge_is_WIRED_into_do_merge(tmp_path: Path) -> None:
+    """🔴 Caught by my own load-bearing check: disabling the call site left all 61 tests green,
+    because every other test in this group calls `_merge_run_history` DIRECTLY. A helper that works
+    perfectly and is never called is the inert-control shape this whole program keeps finding —
+    and I had just written seven tests that could not tell the difference.
+
+    Drives `_do_merge`, the function a real restore reaches.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    _hist(snap, "clock:backup.jsonl", ["FROM-SNAPSHOT"])
+    _hist(pc, "clock:backup.jsonl", ["LIVE-run"])
+
+    _do_merge(snap, pc, None)
+
+    got = _ids(pc, "clock:backup.jsonl")
+    assert "FROM-SNAPSHOT" in got, "_do_merge must invoke the run-history merge"
+    assert "LIVE-run" in got
+
+
+# ── 🔴 the capture side was widened and the RESTORE side was not (S177) ──
+
+_STORES = ("tasks", "projects", "agents", "prompts", "workflows", "artifacts", "uploads")
+
+
+def _seeded_snapshot(root: Path, *, secrets: bool = False) -> Path:
+    """An extracted snapshot tree holding the stores `_everything_paths` captures."""
+    snap = root / "snap"
+    snap.mkdir(parents=True, exist_ok=True)
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    for d in _STORES:
+        (snap / d).mkdir(parents=True, exist_ok=True)
+        (snap / d / "x.json").write_text('{"v":"FROM-SNAPSHOT"}', encoding="utf-8")
+    (snap / "entity_settings").mkdir(exist_ok=True)
+    (snap / "entity_settings" / "e.json").write_text('{"v":"FROM-SNAPSHOT"}', encoding="utf-8")
+    if secrets:
+        (snap / ".env").write_text("OPENAI_API_KEY=sk-FROM-SNAPSHOT", encoding="utf-8")
+        (snap / ".local_secret").write_text("FROM-SNAPSHOT", encoding="utf-8")
+        (snap / "credentials").mkdir(exist_ok=True)
+        (snap / "credentials" / "c.json").write_text('{"tok":"FROM-SNAPSHOT"}', encoding="utf-8")
+    return snap
+
+
+def test_a_MERGE_restore_recovers_the_task_board(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. `_everything_paths` widened CAPTURE to every inventory entry — its comment
+    says a full backup "silently dropped the user's whole task board". Both restore modes stayed
+    hand-written seven-component lists, so the archive held the board and neither mode gave it back,
+    while both printed a success line.
+
+    Driven: 8 stores in the snapshot, 8 absent from the restored home. The asymmetry IS the bug — a
+    snapshot is only as good as its restore, and widening one side made the archive look complete.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_merge(snap, pc, None)
+
+    missing = [d for d in _STORES if not (pc / d / "x.json").is_file()]
+    assert missing == [], f"a merge restore dropped these stores: {missing}"
+    assert (pc / "entity_settings" / "e.json").is_file()
+
+
+def test_a_REPLACE_restore_recovers_the_task_board(tmp_path: Path) -> None:
+    """The same gap in replace mode. Both are reachable from `--mode`, and a user recovering onto a
+    wiped machine picks replace — the shape where losing the board is total."""
+    from personalclaw.snapshot import _do_replace
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_replace(snap, pc, None)
+
+    missing = [d for d in _STORES if not (pc / d / "x.json").is_file()]
+    assert missing == [], f"a replace restore dropped these stores: {missing}"
+
+
+def test_the_restore_does_NOT_re_plant_SECRETS(tmp_path: Path) -> None:
+    """🔴 SECURITY. `backup_entries()` includes secrets deliberately — "losing the credential store
+    is exactly what a backup should prevent" — so `.env`, `credentials/` and `.local_secret` ARE in
+    the archive. Restoring them through the generic path would re-plant credential material into a
+    home that may have deliberately rotated or removed it.
+
+    Capture writes a local 0600 archive; restore writes into a live home. The two directions do not
+    warrant the same default, so the generic path excludes `secret_paths()` and the named `security`
+    component stays the deliberate route (copy-if-missing, chmod 0600).
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path, secrets=True)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_merge(snap, pc, None)
+
+    for leaked in (".env", ".local_secret", "credentials/c.json"):
+        assert not (pc / leaked).exists(), f"restore re-planted secret material: {leaked}"
+
+
+def test_MERGE_leaves_an_existing_file_ALONE(tmp_path: Path) -> None:
+    """Merge mode's contract is that local state wins. These entries have no field-level merge
+    executor yet, so copy-if-missing is the honest half — overwriting a live task board with an
+    older snapshot's copy is the data loss a merge restore exists to avoid."""
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    (pc / "tasks").mkdir(parents=True)
+    (pc / "tasks" / "x.json").write_text('{"v":"LIVE-EDIT"}', encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    assert json.loads((pc / "tasks" / "x.json").read_text())["v"] == "LIVE-EDIT"
+
+
+def test_REPLACE_keeps_the_overwritten_copy_RECOVERABLE(tmp_path: Path) -> None:
+    """Replace mode is destructive by design, and its existing contract is that the previous state
+    lands in `pre-restore-<ts>/`. Widening it without extending that backup would make the new
+    coverage the one unrecoverable path in the function."""
+    from personalclaw.snapshot import _do_replace
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    (pc / "tasks").mkdir(parents=True)
+    (pc / "tasks" / "x.json").write_text('{"v":"LIVE-EDIT"}', encoding="utf-8")
+
+    _do_replace(snap, pc, None)
+
+    assert json.loads((pc / "tasks" / "x.json").read_text())["v"] == "FROM-SNAPSHOT"
+    backups = [p for p in pc.iterdir() if p.name.startswith("pre-restore-")]
+    assert len(backups) == 1, "replace must leave exactly one pre-restore backup"
+    saved = backups[0] / "tasks" / "x.json"
+    assert saved.is_file(), "the overwritten live copy is not recoverable"
+    assert json.loads(saved.read_text())["v"] == "LIVE-EDIT"
+
+
+def test_a_TARGETED_restore_stays_targeted(tmp_path: Path) -> None:
+    """`--components memory` must not drag in the whole state. The new coverage is gated on
+    `everything`, which is also what `components is None` selects — so the default (the invocation a
+    user in a recovery actually types) is complete, and an explicit narrow ask is still narrow."""
+    from personalclaw.snapshot import _do_merge
+
+    snap = _seeded_snapshot(tmp_path)
+    pc = tmp_path / "home"
+    pc.mkdir()
+
+    _do_merge(snap, pc, ["memory"])
+
+    assert not (pc / "tasks").exists()
+
+
+def test_EVERYTHING_is_a_valid_component(tmp_path: Path) -> None:
+    """🔴 Criterion 1 names this invocation verbatim — "`--components everything` followed by wiping
+    `~/.personalclaw` and restoring reproduces … including tasks, projects, entity_settings" — and
+    the CLI answered **"❌ Unknown component: everything"**. Without it there is no way to ask for
+    the task board at all."""
+    from personalclaw.snapshot import COMPONENT_HELP, VALID_COMPONENTS
+
+    assert "everything" in VALID_COMPONENTS
+    assert "everything" in COMPONENT_HELP, "--list-components must advertise it"
+
+
+def test_DERIVED_entries_are_not_restored(tmp_path: Path) -> None:
+    """`backup_entries()` skips derived indexes because "a stale index paired with a newer store is
+    worse than none". The restore projection reuses that same call rather than re-deciding, so the
+    reasoning cannot drift between the two directions."""
+    from personalclaw.snapshot import _extra_restore_paths
+
+    snap = tmp_path / "snap"
+    (snap / "models").mkdir(parents=True)
+    (snap / "models" / "m.bin").write_text("derived", encoding="utf-8")
+    (snap / "tasks").mkdir()
+    (snap / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+
+    got = _extra_restore_paths(snap)
+    assert "tasks" in got
+    assert "models" not in got, "a derived index must not be restored"
+
+
+def test_the_restore_projection_MIRRORS_the_capture_one(tmp_path: Path) -> None:
+    """The defect was capture and restore disagreeing about what state IS. Both now project the same
+    `backup_entries()` and exclude the same named components, so a store added to the inventory
+    later is captured AND restored without editing either function. Asserted structurally, because
+    the failure mode is the two drifting apart again — not a wrong value today."""
+    from personalclaw.snapshot import _everything_paths, _extra_restore_paths
+
+    home = tmp_path / "home"
+    for d in (*_STORES, "entity_settings"):
+        (home / d).mkdir(parents=True)
+        (home / d / "x.json").write_text("{}", encoding="utf-8")
+
+    captured = set(_everything_paths(home))
+    restorable = set(_extra_restore_paths(home))
+    # Restore excludes secrets by design; nothing else may differ.
+    assert restorable <= captured
+    from personalclaw.durability import inventory as inv
+
+    secret = inv.secret_paths()
+    unexplained = {p for p in captured - restorable if p.split("/", 1)[0] not in secret}
+    assert unexplained == set(), f"captured but not restorable, for no stated reason: {unexplained}"
+
+
+def test_EVERYTHING_selects_the_NAMED_components_too(tmp_path: Path) -> None:
+    """🔴 MY OWN FIX SHIPPED HALF-INERT, and the eight tests above all passed while it did.
+
+    Found by driving criterion 1's actual drill — snapshot, wipe the home, restore — instead of
+    trusting the component I had just added. `--components everything` restored the task board and
+    **dropped `config.json`, `memory.db`, `notifications.jsonl`, `workspace/` and `skills/`**,
+    because `everything` had been added as just another member of the list: naming it made `_want`
+    answer False for all seven NAMED components. A flag whose entire promise is completeness,
+    silently narrowing the restore — and the invocation criterion 1 tells a user to type.
+
+    `everything` is a superset marker, not a peer.
+    """
+    from personalclaw.snapshot import _want
+
+    for named in ("memory", "crons", "config", "skills", "workspace", "notifications", "security"):
+        assert _want(["everything"], named), f"'everything' must select '{named}'"
+    assert _want(["everything"], "everything")
+    # and a narrow ask stays narrow
+    assert _want(["memory"], "memory")
+    assert not _want(["memory"], "everything")
+    assert not _want(["memory"], "crons")
+
+
+def test_a_WIPE_and_restore_returns_every_named_component(tmp_path: Path) -> None:
+    """Criterion 1 end to end, at the `_do_replace` level: the drill is "wipe `~/.personalclaw` and
+    restore", so the test that matters drives an EMPTY home rather than a partially-populated one —
+    the state a user recovering onto a new machine actually has."""
+    from personalclaw.snapshot import _do_replace
+
+    snap = _seeded_snapshot(tmp_path)
+    (snap / "notifications.jsonl").write_text('{"ts":1}\n', encoding="utf-8")
+    (snap / "workspace").mkdir(exist_ok=True)
+    (snap / "workspace" / "w.md").write_text("# ws", encoding="utf-8")
+    (snap / "skills").mkdir(exist_ok=True)
+    (snap / "skills" / "s.md").write_text("# skill", encoding="utf-8")
+    pc = tmp_path / "wiped"
+    pc.mkdir()
+
+    _do_replace(snap, pc, ["everything"])
+
+    for rel in ("config.json", "notifications.jsonl", "workspace/w.md", "skills/s.md"):
+        assert (pc / rel).is_file(), f"'everything' dropped a named component: {rel}"
+    assert (pc / "tasks" / "x.json").is_file()
+
+
+def test_the_widened_restore_is_BOUNDED_by_the_inventory(tmp_path: Path) -> None:
+    """🔴 SECURITY. `portability.py:305` calls `_do_replace(snap, pc, None)` on the IMPORT path, so
+    widening the restore widens what an import writes into a live home — and an import archive can
+    come from someone else's export.
+
+    The projection iterates `backup_entries()` and asks whether each DECLARED path exists in the
+    archive; it never walks the archive and copies what it finds. So an undeclared directory cannot
+    be steered into the home no matter what the tree contains. Asserted with an archive carrying
+    `evil/`, `.ssh/authorized_keys` and credential files: only `tasks` is selected.
+    """
+    from personalclaw.durability import inventory as inv
+    from personalclaw.snapshot import _extra_restore_paths
+
+    snap = tmp_path / "snap"
+    (snap / "tasks").mkdir(parents=True)
+    (snap / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+    for hostile, name in (("evil", "payload.sh"), (".ssh", "authorized_keys")):
+        (snap / hostile).mkdir()
+        (snap / hostile / name).write_text("x", encoding="utf-8")
+    (snap / ".env").write_text("KEY=ATTACKER", encoding="utf-8")
+
+    got = _extra_restore_paths(snap)
+
+    declared = {e.path for e in inv.INVENTORY}
+    assert [p for p in got if p not in declared] == [], "restore must copy only declared paths"
+    for hostile in ("evil", ".ssh", ".env"):
+        assert hostile not in got
+
+
+# ── 🔴 the remaining append_dedup entries, and the one that must NOT merge (S178) ──
+
+
+def _sel_home(root: Path, tools: list[str], *, key: bytes | None = None) -> Path:
+    """A home with a real HMAC-signed SEL log. Signed through the real writer, because the whole
+    question is whether imported rows verify — a hand-built fixture could not answer it."""
+    import importlib
+
+    root.mkdir(parents=True, exist_ok=True)
+    if key is not None:
+        (root / "sel_hmac.key").write_bytes(key)
+    os.environ["PERSONALCLAW_HOME"] = str(root)
+    from personalclaw import sel as sel_mod
+
+    importlib.reload(sel_mod)
+    sel_mod.SecurityEventLog._instance = None
+    sel_mod.SecurityEventLog._initialized = False
+    log = sel_mod.SecurityEventLog()
+    for t in tools:
+        log.log_tool_invocation(tool_name=t, outcome="completed", session_key="s")
+    return root
+
+
+def _sel_verify(root: Path) -> tuple[int, int]:
+    import importlib
+
+    os.environ["PERSONALCLAW_HOME"] = str(root)
+    from personalclaw import sel as sel_mod
+
+    importlib.reload(sel_mod)
+    sel_mod.SecurityEventLog._instance = None
+    sel_mod.SecurityEventLog._initialized = False
+    return sel_mod.SecurityEventLog().verify_integrity(max_entries=None)
+
+
+@pytest.fixture(autouse=False)
+def _restore_home():
+    prev = os.environ.get("PERSONALCLAW_HOME")
+    yield
+    if prev is None:
+        os.environ.pop("PERSONALCLAW_HOME", None)
+    else:
+        os.environ["PERSONALCLAW_HOME"] = prev
+
+
+def test_the_SEL_merge_is_SKIPPED_when_the_HMAC_KEY_DIFFERS(tmp_path, _restore_home) -> None:
+    """🔴 SECURITY, and the reason a generic `append_dedup` executor would have been wrong.
+
+    `inventory.py` declares `security_events.jsonl` with `merge=append_dedup`. Appending the
+    snapshot's rows unconditionally was measured against two homes with different `sel_hmac.key`
+    files: `verify_integrity` reported **checked=5, valid=2**, logging "SEL HMAC mismatch" for every
+    imported row. A restore would have made the tamper-EVIDENT log report tampering — turning the
+    surface a user consults to ask "was I compromised?" into a false positive they cannot clear
+    except by rotating the chain.
+
+    Fail-CLOSED here, unlike the other merges: a missing row is strictly better than an
+    unverifiable one, because an audit trail's whole value is that a mismatch means something.
+    """
+    from personalclaw.snapshot import _merge_security_events
+
+    snap = _sel_home(tmp_path / "snap", ["snapX", "snapY", "snapZ"])
+    live = _sel_home(tmp_path / "live", ["liveX"])  # its own, different key
+
+    _merge_security_events(snap, live)
+
+    checked, valid = _sel_verify(live)
+    assert checked == valid, f"{checked - valid} row(s) now report tampering"
+    assert "snapX" not in (live / "security_events.jsonl").read_text()
+
+
+def test_the_SEL_merge_RECOVERS_history_when_the_KEY_MATCHES(tmp_path, _restore_home) -> None:
+    """The case worth merging, and why the guard is a key comparison rather than a blanket refusal.
+
+    `security`'s key restore is copy-if-missing, so a WIPED home takes the snapshot's key — and then
+    the snapshot's rows verify under it. Skipping unconditionally would discard recoverable audit
+    history in exactly the scenario a restore exists for.
+    """
+    from personalclaw.snapshot import _merge_security_events
+
+    snap = _sel_home(tmp_path / "snap", ["snapA", "snapB", "snapC"])
+    key = (snap / "sel_hmac.key").read_bytes()
+    live = _sel_home(tmp_path / "live", ["liveA"], key=key)
+
+    _merge_security_events(snap, live)
+
+    checked, valid = _sel_verify(live)
+    assert checked == 4, "the snapshot's 3 rows must be recovered beside the live one"
+    assert valid == checked, "every recovered row must verify under the shared key"
+    assert "snapA" in (live / "security_events.jsonl").read_text()
+
+
+def test_the_SEL_merge_is_IDEMPOTENT(tmp_path, _restore_home) -> None:
+    """Deduped on `event_id`, so a repeated restore drill cannot double the audit log."""
+    from personalclaw.snapshot import _merge_security_events
+
+    snap = _sel_home(tmp_path / "snap", ["a", "b"])
+    key = (snap / "sel_hmac.key").read_bytes()
+    live = _sel_home(tmp_path / "live", ["c"], key=key)
+
+    _merge_security_events(snap, live)
+    once = (live / "security_events.jsonl").read_text()
+    _merge_security_events(snap, live)
+    assert (live / "security_events.jsonl").read_text() == once
+
+
+def test_the_FEEDBACK_merge_recovers_rows_and_dedupes_on_id(tmp_path: Path) -> None:
+    """🔴 The third `append_dedup` entry with no executor. Carries no HMAC, so plain dedup is
+    safe — keyed on `FeedbackRecord.id` rather than the whole line, because the record round-trips
+    through a serializer on both sides."""
+    from personalclaw.snapshot import _merge_feedback
+
+    snap, pc = tmp_path / "s", tmp_path / "p"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "feedback.jsonl").write_text(
+        '{"id":"f1","verdict":"up"}\n{"id":"f2","verdict":"down"}\n', encoding="utf-8"
+    )
+    (pc / "feedback.jsonl").write_text(
+        '{"id":"f1","verdict":"up"}\n{"id":"live","verdict":"up"}\n', encoding="utf-8"
+    )
+
+    _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+
+    ids = [json.loads(ln)["id"] for ln in (pc / "feedback.jsonl").read_text().splitlines() if ln]
+    assert ids == ["f1", "live", "f2"], "f1 must dedupe, f2 must arrive, live must survive"
+
+    _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl")
+    ids2 = [json.loads(ln)["id"] for ln in (pc / "feedback.jsonl").read_text().splitlines() if ln]
+    assert ids2 == ids, "a repeated restore must not grow the log"
+
+
+def test_the_feedback_merge_does_NOT_re_apply_its_CAP(tmp_path: Path) -> None:
+    """`feedback.py` owns its own retention ("atomic trim at 2x cap"). Re-implementing the bound
+    here would be the duplication S175 deleted from the run store after one copy silently reverted
+    the other."""
+    import inspect
+
+    from personalclaw import snapshot
+
+    body = inspect.getsource(snapshot._merge_feedback).split('"""')[-1]
+    assert "_CAP" not in body
+    assert "trim" not in body
+
+
+def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> None:
+    """The sweep's closing assertion. Six entries declare `append_dedup`; each must now be handled,
+    and by a REASON rather than by accident:
+
+    * `cron-history` — `_merge_run_history` (S176)
+    * `notifications.jsonl` — `_merge_notifications` (pre-existing)
+    * `security_events.jsonl` — `_merge_security_events`, key-gated (S178)
+    * `feedback.jsonl` — `_merge_feedback` (S178)
+    * `crashes`, `sessions` — directories on disk, so the generic per-file tree copy (S177) already
+      gives them entity-level union; a line-dedup executor would be the wrong shape entirely.
+
+    🔴 **A declaration discrepancy found while asserting this:** `sessions` is declared
+    `kind=jsonl_append`, but on disk it is a nested tree (`sessions/<key>/tool_results/*.json`),
+    verified against both the dev home and the real one. The `kind` is wrong, not the merge — the
+    tree copy is the right executor either way, which is why this is recorded rather than "fixed"
+    by changing a declaration whose other readers I have not swept. Asserted as-declared so the
+    discrepancy is visible instead of silently encoded.
+
+    Pinned as a test because the failure mode is a SEVENTH entry being added later and silently
+    inheriting copy-if-missing.
+    """
+    import inspect
+
+    from personalclaw import snapshot
+    from personalclaw.durability import inventory as inv
+
+    declared = {e.path: e for e in inv.INVENTORY if e.merge == inv.MERGE_APPEND_DEDUP}
+    assert set(declared) == {
+        "cron-history",
+        "notifications.jsonl",
+        "security_events.jsonl",
+        "feedback.jsonl",
+        # Added by S179 and demanded by THIS test the moment the entry was declared — which is what
+        # the ratchet is for. Keyed on `AttemptRecord.audit_id` via `_merge_keyed_jsonl`.
+        "model_calls.jsonl",
+        "crashes",
+        "sessions",
+    }, "a new append_dedup entry appeared — give it an executor, not copy-if-missing"
+
+    # Named explicitly rather than derived from the path: `cron-history`'s executor is
+    # `_merge_run_history`, so a stem-to-symbol guess would pass for the wrong reason.
+    merge_src = inspect.getsource(snapshot._do_merge)
+    executors = {
+        "cron-history": "_merge_run_history",
+        "notifications.jsonl": "_merge_notifications",
+        "security_events.jsonl": "_merge_security_events",
+        "feedback.jsonl": "_merge_feedback",
+        # Shares `_merge_keyed_jsonl` with feedback, so the call site is matched by its ARGUMENT —
+        # the symbol alone would pass even if this path were dropped from `_do_merge`.
+        "model_calls.jsonl": "_merge_keyed_jsonl",
+    }
+    for path, symbol in executors.items():
+        assert symbol in merge_src, f"{path} has no executor reachable from _do_merge"
+        assert hasattr(snapshot, symbol), f"{symbol} is not defined"
+    # `_merge_keyed_jsonl` is SHARED (feedback + model calls), so the symbol alone cannot prove both
+    # call sites exist — each is pinned by its filename argument. The dedicated executors take their
+    # paths internally, so there is nothing to pin at their call site.
+    for path in ("feedback.jsonl", "model_calls.jsonl"):
+        assert path in merge_src, f"{path} is not passed at any _do_merge call site"
+    # The two directory-shaped ones ride the generic tree pass. `sessions` declares
+    # `jsonl_append` while being a tree on disk (see the docstring) — pinned as-is so the
+    # discrepancy stays visible.
+    assert declared["crashes"].kind == "json_entity_dir"
+    assert declared["sessions"].kind == "jsonl_append"
+
+
+# ── 🔴 six declared sqlite stores had no ATTACH executor (S180) ──
+
+
+def _kb_db(path: Path, tag: str, n: int = 40) -> Path:
+    """A knowledge-shaped DB: a PK'd content table plus an FTS5 index over it. Built through real
+    sqlite because the whole question is how FTS shadow tables behave under a merge."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE items(id TEXT PRIMARY KEY, body TEXT)")
+    conn.execute(
+        "CREATE VIRTUAL TABLE items_fts USING fts5(body, content='items', content_rowid='rowid')"
+    )
+    for i in range(n):
+        conn.execute("INSERT INTO items VALUES(?,?)", (f"{tag}{i}", f"{tag} doc {i}"))
+    conn.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_a_MERGE_recovers_every_declared_sqlite_store(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. Seven entries declare `merge=sqlite_attach_ignore`; only `memory.db` had an
+    executor. S177 made the other six reachable, but reachably copy-if-missing — so a database the
+    live home already had kept its own rows and dropped the snapshot's entirely.
+
+    Driven across all six: a snapshot row and a live row went in, only the live row came out. Six
+    stores silently half-restored, including `learning.db` and both knowledge stores.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    dbs = [
+        "learning.db",
+        "knowledge/knowledge.db",
+        "loop/loops.db",
+        "workflows/runs.db",
+        "workspace/knowledge/knowledge.db",
+        "workspace/lexicon/lexicon.db",
+    ]
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    for root, tag in ((snap, "FROM-SNAPSHOT"), (pc, "LIVE")):
+        root.mkdir(exist_ok=True)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        for rel in dbs:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(root / rel))
+            conn.execute("CREATE TABLE rows(id TEXT PRIMARY KEY, v TEXT)")
+            conn.execute("INSERT INTO rows VALUES(?,?)", (tag, tag))
+            conn.commit()
+            conn.close()
+
+    _do_merge(snap, pc, None)
+
+    for rel in dbs:
+        conn = sqlite3.connect(str(pc / rel))
+        ids = sorted(r[0] for r in conn.execute("SELECT id FROM rows"))
+        conn.close()
+        assert ids == ["FROM-SNAPSHOT", "LIVE"], f"{rel} did not merge: {ids}"
+
+
+def test_the_FTS_index_is_REBUILT_not_merged(tmp_path: Path) -> None:
+    """🔴 The reason this is not a one-line "merge every table".
+
+    Merging FTS5 shadow tables looks correct ONCE and breaks on the second run: measured 40
+    documents
+    indexed, then a repeated merge returned **80 rows for 40 documents** — every search result
+    duplicated — because `items_fts_data`/`_idx`/`_docsize` carry segment state `INSERT OR IGNORE`
+    cannot reconcile. A restore drill is exactly the thing a user runs twice.
+
+    So virtual tables and their shadow tables are skipped and `rebuild` is issued instead. Asserted
+    over THREE consecutive merges, since the defect only appears from the second.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    src = _kb_db(tmp_path / "snap.db", "snap")
+    dst = _kb_db(tmp_path / "live.db", "live")
+
+    for attempt in (1, 2, 3):
+        _merge_sqlite_attach(src, dst, "kb")
+        conn = sqlite3.connect(str(dst))
+        assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 80
+        hits = conn.execute("SELECT rowid FROM items_fts WHERE items_fts MATCH 'snap'").fetchall()
+        assert len(hits) == 40, f"merge #{attempt}: {len(hits)} search rows for 40 documents"
+        orphans = [
+            r[0]
+            for r in hits
+            if not conn.execute("SELECT 1 FROM items WHERE rowid=?", (r[0],)).fetchone()
+        ]
+        assert orphans == [], f"merge #{attempt}: index points at {len(orphans)} missing rows"
+        conn.execute("INSERT INTO items_fts(items_fts) VALUES('integrity-check')")
+        conn.close()
+
+
+def test_a_CORRUPT_source_leaves_the_live_store_untouched(tmp_path: Path) -> None:
+    """A restore reads a file that has travelled: a truncated archive or a bad disk must cost that
+    one store, not the database the user still has. Mirrors `_merge_memory`'s integrity pre-check.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    bad = tmp_path / "bad.db"
+    bad.write_bytes(b"not a database at all")
+    live = _kb_db(tmp_path / "live.db", "keep", n=3)
+
+    assert _merge_sqlite_attach(bad, live, "corrupt") == 0
+
+    conn = sqlite3.connect(str(live))
+    assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 3
+    conn.close()
+
+
+def test_SCHEMA_DRIFT_skips_the_table_and_keeps_the_rest(tmp_path: Path) -> None:
+    """An older snapshot meets a newer schema. Two cases, both driven:
+
+    * a table only the SNAPSHOT has is not created — importing a shape this build's code cannot read
+      would be worse than omitting it, and the owning module creates its own tables on open;
+    * a column-count mismatch skips that table and keeps going, the same call `_merge_memory` makes
+      about its opportunistic `contributor` column: a partial restore beats an aborted one.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    conn = sqlite3.connect(str(src))
+    conn.execute("CREATE TABLE shared(id TEXT PRIMARY KEY, v TEXT)")
+    conn.execute("CREATE TABLE only_in_snapshot(id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE drifted(id TEXT PRIMARY KEY, v TEXT, extra TEXT)")
+    conn.execute("INSERT INTO shared VALUES('s','snap')")
+    conn.execute("INSERT INTO only_in_snapshot VALUES('x')")
+    conn.execute("INSERT INTO drifted VALUES('d','snap','more')")
+    conn.commit()
+    conn.close()
+    conn = sqlite3.connect(str(dst))
+    conn.execute("CREATE TABLE shared(id TEXT PRIMARY KEY, v TEXT)")
+    conn.execute("CREATE TABLE drifted(id TEXT PRIMARY KEY, v TEXT)")  # narrower
+    conn.execute("INSERT INTO shared VALUES('l','live')")
+    conn.commit()
+    conn.close()
+
+    _merge_sqlite_attach(src, dst, "drift")
+
+    conn = sqlite3.connect(str(dst))
+    assert sorted(r[0] for r in conn.execute("SELECT id FROM shared")) == ["l", "s"]
+    assert (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE name='only_in_snapshot'").fetchone() is None
+    )
+    conn.close()
+
+
+def test_MEMORY_DB_keeps_its_own_executor(tmp_path: Path) -> None:
+    """🔴 The one store that must NOT be routed here. `_merge_memory` filters `WHERE is_deleted=0`,
+    so a generic all-tables merge would **resurrect memories the user deleted** — measured on a
+    synthetic soft-delete table, where the naive merge imported the tombstoned row.
+
+    That filter is the reason its allowlist exists, not an accident of it. The six stores routed to
+    the generic path were checked for soft-delete columns against a long-lived real home and the dev
+    home: none has one.
+    """
+    import inspect
+
+    from personalclaw import snapshot
+
+    # S183 moved the path list into `_attach_merge_paths()` so `_do_merge` and `merge_plan` cannot
+    # disagree. Assert on the SHARED helper's output, which is the behaviour, rather than on a
+    # substring of one caller's source.
+    assert "memory.db" not in snapshot._attach_merge_paths(), "memory.db must not be routed here"
+    assert "_merge_memory(" in inspect.getsource(snapshot._do_merge), "its own executor must run"
+
+
+def test_the_attach_merge_is_driven_by_the_INVENTORY(tmp_path: Path) -> None:
+    """Read off `sqlite_entries()` rather than a hardcoded list, so a sqlite store declared later
+    merges by default — the same reason capture reads `backup_entries()`. A second hand-maintained
+    list is how this whole class of defect started."""
+    import inspect
+
+    from personalclaw import snapshot
+    from personalclaw.durability import inventory as inv
+
+    helper_src = inspect.getsource(snapshot._attach_merge_paths)
+    assert "sqlite_entries()" in helper_src
+    assert "MERGE_SQLITE_ATTACH_IGNORE" in helper_src
+    assert "_attach_merge_paths()" in inspect.getsource(snapshot._do_merge)
+
+    declared = {e.path for e in inv.sqlite_entries() if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE}
+    assert (
+        "memory.db" in declared
+    ), "memory.db still declares the strategy; it just has its own path"
+    assert len(declared - {"memory.db"}) == 6, "the six generic stores"
+
+
+def test_the_FTS_SKIP_avoids_importing_foreign_segment_state(tmp_path: Path) -> None:
+    """The skip's own contribution, measured separately from the rebuild.
+
+    🔴 Found by unwiring each half: removing the SKIP leaves the tests green, because the trailing
+    `rebuild` repairs the shadow tables anyway — so the rebuild is the load-bearing fix. The skip
+    still earns its place: without it the merge writes **160 rows** of the other database's segment
+    state (measured, versus 40 real rows) before overwriting them, and a future caller that rebuilds
+    conditionally would silently reintroduce the doubling.
+
+    Asserted on the row COUNT the merge reports, which is the observable difference.
+    """
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    src = _kb_db(tmp_path / "snap.db", "snap")
+    dst = _kb_db(tmp_path / "live.db", "live")
+
+    imported = _merge_sqlite_attach(src, dst, "kb")
+
+    assert imported == 40, (
+        f"imported {imported} rows for 40 documents — shadow tables are being copied, "
+        "so the FTS skip is not in effect"
+    )
+
+
+def test_a_source_sqlite_calls_DAMAGED_is_refused_before_any_import(tmp_path, monkeypatch) -> None:
+    """The integrity pre-check's own contract, isolated.
+
+    🔴 Found by unwiring it: the corrupt-source test above passes WITHOUT the pre-check, because a
+    file that is not a database fails at `ATTACH` and the rollback already protects the destination.
+    So that test proves the rollback, not this check.
+
+    The case only the pre-check covers is a file sqlite can OPEN and read while
+    `PRAGMA integrity_check` reports damage — a torn page set from a partial copy, which is
+    precisely
+    what the safe-backup-API pass exists to avoid producing. Importing "readable" rows out of a
+    database sqlite calls damaged would launder corruption into the one good copy the user has.
+
+    Driven by forcing the pragma's answer rather than guessing byte offsets: a hand-corrupted file
+    either still reports `ok` (damage in free space) or fails to open, so neither reaches this
+    branch.
+    """
+    # Patch the sqlite3 the MODULE bound, not this test's stdlib import. On CI (Linux x86_64)
+    # `pysqlite3-binary` is installed, so `snapshot.py` does `import pysqlite3 as sqlite3` — a
+    # DIFFERENT module object from the test's stdlib `sqlite3`. Patching `sq.connect` there left
+    # the code's real connections unpatched, the integrity check ran for real and passed on a
+    # valid db, and the merge imported the row → `assert 1 == 0` on CI while passing locally
+    # (where pysqlite3 is absent and the two happen to be the same object).
+    from personalclaw import snapshot as snap_mod
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    sq = snap_mod.sqlite3
+
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    for path, tag in ((src, "snap"), (dst, "live")):
+        conn = sq.connect(str(path))
+        conn.execute("CREATE TABLE items(id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO items VALUES(?)", (tag,))
+        conn.commit()
+        conn.close()
+
+    real_connect = sq.connect
+
+    class _Damaged:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args):
+            if "integrity_check" in sql:
+
+                class _Row:
+                    def fetchone(self):
+                        return ("*** in database main ***\nPage 3: btreeInitPage() error",)
+
+                return _Row()
+            return self._inner.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    def _connect(target, *args, **kwargs):
+        conn = real_connect(target, *args, **kwargs)
+        return _Damaged(conn) if "mode=ro" in str(target) else conn
+
+    monkeypatch.setattr(snap_mod.sqlite3, "connect", _connect)
+    imported = _merge_sqlite_attach(src, dst, "damaged")
+    monkeypatch.undo()
+
+    assert imported == 0
+    conn = real_connect(str(dst))
+    assert [r[0] for r in conn.execute("SELECT id FROM items")] == ["live"]
+    conn.close()
+
+
+def test_one_UNREADABLE_store_does_not_cost_the_others(tmp_path: Path) -> None:
+    """Per-store containment, and the one place this executor deliberately DIFFERS from
+    `_merge_memory`.
+
+    `_merge_memory` re-raises on an outer failure, and `_do_merge` does not catch it — so a broken
+    `memory.db` aborts the entire restore. That is right for the primary store: silently continuing
+    past the memory merge would leave a user believing their memory came back.
+
+    It is wrong for these six. They are independent stores, so one unreadable file must cost that
+    file
+    only. Driven with a poisoned `knowledge.db`: the other three databases merged, and the `skills`
+    component still restored afterwards.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    dbs = ["learning.db", "knowledge/knowledge.db", "loop/loops.db", "workflows/runs.db"]
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    for root, tag in ((snap, "SNAP"), (pc, "LIVE")):
+        root.mkdir(exist_ok=True)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        for rel in dbs:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(root / rel))
+            conn.execute("CREATE TABLE r(id TEXT PRIMARY KEY)")
+            conn.execute("INSERT INTO r VALUES(?)", (tag,))
+            conn.commit()
+            conn.close()
+    (snap / "knowledge/knowledge.db").write_bytes(b"garbage not a db")
+    (snap / "skills").mkdir()
+    (snap / "skills" / "s.md").write_text("# skill", encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    for rel in ("learning.db", "loop/loops.db", "workflows/runs.db"):
+        conn = sqlite3.connect(str(pc / rel))
+        assert sorted(r[0] for r in conn.execute("SELECT id FROM r")) == ["LIVE", "SNAP"], rel
+        conn.close()
+    conn = sqlite3.connect(str(pc / "knowledge/knowledge.db"))
+    assert [r[0] for r in conn.execute("SELECT id FROM r")] == ["LIVE"]
+    conn.close()
+    assert (pc / "skills" / "s.md").is_file(), "a later component must still restore"
+
+
+def test_a_LOCKED_destination_degrades_to_a_skip(tmp_path: Path) -> None:
+    """The gateway holds these databases open in WAL mode, and the IMPORT path
+    (`portability.apply_import_zip` → `_do_replace`) has **no gateway gate** — only `restore_main`
+    refuses while the gateway runs.
+
+    So a locked destination is reachable in production. Measured: an uncommitted writer holding
+    `BEGIN IMMEDIATE` makes the merge print a skip and import nothing, leaving the destination
+    exactly as it was — the same shape `_merge_memory` uses for a per-table failure, not a crash and
+    not a partial write.
+    """
+    # Hold the lock with the SAME sqlite the code uses. On CI (Linux x86_64) `snapshot.py` binds
+    # `pysqlite3`, and a holder opened via the test's stdlib `sqlite3` is a different SQLite build
+    # whose lock the code's pysqlite3 connection need not observe — so the merge acquired the lock
+    # and imported, giving `assert 1 == 0` on CI while passing locally (one build, shared locking).
+    from personalclaw import snapshot as snap_mod
+    from personalclaw.snapshot import _merge_sqlite_attach
+
+    sq = snap_mod.sqlite3
+
+    src, dst = tmp_path / "s.db", tmp_path / "d.db"
+    for path, tag in ((src, "snap"), (dst, "live")):
+        conn = sq.connect(str(path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE items(id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO items VALUES(?)", (tag,))
+        conn.commit()
+        conn.close()
+
+    holder = sq.connect(str(dst))
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO items VALUES('inflight')")
+    try:
+        imported = _merge_sqlite_attach(src, dst, "locked")
+    finally:
+        holder.rollback()
+        holder.close()
+
+    assert imported == 0
+    conn = sq.connect(str(dst))
+    assert [r[0] for r in conn.execute("SELECT id FROM items")] == ["live"]
+    conn.close()
+
+
+# ── 🔴 nine file-shaped union/lww entries had no executor (S181) ──
+
+
+def test_a_MERGE_recovers_every_file_shaped_store(tmp_path: Path) -> None:
+    """🔴 THE DEFECT. Nine file-shaped entries declare `union_by_id` or `lww_by_updated_at` and none
+    had an executor. S177 made them reachable, but reachably copy-if-missing — so a file the live
+    home
+    already had kept its contents and dropped the snapshot's entirely.
+
+    Driven with each file's REAL shape, read out of a long-lived home: **8 of 8 lost the snapshot
+    side**, including `hooks.json` (the message-pipeline hooks a user configured) and `inbox.json`.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    shapes = {
+        "hooks.json": ({"hooks": [{"id": "snap-h"}]}, {"hooks": [{"id": "live-h"}]}),
+        "inbox.json": ({"items": [{"id": "snap-i"}]}, {"items": [{"id": "live-i"}]}),
+        "tags.json": ([{"id": "snap-t"}], [{"id": "live-t"}]),
+        "spend.json": ({"2026-08-01": 1.5}, {"2026-08-05": 2.5}),
+        "tool_usage.json": ({"snapTool": {"count": 3}}, {"liveTool": {"count": 9}}),
+        "tokenjuice_savings.json": (
+            {"schema": 1, "rows": {"2026-07|m|log": {"count": 3}}},
+            {"schema": 1, "rows": {"2026-08|m|log": {"count": 9}}},
+        ),
+        "autonudge.json": (
+            {"version": 1, "loops": {"snap": {}}},
+            {"version": 1, "loops": {"live": {}}},
+        ),
+    }
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    for name, (a, b) in shapes.items():
+        (snap / name).write_text(json.dumps(a), encoding="utf-8")
+        (pc / name).write_text(json.dumps(b), encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    for name, (a, _) in shapes.items():
+        got = json.dumps(json.loads((pc / name).read_text()))
+        marker = next(
+            t
+            for t in (
+                "snap-h",
+                "snap-i",
+                "snap-t",
+                "2026-08-01",
+                "snapTool",
+                "2026-07|m|log",
+                '"snap"',
+            )
+            if t in json.dumps(a)
+        )
+        assert marker in got, f"{name} dropped the snapshot side"
+
+
+def test_DURABILITY_STATE_is_deliberately_NOT_merged(tmp_path: Path) -> None:
+    """🔴 The one file that must abstain, and why it is not an oversight.
+
+    `durability_state.json` holds the scheduler's OWN last-run marks, and `service._due()` compares
+    them against an interval. Driven against the real function: a stale snapshot's `last_snapshot`
+    reads as **due** while the live home's does not — so importing it would re-trigger a snapshot
+    immediately, and a union or min would make the service permanently believe it is overdue.
+
+    Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets its marks back, a
+    live home keeps the ones that describe what actually ran.
+    """
+    from personalclaw.snapshot import _do_merge
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    (snap / "durability_state.json").write_text('{"last_snapshot": 1}', encoding="utf-8")
+    (pc / "durability_state.json").write_text('{"last_snapshot": 999}', encoding="utf-8")
+
+    _do_merge(snap, pc, None)
+
+    assert json.loads((pc / "durability_state.json").read_text())["last_snapshot"] == 999
+
+
+def test_a_snapshots_SPEND_never_moves_the_live_counter(tmp_path: Path) -> None:
+    """🔴 REAL MONEY. `spend.json` is the counter a budget CEILING is compared against, keyed one
+    entry per `%Y-%m-%d`. Combining a snapshot's dollars into a day the live home already has would
+    move a spend decision on the basis of money spent on another machine — either pausing a run that
+    had budget left, or the reverse.
+
+    So the map merge is per-key with live winning: a day the live home lacks is pure recovery, a day
+    it has is authoritative.
+    """
+    from personalclaw.snapshot import _merge_json_map
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"2026-08-05": 99.0, "2026-08-01": 1.0}), encoding="utf-8")
+    dst.write_text(json.dumps({"2026-08-05": 2.5}), encoding="utf-8")
+
+    _merge_json_map(src, dst)
+
+    got = json.loads(dst.read_text())
+    assert got["2026-08-05"] == 2.5, "the live day must not be overwritten or summed"
+    assert got["2026-08-01"] == 1.0, "a day only the snapshot has is recoverable"
+
+
+def test_LIVE_ROWS_WIN_on_a_key_collision(tmp_path: Path) -> None:
+    """Merge mode's contract is that local state wins; the snapshot only fills gaps. A hook the user
+    has since edited must not revert to the archived version."""
+    from personalclaw.snapshot import _merge_json_collection
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"hooks": [{"id": "same", "cmd": "SNAPSHOT"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"hooks": [{"id": "same", "cmd": "LIVE"}]}), encoding="utf-8")
+
+    _merge_json_collection(src, dst, wrapper="hooks", key="id")
+
+    rows = json.loads(dst.read_text())["hooks"]
+    assert rows == [{"id": "same", "cmd": "LIVE"}]
+
+
+def test_the_json_merges_are_IDEMPOTENT(tmp_path: Path) -> None:
+    """A restore drill is run twice. Both executors must import on the first pass and nothing
+    after."""
+    from personalclaw.snapshot import _merge_json_collection, _merge_json_map
+
+    src, dst = tmp_path / "c_s.json", tmp_path / "c_d.json"
+    src.write_text(json.dumps({"hooks": [{"id": "s"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"hooks": [{"id": "l"}]}), encoding="utf-8")
+    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 1
+    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 0
+
+    msrc, mdst = tmp_path / "m_s.json", tmp_path / "m_d.json"
+    msrc.write_text(json.dumps({"a": 1}), encoding="utf-8")
+    mdst.write_text(json.dumps({"b": 2}), encoding="utf-8")
+    assert _merge_json_map(msrc, mdst) == 1
+    assert _merge_json_map(msrc, mdst) == 0
+
+
+def test_a_MALFORMED_json_file_leaves_the_live_copy_untouched(tmp_path: Path) -> None:
+    """These are hand-editable files, so a truncated or half-written one is reachable. Overwriting
+    real state with a parse of something we do not understand is the worse direction."""
+    from personalclaw.snapshot import _merge_json_collection, _merge_json_map
+
+    bad, live = tmp_path / "bad.json", tmp_path / "live.json"
+    bad.write_text("{not json", encoding="utf-8")
+    live.write_text(json.dumps({"hooks": [{"id": "keep"}]}), encoding="utf-8")
+
+    assert _merge_json_collection(bad, live, wrapper="hooks", key="id") == 0
+    assert _merge_json_map(bad, live) == 0
+    assert json.loads(live.read_text())["hooks"] == [{"id": "keep"}]
+
+
+def test_a_row_with_NO_ID_is_skipped(tmp_path: Path) -> None:
+    """A row carrying no identity cannot be deduplicated, so importing it would double on the next
+    drill — the exact non-idempotence the FTS shadow tables showed in S180."""
+    from personalclaw.snapshot import _merge_json_collection
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"hooks": [{"cmd": "no-id"}, {"id": "ok"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"hooks": []}), encoding="utf-8")
+
+    _merge_json_collection(src, dst, wrapper="hooks", key="id")
+
+    assert json.loads(dst.read_text())["hooks"] == [{"id": "ok"}]
+
+
+def test_a_WRAPPER_MISMATCH_is_a_no_op(tmp_path: Path) -> None:
+    """The wrapper key is read from the owning module's real shape (`{"hooks": [...]}`,
+    `{"items": [...]}`, `{"rows": {...}}`). If a future version changes the envelope, the merge must
+    do nothing rather than guess — a wrong guess writes a document the owning module cannot read."""
+    from personalclaw.snapshot import _merge_json_collection
+
+    src, dst = tmp_path / "s.json", tmp_path / "d.json"
+    src.write_text(json.dumps({"entries": [{"id": "s"}]}), encoding="utf-8")
+    dst.write_text(json.dumps({"entries": [{"id": "l"}]}), encoding="utf-8")
+
+    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 0
+    assert json.loads(dst.read_text()) == {"entries": [{"id": "l"}]}
+
+
+def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Path) -> None:
+    """The sweep's closing assertion (S176-S181). Each of the five `MERGE_*` strategies must be
+    satisfied, and `replace_only` was checked entry-by-entry rather than waved through:
+
+    * `append_dedup` — `_merge_run_history`, `_merge_notifications`, `_merge_security_events`
+      (key-gated), `_merge_keyed_jsonl`; `crashes`/`sessions` are directories.
+    * `sqlite_attach_ignore` — `_merge_sqlite_attach`, plus `memory.db`'s own `_merge_memory`.
+    * `union_by_id` / `lww_by_updated_at` — `_merge_json_collection` / `_merge_json_map` for the
+      file-shaped entries; the directory-shaped ones union per-file via the tree copy.
+    * `replace_only` — every entry is `derived` (excluded from a backup), `secret` (restored
+      copy-if-missing by the `security` component), or plain config reached by a copy-if-missing
+      path.
+
+    Pinned because the failure mode is a SIXTH strategy, or a new entry declaring an existing one,
+    silently inheriting copy-if-missing — which is exactly how this six-session run started.
+    """
+    from personalclaw import snapshot
+    from personalclaw.durability import inventory as inv
+
+    strategies = {v for k, v in vars(inv).items() if k.startswith("MERGE_")}
+    assert strategies == {
+        "append_dedup",
+        "lww_by_updated_at",
+        "replace_only",
+        "sqlite_attach_ignore",
+        "union_by_id",
+    }, "a new merge strategy appeared — give it an executor and add it here"
+
+    for executor in (
+        "_merge_run_history",
+        "_merge_notifications",
+        "_merge_security_events",
+        "_merge_keyed_jsonl",
+        "_merge_sqlite_attach",
+        "_merge_memory",
+        "_merge_json_collection",
+        "_merge_json_map",
+    ):
+        assert hasattr(snapshot, executor), f"{executor} is missing"
+
+    # `replace_only` per entry: each must fall in exactly one group that already reaches a
+    # copy-if-missing path. An `or True` here would make the assertion vacuous, so the groups are
+    # enumerated and the entry must match one — a NEW plain entry that no component copies fails.
+    secret = inv.secret_paths()
+    core_files = {f for files in snapshot.CORE_FILES.values() for f in files}
+    generic_reach = set(snapshot._extra_restore_paths_for_test_paths())
+    unexplained = []
+    for entry in inv.INVENTORY:
+        if entry.merge != inv.MERGE_REPLACE_ONLY:
+            continue
+        top = entry.path.split("/")[0]
+        if entry.derived:
+            continue  # backup_entries() excludes it, so there is nothing to merge
+        if entry.path in secret or top in secret:
+            continue  # the `security` component restores these copy-if-missing at 0600
+        if entry.path in core_files:
+            continue  # the `config`/`security` components copy only when the target is missing
+        if entry.path in generic_reach:
+            continue  # the generic store pass, which is copy-if-missing by construction
+        unexplained.append(entry.path)
+    assert unexplained == [], (
+        f"these replace_only entries reach no copy-if-missing path: {unexplained}. "
+        "Give them a restore path or a recorded reason."
+    )
+
+
+# ── 🔴 `--dry-run` printed a file list, not a merge plan (S183, plan gap 2) ──
+
+
+def test_the_DRY_RUN_prints_a_PLAN_not_a_file_list(tmp_path, capsys) -> None:
+    """🔴 THE DEFECT, which the plan names against itself: *"`--dry-run` prints a raw file list, not
+    a
+    merge plan (no counts, no per-entry strategy, no conflict preview)"*.
+
+    Driven side by side before the fix: the dry run listed three filenames while the merge imported
+    one
+    notification and one store and left `config.json` untouched. The preview answered a different
+    question from the one a user about to merge into their own home is asking.
+    """
+    from personalclaw.snapshot import merge_plan
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (pc / "config.json").write_text('{"a":2}', encoding="utf-8")
+    (snap / "notifications.jsonl").write_text('{"ts":"1"}\n{"ts":"2"}\n', encoding="utf-8")
+    (pc / "notifications.jsonl").write_text('{"ts":"1"}\n', encoding="utf-8")
+    (snap / "tasks").mkdir()
+    (snap / "tasks" / "x.json").write_text('{"id":"SNAP"}', encoding="utf-8")
+
+    rows = {r["path"]: r for r in merge_plan(snap, pc, None)}
+
+    assert rows["notifications.jsonl"]["action"] == "merge"
+    assert rows["notifications.jsonl"]["strategy"] == "append_dedup"
+    assert rows["tasks"]["action"] == "copy"
+    # gap (3): the config contract was true but UNSTATED, so a user could not know it.
+    assert rows["config.json"]["action"] == "keep-local"
+    assert "never overwritten" in rows["config.json"]["detail"]
+
+
+def test_the_PLAN_and_the_ACT_name_the_same_sqlite_stores(tmp_path) -> None:
+    """🔴 Why the plan is DERIVED rather than a `dry_run` flag threaded through twelve helpers.
+
+    Twelve flags are twelve chances for the preview to drift from the act. `_do_merge` and
+    `merge_plan` now read the SAME `_attach_merge_paths()`, so they cannot disagree about which
+    databases participate — a preview that names a different set from the act is worse than none.
+    """
+    import inspect
+
+    from personalclaw import snapshot
+
+    merge_src = inspect.getsource(snapshot._do_merge)
+    plan_src = inspect.getsource(snapshot.merge_plan)
+    assert "_attach_merge_paths()" in merge_src
+    assert "_attach_merge_paths()" in plan_src
+    # and the shared helper excludes memory.db, which has its own executor
+    assert "memory.db" not in snapshot._attach_merge_paths()
+
+
+def test_the_dry_run_WRITES_NOTHING(tmp_path, monkeypatch, capsys) -> None:
+    """The plan's own done-when for this task: "nothing written in plan mode (dir hash unchanged)".
+    A preview that mutates the thing it previews is the one failure mode a dry run cannot have."""
+    import hashlib
+
+    from personalclaw.snapshot import restore_main, snapshot_main
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "x.json").write_text('{"id":"SNAP"}', encoding="utf-8")
+    out = tmp_path / "snaps"
+    snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+
+    live = tmp_path / "live"
+    live.mkdir()
+    (live / "memory.db").write_bytes(b"")  # merge mode is the default when this exists
+    (live / "config.json").write_text('{"a":2}', encoding="utf-8")
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(live))
+
+    def _digest(root):
+        h = hashlib.sha256()
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                h.update(path.name.encode())
+                h.update(path.read_bytes())
+        return h.hexdigest()
+
+    before = _digest(live)
+    assert restore_main([str(archive), "--force", "--dry-run"]) == 0
+    assert _digest(live) == before, "the dry run mutated the home it was previewing"
+
+    printed = capsys.readouterr().out
+    assert "Merge plan:" in printed
+    assert "[replace_only]" in printed, "the plan must name each entry's strategy"
+
+
+def test_REPLACE_mode_previews_where_the_current_state_GOES(tmp_path) -> None:
+    """Replace mode is wholesale by definition, so a per-entry merge table would be misleading. The
+    honest preview is what travels PLUS where the existing state is moved — the recoverability that
+    makes replace mode safe is the part a user needs told."""
+    import inspect
+
+    from personalclaw import snapshot
+
+    src = inspect.getsource(snapshot.restore_main)
+    assert "pre-restore-<timestamp>" in src
+
+
+def test_the_plan_respects_the_COMPONENT_filter(tmp_path) -> None:
+    """A plan for `--components memory` must not list the whole home, or the preview overstates what
+    a targeted restore will touch."""
+    from personalclaw.snapshot import merge_plan
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    (snap / "tasks").mkdir()
+    (snap / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+
+    paths = {r["path"] for r in merge_plan(snap, pc, ["memory"])}
+
+    assert "tasks" not in paths
+    assert "config.json" not in paths
+
+
+def test_an_ABSENT_entry_is_not_in_the_plan(tmp_path) -> None:
+    """Only what the archive actually holds. Listing every declared entry would make the plan a
+    manifest of the inventory rather than of this snapshot."""
+    from personalclaw.snapshot import merge_plan
+
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+
+    paths = {r["path"] for r in merge_plan(snap, pc, None)}
+
+    assert paths == {"config.json"}, (
+        f"expected exactly {{'config.json'}}, got {paths}: "
+        f"extra={paths - {'config.json'}} missing={{'config.json'}} - paths"
+    )
+
+
+# ── 🔴 restore mode auto-detected on memory.db alone (S184, T2-M3) ──
+
+
+def test_a_POPULATED_home_without_memory_db_proposes_MERGE(tmp_path, monkeypatch) -> None:
+    """🔴 THE DEFECT. Mode auto-detected as `"merge" if (pc / "memory.db").is_file() else "replace"`.
+    A home that has never embedded anything has no `memory.db`, so a home FULL of real state read as
+    empty and defaulted to REPLACE.
+
+    Driven end to end before the fix, on a home holding tasks, projects, workflows and
+    `triggers.json`: the user's task and their automation were moved into `pre-restore-<ts>/`
+    and the snapshot's copies took their place. Recoverable, which is why this is a wrong
+    DEFAULT rather than
+    data loss — but the plan's own framing is that "the restore people actually perform is onto a
+    machine that already has state … and replace-mode restores there destroy the newer half".
+    """
+    from personalclaw.snapshot import home_is_populated
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    for name in ("tasks", "projects", "workflows"):
+        (home / name).mkdir()
+        (home / name / "mine.json").write_text('{"id":"MY-WORK"}', encoding="utf-8")
+    (home / "triggers.json").write_text('{"triggers":[{"id":"a"}]}', encoding="utf-8")
+
+    assert not (home / "memory.db").exists()
+    populated = home_is_populated(home)
+    assert "tasks" in populated and "triggers.json" in populated
+
+
+def test_a_FRESH_install_still_takes_the_REPLACE_path(tmp_path, monkeypatch) -> None:
+    """The other direction, and why `config.json` is not counted: it is written at first boot,
+    so treating it as state would make every fresh install look populated and push a genuine
+    first-time restore onto the merge path."""
+    from personalclaw.snapshot import home_is_populated
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    (home / "machine_id").write_text("abc", encoding="utf-8")
+
+    assert home_is_populated(home) == []
+
+
+def test_the_populated_list_names_NO_SECRET(tmp_path, monkeypatch) -> None:
+    """🔴 Found by driving the API response: `sel_hmac.key` appeared in `existing_stores`. Only its
+    EXISTENCE would be disclosed, and the caller is already authenticated — but naming a credential
+    file in an API response is needless, and a key says nothing about whether the home holds work
+    worth protecting, which is the question being asked."""
+    from personalclaw.snapshot import home_is_populated
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "sel_hmac.key").write_text("k", encoding="utf-8")
+    (home / "telemetry_salt").write_text("s", encoding="utf-8")
+    (home / ".env").write_text("K=v", encoding="utf-8")
+    (home / "credentials").mkdir()
+    (home / "credentials" / "c.json").write_text("{}", encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "x.json").write_text("{}", encoding="utf-8")
+
+    assert home_is_populated(home) == ["tasks"]
+
+
+def test_a_MERGE_restore_into_a_populated_home_keeps_local_work(tmp_path, monkeypatch) -> None:
+    """The behaviour the default now produces, end to end through `restore_main`."""
+    from personalclaw.snapshot import restore_main, snapshot_main
+
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
+    (src / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (src / "tasks").mkdir()
+    (src / "tasks" / "from-snap.json").write_text('{"id":"FROM-SNAP"}', encoding="utf-8")
+    out = tmp_path / "snaps"
+    snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+
+    live = tmp_path / "live"
+    live.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(live))
+    (live / "tasks").mkdir()
+    (live / "tasks" / "mine.json").write_text('{"id":"MINE"}', encoding="utf-8")
+    (live / "triggers.json").write_text('{"triggers":[{"id":"a"}]}', encoding="utf-8")
+
+    assert restore_main([str(archive), "--force"]) == 0
+
+    assert (live / "tasks" / "mine.json").is_file(), "local work must survive the default restore"
+    assert (live / "triggers.json").is_file(), "the user's automation must survive"
+    assert (live / "tasks" / "from-snap.json").is_file(), "the snapshot's row must arrive too"
+    assert [p for p in live.iterdir() if p.name.startswith("pre-restore-")] == []
+
+
+def test_RESTORE_PLAN_writes_nothing_and_shares_the_CLI_plan(tmp_path, monkeypatch) -> None:
+    """The API's read-only half. Omitting `mode` returns the plan and changes nothing — the safe
+    default for an endpoint that can overwrite a home, so `mode=replace` is always deliberate.
+
+    Shares `merge_plan()` with the CLI's `--dry-run`, so the endpoint cannot describe a different
+    restore from the one the terminal describes.
+    """
+    import hashlib
+
+    from personalclaw.snapshot import restore_plan, snapshot_main
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text('{"a":1}', encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "x.json").write_text('{"id":"T"}', encoding="utf-8")
+    out = tmp_path / "snaps"
+    snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+    (home / "projects").mkdir()
+    (home / "projects" / "mine.json").write_text('{"id":"MINE"}', encoding="utf-8")
+
+    def _digest():
+        h = hashlib.sha256()
+        for path in sorted(home.rglob("*")):
+            if path.is_file() and "snaps" not in str(path):
+                h.update(path.name.encode())
+                h.update(path.read_bytes())
+        return h.hexdigest()
+
+    before = _digest()
+    result = restore_plan(archive, None)
+
+    assert result["ok"] is True
+    assert result["home_populated"] is True
+    assert result["proposed_mode"] == "merge"
+    assert "projects" in result["existing_stores"]
+    assert any(r["path"] == "tasks" for r in result["plan"])
+    assert _digest() == before, "a plan request mutated the home"
+
+
+def test_RESTORE_APPLY_refuses_while_the_gateway_runs(tmp_path, monkeypatch) -> None:
+    """The CLI's guard, mirrored. This handler IS the gateway, so a restore under it would rewrite
+    state the running process holds open. There is no `force` mirror on purpose: overriding is a
+    local operator decision at a terminal, not something to expose over HTTP."""
+    from personalclaw import snapshot as snap_mod
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / "config.json").write_text("{}", encoding="utf-8")
+    out = tmp_path / "snaps"
+    snap_mod.snapshot_main([str(out)])
+    archive = sorted(out.glob("*.tar.gz"))[0]
+
+    monkeypatch.setattr(snap_mod, "_is_gateway_running", lambda: True)
+    result = snap_mod.restore_apply(archive, "merge", None)
+
+    assert result["ok"] is False
+    assert "gateway is running" in result["error"]
