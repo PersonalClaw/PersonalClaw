@@ -900,6 +900,7 @@ class GatewayOrchestrator:
         # S122 used for chaining. A blocked payload is NEVER auto-retried (`blocked_injection` is
         # terminal by design), which is also why `payload_text_for` reads an allowlist of prose-
         # carrying keys instead of screening ids and URLs that would produce false blocks.
+        from personalclaw.triggers import screen as screen_mod
         from personalclaw.triggers.screen import payload_text_for
         from personalclaw.triggers.screen import screen as screen_text
 
@@ -922,6 +923,21 @@ class GatewayOrchestrator:
                 await self._record_blocked_fire(trigger, groups)
                 self._push_trigger_refresh()
                 return
+            # 🔴 FENCE-AND-PROCEED, which nothing actually did (§7/R4 rule c — S157).
+            # `Verdict.SUSPICIOUS` exists precisely so a payload can be fenced and still run —
+            # `screen_to_outcome` maps it to `ran` on the stated grounds that "the payload is FENCED
+            # and the run proceeds". Measured: only `web_watch` fenced (at origin, S127), so a
+            # `persona_hijack` payload from webhook/event/file reached the provider VERBATIM.
+            #
+            # Fenced for CLEAN too, not only suspicious: the screen is a pattern matcher and its
+            # clean verdict means "no known pattern", not "trustworthy". This text still crossed the
+            # trust boundary, and every other ingestion seam in the codebase fences it
+            # unconditionally (`web/fetch`, `inbox_service`, `event_triggers`, `bindings`). Fencing
+            # only what a matcher flagged would make the guarantee depend on the corpus being
+            # complete, which is the one thing a pattern corpus never is.
+            payload = screen_mod.fence_payload(
+                payload, kind=str(getattr(trigger, "kind", "") or ""), trigger_id=trigger.id
+            )
         # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11 — S115). Workflows
         # have carried this form since WF2-R14 and three surfaces tell the author to use it, but a
         # TRIGGER action passed the literal placeholder to the provider — measured: a bash command

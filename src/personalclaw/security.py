@@ -720,6 +720,29 @@ def redact(text: str) -> str:
 UNTRUSTED_OPEN = "<untrusted_content>"
 UNTRUSTED_CLOSE = "</untrusted_content>"
 
+#: The open marker WITH its optional attributes, and the `is_fenced` predicate over it.
+#:
+#: 🔴 A literal `UNTRUSTED_OPEN in text` check finds NOTHING on exactly the spans that carry
+#: provenance: `fence_untrusted(..., source_type=...)` emits
+#: `<untrusted_content source=… source_type=…>`, so the bare-tag substring is absent. That is a
+#: fail-OPEN mistake in any caller asking "is this already fenced?" — it re-wraps an origin-fenced
+#: span, and the outer call escapes the inner marker, turning the origin's `source_id` /
+#: `transformation_path` into literal text and destroying the provenance chain.
+#:
+#: `learning/hygiene` hit this first and solved it locally; promoted here so there is ONE definition
+#: rather than a second regex to forget. Derived from the constant, so renaming the tag cannot leave
+#: a matcher silently looking for the old name.
+_OPEN_TAG_RE = re.compile(re.escape(UNTRUSTED_OPEN[:-1]) + r"(?:\s[^>]*)?>", re.IGNORECASE)
+
+
+def is_fenced(text: str) -> bool:
+    """Whether ``text`` already carries an untrusted-content fence (attributed or bare).
+
+    Use this instead of `UNTRUSTED_OPEN in text` before deciding to fence: the substring form
+    misses every attributed fence, which is the fail-open direction (double-wrapping).
+    """
+    return bool(text) and bool(_OPEN_TAG_RE.search(text))
+
 
 #: Chat-template role/control tokens, neutralised in untrusted text (§7/R4 rule b).
 #:

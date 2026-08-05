@@ -42,7 +42,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
+from personalclaw.security import _OPEN_TAG_RE as _SECURITY_OPEN_TAG_RE
+from personalclaw.security import UNTRUSTED_CLOSE
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +120,13 @@ class HygieneVerdict:
 #: ``security.fence_untrusted`` emits ``<untrusted_content source=web>`` when a
 #: source is named, so matching the bare ``UNTRUSTED_OPEN`` literal finds nothing
 #: on exactly the spans that carry provenance — measured: a fenced web payload
-#: passed straight through a literal match. Derived from the constant rather than
-#: hardcoded, so a rename of the tag cannot leave this filter silently matching
-#: the old name.
-_OPEN_TAG_RE = re.compile(re.escape(UNTRUSTED_OPEN[:-1]) + r"(?:\s[^>]*)?>", re.IGNORECASE)
+#: passed straight through a literal match.
+#:
+#: Imported from ``security`` rather than compiled again here (S157): the same mistake
+#: recurred in ``triggers.screen.fence_payload``, which needed the identical predicate to
+#: avoid double-wrapping an origin-fenced payload. Two copies of a pattern that exists to
+#: catch a fail-open bug is two places to forget it.
+_OPEN_TAG_RE = _SECURITY_OPEN_TAG_RE
 
 
 def _strip_untrusted(text: str) -> tuple[str, bool]:
