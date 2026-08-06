@@ -360,15 +360,24 @@ class NativeTaskProvider(TaskProvider):
             if cycle:
                 raise reconcile.DependencyCycleError(cycle)
             task.updated_at = _now_iso()
-            # Stamp manual vs auto block for the directly-edited task, then cascade.
-            reconcile.classify_manual_block(task, tasks)
-            self._write_task(task)
+            # Stamp manual vs auto block ONLY when this write explicitly set status
+            # (a user deliberately blocking for an external reason). A write that
+            # merely edits dependencies must NOT reclassify: removing the last
+            # prerequisite from an auto-blocked task would otherwise be stamped
+            # "manual" and stranded blocked forever, since reconcile skips manual
+            # blocks (#775). With status untouched, let reconcile (un)block by prereqs.
+            if "status" in fields:
+                reconcile.classify_manual_block(task, tasks)
             changed: list[Task] = [task]
             if status_or_deps_changed:
                 for c in reconcile.reconcile_blocked_status(tasks, task.id):
                     if c.id != task.id:
-                        self._write_task(c)
                         changed.append(c)
+            # Persist AFTER reconcile so a cascade that (un)blocks the edited task
+            # itself is durable — reconcile mutates it in place, and writing before
+            # the cascade would freeze the pre-reconcile status on disk (#775).
+            for c in changed:
+                self._write_task(c)
             task._reconciled = changed  # type: ignore[attr-defined]
             task._completed_edge = pool.should_fire_completion(  # type: ignore[attr-defined]
                 previous_status, task.status.value
