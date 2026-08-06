@@ -176,6 +176,27 @@ def resolve_use_case(node: Node, tiers: dict[str, str] | None = None) -> str:
     return table.get(tier, "background")
 
 
+def resolve_axis_model(use_case: str) -> str:
+    """The concrete ``"Provider:model_id"`` ref the engine WOULD resolve for one axis.
+
+    Reads the head of the active-selection CHAIN — the exact model
+    `one_shot_completion` resolves for this use case — so a `cross_model` judge is
+    validated against the model it will ACTUALLY run on, not a guess. Returns ``""``
+    when nothing is bound (which the caller treats as an undeterminable family, so a
+    cross-model gate fails closed rather than certifying against an unknown).
+
+    Injected into `dispatch_gate` as `judge_model_resolver` so a test can pin a
+    candidate family with no live provider.
+    """
+    try:
+        from personalclaw.providers.use_cases import active_model_refs
+
+        refs = active_model_refs(use_case)
+    except Exception:  # noqa: BLE001 — an unresolvable axis is an undeterminable family
+        return ""
+    return str(refs[0]) if refs else ""
+
+
 def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
     """Run the free rule tier on a judge gate's declared `evidence`. Returns a NodeResult to
     SHORT-CIRCUIT the model call, or None to proceed to the judge (LOOPS-EVOLUTION criterion 2).
@@ -932,6 +953,8 @@ async def dispatch_gate(
     completion: Any = None,
     tiers: dict[str, str] | None = None,
     mode: str = "background",
+    worker_model: str = "",
+    judge_model_resolver: Any = None,
 ) -> NodeResult:
     """A checkpoint the engine — never the worker — resolves (WF2-R3).
 
@@ -1090,6 +1113,51 @@ async def dispatch_gate(
         # and the closed enum is demanded explicitly, because a judge that answers in
         # prose forces the scheduler to route on parsed sentiment.
         use_case = resolve_use_case(node, tiers) if node.config.get("model_tier") else "reasoning"
+
+        # 🔴 CROSS-MODEL JUDGE ISOLATION (WF2LOO-11). `isolation: cross_model` demands a judge on a
+        # DIFFERENT model FAMILY than the worker — a same-family "independent" judge shares the
+        # blind spots it exists to catch. This is the seam `judge_actors.plan_judge_session` /
+        # `validate_judge_model` were built for and had NO caller (S146): before it, a template
+        # asking for cross-model independence silently got fresh-session isolation only, because the
+        # gate was never told the worker's model and `one_shot_completion` resolved by use-case,
+        # not by model. Now the engine resolves the concrete model this judge WOULD run on,
+        # validates its family against the worker's, and PINS it so the judge provably runs it.
+        #
+        # Fail CLOSED. An unsatisfiable isolation guarantee must never certify work — the same rule
+        # the `verify_command` tristate applies above (a verifier that could not run is not a pass).
+        # Silently downgrading to fresh is the exact defect this atom fixes, so it is not an option.
+        judge_model = ""
+        if str(cfg.get("isolation", "") or "").strip().lower() == "cross_model":
+            from personalclaw.workflows.judge_actors import plan_judge_session, validate_judge_model
+
+            spec = plan_judge_session(isolation="cross_model", worker_model=worker_model)
+            # A blank worker family is ALSO unsatisfiable: `validate_judge_model` compares the
+            # candidate against `avoid_family`, and an empty avoid_family would accept any
+            # determinable candidate — certifying "different from the worker" without knowing the
+            # worker. Not knowing what to differ from is not proof of difference, so fail closed
+            # here rather than letting the empty-string comparison read as a pass.
+            if not spec.avoid_family:
+                return _fail(
+                    FailureClass.USER,
+                    "cross_model judge isolation unsatisfiable: the worker's model family could "
+                    "not be determined, so a different-family judge cannot be proven",
+                    "bind a model for the worker tier so its family is known, or use "
+                    "isolation: fresh",
+                )
+            resolve_candidate = judge_model_resolver or resolve_axis_model
+            candidate = str(resolve_candidate(use_case) or "")
+            # `_family_of` reads the family out of a bare id OR a "Provider:model_id" ref, so the
+            # active-chain ref both the worker and the candidate carry validates directly.
+            ok, reason = validate_judge_model(spec, candidate)
+            if not ok:
+                return _fail(
+                    FailureClass.USER,
+                    f"cross_model judge isolation unsatisfiable: {reason}",
+                    "configure a different-family model for the judge tier, or use "
+                    "isolation: fresh",
+                )
+            judge_model = candidate
+
         instruction = (
             f"{prompt}\n\nRespond with EXACTLY ONE word, one of: "
             "PASS, RETRY, ESCALATE, REJECT. No other text."
@@ -1110,9 +1178,13 @@ async def dispatch_gate(
         samples = _judge_sample_count(cfg)
         verdicts: list[Verdict] = []
         texts: list[str] = []
+        # The pin rides along ONLY when cross_model resolved one — a non-cross gate calls exactly as
+        # before (byte-for-byte), so the completion seam the whole loop library already injects is
+        # untouched. A cross_model gate pins the validated different-family model.
+        pin = {"model": judge_model} if judge_model else {}
         for _ in range(samples):
             try:
-                text = await fn(instruction, use_case=use_case, output_type=None)
+                text = await fn(instruction, use_case=use_case, output_type=None, **pin)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1627,6 +1699,11 @@ async def dispatch(
     #: makes `timeout_stall` mean "silent" rather than merely "slow". Without it the two timeout
     #: knobs collapse into one and a steadily-working node is killed as wedged.
     on_progress: Any = None,
+    #: The concrete model the run's workers resolve to — the family a `cross_model` judge gate must
+    #: AVOID (WF2LOO-11). Threaded from the controller so the gate can demand a different family;
+    #: only the JUDGE branch of `dispatch_gate` reads it, so a run with no cross_model gate is
+    #: unaffected.
+    worker_model: str = "",
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -1651,6 +1728,7 @@ async def dispatch(
         mode=mode,
         supervisor=supervisor,
         on_progress=on_progress,
+        worker_model=worker_model,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     result = apply_artifact_gate(node, result, cwd or None)
@@ -1678,6 +1756,7 @@ async def _dispatch_inner(
     mode: str = "background",
     supervisor: Any = None,
     on_progress: Any = None,
+    worker_model: str = "",
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
@@ -1697,7 +1776,14 @@ async def _dispatch_inner(
         return await dispatch_wait(node, ctx, now=clock)
     if kind == NodeKind.GATE:
         return await dispatch_gate(
-            node, ctx, now=clock, verify=verify, completion=completion, tiers=tiers, mode=mode
+            node,
+            ctx,
+            now=clock,
+            verify=verify,
+            completion=completion,
+            tiers=tiers,
+            mode=mode,
+            worker_model=worker_model,
         )
     if kind == NodeKind.SUBWORKFLOW:
         return await dispatch_subworkflow(
