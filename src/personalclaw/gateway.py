@@ -62,6 +62,7 @@ from personalclaw.dashboard.token_auth import (
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     generate_token,
 )
+from personalclaw.env import _is_wsl
 from personalclaw.frontend import build_frontend_async
 from personalclaw.heartbeat import HeartbeatService, is_keep_response, strip_keep_sentinel
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -3652,9 +3653,7 @@ class GatewayOrchestrator:
                 elif _skip_open:
                     print("Headless remote session — skipping browser auto-open")
                 else:
-                    import webbrowser
-
-                    webbrowser.open(dashboard_url)
+                    _open_dashboard(dashboard_url)
             for _ch_name in _connected_channels:
                 print(f"PersonalClaw gateway connected to {_ch_name}")
 
@@ -3679,6 +3678,51 @@ class GatewayOrchestrator:
         # Kill any ACP agent processes that survived graceful shutdown
         cleanup_orphaned_sessions()
         os._exit(0)
+
+
+def _open_dashboard(url: str) -> None:
+    """Open the dashboard in a browser, best-effort, and always print the URL.
+
+    The URL is printed prominently first so a user whose browser does not
+    auto-launch (headless-ish, WSL, a misconfigured ``$BROWSER``) can still
+    click or copy it — a no-op improvement on every platform.
+
+    Under WSL, ``webbrowser.open`` has no Linux browser to launch, so we go
+    straight to ``wslview`` (from wslu), which hands the URL to the Windows
+    default browser — WSL2 forwards localhost, so the dashboard resolves. On
+    normal Linux/macOS the standard ``webbrowser.open`` path is used unchanged;
+    ``wslview`` is only attempted as a fallback when that open reports failure
+    (returns False) or raises. A missing ``wslview`` is swallowed — it must
+    never crash the gateway boot.
+    """
+    import webbrowser
+
+    print(f"Open PersonalClaw: {url}", flush=True)
+
+    if _is_wsl():
+        _wslview_open(url)
+        return
+
+    try:
+        opened = webbrowser.open(url)
+    except Exception:
+        opened = False
+    if not opened:
+        _wslview_open(url)
+
+
+def _wslview_open(url: str) -> bool:
+    """Try to open *url* via ``wslview`` (wslu). Best-effort; never raises.
+
+    Returns True if ``wslview`` was launched, False if it is absent or failed.
+    """
+    import subprocess
+
+    try:
+        subprocess.run(["wslview", url], check=False)
+        return True
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return False
 
 
 async def run_gateway(

@@ -1441,3 +1441,29 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   clean (710 files); `tests/test_durability_project_tombstones.py` (3: every synced subtree row
   tombstoned + worktrees skipped, markers ride the export, default-project guarded) + hierarchy/
   tasks/tombstone regression (553 passed, 2 skipped).
+
+## Execution log — DAS-6d-iii (two-machine convergence over a REAL transport) — DAS-6 COMPLETE
+
+- **DAS-6d-iii DONE; DAS-6d COMPLETE; DAS-6 (whole DURABILITY-AND-SYNC Session-3 sync program)
+  COMPLETE.** `tests/test_durability_convergence_e2e.py` proves the plan's **Success Criterion 4
+  verbatim** over a REAL on-disk transport (`FolderTransport` — the dir-sync algorithm: insert-only
+  atomic writes, prefix-filtered listing, rename-lock CAS on `registry.json`) driving core's real
+  `run_sync_cycle` end to end: a task created on A **and a knowledge item added on B** (a
+  `notifications.jsonl` append-stream event) both exist on both after one cycle each way; a task
+  deleted on A (hard unlink + a `_tombstones.jsonl` marker, the DAS-6c-iii side-log) stays deleted
+  on B; and the registry is real bytes on disk (`registry.json` with machine A recorded), not an
+  in-memory dict. The earlier `test_durability_sync_cycle.py` proved convergence through an
+  in-MEMORY fake; this closes the gap with a real filesystem transport. **Cross-repo ordering note
+  (E5-avoided):** the git-sync/dir-sync transport APPS live in PersonalClawApps (shipped as
+  Apps#21/#22) and their CI installs core from `git+main`, but the durability engine
+  (`sync_cycle`/`db_merge`/…) only exists on THIS stack until it merges — so a convergence test in
+  the apps repo would fail apps-CI against main today. The real-transport convergence proof
+  therefore lives HERE in core (where `run_sync_cycle` lives, hermetic, no cross-repo import); the
+  transport apps carry their own per-transport tests (28 each) proving the same insert-only/CAS
+  contract. **DAS-6 tally:** 6a contract, 6b import, 6c-i…6c-ii-j the sync engine (LIVE, config-gated
+  service), 6c-iii-a/b/c delete-convergence, 6d-i dir-sync app (Apps#21), 6d-ii git-sync app
+  (Apps#22), 6d-iii this convergence proof. The plan's five NEW-4 criteria + the amendment are met;
+  the remaining plan sessions (S4 rsync/s3 + encryption, S5 time-travel + FE) are SEPARATE later
+  atoms (DAS-7+/DAS-9), not part of the Session-3 sync program this completes. **Gates:** `make lint`
+  clean (713 files); `tests/test_durability_convergence_e2e.py` (3: task-on-A + knowledge-on-B
+  converge over a real folder, delete propagates, registry is real on-disk bytes) pass.
