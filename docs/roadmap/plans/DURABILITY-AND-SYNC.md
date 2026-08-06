@@ -1236,3 +1236,31 @@ beyond staging the DB copy the exporter already knows how to make.
   DB, rows written alongside, manifest declares dbs, validate passes + catches a corrupted copy +
   accepts a row-only export, import maps entry→path + respects the filter, determinism untouched) +
   `test_durability_shards.py` (33) + `test_snapshot.py` (111) all pass.
+
+## Execution log — DAS-6c-ii-h (the sqlite DB-merge seam)
+
+- **DAS-6c-ii-h DONE.** `durability/db_merge.py::make_db_merger(home)` returns the
+  `db_merger(entry, shard_dir)` callback the pull engine already accepts (6c-ii-e) for the
+  `sqlite`/`tree` entries it declines to row-merge. It finds the whole-DB copy the exporter staged
+  under `db/<entry_id>.db` (6c-ii-g) and ATTACH-merges it into the live DB, reusing the PROVEN
+  snapshot machinery rather than a second copy: `memory.db` → `snapshot._merge_memory` (the
+  4-table `WHERE is_deleted=0` allowlist, so a synced copy never RESURRECTS a deleted memory);
+  every other `KIND_SQLITE` entry → `snapshot._merge_sqlite_attach` (all real tables `INSERT OR
+  IGNORE`, FTS shadow tables skipped). A first sync onto a fresh machine (no live DB yet) copies
+  the source wholesale (lossless, incl. embeddings). Embeddings ride the ATTACH (they live IN the
+  DB — the snapshot precedent); derived `memory.faiss`/`memory_index.db` are NOT synced and rebuild
+  locally (boot rebuild + heartbeat reindex), per §4.1 "indexes rebuilt on import, never synced".
+  Verdicts: `consumed` on a clean merge (and for a `tree` entry — nothing to merge, derived);
+  `prerequisite-absent` when a sqlite entry arrived with no staged DB copy (a row-only export
+  mis-routed — hold, don't advance past unmerged data); `payload-bad` when the merge itself throws
+  (advance past a poison DB). Proven end-to-end THROUGH the pull engine: a peer's real `memory.db`
+  row syncs onto a fresh machine via `pull_from_peers(..., db_merger=make_db_merger(local))`. No
+  change needed to the push engine — `include_databases=True` is the caller's (6c-ii-i's) concern.
+  Clean break, reuses snapshot's merge functions; no user surface → no CHANGELOG. **Remaining:**
+  6c-ii-i (assemble `run_sync_cycle` = pull(db_merger) + push(include_databases=True) with the
+  `stale_after_secs` window, wired into `service.py::run_due_jobs` + `DurabilityConfig.sync_*`), then
+  DAS-6d (git-sync + dir-sync installable `sync` apps + end-to-end criterion-4 over a real git
+  repo/folder). **Gates:** `make lint` clean (708 files); `tests/test_durability_db_merge.py` (7:
+  fresh-machine wholesale copy, INSERT-OR-IGNORE union keeps local + brings remote-only,
+  memory.db routes through `_merge_memory` not the generic path, tree consumed, missing-copy holds,
+  corrupt-merge payload-bad, end-to-end peer-DB-syncs-onto-fresh-machine through the pull engine) pass.
