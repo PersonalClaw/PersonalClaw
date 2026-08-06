@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
-  Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, type LucideIcon,
+  Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
+  type LucideIcon,
 } from 'lucide-react'
 import { api, type AvailableModel, type ProviderHealth } from '../../lib/api'
 import { IconButton } from '../../ui/IconButton'
@@ -82,6 +83,64 @@ export function capableModels(useCase: string, allModels: AvailableModel[], acti
   return out
 }
 
+/** The contract chips a model row shows (LMMV §2.2/§2.3), as pure data so the mapping
+ *  is unit-testable independently of rendering:
+ *   - `deprecated`/`sunset` status → an informational chip (the model stays bindable).
+ *   - a non-commercial license → a warning chip surfaced AT BIND TIME (Success Criterion 7).
+ *   - `integrity: "truncated"` → a danger chip whose row offers Repair (re-download).
+ *  A hosted/remote model (no catalog fields) yields no chips. */
+export type ChipKind = 'status' | 'non-commercial' | 'truncated'
+export function modelChips(m: AvailableModel): ChipKind[] {
+  const chips: ChipKind[] = []
+  if (m.status === 'deprecated' || m.status === 'sunset') chips.push('status')
+  if (m.non_commercial) chips.push('non-commercial')
+  if (m.integrity === 'truncated') chips.push('truncated')
+  return chips
+}
+
+/** The contract chips (+ a Repair button when truncated) for one model row. Kept beside
+ *  the provider chip in the row; renders nothing for a model carrying no catalog fields. */
+function ModelChips({ model, onRepair, repairing }: {
+  model: AvailableModel; onRepair: () => void; repairing: boolean
+}) {
+  const chips = modelChips(model)
+  if (chips.length === 0) return null
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {model.status === 'deprecated' && (
+        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide"
+          title="Deprecated — still bindable, but a newer model is preferred.">deprecated</span>
+      )}
+      {model.status === 'sunset' && (
+        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide"
+          title="Sunset — hidden from new bindings; an existing binding keeps working.">sunset</span>
+      )}
+      {model.non_commercial && (
+        <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
+          style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
+          title={`Non-commercial license${model.license ? ` (${model.license})` : ''} — for personal/research use only.`}>
+          <AlertTriangle size={9} /> non-commercial
+        </span>
+      )}
+      {model.integrity === 'truncated' && (
+        <>
+          <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
+            style={{ background: 'color-mix(in srgb, var(--color-danger) 16%, transparent)', color: 'var(--color-danger)' }}
+            title="Downloaded weights are incomplete — this model won't load. Repair to re-download.">
+            truncated
+          </span>
+          <button type="button" onClick={onRepair} disabled={repairing}
+            className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem] transition-colors hover:bg-surface-high"
+            style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' }}
+            title="Re-download this model's weights.">
+            <Wrench size={9} /> {repairing ? 'repairing…' : 'Repair'}
+          </button>
+        </>
+      )}
+    </span>
+  )
+}
+
 /** Models → assign discovered models to use-cases. Reads /api/models/available
  *  (all backends' models) + /api/models/active (current bindings); writes via
  *  PUT /api/models/active/{use_case}. Chat + Image·Modality are multi-select;
@@ -157,6 +216,9 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
+  // The `provider:id` ref currently being re-downloaded (truncated → Repair), so its
+  // button shows a pending state without blocking the rest of the list.
+  const [repairing, setRepairing] = useState<string | null>(null)
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', chain: false, icon: Boxes }
   // Filter to models declaring this capability, then DEDUPE by the `provider:id`
   // ref. A model can legitimately surface from two discovery paths (e.g.
@@ -234,6 +296,16 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
     const next = [...activeModels]
     ;[next[i], next[j]] = [next[j], next[i]]
     setActive(next)
+  }
+  // Repair a truncated model: re-run the same download the "not downloaded" path uses
+  // (the runner overwrites the incomplete weights), then revalidate so the chip clears.
+  const repair = async (m: AvailableModel) => {
+    const ref = `${m.provider}:${m.id}`
+    setRepairing(ref)
+    try {
+      await api.startModelDownload(m.provider, m.id)
+      onChanged()
+    } finally { setRepairing(null) }
   }
 
   return (
@@ -346,14 +418,21 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
                 // silently means "inert" (e.g. after deleting a bound model's weights).
                 const notDownloaded = m.downloaded === false
                 return (
-                  <button key={ref} type="button" onClick={() => toggle(ref)} disabled={saving}
-                    className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
+                  // A row, not a bare button: the Repair affordance is itself a button and
+                  // can't nest inside one. The toggle lives on the flex-1 inner button; the
+                  // chips + Repair sit beside it as siblings.
+                  <div key={ref}
+                    className="flex items-center gap-2.5 rounded-md pr-3 transition-colors hover:bg-surface-high"
                     style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
-                    <span className="grid size-4 shrink-0 place-items-center rounded border"
-                      style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
-                      {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem] font-mono">{m.name}</span>
+                    <button type="button" onClick={() => toggle(ref)} disabled={saving}
+                      className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
+                      <span className="grid size-4 shrink-0 place-items-center rounded border"
+                        style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+                        {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem] font-mono">{m.name}</span>
+                    </button>
+                    <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
                     {on && notDownloaded && (
                       <span className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.75rem]"
                         style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
@@ -362,7 +441,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
                       </span>
                     )}
                     <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{m.provider}</span>
-                  </button>
+                  </div>
                 )
                   })}
                 </div>

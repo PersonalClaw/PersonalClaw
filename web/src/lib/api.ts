@@ -1315,8 +1315,23 @@ export interface SearchCapabilitiesInfo {
 }
 export interface SearchProviderInfo { name: string; display_name: string; capabilities: SearchCapabilitiesInfo; available: boolean }
 
+// Per-model capability flags (mirrors local_models/provider.py CapabilityMatrix) — a
+// binding UI renders these as chips instead of guessing (LMMV §2.1).
+export interface CapabilityMatrix {
+  word_timestamps?: boolean; segment_timestamps?: boolean; speaker_labels?: boolean
+  acoustic_events?: boolean; hotword_biasing?: boolean; hotword_budget?: number
+  languages?: string[]; reasoning_budget_control?: boolean
+}
 // A model discovered from a configured backend (the unit you bind to a use-case).
-export interface AvailableModel { id: string; name: string; capabilities: string[]; provider: string; provider_type: string; size?: number; downloaded?: boolean; gated?: boolean; description?: string; size_mb?: number; source?: string }
+// The catalog-contract fields (matrix/license/…, LMMV §2) are optional — only local
+// models loaded from a catalog.json carry them; hosted/remote models omit them.
+export interface AvailableModel {
+  id: string; name: string; capabilities: string[]; provider: string; provider_type: string
+  size?: number; downloaded?: boolean; gated?: boolean; description?: string; size_mb?: number; source?: string
+  matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
+  runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
+  io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+}
 export interface ProviderModels { name: string; displayName?: string; type: string; models: AvailableModel[]; error?: string; searchable?: boolean; local?: boolean }
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
