@@ -1,3 +1,12 @@
+# APP-PLATFORM-EVOLUTION
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/APE.md`](../atomic/APE.md) as 11 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: App Platform Evolution — Richer Capabilities, Better Apps
 
 **Status:** DESIGNED — created 2026-07-18 (roadmap rev 10; owner ask: evolution of first-party + native apps and what platform capabilities can grow into)
@@ -7,6 +16,8 @@
 **Scope:** grow what an app *can be* (new capability surfaces, richer UI contribution, app-to-app messaging, background capabilities) and raise the quality bar of the shipped 26 native + 36 first-party apps. **Soul guardrail:** every new capability is a *seam* (typed contract + permission), never a vendor path in core; new power is permission-gated and consent-surfaced exactly like today's `api`/`events`/`network`. The app platform stays the ONE extension mechanism — no second plugin system. Additive-only to the manifest (unknown-field-preserving, §3.8); existing apps keep working untouched.
 
 ---
+
+> 📎 **The App Store UI re-layout lives in [PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md) §2 (#68)** — added 2026-08-05: a persistent right-rail (categories+counts + source management, always-open on wide screens) + art-forward card polish, following a `CategoryRail`/`FeatureCard` pattern. #68 §2 **renders** this plan's S2 `quality` manifest badges rather than inventing a second badge system — land the `quality` block here, render it there. Coordinate so the Store card component isn't churned twice.
 
 ## Context (code recon, 2026-07-18)
 
@@ -92,9 +103,9 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
 - **App-to-app messaging could become a covert channel** — the broker fences + SEL-logs + double-declares; no direct sockets. Revisit if abuse appears (ratchet).
 - **Open:** whether native bundles gaining `provider.py` blurs the native/first-party line — keep native = shipped-in-package + locked-on; the capability contract doesn't change that, only what a native provider may do.
 
-## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+## Amendment (2026-07-26 — ecosystem gap analysis, owner greenlight)
 
-**The app QoL trio the sibling ecosystem kept hand-rolling.** (a) **Update-available surfacing:** recon confirms `app_manager.update()` (`apps/app_manager.py:508`) does atomic stage→scan→swap→rollback and `POST /api/apps/{name}/update` exists — but nothing *tells the user* an update exists; the Store catalog (`apps/catalog.py`, `CatalogEntry.version`, `available_catalog()`) already computes source-side versions on request. (b) **Consented cross-app data access:** apps get exactly one private `app_data_dir(name)` (`apps/manager.py:89`, gated by `permissions.storage`, handed as `PERSONALCLAW_APP_DATA_DIR`); the sibling pattern of apps shuttling files through the user is the workaround. (c) **"Fix with AI":** failed installs/updates return `InstallResult{ok: False, error}` + SEL audit, and the user retypes the error into chat by hand. All three are seams, not vendor paths.
+**The app QoL trio the ecosystem kept hand-rolling.** (a) **Update-available surfacing:** recon confirms `app_manager.update()` (`apps/app_manager.py:508`) does atomic stage→scan→swap→rollback and `POST /api/apps/{name}/update` exists — but nothing *tells the user* an update exists; the Store catalog (`apps/catalog.py`, `CatalogEntry.version`, `available_catalog()`) already computes source-side versions on request. (b) **Consented cross-app data access:** apps get exactly one private `app_data_dir(name)` (`apps/manager.py:89`, gated by `permissions.storage`, handed as `PERSONALCLAW_APP_DATA_DIR`); the common pattern of apps shuttling files through the user is the workaround. (c) **"Fix with AI":** failed installs/updates return `InstallResult{ok: False, error}` + SEL audit, and the user retypes the error into chat by hand. All three are seams, not vendor paths.
 
 ### Contract-level design
 

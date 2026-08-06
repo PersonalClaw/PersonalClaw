@@ -1,3 +1,12 @@
+# SELF-VERIFICATION
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/SV.md`](../atomic/SV.md) as 11 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Self-Verification — Spec-Driven Dev Harness + Event-Trace Replay + Self-QA Companion
 
 **Status:** IN PROGRESS — §1 (spec harness + scanner + diff-aware run) and §2 (event-trace replay

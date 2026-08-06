@@ -1,3 +1,12 @@
+# PLATFORM-RESILIENCE
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/PR2.md`](../atomic/PR2.md) as 11 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Platform Resilience — Doctor, No-Model Degraded Mode, Mid-Turn Message Handling
 
 **Status:** DONE — all 6 sessions landed (S1-S5 2026-07-25; S6 mid-turn steering 2026-07-29). S1 Doctor core (§1) · S2 no-model degraded contract (§5) · S3 mid-turn message handling (§6) · S4 confirm-gated fixes + trust simulators + crash capture (§2/§3.1/§3.2/§6.5) · S5 health-scored remediation engine (§4). Deferred-as-future-infra (E6, recorded per session): §3.3 automation would-execute (AUTOMATION-SUBSTRATE), the richer §3.2 memory-pipeline alarm + judgment-lane remediation jobs (LEARN-R19/KNOW-R17 flywheel infra), and the AUTOMATION-SUBSTRATE trigger-form for the engine's cadence (it runs off the heartbeat until then). Created 2026-07-13 from research synthesis, promoted from backlog.

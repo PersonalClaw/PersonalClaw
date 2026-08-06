@@ -1,3 +1,12 @@
+# WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2KNO.md`](../atomic/WF2KNO.md) as 10 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Knowledge Artifact Synthesis via Workflow Nodes
 
 **Status:** DONE — sessions 34-39 shipped (PRs #173-#177, on `main`): store semantics +

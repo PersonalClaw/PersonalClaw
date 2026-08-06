@@ -1,3 +1,12 @@
+# INVESTIGATE-ANYWHERE
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/IA2.md`](../atomic/IA2.md) as 7 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Investigate Anywhere — One Chat-With-Context Primitive for Every Entity Row
 
 **Status:** DONE — S1 (the primitive: envelope + resolver registry + route + turn-time fenced

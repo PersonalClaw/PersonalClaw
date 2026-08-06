@@ -1,3 +1,12 @@
+# REMOTE-USER-AUTH
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/RUA.md`](../atomic/RUA.md) as 4 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Remote User Authentication — Log In From the Internet Without Being Home
 
 **Status:** DONE — all four sessions shipped 2026-07-30 (created 2026-07-25 from owner request:

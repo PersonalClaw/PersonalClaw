@@ -42,24 +42,27 @@ class TestVisualOutputSkill:
         assert "visual-output" not in miss
 
     def test_no_internal_nouns(self):
-        # The denylist is base64-encoded so the published repo itself never
-        # grep-hits the guarded nouns; decode at runtime to keep the guard live.
-        import base64
+        # The denylist is stored as irreversible SHA-256 digests so the published
+        # repo never contains the guarded nouns in any recoverable form (a base64
+        # denylist still ships them). The guard stays live: hash each token in the
+        # skill text and compare against the digest set.
+        import hashlib
+        import re
 
-        banned_b64 = (
-            "bWVzaGNsYXc=",
-            "bXdpbml0",
-            "bWlkd2F5",
-            "a2lybw==",
-            "Y29kZS5hbWF6b24uY29t",
-            "YXJjYw==",
-            "dGFza2Vp",
-            "cGhvbmV0b29s",
-        )
+        banned_digests = {
+            "9cfc2063b8f2b755719b465df28f87226d29d38e4e4485801b3d7a4b49ec53ad",
+            "9565bef533fe7668fdfea4dea2d77de9b5b000d76634267faf5b2d4b2538777b",
+            "2a0abe451aede7f7139e3b7be00c2adff97b5ef4a50c6b5f4a2165125b55cc15",
+            "6e885b857804f868c79c20c78f03696636427565a4fbac95d7352d8530bfadf1",
+            "acc0e211a3e3d504b51e3d0e0dd24d597472cfbb2f5e9897483154589826f4d4",
+            "da72f57a8db8bba716a5e6bc030530b2160ff92b1c51f10b4b407aea1ef71e58",
+            "87ec940abd81dcaa2ef5deb4b3bf9e354f161dc5eb51ba0e26f88ea797080b8c",
+            "87cb60d3f9cbfa1e55661503e2ca017f5a11c2aa3d78e44982e370866aa8f71b",
+        }
         md = (_bundled_root() / "visual-output" / "SKILL.md").read_text(encoding="utf-8").lower()
-        for encoded in banned_b64:
-            banned = base64.b64decode(encoded).decode("utf-8")
-            assert banned not in md, f"visual-output skill leaked internal noun: {banned!r}"
+        tokens = set(re.findall(r"[a-z0-9][a-z0-9.]*", md))
+        leaked = {t for t in tokens if hashlib.sha256(t.encode()).hexdigest() in banned_digests}
+        assert not leaked, f"visual-output skill leaked internal noun(s): {leaked}"
 
 
 class TestArtifactsSkill:
@@ -95,10 +98,13 @@ class TestArtifactsSkill:
         assert not missing, f"artifacts skill references nonexistent tools: {missing}"
 
     def test_personalclaw_namespace(self):
-        import base64
-
         md = (_bundled_root() / "artifacts" / "SKILL.md").read_text(encoding="utf-8")
         assert "@personalclaw-core" in md
-        # base64("@meshclaw-core") — the pre-rename namespace must not resurface
-        # (encoded so the published repo doesn't grep-hit the old name).
-        assert base64.b64decode("QG1lc2hjbGF3LWNvcmU=").decode("utf-8") not in md
+        # The skill must reference only the canonical core MCP namespace — no
+        # pre-rename or vendor namespace may resurface. Assert every "@…-core"
+        # token the skill names is exactly "@personalclaw-core".
+        core_namespaces = set(re.findall(r"@[a-z][a-z0-9-]*-core\b", md))
+        assert core_namespaces == {"@personalclaw-core"}, (
+            f"skill references unexpected core namespace(s): "
+            f"{core_namespaces - {'@personalclaw-core'}}"
+        )

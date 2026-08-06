@@ -133,14 +133,14 @@ The synthesis's inference (flagged as inference, not finding): the ecosystem's a
 ## Caveats (verbatim from synthesis)
 
 1. Source composition skews heavily toward vendor primary documentation — accurate for stated design and admitted limitations (Letta's last-writer-wins, Temporal's credential gap, n8n's sharing-revocation warning are all against-interest admissions), but almost no independent production failure stories or postmortems survived verification; the request for 'failure stories' is only partially satisfied by vendor-documented anti-patterns.
-2. Research dimension (5) produced NO surviving direct claims; the "server-authoritative + ownership/claim conventions over CRDTs" implication is an inference from adjacent evidence, not a verified finding. Likewise, no claims survived on OpenClaw/Claude-Code-class harnesses, LangGraph/CrewAI, Devin, MS Copilot agents, or Google Agentspace specifically — the Google finding is a GCP reference architecture, not Agentspace.
+2. Research dimension (5) produced NO surviving direct claims; the "server-authoritative + ownership/claim conventions over CRDTs" implication is an inference from adjacent evidence, not a verified finding. Likewise, no claims survived on general-purpose/Claude-Code-class personal-agent harnesses, LangGraph/CrewAI, Devin, MS Copilot agents, or Google Agentspace specifically — the Google finding is a GCP reference architecture, not Agentspace.
 3. One claim was refuted (see above) — do not rely on that characterization of Graphiti's cross-namespace behavior.
 4. Time-sensitivity: Graphiti's MCP server is labeled experimental; Letta's cited pages sit under a "V1 SDK (legacy)" section while a newer Agent SDK adds a separate git-backed MemFS mechanism; Linear's Agents API is Developer Preview; Atlassian's API-token path shipped ~Feb 2026; the MCP authorization spec (2025-06-18 revision) is still evolving.
 5. Scope/licensing footnotes: n8n project RBAC requires paid tiers; Atlassian API-token auth requires org-admin enablement; Temporal's 10,000-Namespace "hard ceiling" and "<50 tenants" figures carry documented qualifiers the merged claims slightly flatten; Graphiti group_id isolation is namespace partitioning, not a hardened security boundary.
 
 ## Open Questions
 
-1. How do OpenClaw/Claude-Code-class personal-agent harnesses and orchestration frameworks (LangGraph, CrewAI, Letta Cloud, Devin, Copilot agents, Agentspace) concretely implement the personal-vs-team boundary today — no claims about their shared-cron/trigger repositories or claimable automations survived verification, so it remains unknown whether **anyone** ships teammate-visible/claimable scheduled jobs for personal agents. (If true, PersonalClaw's shared-trigger repository would be first-of-kind.)
+1. How do general-purpose/Claude-Code-class personal-agent harnesses and orchestration frameworks (LangGraph, CrewAI, Letta Cloud, Devin, Copilot agents, Agentspace) concretely implement the personal-vs-team boundary today — no claims about their shared-cron/trigger repositories or claimable automations survived verification, so it remains unknown whether **anyone** ships teammate-visible/claimable scheduled jobs for personal agents. (If true, PersonalClaw's shared-trigger repository would be first-of-kind.)
 2. What concrete sync protocols are being used in practice to evolve local-first agent entity stores (JSON/SQLite/FAISS) into optionally-remote shared stores — are CRDT libraries (Automerge/Loro/Yjs) actually applied to agent state anywhere, or does everyone go straight to server-authoritative APIs with LWW, as Letta and Temporal's patterns suggest?
 3. Given the MCP spec's prohibition on raw token passthrough, what token-exchange implementations do small teams (without enterprise IdPs) actually use to propagate end-user identity into shared MCP servers — Google's architecture prescribes it but hand-waves the mechanism (a gap its independent reviewer also flagged)?
 4. Are there documented production incidents of cross-tenant leakage or lost updates in shared agent memory at scale (e.g., group_id scoping bugs, concurrent memory_rethink data loss) — verification found only vendor-admitted theoretical limitations, no real postmortems.
@@ -155,9 +155,9 @@ The synthesis's inference (flagged as inference, not finding): the ecosystem's a
 | https://rhumb.dev/blog/multi-tenant-mcp-server-design | blog | shared-agent-memory-backends | 5 |
 | https://github.com/getzep/graphiti | primary | shared-agent-memory-backends | 5 |
 | https://www.falkordb.com/blog/graphiti-falkordb-multi-agent-performance/ | blog | shared-agent-memory-backends | 5 |
-| https://github.com/openclaw/openclaw/issues/26370 | forum | multi-tenant-scheduling-and-triggers | 5 |
+| [peer personal-agent harness — issue-tracker thread] | forum | multi-tenant-scheduling-and-triggers | 5 |
 | https://docs.temporal.io/production-deployment/multi-tenant-patterns | primary | multi-tenant-scheduling-and-triggers | 5 |
-| https://clawgo.net/mastering-openclaw-multi-user-setup-in-no-time/ | unreliable | multi-tenant-scheduling-and-triggers | 5 |
+| [peer personal-agent harness — multi-user setup guide] | unreliable | multi-tenant-scheduling-and-triggers | 5 |
 | https://docs.n8n.io/administer/manage-users-and-access/set-permissions-and-roles-rbac/organize-work-in-projects | primary | multi-tenant-scheduling-and-triggers | 5 |
 | https://community.n8n.io/t/multi-tenant-n8n-workflows-with-shared-logic-but-isolated-state/295495 | forum | multi-tenant-scheduling-and-triggers | 5 |
 | https://docs.cloud.google.com/architecture/multi-tenant-agentic-ai-system | primary | multi-tenant-scheduling-and-triggers | 5 |

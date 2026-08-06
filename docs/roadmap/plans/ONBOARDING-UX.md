@@ -1,3 +1,12 @@
+# ONBOARDING-UX
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/OU.md`](../atomic/OU.md) as 11 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Onboarding UX — Guided First Run + Progressive Disclosure
 
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner: "onboarding UX that guides user through the app, features, configuration of their first agent provider or model provider, and gets them started")
@@ -7,6 +16,8 @@
 **Scope:** guided first run to a first success in under 5 minutes, progressive disclosure over the 20+-surface nav, approval-brief polish, and stranger validation. **Soul guardrail:** guidance, never gates — every step skippable, the full sidebar one toggle away, zero features locked behind the tour, and **no tour telemetry** (zero-telemetry stance; learn from usability sessions, not tracking). Build on the existing machinery — `Onboarding.tsx` + `onboarding/StepStack.tsx`, `NavRail.tsx`, `ApprovalCard.tsx`, `PlanningWalkthrough.tsx` — extend, don't reinvent (protocol rule: nearest-analog style).
 
 ---
+
+> 📎 **A high-value onboarding step lives in [PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md) §3 (#68)** — added 2026-08-05: **import from other local agent tools** (Claude Code, Codex first — detect, review, import instructions/memories/MCP/skills). This plan has no import row; #68 owns it but the *step* belongs in this plan's onboarding flow (it extends the StepStack in C-series). Coordinate placement when #68 §3 executes: the import step slots after the provider step, before first-success. #68 §1's `PresetEmptyState` also rides this plan's T2.1 Starter/Everything progressive disclosure — same family, land compatibly.
 
 ## Context (code recon, 2026-07-18)
 

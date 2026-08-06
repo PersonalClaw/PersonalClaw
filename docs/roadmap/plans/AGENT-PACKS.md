@@ -1,20 +1,29 @@
+# AGENT-PACKS
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/AP.md`](../atomic/AP.md) as 7 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Agent Packs & Portable Bundles — Share a Composed PersonalClaw
 
 **Status:** PROPOSED — created 2026-07-13 from research synthesis, promoted from backlog
 **Created:** 2026-07-13
 **Wave:** 4 (pre-publication) — this is the distribution story for a product heading toward open publication; it consumes entity stores that Waves 1-3 stabilize (workflow templates, unified triggers, the flywheel lifecycle, project secrets) and is the sharing channel for flywheel-earned templates. Slices 1-2 (format + export/import core) have no hard engine dependency and could pull forward if publication accelerates.
 **Depends on:** softly on WORKFLOWS-V2 (template store shape), WORKFLOWS-V2-AUTOMATION-SUBSTRATE (`triggers.json` unified store — pack triggers import as *staged/disabled* either way), WORK-R19 (per-project secrets store — the requirements manifest re-satisfies against it), LEARNING-FLYWHEEL (`{source, computedHash}` lock convention on imported templates). None is a blocker: every dependency has a today-shaped fallback named in §2/§3.
-**Scope:** one portable bundle format (`.pclaw` packs) with dependency-closure export, redaction, and non-forgeable provenance; a leaves-first transactional importer with fresh-id cross-ref rewriting and a referential-integrity linter; connector configure-or-substitute + post-install setup-skill interview; pack kinds (Domain OS, agent/roster, prompt-card, one-link setup); a multi-tool OUTBOUND exporter to external harness formats; an agentskills.io-style INBOUND catalog importer; and project-fingerprint auto-surfacing that *proposes* packs.
+**Scope:** one portable bundle format (`.pclaw` packs) with dependency-closure export, redaction, and non-forgeable provenance; a leaves-first transactional importer with fresh-id cross-ref rewriting and a referential-integrity linter; connector configure-or-substitute + post-install setup-skill interview; pack kinds (Domain OS, agent/roster, prompt-card, one-link setup); a multi-tool OUTBOUND exporter to external harness formats; an external skill-catalog INBOUND importer; and project-fingerprint auto-surfacing that *proposes* packs.
 
 ---
 
 ## Research Integration (2026-07-13)
 
-- **NEW-12** (installable bundles of composed configurations: identity, config subset, skills, workflow templates, triggers, MCP connector declarations, app wiring; dependency-closure `.pclaw` export/import; fresh-id cross-ref rewriting; leaves-first import with rollback; referential-integrity linter; credentials/memories NEVER ship + requirements manifest; deny-list secret redaction; schema-versioned forward-compat; connector catalog with configure-or-substitute; post-install setup-skill interview; Domain OS packs; prompt-card importer) → §1-§5, sources `hermes-agent` (profile distributions, `distribution.yaml`, `env_requires`, distribution-owned paths, credentials-never-ship), `anthropic-financial-services` (vertical bundles, leaves-first manifest resolution, connector catalog, check.py ref-integrity linting, version-bump-on-touch), `omnivoice-studio` (`.ovsvoice`: integer `schema_version`, best-effort forward import, non-forgeable provenance recomputed from bundle contents, zip-slip defense, mid-import rollback, inspect-without-writing), `mattpocock-skills` (setup-skill convention binding abstract roles to the environment), `milesdeutscher-x-post` (Domain OS / prompt-card genre).
+- **NEW-12** (installable bundles of composed configurations: identity, config subset, skills, workflow templates, triggers, MCP connector declarations, app wiring; dependency-closure `.pclaw` export/import; fresh-id cross-ref rewriting; leaves-first import with rollback; referential-integrity linter; credentials/memories NEVER ship + requirements manifest; deny-list secret redaction; schema-versioned forward-compat; connector catalog with configure-or-substitute; post-install setup-skill interview; Domain OS packs; prompt-card importer) → §1-§5, sources a distribution-format pattern (profile distributions, `distribution.yaml`, `env_requires`, distribution-owned paths, credentials-never-ship), `anthropic-financial-services` (vertical bundles, leaves-first manifest resolution, connector catalog, check.py ref-integrity linting, version-bump-on-touch), `omnivoice-studio` (`.ovsvoice`: integer `schema_version`, best-effort forward import, non-forgeable provenance recomputed from bundle contents, zip-slip defense, mid-import rollback, inspect-without-writing), `mattpocock-skills` (setup-skill convention binding abstract roles to the environment), `milesdeutscher-x-post` (Domain OS / prompt-card genre).
 - **NEW-12 amendment (a)** (agent-pack/roster-pack installs: catalog JSON + persona markdown + optional scenario runbooks with staged rosters, slug-resolution-checked on install, one-click team deploy) → §4.2, source `agency-agents` (divisions.json / runbooks.json / activation staging).
 - **NEW-12 amendment (b)** (one-link setup export/import: skills+prompts+workflow templates+app configs, never secrets, single shareable manifest with per-resource hashes) → §4.4, sources `different-ai-openwork`, `tryfriday`.
 - **NEW-12 amendment (c)** (multi-tool export rendering AgentDefinitions/skills into external harness formats via a format/installKind/dest contract) → §5, source `agency-agents` (tools.json).
-- **NEW-12 amendment (d)** (inbound half: agentskills.io-style importer pulling external skill catalogs into the skill store; project-fingerprint auto-surfacing that scans workspace file patterns, confidence-scores a project type, and proposes the matching pack) → §6, §7, sources `hermes-agent` (skills federation, ~150-skill hub), `openclaw` (~13.7k catalog), `skillclaw`, `openjarvis`.
+- **NEW-12 amendment (d)** (inbound half: an external skill-catalog importer pulling external skill catalogs into the skill store; project-fingerprint auto-surfacing that scans workspace file patterns, confidence-scores a project type, and proposes the matching pack) → §6, §7, source an external skill-catalog importer (federated skill hubs, large public catalogs).
 
 ---
 
@@ -70,8 +79,8 @@ Load-bearing rules, each traceable to a verified source mechanism:
 
 - **Integer `schema_version` with best-effort forward import** (.ovsvoice): a pack from a future schema imports what it understands, flags `schema_version_ahead=true` in the report, never hard-fails on unknown manifest keys.
 - **Non-forgeable provenance**: manifest flags are advisory; anything trust-bearing is **recomputed from actual bundle contents on import** (per-file sha256 re-hashed, `content_hash` re-derived). A pack claiming components it doesn't contain fails the integrity check, not the reader's trust.
-- **Credentials and memories NEVER ship** — structurally, not by discipline: the exporter has no code path that reads `.env`, `memory.db`, `knowledge.db`, session JSONLs, or `sel_hmac.key` (§2.2). What ships instead is the `requirements` manifest, re-satisfied on import (§3.3). This is Hermes's "`auth.json` and `.env` are never part of a distribution" plus its `env_requires` interview, verbatim.
-- **`pack_owned` paths** (Hermes `distribution_owned`): on pack *update*, only pack-owned entities are overwritten; user-modified copies are skipped with a drift note (the skills-lock `computedHash` tells us which is which — the LEARNING-FLYWHEEL lock convention doing double duty).
+- **Credentials and memories NEVER ship** — structurally, not by discipline: the exporter has no code path that reads `.env`, `memory.db`, `knowledge.db`, session JSONLs, or `sel_hmac.key` (§2.2). What ships instead is the `requirements` manifest, re-satisfied on import (§3.3). This follows the known pattern of "`auth.json` and `.env` are never part of a distribution" plus an `env_requires` interview, verbatim.
+- **`pack_owned` paths** (the `distribution_owned` pattern): on pack *update*, only pack-owned entities are overwritten; user-modified copies are skipped with a drift note (the skills-lock `computedHash` tells us which is which — the LEARNING-FLYWHEEL lock convention doing double duty).
 - **Path safety = WORK-R15's contract**, reused not reimplemented: member names never build paths directly (zip-slip defense), reject traversal/absolute/symlink/NUL, extract to unique tmp with janitor cleanup.
 
 **Memory vs Knowledge boundary (explicit):** packs carry **harness capability configuration only**. `memory.db` content (harness mechanics) never exports — a recipient's assistant must not inherit the author's episodic/semantic memory. `knowledge.db` items (the user's personal documents/files/photos) never export either — they are personal data, not capability. The ONLY learning-adjacent thing a pack may carry is a *skill* (already a shareable file entity behind install_guarded). Nothing in this plan writes to `memory.db` or `knowledge.db`.
@@ -182,7 +191,7 @@ class ExternalFormat:
     render: Callable[[Entity], list[RenderedFile]]
 ```
 
-- v1 formats: **Claude Code agents** (`~/.claude/agents/<slug>.md`, frontmatter name/description/tools), **Cursor rules** (roster-kind single `.cursorrules`), **SKILL.md dirs** (skills exported near-verbatim — they already ARE the agentskills.io shape).
+- v1 formats: **Claude Code agents** (`~/.claude/agents/<slug>.md`, frontmatter name/description/tools), **Cursor rules** (roster-kind single `.cursorrules`), **SKILL.md dirs** (skills exported near-verbatim — they already ARE the standard skill-catalog shape).
 - Byte-identical-per-format guarantee (the tools.json rule): two targets share a `format` only if rendered output is identical — enforced by a golden-file test per format.
 - Redaction (§2.2 content layer) runs on rendered output too; exports land in a user-chosen directory, never auto-installed into another tool's config without an explicit dest confirmation.
 - **Boundary note:** NEW-13's "PClaw as context provider" (routed-context CLAUDE.md adapters) is a *live context* surface and stays with NEW-13; this section renders *entities* (agents/skills), one-shot. Complementary, not overlapping.
@@ -193,7 +202,7 @@ class ExternalFormat:
 
 The inbound half of distribution — and the cheapest slice, because the chokepoint already exists:
 
-- `packs/catalog_marketplace.py:CatalogMarketplace(SkillsMarketplace)` — one class, N instances: each configured catalog (agentskills.io-style index URL, a GitHub "tap" repo with `skills/<slug>/SKILL.md`, a `/.well-known/skills/index.json` site) registers as a named marketplace on `get_default_skills_registry()` with `trust_tier=COMMUNITY`. `fetch(skill_id)` pulls files via `net.fetch` under the CONNECTOR egress profile and returns `SkillDetail{name, files}` — **`install_guarded` then does everything else** (quarantine, scan, TOCTOU-closed commit, `.pclaw-lock.json`, SEL). Zero new install machinery.
+- `packs/catalog_marketplace.py:CatalogMarketplace(SkillsMarketplace)` — one class, N instances: each configured catalog (an external skill-catalog index URL, a GitHub "tap" repo with `skills/<slug>/SKILL.md`, a `/.well-known/skills/index.json` site) registers as a named marketplace on `get_default_skills_registry()` with `trust_tier=COMMUNITY`. `fetch(skill_id)` pulls files via `net.fetch` under the CONNECTOR egress profile and returns `SkillDetail{name, files}` — **`install_guarded` then does everything else** (quarantine, scan, TOCTOU-closed commit, `.pclaw-lock.json`, SEL). Zero new install machinery.
 - Catalog list lives in config (`packs.skill_catalogs: list[{name, url, kind}]` — four wiring points, §8); the Skills store UI gains a source filter + per-source counts. Search is client-side over the fetched index (personal-scale; no search service).
 - Scale honesty: a 13.7k-entry catalog imports its *index* (name/description rows) for browse/search; skills fetch lazily on install. The index is data, never context — nothing enters the agent's budget until a skill is actually installed and surfaced by the existing `skills/surfacing.py` machinery.
 
@@ -248,7 +257,7 @@ Packs get *discovered*, not just installed:
 | **AUTOMATION-SUBSTRATE** (approved) | Pack triggers target whichever store exists (dual-write shim until `triggers.json`); always disabled on import; its never-throw trigger validation is the model for §3.1's lenient component parse. |
 | **AUTONOMY-GUARDRAILS** (approved) | Shared scan rules (§2.2), guard-flag parse tenet (§8 config), profiles/budgets governing any pack-shipped trigger the user enables. |
 | **NEW-13** (Platform Legibility, sibling backlog plan) | §5 renders entities outbound; NEW-13 owns live context adapters + the first-party SKILL.md. No shared code beyond the redaction pass. |
-| **Hermes multi-profile isolation** (research) | Deliberately NOT adopted — PersonalClaw stays single-home, single-user; packs compose INTO the one instance rather than forking instances. Named here so it isn't re-proposed. |
+| **Multi-profile isolation** (research) | Deliberately NOT adopted — PersonalClaw stays single-home, single-user; packs compose INTO the one instance rather than forking instances. Named here so it isn't re-proposed. |
 
 ---
 
@@ -277,7 +286,7 @@ Sessions 1-2 are the keel; 3-6 each ship independently behind it.
 | Store-shape drift under this plan (workflows v1→v2, triggers unification) | Exporter/importer read through small per-kind adapters keyed on what exists on disk; component `kind` is stable while the backing store moves; golden-pack round-trip test runs in CI to catch drift |
 | Format ossification (schema_version 1 forever wrong) | Best-effort forward import + advisory unknown keys means v2 can add fields without breaking v1 importers; the .ovsvoice legacy-shadow trick reserved if a breaking change ever ships |
 | Fingerprinting feels like nagware | Deterministic rules only, on-create/on-demand only, propose-only, per-(project,pack) rejection memory, one config kill switch |
-| Scope creep toward a pack registry service | Hard line in §Overview soul guardrail: catalogs are fetched JSON files; publishing is "put the .pclaw somewhere" (Hermes: "publishing is just a git push"); no server component, ever, in this plan |
+| Scope creep toward a pack registry service | Hard line in §Overview soul guardrail: catalogs are fetched JSON files; publishing is "put the .pclaw somewhere" (the known pattern: "publishing is just a git push"); no server component, ever, in this plan |
 | Silent config drop (four-wiring-points gotcha) | Explicit checklist §8; schema reachability tests enforce `_meta`; list-element `_meta` per the ProjectionRuleConfig precedent |
 
 ---
@@ -288,7 +297,7 @@ Sessions 1-2 are the keel; 3-6 each ship independently behind it.
 2. A pack containing a skill with a planted DANGEROUS pattern is refused at import regardless of consent; a WARNING pack requires explicit consent; both verdicts and every commit step appear in the SEL.
 3. Mid-import failure (fault-injected at the template leg) rolls back every already-written component — `packs/installed.json`, the skills dir, `prompts/`, and `agents{}` are byte-identical to pre-import.
 4. A roster pack installs with every runbook slug resolving (lint-proven); a deliberately broken slug blocks import with the exact unresolved reference named; the `always` tier deploys in one click and `phase-N` agents stay dormant until surfaced.
-5. An external agentskills.io-style catalog registers as a marketplace; installing one of its skills produces a standard `.pclaw-lock.json` and passes `verify_skill_integrity` — proving zero bypass of the existing chokepoint.
+5. An external skill catalog registers as a marketplace; installing one of its skills produces a standard `.pclaw-lock.json` and passes `verify_skill_integrity` — proving zero bypass of the existing chokepoint.
 6. `ExternalFormat` renders a PersonalClaw agent into a working `~/.claude/agents/<slug>.md` that Claude Code actually loads, and the golden-file test proves byte-identical rendering across runs.
 7. Creating a project over a Terraform-shaped directory surfaces a propose-only pack card with confidence + inspect report; rejecting it once means it never reappears for that project; disabling `packs.fingerprint_enabled` stops scanning entirely.
 8. Updating an installed pack overwrites only `pack_owned` components; a user-edited pack skill (computedHash drift) is skipped with a visible drift note, never clobbered.

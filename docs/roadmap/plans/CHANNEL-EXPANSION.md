@@ -1,3 +1,12 @@
+# CHANNEL-EXPANSION
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/CE.md`](../atomic/CE.md) as 9 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Channel Expansion — Core Channels Beyond the Slack Proof of Concept
 
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner: "first wave = few core channels most popular in market beyond the slack proof of concept")
@@ -164,6 +173,31 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 - **Discord gateway maintenance** is the highest-complexity piece (WS lifecycle); contained by the minimal-intents client + conformance kit. If it exceeds budget, ship Telegram+email first (owner's "few core channels" is satisfied) and let Discord ride a community bounty with the half-built client as a head start — E6 decision point, flagged early.
 - **Telegram MarkdownV2** and **Discord rate buckets** are the two classic correctness traps — both have dedicated table-driven tests by design.
 - **Open:** whether pairing prompts should also appear in channel (canned reply) when `dm_policy=owner_only` — default: no reply at all (silent), documented.
+
+## Amendment (2026-08-05 — the shared TurnDriver + added channels)
+
+A design analysis (see [PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md)
+§9) contributes two design inputs to this plan; both land **here**, not in a new plan.
+
+- **Adopt a shared channel-neutral `TurnDriver` before the per-channel work (fold into S1).**
+  The design factors a messaging driver: a `TurnDriver` consumes the provider event stream and emits
+  abstract `OutputEvent`s to a per-channel `Renderer`, and it **owns credential/exfiltration
+  redaction and the tool-approval ladder once**, so every channel inherits them rather than
+  re-implementing. Each of their channels is then a uniform thin shape
+  (`client / commands / gateway / renderer / transport / transport_dispatch`), which is why
+  Teams/Webex/WeCom/WeChat are only ~1.3–1.5k LOC each. Our `ChannelTransportProvider`
+  (`channel_transports/base.py`) is comparable but does **not** centralize the turn concerns —
+  adopting a shared driver keeps every future channel thin and means redaction+approval can never
+  drift per channel. **Recommendation:** land the driver as S1's trust-seam companion; Telegram (S2)
+  is then the first consumer that proves it.
+- **More channels are cheap once the driver exists (append to Wave 2).** Beyond the planned
+  Discord/email, Teams/Webex/WeCom/WeChat are small on the shared driver — add them as Wave-2 rows
+  when the driver + Telegram/Discord have proven the shape. Community-tier rules
+  (WhatsApp/Signal/iMessage — official APIs only) are unchanged.
+- **Slack hardening read.** A mature Slack app design is ~21k LOC with dedicated `enterprise.py`,
+  `channel_resolver.py`, `interactions.py`, `blocks.py`, and `retry.py`. Before extending our
+  slack-channel app, study those concerns for enterprise-workspace handling, interaction robustness, and
+  retry/backoff — a hardening pass on the existing app, not a rewrite.
 
 ## Amendment (2026-07-26 — gap analysis round 2, owner decisions)
 
