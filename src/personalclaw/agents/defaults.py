@@ -378,6 +378,7 @@ RETIRED_AGENT_NAMES = frozenset({"personalclaw-autonomous"})
 
 _LOWER_RESERVED_AGENT_NAMES = frozenset(n.lower() for n in RESERVED_AGENT_NAMES)
 
+
 def is_reserved_agent(name: str) -> bool:
     """True when ``name`` is a system-critical agent the user must not edit."""
     if not name:

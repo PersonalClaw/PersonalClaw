@@ -148,8 +148,10 @@ def test_is_reserved_agent_case_insensitive():
 async def test_api_agents_create_rejects_non_alphanumeric(monkeypatch, tmp_path):
     _acfg(monkeypatch, tmp_path, {"default": {}})
     req = make_mocked_request("POST", "/api/agents")
+
     async def _j():
         return {"name": "---"}
+
     req.json = _j
     resp = await _agents_h.api_personalclaw_agents_create(req)
     assert resp.status == 400
@@ -161,8 +163,10 @@ async def test_api_agents_create_case_insensitive_conflict(monkeypatch, tmp_path
     from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME
     _acfg(monkeypatch, tmp_path, {LOOP_WORKER_AGENT_NAME: {}})
     req = make_mocked_request("POST", "/api/agents")
+
     async def _j():
         return {"name": LOOP_WORKER_AGENT_NAME.upper()}
+
     req.json = _j
     resp = await _agents_h.api_personalclaw_agents_create(req)
     assert resp.status == 409
@@ -173,8 +177,10 @@ async def test_api_agents_create_case_insensitive_conflict(monkeypatch, tmp_path
 async def test_api_agents_create_lowercases_name(monkeypatch, tmp_path):
     cfg = _acfg(monkeypatch, tmp_path, {})
     req = make_mocked_request("POST", "/api/agents")
+
     async def _j():
         return {"name": "MyNewAgent"}
+
     req.json = _j
     resp = await _agents_h.api_personalclaw_agents_create(req)
     assert resp.status == 200
