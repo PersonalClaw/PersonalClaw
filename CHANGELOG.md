@@ -96,6 +96,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   waiting for a run that had never started. Automations still fired on their own schedule, so
   nothing looked broken until you tried to test one by hand. Manual runs now execute the
   automation's action, and a run that cannot start says so instead of claiming success.
+- **A manual "Run now" left no trace and the "Running…" pill never cleared.** Even after Run now
+  began actually executing the action, the run was recorded nowhere — the run history gained no
+  row, the "last run" time never advanced, and so the animated "Running…" indicator waited forever
+  for a completion it could not see. A manual run is now written to the automation's run history
+  (tagged as a manual run) and advances its last-run time, so the history updates and the pill
+  clears. A manual run that fails is recorded as a failed run rather than swallowed. Testing an
+  automation by hand still never counts against its own fire limit.
 - **Knowledge ingest reported steps as finished that never ran.** The per-item ingest view marked
   entity extraction, intent matching, and embedding as done on every item regardless of what
   actually happened — so with no embedding model bound, an item that stored zero vectors still
