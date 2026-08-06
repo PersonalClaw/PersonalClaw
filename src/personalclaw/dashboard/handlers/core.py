@@ -482,6 +482,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "durability.sync_enabled": {"type": "bool"},
     "durability.sync_transport": {"type": "str", "max_len": 64},
     "durability.sync_stale_after_secs": {"type": "int", "min": 30, "max": 86400},
+    # EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset. These are the
+    # knobs a user reaches for from Settings; each is a plain scalar. Deliberately
+    # EXCLUDED: `evals.bakeoff_capture_enabled` — a privacy-sensitive input-capture
+    # flag, off by default and SEL-audited, kept out of the one-click PATCH allowlist
+    # (mirroring `inbound.mcp.allow_remote`); flipping it is a deliberate config edit.
+    "evals.enabled": {"type": "bool"},
+    "evals.study_default_k": {"type": "int", "min": 1, "max": 50},
+    "evals.judge_agreement_floor": {"type": "float", "min": 0.0, "max": 1.0},
+    "evals.ablation_cadence_days": {"type": "int", "min": 1, "max": 365},
+    "evals.default_budget_usd": {"type": "float", "min": 0.0, "max": 1000.0},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
