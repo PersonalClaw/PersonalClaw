@@ -1688,12 +1688,26 @@ class GatewayOrchestrator:
                 # Heartbeat is a pure UNATTENDED background loop — no user present.
                 # HOOK_BASED keeps the security hooks; hook-neutral tools auto-approve
                 # (no interactive callback), never hanging on an unanswerable prompt.
+                _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
+
+                def _hb_usage(event: object, _m: str = _hb_model) -> None:
+                    from personalclaw.usage_ledger import record_from_event
+
+                    record_from_event(
+                        event,
+                        source="background",
+                        session_key=session_key,
+                        provider="acp",
+                        model=_m if isinstance(_m, str) and _m != "auto" else "",
+                    )
+
                 result_text = await stream_and_collect(
                     client,
                     full_message,
                     approval_policy=ToolApprovalPolicy.HOOK_BASED,
                     hooks=self.ctx_builder.hooks,
                     on_tool_approval=None,
+                    on_complete=_hb_usage,
                 )
 
                 if not result_text:
@@ -2508,9 +2522,22 @@ class GatewayOrchestrator:
                 Cancels any orphaned prompt between attempts so the next
                 retry doesn't hit 'Prompt already in progress'.
                 """
+
+                def _inject_usage(event: object, _src: str = label, _key: str = parent_key) -> None:
+                    from personalclaw.usage_ledger import record_from_event
+
+                    _m = getattr(getattr(client, "client", None), "_model", "") or ""
+                    record_from_event(
+                        event,
+                        source=_src,  # "channel" | "cron" — the announce path's label
+                        session_key=_key,
+                        provider="acp",
+                        model=_m if isinstance(_m, str) and _m != "auto" else "",
+                    )
+
                 for attempt in range(3):
                     try:
-                        return await stream_and_collect(client, msg)
+                        return await stream_and_collect(client, msg, on_complete=_inject_usage)
                     except PromptBusyExhaustedError:
                         # Provider is dead after exhausting prompt-busy retries.
                         # Reset session + notify, same as TimeoutError path.
