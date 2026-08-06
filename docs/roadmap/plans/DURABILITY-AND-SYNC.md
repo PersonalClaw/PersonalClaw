@@ -998,3 +998,26 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   (8: full round-trip row-count/entry parity, entity-dir by-id, sqlite-table reassembly, year-bucket
   merge, secrets-absent, entries-filter, invalid-export-refuses, part-split reassembly-in-order) +
   the full shards suite = 36 passed.
+
+## Execution log — DAS-6c-i (the row-level merge core; DAS-6c re-scoped)
+
+- **DAS-6c RE-SCOPED; DAS-6c-i DONE.** The DAS-6c cycle clause (pull→merge-import→export-union→push
+  with CAS registry + staleness window + durable outbox + consumed-only cursor + deterministic
+  per-strategy merges + tombstones) is genuinely multi-mechanism, so it's split like DAS-6 itself:
+  **6c-i = the deterministic row-level MERGE core** (this), 6c-ii = the cycle orchestration
+  (registry.json machine-seqs / CAS retry / stale_after_secs / outbox / cursor) that composes 6a's
+  transport + 6b's `import_shards` + this merge. Added `durability/merge.py`: pure, clock-free,
+  deterministic `merge_union_by_id` / `merge_lww_by_updated_at` / `merge_append_dedup` + a
+  `merge_rows(strategy, ...)` dispatcher over `inventory.MERGE_*`. Tombstone-aware (a `deleted_at` row
+  wins over a live same-id row — deletion survives the union; later `deleted_at` wins between two
+  tombstones; a tombstone beats even a newer live `updated_at`). LWW ties favor local (stable);
+  append_dedup by a stable per-row key makes a re-import a no-op. `sqlite_attach_ignore`/`replace_only`
+  RAISE from `merge_rows` (the cycle handles DBs via attach-ignore + skips replace_only — routing one
+  here is a caller bug). No CRDTs — union+LWW+tombstones per the plan's Anti-goals. Proved the
+  done-when convergence properties at the row layer: two machines merging each other's rows converge
+  to the same set; a delete on A stays deleted on B; merge is idempotent (re-applying an unchanged
+  remote changes nothing — the free-retry-on-CAS-race property). Pure core, no user surface → no
+  CHANGELOG. **Remaining:** DAS-6c-ii (cycle orchestration + registry/CAS/outbox/cursor), DAS-6d
+  (git-sync + dir-sync apps + two-machine convergence). **Gates:** `make lint` clean (700 files);
+  `tests/test_durability_merge.py` (21: per-strategy, tombstone precedence, LWW ties/undated,
+  append no-op, dispatch guards, convergence + idempotency) pass.
