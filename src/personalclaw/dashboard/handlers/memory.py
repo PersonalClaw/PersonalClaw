@@ -895,6 +895,18 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     Works even while the vault flag is off (an explicit one-shot export to the
     configured path), so a user can generate the vault on demand before turning on
     the always-mirror. Returns the change summary."""
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.vault_sync",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     from personalclaw.config.loader import AppConfig, config_dir  # noqa: F811
     from personalclaw.memory_vault import MemoryVault, vault_dir_from_config
 
@@ -913,6 +925,18 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
 
 async def api_memory_migrate(request: web.Request) -> web.Response:
     """POST /api/memory/migrate — migrate legacy markdown memory to vector store."""
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.migrate",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     store = _get_provider(request.app["state"])
 
     global _migrate_lock
@@ -1037,6 +1061,18 @@ async def api_memory_observability(request: web.Request) -> web.Response:
 
 async def api_memory_promote(request: web.Request) -> web.Response:
     """POST /api/memory/promote — promote repeated episodic patterns to semantic facts."""
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.promote",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     store = _get_provider(request.app["state"])
     try:
         body = await request.json()
