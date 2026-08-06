@@ -33,6 +33,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Handing `POST /api/memory/import` (or `personalclaw memory import`) a JSON list, string, number,
   `null`, or `true` crashed the import instead of telling you the file was the wrong shape. Both
   now say so plainly, and a valid export imports as before.
+- **A request that named no task mode relaxed every chat to full execution.** `POST
+  /api/chat/task-mode` read a missing `mode` as `agent`, and a missing `session` as "all
+  sessions", so one under-specified request could take every chat you had set to Ask or
+  Plan and hand it full tool access. An absent or non-string `mode` is now refused the
+  same way an invalid one always was, and the response names the sessions it changed so a
+  caller can tell a one-chat change from a fleet-wide one.
 
 - **One app could borrow another app's permission to run an agent, and read agent runs that
   weren't its own.** The permission check on the app agent-run endpoints read the app name out of
