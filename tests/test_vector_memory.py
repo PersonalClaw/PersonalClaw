@@ -704,3 +704,61 @@ class TestStemWords:
     def test_short_words_unchanged(self) -> None:
         result = _stem_words({"bug", "run", "fix"})
         assert {"bug", "run", "fix"} <= result
+
+
+class TestEpisodicCitations:
+    """`[Memory N]` citation markers + resolvable manifest (MEMORY-GRAPH-AND-VAULT §5.4)."""
+
+    def _seed(self, tmp_path: Path) -> VectorMemoryStore:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
+        store.init()
+        store.write_episodic("deployed the billing service to production on friday")
+        store.write_episodic("the deploy runbook lives in docs/ops/deploy.md")
+        return store
+
+    def test_default_block_is_unchanged(self, tmp_path: Path) -> None:
+        """No citations_out → legacy `N.` numbering, byte-identical to before."""
+        store = self._seed(tmp_path)
+        block = store.get_episodic_context(query_text="deploy production")
+        assert block
+        assert "[Memory 1]" not in block
+        # Legacy format leads each fragment with an ordinal + period.
+        assert "1. " in block
+        assert block.startswith("[Episodic Memory")
+
+    def test_citation_markers_and_manifest(self, tmp_path: Path) -> None:
+        """citations_out → `[Memory N]` markers + one manifest entry per fragment."""
+        store = self._seed(tmp_path)
+        cites: list[dict] = []
+        block = store.get_episodic_context(query_text="deploy production", citations_out=cites)
+        assert block
+        assert "[Memory 1]" in block
+        assert cites, "manifest must be populated when fragments are emitted"
+        # Contiguous 1-based numbering, and every marker in the block resolves.
+        for i, c in enumerate(cites, 1):
+            assert c["n"] == i
+            assert f"[Memory {i}]" in block
+            # id is the stable episode record id (used for the deep-link).
+            assert c["id"] is not None
+            assert c["preview"]
+
+    def test_manifest_ids_resolve_to_records(self, tmp_path: Path) -> None:
+        """Each manifest id points at a real episodic record (deep-link target)."""
+        store = self._seed(tmp_path)
+        cites: list[dict] = []
+        store.get_episodic_context(query_text="deploy production", citations_out=cites)
+        assert cites
+        for c in cites:
+            rec = store._get_episodic(c["id"])
+            assert rec is not None, f"manifest id {c['id']} must resolve to a record"
+
+    def test_empty_recall_emits_no_manifest(self, tmp_path: Path) -> None:
+        """No episodic hits → empty block AND untouched manifest (no phantom cites)."""
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
+        store.init()
+        cites: list[dict] = []
+        block = store.get_episodic_context(
+            query_text="nothing was ever stored", citations_out=cites
+        )
+        assert block == ""
+        assert cites == []

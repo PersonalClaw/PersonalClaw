@@ -623,6 +623,17 @@ def _flush_segment(
     # the chat_segment event tells it to finalize streaming → assistant.
     session.append("assistant", redacted, "msg msg-a")
     last_msg: dict = session.messages[-1]
+    # Episodic memory citations (§5.4): stamp the turn's `[Memory N]` → record manifest
+    # onto the assistant message's meta so the frontend can resolve each cited token to
+    # a deep-link. The manifest is per-TURN (episodic injects once, on the new-session
+    # turn), so every finalized segment of that turn carries the same small list; the FE
+    # only renders a chip for a `[Memory N]` token that actually appears in the prose.
+    if session._memory_citations:
+        meta = last_msg.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["memory_citations"] = session._memory_citations
+        last_msg["meta"] = meta
     # If a regenerate is pending, attach the stashed variants to this fresh assistant message.
     attached_variants = False
     if session._pending_variants:
@@ -1106,6 +1117,9 @@ async def _run_chat(
     # Reset the per-turn file-change accumulator here — all dispatch paths
     # (handler, orchestrator, queued re-dispatch) funnel through _run_chat.
     session._file_changes = []
+    # Same for the per-turn episodic-citation manifest: populated from the assembled
+    # context below (new session only), attached to each assistant message's meta.
+    session._memory_citations = []
 
     # ── Attachments: inject extracted file content into the prompt ──
     # Uploaded attachments begin content-extraction at upload time (knowledge
@@ -1673,6 +1687,11 @@ async def _run_chat(
                 force_workflow_ids=_force_workflow_ids,
             )
             full_message = _apply_incognito_prefix(session, _assembled.message)
+            # Capture the episodic citation manifest surfaced into this turn's prompt so
+            # _flush_segment can stamp it onto the assistant message's meta (§5.4).
+            _cited = _assembled.metadata.get("memory_citations")
+            if isinstance(_cited, list) and _cited:
+                session._memory_citations = _cited
             if is_new:
                 ctx_len = _assembled.injected_chars
                 state.broadcast_ws(

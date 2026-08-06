@@ -1122,6 +1122,12 @@ class ContextBuilder:
         # block is what makes them mean something again. Dropping the parameter would
         # force a matching edit in the loop capability contract for no gain.
         force_workflow_ids: list[str] | None = None,
+        # MEMORY-GRAPH-AND-VAULT §5.4: when a list is supplied, the episodic block is
+        # rendered with `[Memory N]` markers and this list is filled with one
+        # resolvable manifest entry per cited fragment ({"n", "id", "preview"}), so the
+        # reply can cite a memory by index and the frontend can deep-link the token.
+        # Left None by non-chat callers → the block is byte-identical to before.
+        citations_out: list[dict] | None = None,
     ) -> tuple[str, HookResult]:
         """Build the full message with context and hook processing.
 
@@ -1254,10 +1260,31 @@ class ContextBuilder:
             from personalclaw.memory_service import service_for
 
             memory = self.get_memory_for(cwd, memory_store)
-            episodic_ctx = service_for(memory).episodic_context(query_text=text, cap=3000)
+            episodic_ctx = service_for(memory).episodic_context(
+                query_text=text, cap=3000, citations_out=citations_out
+            )
             if episodic_ctx:
                 parts.append(episodic_ctx + "\n")
                 logger.info("🔍 Injected episodic memory (%d chars)", len(episodic_ctx))
+                # Cite-by-index + admit-ignorance clauses (MEMORY-GRAPH-AND-VAULT §5.4).
+                # Placed adjacent to the block so the model reads the fragments and the
+                # rule together. The cite clause is emitted only when the block carries
+                # `[Memory N]` markers (citations_out supplied AND non-empty) — no marker,
+                # no instruction to cite one. The admit-ignorance clause is unconditional
+                # on an injected block: the whole point is to bound the reply to what was
+                # actually recalled.
+                if citations_out:
+                    parts.append(
+                        "[Memory citation] When you use a fact from the episodic "
+                        "memory above, cite it inline as `[Memory N]` using its number, "
+                        "so the user can trace it to the source. Only cite a number that "
+                        "appears above; never invent one.\n"
+                    )
+                parts.append(
+                    "[Answer only from memory] If the memory above does not contain "
+                    "what the user asked about, say you don't have it in memory rather "
+                    "than guessing — never present an un-recalled fact as remembered.\n"
+                )
             else:
                 logger.info("🔍 No episodic memory to inject")
         else:

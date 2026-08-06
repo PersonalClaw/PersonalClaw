@@ -197,6 +197,67 @@ class TestContextBuilder:
         assert "lobsters" in msg
         assert "hello" in msg
 
+    def _memory_citation_builder(self, tmp_path):
+        return ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+
+    def test_memory_citation_clauses_present_when_episodic_injected(self, tmp_path):
+        """A new session with episodic recall gets both the cite-by-index and the
+        admit-ignorance clauses, and build_message fills the citation manifest
+        (MEMORY-GRAPH-AND-VAULT §5.4)."""
+        from personalclaw.memory_service import MemoryService
+
+        builder = self._memory_citation_builder(tmp_path)
+
+        def _episodic(self, query_text, *, cap=3000, citations_out=None):
+            if citations_out is not None:
+                citations_out.append({"n": 1, "id": "42", "preview": "deployed billing"})
+            return "[Episodic Memory]\n[Memory 1] deployed billing\n[End of episodic memory]\n"
+
+        cites: list[dict] = []
+        with patch.object(MemoryService, "episodic_context", _episodic):
+            msg, _ = builder.build_message(
+                "what did I deploy?", is_new_session=True, citations_out=cites
+            )
+        assert "[Memory 1]" in msg
+        assert "cite it inline as `[Memory N]`" in msg  # cite-by-index clause
+        assert "say you don't have it in memory" in msg  # admit-ignorance clause
+        assert cites == [{"n": 1, "id": "42", "preview": "deployed billing"}]
+
+    def test_cite_clause_absent_without_manifest(self, tmp_path):
+        """Episodic block present but no `[Memory N]` manifest (citations_out empty)
+        → no cite-by-index instruction, but admit-ignorance still applies."""
+        from personalclaw.memory_service import MemoryService
+
+        builder = self._memory_citation_builder(tmp_path)
+
+        def _episodic(self, query_text, *, cap=3000, citations_out=None):
+            # Emits a block but populates NO citations (legacy numbering).
+            return "[Episodic Memory]\n1. deployed billing\n[End of episodic memory]\n"
+
+        with patch.object(MemoryService, "episodic_context", _episodic):
+            msg, _ = builder.build_message(
+                "what did I deploy?", is_new_session=True, citations_out=[]
+            )
+        assert "cite it inline as `[Memory N]`" not in msg
+        assert "say you don't have it in memory" in msg
+
+    def test_no_memory_no_clauses(self, tmp_path):
+        """No episodic block at all → neither memory-citation clause is injected."""
+        from personalclaw.memory_service import MemoryService
+
+        builder = self._memory_citation_builder(tmp_path)
+
+        def _episodic(self, query_text, *, cap=3000, citations_out=None):
+            return ""
+
+        with patch.object(MemoryService, "episodic_context", _episodic):
+            msg, _ = builder.build_message("hi", is_new_session=True, citations_out=[])
+        assert "cite it inline as `[Memory N]`" not in msg
+        assert "say you don't have it in memory" not in msg
+
     def test_force_skill_ids_loads_even_for_custom_agent(self, tmp_path):
         # Goal-loop capabilities (IT-5): a confirmed skill loads ACTIVELY even on a
         # custom agent's turn (which otherwise skips passive skill surfacing).

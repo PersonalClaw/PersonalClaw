@@ -412,8 +412,9 @@ export interface RetagJob { id?: string; status: 'idle' | 'running' | 'done' | '
 export interface TagColumn { id: string; name?: string; tag_ids?: string[]; mode?: 'any' | 'all' | 'none'; order?: number; include_untagged?: boolean }
 export interface ChatHistoryMsg {
   role: string; content: string; ts?: string; cls?: string
-  // tool/permission messages carry meta {tool_call_id, input, purpose, output?, done?}
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string }
+  // tool/permission messages carry meta {tool_call_id, input, purpose, output?, done?};
+  // an assistant message that used episodic recall carries memory_citations (§5.4).
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[] }
 }
 
 // ── workspace / build entity types ──
