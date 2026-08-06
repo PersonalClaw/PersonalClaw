@@ -90,6 +90,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   itself always worked, but the orphaned pipeline made noise it shouldn't. A delete during
   enrichment now aborts the pipeline quietly — the item is gone, so there is nothing left to
   enrich. Genuine mid-pipeline failures (where the item still exists) still record as failed.
+- **Renaming the built-in Personal or Repeatable project quietly broke your projects.** The API
+  let you rename a default project even though the UI hides the button — and because the system
+  re-creates any missing default by name, the rename left you with two Personal (or two
+  Repeatable) projects: the original, now holding your task lists but no longer the one new work
+  routes to, and a fresh empty duplicate. Worse, neither could be cleaned up through the app.
+  Renaming a default is now refused with a clear message (other edits like its brief or workspace
+  still work), and the delete guard now protects a project by its current name rather than a
+  sticky internal flag, so any stray duplicate left behind by the old bug can finally be deleted.
 - **"Run now" did nothing for almost every automation, while reporting success.** Clicking Run now
   (or dry-run's live counterpart) on a schedule or automation reported that it had run, but no
   action executed and nothing appeared in the run history — the Run button just sat on "Running…"
