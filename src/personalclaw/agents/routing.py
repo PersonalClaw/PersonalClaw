@@ -229,10 +229,11 @@ def _save_store(store: dict) -> None:
 
 def is_suppressed(agent: str, *, now: float, cooldown_hours: float) -> bool:
     """True when *agent* is muted or inside its dismissal cooldown."""
+    agent_key = agent.lower()
     store = _load_store()
-    if agent in (store.get("muted") or []):
+    if agent_key in (store.get("muted") or []):
         return True
-    entry = (store.get("dismissals") or {}).get(agent)
+    entry = (store.get("dismissals") or {}).get(agent_key)
     if not isinstance(entry, dict):
         return False
     last = float(entry.get("last_dismissed_at", 0.0) or 0.0)
@@ -242,26 +243,28 @@ def is_suppressed(agent: str, *, now: float, cooldown_hours: float) -> bool:
 def record_dismiss(agent: str, *, now: float, mute_at: int = 3) -> dict:
     """Bump *agent*'s dismissal counter; mute it once the count reaches ``mute_at``.
     Returns the updated status for the agent."""
+    agent_key = agent.lower()
     store = _load_store()
     dismissals = store.setdefault("dismissals", {})
-    entry = dismissals.setdefault(agent, {"count": 0, "last_dismissed_at": 0.0})
+    entry = dismissals.setdefault(agent_key, {"count": 0, "last_dismissed_at": 0.0})
     entry["count"] = int(entry.get("count", 0)) + 1
     entry["last_dismissed_at"] = now
     muted = store.setdefault("muted", [])
-    if entry["count"] >= mute_at and agent not in muted:
-        muted.append(agent)
+    if entry["count"] >= mute_at and agent_key not in muted:
+        muted.append(agent_key)
     _save_store(store)
-    return {"agent": agent, "count": entry["count"], "muted": agent in muted}
+    return {"agent": agent, "count": entry["count"], "muted": agent_key in muted}
 
 
 def unmute(agent: str) -> None:
     """Clear an agent's mute + dismissal history (from the agent detail page)."""
+    agent_key = agent.lower()
     store = _load_store()
     muted = store.get("muted") or []
-    if agent in muted:
-        muted.remove(agent)
+    if agent_key in muted:
+        muted.remove(agent_key)
         store["muted"] = muted
-    (store.get("dismissals") or {}).pop(agent, None)
+    (store.get("dismissals") or {}).pop(agent_key, None)
     _save_store(store)
 
 

@@ -132,3 +132,14 @@ async def test_default_agent_missing_key_is_400_not_silent_clear(monkeypatch, tm
     assert resp.status == 400
     # default_agent untouched on disk
     assert _json.loads(cfg.read_text())["default_agent"] == "default"
+
+
+def test_is_reserved_agent_case_insensitive():
+    from personalclaw.agents.defaults import is_reserved_agent, RESERVED_AGENT_NAMES
+
+    assert len(RESERVED_AGENT_NAMES) > 0
+    reserved = list(RESERVED_AGENT_NAMES)[0]
+    assert is_reserved_agent(reserved)
+    assert is_reserved_agent(reserved.upper())
+    assert is_reserved_agent(reserved.lower())
+    assert not is_reserved_agent("my-custom-agent")
