@@ -437,37 +437,22 @@ def _record_turn_usage(
     provider: str,
     model: str,
 ) -> None:
-    """Append one row to the per-turn cost/token ledger for a completed turn
-    (COST-AND-TOKEN-OBSERVABILITY C2, chat write-site).
+    """Append one row to the per-turn cost/token ledger for a completed chat turn
+    (COST-AND-TOKEN-OBSERVABILITY C2, chat write-site). Thin wrapper over the shared
+    :func:`personalclaw.usage_ledger.record_from_event` seam (which owns the
+    vendor-cost-wins / honest-unpriced / fail-open logic)."""
+    from personalclaw.usage_ledger import record_from_event
 
-    ``priced`` is False ONLY when the model has no ``model_pricing.json`` row AND
-    the provider reported no cost — then ``cost_usd`` is an honest 0.0 the UI must
-    render "unpriced" (vendor-reported cost always wins when present). Fail-open:
-    ``record_turn`` never raises into the turn, so a ledger fault can't break chat.
-    """
-    from datetime import datetime, timezone
-
-    from personalclaw.pricing import has_pricing
-    from personalclaw.usage_ledger import TurnUsage, record_turn
-
-    cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
-    priced = bool(cost) or has_pricing(model)
-    record_turn(
-        TurnUsage(
-            ts=datetime.now(timezone.utc).isoformat(),
-            session_key=session_key,
-            source=source,
-            agent=agent,
-            provider=provider,
-            model=model,
-            input_tokens=int(getattr(event, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(event, "output_tokens", 0) or 0),
-            cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
-            cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
-            cost_usd=cost,
-            priced=priced,
-            duration_ms=int(getattr(event, "duration_ms", 0) or 0),
-        )
+    # estimate_if_missing=False: the chat EVENT_COMPLETE handler already resolved
+    # event.cost_usd via estimate_cost, so re-estimating here would double-count it.
+    record_from_event(
+        event,
+        source=source,
+        session_key=session_key,
+        agent=agent,
+        provider=provider,
+        model=model,
+        estimate_if_missing=False,
     )
 
 

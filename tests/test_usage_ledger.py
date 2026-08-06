@@ -242,7 +242,7 @@ class TestSubagentWriteSite:
         from personalclaw.subagent import SubagentManager
 
         info = self._info(agent="researcher", model="claude-opus-4.5")
-        SubagentManager._record_subagent_usage(info, "subagent:a1", self._event(cost_usd=0.3), 0.3)
+        SubagentManager._record_subagent_usage(info, "subagent:a1", self._event(cost_usd=0.3))
         rows = ul._iter_rows()
         assert len(rows) == 1
         r = rows[0]
@@ -256,7 +256,7 @@ class TestSubagentWriteSite:
         for i in range(3):
             info = self._info(id=f"a{i}", model="claude-opus-4.5")
             SubagentManager._record_subagent_usage(
-                info, f"subagent:a{i}", self._event(cost_usd=0.1), 0.1
+                info, f"subagent:a{i}", self._event(cost_usd=0.1)
             )
         rows = ul._iter_rows()
         assert len(rows) == 3
@@ -267,7 +267,7 @@ class TestSubagentWriteSite:
         from personalclaw.subagent import SubagentManager
 
         info = self._info(model="some-unknown-local-model")
-        SubagentManager._record_subagent_usage(info, "subagent:a1", self._event(cost_usd=0.0), 0.0)
+        SubagentManager._record_subagent_usage(info, "subagent:a1", self._event(cost_usd=0.0))
         r = ul._iter_rows()[0]
         assert r["priced"] is False and r["cost_usd"] == 0.0
 
@@ -275,3 +275,94 @@ class TestSubagentWriteSite:
         """SubagentInfo gained the token/cost fields (default 0.0) for delivery."""
         info = self._info()
         assert info.input_tokens == 0 and info.output_tokens == 0 and info.cost_usd == 0.0
+
+
+# ── CATO-4: the shared record_from_event seam + the non-_run_chat sources ──────
+
+
+class TestRecordFromEvent:
+    """The shared seam every write-site delegates to (chat/subagent/background/
+    channel/cron/cli), and the done-when: each source appears in rollup(by source)."""
+
+    def _event(self, **over):
+        base = dict(
+            input_tokens=50,
+            output_tokens=10,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.0,
+            duration_ms=500,
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def test_vendor_cost_wins_and_is_priced(self, _home):
+        ul.record_from_event(self._event(cost_usd=0.7), source="cli", model="claude-opus-4.5")
+        r = ul._iter_rows()[0]
+        assert r["source"] == "cli" and r["cost_usd"] == 0.7 and r["priced"] is True
+
+    def test_cost_estimated_when_provider_reports_none(self, _home):
+        # A priced model with tokens but no provider cost → estimate_cost fills it.
+        ul.record_from_event(
+            self._event(cost_usd=0.0, input_tokens=1_000_000),
+            source="background",
+            model="claude-opus-4.5",
+        )
+        r = ul._iter_rows()[0]
+        assert r["priced"] is True and r["cost_usd"] > 0
+
+    def test_unpriced_model_is_honest_zero(self, _home):
+        ul.record_from_event(self._event(cost_usd=0.0), source="cron", model="unknown-local")
+        r = ul._iter_rows()[0]
+        assert r["priced"] is False and r["cost_usd"] == 0.0
+
+    def test_each_source_appears_in_rollup_by_source(self, _home):
+        """CATO-4 done-when: every write-site's source string is a distinct group."""
+        for src in ("chat", "subagent", "background", "channel", "cron", "cli"):
+            ul.record_from_event(self._event(cost_usd=0.1), source=src, model="claude-opus-4.5")
+        by_source = {r["source"] for r in ul.rollup(group_by="source")}
+        assert {"chat", "subagent", "background", "channel", "cron", "cli"} <= by_source
+
+    def test_fail_open_on_broken_ledger(self, monkeypatch, _home):
+        monkeypatch.setattr(ul, "_path", lambda: (_ for _ in ()).throw(OSError("boom")))
+        ul.record_from_event(self._event(), source="cli", model="m")  # must not raise
+
+
+class TestStreamAndCollectOnComplete:
+    """`stream_and_collect(on_complete=...)` fires the callback with the terminal
+    event — the seam the background/channel/cron write-sites hang the ledger on."""
+
+    def test_on_complete_fires_with_the_complete_event(self):
+        import asyncio
+
+        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+        from personalclaw.llm_helpers import stream_and_collect
+
+        class _Provider:
+            async def stream(self, _message):
+                yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="hello ")
+                yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="world")
+                yield LLMEvent(kind=EVENT_COMPLETE, input_tokens=42, output_tokens=7, cost_usd=0.05)
+
+        seen = {}
+
+        def _cb(event):
+            seen["input"] = event.input_tokens
+            seen["cost"] = event.cost_usd
+
+        text = asyncio.run(stream_and_collect(_Provider(), "hi", on_complete=_cb))
+        assert text == "hello world"
+        assert seen == {"input": 42, "cost": 0.05}
+
+    def test_on_complete_none_is_byte_identical_text(self):
+        import asyncio
+
+        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+        from personalclaw.llm_helpers import stream_and_collect
+
+        class _Provider:
+            async def stream(self, _message):
+                yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="abc")
+                yield LLMEvent(kind=EVENT_COMPLETE)
+
+        assert asyncio.run(stream_and_collect(_Provider(), "hi")) == "abc"

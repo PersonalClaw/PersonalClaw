@@ -1724,7 +1724,13 @@ class SubagentManager:
                         cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
                     )
                 info.cost_usd = cost
-                self._record_subagent_usage(info, session_key, event, cost)
+                # Write the resolved cost back so the ledger records it without a
+                # redundant second estimate (see _record_subagent_usage).
+                try:
+                    event.cost_usd = cost  # type: ignore[attr-defined]
+                except (AttributeError, TypeError):
+                    pass
+                self._record_subagent_usage(info, session_key, event)
                 break
 
         # Strip [OPTIONS: ...] tags and redact sensitive content
@@ -1754,36 +1760,23 @@ class SubagentManager:
         logger.info("Subagent %s completed", info.id)
 
     @staticmethod
-    def _record_subagent_usage(
-        info: "SubagentInfo", session_key: str, event: object, cost: float
-    ) -> None:
+    def _record_subagent_usage(info: "SubagentInfo", session_key: str, event: object) -> None:
         """Append one usage-ledger row for a completed subagent turn (source='subagent').
 
-        A fan-out of N children yields N rows, each keyed to the parent session so a
-        fan-out's total cost is attributable per child. ``priced`` is False only when
-        the model has no price row AND the provider reported no cost. Fail-open — the
-        ledger must never break a subagent's completion delivery."""
-        from datetime import datetime, timezone
+        A fan-out of N children yields N rows, each keyed to the PARENT session so a
+        fan-out's total cost is attributable per child. Delegates to the shared
+        :func:`personalclaw.usage_ledger.record_from_event` seam — the caller already
+        set ``info.cost_usd``/``cost`` from the same event, so the derived cost matches;
+        the ledger writes provider-cost-wins / honest-unpriced / fail-open."""
+        from personalclaw.usage_ledger import record_from_event
 
-        from personalclaw.pricing import has_pricing
-        from personalclaw.usage_ledger import TurnUsage, record_turn
-
-        record_turn(
-            TurnUsage(
-                ts=datetime.now(timezone.utc).isoformat(),
-                session_key=info.parent_session_key or session_key,
-                source="subagent",
-                agent=info.agent or "",
-                provider="acp",  # subagents run through the ACP runtime
-                model=info.model or "",
-                input_tokens=info.input_tokens,
-                output_tokens=info.output_tokens,
-                cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
-                cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
-                cost_usd=cost,
-                priced=bool(cost) or has_pricing(info.model),
-                duration_ms=int(getattr(event, "duration_ms", 0) or 0),
-            )
+        record_from_event(
+            event,
+            source="subagent",
+            session_key=info.parent_session_key or session_key,
+            agent=info.agent or "",
+            provider="acp",  # subagents run through the ACP runtime
+            model=info.model or "",
         )
 
     async def cancel(self, agent_id: str) -> bool:

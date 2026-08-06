@@ -203,3 +203,23 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   `tests/test_usage_ledger.py::TestSubagentWriteSite` (4: parent-keyed row, 3-way fan-out→3 rows,
   unpriced→priced=False, SubagentInfo carries the fields) + full usage-ledger (20) + `test_subagent.py`
   (65, SubagentInfo field addition safe) pass.
+
+- **CATO-4 DONE — the remaining C2 write-sites (background / channel / cron / cli).** Root finding:
+  the loop-worker + schedule-injection paths ALREADY route through `_run_chat` (so CATO-2 covers them
+  via `source=session._app`); the genuine gaps go through `stream_and_collect`, which returned only
+  text and discarded the `EVENT_COMPLETE` usage. Fix: added an optional `on_complete(event)` callback
+  to `stream_and_collect` (fires at EVENT_COMPLETE, default None → byte-identical for its 10 callers,
+  fail-open) and a shared `usage_ledger.record_from_event(event, *, source, …)` seam that owns the
+  vendor-cost-wins / estimate-when-absent / honest-unpriced / fail-open logic. Wired: heartbeat
+  (`source="background"`), `_inject_with_retry` (`source=label` → "channel"/"cron"), and `cli_chat`'s
+  own EVENT_COMPLETE loop (`source="cli"`). Refactored CATO-2's `_record_turn_usage` and CATO-3's
+  `_record_subagent_usage` to delegate to `record_from_event` (deleted the duplicated cost/priced
+  logic — clean break). DEVIATION (recorded): the atom framed 4 discrete sites; two were already
+  covered via `_run_chat`, and the real work was the shared `stream_and_collect` seam that unlocks
+  every text-only caller at once. Model is best-effort at these paths (ACP abstracts it); `source` is
+  what the done-when's `rollup(group_by='source')` requires. Scope: write-sites complete — the API
+  (CATO-5) + surfaces (CATO-6..8) remain, so no user-visible readout yet → no CHANGELOG. **Gates:**
+  `make lint` clean (698 files); `tests/test_usage_ledger.py::{TestRecordFromEvent,TestStreamAndCollectOnComplete}`
+  (7: vendor-cost-wins, estimate-when-absent, honest-zero, all-six-sources-in-rollup, fail-open,
+  on_complete fires with the event, None→byte-identical) + full usage-ledger + `test_subagent.py`
+  (65) + `test_llm_helpers.py` = 92 passed.
