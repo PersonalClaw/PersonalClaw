@@ -839,10 +839,17 @@ class ContextBuilder:
         # Honour AppConfig.timezone (e.g. "Asia/Tokyo") so the LLM sees
         # the user's local time instead of the gateway host's system TZ, which
         # is often UTC on remote/server hosts and makes "today" ambiguous.
-
+        #
+        # PROMPT-CACHE-SUBSTRATE §C3: the date line is NOT appended into `parts` here —
+        # `parts` is joined and hard-truncated at `_MAX_CONTEXT_CHARS` below, and
+        # truncation cuts from the END, so a tail-positioned date would be the FIRST
+        # thing a large context loses (silently regressing "what day is it" for the
+        # heaviest users). Instead the assembled block is built and truncated first,
+        # THEN the date is appended AFTER truncation (see the return path below), so it
+        # always survives. Rendered once here so the timestamp is captured at assembly.
         _, tz = get_local_tz()
         now = datetime.now(tz)
-        parts.append(f"[CURRENT DATE] {now.strftime('%A, %Y-%m-%d %H:%M %Z')}\n\n")
+        current_date_line = f"[CURRENT DATE] {now.strftime('%A, %Y-%m-%d %H:%M %Z')}\n\n"
 
         # Agent identity and runtime — inject for ALL agents so the LLM
         # knows which agent it is and where it's running.  Without this,
@@ -1086,6 +1093,12 @@ class ContextBuilder:
             if last_nl > 0:
                 context = context[: last_nl + 1]
 
+        # Append the date AFTER truncation (§C3) so it survives even an oversized
+        # context — truncation cut from the end, so a date placed earlier could have
+        # been dropped. Appended for both the custom and personalclaw paths (this is
+        # the single assembly tail both take).
+        context += current_date_line
+
         logger.debug(
             "Session context: agent=%s, custom=%s, %d chars",
             agent or "personalclaw",
@@ -1122,6 +1135,12 @@ class ContextBuilder:
         # block is what makes them mean something again. Dropping the parameter would
         # force a matching edit in the loop capability contract for no gain.
         force_workflow_ids: list[str] | None = None,
+        # MEMORY-GRAPH-AND-VAULT §5.4: when a list is supplied, the episodic block is
+        # rendered with `[Memory N]` markers and this list is filled with one
+        # resolvable manifest entry per cited fragment ({"n", "id", "preview"}), so the
+        # reply can cite a memory by index and the frontend can deep-link the token.
+        # Left None by non-chat callers → the block is byte-identical to before.
+        citations_out: list[dict] | None = None,
     ) -> tuple[str, HookResult]:
         """Build the full message with context and hook processing.
 
@@ -1254,10 +1273,31 @@ class ContextBuilder:
             from personalclaw.memory_service import service_for
 
             memory = self.get_memory_for(cwd, memory_store)
-            episodic_ctx = service_for(memory).episodic_context(query_text=text, cap=3000)
+            episodic_ctx = service_for(memory).episodic_context(
+                query_text=text, cap=3000, citations_out=citations_out
+            )
             if episodic_ctx:
                 parts.append(episodic_ctx + "\n")
                 logger.info("🔍 Injected episodic memory (%d chars)", len(episodic_ctx))
+                # Cite-by-index + admit-ignorance clauses (MEMORY-GRAPH-AND-VAULT §5.4).
+                # Placed adjacent to the block so the model reads the fragments and the
+                # rule together. The cite clause is emitted only when the block carries
+                # `[Memory N]` markers (citations_out supplied AND non-empty) — no marker,
+                # no instruction to cite one. The admit-ignorance clause is unconditional
+                # on an injected block: the whole point is to bound the reply to what was
+                # actually recalled.
+                if citations_out:
+                    parts.append(
+                        "[Memory citation] When you use a fact from the episodic "
+                        "memory above, cite it inline as `[Memory N]` using its number, "
+                        "so the user can trace it to the source. Only cite a number that "
+                        "appears above; never invent one.\n"
+                    )
+                parts.append(
+                    "[Answer only from memory] If the memory above does not contain "
+                    "what the user asked about, say you don't have it in memory rather "
+                    "than guessing — never present an un-recalled fact as remembered.\n"
+                )
             else:
                 logger.info("🔍 No episodic memory to inject")
         else:

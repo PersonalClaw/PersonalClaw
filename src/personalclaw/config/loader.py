@@ -2322,6 +2322,102 @@ class DurabilityConfig:
             "Never touches live data; reports pass or fail.",
         ),
     )
+    # ── sync (DURABILITY-AND-SYNC §4) — off by default; needs a configured transport ──
+    sync_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Sync between machines",
+            "Keep this PersonalClaw in sync with your other machines through a shared "
+            "remote (a git repo or a synced folder). Off by default; turning it on also "
+            "requires choosing a sync transport. Sync never overwrites — it merges, and "
+            "your local data is always kept.",
+        ),
+    )
+    sync_transport: str = field(
+        default="",
+        metadata=_meta(
+            "Sync transport",
+            "Which installed sync transport to use (e.g. git-sync, dir-sync). Empty "
+            "means no transport is chosen yet, so sync stays idle even if enabled.",
+        ),
+    )
+    sync_stale_after_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Sync staleness window (seconds)",
+            "How long to trust a recent remote check before pulling again. A short "
+            "window syncs sooner at the cost of more remote polls; the default (15 "
+            "minutes) balances freshness against chattiness.",
+        ),
+    )
+
+
+@dataclass
+class EvalsConfig:
+    """The offline eval substrate (EVALUATION-SUBSTRATE §10).
+
+    Off by default: the substrate runs nothing until a study/benchmark/matrix is
+    invoked. Everything it produces is a file under ``~/.personalclaw/evals/``;
+    there is no daemon. ``bakeoff_capture_enabled`` is a privacy-sensitive capture
+    flag kept OFF by default and out of the one-click PATCH allowlist (like
+    ``inbound.mcp.allow_remote``) — flipping it is a deliberate config-file edit.
+    """
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Evals enabled",
+            "Turn on the offline eval substrate — pre-registered studies, ablation "
+            "reports, the retrieval/judge benchmarks. Off by default; nothing runs "
+            "until you invoke a study or benchmark. Results are files under "
+            "~/.personalclaw/evals/, never a background service.",
+        ),
+    )
+    study_default_k: int = field(
+        default=5,
+        metadata=_meta(
+            "Study runs per arm (k)",
+            "How many paired runs per arm a template A/B study takes by default. "
+            "k≈5 is the smallest paired design that survives judge noise; higher k "
+            "buys confidence at a linear cost in runs and judge calls.",
+        ),
+    )
+    judge_agreement_floor: float = field(
+        default=0.6,
+        metadata=_meta(
+            "Judge agreement floor",
+            "Below this position-swap agreement rate a study's verdict is "
+            "'judge_unreliable' — it files a judge-calibration item instead of a "
+            "template verdict, so a noisy judge never produces a fake win.",
+        ),
+    )
+    ablation_cadence_days: int = field(
+        default=30,
+        metadata=_meta(
+            "Ablation cadence (days)",
+            "How often the harness-ablation runner picks one component to measure "
+            "keep/remove/lighten. Monthly by default — component payoff drifts on the "
+            "timescale of model upgrades, not days.",
+        ),
+    )
+    bakeoff_capture_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Bake-off input capture",
+            "Let the model bake-off capture real per-use-case inputs to score "
+            "candidate models on your actual traffic. OFF by default and privacy-"
+            "sensitive: captured inputs are redacted and the capture auto-expires. "
+            "Flipping it is a deliberate config-file edit, not a one-click toggle.",
+        ),
+    )
+    default_budget_usd: float = field(
+        default=0.0,
+        metadata=_meta(
+            "Default eval budget (USD)",
+            "The default hard spend cap a matrix/study run refuses to exceed. 0 means "
+            "no default cap — each study still declares its own budget at registration.",
+        ),
+    )
 
 
 @dataclass
@@ -2641,6 +2737,13 @@ class AppConfig:
         default_factory=lambda: DurabilityConfig(),
         metadata=_meta("Durability", "Scheduled backups, retention, and restore drills."),
     )
+    evals: "EvalsConfig" = field(
+        default_factory=lambda: EvalsConfig(),
+        metadata=_meta(
+            "Evals",
+            "The offline eval substrate — studies, ablation, retrieval/judge benchmarks.",
+        ),
+    )
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -2690,6 +2793,7 @@ class AppConfig:
         feedback_data = data.get("feedback", {})
         inbound_data = data.get("inbound", {}) or {}
         durability_data = data.get("durability", {}) or {}
+        evals_data = data.get("evals", {}) or {}
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -2922,6 +3026,20 @@ class AppConfig:
                 keep_weekly=_safe_int(durability_data.get("keep_weekly"), 8),
                 keep_monthly=_safe_int(durability_data.get("keep_monthly"), 12),
                 restore_drills=_guard_flag(durability_data.get("restore_drills")),
+                # Sync is fail-CLOSED (unlike backups): a sync surface that turns itself
+                # on when config is unreadable would move data off-box unexpectedly, so a
+                # missing/garbage value reads False, not True.
+                sync_enabled=bool(durability_data.get("sync_enabled", False)),
+                sync_transport=str(durability_data.get("sync_transport", "") or ""),
+                sync_stale_after_secs=_safe_int(durability_data.get("sync_stale_after_secs"), 900),
+            ),
+            evals=EvalsConfig(
+                enabled=bool(evals_data.get("enabled", False)),
+                study_default_k=_safe_int(evals_data.get("study_default_k"), 5),
+                judge_agreement_floor=float(evals_data.get("judge_agreement_floor", 0.6) or 0.6),
+                ablation_cadence_days=_safe_int(evals_data.get("ablation_cadence_days"), 30),
+                bakeoff_capture_enabled=bool(evals_data.get("bakeoff_capture_enabled", False)),
+                default_budget_usd=float(evals_data.get("default_budget_usd", 0.0) or 0.0),
             ),
             inbox=InboxConfig(
                 enabled=bool(inbox_data.get("enabled", False)),
@@ -3305,6 +3423,7 @@ class AppConfig:
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,
             "durability": asdict(self.durability),
+            "evals": asdict(self.evals),
             # Channel-agnostic observe-buffer sizing — top-level keys (Slack config
             # lives in the slack-channel app's own store, not here).
             "observe_max_messages": self.observe_max_messages,

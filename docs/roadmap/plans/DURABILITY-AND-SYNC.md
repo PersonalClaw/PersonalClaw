@@ -956,3 +956,514 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   offline reference is route-derived and the new endpoint is a real route, so `test_agent_reference`
   correctly went red until regenerated. Gate: `make lint` green (1337 files) · full
   `pytest -n 4 --dist worksteal` → 16401 passed, 29 skipped, 12 xfailed.
+
+## Execution log — DAS-6a (the sync-transport contract; DAS-6 re-scoped)
+
+- **DAS-6 RE-SCOPED into sub-atoms; DAS-6a DONE.** DAS-6's `done_when` spanned eight
+  deliverables (contract + registry + SDK + shard import + a CAS/outbox/cursor cycle engine +
+  per-strategy merges + two sync apps + convergence) — too large for one atomic PR (three prior
+  implementation subagents stalled on it). Split, contract-owner-first (the pattern WS-1 used):
+  **DAS-6a = §4.3 the transport contract only.** Added `sync_transports/` — `SyncTransportProvider`
+  ABC (`push`/`list_remote`/`pull`/`cas_registry`/`test`, all insert-only + idempotent on key) with
+  `SyncObject`/`RemoteRef`/`PushResult`/`ConnectionResult`, and a flat `register/get/unregister`
+  registry mirroring `channel_transports`. Re-exported via `sdk/sync.py`. Added `sync` to
+  `PROVIDER_TYPES` AND a real `SyncTypeHandler` (registers a transport into `sync_transports`) in the
+  SAME commit — the #47 rule; parity test green. Applied the same lazy-`deregister` fix as WS-1 (no
+  eager `getattr` default that dereferences a None `ext`). **Remaining DAS-6 sub-atoms (not started):**
+  DAS-6b shard import/restore (S2k noted shards were write-only); DAS-6c the sync cycle engine
+  (pull→merge-import→export-union→push, registry.json machine-seq CAS retry, stale_after_secs, durable
+  outbox + consumed-only cursor, per-strategy merges + tombstones, derived-index rebuild); DAS-6d the
+  git-sync + dir-sync first-party apps + convergence (criterion 4). Contract-only; no user surface yet
+  → no CHANGELOG entry. **Gates:** `make lint` clean (696 source files); `test_sync_transport_contract.py`
+  (6) + `test_app_manifest.py` (#47 parity) + `test_provider_registry.py` = 66 passed.
+
+- **DAS-6a CI fix (amended):** adding `sync` to `PROVIDER_TYPES` drifted the checked-in offline
+  reference `src/personalclaw/reference/providers.md` (a generated artifact — `test_agent_reference.py`
+  byte-matches it against a fresh `render_reference()`). Regenerated via `python -m
+  personalclaw.manifest_reference` and amended into the DAS-6a commit; cascade-rebased CATO-1 + PCS-2.
+  Lesson: a new `PROVIDER_TYPES` entry MUST regenerate `reference/providers.md` in the same commit —
+  the full-suite `test` job catches it even when file-scoped tests + `make lint` are green.
+
+- **DAS-6b DONE — the shard IMPORT (read) side.** S2k shipped `shards.py` write-only: shards could be
+  produced + `validate`d but nothing read them back. Added `import_shards(shard_dir, entries=None) ->
+  ImportResult` — the exact inverse of `export_shards`' row extraction: it `validate`s first (a shard
+  whose bytes/sha/row-count drifted from the manifest is untrustworthy input for a merge/restore, so a
+  failed validation RAISES rather than importing silently-corrupt data), then reads every declared
+  shard in manifest order into `{entry_id: [rows]}`, reassembling across sqlite tables, year buckets,
+  and deterministic `part-NNNN` splits into one flat order-preserving list per entry. `ImportResult`
+  also enumerates content-addressed `blobs/` (KIND_TREE payloads) and carries the source `machine_id`.
+  Scope: the read primitive ONLY — the restore-into-live-home-with-merges and the pull→merge→push
+  cycle are DAS-6c; two-machine convergence is DAS-6d. Contract/primitive, no user surface → no
+  CHANGELOG. **Gates:** `make lint` clean (697 files); `tests/test_durability_shards.py::TestImport`
+  (8: full round-trip row-count/entry parity, entity-dir by-id, sqlite-table reassembly, year-bucket
+  merge, secrets-absent, entries-filter, invalid-export-refuses, part-split reassembly-in-order) +
+  the full shards suite = 36 passed.
+
+## Execution log — DAS-6c-i (the row-level merge core; DAS-6c re-scoped)
+
+- **DAS-6c RE-SCOPED; DAS-6c-i DONE.** The DAS-6c cycle clause (pull→merge-import→export-union→push
+  with CAS registry + staleness window + durable outbox + consumed-only cursor + deterministic
+  per-strategy merges + tombstones) is genuinely multi-mechanism, so it's split like DAS-6 itself:
+  **6c-i = the deterministic row-level MERGE core** (this), 6c-ii = the cycle orchestration
+  (registry.json machine-seqs / CAS retry / stale_after_secs / outbox / cursor) that composes 6a's
+  transport + 6b's `import_shards` + this merge. Added `durability/merge.py`: pure, clock-free,
+  deterministic `merge_union_by_id` / `merge_lww_by_updated_at` / `merge_append_dedup` + a
+  `merge_rows(strategy, ...)` dispatcher over `inventory.MERGE_*`. Tombstone-aware (a `deleted_at` row
+  wins over a live same-id row — deletion survives the union; later `deleted_at` wins between two
+  tombstones; a tombstone beats even a newer live `updated_at`). LWW ties favor local (stable);
+  append_dedup by a stable per-row key makes a re-import a no-op. `sqlite_attach_ignore`/`replace_only`
+  RAISE from `merge_rows` (the cycle handles DBs via attach-ignore + skips replace_only — routing one
+  here is a caller bug). No CRDTs — union+LWW+tombstones per the plan's Anti-goals. Proved the
+  done-when convergence properties at the row layer: two machines merging each other's rows converge
+  to the same set; a delete on A stays deleted on B; merge is idempotent (re-applying an unchanged
+  remote changes nothing — the free-retry-on-CAS-race property). Pure core, no user surface → no
+  CHANGELOG. **Remaining:** DAS-6c-ii (cycle orchestration + registry/CAS/outbox/cursor), DAS-6d
+  (git-sync + dir-sync apps + two-machine convergence). **Gates:** `make lint` clean (700 files);
+  `tests/test_durability_merge.py` (21: per-strategy, tombstone precedence, LWW ties/undated,
+  append no-op, dispatch guards, convergence + idempotency) pass.
+
+## Execution log — DAS-6c-ii-a (the versioned registry model; DAS-6c-ii re-scoped)
+
+- **DAS-6c-ii RE-SCOPED; DAS-6c-ii-a DONE.** The DAS-6c-ii cycle orchestration is itself
+  multi-mechanism (versioned registry + CAS-retry loop + durable outbox/consumed-only cursor +
+  the pull→merge-import→export-union→push engine), so it splits like DAS-6/6c before it. First
+  completable sub-atom = the **pure registry model** every other piece turns on. Added
+  `durability/registry.py`: `Registry`/`MachineEntry` parse & canonically serialize `registry.json`
+  (`{"machines": {id: {seq, last_export_at, manifest_sha}}}`), `.sha()` over the canonical bytes
+  (the `expected_sha` a CAS compares — `canonical_json` reused so two machines writing the same
+  logical registry produce byte-identical output), `bump()` monotonic seq advance on a fresh export
+  (a stale registry from a lost race can never lower the mark), `shard_prefix(id, seq)` = the
+  insert-only `machines/<id>/seq-NNNN/` key (zero-padded so a lexical list-sort is chronological),
+  and the peer-discovery seam the cycle drains through: `new_prefixes_since(self, seen)` yields
+  exactly the unseen peer shard prefixes ascending (cursor-driven, re-poll idempotent) and
+  `advanced_over(prior, self_id)` reports who moved during a mid-cycle re-pull. Clock-free (the
+  timestamp is passed in) and I/O-free — the transport owns the CAS write (`cas_registry`, 6a) and
+  6c-ii-b composes model+transport into the retry loop; keeping the model pure is what makes the
+  CAS contract testable without a remote and a lost-race retry free. Corrupt/forward-version fields
+  degrade to 0 (re-publish), a genuinely unparseable registry RAISES (a mis-parsed coordinator would
+  let two machines both own a seq). Pure core, no user surface → no CHANGELOG. **Remaining:**
+  6c-ii-b (CAS-retry push loop + durable outbox + consumed-only cursor), 6c-ii-c (the
+  pull→merge-import→export-union engine composing 6a transport + 6b import + 6c-i merge + this
+  registry), DAS-6d (git-sync + dir-sync apps + criterion-4 two-machine convergence). **Gates:**
+  `make lint` clean (701 files); `tests/test_durability_registry.py` (23: prefix zero-pad/sort,
+  canonical byte-stability + sha, empty/corrupt/malformed handling, monotonic bump, peer ordering,
+  cursor-driven `new_prefixes_since` + idempotent re-poll, `advanced_over`) pass.
+
+## Execution log — DAS-6c-ii-b (durable outbox + consumed-only cursor)
+
+- **DAS-6c-ii-b DONE.** The two durable-state halves the cycle engine (6c-ii-c) reads/writes,
+  built as pure bookkeeping over on-disk JSON (clock-free — timestamps passed in — so a replay
+  is deterministic). Added `durability/outbox.py`: one file per (target, seq) under
+  `<sync_root>/outbox/`, so a push obligation survives a crash/restart. Statuses
+  `pending|delivered|given-up`; deliverer outcomes `delivered|transient|permanent`, applied by
+  `record_outcome` — `delivered`→terminal delivered, `permanent`→terminal given-up, and
+  **anything else (transient OR an unclassified throw) leaves it pending + bumps attempts**, so a
+  push is discharged only by a real success or an explicit permanent failure, never silently
+  dropped (§4.1 verbatim). Per-(target,seq) files mean **one target giving up never blocks
+  another's drain** (`pending()` excludes terminals). `enqueue` is idempotent on (target, seq) —
+  re-enqueue after a crash never resets a delivered entry; target names are path-separator-scrubbed
+  so an entry file can't escape the outbox dir; a corrupt entry file is skipped, not fatal. Added
+  `durability/cursor.py`: the consumed-only pull cursor — the `seen` map `Registry.new_prefixes_since`
+  reads. `record(peer, seq, verdict)` advances the per-peer high-water mark **only** on `consumed`
+  or `payload-bad` (the latter advances past a poison shard so it can't wedge every later seq, and
+  logs); `prerequisite-absent` **holds** (out-of-order arrival retried next cycle); advancement is
+  monotonic (a stale/replayed verdict is a no-op); `seen()` returns a copy; a corrupt cursor file
+  degrades to empty. Pure state layer, no user surface → no CHANGELOG. **Remaining:** 6c-ii-c (the
+  pull→merge-import→export-union→push engine composing 6a transport + 6b import + 6c-i merge + 6c-ii-a
+  registry + this outbox/cursor, with the CAS retry loop + staleness window), then DAS-6d (git-sync +
+  dir-sync apps + criterion-4 two-machine convergence). **Gates:** `make lint` clean (703 files);
+  `tests/test_durability_outbox.py` (23: enqueue idempotency, all four outcome→status transitions incl.
+  unclassified-as-transient, one-target-give-up-doesn't-block-others, persistence across handles, stats,
+  corrupt-file skip; cursor consumed/hold/payload-bad/monotonic/copy/unknown-verdict/reload/corrupt) pass.
+
+## Execution log — DAS-6c-ii-c (apply merged rows back to the live store)
+
+- **DAS-6c-ii-c DONE.** The sync cycle's last pure primitive: `durability/writeback.py::apply_rows`,
+  the exact inverse of `shards.py`'s per-kind row *extraction*. After `merge` reconciles a peer's
+  rows with the local ones, this writes the merged set back into each inventory entry's native
+  on-disk shape, dispatched by `kind` — the mirror of `export_shards`' dispatch, so a round-trip
+  (extract → apply) reproduces the same files (proven by tests re-extracting the written output).
+  `json_entity_dir` → one JSON file per `{"id","data"}` row (a `deleted_at` **tombstone** row
+  removes the file, so a peer's delete propagates instead of resurrecting); `json_file` → the one
+  row's `data` (tombstone removes; >1 row is a merge bug → last-wins + warn); `jsonl_append` →
+  canonical JSONL, year-sharded exactly as the exporter shards a directory stream
+  (`<dest>/<year>.jsonl`) or one file for a single-file stream, order preserved. `sqlite`/`tree`
+  RAISE (the cycle merges DBs via ATTACH-OR-IGNORE — `snapshot.py` — and rehydrates tree payloads
+  from the content-addressed blob store), mirroring `merge.merge_rows`; unknown kind raises. Atomic
+  per file (temp + rename). A malformed row is skipped + logged, never fatal. Pure primitive, no
+  user surface → no CHANGELOG. **Remaining:** 6c-ii-d — the ENGINE that orchestrates these pure
+  pieces (pull via 6a transport → import_shards 6b → merge_rows 6c-i / ATTACH-IGNORE for DBs →
+  apply_rows this → export union → push, with the 6c-ii-a registry CAS-retry loop, 6c-ii-b
+  outbox/cursor, and stale_after_secs staleness window), then DAS-6d (git-sync + dir-sync apps +
+  criterion-4 two-machine convergence). **Gates:** `make lint` clean (704 files);
+  `tests/test_durability_writeback.py` (14: entity-dir write/round-trip/tombstone/skip, json-file
+  write/empty/tombstone/last-wins, jsonl single-file + year-shard + round-trip, sqlite/tree/unknown
+  raises) pass.
+
+## Execution log — DAS-6c-ii-d (reconcile a peer's rows into the live store)
+
+- **DAS-6c-ii-d DONE.** The bridge that turns "I pulled a peer's shards" into "the peer's rows
+  are now in my live store", composing the three pure pieces already shipped:
+  `durability/reconcile.py::reconcile_entry(home, entry, remote_rows)` reads the entry's on-disk
+  rows the SAME way `export_shards` extracts them (so both sides of the merge speak one row shape
+  — the invariant convergence depends on) → `merge.merge_rows(entry.merge, local, remote,
+  tombstones=entry.tombstones)` → `writeback.apply_rows(entry.kind, dest, merged.rows)`. Row path
+  only: for a `sqlite` entry (merged by ATTACH-OR-IGNORE in `snapshot.py`) or a `tree` entry
+  (rehydrated from the content-addressed blob store) it DECLINES — returns `handled=False` so the
+  cycle engine routes it to the DB/blob path, rather than raising. Returns a cursor verdict
+  (`ReconcileResult.verdict`): `consumed` on a clean merge; a row entry that throws mid-merge is
+  caught and reported `payload-bad` (with `handled=True`) so one poison entry advances the cursor
+  past itself instead of aborting the whole pull (§4.1). Proves **criterion 4 at the reconcile
+  layer**: two machines each reconciling the other's rows converge to the same id set; a
+  tombstoned delete on A stays deleted on B (no resurrection). Pure bridge over pure pieces, no
+  transport, no user surface → no CHANGELOG. **Remaining:** 6c-ii-e — the transport-driven ENGINE
+  (walk the 6c-ii-a registry's `new_prefixes_since`, pull each prefix via the 6a transport,
+  `import_shards` 6b, route each entry through `reconcile_entry` OR the sqlite ATTACH-IGNORE path,
+  record the 6c-ii-b cursor verdict, then export-union + push through the outbox with the registry
+  CAS-retry loop + `stale_after_secs` window), then DAS-6d (git-sync + dir-sync apps as installable
+  `sync` provider apps + the end-to-end criterion-4 convergence over a real git repo/folder).
+  **Gates:** `make lint` clean (705 files); `tests/test_durability_reconcile.py` (9: remote-only
+  brought in, empty-local takes all, tombstone delete propagates, two-machine convergence,
+  delete-stays-deleted, sqlite/tree declined, handles_kind predicate, poison→payload-bad) pass.
+
+## Execution log — DAS-6c-ii-e (transport-driven pull engine)
+
+- **DAS-6c-ii-e DONE.** Where the pure pieces meet a real remote: `durability/pull_engine.py`.
+  `pull_from_peers(transport, home, registry, cursor, *, self_id, db_merger=None)` walks each
+  peer's unseen shard sets oldest-first (`registry.peers` × cursor gap), and per seq:
+  `transport.list_remote(prefix)` → `transport.pull(refs)` → `_materialize` into a validatable
+  shard dir (strip the `machines/<id>/seq-NNNN/` prefix) → `import_shards` (6b, validates +
+  reassembles) → route each entry through `reconcile.reconcile_entry` (6c-i+c+d) → aggregate a
+  cursor verdict → `cursor.record` (6c-ii-b, consumed-only). **DISCOVERY (recon):** the sqlite
+  export is deliberately LOSSY — `_sqlite_rows` stores byte/embedding columns as `{"__bytes__": n}`
+  size placeholders and `_sqlite_tables` drops FTS shadow tables (derived) — so a `sqlite`/`tree`
+  entry can NOT be losslessly rebuilt from row shards; it needs the DB-to-DB ATTACH path
+  (`snapshot._merge_sqlite_attach`) and an embeddings-rebuilt-vs-round-tripped decision. That is
+  6c-ii-f's design call, NOT a blocker here: the DB path is an **injected `db_merger` seam**, and
+  until it's supplied a seq containing a DB/unknown entry is **HELD** (cursor not advanced,
+  re-pulled next cycle) rather than silently skipping unmerged database data (§4.1: advance only
+  on consumed rows). The row-entry convergence path (criterion 4 — tasks, entity dirs, JSONL) is
+  fully live today. Also faithful to §4.1: a partial push (prefix announced but no bytes) HOLDS;
+  an unknown entry id HOLDS (an older reader never drops a newer peer's entry); a structurally
+  invalid import → `payload-bad` (advance past it); and a held seq **stops contiguity** so seq+1
+  isn't pulled past its unmet prerequisite. **Remaining:** 6c-ii-f (the DB/tree `db_merger`
+  implementation — ATTACH-IGNORE for DBs incl. the embeddings decision, blob rehydrate for trees;
+  its own tick), 6c-ii-g (the push half: export-union + CAS-retry registry bump + outbox drain +
+  `stale_after_secs`), then wire the whole cycle into `service.py::run_due_jobs` and DAS-6d
+  (git-sync/dir-sync installable `sync` apps + end-to-end criterion-4 over a real git repo/folder).
+  **Gates:** `make lint` clean (706 files); `tests/test_durability_pull_engine.py` (6, driven by an
+  in-memory `FakeTransport`: pull+reconcile a peer seq into the live store, cursor skips already-seen,
+  partial-push holds, held-seq stops contiguity, DB entry holds without a merger, DB seam lets it
+  advance) pass.
+
+### Design note for DAS-6c-ii-f (the DB/tree db_merger) — decided, precedent-matching (no owner block)
+
+The 6c-ii-e recon surfaced the fork and it resolves cleanly against existing behavior, so the DB
+merger is a defensible clean-break, not an escalation:
+
+- **Sqlite entries sync the real DB file, not the lossy row shards.** `_sqlite_rows` intentionally
+  replaces byte/embedding columns with `{"__bytes__": n}` placeholders (human-diffable shards), so
+  row shards can NOT rebuild a DB losslessly. The snapshot path already proves the answer:
+  `_merge_memory` carries the `embedding` column and `_merge_sqlite_attach` ATTACH-merges every
+  real table with `INSERT OR IGNORE`. So 6c-ii-f: (a) the export stages a **consistent DB copy**
+  for each `KIND_SQLITE` entry (reusing `_consistent_db_copy`, already present — sqlite backup API,
+  WAL-checkpointed) under a `db/<entry>.db` path in the shard set, alongside the diffable rows;
+  (b) `import_shards`/`ImportResult` surfaces that DB path; (c) the `db_merger` ATTACHes it via the
+  existing `snapshot._merge_sqlite_attach` (memory.db keeps its `is_deleted=0` executor so deletes
+  aren't resurrected).
+- **Derived indexes are rebuilt, never synced** — `memory.faiss` / `memory_index.db` are
+  `derived=True`; the merger rebuilds them locally after the ATTACH (the FTS `'rebuild'` command the
+  snapshot path already runs), matching §4.1 "indexes rebuilt on import, never synced". Embeddings
+  themselves live IN `memory.db` and ride the ATTACH (they are NOT rebuilt — carrying them is the
+  snapshot precedent), so a synced memory is searchable without re-embedding.
+- **Tree entries** rehydrate from the content-addressed `blobs/` the exporter already writes.
+This keeps the whole thing lossless, reuses proven machinery, and needs no new format concept
+beyond staging the DB copy the exporter already knows how to make.
+
+## Execution log — DAS-6c-ii-f (transport-driven push engine)
+
+- **DAS-6c-ii-f DONE. (Note: the DB/tree db_merger — earlier called 6c-ii-f — is renumbered
+  6c-ii-g; the push half is taken first because it's self-contained and doesn't touch the fragile
+  shard export format.)** `durability/push_engine.py::publish_export` is the mirror of the pull
+  engine: `registry.bump(self_id, …)` (6c-ii-a, monotonic) → keys every file of a fresh
+  `export_shards` dir under `machines/<self_id>/seq-NNNN/<rel>` (exact inverse of the pull engine's
+  `_materialize`) → **records the durable outbox obligation FIRST** (6c-ii-b) so a crash between
+  push and registry-commit leaves a pending entry the next cycle re-drains (insert-only keys make
+  that a no-op) → `transport.push` → `outbox.record_outcome` → **only on a delivered push**,
+  CAS-commit the registry via `transport.cas_registry(expected_sha, registry.to_bytes())`. A
+  transient/permanent push does NOT announce the seq (a peer must never pull a prefix whose objects
+  are missing) — the outbox retries. On a lost CAS race the loop calls an injected
+  `reload_registry()`, re-applies our bump on top of the peers' latest, carries peers' higher seqs
+  forward, and retries — bounded to 5 attempts so a pathological race can't spin (idempotent object
+  keys make each retry free, per §4.1). Clock-free (timestamp passed in). Composes only
+  already-shipped pieces; touches no export-format code. No user surface yet → no CHANGELOG.
+  **Remaining:** 6c-ii-g (the DB/tree `db_merger` + the shard-format extension to carry consistent
+  DB copies — the design decided in the note above: DB-file ATTACH, not lossy rows; `import_shards`
+  can't carry a binary `.db` in its JSONL `shards` list, so this needs a parallel manifest field
+  next to `blobs`), then 6c-ii-h (assemble pull+push into one `run_sync_cycle` with the
+  `stale_after_secs` window + wire into `service.py::run_due_jobs` + `DurabilityConfig.sync_*`), then
+  DAS-6d (git-sync + dir-sync installable `sync` apps + end-to-end criterion-4 over a real git
+  repo/folder). **Gates:** `make lint` clean (707 files); `tests/test_durability_push_engine.py`
+  (7: publishes objects + commits registry, obligation-before-push, transient-doesn't-announce,
+  monotonic seq across publishes, lost-race-then-win reload+retry preserving both seqs, no-reloader
+  gives up, persistent race gives up bounded at 5) pass.
+
+## Execution log — DAS-6c-ii-g (whole-DB copies in the shard format)
+
+- **DAS-6c-ii-g DONE (the format half of the DB path).** The diffable row shards store
+  embedding/byte columns as `{"__bytes__": n}` placeholders, so they can't rebuild a DB
+  losslessly. Extended the shard format to carry the real database: `export_shards` gains a
+  keyword-only `include_databases=False` — when a SYNC export sets it True, each `KIND_SQLITE`
+  entry additionally stages its already-consistent backup-API copy (the one the exporter already
+  makes for row extraction — no second live read) under `db/<entry_id>.db`, recorded as a new
+  `DbCopy` in `ExportResult.databases` and declared in the manifest's new `databases` list.
+  `validate()` verifies each DB copy's bytes + sha256 (a corrupted copy is named), and treats an
+  absent `databases` key as valid (a row-only/incremental export). `import_shards` surfaces
+  `ImportResult.databases` = `{entry_id: db/<entry>.db}` (respecting the `entries` filter) so the
+  6c-ii-h DB merger can ATTACH the real database. **The hourly incremental backup path is
+  untouched** — it never passes `include_databases`, so its byte-for-byte determinism (DB files
+  aren't byte-stable across runs by nature) and all 33 existing `test_durability_shards.py` cases
+  still pass, and `test_snapshot.py` (111) is green. The row shards are STILL written alongside the
+  DB (human-diffable review + the append/entity merge paths); the DB copy is only the merge source
+  for sqlite entries. Clean break; the new field has its consumer in 6c-ii-h. No user surface → no
+  CHANGELOG. **Remaining:** 6c-ii-h (the DB merger seam itself — `db_merger(entry, shard_dir)` that
+  ATTACHes `import_shards().databases[entry.id]` via `snapshot._merge_sqlite_attach`, keeping
+  memory.db's `is_deleted=0` executor, then rebuilds derived faiss/index — the callback the pull
+  engine already accepts + `include_databases=True` on the push engine's export), then 6c-ii-i
+  (assemble `run_sync_cycle` + `stale_after_secs` + service wiring + `DurabilityConfig.sync_*`),
+  then DAS-6d (git/dir-sync apps + e2e criterion-4). **Gates:** `make lint` clean (707 files);
+  `tests/test_durability_db_shards.py` (13: default stages nothing, sync stages a lossless openable
+  DB, rows written alongside, manifest declares dbs, validate passes + catches a corrupted copy +
+  accepts a row-only export, import maps entry→path + respects the filter, determinism untouched) +
+  `test_durability_shards.py` (33) + `test_snapshot.py` (111) all pass.
+
+## Execution log — DAS-6c-ii-h (the sqlite DB-merge seam)
+
+- **DAS-6c-ii-h DONE.** `durability/db_merge.py::make_db_merger(home)` returns the
+  `db_merger(entry, shard_dir)` callback the pull engine already accepts (6c-ii-e) for the
+  `sqlite`/`tree` entries it declines to row-merge. It finds the whole-DB copy the exporter staged
+  under `db/<entry_id>.db` (6c-ii-g) and ATTACH-merges it into the live DB, reusing the PROVEN
+  snapshot machinery rather than a second copy: `memory.db` → `snapshot._merge_memory` (the
+  4-table `WHERE is_deleted=0` allowlist, so a synced copy never RESURRECTS a deleted memory);
+  every other `KIND_SQLITE` entry → `snapshot._merge_sqlite_attach` (all real tables `INSERT OR
+  IGNORE`, FTS shadow tables skipped). A first sync onto a fresh machine (no live DB yet) copies
+  the source wholesale (lossless, incl. embeddings). Embeddings ride the ATTACH (they live IN the
+  DB — the snapshot precedent); derived `memory.faiss`/`memory_index.db` are NOT synced and rebuild
+  locally (boot rebuild + heartbeat reindex), per §4.1 "indexes rebuilt on import, never synced".
+  Verdicts: `consumed` on a clean merge (and for a `tree` entry — nothing to merge, derived);
+  `prerequisite-absent` when a sqlite entry arrived with no staged DB copy (a row-only export
+  mis-routed — hold, don't advance past unmerged data); `payload-bad` when the merge itself throws
+  (advance past a poison DB). Proven end-to-end THROUGH the pull engine: a peer's real `memory.db`
+  row syncs onto a fresh machine via `pull_from_peers(..., db_merger=make_db_merger(local))`. No
+  change needed to the push engine — `include_databases=True` is the caller's (6c-ii-i's) concern.
+  Clean break, reuses snapshot's merge functions; no user surface → no CHANGELOG. **Remaining:**
+  6c-ii-i (assemble `run_sync_cycle` = pull(db_merger) + push(include_databases=True) with the
+  `stale_after_secs` window, wired into `service.py::run_due_jobs` + `DurabilityConfig.sync_*`), then
+  DAS-6d (git-sync + dir-sync installable `sync` apps + end-to-end criterion-4 over a real git
+  repo/folder). **Gates:** `make lint` clean (708 files); `tests/test_durability_db_merge.py` (7:
+  fresh-machine wholesale copy, INSERT-OR-IGNORE union keeps local + brings remote-only,
+  memory.db routes through `_merge_memory` not the generic path, tree consumed, missing-copy holds,
+  corrupt-merge payload-bad, end-to-end peer-DB-syncs-onto-fresh-machine through the pull engine) pass.
+
+## Execution log — DAS-6c-ii-i (assemble run_sync_cycle) + two discoveries
+
+- **DAS-6c-ii-i DONE.** `durability/sync_cycle.py::run_sync_cycle(transport, home, *, self_id, …)`
+  assembles every piece into the §4.1 loop: `read_registry(transport)` (the one new transport
+  read — pulls + parses `registry.json`, absent → empty) → `pull_from_peers(..., db_merger=
+  make_db_merger(home))` (6c-ii-e + 6c-ii-h) → `export_shards(home, out, include_databases=True)`
+  (6b + 6c-ii-g) → `publish_export(..., reload_registry=lambda: read_registry(transport))`
+  (6c-ii-f + CAS bump). Clock-free (`now` passed in); never raises — any transport error lands in
+  `SyncCycleReport` so a bad cycle can't kill the service loop. Scheduling (`stale_after_secs`) and
+  transport/enabled resolution stay in the service layer (6c-ii-j). **Proves the plan's Success
+  Criterion 4 end-to-end** through a shared in-memory store: two machines converge on tasks after a
+  cycle each way; a peer's `memory.db` row lands on a fresh machine (DB rides along).
+- **DISCOVERY 1 (FIXED here — a real bug the assembly caught).** The exporter wraps an entity file
+  as `{"id": <stem>, "data": <content>}`, so a `deleted_at` tombstone (and any LWW field like
+  `updated_at`) lives at `row["data"][field]`, NOT the top level. `merge`/`writeback` checked only
+  the top level — so tombstone precedence and LWW silently no-op'd for the entity-dir kind (the
+  earlier unit tests used synthetic FLAT rows and missed it). Fixed: `merge._field` /
+  `writeback._is_tombstone` now check top-level (JSONL streams) then fall back to `data`
+  (entity-dir wrappers), so both shapes work. Lesson: a control field's LOCATION is part of the
+  contract — unit-test against the REAL producer's row shape, not a hand-built one.
+- **DISCOVERY 2 (recorded, its own atom — a producer gap).** `tasks`/`projects` declare
+  `tombstones=True`, but `tasks/native.py:delete_task` does a **hard `path.unlink()`** — no
+  `deleted_at` marker is ever written. So the tombstone MECHANISM is complete and correct (a
+  tombstone that exists is honored end-to-end, verified), but nothing PRODUCES one: a real
+  delete-then-sync would resurrect the task via union-merge on a peer that still holds it live.
+  Closing this is a distinct cross-cutting change (soft-delete write path + read-path filtering
+  across the tasks/projects subsystem + its FE), NOT a bolt-on to the sync engine — filed as
+  **DAS-6c-iii (tombstone producers)**. This is the honest edge of the slice: sync is safe for
+  create/update convergence today; delete-convergence for tasks/projects waits on 6c-iii.
+  **Remaining:** 6c-ii-j (service wiring: `run_due_jobs` sync job + `stale_after_secs` per-process
+  memo + `DurabilityConfig.sync_enabled/sync_transport/sync_stale_after_secs` config round-trip),
+  6c-iii (tombstone producers), DAS-6d (git-sync + dir-sync installable apps + e2e over a real git
+  repo/folder). **Gates:** `make lint` clean (709 files); `tests/test_durability_sync_cycle.py` (7:
+  first-publish, transport-failure contained, two-machine convergence, delete-propagates,
+  DB-rides-along, empty/written registry) + the full durability suite (242 passed, 2 skipped) pass.
+
+## Execution log — DAS-6c-ii-j (service wiring + sync config round-trip)
+
+- **DAS-6c-ii-j DONE.** Wired the assembled cycle into the running system. **Config round-trip**
+  (the full four-point contract): `DurabilityConfig` gains `sync_enabled` (default False),
+  `sync_transport` (default ""), `sync_stale_after_secs` (default 900), each with `_meta`;
+  `AppConfig.load()` maps all three explicitly (else they'd silently revert — the leaf-walk
+  round-trip test excludes `durability`), with `sync_enabled` **fail-CLOSED** (a garbage value
+  reads False — a sync surface must never self-enable, unlike backups which fail-safe ON);
+  `asdict` serializes them; `_EDITABLE_CONFIG` allowlists all three (PATCH-editable), and the
+  existing `TestConfigContract` allowlist-matches-dataclass test's `_FIELDS` was extended to match.
+  **Service due-job:** `service.run_sync_job()` is self-guarding (idle → `skipped` unless
+  `sync_enabled` AND a `sync_transport` that resolves in `sync_transports.registry.get_transport`),
+  runs under `single_flight("durability:sync")` so it never overlaps an export, never raises (the
+  cycle's report carries any error), and audits via SEL. `run_due_jobs` schedules it by the
+  **staleness window** (`_due(state, "last_sync", sync_stale_after_secs)`), stamping `last_sync`
+  even on skip/failure so a misconfigured sync can't hammer the remote every tick; `status()` now
+  reports the sync entry (enabled/transport/due). **Near-miss caught + fixed:** a first draft of a
+  schedule test called `run_due_jobs` unstubbed and triggered a real nightly snapshot of the
+  actual 1.2 GB `~/.personalclaw` (pytest-timeout kill) — rewrote `TestDueSchedule` to stub every
+  job branch (export/snapshot/drill/save_state) so it asserts only the scheduler's DECISION,
+  touching no real home (the destructive-test rule). **Sync is now a live, config-gated, scheduled
+  service** — off by default, on with `durability.sync_enabled` + a transport. **Remaining:** 6c-iii
+  (tombstone producers — soft-delete tasks/projects so delete-convergence holds), then DAS-6d
+  (git-sync + dir-sync installable `sync` transport apps + the end-to-end criterion-4 over a real
+  git repo/folder). **Gates:** `make lint` clean (709 files); `tests/test_durability_sync_service.py`
+  (10) + `test_durability_service.py` + `test_config_roundtrip.py` + full durability suite
+  (257 passed, 2 skipped) pass.
+
+## RESOLVED — DAS-6c-iii owner decision: Fork B (sync-only tombstone side-log), 2026-08-06
+
+Owner chose **Fork B**: hard-delete stays, plus a durability-isolated `_tombstones.jsonl`
+side-log — no tasks-subsystem/FE churn, no user-facing undo/retention surface, shipped #809
+writeback unchanged. **DAS-6c-iii-a DONE** (the log primitive + export fold); **6c-iii-b** wires
+the delete write-sites (`tasks/native.py:delete_task`/`delete_comment`,
+`hierarchy.delete_project`/`delete_task_list`) to call `record_tombstone`, and adds the GC to the
+sync cycle. See the log entry below the original fork writeup.
+
+## (original fork writeup) DAS-6c-iii tombstone-producer options (2026-08-06)
+
+The sync tombstone MECHANISM is complete and correct end-to-end (verified: a tombstone that
+exists propagates a delete and is honored by merge + writeback). But NOTHING produces one:
+`tasks/native.py:delete_task` and `delete_comment` hard-`unlink()`, and projects delete the
+same way. So delete-CONVERGENCE across machines doesn't hold yet, and closing it forks into two
+architectures with different product consequences — a genuine judgment call, not a clean-break I
+should pick unilaterally:
+
+- **Fork A — convert tasks/projects to soft-delete.** `delete_*` writes a `deleted_at` marker
+  instead of unlinking; every read path (`_read_task`/`_all_tasks`/`list_tasks`/`get_task`,
+  hierarchy, comments) filters tombstoned rows; `writeback._apply_entity_dir` PERSISTS the marker
+  instead of unlinking (changes the shipped 6c-ii-c behavior). Pros: one row model, the inventory's
+  `tombstones=True` is literally true. Cons: touches the whole tasks subsystem + FE + the ACP
+  provider; raises a user-facing retention/undo/trash question (tombstone marker files linger — for
+  how long? GC policy?) that is really a Tasks-UX decision, not a durability one.
+- **Fork B — a sync-only tombstone side-log.** `delete_*` stays a hard unlink (tasks UX unchanged,
+  no retention/undo question for the user), but ALSO appends `{id, deleted_at}` to a sync-only
+  `tasks/_tombstones.jsonl` the durability layer reads to emit tombstone rows; a GC prunes the log
+  past the sync horizon. Pros: zero tasks-subsystem/FE churn, isolates the concern in durability,
+  keeps writeback's current unlink-on-apply. Cons: a second delete write-site to keep in step; a
+  new side-file kind for the inventory/exporter to carry.
+
+Recording BLOCKED here and moving on rather than guessing — the choice changes core tasks
+semantics (A) vs. a durability-local mechanism (B), and it decides whether shipped #809's
+writeback unlink is final or must persist markers. Everything through #819 is unaffected: sync is
+OFF by default and has no tombstone producers, so create/update convergence (Criterion 4's build
+half) is live and safe today; only cross-machine DELETE convergence waits on this decision.
+
+## Execution log — DAS-6c-iii-a (tombstone side-log primitive + export fold; owner Fork B)
+
+- **DAS-6c-iii-a DONE.** `durability/tombstones.py` — the sync-only delete side-log Fork B calls
+  for. `record_tombstone(entry_dir, row_id, *, now)` appends `{"id", "deleted_at"}` to
+  `<entry_dir>/_tombstones.jsonl` (best-effort, never raises — a delete must not fail because its
+  sync breadcrumb couldn't be written). `read_tombstones` returns newest-per-id, id-sorted,
+  corrupt-lines-skipped. `merge_into_rows(entry_dir, live_rows)` folds the log into an entity-dir
+  export: a tombstone whose id is GONE from the live rows is appended (the delete marker is all
+  that remains); a tombstone whose id is LIVE AGAIN (recreated after delete) is DROPPED, so a stale
+  marker can't delete a resurrected entity. `prune(entry_dir, *, keep_after)` GCs entries past the
+  sync horizon so the log can't grow unbounded. Wired into `export_shards`' entity-dir branch,
+  guarded by `entry.tombstones` (so only tasks/projects pay for it) — a hard-deleted task's marker
+  now rides the export as a tombstone row, which merge+writeback already honor (verified
+  end-to-end). The `_`+`.jsonl` name keeps it invisible to BOTH the store's `*.json` reads and the
+  exporter's entity extraction (proven). Clock-free at the seam (`now`/`keep_after` passed in).
+  Determinism guarantee intact (33 shards tests + 20 db-shards/sync-cycle tests green). No user
+  surface → no CHANGELOG. **Remaining (6c-iii-b):** call `record_tombstone` from the four hard-delete
+  sites (`tasks/native.py:delete_task`/`delete_comment`, `hierarchy.delete_project`/
+  `delete_task_list`) + invoke `prune` from the sync cycle with a horizon derived from
+  `sync_stale_after_secs`. Then DAS-6d (git-sync + dir-sync transport apps in PersonalClawApps +
+  e2e criterion-4 over a real git repo/folder). **Gates:** `make lint` clean (710 files);
+  `tests/test_durability_tombstones.py` (12: record/read/dedup/corrupt-skip/invisible-to-glob,
+  fold appends-when-gone + drops-when-live + passthrough, prune horizon, end-to-end export fold)
+  + shards/db-shards/sync-cycle regression (53) pass.
+
+## Execution log — DAS-6c-iii-b (wire the delete sites + prune) + a scoping discovery
+
+- **DAS-6c-iii-b DONE (the flat-entity delete sites + GC).** `tasks/native.py:delete_task` and
+  `hierarchy.py:delete_task_list` now call `record_tombstone` after their hard `unlink`, keyed by
+  the id the exporter emits for that file: a task's id is its stem (`<task_id>`), a task list's is
+  its relpath-stem under the `tasks` entry dir (`task_lists/<id>`). Both are best-effort (a failed
+  breadcrumb never fails the delete). `run_sync_job` calls a new `_prune_tombstones(home,
+  stale_after_secs)` after a SUCCESSFUL cycle — horizon = now − window×4 (a generous "every peer
+  has surely pulled by now" margin), walking every `tombstones=True` entity-dir entry. A
+  hard-deleted task's marker now rides the export end-to-end (verified: create two tasks, delete
+  one, export → the deleted id appears as a `deleted_at` row, the kept id as a live row).
+- **DISCOVERY (scoping, recorded for 6c-iii-c).** Two of the four hard-delete sites are NOT clean
+  flat-entity deletes, so they're deliberately deferred, not wired here:
+  - **`delete_project` deletes a SUBTREE** (`projects/<id>/project.json` + `context/` + worktrees),
+    and the exporter emits one row PER `*.json` file (id = relpath-stem), so a project is MANY
+    shard rows. One tombstone id can't capture it — 6c-iii-c must enumerate the subtree's rows (or
+    the merge/writeback need a prefix-tombstone concept). Deferred.
+  - **`delete_comment` REWRITES a sidecar** (`_comments_<task_id>.json`) — it's an UPDATE to an
+    existing entity file, not an entity unlink, so ordinary update-sync already carries it; no
+    tombstone is needed (and the sidecar is itself an entity row the exporter picks up). Correctly
+    out of scope.
+  So delete-convergence now holds for **tasks and task lists** (the common case); **project**
+  deletion convergence waits on 6c-iii-c. **Remaining:** 6c-iii-c (project-subtree tombstones),
+  DAS-6d (git-sync + dir-sync transport apps in PersonalClawApps + e2e criterion-4 over a real git
+  repo/folder). **Gates:** `make lint` clean (710 files); `tests/test_durability_tombstone_wiring.py`
+  (4: delete_task records a marker + it rides the export, delete_task_list records a relpath-keyed
+  marker, prune trims old markers) + tasks/durability/hierarchy regression (646 passed, 2 skipped).
+
+## Execution log — DAS-6c-iii-c (project-subtree delete tombstones) — DAS-6c-iii COMPLETE
+
+- **DAS-6c-iii-c DONE; DAS-6c-iii COMPLETE.** A project is a SUBTREE
+  (`projects/<id>/project.json` + `context/*.json`), and the `projects` entity-dir export emits
+  one row per `*.json` with id = its path relative to the entry dir — so a single project-id
+  tombstone couldn't cover it. `hierarchy.delete_project` now enumerates every synced `*.json` in
+  the subtree BEFORE the `rmtree` and records a tombstone per relpath-stem
+  (`<id>/project`, `<id>/context/<name>`, …), skipping `worktrees/` (it's `derived_within` on the
+  inventory entry — never exported, so it must never be tombstoned either). The cascade that drops
+  the project's task lists now also records THEIR tombstones (the cascade unlinks directly, so it
+  needed the marker too). Verified end-to-end: delete a project → every synced row (project +
+  context) rides the export as a `deleted_at` row while a kept project stays live; the default
+  project still can't be deleted and leaves no marker. **DAS-6c-iii is now COMPLETE** —
+  delete-convergence holds for ALL entity-dir entries: tasks, task lists (6c-iii-b), and projects
+  incl. their context (6c-iii-c). (`delete_comment` needs no tombstone — it rewrites a sidecar,
+  an update ordinary sync carries.) **Remaining in DAS-6:** only DAS-6d (git-sync + dir-sync
+  installable `sync` transport apps in the sibling PersonalClawApps repo + the end-to-end
+  criterion-4 over a real git repo/folder — the last piece of Session 3). **Gates:** `make lint`
+  clean (710 files); `tests/test_durability_project_tombstones.py` (3: every synced subtree row
+  tombstoned + worktrees skipped, markers ride the export, default-project guarded) + hierarchy/
+  tasks/tombstone regression (553 passed, 2 skipped).
+
+## Execution log — DAS-6d-iii (two-machine convergence over a REAL transport) — DAS-6 COMPLETE
+
+- **DAS-6d-iii DONE; DAS-6d COMPLETE; DAS-6 (whole DURABILITY-AND-SYNC Session-3 sync program)
+  COMPLETE.** `tests/test_durability_convergence_e2e.py` proves the plan's **Success Criterion 4
+  verbatim** over a REAL on-disk transport (`FolderTransport` — the dir-sync algorithm: insert-only
+  atomic writes, prefix-filtered listing, rename-lock CAS on `registry.json`) driving core's real
+  `run_sync_cycle` end to end: a task created on A **and a knowledge item added on B** (a
+  `notifications.jsonl` append-stream event) both exist on both after one cycle each way; a task
+  deleted on A (hard unlink + a `_tombstones.jsonl` marker, the DAS-6c-iii side-log) stays deleted
+  on B; and the registry is real bytes on disk (`registry.json` with machine A recorded), not an
+  in-memory dict. The earlier `test_durability_sync_cycle.py` proved convergence through an
+  in-MEMORY fake; this closes the gap with a real filesystem transport. **Cross-repo ordering note
+  (E5-avoided):** the git-sync/dir-sync transport APPS live in PersonalClawApps (shipped as
+  Apps#21/#22) and their CI installs core from `git+main`, but the durability engine
+  (`sync_cycle`/`db_merge`/…) only exists on THIS stack until it merges — so a convergence test in
+  the apps repo would fail apps-CI against main today. The real-transport convergence proof
+  therefore lives HERE in core (where `run_sync_cycle` lives, hermetic, no cross-repo import); the
+  transport apps carry their own per-transport tests (28 each) proving the same insert-only/CAS
+  contract. **DAS-6 tally:** 6a contract, 6b import, 6c-i…6c-ii-j the sync engine (LIVE, config-gated
+  service), 6c-iii-a/b/c delete-convergence, 6d-i dir-sync app (Apps#21), 6d-ii git-sync app
+  (Apps#22), 6d-iii this convergence proof. The plan's five NEW-4 criteria + the amendment are met;
+  the remaining plan sessions (S4 rsync/s3 + encryption, S5 time-travel + FE) are SEPARATE later
+  atoms (DAS-7+/DAS-9), not part of the Session-3 sync program this completes. **Gates:** `make lint`
+  clean (713 files); `tests/test_durability_convergence_e2e.py` (3: task-on-A + knowledge-on-B
+  converge over a real folder, delete propagates, registry is real on-disk bytes) pass.

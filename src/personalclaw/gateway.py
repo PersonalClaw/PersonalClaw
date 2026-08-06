@@ -62,6 +62,7 @@ from personalclaw.dashboard.token_auth import (
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     generate_token,
 )
+from personalclaw.env import _is_wsl
 from personalclaw.frontend import build_frontend_async
 from personalclaw.heartbeat import HeartbeatService, is_keep_response, strip_keep_sentinel
 from personalclaw.history import ConversationLog, HistoryConsolidator
@@ -1688,12 +1689,26 @@ class GatewayOrchestrator:
                 # Heartbeat is a pure UNATTENDED background loop — no user present.
                 # HOOK_BASED keeps the security hooks; hook-neutral tools auto-approve
                 # (no interactive callback), never hanging on an unanswerable prompt.
+                _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
+
+                def _hb_usage(event: object, _m: str = _hb_model) -> None:
+                    from personalclaw.usage_ledger import record_from_event
+
+                    record_from_event(
+                        event,
+                        source="background",
+                        session_key=session_key,
+                        provider="acp",
+                        model=_m if isinstance(_m, str) and _m != "auto" else "",
+                    )
+
                 result_text = await stream_and_collect(
                     client,
                     full_message,
                     approval_policy=ToolApprovalPolicy.HOOK_BASED,
                     hooks=self.ctx_builder.hooks,
                     on_tool_approval=None,
+                    on_complete=_hb_usage,
                 )
 
                 if not result_text:
@@ -2508,9 +2523,22 @@ class GatewayOrchestrator:
                 Cancels any orphaned prompt between attempts so the next
                 retry doesn't hit 'Prompt already in progress'.
                 """
+
+                def _inject_usage(event: object, _src: str = label, _key: str = parent_key) -> None:
+                    from personalclaw.usage_ledger import record_from_event
+
+                    _m = getattr(getattr(client, "client", None), "_model", "") or ""
+                    record_from_event(
+                        event,
+                        source=_src,  # "channel" | "cron" — the announce path's label
+                        session_key=_key,
+                        provider="acp",
+                        model=_m if isinstance(_m, str) and _m != "auto" else "",
+                    )
+
                 for attempt in range(3):
                     try:
-                        return await stream_and_collect(client, msg)
+                        return await stream_and_collect(client, msg, on_complete=_inject_usage)
                     except PromptBusyExhaustedError:
                         # Provider is dead after exhausting prompt-busy retries.
                         # Reset session + notify, same as TimeoutError path.
@@ -3625,9 +3653,7 @@ class GatewayOrchestrator:
                 elif _skip_open:
                     print("Headless remote session — skipping browser auto-open")
                 else:
-                    import webbrowser
-
-                    webbrowser.open(dashboard_url)
+                    _open_dashboard(dashboard_url)
             for _ch_name in _connected_channels:
                 print(f"PersonalClaw gateway connected to {_ch_name}")
 
@@ -3652,6 +3678,51 @@ class GatewayOrchestrator:
         # Kill any ACP agent processes that survived graceful shutdown
         cleanup_orphaned_sessions()
         os._exit(0)
+
+
+def _open_dashboard(url: str) -> None:
+    """Open the dashboard in a browser, best-effort, and always print the URL.
+
+    The URL is printed prominently first so a user whose browser does not
+    auto-launch (headless-ish, WSL, a misconfigured ``$BROWSER``) can still
+    click or copy it — a no-op improvement on every platform.
+
+    Under WSL, ``webbrowser.open`` has no Linux browser to launch, so we go
+    straight to ``wslview`` (from wslu), which hands the URL to the Windows
+    default browser — WSL2 forwards localhost, so the dashboard resolves. On
+    normal Linux/macOS the standard ``webbrowser.open`` path is used unchanged;
+    ``wslview`` is only attempted as a fallback when that open reports failure
+    (returns False) or raises. A missing ``wslview`` is swallowed — it must
+    never crash the gateway boot.
+    """
+    import webbrowser
+
+    print(f"Open PersonalClaw: {url}", flush=True)
+
+    if _is_wsl():
+        _wslview_open(url)
+        return
+
+    try:
+        opened = webbrowser.open(url)
+    except Exception:
+        opened = False
+    if not opened:
+        _wslview_open(url)
+
+
+def _wslview_open(url: str) -> bool:
+    """Try to open *url* via ``wslview`` (wslu). Best-effort; never raises.
+
+    Returns True if ``wslview`` was launched, False if it is absent or failed.
+    """
+    import subprocess
+
+    try:
+        subprocess.run(["wslview", url], check=False)
+        return True
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return False
 
 
 async def run_gateway(

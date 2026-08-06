@@ -425,6 +425,24 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="crash artifacts (rotated)",
     ),
+    # EVALUATION-SUBSTRATE §1.1/§10 — the offline eval store (matrices, the append-only
+    # results.tsv ledger; studies/benchmarks/trust arrive in later atoms). Harness
+    # mechanics, so DOMAIN_PLATFORM; a file tree, so KIND_TREE + union-by-id like the
+    # other tree stores (loop, artifacts, skills). Not derived: the evidence is the
+    # point of backup, not a rebuildable index.
+    #
+    # NOTE (future, not now): §1.1 excludes `studies/*/locked` (hidden validation
+    # answer keys) from the PORTABILITY export. That subtree does not exist in ES-1a —
+    # matrices carry no answer keys — so no `derived_within`/export-exclusion is wired
+    # here yet; ES-5 adds it when `locked/` is first written (no dead control before then).
+    StateEntry(
+        id="evals",
+        kind=KIND_TREE,
+        path="evals",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="offline eval substrate: matrices, results ledger (studies/benchmarks later)",
+    ),
     # 🔴 S179 — the ten paths `audit_home()` reports on a REAL home. The guard was correct and had
     # never been pointed at one: every existing test builds an 8-path synthetic fixture, so a store
     # added after the manifest was written could not fail it. Driven: `learning.db`,
@@ -462,6 +480,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_APPEND_DEDUP,
         help="one line per model-call attempt",
+    ),
+    StateEntry(
+        # COST-AND-TOKEN-OBSERVABILITY §2.4: the per-turn cost/token ledger. Derived =
+        # reconstructible telemetry-of-self (rebuildable from the SEL/event stream), not
+        # irreplaceable user content, so export/retention treats it as disposable.
+        id="usage_ledger",
+        kind=KIND_JSONL_APPEND,
+        path="usage",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="per-turn token + cost ledger (usage/turns.jsonl)",
     ),
     # Both index stores declare themselves disposable in their own docstrings — session_search
     # "holds no truth of its own … better rebuilt than restored", codegraph re-parses on mtime — so

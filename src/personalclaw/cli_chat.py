@@ -49,6 +49,17 @@ async def _send_and_print(provider: ModelProvider, message: str) -> None:
             if event.kind == EVENT_TEXT_CHUNK:
                 print(event.text, end="", flush=True)
             elif event.kind == EVENT_COMPLETE:
+                # Per-turn cost/token ledger, CLI write-site (COST-AND-TOKEN-OBSERVABILITY C2).
+                from personalclaw.usage_ledger import record_from_event
+
+                _m = getattr(getattr(provider, "client", None), "_model", "") or ""
+                record_from_event(
+                    event,
+                    source="cli",
+                    session_key="cli_chat",
+                    provider="acp",
+                    model=_m if isinstance(_m, str) and _m != "auto" else "",
+                )
                 break
         print()  # final newline
     except AcpTimeoutError as e:

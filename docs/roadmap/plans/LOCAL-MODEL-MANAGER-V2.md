@@ -369,3 +369,39 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
 
   **Gates:** `make lint` clean (mypy 557 files) · `make test` **9541 passed, 0 failed**.
   Tests: `tests/test_local_model_layouts.py`, 47 cases.
+
+- 2026-08-05 — **DONE (LMMV-2 / Session 1 — Catalog & contract). The core mechanism, proven
+  with a fixture catalog.json.**
+
+  Landed §2.1/§2.2/§2.3 as an additive contract on `local_models/provider.py`: a
+  `CapabilityMatrix` dataclass and eleven optional `LocalModel` fields
+  (`matrix`, `runtime`, `runtime_contract`, `license`, `non_commercial`, `context_tokens`,
+  `output_tokens`, `io_mime`, `status`, `integrity`, `config_only`), all appended so every existing
+  keyword constructor and the old `-> bool`-shaped providers stay valid. `to_dict()` emits them, so
+  they ride `GET /api/models/available` with no handler change (the registry's `to_local_model`
+  returns a `LocalModel` as-is, so the fields pass through untouched). Added
+  `LocalModelProvider._models_from_catalog(catalog_path, *, cache_root, active_downloads)` — reads
+  the app-owned `catalog.json`, fail-soft (missing/malformed → `[]` with a warning; one bad card
+  skipped, never blanks the list), maps each card to a `LocalModel`, filters `platforms` against a
+  new `host_platform_token()` helper (`darwin-arm64`/`linux-x86_64`, arch aliases normalized;
+  empty/absent = all hosts), computes `downloaded` via the §4.4 probe, and flags
+  `integrity="truncated"` when a finished non-`config_only` model's on-disk bytes fall below 60% of
+  its declared `size_mb` (Part 3's `layouts.on_disk_bytes` byte-sum helper) with no in-flight fetch.
+  FE: `ModelsPanel` renders deprecated/sunset/non-commercial/truncated chips + a Repair button
+  (re-uses the existing `startModelDownload` action), via a pure `modelChips()` mapping;
+  `AvailableModel` + `CapabilityMatrix` typed in `api.ts`.
+
+  **DEVIATION — per-app catalog.json migration is a PersonalClawApps-repo follow-up (cross-repo).**
+  `git ls-files apps/` = 0: NO provider apps are git-tracked in this core repo (faster-whisper,
+  sentence-transformers, piper-tts, diarization-onnx, diarization-pyannote all live in
+  PersonalClawApps + seeded home copies). Editing a seeded/installed copy is not a durable change,
+  so the fixed-five migration to `catalog.json` (and rewiring each `list_models()` to
+  `_models_from_catalog`) is deferred to an apps-repo change. The core deliverable here is the full,
+  reusable mechanism + contract, proven end-to-end by `tests/test_local_model_catalog.py` (37 cases)
+  driving `_models_from_catalog` against a fixture catalog exercising every Success-Criteria-6/7
+  behavior: an active model, a deprecated model (chip, still bindable), a `config_only` gated
+  pyannote-shape model (never truncation-flagged), a non-commercial license (warning), a
+  hand-truncated on-disk case (<60% → `integrity:truncated`), platform filtering, fail-soft, and the
+  byte-sum/host-token/license-sniff helpers. This keeps the atom dependency-complete without a
+  half-built mechanism; Success Criterion 6's "download/bind/RUN" through the real app UI completes
+  when the apps-repo cards land.

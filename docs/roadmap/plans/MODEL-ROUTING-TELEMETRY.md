@@ -290,3 +290,135 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
 | T-U1 | Usage fold: `routing/usage.py` (purpose mapping, per-day rollup, rebuild-from-JSONL path shared with §1.3), `GET /api/usage` | `routing/usage.py`, dashboard route, tests | fold matches a hand-computed fixture over 50 audit lines; rebuild after deleting the fold reproduces it; estimated_share correct |
 | T-U2 | Usage UI: daily/weekly charts (model/provider/purpose group-by), per-run cost line on run/loop detail surfaces via `run_totals` | Settings → Models Usage section, run detail component | charts render from real dev-home traffic; a loop's detail shows "~$X this run" |
 | T-U3 | Monthly recap: template renderer + system cron + delivery through the rules engine as a `digest`-mode notification | `routing/usage.py`, cron registration site | fixture month renders the recap verbatim-predictable; notification obeys quiet hours/mute |
+
+## Execution log — MRT-1a (pure query classifier) + MRT decomposition
+
+- **MRT plan DECOMPOSED (tick-12 design verdict).** The two whole-plan atoms split: MRT-1 →
+  1a classifier / 1b audit `query_class` field / 1c `routing_stats.json` fold+rebuild / 1d
+  `GET /api/models/telemetry` / 1e Routing FE tab; MRT-2 → 2a `rate_for`+`model_rates.json` overlay
+  (clean addition) / **2b = OWNER DECISION** (consolidating `pricing.py` onto `rate_for` re-keys the
+  SHIPPED CATO cost seam by `(provider,model)` across 6 modules — `usage_ledger`/`subagent`/
+  `chat_runner`/`guardrails.model_call` + `pricing.py` + `model_pricing.json`, and `test_pricing.py`
+  locks the model-only signatures). 2b DEFERRED until the owner rules; recorded in dag.json.
+- **MRT-1a DONE.** `routing/classifier.py::classify_query(text, use_case="", *, wants_structured_output=False)`
+  — the pure heuristic routing needs so it never spends an LLM call to decide. Maps every request
+  into the fixed 5-class vocabulary `short_chat | code | summarize | extract_structured |
+  long_reasoning` (module constant `QUERY_CLASSES`), versioned by `CLASSIFIER_VERSION` so the stats
+  layer buckets by `(use_case, query_class)` and starts fresh on a vocabulary change. Precedence:
+  structured-output request (flag OR text signal) → `extract_structured`; code fence / `code_tools`
+  use-case / real code-shaped signal → `code`; explicit condense ask → `summarize`; long text /
+  `reasoning` use-case / reasoning-marker words → `long_reasoning`; else `short_chat` (the
+  cheapest-model-safe fallback, incl. empty/None). Pure, deterministic, no I/O, no model call, no
+  provider import (use-case labels are bare strings). **A false-positive my own test caught:** the
+  first code regex matched the English word "function" ("the function of the mitochondria"); tightened
+  so code keywords require code shape (`def name(`, `class Name:`, `function(`, `SELECT…FROM`,
+  line-start imports, code punctuation) — prose using function/class/return as words is not miscalled.
+  Dep (guardrails `model_calls.jsonl` + `ModelCallGuard` seam, AG-1) verified SHIPPED; the seam
+  `query_class` threads through is `AttemptRecord` (audit.py:39) set in `ModelCallGuard._audit`
+  (model_call.py:381) — that's MRT-1b. No caller yet in this atom (the classifier is consumed by 1b);
+  it's a pure library with a full test suite. No user surface → no CHANGELOG. **Gates:** `make lint`
+  clean (712 files); `tests/test_routing_classifier.py` (21: vocab/version constants, all 5 classes,
+  precedence incl. structured>code and summarize>length, the function-prose false-positive guard,
+  empty/None/mid-length fallback, purity/determinism) pass.
+
+## Execution log — MRT-1b (thread query_class onto the attempt audit)
+
+- **MRT-1b DONE.** The pure classifier (MRT-1a) is now WIRED into the one seam every non-interactive
+  model call passes through. `AttemptRecord` (guardrails/audit.py) gains a first-class
+  `query_class: str = ""` column (not an `extra` field — the stats layer folds per
+  `(use_case, query_class)`). `ModelCallGuard` classifies the CURRENT call at each entry point that
+  holds the prompt text — `stream`/`stream_command` (raw text) and `complete` (via a new
+  `_joined_content` helper that joins the user turns' text, handling both string and typed-block
+  content shapes) — stores it on `self._query_class`, and stamps it onto every attempt row via
+  `_audit`. Classification is **fail-open**: a `_classify` helper swallows any classifier error and
+  leaves `query_class=""`, so a telemetry field can never break a model call (verified — a boom
+  classifier still completes the call and audits an empty class). The guard passes its own
+  `use_case` into `classify_query`, so the use-case prior flows through (a `code_tools` call →
+  `code`). Every `model_calls.jsonl` row now carries the query class the routing stats layer
+  (MRT-1c) will fold on. No user surface → no CHANGELOG; the new audit column is additive (no
+  ratchet trips — verified against the audit's consumers: portability, snapshot, learning-detectors,
+  budgets/profiles/flags). **Remaining in MRT-1:** 1c (`routing_stats.json` fold + rebuild reading
+  this column), 1d (`GET /api/models/telemetry`), 1e (Routing FE tab). MRT-2a (rate_for overlay) is
+  a clean addition but pointless without the owner-gated 2b (pricing consolidation) — both deferred.
+  **Gates:** `make lint` clean (712 files); `tests/test_guardrails_query_class.py` (10: query_class
+  stamped for stream/complete/stream_command, short_chat default, use-case prior flows in, fail-open
+  on a broken classifier, AttemptRecord column round-trips + defaults empty, `_joined_content` from
+  string+blocks + junk-tolerant) + guardrails/classifier regression (50) + audit consumers (164) pass.
+
+## Execution log — MRT-1c (rolling routing-stats fold + rebuild)
+
+- **MRT-1c DONE.** `routing/stats.py` — the incremental `routing_stats.json` fold keyed
+  `(use_case → query_class → "provider:model_id" ref)` so the router reads an O(1) fold instead of
+  scanning `model_calls.jsonl` per call. `fold_record` maintains conservative online estimates
+  (EMA, alpha 0.2 — one bad night never flips a policy): `n`, `success_rate` (EMA of `passed`),
+  `avg_ms`, `avg_cost_usd`, `feedback`/`feedback_n` (0 until Session-3 feedback extraction), and
+  `score` (§4.2 0.60·success + 0.40·feedback, but **collapsing onto success_rate when feedback_n=0**
+  so an unrated ref isn't docked for a signal it can't have). First sample seeds the EMAs with the
+  observed values; a row lacking `use_case` or `query_class` (an unclassified call) is skipped (can't
+  attribute it). `ref_of` joins on the ref's natural spelling so a colon-bearing model id
+  (`gpt-oss:20b` → `provider:gpt-oss:20b`) round-trips. `record_routing_stats` is the post-attempt
+  hook wired into `ModelCallGuard._audit` (folds the SAME `AttemptRecord` — parsed via
+  `to_json_line` so the live fold and rebuild see byte-identical row shapes) — best-effort, never
+  breaks a call. `rebuild(home, audit_path)` = the `--rebuild-routing-stats` refold over the
+  (capped/rotated) JSONL, so the fold is the durable long-horizon record and the JSONL the recent
+  forensic one. **DEVIATION (documented in the module):** §1.3's JSON example shows `p50_ms`/`p95_ms`
+  in the fold, but true percentiles can't be maintained incrementally from an EMA; per §1.5 the
+  telemetry route (MRT-1d) derives p50/p95 at READ time "from routing_stats.json + a bounded tail of
+  model_calls.jsonl", so the fold keeps `avg_ms` and stays a true O(1) update rather than a growing
+  per-ref latency reservoir. No user surface (the fold is consumed by the MRT-1d route + the Session-3
+  router) → no CHANGELOG. **Remaining in MRT-1:** 1d (`GET /api/models/telemetry` deriving per-model
+  rows incl. read-time p50/p95 + the ~20-line frontier-dominance check), 1e (Routing FE tab). MRT-2a
+  clean-addition + 2b owner-gated pricing consolidation still deferred. **Gates:** `make lint` clean
+  (713 files); `tests/test_routing_stats.py` (11: EMA blend + first-sample seed, score-collapse
+  without feedback, colon-model ref, unclassified skip, load/save round-trip + corrupt-degrades,
+  rebuild-from-JSONL + missing-JSONL, live guard→fold hook) + guardrails/classifier regression (50) pass.
+
+## Execution log — MRT-1d (GET /api/models/telemetry read route)
+
+- **MRT-1d DONE.** The read-model + route behind the Pareto/efficiency view. `routing/telemetry.py`
+  is the PURE read-model: `telemetry_rows(stats, audit_rows, use_case, query_class)` derives one row
+  per candidate ref `{ref, n, success, feedback, avg_cost_usd, p50_ms, p95_ms, on_frontier}` from the
+  O(1) fold (MRT-1c `routing_stats.json`, supplying n/success/feedback/cost) PLUS a bounded
+  `model_calls.jsonl` tail (supplying READ-TIME p50/p95 — the fold keeps EMA `avg_ms`; true
+  percentiles can't be EMA'd, the deviation documented in 1c, resolved here per §1.5). `on_frontier`
+  = the ~20-line dominance check: a row is on the frontier unless another ref dominates it (no worse
+  on quality↑/latency↓/cost↓ and strictly better on one). A ref with no latency samples has
+  `p50_ms=0`, treated as unknown/∞ so it never falsely knocks a measured row off. Pure given its two
+  inputs (fold dict + JSONL rows), so trivially testable. `dashboard/handlers/model_telemetry.py`
+  is the thin route `GET /api/models/telemetry?use_case=&query_class=` (both required → clean 400;
+  §2.2 error envelope; read-only, 500-safe), registered in `server.py` beside the usage routes. It
+  reads `config_dir()`'s fold + a 2000-row JSONL tail. Nothing here ROUTES or decides — it shapes a
+  view (the Session-3 router is the consumer of the fold, separately). No CHANGELOG (the FE tab
+  MRT-1e is the user surface; this is its data). **Remaining in MRT-1:** 1e (Routing & Efficiency FE
+  tab rendering this). MRT-2a clean-addition + 2b owner-gated pricing consolidation still deferred.
+  **Gates:** `make lint` clean (715 files); `tests/test_routing_telemetry.py` (12: nearest-rank
+  percentile, dominance incl. tradeoff-neither + unknown-latency, fold+latency join, frontier marks
+  both on a tradeoff + drops a dominated row, empty bucket; route 400-on-missing-params +
+  rows-for-a-bucket + empty-200) pass.
+
+## Execution log — MRT-1e (Routing & Efficiency FE tab) — MRT Session-1 COMPLETE
+
+- **MRT-1e DONE; MRT-1 (telemetry + Pareto view) COMPLETE.** The read-only "Routing & Efficiency"
+  settings surface rendering `GET /api/models/telemetry` (MRT-1d). `web/src/pages/settings/RoutingPanel.tsx`:
+  two selectors — use_case (`chat`/`code_tools`/`reasoning`, reusing ModelsPanel's USE_CASE_META
+  labels, 3 → `Segmented`) and query_class (the 5 `QUERY_CLASSES`, >4 → a `Select` from `ui/forms`) —
+  both URL-round-tripped via `useQueryParam` (`?uc=`/`?qc=`) so a reload restores the view. Fetches
+  via a new `api.modelsTelemetry({use_case, query_class})` (+ `TelemetryRow` interface mirroring the
+  1d JSON) through `useCachedData` keyed by both params. Renders a table (ref/n/success%/feedback/
+  p50/p95/cost) with the **Pareto frontier** made visible: `on_frontier` rows floated to the top
+  (`sortByFrontier`) and flagged with a `Trophy` badge (text label + `title`, `aria-hidden` icon —
+  never color-only) plus an "N of M models on the frontier" summary. THREE distinct states —
+  loading (`undefined`), graceful inline error (`.catch→null`), and a friendly empty-bucket message
+  (`rows.length===0`) — so a bucket with no telemetry yet never renders broken. Cost shows `free`
+  for local/0-cost (honest, not `$0.00`); feedback/latency show `—` when absent. Registered in BOTH
+  `SUBPAGES` (SettingsPage.tsx) and `settingsWidgets.tsx` (bento, "AI & Models" group) — the
+  two-registration contract. Primitives + token colors only (no ratchet moved). Scatter plot
+  DEFERRED (a dependency-free table + frontier flag fully satisfies the visibility goal — no
+  charting dep pulled in). Class-B UI, user-facing → CHANGELOG-worthy, but this is the read-only
+  view of already-recorded telemetry with no behavior change; noted as a feature addition. **MRT
+  Session-1 (1a classifier → 1b audit field → 1c stats fold → 1d read route → 1e visualization) is
+  COMPLETE**: local-vs-cloud efficiency is now visible with zero routing. **Remaining MRT:** 2a
+  (rate_for overlay, clean addition) + 2b (OWNER-GATED pricing consolidation, deferred) are Session-1
+  pricing; MRT-3/4/5 (usage read-model, heuristic router, learned policy) are Sessions 2-3. **Gates:**
+  `npm run typecheck` clean; `npm test --workspace web` 753 pass (65 files, 11 new routingPanel + all
+  design ratchets green); `npm run build` green.

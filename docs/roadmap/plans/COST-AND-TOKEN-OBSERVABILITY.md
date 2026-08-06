@@ -158,4 +158,134 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
 
 ## Execution log
 
-_(empty — no session has run yet)_
+- **CATO-1 (T1.1) DONE — the ledger store.** Added `src/personalclaw/usage_ledger.py`: the
+  `TurnUsage` dataclass (§C1 shape — session/source/agent/provider/model + four token classes +
+  cost_usd + `priced` + duration_ms), `record_turn` (append-only JSONL at
+  `config_dir()/usage/turns.jsonl`, fail-open — a write failure DEBUG-logs and never raises into a
+  turn, §2.7; 2×-cap atomic-rewrite trim per the feedback.py house convention), `rollup(group_by ∈
+  {model,source,agent,provider,day})` and `totals` — both fold a `priced` flag that goes False when
+  ANY constituent row is unpriced (a partial total can't present as complete), sorted by descending
+  cost. Registered the path in `durability/inventory.py` as `usage_ledger` (`KIND_JSONL_APPEND`,
+  `DOMAIN_PLATFORM`, `derived=True`, `secret=False`) so `audit_home()` claims it — proven both ways
+  (passes WITH the entry, reports `usage/` unclaimed WITHOUT). Scope: T1.1 ONLY — the four write
+  sites (C2) and the three surfaces (S2) are separate atoms, so no user-facing readout yet → no
+  CHANGELOG entry (the store is invisible until S2). Soul guardrails honored: observation-only (no
+  enforcement — that's SpendMeter), honest-zero (`priced=False` never renders `$0.00`), one meter
+  (real provider tokens + USD, never an invented unit). **Gates:** `make lint` clean (697 source
+  files); `tests/test_usage_ledger.py` (12: round-trip, all 5 group keys, tainted-total rule,
+  window filter, fail-open, corrupt-line tolerance, inventory audit both ways) + `test_durability_inventory.py`
+  (22) pass.
+
+- **CATO-2 DONE — the chat write-site (C2, 1 of 4).** A real dashboard chat turn now writes exactly
+  one ledger row at the `EVENT_COMPLETE` handler (`chat_runner.py`, beside the existing
+  `stats.inc_cost_usd`), via a new `_record_turn_usage(event, *, session_key, source, agent, provider,
+  model)` helper. Vendor-reported cost wins when present; when the provider reported none the caller's
+  `estimate_cost` fallback (already resolved at that site) is recorded. `priced` is False ONLY when the
+  model has no `model_pricing.json` row (via the existing `pricing.has_pricing`) AND the provider
+  reported no cost — then `cost_usd` is an honest 0.0 the UI renders "unpriced". `record_turn` is
+  fail-open, so a ledger fault can't break a turn. Scope: the CHAT write-site only — the subagent /
+  loop-cron / channel-cli sites (the other three of C2) and the surfaces (S2) are later atoms, so
+  still no user-visible readout → no CHANGELOG. **Gates:** `make lint` clean (697 files);
+  `tests/test_usage_ledger.py::TestChatWriteSite` (4: one row with provider cost=priced, priced-model
+  zero-cost still priced, unpriced-model→priced=False+0.0, write-site fail-open) + full usage-ledger
+  suite (16) + `test_chat_runner_procedural_wiring` (3) pass.
+
+- **CATO-3 DONE — the subagent write-site (C2, 2 of 4).** The `EVENT_COMPLETE` handler in
+  `subagent.py::_run_inner` discarded the child's token/cost numbers (`break`); it now captures them,
+  derives cost via `pricing.estimate_cost` when the provider reported none, stamps
+  `input_tokens`/`output_tokens`/`cost_usd` onto `SubagentInfo` (new fields, carried on the existing
+  completion delivery), and writes one ledger row via a new `SubagentManager._record_subagent_usage`
+  helper with `source="subagent"` keyed to the PARENT session — so a 3-way fan-out yields 3 rows and
+  a fan-out's cost is attributable per child. `provider="acp"` (subagents run through the ACP
+  runtime). Fail-open (record_turn never raises into completion delivery). Scope: subagent site only —
+  the loop-cron / channel-cli sites (C2 remainder = CATO-4) and the surfaces (S2 = CATO-5..8) remain,
+  so still no user-visible readout → no CHANGELOG. **Gates:** `make lint` clean (698 files);
+  `tests/test_usage_ledger.py::TestSubagentWriteSite` (4: parent-keyed row, 3-way fan-out→3 rows,
+  unpriced→priced=False, SubagentInfo carries the fields) + full usage-ledger (20) + `test_subagent.py`
+  (65, SubagentInfo field addition safe) pass.
+
+- **CATO-4 DONE — the remaining C2 write-sites (background / channel / cron / cli).** Root finding:
+  the loop-worker + schedule-injection paths ALREADY route through `_run_chat` (so CATO-2 covers them
+  via `source=session._app`); the genuine gaps go through `stream_and_collect`, which returned only
+  text and discarded the `EVENT_COMPLETE` usage. Fix: added an optional `on_complete(event)` callback
+  to `stream_and_collect` (fires at EVENT_COMPLETE, default None → byte-identical for its 10 callers,
+  fail-open) and a shared `usage_ledger.record_from_event(event, *, source, …)` seam that owns the
+  vendor-cost-wins / estimate-when-absent / honest-unpriced / fail-open logic. Wired: heartbeat
+  (`source="background"`), `_inject_with_retry` (`source=label` → "channel"/"cron"), and `cli_chat`'s
+  own EVENT_COMPLETE loop (`source="cli"`). Refactored CATO-2's `_record_turn_usage` and CATO-3's
+  `_record_subagent_usage` to delegate to `record_from_event` (deleted the duplicated cost/priced
+  logic — clean break). DEVIATION (recorded): the atom framed 4 discrete sites; two were already
+  covered via `_run_chat`, and the real work was the shared `stream_and_collect` seam that unlocks
+  every text-only caller at once. Model is best-effort at these paths (ACP abstracts it); `source` is
+  what the done-when's `rollup(group_by='source')` requires. Scope: write-sites complete — the API
+  (CATO-5) + surfaces (CATO-6..8) remain, so no user-visible readout yet → no CHANGELOG. **Gates:**
+  `make lint` clean (698 files); `tests/test_usage_ledger.py::{TestRecordFromEvent,TestStreamAndCollectOnComplete}`
+  (7: vendor-cost-wins, estimate-when-absent, honest-zero, all-six-sources-in-rollup, fail-open,
+  on_complete fires with the event, None→byte-identical) + full usage-ledger + `test_subagent.py`
+  (65) + `test_llm_helpers.py` = 92 passed.
+
+- **CATO-5 DONE — the usage read API.** `dashboard/handlers/usage.py`: `GET /api/usage/rollup?group_by=&since=&until=`
+  (group_by ∈ model|source|agent|provider|day, defaults model) and `GET /api/usage/totals?since=&until=`,
+  both thin read-only wrappers over `usage_ledger.rollup`/`totals`, registered via `register_usage_routes`
+  in `server.py`. A bad `group_by` is a §2.2 `{error:{code,message}}` 400 (validated at the boundary,
+  not a 500); a ledger read fault degrades to a 500 envelope rather than propagating; an empty ledger
+  returns `rows:[]`/`turns:0`, not an error. Read-only — this plan is observation, never enforcement,
+  so there is no mutate route. Per the done-when, regenerated the offline agent reference
+  (`python -m personalclaw.manifest_reference` → `routes.md`+`index.md` picked up the two new routes)
+  and the drift test is green. Scope: API only — the surfaces that render it (S2: turn readout /
+  session header / Usage panel = CATO-6..8) are later atoms, so no user-visible readout yet → no
+  CHANGELOG. **Gates:** `make lint` clean (699 files); `tests/test_usage_routes.py` (6: rollup by
+  source, default-model, bad-group_by→400 envelope, totals, window-filter threading, empty-ledger-ok)
+  + `test_agent_reference.py` (7) pass.
+
+- **CATO-6 DONE — the turn-complete cost readout (S2, first user-visible surface).** The existing
+  live-only "Turn complete" stats line (`chat_runner.py`, a `kind:stats` activity_event rendered by
+  the FE `ContextLedger`'s Telemetry row) now carries real cost + tokens. Extracted a testable
+  `_turn_complete_line(...)` composer: appends `· $X.XXXX · N in / N out tokens` for a priced turn;
+  `· unpriced · …` (NEVER `$0.00`) for a model with no price row; a `· N cached` fragment ONLY when
+  cache tokens are non-zero (absent until PROMPT-CACHE lands + a provider reports them). Captured the
+  turn's tokens/cost/priced at EVENT_COMPLETE into function-scoped vars (mirroring the existing
+  `_turn_event_count`), and broadened the emit gate to also fire on a token-only turn. FE needed no
+  structural change — `ContextLedger` already renders the stats text verbatim, so the cost now shows
+  where users already look; the backend line composer is the update. First user-visible CATO surface
+  → **CHANGELOG entry added.** Scope: turn readout only — session-header (CATO-7) + Usage panel
+  (CATO-8) remain. **Gates:** `make lint` clean (699 files); `tests/test_usage_ledger.py::TestTurnCompleteLine`
+  (5: priced shows USD+tokens, unpriced never `$0.00`, cache-only-when-nonzero, no-token backward-compatible
+  bare line, priced-zero-cost still shows `$` not unpriced) + usage-ledger + chat-runner-wiring = 35 passed.
+
+- **CATO-7 DONE — the session cost header (S2 session-level surface).** Added a `session_key` filter
+  to `usage_ledger.rollup`/`totals` (via a shared `_row_selected` helper — the rows already carried
+  `session_key`; only the query fns lacked the filter) and threaded `?session=` through the CATO-5
+  routes. FE: `api.usageTotals(session)` + a header chip in `ChatPage.tsx` (`Coins` icon, compact
+  `fmtTokens` — "46k") next to the project/investigate chips, refreshed on session load + after each
+  `chat_done`. Honest total: a session mixing an unpriced model renders `unpriced`, never a
+  confidently-complete `$0.00`; the chip only appears once the session has real recorded usage.
+  Done-when invariant proven: a multi-turn session's reported total equals the sum of its turn rows.
+  Second user-visible CATO surface → **CHANGELOG entry.** Scope: session header only — the Usage
+  panel (CATO-8, account-level) remains. **Gates:** `make lint` clean (699 files); `npm run
+  typecheck` + `npm run build` clean; `tests/test_usage_ledger.py::TestSessionScopedAggregation` (4:
+  session-scoped totals, sum-matches-turns invariant, scoped rollup, unknown-session-empty) +
+  `test_usage_routes.py` session-filter route test + full usage suites pass.
+
+- **CATO-8 DONE — the account-level Usage panel (S2c). PLAN COMPLETE.** New `web/src/pages/settings/UsagePanel.tsx`
+  registered in BOTH `SUBPAGES` (Settings → Usage, `Coins` icon) AND the `settingsWidgets` bento (the
+  recurring miss — not missed): a `Segmented` period control (Today/7d/30d, state round-trips the URL
+  via `useQueryParam`), Today/7d/30d cost+token+turns `BigStat`s, by-model + by-source tables (tokens/
+  cost/share, "unpriced"/"—" for a no-price-row row), a cache-savings line (0 when no cache activity),
+  and a read-only "spent $X of your $Y daily cap" reading `guardrails.budgets.max_dollars_per_day`
+  from `personalclawConfig` (SpendMeter's config — NEVER written; observation only). Honest-partial: a
+  period with any unpriced model shows a "partial — N unpriced models" `role=status` marker, never a
+  confidently-complete total. Generalized `api.usageTotals`/`usageRollup` to a `{since,until,session,
+  group_by}` options shape (+ fixed CATO-7's call site) and added the `UsageAgg` type. **Wired the
+  orphaned `SystemAgentStats.input_tokens`** (`SystemInfo.stats`, typed at api.ts but rendered by no
+  component): the panel's "Since gateway start" section renders the in-memory process-lifetime
+  counters as a live cross-check on the durable ledger — no parallel type added. **MUST-NOTs honored:**
+  no `spend.json` write, no cap/gate/throttle. **Ratchet + a11y:** primitiveAdoption (Button/Segmented/
+  table — zero raw `<button>`/`<input>`) + tokenLint + consistency + contrast all green. Third +
+  final user-visible surface → **CHANGELOG.** **Gates:** `make lint` clean (699 files); `npm run
+  typecheck` + `npm run build` clean; FE suite 742 passed; design suites (primitiveAdoption 5 +
+  tokenLint/consistency/contrast/inert 81) passed; backend usage suites 43 passed.
+
+  **COST-AND-TOKEN-OBSERVABILITY is now fully shipped:** store (CATO-1) → 4 write-sites (CATO-2/3/4) →
+  read API (CATO-5) → turn / session / account surfaces (CATO-6/7/8). Every soul guardrail held (one
+  real meter, honest-unpriced, observation-only).

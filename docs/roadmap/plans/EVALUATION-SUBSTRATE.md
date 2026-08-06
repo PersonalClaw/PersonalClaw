@@ -408,3 +408,51 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
 | E1 | `RunPin` + scenario library migration (`eval/scenarios/` → versioned `evals/scenarios/` over named fixture homes); every matrix/study/gate run persists its pin; pin-diff query over `results.tsv` (extends Session 1) | `evals/pinning.py`, `evals/matrix.py`, `eval/runner.py` child wiring, store layout | re-running a scenario after a model rebind yields a different fingerprint row, same scenario hash; a run without a pin cannot be written to results.tsv |
 | E2 | Gate subset (`evals/scenarios/gate/`) + before/after score columns on flywheel self-modification proposals; a prompt/skill/routing proposal without a gate run renders "ungated" honestly (never blocks pre-flywheel) (extends Session 3) | gate scenario set, §8.3 proposal emission, proposal card FE | a planted regression in a candidate skill edit shows a score drop on its own proposal card before the user accepts; gate run cost is bounded and metered via SpendMeter |
 | E3 | Loop 3 derived field metrics (plan-58 records + autonomy ledger + SEL outcomes, query-computed) rendered beside lab results on the Learning tab; `lab_field_divergence` flag feeding §4.2 demotion (extends Session 4; gated on plan 58 S1) | ledger query module, Learning-page tab, trust-record wiring | the tab answers "lab says better — is it?" per subject in one row; a post-ship field decline on a lab-improved subject files a divergence flag and a demotion signal, mechanically |
+
+## Execution log — ES-1a (pure evals substrate: store + matrix types + EvalsConfig) — ES-1 split
+
+- **ES-1 DECOMPOSED (tick-14 design verdict); ES-1a DONE.** ES-1 split into 1a (pure store +
+  dataclasses + config round-trip + inventory listing — deterministic, no process/LLM) and 1b (the
+  child-process matrix runner + SpendMeter preflight + SEL). Design verified ES-1 startable now with
+  NO EXECUTION-ISOLATION dependency — the "spawned child with PERSONALCLAW_WORKSPACE in the child
+  env only" is a plain `subprocess` + `os.environ.copy()` (precedent: `schedule_script.py:
+  run_script_sandboxed`), strictly weaker than and independent of EI's SandboxProvider.
+- **ES-1a shipped:** new `evals/` package — `matrix.py` (the shared TYPES: frozen `MatrixSpec` with
+  JSON round-trip, `CellResult`, `MatrixResult`, and the three-state `PASSED|FAILED|VERIFIER_ABSENT`
+  `aggregate()` that computes the mean over scored cells ONLY — a verifier that couldn't run is
+  counted separately, NEVER averaged in as a 0); `store.py` (`evals/` layout under the home,
+  `matrices/<id>/` artifact dirs with `experiment.json`/`aggregates.json`/`trials.json` via
+  `atomic_write`, and the append-only `results.tsv` ledger with a stable ordered column set +
+  tab/newline neutralization + unknown-key rejection so it can't be silently widened; `studies/`/
+  `benchmarks/`/`trust/` deliberately NOT created — no writer yet, no dead scaffolding). `EvalsConfig`
+  wired through all 4 config points (dataclass+`_meta`, explicit `load()` mapping, `to_dict()`,
+  `_EDITABLE_CONFIG`) — with `bakeoff_capture_enabled` DELIBERATELY EXCLUDED from the editable
+  allowlist (a privacy-sensitive capture flag, off-by-default, SEL-audited when flipped, mirroring
+  `inbound.mcp.allow_remote`). One `evals` `StateEntry` (KIND_TREE, DOMAIN_PLATFORM,
+  MERGE_UNION_BY_ID) claims the whole tree so `audit_home()` + snapshot/portability cover it. No user
+  surface (the FE tab is a later atom) → no CHANGELOG. **Remaining:** ES-1b (child-process `run_matrix`
+  + budget preflight + SEL run-lifecycle hooks; the `locked/` export-exclusion the design flagged is a
+  STUDIES concern for ES-2/ES-5, not here). **Gates:** `make lint` clean (718 files);
+  `tests/test_evals_store.py` (10) + config round-trip/schema + durability inventory (48 total) +
+  `test_snapshot.py` (111) pass.
+
+## Execution log — ES-1b (child-process matrix runner) — ES-1 COMPLETE
+
+- **ES-1b DONE; ES-1 (evals store + experiment-matrix runner + isolation fix) COMPLETE.**
+  `evals/runner.py::run_matrix` composes ES-1a's types + store: expand axes cartesian product ×
+  `trial_count`, run cells SEQUENTIALLY, aggregate via the three-state `aggregate()`, persist
+  per-cell trials + aggregates + experiment under `matrices/<id>/`, append a `results.tsv` row, SEL
+  log start/finish. `evals/child.py` is the `python -m personalclaw.evals.child <descriptor.json>`
+  entrypoint running ONE cell via the reused `EvalRunner`. **§1.3 isolation:** each cell spawns with
+  `os.environ.copy()` + `PERSONALCLAW_WORKSPACE` set on the COPY for the child only — the parent
+  gateway env is NEVER mutated (`eval/runner.py` byte-for-byte untouched; a test asserts
+  `dict(os.environ)` unchanged across a run). Three-state maps a verifier that couldn't run
+  (timeout / non-zero exit / unparseable stdout / budget-EXCEEDED-preflight-so-no-spawn / spawn
+  OSError) to `VERIFIER_ABSENT`, never a false `FAILED`; `run_matrix` never raises out.
+  `store.py` gained `write/read_matrix_trials`. No user surface → no CHANGELOG. **Operational note:**
+  implemented in an isolated worktree after tick-15's health-fix `git checkout` on the shared tree
+  displaced it; recovered intact and rebased onto the current #832 (which carries the #831
+  FTS5-degrade-test fix). **Remaining EVALUATION-SUBSTRATE:** ES-2+ (RunPin, judge bench, studies,
+  the FE tab) — later atoms. **Gates:** `make lint` clean (720 files);
+  `tests/test_evals_matrix_runner.py` (21) + `test_evals_store.py` (10) + `test_eval_harness.py` (59
+  — proves eval/runner.py unchanged) pass.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Coins, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -43,7 +43,7 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { useIsMac } from '../app/usePlatform'
 import { notify } from '../app/appSdk'
@@ -126,6 +126,14 @@ function greeting(name: string): string {
   const h = new Date().getHours()
   const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
   return `Good ${part}, ${firstNameOf(name)}`
+}
+
+/** Compact token count for the session cost chip: 940 → "940", 46_000 → "46k",
+ *  1_200_000 → "1.2M". Keeps the header chip short (the plan's "$0.19 · 46k tokens"). */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return String(n)
 }
 
 /** Contextual prompt-starter chips on the empty-chat hero. Sourced from the
@@ -429,6 +437,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     api.project(projectId).then((p) => { if (alive) setProjectName(p?.name || '') }).catch(() => {})
     return () => { alive = false }
   }, [projectId])
+  // Session cost total (COST-AND-TOKEN-OBSERVABILITY CATO-7): "$X · N tokens" for
+  // THIS chat, read from the usage rollup scoped to the session key. Refreshed on
+  // load + after each chat_done. `priced=false` ⇒ the total mixes an unpriced model,
+  // so we show a "~" prefix rather than a confidently-complete figure.
+  const [sessionCost, setSessionCost] = useState<{ cost: number; tokens: number; priced: boolean } | null>(null)
+  const refreshSessionCost = useCallback((key: string | null) => {
+    if (!key) { setSessionCost(null); return }
+    api.usageTotals({ session: key }).then((d) => {
+      const t = d.totals
+      const tokens = (t.input_tokens || 0) + (t.output_tokens || 0)
+      // Show the chip only once the session has recorded real usage.
+      setSessionCost(t.turns > 0 && tokens > 0 ? { cost: t.cost_usd, tokens, priced: t.priced } : null)
+    }).catch(() => { /* leave the chip as-is; a transient read failure isn't worth clearing it */ })
+  }, [])
   // Instant-paint seed: if we have a cached detail for this session, hydrate its
   // turns synchronously so the transcript paints on the FIRST frame (skeleton only
   // shows for a genuinely-uncached first open). The load effect below revalidates.
@@ -701,6 +723,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         return acc
       }, []).slice(-50))
       setTitle(d.title || '')
+      // Seed the session cost chip from the ledger for a revisited chat (CATO-7).
+      refreshSessionCost(sessionId)
       // Restore BOTH composer axes to the session's actual posture. Unlike
       // agent/model (which must resolve against the discovered-agent catalog
       // below), task_mode + approval are plain enums the backend hands back
@@ -927,7 +951,39 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // skeleton, no visible reload) — the open tab already shows the right
         // content from streaming; we only bring the cached snapshot up to date.
         const sk = sessionRef.current
-        if (sk) api.chatSessionDetail(sk).then((d) => writeCachedDetail(sk, d)).catch(() => {})
+        // Refresh the session cost chip now the turn's ledger row has landed (CATO-7).
+        refreshSessionCost(sk)
+        if (sk) api.chatSessionDetail(sk).then((d) => {
+          writeCachedDetail(sk, d)
+          // Episodic citations (§5.4) live on the persisted assistant message's meta,
+          // not in the WS stream — so the just-streamed turn shows plain `[Memory N]`
+          // text until they're grafted on. Copy them from the fresh snapshot onto the
+          // matching in-place turns so the chips light up without a visible re-hydrate.
+          // Episodic recall injects once per session (the new-session turn), so there is
+          // at most one such message; a persisted turn matches by ts, and the trailing
+          // just-streamed turn (which has no ts yet) is grafted positionally. Cheap:
+          // no-op on the overwhelming majority of turns (no episodic recall).
+          if (sk !== sessionRef.current) return
+          const byTs = new Map<string, MemoryCitation[]>()
+          let lastCites: MemoryCitation[] | null = null
+          for (const m of d.messages || []) {
+            const c = m.meta?.memory_citations
+            if (m.role === 'assistant' && Array.isArray(c) && c.length) {
+              lastCites = c
+              if (m.ts) byTs.set(m.ts, c)
+            }
+          }
+          if (byTs.size || lastCites) setTurns((prev) => {
+            const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
+            return prev.map((t, i) => {
+              if (t.role !== 'assistant' || t.citations) return t
+              if (t.ts && byTs.has(t.ts)) return { ...t, citations: byTs.get(t.ts) }
+              // Trailing streamed turn with no ts → attach the session's one manifest.
+              if (i === lastIdx && !t.ts && lastCites) return { ...t, citations: lastCites }
+              return t
+            })
+          })
+        }).catch(() => {})
         break
       }
       // Visible message queue (mid-stream sends). The server owns the FIFO; these
@@ -2192,6 +2248,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   <FolderKanban size={12} className="text-primary" /> {projectName}
                 </button>
               )}
+              {/* Session cost (CATO-7): what this conversation cost, read from the
+                  usage ledger scoped to the session key. "~" prefix + "unpriced"
+                  when the total mixes a model with no price row (honest, never a
+                  confidently-complete $0.00). */}
+              {sessionCost && (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
+                  title={sessionCost.priced ? 'What this conversation has cost so far' : 'Cost so far — includes a model with no price row, so this is a partial total'}>
+                  <Coins size={12} className="text-primary" />
+                  {sessionCost.priced ? `$${sessionCost.cost.toFixed(sessionCost.cost < 1 ? 4 : 2)}` : 'unpriced'}
+                  {' · '}{fmtTokens(sessionCost.tokens)} tokens
+                </span>
+              )}
               {/* Investigate origin (plan 60): the entity this chat was opened to
                   investigate; click deep-links back to the source surface. */}
               {investigateOrigin?.title && (
@@ -2319,7 +2388,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips (CHAT-CRAFT S3) under the last assistant turn only,
@@ -2974,7 +3043,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey, citations }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
@@ -2982,6 +3051,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
   chatSessionKey?: string
+  citations?: MemoryCitation[]
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
@@ -3027,7 +3097,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     if (seg.kind === 'text') {
       // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose
       const body = parseSwitchToAgent(parseOptions(seg.text).body).body
-      return body ? <Markdown key={i} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming}>{body}</Markdown> : null
+      return body ? <Markdown key={i} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown> : null
     }
     return null
   }

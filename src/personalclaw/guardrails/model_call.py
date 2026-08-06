@@ -65,6 +65,47 @@ def _new_audit_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+def _iso_now() -> str:
+    """Wall-clock ISO-UTC stamp for the routing-stats fold's ``updated_at``."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _asdict_row(rec) -> dict:
+    """The attempt as the SAME flat dict the JSONL carries, so the live fold and the
+    rebuild-from-JSONL path (routing.stats) see byte-identical row shapes."""
+    import json as _json
+
+    return _json.loads(rec.to_json_line())
+
+
+def _joined_content(messages: list[dict]) -> str:
+    """The user-authored text of a structured message list, for query classification.
+
+    A message ``content`` is either a plain string or a list of typed blocks
+    (``{"type": "text", "text": ...}`` and friends). Join the text of the user turns —
+    that's what the classifier's length/signal heuristics key on. Best-effort: an odd
+    shape yields "" rather than raising (classification is telemetry, never load-bearing)."""
+    parts: list[str] = []
+    try:
+        for msg in messages or []:
+            if not isinstance(msg, dict) or msg.get("role") not in ("user", None, ""):
+                continue
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        parts.append(block["text"])
+                    elif isinstance(block, str):
+                        parts.append(block)
+    except Exception:  # noqa: BLE001
+        return ""
+    return "\n".join(parts)
+
+
 class ModelCallGuard(ModelProvider):
     """Wraps ``inner`` with breaker + hard timeout + attempt-level audit."""
 
@@ -103,11 +144,29 @@ class ModelCallGuard(ModelProvider):
         # Mirror the wrapped provider's tool support so the loop treats the guard
         # exactly as it would the inner provider.
         self.supports_tools = getattr(inner, "supports_tools", False)
+        # The routing query class of the CURRENT call, set by the entry point that has
+        # the prompt text (stream/complete/stream_command) and stamped onto each attempt
+        # audit row (MODEL-ROUTING-TELEMETRY §2, MRT-1b). "" until a call classifies.
+        self._query_class = ""
 
     # ── The intercepted generation paths ────────────────────────────────
 
+    def _classify(self, text: str) -> None:
+        """Set ``self._query_class`` for the current call from the pure classifier.
+
+        Pure + fail-open: a classification failure must never break a model call, so any
+        error leaves the class "" (the audit row simply carries no class). The value is
+        stamped onto every attempt this call makes."""
+        try:
+            from personalclaw.routing.classifier import classify_query
+
+            self._query_class = classify_query(text, self._use_case)
+        except Exception:  # noqa: BLE001 — classification is telemetry, never load-bearing
+            self._query_class = ""
+
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         message = self._prescan(message)
+        self._classify(message)
         async for event in self._guarded(self._inner.stream(message), strategy="direct"):
             yield event
 
@@ -121,6 +180,7 @@ class ModelCallGuard(ModelProvider):
     ) -> AsyncIterator[LLMEvent]:
         # complete() is the native-loop path (structured messages), out of scope
         # for the v1 wrap — but budget + breaker still apply if reached.
+        self._classify(_joined_content(messages))
         inner = self._inner.complete(
             messages, tools=tools, model=model, reasoning_effort=reasoning_effort
         )
@@ -129,6 +189,7 @@ class ModelCallGuard(ModelProvider):
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         command = self._prescan(command)
+        self._classify(command)
         async for event in self._guarded(self._inner.stream_command(command), strategy="direct"):
             yield event
 
@@ -378,26 +439,36 @@ class ModelCallGuard(ModelProvider):
         *,
         dollars: float = 0.0,
     ) -> None:
-        record_attempt(
-            AttemptRecord(
-                audit_id=audit_id,
-                ts=time.time(),
-                use_case=self._use_case,
-                provider=self._provider_name,
-                model=self._model,
-                attempt=attempt,
-                failure_mode=mode.value,
-                latency_ms=round(latency_ms, 1),
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                dollars_est=round(dollars, 6),
-                # Estimated unless the provider reported a real cost_usd (which
-                # _estimate_dollars prefers); a heuristic-derived value is flagged.
-                estimated=True,
-                passed=passed,
-                strategy=strategy,
-            )
+        rec = AttemptRecord(
+            audit_id=audit_id,
+            ts=time.time(),
+            use_case=self._use_case,
+            provider=self._provider_name,
+            model=self._model,
+            attempt=attempt,
+            failure_mode=mode.value,
+            latency_ms=round(latency_ms, 1),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            dollars_est=round(dollars, 6),
+            # Estimated unless the provider reported a real cost_usd (which
+            # _estimate_dollars prefers); a heuristic-derived value is flagged.
+            estimated=True,
+            passed=passed,
+            strategy=strategy,
+            query_class=self._query_class,
         )
+        record_attempt(rec)
+        # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY
+        # §1.3, MRT-1c) — the router reads that O(1) fold, never scans the JSONL per call.
+        # Best-effort inside record_routing_stats; a fold failure never breaks a call.
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.routing.stats import record_routing_stats
+
+            record_routing_stats(_asdict_row(rec), home=config_dir(), now=_iso_now())
+        except Exception:  # noqa: BLE001 — observability, never load-bearing
+            pass
 
     @staticmethod
     async def _aclose(source: AsyncIterator[LLMEvent]) -> None:
