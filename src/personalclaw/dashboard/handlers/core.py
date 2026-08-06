@@ -476,6 +476,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "durability.keep_weekly": {"type": "int", "min": 0, "max": 260},
     "durability.keep_monthly": {"type": "int", "min": 0, "max": 120},
     "durability.restore_drills": {"type": "bool"},
+    # DURABILITY-AND-SYNC §4 — sync knobs. sync_enabled is fail-closed in load(); the
+    # transport is a free-text provider name (validated against installed transports at
+    # cycle time, not here — an unknown name simply leaves sync idle).
+    "durability.sync_enabled": {"type": "bool"},
+    "durability.sync_transport": {"type": "str", "max_len": 64},
+    "durability.sync_stale_after_secs": {"type": "int", "min": 30, "max": 86400},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},

@@ -1300,3 +1300,60 @@ beyond staging the DB copy the exporter already knows how to make.
   repo/folder). **Gates:** `make lint` clean (709 files); `tests/test_durability_sync_cycle.py` (7:
   first-publish, transport-failure contained, two-machine convergence, delete-propagates,
   DB-rides-along, empty/written registry) + the full durability suite (242 passed, 2 skipped) pass.
+
+## Execution log — DAS-6c-ii-j (service wiring + sync config round-trip)
+
+- **DAS-6c-ii-j DONE.** Wired the assembled cycle into the running system. **Config round-trip**
+  (the full four-point contract): `DurabilityConfig` gains `sync_enabled` (default False),
+  `sync_transport` (default ""), `sync_stale_after_secs` (default 900), each with `_meta`;
+  `AppConfig.load()` maps all three explicitly (else they'd silently revert — the leaf-walk
+  round-trip test excludes `durability`), with `sync_enabled` **fail-CLOSED** (a garbage value
+  reads False — a sync surface must never self-enable, unlike backups which fail-safe ON);
+  `asdict` serializes them; `_EDITABLE_CONFIG` allowlists all three (PATCH-editable), and the
+  existing `TestConfigContract` allowlist-matches-dataclass test's `_FIELDS` was extended to match.
+  **Service due-job:** `service.run_sync_job()` is self-guarding (idle → `skipped` unless
+  `sync_enabled` AND a `sync_transport` that resolves in `sync_transports.registry.get_transport`),
+  runs under `single_flight("durability:sync")` so it never overlaps an export, never raises (the
+  cycle's report carries any error), and audits via SEL. `run_due_jobs` schedules it by the
+  **staleness window** (`_due(state, "last_sync", sync_stale_after_secs)`), stamping `last_sync`
+  even on skip/failure so a misconfigured sync can't hammer the remote every tick; `status()` now
+  reports the sync entry (enabled/transport/due). **Near-miss caught + fixed:** a first draft of a
+  schedule test called `run_due_jobs` unstubbed and triggered a real nightly snapshot of the
+  actual 1.2 GB `~/.personalclaw` (pytest-timeout kill) — rewrote `TestDueSchedule` to stub every
+  job branch (export/snapshot/drill/save_state) so it asserts only the scheduler's DECISION,
+  touching no real home (the destructive-test rule). **Sync is now a live, config-gated, scheduled
+  service** — off by default, on with `durability.sync_enabled` + a transport. **Remaining:** 6c-iii
+  (tombstone producers — soft-delete tasks/projects so delete-convergence holds), then DAS-6d
+  (git-sync + dir-sync installable `sync` transport apps + the end-to-end criterion-4 over a real
+  git repo/folder). **Gates:** `make lint` clean (709 files); `tests/test_durability_sync_service.py`
+  (10) + `test_durability_service.py` + `test_config_roundtrip.py` + full durability suite
+  (257 passed, 2 skipped) pass.
+
+## BLOCKED — DAS-6c-iii (tombstone producers) needs an owner design decision (2026-08-06)
+
+The sync tombstone MECHANISM is complete and correct end-to-end (verified: a tombstone that
+exists propagates a delete and is honored by merge + writeback). But NOTHING produces one:
+`tasks/native.py:delete_task` and `delete_comment` hard-`unlink()`, and projects delete the
+same way. So delete-CONVERGENCE across machines doesn't hold yet, and closing it forks into two
+architectures with different product consequences — a genuine judgment call, not a clean-break I
+should pick unilaterally:
+
+- **Fork A — convert tasks/projects to soft-delete.** `delete_*` writes a `deleted_at` marker
+  instead of unlinking; every read path (`_read_task`/`_all_tasks`/`list_tasks`/`get_task`,
+  hierarchy, comments) filters tombstoned rows; `writeback._apply_entity_dir` PERSISTS the marker
+  instead of unlinking (changes the shipped 6c-ii-c behavior). Pros: one row model, the inventory's
+  `tombstones=True` is literally true. Cons: touches the whole tasks subsystem + FE + the ACP
+  provider; raises a user-facing retention/undo/trash question (tombstone marker files linger — for
+  how long? GC policy?) that is really a Tasks-UX decision, not a durability one.
+- **Fork B — a sync-only tombstone side-log.** `delete_*` stays a hard unlink (tasks UX unchanged,
+  no retention/undo question for the user), but ALSO appends `{id, deleted_at}` to a sync-only
+  `tasks/_tombstones.jsonl` the durability layer reads to emit tombstone rows; a GC prunes the log
+  past the sync horizon. Pros: zero tasks-subsystem/FE churn, isolates the concern in durability,
+  keeps writeback's current unlink-on-apply. Cons: a second delete write-site to keep in step; a
+  new side-file kind for the inventory/exporter to carry.
+
+Recording BLOCKED here and moving on rather than guessing — the choice changes core tasks
+semantics (A) vs. a durability-local mechanism (B), and it decides whether shipped #809's
+writeback unlink is final or must persist markers. Everything through #819 is unaffected: sync is
+OFF by default and has no tombstone producers, so create/update convergence (Criterion 4's build
+half) is live and safe today; only cross-machine DELETE convergence waits on this decision.
