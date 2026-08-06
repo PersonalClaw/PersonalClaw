@@ -189,3 +189,17 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   `tests/test_usage_ledger.py::TestChatWriteSite` (4: one row with provider cost=priced, priced-model
   zero-cost still priced, unpriced-model→priced=False+0.0, write-site fail-open) + full usage-ledger
   suite (16) + `test_chat_runner_procedural_wiring` (3) pass.
+
+- **CATO-3 DONE — the subagent write-site (C2, 2 of 4).** The `EVENT_COMPLETE` handler in
+  `subagent.py::_run_inner` discarded the child's token/cost numbers (`break`); it now captures them,
+  derives cost via `pricing.estimate_cost` when the provider reported none, stamps
+  `input_tokens`/`output_tokens`/`cost_usd` onto `SubagentInfo` (new fields, carried on the existing
+  completion delivery), and writes one ledger row via a new `SubagentManager._record_subagent_usage`
+  helper with `source="subagent"` keyed to the PARENT session — so a 3-way fan-out yields 3 rows and
+  a fan-out's cost is attributable per child. `provider="acp"` (subagents run through the ACP
+  runtime). Fail-open (record_turn never raises into completion delivery). Scope: subagent site only —
+  the loop-cron / channel-cli sites (C2 remainder = CATO-4) and the surfaces (S2 = CATO-5..8) remain,
+  so still no user-visible readout → no CHANGELOG. **Gates:** `make lint` clean (698 files);
+  `tests/test_usage_ledger.py::TestSubagentWriteSite` (4: parent-keyed row, 3-way fan-out→3 rows,
+  unpriced→priced=False, SubagentInfo carries the fields) + full usage-ledger (20) + `test_subagent.py`
+  (65, SubagentInfo field addition safe) pass.
