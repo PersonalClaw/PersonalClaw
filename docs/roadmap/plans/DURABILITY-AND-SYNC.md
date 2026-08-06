@@ -1048,3 +1048,30 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   `make lint` clean (701 files); `tests/test_durability_registry.py` (23: prefix zero-pad/sort,
   canonical byte-stability + sha, empty/corrupt/malformed handling, monotonic bump, peer ordering,
   cursor-driven `new_prefixes_since` + idempotent re-poll, `advanced_over`) pass.
+
+## Execution log — DAS-6c-ii-b (durable outbox + consumed-only cursor)
+
+- **DAS-6c-ii-b DONE.** The two durable-state halves the cycle engine (6c-ii-c) reads/writes,
+  built as pure bookkeeping over on-disk JSON (clock-free — timestamps passed in — so a replay
+  is deterministic). Added `durability/outbox.py`: one file per (target, seq) under
+  `<sync_root>/outbox/`, so a push obligation survives a crash/restart. Statuses
+  `pending|delivered|given-up`; deliverer outcomes `delivered|transient|permanent`, applied by
+  `record_outcome` — `delivered`→terminal delivered, `permanent`→terminal given-up, and
+  **anything else (transient OR an unclassified throw) leaves it pending + bumps attempts**, so a
+  push is discharged only by a real success or an explicit permanent failure, never silently
+  dropped (§4.1 verbatim). Per-(target,seq) files mean **one target giving up never blocks
+  another's drain** (`pending()` excludes terminals). `enqueue` is idempotent on (target, seq) —
+  re-enqueue after a crash never resets a delivered entry; target names are path-separator-scrubbed
+  so an entry file can't escape the outbox dir; a corrupt entry file is skipped, not fatal. Added
+  `durability/cursor.py`: the consumed-only pull cursor — the `seen` map `Registry.new_prefixes_since`
+  reads. `record(peer, seq, verdict)` advances the per-peer high-water mark **only** on `consumed`
+  or `payload-bad` (the latter advances past a poison shard so it can't wedge every later seq, and
+  logs); `prerequisite-absent` **holds** (out-of-order arrival retried next cycle); advancement is
+  monotonic (a stale/replayed verdict is a no-op); `seen()` returns a copy; a corrupt cursor file
+  degrades to empty. Pure state layer, no user surface → no CHANGELOG. **Remaining:** 6c-ii-c (the
+  pull→merge-import→export-union→push engine composing 6a transport + 6b import + 6c-i merge + 6c-ii-a
+  registry + this outbox/cursor, with the CAS retry loop + staleness window), then DAS-6d (git-sync +
+  dir-sync apps + criterion-4 two-machine convergence). **Gates:** `make lint` clean (703 files);
+  `tests/test_durability_outbox.py` (23: enqueue idempotency, all four outcome→status transitions incl.
+  unclassified-as-transient, one-target-give-up-doesn't-block-others, persistence across handles, stats,
+  corrupt-file skip; cursor consumed/hold/payload-bad/monotonic/copy/unknown-verdict/reload/corrupt) pass.
