@@ -20,6 +20,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The chat header shows what the whole conversation has cost.** A cost chip — e.g.
+  `$0.19 · 46k tokens` — appears in the session header once a chat has recorded usage, reading the
+  per-turn ledger scoped to that session. A conversation whose models are all priced shows a real
+  dollar figure; one that used a model with no price row shows `unpriced` rather than a misleadingly
+  precise total.
 - **The "Turn complete" line now shows what the turn cost.** When a turn finishes, its telemetry
   line (in the collapsible per-turn details) reports real USD plus in/out token counts — e.g.
   `$0.0123 · 1,200 in / 340 out tokens`. A model with no price row shows `unpriced` rather than a

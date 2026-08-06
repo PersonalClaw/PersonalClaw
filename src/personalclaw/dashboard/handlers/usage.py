@@ -27,39 +27,46 @@ def _bad_request(message: str) -> web.Response:
 
 
 async def api_usage_rollup(request: web.Request) -> web.Response:
-    """GET /api/usage/rollup?group_by=&since=&until= — aggregated ledger rows.
+    """GET /api/usage/rollup?group_by=&since=&until=&session= — aggregated ledger rows.
 
     ``group_by`` defaults to ``model``; ``since``/``until`` are optional ISO
-    timestamps bounding a ``[since, until)`` window (empty = unbounded)."""
+    timestamps bounding a ``[since, until)`` window (empty = unbounded); ``session``
+    restricts to one session key (empty = all)."""
     group_by = request.query.get("group_by", "model")
     if group_by not in _GROUP_KEYS:
         return _bad_request(f"group_by must be one of {list(_GROUP_KEYS)}, got {group_by!r}")
     since = request.query.get("since", "")
     until = request.query.get("until", "")
+    session = request.query.get("session", "")
     try:
-        rows = ul.rollup(since=since, until=until, group_by=group_by)
+        rows = ul.rollup(since=since, until=until, group_by=group_by, session_key=session)
     except Exception:  # noqa: BLE001 — a ledger read must never 500 a read-only surface
         logger.debug("usage rollup failed", exc_info=True)
         return web.json_response(
             {"error": {"code": "internal", "message": "could not read the usage ledger"}},
             status=500,
         )
-    return web.json_response({"group_by": group_by, "since": since, "until": until, "rows": rows})
+    return web.json_response(
+        {"group_by": group_by, "since": since, "until": until, "session": session, "rows": rows}
+    )
 
 
 async def api_usage_totals(request: web.Request) -> web.Response:
-    """GET /api/usage/totals?since=&until= — the grand total over the window."""
+    """GET /api/usage/totals?since=&until=&session= — the grand total over the window.
+
+    ``session`` (when given) restricts to one session key — the session-total surface."""
     since = request.query.get("since", "")
     until = request.query.get("until", "")
+    session = request.query.get("session", "")
     try:
-        totals = ul.totals(since=since, until=until)
+        totals = ul.totals(since=since, until=until, session_key=session)
     except Exception:  # noqa: BLE001
         logger.debug("usage totals failed", exc_info=True)
         return web.json_response(
             {"error": {"code": "internal", "message": "could not read the usage ledger"}},
             status=500,
         )
-    return web.json_response({"since": since, "until": until, "totals": totals})
+    return web.json_response({"since": since, "until": until, "session": session, "totals": totals})
 
 
 def register_usage_routes(app: web.Application) -> None:

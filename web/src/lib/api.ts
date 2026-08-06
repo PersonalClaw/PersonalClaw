@@ -1686,6 +1686,10 @@ export const api = {
   routingDismiss: (agent: string) => post<{ ok: boolean; count: number; muted: boolean }>('/api/agents/routing/dismiss', { agent }),
   routingUnmute: (agent: string) => post<{ ok: boolean }>('/api/agents/routing/unmute', { agent }),
   routingStatus: () => get<{ enabled: boolean; muted: string[]; dismissals: Record<string, { count: number; last_dismissed_at: number }> }>('/api/agents/routing/status'),
+  // Cost/token usage totals (COST-AND-TOKEN-OBSERVABILITY). `session` scopes to one
+  // chat (the header chip); omit for the account-wide total. `priced=false` ⇒ the
+  // window mixes a model with no price row, so the cost is a partial (render "unpriced"-ish).
+  usageTotals: (session?: string) => get<{ session: string; totals: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number; turns: number; priced: boolean } }>(`/api/usage/totals${session ? `?session=${encodeURIComponent(session)}` : ''}`),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),

@@ -145,3 +145,29 @@ async def test_empty_ledger_is_ok_not_error(_home):
         assert t.status == 200 and (await t.json())["totals"]["turns"] == 0
     finally:
         await c.close()
+
+
+@pytest.mark.asyncio
+async def test_session_filter_threads_through(_home):
+    for sk, cost in (("dashboard:a", 1.0), ("dashboard:a", 2.0), ("dashboard:b", 0.5)):
+        ul.record_turn(
+            TurnUsage(
+                ts="2026-08-06T12:00:00+00:00",
+                session_key=sk,
+                source="chat",
+                agent="",
+                provider="anthropic",
+                model="claude-opus-4.5",
+                input_tokens=100,
+                output_tokens=20,
+                cost_usd=cost,
+                priced=True,
+            )
+        )
+    c = await _client()
+    try:
+        body = await (await c.get("/api/usage/totals?session=dashboard:a")).json()
+        assert body["session"] == "dashboard:a"
+        assert body["totals"]["cost_usd"] == 3.0 and body["totals"]["turns"] == 2
+    finally:
+        await c.close()

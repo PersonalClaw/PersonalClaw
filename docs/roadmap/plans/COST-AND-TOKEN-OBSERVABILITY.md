@@ -252,3 +252,17 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   (CATO-8) remain. **Gates:** `make lint` clean (699 files); `tests/test_usage_ledger.py::TestTurnCompleteLine`
   (5: priced shows USD+tokens, unpriced never `$0.00`, cache-only-when-nonzero, no-token backward-compatible
   bare line, priced-zero-cost still shows `$` not unpriced) + usage-ledger + chat-runner-wiring = 35 passed.
+
+- **CATO-7 DONE — the session cost header (S2 session-level surface).** Added a `session_key` filter
+  to `usage_ledger.rollup`/`totals` (via a shared `_row_selected` helper — the rows already carried
+  `session_key`; only the query fns lacked the filter) and threaded `?session=` through the CATO-5
+  routes. FE: `api.usageTotals(session)` + a header chip in `ChatPage.tsx` (`Coins` icon, compact
+  `fmtTokens` — "46k") next to the project/investigate chips, refreshed on session load + after each
+  `chat_done`. Honest total: a session mixing an unpriced model renders `unpriced`, never a
+  confidently-complete `$0.00`; the chip only appears once the session has real recorded usage.
+  Done-when invariant proven: a multi-turn session's reported total equals the sum of its turn rows.
+  Second user-visible CATO surface → **CHANGELOG entry.** Scope: session header only — the Usage
+  panel (CATO-8, account-level) remains. **Gates:** `make lint` clean (699 files); `npm run
+  typecheck` + `npm run build` clean; `tests/test_usage_ledger.py::TestSessionScopedAggregation` (4:
+  session-scoped totals, sum-matches-turns invariant, scoped rollup, unknown-session-empty) +
+  `test_usage_routes.py` session-filter route test + full usage suites pass.
