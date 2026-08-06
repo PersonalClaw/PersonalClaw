@@ -280,3 +280,17 @@ Owner ruling 2026-07-29: "Redesign the plan now and implement when it should be 
 Restructured S1/S2 into three sessions so the ordering repairs (valuable alone, and the precondition for the marker) land before the marker, and the producer lands before the proof. Sharpened §C6 to state that the config switch gates the marker only and must not fork the ordering into a dual path. No task was dropped; T1.1 and T3.1 are new, and every rev-1 task survives with its clauses intact.
 
 Status stays DESIGNED — implementation deferred to its natural roadmap position per the owner ruling.
+
+- **PCS-2 DONE — [CURRENT DATE] moved after truncation (§C3).** `context.py::build_session_context`
+  no longer appends the date line into `parts` (which is joined then hard-truncated at
+  `_MAX_CONTEXT_CHARS`, cutting from the END — so a mid-block date was the first thing an oversized
+  context silently lost, regressing "what day is it" for the heaviest users). The line is now
+  rendered once at assembly time (timestamp captured there) and appended to `context` AFTER the
+  truncation step, for the single assembly tail both the custom and personalclaw paths take. Date
+  text byte-identical; date now always the final block, exactly once. **Scope:** PCS-2 only (the
+  ordering repair) — independent of PCS-1's volatile-tagging (different file: `context.py` vs
+  `llm/anthropic.py`+`runtime.py`), so taken now without waiting on PCS-1; the cache MARKER + its
+  measure-before-claiming gate remain PCS-1/T2.2/S3. No user surface → no CHANGELOG. **Gates:**
+  `make lint` clean (697 files); 2 new `test_context.py` cases (date survives a shrunken-cap
+  truncation as the tail block; present exactly once on a small context) + full `test_context.py`
+  (52) + `test_context_engine.py`/`test_thread_context.py`/`test_project_context.py` (51) pass.
