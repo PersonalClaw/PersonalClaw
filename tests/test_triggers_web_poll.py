@@ -124,6 +124,47 @@ def _fetcher(pages):
     return fetch
 
 
+def _async_fetcher(pages):
+    """An ASYNC fetcher matching the real `personalclaw.net.fetch` (a coroutine).
+
+    The production default path fetches through the async `net.fetch`; this fake exercises that
+    exact shape so the coroutine-bridge (`_await_maybe`) is under test. Before the bridge, `_fetch`
+    returned the un-awaited coroutine and read `status`/`body` as 0/empty.
+    """
+
+    async def fetch(url):
+        return types.SimpleNamespace(
+            status=200, body=pages["v"].encode(), url=url, headers={}, truncated=False
+        )
+
+    return fetch
+
+
+def test_an_ASYNC_fetcher_is_awaited_not_left_a_coroutine(store, tmp_path):
+    """🔴 Regression for the missing-await bug: the real `net.fetch` is a coroutine, and `_fetch`
+    called it without awaiting — so the default path saw `status=0`/empty and every web_watch
+    silently no-oped. With the `_await_maybe` bridge, an async fetcher's items reach the seed."""
+    trigger = _watch(store)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_async_fetcher({"v": FEED_TWO})
+    )
+    # The seed pass never fires, but it must have SEEN the items — an un-awaited coroutine would
+    # have extracted nothing and seeded zero.
+    assert "seeded" in outcome.reason
+    state = web_poll.load_state(trigger.id, base_dir=tmp_path)
+    assert len(state.seen) >= 1, "async fetch body was not awaited — seed saw no items"
+
+
+def test_await_maybe_passes_through_a_sync_value_and_resolves_a_coroutine():
+    """The bridge is used by BOTH async seams; a sync fake must pass straight through."""
+
+    async def _coro():
+        return 42
+
+    assert web_poll._await_maybe(7) == 7  # sync value untouched
+    assert web_poll._await_maybe(_coro()) == 42  # coroutine resolved on a no-loop thread
+
+
 # ── the gap itself ──
 
 
