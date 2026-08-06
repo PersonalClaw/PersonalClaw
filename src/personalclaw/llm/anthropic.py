@@ -105,11 +105,28 @@ def _translate_tools(tools: list[dict]) -> list[dict]:
     return out
 
 
+# Neutral message-dict marker (PCS-1 / F1): a ``role: "system"`` message carrying
+# ``{_VOLATILE_MESSAGE_KEY: True}`` holds per-turn VOLATILE content (the native loop's
+# turn_note — tool catalog + group stubs — changes every turn). The writer is the native
+# runtime; this is its sole reader. The word ``cache_control`` deliberately does not appear
+# here — this atom only relocates the volatile note; cache-point tagging is PCS-2.
+_VOLATILE_MESSAGE_KEY = "_volatile"
+
+
 def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
 
     * ``role: "system"`` messages are concatenated into the returned system
-      string (Anthropic carries the system prompt out-of-band).
+      string (Anthropic carries the system prompt out-of-band, so it leads the
+      served prompt) — UNLESS the message is tagged VOLATILE (see below).
+    * A ``role: "system"`` message tagged ``{_VOLATILE_MESSAGE_KEY: True}`` is NOT
+      hoisted into ``system=``. Anthropic serves ``system=`` ahead of ``messages[0]``,
+      so a per-turn-changing note there would break the cacheable EXACT prefix
+      (F1). Instead the note is relocated to the TAIL of the message list, carried
+      as a trailing ``{"role": "user", "content": <note>}`` (Anthropic has no
+      trailing-system concept). The stable assembled context — ``messages[0]``, a
+      user message — then leads. The note moves position, never existence: it still
+      reaches the model, just late. Multiple volatile notes ship once each, in order.
     * ``role: "assistant"`` with ``tool_calls`` becomes a content-block list
       mixing an optional leading ``text`` block and one ``tool_use`` block per
       call (``arguments`` JSON string parsed into the ``input`` dict).
@@ -118,16 +135,27 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
       tool results in one user message).
     * Plain ``user``/``assistant`` string messages pass through as
       ``{role, content}``.
+
+    Byte-identical invariant: a ``messages`` list with NO volatile-tagged message
+    produces exactly the ``(system, out)`` this returned before PCS-1.
     """
     system_parts: list[str] = []
     out: list[dict] = []
+    # Volatile system notes, relocated to the tail after the loop (empty ⇒ the
+    # return is byte-for-byte the pre-PCS-1 behavior).
+    volatile_tail: list[dict] = []
 
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content")
 
         if role == "system":
-            if content:
+            if msg.get(_VOLATILE_MESSAGE_KEY):
+                # Volatile per-turn note → tail user message, not out-of-band system=.
+                if content:
+                    volatile_tail.append({"role": "user", "content": str(content)})
+            elif content:
+                # Stable system content → out-of-band system=, leads the prompt.
                 system_parts.append(str(content))
             continue
 
@@ -179,6 +207,11 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
 
         # Plain user / assistant text message — pass through unchanged.
         out.append({"role": role, "content": content})
+
+    # Deliver any volatile notes at the TAIL, in order — after the stable context
+    # so the served prompt's prefix stays stable across turns (F1). Empty when no
+    # message was tagged, keeping the untagged path byte-identical.
+    out.extend(volatile_tail)
 
     return "\n\n".join(system_parts), out
 
