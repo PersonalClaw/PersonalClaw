@@ -435,3 +435,24 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   STUDIES concern for ES-2/ES-5, not here). **Gates:** `make lint` clean (718 files);
   `tests/test_evals_store.py` (10) + config round-trip/schema + durability inventory (48 total) +
   `test_snapshot.py` (111) pass.
+
+## Execution log — ES-1b (child-process matrix runner) — ES-1 COMPLETE
+
+- **ES-1b DONE; ES-1 (evals store + experiment-matrix runner + isolation fix) COMPLETE.**
+  `evals/runner.py::run_matrix` composes ES-1a's types + store: expand axes cartesian product ×
+  `trial_count`, run cells SEQUENTIALLY, aggregate via the three-state `aggregate()`, persist
+  per-cell trials + aggregates + experiment under `matrices/<id>/`, append a `results.tsv` row, SEL
+  log start/finish. `evals/child.py` is the `python -m personalclaw.evals.child <descriptor.json>`
+  entrypoint running ONE cell via the reused `EvalRunner`. **§1.3 isolation:** each cell spawns with
+  `os.environ.copy()` + `PERSONALCLAW_WORKSPACE` set on the COPY for the child only — the parent
+  gateway env is NEVER mutated (`eval/runner.py` byte-for-byte untouched; a test asserts
+  `dict(os.environ)` unchanged across a run). Three-state maps a verifier that couldn't run
+  (timeout / non-zero exit / unparseable stdout / budget-EXCEEDED-preflight-so-no-spawn / spawn
+  OSError) to `VERIFIER_ABSENT`, never a false `FAILED`; `run_matrix` never raises out.
+  `store.py` gained `write/read_matrix_trials`. No user surface → no CHANGELOG. **Operational note:**
+  implemented in an isolated worktree after tick-15's health-fix `git checkout` on the shared tree
+  displaced it; recovered intact and rebased onto the current #832 (which carries the #831
+  FTS5-degrade-test fix). **Remaining EVALUATION-SUBSTRATE:** ES-2+ (RunPin, judge bench, studies,
+  the FE tab) — later atoms. **Gates:** `make lint` clean (720 files);
+  `tests/test_evals_matrix_runner.py` (21) + `test_evals_store.py` (10) + `test_eval_harness.py` (59
+  — proves eval/runner.py unchanged) pass.
