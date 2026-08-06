@@ -818,6 +818,28 @@ class TestFileMove:
             )
             assert r.status == 404
 
+    @pytest.mark.asyncio
+    async def test_move_root_as_src_refused(self, mock_sel, home_patch):
+        """Issue #780: a dashboard ROOT is never a valid move source.
+
+        A root passes ``_validate_dashboard_path`` (a root is inside itself), so
+        without the guard ``shutil.move`` would relocate the whole root. The root
+        and its contents MUST survive untouched.
+        """
+        sentinel = home_patch / "keep-me.txt"
+        sentinel.write_text("precious")
+        async with TestClient(TestServer(_make_app())) as client:
+            r = await client.post(
+                "/api/file-move",
+                json={"src": str(home_patch), "dest": str(home_patch / "relocated")},
+            )
+            assert r.status == 400
+            body = await r.json()
+            assert "root" in body["error"]
+        # The root and its contents are untouched — no move happened.
+        assert home_patch.is_dir()
+        assert sentinel.read_text() == "precious"
+
 
 class TestFileDelete:
     @pytest.mark.asyncio
@@ -850,6 +872,26 @@ class TestFileDelete:
         async with TestClient(TestServer(_make_app())) as client:
             r = await client.post("/api/file-delete", json={"path": str(home_patch / "nope.txt")})
             assert r.status == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_root_refused(self, mock_sel, home_patch):
+        """Issue #780: deleting a dashboard ROOT must be refused, not rmtree'd.
+
+        A root is inside the allowlist (a root is inside itself), so it passes
+        ``_validate_dashboard_path`` — but ``shutil.rmtree`` on it would wipe the
+        whole root (e.g. the workspace, or via #294 the real ~/.personalclaw).
+        The root and its contents MUST survive untouched.
+        """
+        sentinel = home_patch / "keep-me.txt"
+        sentinel.write_text("precious")
+        async with TestClient(TestServer(_make_app())) as client:
+            r = await client.post("/api/file-delete", json={"path": str(home_patch)})
+            assert r.status == 400
+            body = await r.json()
+            assert "root" in body["error"]
+        # The root dir and its contents are untouched — no rmtree happened.
+        assert home_patch.is_dir()
+        assert sentinel.read_text() == "precious"
 
 
 class TestFileUpload:
