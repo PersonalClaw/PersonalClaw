@@ -46,7 +46,7 @@ from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import longrun, mutations, store
+from personalclaw.workflows import judge_calibration, longrun, mutations, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
@@ -58,9 +58,15 @@ from personalclaw.workflows.effects import (
     redo_blocked,
     run_teardown,
 )
-from personalclaw.workflows.engine import NodeResult, dispatch
+from personalclaw.workflows.engine import (
+    DEFAULT_MODEL_TIERS,
+    NodeResult,
+    dispatch,
+    resolve_axis_model,
+)
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
+from personalclaw.workflows.loop_middleware import InterruptQueue
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_RUN_STATUSES,
@@ -214,6 +220,13 @@ class RunController:
         self._declined_edges: set[str] = self._collect_declined_edges()
         self._iterations: dict[str, int] = {}
         self._dry_streaks: dict[str, int] = {}
+        #: Steering, keyed by the iterated container's path. The durable
+        #: queue lives on `run.extra["steering_queue"]` (written by `service.steer_run`); the tick
+        #: consumes it at the iteration boundary and parks the rendered re-plan block HERE until
+        #: the next iteration's prompt picks it up. Single-use: cleared once injected, so a resume
+        #: cannot replay a mid-run instruction — the same discipline the human-input continuations
+        #: follow.
+        self._steering_inject: dict[str, str] = {}
         #: Context lifecycle, keyed by the iterated container's path. Held in memory for
         #: the CURRENT run and journaled on every write, so a resumed or rewound run rebuilds them
         #: from the ledger rather than losing them — see `_rehydrate_context`.
@@ -229,6 +242,10 @@ class RunController:
         #: session through the composer @-picker or the agent's `knowledge_search` tool, both of
         #: which are the user asking. Nothing here is reachable from a chat-context path.
         self._brief: Any = None
+        #: The run's worker model, resolved ONCE (see `_worker_model`) — the family a `cross_model`
+        #: judge gate must avoid. The active selection does not change mid-run, so
+        #: re-resolving per gate would re-read the model store for an answer that cannot change.
+        self._worker_model_cache: str | None = None
         #: Long-run watcher state, keyed by the loop's path. Journaled
         #: on every cycle and replayed on resume: held only in memory it would reset on every
         #: gateway restart, which is precisely when a months-long watcher is most likely to be
@@ -763,6 +780,13 @@ class RunController:
             approved=approved,
             answer=filled,
         )
+        # Judge/human divergence → Run Ledger. If this gate had a judge
+        # verdict and the human's decision contradicts it, record the direction: a judge that
+        # PASSed work a human then rejected is a `false_pass`; a judge that REJECTed work a human
+        # then approved is a `false_reject`. This is the calibration signal — a verdict that
+        # followed a human override is not clean evidence about the template, and without the event
+        # a refiner cannot tell the difference (see judge_calibration.DivergenceRecord).
+        self._emit_judge_divergence(cont.instance_path, cont.node_id, approved)
         self.run.attention = None
         # The run has work again, so it is no longer surfaced as blocked. Written BEFORE the
         # loop restarts so a status read between the two never reports a stale needs_input.
@@ -1405,6 +1429,25 @@ class RunController:
         out.config["prompt"] = f"{carried}\n\n---\n\n{prompt}"
         return out
 
+    def _worker_model(self) -> str:
+        """The concrete model this run's WORKERS resolve to — the family a `cross_model`
+        judge gate must avoid (WF2LOO-11).
+
+        A stage spawn records no model synchronously (it returns RUNNING with a
+        subagent id and the model is chosen inside the async turn), so the honest,
+        available source is the SAME resolution a worker stage performs: its
+        `model_tier` maps to a use case (the default `standard` tier → the
+        `orchestration` axis that model-less subagent spawns run under), and the
+        engine resolves that axis to the head of its active-selection chain. That is
+        exactly the model a worker WILL run on, which is what the judge must differ
+        from. Memoized: the active selection does not change mid-run, and the family
+        is all the check needs.
+        """
+        if self._worker_model_cache is None:
+            worker_uc = self.services.model_tiers.get("standard", DEFAULT_MODEL_TIERS["standard"])
+            self._worker_model_cache = resolve_axis_model(worker_uc)
+        return self._worker_model_cache
+
     async def _execute(self, item: ReadyNode, ctx: BindingContext) -> NodeResult:
         """Run a dispatcher under the total-timeout knob.
 
@@ -1450,6 +1493,10 @@ class RunController:
             # `timeout_stall` fires on any node slower than the window, which makes the two timeout
             # knobs one knob and kills a node that is visibly working.
             on_progress=lambda path=item.path: self.note_progress(path),
+            # The worker model a `cross_model` judge gate must differ from. Resolved
+            # from the run's worker axis; only the JUDGE branch reads it, so a run with no
+            # cross_model gate pays nothing.
+            worker_model=self._worker_model(),
         )
         if total and total > 0:
             try:
@@ -1796,6 +1843,24 @@ class RunController:
                 # that node needs in order to know what it is invalidating.
                 self.journal.child_run_attach(self.run.id, child_id, item.node.id)
 
+        # Judge gate verdict → Run Ledger (criterion 3). A judge gate's
+        # NodeResult carries `judge_evidence` (see engine.dispatch_gate); emit here at the settle,
+        # for BOTH pass and reject, so a refiner reading the ledger sees every judge call with its
+        # evidence chain and discard status — and criterion 3 ("judges reject at least once with
+        # evidence over parity runs") is provable from the ledger rather than only from tests.
+        out = result.output if isinstance(result.output, dict) else {}
+        if "judge_evidence" in out:
+            self.journal.write(
+                journal_mod.JUDGE_VERDICT,
+                instance_path=item.path,
+                node_id=item.node.id,
+                epoch=inst.epoch,
+                template=str(self.run.workflow_name or ""),
+                verdict=out.get("verdict", ""),
+                status=out.get("judge_status", "kept"),
+                evidence=out.get("judge_evidence", {}),
+            )
+
         if result.state in SUCCESS_STATES:
             ref, preview = self.journal.store_output(item.path, result.output)
             inst.output_ref = ref
@@ -1930,6 +1995,79 @@ class RunController:
         inst.declined_edges = sorted(set(inst.declined_edges) | set(edges))
         self._declined_edges.update(edges)
 
+    def _emit_judge_divergence(
+        self, instance_path: str, node_id: str, human_approved: bool
+    ) -> None:
+        """Record a human overriding a judge on the same gate (LOOPS-EVOLUTION R3).
+
+        Reads this node's last `judge_verdict` from the ledger; emits `judge_divergence` only when
+        the human's decision actually contradicts it. No prior judge verdict (an ordinary approval
+        gate) → nothing to diverge from, so nothing is written.
+        """
+        if not node_id:
+            return
+        verdicts = journal_mod.ledger(self.run.id, kinds={journal_mod.JUDGE_VERDICT})
+        mine = [v for v in verdicts if v.get("node_id") == node_id]
+        if not mine:
+            return
+        judge_verdict = str(mine[-1].get("verdict", ""))
+        judged_pass = judge_verdict.upper() == "PASS"
+        if judged_pass == human_approved:
+            return  # judge and human agree — not a divergence
+        record = judge_calibration.DivergenceRecord(
+            run_id=self.run.id,
+            node_id=node_id,
+            template=str(self.run.workflow_name or ""),
+            judge_verdict=judge_verdict,
+            human_verdict="PASS" if human_approved else "REJECT",
+        )
+        self.journal.write(journal_mod.JUDGE_DIVERGENCE, **record.to_dict())
+
+    def _consume_steering(self, parent_path: str, node: Node, iteration: int) -> None:
+        """Consume mid-run steering at the loop boundary (LOOPS-EVOLUTION R14).
+
+        The durable queue (`run.extra["steering_queue"]`, written by `service.steer_run`) is
+        drained HERE — under the lock, between iterations, exactly like `_drain_mutations`. Mid-
+        iteration injection would race the worker's own state; the boundary is where the next
+        iteration can actually act on the instruction. Single-use: the queue is cleared and the
+        rendered block parked on `_steering_inject` for the next iteration's prompt, so a resume
+        cannot replay it. Journaled so a refiner can tell a human-steered verdict from an
+        autonomous one — without the event the two are indistinguishable (see journal.STEERING).
+        """
+        pending = self.run.extra.get("steering_queue")
+        if not isinstance(pending, list) or not pending:
+            return
+        self.run.extra["steering_queue"] = []
+        queue = InterruptQueue()
+        for entry in pending:
+            text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
+            queue.push(text, now=time.time())
+        consumed = queue.consume(now=time.time())
+        texts = [i.text for i in consumed]
+        if not texts:
+            self._save_run()
+            return
+        block = queue.as_steering_prompt(consumed)
+        # Append if a block is already parked (two steers before the next iteration read either):
+        # the newest instruction goes last, the same order `consume` preserves.
+        existing = self._steering_inject.get(parent_path)
+        self._steering_inject[parent_path] = f"{existing}\n\n{block}" if existing else block
+        self.journal.write(
+            journal_mod.STEERING,
+            instance_path=parent_path,
+            node_id=node.id,
+            iteration=iteration,
+            count=len(texts),
+            texts=texts,
+        )
+        self._publish(
+            "workflow_steering_consumed",
+            {"instance_path": parent_path, "node_id": node.id, "count": len(texts)},
+        )
+        # Persist the drained queue immediately: a crash between here and the next tick must not
+        # resurrect an instruction the ledger already records as consumed.
+        self._save_run()
+
     def _advance_loop(self, item: ReadyNode) -> None:
         """Advance a loop's iteration counter when its body finished an iteration.
 
@@ -1958,6 +2096,12 @@ class RunController:
         # Feed the breaker, then consult it BEFORE the next iteration. Deterministic and
         # LLM-free: a loop thrashing on the same error is the most common autonomous-run
         # failure, and paying a model to notice it would be slower and less reliable.
+        #
+        # This `check_breaker` is the SOLE trip authority (LOOPS-EVOLUTION R-de-dup). `loop_
+        # middleware.check_middleware` re-implements the same identical-call/no-progress trips;
+        # wiring its breaker half here would be a second, redundant path — a clean-break violation.
+        # Only `loop_middleware`'s non-redundant surface (`InterruptQueue`, used by
+        # `_consume_steering`) is adopted; its counter-based breaker is deliberately not called.
         inst = self._instance(item.path)
         breaker = self._breakers.setdefault(parent_path, BreakerState())
         breaker.record(
@@ -1983,6 +2127,12 @@ class RunController:
             )
             self._escalate(parent_path, node.id, reason=verdict.reason, detail=verdict.detail)
             return
+
+        # Consume steering BEFORE the continue decision, so a mid-run instruction reaches the next
+        # iteration's prompt (R14). Drained even when the loop is about to end — a dropped
+        # instruction the user cannot see is indistinguishable from one that was silently ignored,
+        # so the STEERING event is journaled regardless; only the injection needs a next iteration.
+        self._consume_steering(parent_path, node, iteration)
 
         ctx = BindingContext(
             inputs=self.run.inputs,
@@ -2202,13 +2352,21 @@ class RunController:
         node = dict(_walk(self.root)).get(parent_path)
         if node is None:
             return ""
+        # Steering (R14) reaches BOTH session policies: a mid-run instruction must land even in a
+        # `continuous` loop, whose transcript otherwise carries no fresh block. Consume it single-
+        # use — once it is in a prompt, a re-render must not repeat it. It goes LAST, after the
+        # handoff/carryover, because it is the newest and highest-priority instruction.
+        steer = self._steering_inject.pop(parent_path, "")
         if context_mod.session_policy(node.config) != context_mod.SESSION_FRESH:
-            return ""
-        return context_mod.render_context(
+            return steer
+        carried = context_mod.render_context(
             handoff=self._handoffs.get(parent_path),
             carryover=self._carryover.get(parent_path),
             decisions=self._decisions.get(parent_path),
         )
+        if steer:
+            return f"{carried}\n\n{steer}" if carried else steer
+        return carried
 
     # ── binding context ──
 

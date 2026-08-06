@@ -76,9 +76,32 @@ Security Event Log.
 
 ## Sandbox (`sandbox.py`)
 
-OS-level child-process sandboxing for tool execution, including an
+Credential-hiding child-process isolation for tool execution, including an
 environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
+
+### What the sandbox does and does not do
+
+This is a **credential-hiding sandbox, not a confinement sandbox** — a precise distinction
+that the rest of this section, and any public claim, must respect. The macOS Seatbelt profile
+is allow-by-default (`(version 1)\n(allow default)`) with targeted `deny file-read*` rules over
+credential paths (`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.docker`, `~/.kube`,
+`.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, `.personalclaw/.env`, plus `~/.ssh` in
+`strict`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
+cost of credential theft; it does not stop an agent from doing anything else.
+
+| It **does** | It does **not** |
+|---|---|
+| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`) |
+| Scrub credential env vars from the child, every mode | Restrict **network / egress** from the child |
+| Deny `~/.ssh` writes (macOS `strict` only) | Limit processes, CPU, or memory (no rlimits) |
+| Path-allowlist a subagent's cwd (advisory — the prompt tells the agent its scope) | Provide a filesystem **jail** or a real execution boundary |
+| Enforce app `api`/`storage`/`memory`/`cron` permissions server-side | Enforce the app `network` permission (declaration-only — see `docs/security/limitations.md`) |
+
+The honest, complete statement of limitations lives in
+[`../security/threat-model.md`](../security/threat-model.md) and
+[`../security/limitations.md`](../security/limitations.md); this section is the architectural
+summary, not a substitute for them.
 
 ## Egress chokepoint (`net/`)
 

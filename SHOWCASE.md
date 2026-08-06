@@ -130,7 +130,7 @@ stateDiagram-v2
     Paused --> Cycle: resume
     Done --> [*]
     note right of Cycle
-        Bounded by guardrails:
+        Unattended work bounded by guardrails:
         budgets · breakers · approval gates
     end note
 ```

@@ -235,3 +235,41 @@ async def test_groups_endpoint_survives_a_broken_registry(monkeypatch):
     resp = await tools_mod.api_tool_groups(_DummyRequest())
     payload = json.loads(resp.body.decode())
     assert "groups" in payload  # still a well-formed answer
+
+
+# ── POST /api/tools/invoke — request type guards ──────────────────────────────
+
+
+class _InvokeRequest:
+    """Minimal stand-in for api_tool_invoke: supplies the JSON body and the
+    optional app identity the handler reads off the request mapping."""
+
+    def __init__(self, body: dict) -> None:
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+    def get(self, key, default=None):
+        # No app identity → the owner/internal caller path (no permission gate).
+        return default
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_provider", [["a", "b"], {"x": 1}])
+async def test_invoke_rejects_non_string_provider(bad_provider):
+    """A non-string ``provider`` is a 400, mirroring the ``arguments`` guard.
+
+    Regression: an unhashable ``provider`` (list/dict) flowed straight into
+    ``get_provider(provider_name)`` — a dict lookup — which raised and surfaced
+    as HTTP 500 instead of a clean 400.
+    """
+    import json
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "artifact_list", "provider": bad_provider})
+    )
+    assert resp.status == 400
+    payload = json.loads(resp.body.decode())
+    assert payload["ok"] is False
+    assert payload["error"] == "provider must be a string"

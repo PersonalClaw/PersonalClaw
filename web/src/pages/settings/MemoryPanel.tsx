@@ -96,7 +96,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
 
       {/* Studio owns its own 3-pane height; the tool tabs get a bounded scroll body. */}
       {tab === 'studio' ? (
-        <MemoryStudio onChanged={reloadStats} />
+        <MemoryStudio onChanged={reloadStats} initialSel={query.sel || undefined} />
       ) : (
         <ToolTabBody>
           {tab === 'recall' && <RecallTab />}
@@ -192,10 +192,12 @@ const STUDIO_DOCS: { which: 'preferences' | 'projects' | 'history'; label: strin
  *  md5; we only need the same label key). */
 const lessonRef = (rule: string) => `lesson:${rule.slice(0, 80)}`
 
-function MemoryStudio({ onChanged }: { onChanged: () => void }) {
+function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initialSel?: string }) {
   const [kindFilter, setKindFilter] = useState<StudioKind | 'all'>('all')
   const [q, setQ] = useState('')
-  const [selUid, setSelUid] = useState<string | null>(null)
+  // `initialSel` (e.g. `epi:42`, from a `[Memory N]` chat citation's deep-link)
+  // preselects that memory once on mount; user selection takes over after.
+  const [selUid, setSelUid] = useState<string | null>(initialSel ?? null)
   const [hopDepth, setHopDepth] = useState(1)
   const [addMode, setAddMode] = useState<'fact' | 'lesson' | null>(null)
 

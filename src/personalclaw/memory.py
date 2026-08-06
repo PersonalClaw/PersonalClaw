@@ -15,13 +15,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-try:
-    import pysqlite3 as sqlite3
-except ImportError:
-    import sqlite3
-
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
+from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 if TYPE_CHECKING:
     from personalclaw.vector_memory import VectorMemoryStore
@@ -73,6 +69,14 @@ class MemoryStore:
         self._projects_file = self._memory_dir / PROJECTS_FILE
         self._index_db = (workspace or config_dir()) / "memory_index.db"
         self._vector_store: "VectorMemoryStore | None" = None
+        # DEGRADE (not raise): the markdown projection (preferences/projects/history) is
+        # this class's real job and works without a search index — FTS5 only powers the
+        # optional `search()`. Decide ONCE here whether the index is available; on a build
+        # without FTS5 we log the remedy once and every FTS method becomes a clean no-op
+        # instead of throwing (or retrying to build) on each write/search.
+        self._fts_available = probe().fts5
+        if not self._fts_available:
+            logger.warning("Memory full-text search disabled. %s", FTS5_REMEDY)
 
     @property
     def vector_store(self) -> "VectorMemoryStore | None":
@@ -304,7 +308,9 @@ class MemoryStore:
         return conn
 
     def _index_file(self, path: Path, content: str) -> None:
-        """Index a single file (incremental update)."""
+        """Index a single file (incremental update). No-op without FTS5."""
+        if not self._fts_available:
+            return
         conn = None
         try:
             conn = self._get_db()
@@ -322,7 +328,12 @@ class MemoryStore:
                 conn.close()
 
     def rebuild_index(self) -> int:
-        """Rebuild the full FTS index from all memory files. Returns file count."""
+        """Rebuild the full FTS index from all memory files. Returns file count.
+
+        Without FTS5 the index doesn't exist; returns 0 rather than attempting a build.
+        """
+        if not self._fts_available:
+            return 0
         files: list[tuple[str, str]] = []
         for path in (self._preferences_file, self._projects_file):
             if path.exists():
@@ -349,7 +360,9 @@ class MemoryStore:
         return len(files)
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
-        """Search memory using FTS5. Returns [{path, snippet, rank}]."""
+        """Search memory using FTS5. Returns [{path, snippet, rank}], or [] without FTS5."""
+        if not self._fts_available:
+            return []
         conn = None
         try:
             conn = self._get_db()

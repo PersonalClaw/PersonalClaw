@@ -597,6 +597,9 @@ PROVIDER_TYPES = frozenset(
         # AUTOMATION-SUBSTRATE AUTO-A2: an app-contributed is-the-user-on-duty predicate. Its
         # `DutyGateTypeHandler` lands in the same commit (the #47 rule).
         "duty_gate",
+        # An app-contributed sync transport (git-sync, dir-sync). Its
+        # `SyncTypeHandler` lands in the same commit (the #47 rule).
+        "sync",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry

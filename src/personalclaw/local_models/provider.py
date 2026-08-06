@@ -9,9 +9,82 @@ is identical across use-cases, inference is not.
 
 from __future__ import annotations
 
+import json
+import logging
+import platform
+import sys
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+#: Machine-arch spellings normalized to the token catalogs name (`darwin-arm64`,
+#: `linux-x86_64`), so a card's `platforms` list doesn't have to know that macOS says
+#: ``arm64`` while a Linux box says ``aarch64`` for the same silicon.
+_ARCH_ALIASES: dict[str, str] = {"aarch64": "arm64", "amd64": "x86_64", "x64": "x86_64"}
+
+#: A finished download whose on-disk footprint is below this fraction of its declared
+#: `size_mb` is weights-missing (`integrity="truncated"`). 60% leaves slack for
+#: compression and format overhead while still catching a half-fetched model.
+_TRUNCATION_FLOOR = 0.60
+
+
+def host_platform_token() -> str:
+    """The host's ``<platform>-<arch>`` token for catalog platform filtering.
+
+    ``darwin-arm64``, ``linux-x86_64``, … — the same spelling a catalog entry's
+    ``platforms`` list uses, so :meth:`LocalModelProvider._models_from_catalog` can keep
+    an entry only on the hosts it names. Arch aliases are normalized (:data:`_ARCH_ALIASES`).
+    """
+    machine = platform.machine().lower()
+    return f"{sys.platform}-{_ARCH_ALIASES.get(machine, machine)}"
+
+
+#: License substrings that mark a non-commercial grant. Never rejects a license (omnivoice
+#: rule) — this only flags one so the FE renders a warning chip at bind time.
+_NON_COMMERCIAL_MARKERS: tuple[str, ...] = ("-nc", "cc-by-nc", "noncommercial", "non-commercial")
+
+
+def _is_non_commercial(license_id: str, explicit: Any = None) -> bool:
+    """Whether a license is non-commercial — explicit card flag wins, else an SPDX sniff.
+
+    A card may say ``non_commercial: true`` outright; otherwise the SPDX id is checked for
+    the usual NC markers (``CC-BY-NC-4.0``, ``*-NC``, …). Advisory only — the model is
+    never blocked, just chipped.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    low = license_id.lower()
+    return any(marker in low for marker in _NON_COMMERCIAL_MARKERS)
+
+
+def _matrix_from_dict(data: dict[str, Any]) -> CapabilityMatrix:
+    """Build a :class:`CapabilityMatrix` from a card's ``matrix`` object, keeping only the
+    keys the dataclass declares (an unknown key in the file is ignored, not an error)."""
+    known = {f.name for f in fields(CapabilityMatrix)}
+    return CapabilityMatrix(**{k: v for k, v in data.items() if k in known})
+
+
+@dataclass
+class CapabilityMatrix:
+    """Per-model feature flags a binding UI renders as chips instead of guessing.
+
+    Optional on :class:`LocalModel` (default ``None`` = "unknown, don't assert"). Kept a
+    flat, extensible dataclass on purpose — MI-2 will add cloning / voice-design flags —
+    so a new capability is one field, not a schema migration.
+    """
+
+    word_timestamps: bool = False
+    segment_timestamps: bool = False
+    speaker_labels: bool = False  # a joint transcribe+diarize model fills `speaker` at source
+    acoustic_events: bool = False
+    hotword_biasing: bool = False
+    # chars/tokens the bias lever tolerates — whisper's 224 becomes a declared number
+    hotword_budget: int = 0
+    languages: list[str] = field(default_factory=list)  # [] = unknown / broad
+    reasoning_budget_control: bool = False  # thinking-budget honored per request (chat)
 
 
 @dataclass
@@ -31,6 +104,19 @@ class LocalModel:
     capabilities: list[str] = field(default_factory=list)
     gated: bool = False  # needs a token / license acceptance (e.g. pyannote)
     source: str = ""  # display-only origin hint (HF repo, GitHub release, ollama.com)
+    # Catalog-contract fields (LMMV §2.1/§2.2/§2.3) — all optional, appended so every
+    # keyword constructor and the old bool-shaped providers stay valid untouched.
+    matrix: CapabilityMatrix | None = None  # per-model feature chips (None = unknown)
+    runtime: str = ""  # ctranslate2 / onnx / torch / piper / gguf-llamacpp
+    runtime_contract: str = ""  # inference-API version tag (e.g. `pyannote>=4`)
+    license: str = ""  # SPDX id, normalized never rejected (omnivoice rule)
+    non_commercial: bool = False  # derived from license → warning chip at bind time
+    context_tokens: int = 0  # per-model context window (chat/embedding); 0 = unknown
+    output_tokens: int = 0  # per-model max output (chat); 0 = unknown
+    io_mime: dict = field(default_factory=dict)  # {"input": [...], "output": [...]}
+    status: str = "active"  # active | deprecated | sunset
+    integrity: str = ""  # "" | "truncated" (on-disk weights below the expected floor)
+    config_only: bool = False  # a pipeline/config repo with no local weights (pyannote)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +129,17 @@ class LocalModel:
             "capabilities": list(self.capabilities),
             "gated": self.gated,
             "source": self.source,
+            "matrix": asdict(self.matrix) if self.matrix is not None else None,
+            "runtime": self.runtime,
+            "runtime_contract": self.runtime_contract,
+            "license": self.license,
+            "non_commercial": self.non_commercial,
+            "context_tokens": self.context_tokens,
+            "output_tokens": self.output_tokens,
+            "io_mime": dict(self.io_mime),
+            "status": self.status,
+            "integrity": self.integrity,
+            "config_only": self.config_only,
         }
 
 
@@ -114,3 +211,116 @@ class LocalModelProvider(ABC):
         to indeterminate rather than coupling core to a backend's cache layout.
         """
         return None
+
+    def _models_from_catalog(
+        self,
+        catalog_path: Path,
+        *,
+        cache_root: Path | None = None,
+        active_downloads: set[str] | None = None,
+    ) -> list[LocalModel]:
+        """Build the model list from a declarative ``catalog.json`` (LMMV §2.3).
+
+        A fixed-catalog provider's :meth:`list_models` becomes a one-liner over this: the
+        catalog file is the source of truth, so adding or deprecating a model is a file
+        drop, not a code change. Fail-soft like ``registry.catalog_for`` — a missing or
+        malformed file logs a warning and yields ``[]``, and one bad card is skipped
+        rather than blanking the whole list.
+
+        ``cache_root`` is where downloaded weights live; ``downloaded`` and the truncation
+        check probe it via :mod:`~personalclaw.local_models.layouts`. ``active_downloads``
+        is the set of model names with an in-flight fetch — a model mid-download is
+        legitimately partial on disk, so it is never flagged ``truncated``. (Injected, not
+        read from a global, so this stays layering-pure and unit-testable.)
+        """
+        from personalclaw.local_models import layouts
+
+        try:
+            raw = json.loads(catalog_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            logger.warning("catalog unreadable at %s — no models listed", catalog_path)
+            return []
+        entries = raw.get("models", raw) if isinstance(raw, dict) else raw
+        if not isinstance(entries, list):
+            logger.warning("catalog at %s is not a list of model cards", catalog_path)
+            return []
+
+        host = host_platform_token()
+        in_flight = active_downloads or set()
+        out: list[LocalModel] = []
+        for card in entries:
+            if not isinstance(card, dict):
+                continue
+            try:
+                model = self._model_from_card(card, host)
+            except Exception:  # noqa: BLE001 — one bad card must not blank the list
+                logger.warning("skipping malformed model card in %s", catalog_path, exc_info=True)
+                continue
+            if model is None:
+                continue  # filtered out for this host
+            if cache_root is not None:
+                self._apply_disk_state(model, cache_root, layouts, in_flight)
+            out.append(model)
+        return out
+
+    @staticmethod
+    def _model_from_card(card: dict[str, Any], host: str) -> LocalModel | None:
+        """One catalog card → a :class:`LocalModel`, or None if this host is excluded.
+
+        ``platforms`` absent or empty = every host; otherwise the host token
+        (:func:`host_platform_token`) must appear. ``label`` maps to ``description``.
+        """
+        name = str(card.get("name") or "").strip()
+        if not name:
+            raise ValueError("model card missing 'name'")
+        platforms = card.get("platforms") or []
+        if platforms and host not in platforms:
+            return None
+
+        matrix_data = card.get("matrix")
+        matrix = _matrix_from_dict(matrix_data) if isinstance(matrix_data, dict) else None
+        license_id = str(card.get("license") or "")
+        return LocalModel(
+            name=name,
+            size_mb=float(card.get("size_mb") or 0),
+            description=str(card.get("label") or card.get("description") or ""),
+            capabilities=list(card.get("capabilities") or []),
+            gated=bool(card.get("gated", False)),
+            source=str(card.get("source") or ""),
+            matrix=matrix,
+            runtime=str(card.get("runtime") or ""),
+            runtime_contract=str(card.get("runtime_contract") or ""),
+            license=license_id,
+            non_commercial=_is_non_commercial(license_id, card.get("non_commercial")),
+            context_tokens=int(card.get("context_tokens") or 0),
+            output_tokens=int(card.get("output_tokens") or 0),
+            io_mime=dict(card.get("io_mime") or {}),
+            status=str(card.get("status") or "active"),
+            config_only=bool(card.get("config_only", False)),
+        )
+
+    @staticmethod
+    def _apply_disk_state(
+        model: LocalModel,
+        cache_root: Path,
+        layouts: Any,
+        active_downloads: set[str],
+    ) -> None:
+        """Fill ``downloaded`` and the ``truncated`` integrity flag from disk (LMMV §2.3).
+
+        A finished, non-``config_only`` model whose on-disk bytes fall below
+        :data:`_TRUNCATION_FLOOR` of its declared footprint — and which has no in-flight
+        fetch to explain the shortfall — is weights-missing, so it carries
+        ``integrity="truncated"`` (the FE then offers Repair). ``config_only`` repos
+        (pyannote's pipeline layout) have no local weights, so they are never flagged.
+        """
+        model.downloaded = layouts.is_downloaded(cache_root, model.name)
+        if not model.downloaded or model.config_only:
+            return
+        if model.name in active_downloads:
+            return  # mid-download: partial on disk is expected, not truncation
+        expected = model.size_mb * 1_000_000
+        if expected <= 0:
+            return  # no declared footprint → nothing to compare against
+        if layouts.on_disk_bytes(cache_root, model.name) < expected * _TRUNCATION_FLOOR:
+            model.integrity = "truncated"

@@ -8,9 +8,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **Security docs now describe what the sandbox actually does — credential-hiding, not confinement.**
+
+### Added
+
+- **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of work.**
+- **A Usage panel in Settings shows what you're spending.**
+- **The chat header shows what the whole conversation has cost.**
+- **The "Turn complete" line now shows what the turn cost.**
+- **`personalclaw doctor` now reports your SQLite driver and its capabilities.**
+- **Memory-backed answers cite their sources, and say so when memory is empty.**
+- **A muted agent can be un-muted from its detail page.**
+- **Local models now carry a capability matrix and a runtime/license contract from a declarative catalog.**
+- **Mid-run steering now takes effect, and the judge leaves a paper trail.**
+
 ### Fixed
 
+- **Deleting a knowledge item mid-enrichment crashed its background pipeline with a noisy error.**
 - **"Run now" did nothing for almost every automation, while reporting success.**
+- **A manual "Run now" left no trace and the "Running…" pill never cleared.**
 - **Knowledge ingest reported steps as finished that never ran.**
 - **Accepting a "refine an existing skill" proposal always failed with an error.**
 - **Importing a memory file that wasn't a JSON object failed with an unhelpful server error.**

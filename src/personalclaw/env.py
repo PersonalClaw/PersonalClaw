@@ -2,6 +2,26 @@
 
 import os
 
+# Path probed to detect the Windows Subsystem for Linux. Module-level so tests
+# can redirect it at a fixture file without monkeypatching builtins.
+_PROC_VERSION = "/proc/version"
+
+
+def _is_wsl() -> bool:
+    """Return True when running under the Windows Subsystem for Linux.
+
+    Detected by ``microsoft`` appearing in ``/proc/version`` (case-insensitive),
+    which both WSL1 and WSL2 kernels report. The read is guarded: on non-Linux
+    platforms ``/proc/version`` is absent, so this returns False and never
+    raises. Pure and side-effect-free — safe to call from any layer.
+    """
+    try:
+        with open(_PROC_VERSION, encoding="utf-8") as fh:
+            return "microsoft" in fh.read().lower()
+    except OSError:
+        return False
+
+
 # Common directories where MCP server binaries may be installed.
 # Order matters — earlier entries take precedence.
 _EXTRA_PATH_DIRS = (

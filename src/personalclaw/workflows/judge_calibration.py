@@ -251,6 +251,24 @@ def assess_all_gates(
     return [assess_gate(records, template=t, node_id=n, min_runs=min_runs) for t, n in pairs]
 
 
+def may_become_default(
+    records: list[VerdictRecord], *, template: str, min_runs: int = NODDING_MIN_RUNS
+) -> tuple[bool, str]:
+    """R6a: may this template become its kind's default replacement?
+
+    A template is blocked when ANY of its judge gates is a nodding loop — a 100% pass rate
+    over ≥ `min_runs` real verdicts is statistical proof of a check that does not check
+    (LOOPS-EVOLUTION R6 criterion 1). Returns `(allowed, reason)`; the reason is empty when
+    allowed, else names the offending gate so it can surface as the template's warning badge.
+    A template with too few verdicts to judge is NOT blocked — the detector reports UNPROVEN
+    rather than punishing a template for being new.
+    """
+    for report in assess_all_gates(records, min_runs=min_runs):
+        if report.template == template and report.blocks_default:
+            return False, f"nodding gate {report.node_id!r}: {report.detail}"
+    return True, ""
+
+
 # ── Stuck detection ──
 
 

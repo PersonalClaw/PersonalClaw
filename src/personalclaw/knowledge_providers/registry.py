@@ -58,5 +58,14 @@ async def search_all(query: str, limit: int = 10) -> list[KnowledgeItem]:
 
 
 def create_native_provider(config=None):
-    """Extension factory for native knowledge provider."""
-    return None  # Knowledge uses the existing knowledge module connectors
+    """Manifest factory for the bundled ``native-knowledge`` extension.
+
+    Returns ``None`` by design: the native provider needs the ``DashboardState``
+    knowledge store + ingest queue, which the manifest-factory call site does not
+    have, so it self-registers via ``state.knowledge_provider()`` (the single
+    source of truth). ``ProviderRegistry._enable_one`` skips ``register`` for a
+    ``None`` instance, so enabling ``native-knowledge`` through the real
+    ``KnowledgeTypeHandler`` does not double-register it. An EXTERNAL provider's
+    factory returns a real instance and IS registered here.
+    """
+    return None
