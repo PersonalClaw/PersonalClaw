@@ -66,7 +66,16 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
   async function unack(n: NotificationItem) { await api.unackNotification(n.ts).catch(() => {}); load() }
   async function remove(n: NotificationItem) { await api.deleteNotification(n.ts).catch(() => {}); if (openTs === n.ts) setOpenTs(""); load() }
   async function ackAll() { await api.ackAllNotifications().catch(() => {}); load() }
-  async function clearAll() { if (!(await confirm({ title: 'Clear all notifications?', danger: true, confirmLabel: 'Clear all' }))) return; await api.clearNotifications().catch(() => {}); setOpenTs(""); load() }
+  async function clearAll() {
+    const n = items?.length ?? 0
+    const body = n > 0
+      ? `This will permanently delete ${n} notification${n === 1 ? '' : 's'}. This cannot be undone.`
+      : 'This cannot be undone.'
+    if (!(await confirm({ title: 'Clear all notifications?', body, danger: true, confirmLabel: 'Clear all' }))) return
+    await api.clearNotifications().catch(() => {})
+    setOpenTs("")
+    load()
+  }
 
   const filterSection: FilterSectionDef = useMemo(() => ({
     title: 'Show', value: filter, defaultKey: 'all', onChange: setFilter,
