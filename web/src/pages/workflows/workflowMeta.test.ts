@@ -157,6 +157,9 @@ describe('WORKFLOW_LIFECYCLE', () => {
       'workflow_confirmation_resolved',
       'workflow_task_verified',
       'workflow_cascade_blocked',
+      // LOOPS-EVOLUTION R14: emitted by RunController._consume_steering when a mid-run steer is
+      // consumed at the iteration boundary.
+      'workflow_steering_consumed',
     ]
     for (const ev of published) expect(WORKFLOW_LIFECYCLE).toContain(ev)
     // And no extras: a listener for an event nobody publishes is dead code that reads as
