@@ -215,7 +215,35 @@ def _load_store() -> dict:
         raw = _load_entity_settings(_STORE)
     except Exception:
         return {}
-    return raw if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+
+    # Migrate to lowercase keys
+    migrated = False
+    muted = raw.get("muted") or []
+    new_muted = []
+    for m in muted:
+        lm = m.lower()
+        if lm not in new_muted:
+            new_muted.append(lm)
+        if m != lm:
+            migrated = True
+            
+    dismissals = raw.get("dismissals") or {}
+    new_dismissals = {}
+    for k, v in dismissals.items():
+        lk = k.lower()
+        if lk not in new_dismissals or v.get("last_dismissed_at", 0) > new_dismissals[lk].get("last_dismissed_at", 0):
+            new_dismissals[lk] = v
+        if k != lk:
+            migrated = True
+            
+    if migrated:
+        raw["muted"] = new_muted
+        raw["dismissals"] = new_dismissals
+        _save_store(raw)
+        
+    return raw
 
 
 def _save_store(store: dict) -> None:
@@ -253,7 +281,7 @@ def record_dismiss(agent: str, *, now: float, mute_at: int = 3) -> dict:
     if entry["count"] >= mute_at and agent_key not in muted:
         muted.append(agent_key)
     _save_store(store)
-    return {"agent": agent, "count": entry["count"], "muted": agent_key in muted}
+    return {"agent": agent_key, "count": entry["count"], "muted": agent_key in muted}
 
 
 def unmute(agent: str) -> None:
