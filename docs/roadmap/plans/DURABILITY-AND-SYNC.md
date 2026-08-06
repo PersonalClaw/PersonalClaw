@@ -956,3 +956,30 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   offline reference is route-derived and the new endpoint is a real route, so `test_agent_reference`
   correctly went red until regenerated. Gate: `make lint` green (1337 files) · full
   `pytest -n 4 --dist worksteal` → 16401 passed, 29 skipped, 12 xfailed.
+
+## Execution log — DAS-6a (the sync-transport contract; DAS-6 re-scoped)
+
+- **DAS-6 RE-SCOPED into sub-atoms; DAS-6a DONE.** DAS-6's `done_when` spanned eight
+  deliverables (contract + registry + SDK + shard import + a CAS/outbox/cursor cycle engine +
+  per-strategy merges + two sync apps + convergence) — too large for one atomic PR (three prior
+  implementation subagents stalled on it). Split, contract-owner-first (the pattern WS-1 used):
+  **DAS-6a = §4.3 the transport contract only.** Added `sync_transports/` — `SyncTransportProvider`
+  ABC (`push`/`list_remote`/`pull`/`cas_registry`/`test`, all insert-only + idempotent on key) with
+  `SyncObject`/`RemoteRef`/`PushResult`/`ConnectionResult`, and a flat `register/get/unregister`
+  registry mirroring `channel_transports`. Re-exported via `sdk/sync.py`. Added `sync` to
+  `PROVIDER_TYPES` AND a real `SyncTypeHandler` (registers a transport into `sync_transports`) in the
+  SAME commit — the #47 rule; parity test green. Applied the same lazy-`deregister` fix as WS-1 (no
+  eager `getattr` default that dereferences a None `ext`). **Remaining DAS-6 sub-atoms (not started):**
+  DAS-6b shard import/restore (S2k noted shards were write-only); DAS-6c the sync cycle engine
+  (pull→merge-import→export-union→push, registry.json machine-seq CAS retry, stale_after_secs, durable
+  outbox + consumed-only cursor, per-strategy merges + tombstones, derived-index rebuild); DAS-6d the
+  git-sync + dir-sync first-party apps + convergence (criterion 4). Contract-only; no user surface yet
+  → no CHANGELOG entry. **Gates:** `make lint` clean (696 source files); `test_sync_transport_contract.py`
+  (6) + `test_app_manifest.py` (#47 parity) + `test_provider_registry.py` = 66 passed.
+
+- **DAS-6a CI fix (amended):** adding `sync` to `PROVIDER_TYPES` drifted the checked-in offline
+  reference `src/personalclaw/reference/providers.md` (a generated artifact — `test_agent_reference.py`
+  byte-matches it against a fresh `render_reference()`). Regenerated via `python -m
+  personalclaw.manifest_reference` and amended into the DAS-6a commit; cascade-rebased CATO-1 + PCS-2.
+  Lesson: a new `PROVIDER_TYPES` entry MUST regenerate `reference/providers.md` in the same commit —
+  the full-suite `test` job catches it even when file-scoped tests + `make lint` are green.
