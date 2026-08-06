@@ -37,6 +37,10 @@ export const WORKFLOW_LIFECYCLE = [
   'workflow_confirmation_resolved',
   'workflow_task_verified',
   'workflow_cascade_blocked',
+  // LOOPS-EVOLUTION R14: a mid-run steer consumed at the iteration boundary. Registered for the
+  // same reason as the task events above — an unregistered type is silently dropped by EventSource
+  // — and backed by `RunController._consume_steering`'s `_publish` + the `steering` ledger kind.
+  'workflow_steering_consumed',
 ] as const
 
 export type WorkflowLifecycleEvent = (typeof WORKFLOW_LIFECYCLE)[number]

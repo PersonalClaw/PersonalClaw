@@ -8,6 +8,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Mid-run steering now takes effect, and the judge leaves a paper trail.** A workflow's decision
+  layers are wired into the run loop: an instruction you queue while a loop is running is consumed
+  at the next iteration boundary and re-ranks the plan (rather than sitting unread until the run
+  ends); every judge-gate verdict is recorded to the Run Ledger with its evidence chain, and a
+  human overriding a judge records the divergence — so the flywheel can tell a human-steered
+  outcome from an autonomous one. A judge gate that has never rejected across enough runs is now
+  flagged as a "nodding loop" and blocked from becoming its kind's default. The loop breaker keeps
+  a single authority (no duplicate trip path).
+
 ### Fixed
 
 - **"Run now" did nothing for almost every automation, while reporting success.** Clicking Run now

@@ -1173,9 +1173,25 @@ async def dispatch_gate(
                 ),
                 recoverable=verdict == Verdict.RETRY,
             )
+        # Carry the evidence chain out on the node output so the controller can emit a
+        # `judge_verdict` Run Ledger event at the settle (LOOPS-EVOLUTION R3, criterion 3).
+        # Additive: existing readers of `output["verdict"]` are unaffected. `judge_evidence` holds
+        # the per-sample verdicts + raw texts (the proof a reader replays); `judge_status` is
+        # "discard" when a sample was outvoted by the median aggregation, else "kept".
+        sample_values = [v.value for v in verdicts]
+        judge_status = "kept" if not verdicts or verdict.value in sample_values else "discard"
         return NodeResult(
             state=state,
-            output={"verdict": verdict.value},
+            output={
+                "verdict": verdict.value,
+                "judge_evidence": {
+                    "samples": sample_values,
+                    "texts": [t[:2000] for t in texts],
+                    "sample_count": samples,
+                    "aggregated": verdict.value,
+                },
+                "judge_status": judge_status,
+            },
             failure=failure,
             resolved_prompt=instruction,
             tokens=sampled_tokens,
