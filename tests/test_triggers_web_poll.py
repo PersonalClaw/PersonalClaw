@@ -39,6 +39,65 @@ def store(tmp_path):
     return TriggerStore(base_dir=tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_knowledge(tmp_path_factory, monkeypatch):
+    """Point the DEFAULT knowledge-digest routing at a per-test tmp DB.
+
+    A fire now writes fresh items to the knowledge store, and a test that fires without an injected
+    `knowledge_store` would otherwise reach `get_knowledge_store()` → the real `~/.personalclaw`
+    knowledge.db (config_dir() resolves there when PERSONALCLAW_HOME is unset). Same real-home
+    hazard and remedy as conftest's trigger-store fixture. Returned so a test can assert on it; a
+    test that passes its own `knowledge_store` is unaffected."""
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    kdb = tmp_path_factory.mktemp("pclaw-knowledge") / "k.db"
+    kstore = KnowledgeStore(str(kdb))
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: kstore)
+    return kstore
+
+
+class _SpyKnowledge:
+    """Records `create_typed_item` calls so a test can assert the digest lands in KNOWLEDGE."""
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def create_typed_item(self, **kwargs):
+        self.items.append(kwargs)
+        return f"item-{len(self.items)}"
+
+
+def _shell_fetcher():
+    """A real 200 whose body is an empty JS shell — `extract_items` finds nothing, the escalation
+    signal (the page builds its content client-side)."""
+
+    def fetch(url):
+        return types.SimpleNamespace(
+            status=200,
+            body=b"<html><body><div id='app'></div></body></html>",
+            url=url,
+            headers={},
+            truncated=False,
+        )
+
+    return fetch
+
+
+def _renderer(html: str, *, ok: bool = True, unavailable: bool = False, error: str = ""):
+    """A sync fake standing in for `web.render.render_url` — returns a `RenderResult` directly, so
+    `_render_headless` never touches the event loop. `calls` counts invocations."""
+    from personalclaw.web.render import RenderResult
+
+    calls = {"n": 0}
+
+    def render(url, *, policy=None):
+        calls["n"] += 1
+        return RenderResult(ok=ok, url=url, html=html, unavailable=unavailable, error=error)
+
+    render.calls = calls  # type: ignore[attr-defined]
+    return render
+
+
 def _watch(store, *, tid="web_watch:w", url="https://example.com/feed", **spec):
     store.upsert(
         Trigger(
@@ -442,3 +501,189 @@ def test_the_loop_is_CANCELLED_on_shutdown():
     src = inspect.getsource(GatewayOrchestrator)
     shutdown = src[src.index("# Stop services") :]
     assert "self._web_watch_task" in shutdown
+
+
+# ── the headless escalation tier (WF2AUT-7) ──
+
+# A shell page that, once JS runs, exposes a feed the plain fetch never saw.
+RENDERED_FEED = "<rss><item><guid>js-post-1</guid></item></rss>"
+
+
+def test_escalation_is_OFF_by_default_a_shell_page_does_not_escalate(store, tmp_path):
+    """Default OFF: a watch that never set `escalate_headless` polls byte-for-byte as before — a
+    shell page seeds, the renderer is never touched."""
+    trigger = _watch(store)  # no escalate_headless key
+    render = _renderer(RENDERED_FEED)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 0, "escalation must not run when the watch didn't opt in"
+    assert outcome.escalation == ""
+    # seeded on an empty shell (no items), and the renderer stayed idle
+    assert "seeded 0 item" in outcome.reason
+
+
+def test_escalation_ON_a_shell_page_renders_and_extracts(store, tmp_path):
+    """Opted in + a real 200 whose plain fetch is empty → escalate, re-extract from the post-JS
+    HTML, and mark the escalation so it reaches the ledger/payload."""
+    trigger = _watch(store, tid="web_watch:js", escalate_headless=True)
+    render = _renderer(RENDERED_FEED)
+    # first poll seeds (the rendered item is recorded without firing)
+    seed = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 1
+    assert "escalated to headless; extracted 1 item(s)" in seed.escalation
+    assert "seeded 1 item" in seed.reason  # the rendered item WAS seen via the headless tier
+    # a NEW rendered item now fires, carrying the escalation marker in the payload
+    render2 = _renderer(RENDERED_FEED.replace("js-post-1", "js-post-2"))
+    fire = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render2
+    )
+    assert fire.payload is not None
+    assert fire.payload["new_count"] == 1
+    assert "extracted 1 item(s)" in fire.payload["escalation"]
+    assert "js-post-2" in fire.payload["new_items"][0]
+
+
+def test_escalation_budget_EXHAUSTED_stops_with_a_visible_reason(store, tmp_path):
+    """A render is the expensive tier. When its own daily budget is spent, escalation stops and says
+    so (a ledger-visible reason) rather than launching a browser it has no budget for."""
+    trigger = _watch(store, tid="web_watch:cap", escalate_headless=True, max_headless_requests=1)
+    render = _renderer(RENDERED_FEED)
+    # poll 1: seeds, spends the single headless render
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 1
+    # poll 2: budget spent → refused, visibly, and the renderer is NOT called again
+    outcome = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert render.calls["n"] == 1, "a spent budget must not launch another render"
+    assert "headless escalation budget spent" in outcome.escalation
+    assert "headless escalation budget spent" in outcome.reason
+
+
+def test_a_FAILED_render_still_SPENDS_its_budget(store, tmp_path):
+    """Charged win-or-lose: a failed render that did not count would retry every interval forever —
+    the runaway the plain budget also guards."""
+    trigger = _watch(
+        store, tid="web_watch:failrender", escalate_headless=True, max_headless_requests=5
+    )
+    web_poll.poll_one(  # seed
+        trigger,
+        now=NOW,
+        base_dir=tmp_path,
+        fetcher=_shell_fetcher(),
+        renderer=_renderer("", ok=False, error="boom"),
+    )
+    st = web_poll.load_state(trigger.id, base_dir=tmp_path)
+    assert st.headless_today == 1, "a failed render is accounted like a successful one"
+    outcome = web_poll.poll_one(
+        trigger,
+        now=NOW + 400,
+        base_dir=tmp_path,
+        fetcher=_shell_fetcher(),
+        renderer=_renderer("", ok=False, error="boom again"),
+    )
+    assert "headless render failed" in outcome.escalation
+
+
+def test_PLAYWRIGHT_UNAVAILABLE_does_not_escalate_or_crash(store, tmp_path):
+    """`render_url`→`unavailable=True` (Playwright absent). No escalation, no crash, no budget spent
+    (it can never succeed until installed) — serve the plain result, reason recorded."""
+    trigger = _watch(store, tid="web_watch:noplaywright", escalate_headless=True)
+    render = _renderer("", ok=False, unavailable=True)
+    outcome = web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_shell_fetcher(), renderer=render
+    )
+    assert outcome.payload is None  # plain shell seeds, no crash
+    assert "headless tier unavailable" in outcome.escalation
+    assert "install personalclaw[js-render]" in outcome.escalation
+    st = web_poll.load_state(trigger.id, base_dir=tmp_path)
+    assert st.headless_today == 0, "an unavailable tier is never charged — it can't succeed yet"
+
+
+# ── digest routing → the KNOWLEDGE store, never memory ──
+
+
+def test_a_new_item_ROUTES_to_the_knowledge_store(store, tmp_path):
+    """The digest lands in the knowledge store as a searchable user item — the injected spy proves a
+    genuinely-new item is written, with web_watch provenance."""
+    trigger = _watch(store)
+    spy = _SpyKnowledge()
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )  # seed — nothing fires, nothing written
+    assert spy.items == []
+    pages["v"] = FEED_THREE
+    fire = web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    assert fire.payload is not None
+    assert len(spy.items) == 1, "only the ONE genuinely-new item is written"
+    written = spy.items[0]
+    assert written["item_type"] == "bookmark"
+    assert written["provider"] == "web_watch"
+    assert "post-3" in written["title"]
+
+
+def test_only_GENUINELY_NEW_items_are_written_not_the_whole_page(store, tmp_path):
+    """The seen-set gates 'new', so a re-poll of an unchanged page writes nothing more."""
+    trigger = _watch(store)
+    spy = _SpyKnowledge()
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(  # seed
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    pages["v"] = FEED_THREE
+    web_poll.poll_one(  # fires: 1 new
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    web_poll.poll_one(  # unchanged: writes nothing
+        trigger, now=NOW + 800, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=spy
+    )
+    assert len(spy.items) == 1
+
+
+def test_the_digest_does_NOT_touch_the_memory_subsystem(store, tmp_path):
+    """🔴 The routing contract: web_watch output is KNOWLEDGE (searchable user items), not memory.
+    A real KnowledgeStore gains the item; a MemoryStore over the same tmp home stays empty."""
+    from personalclaw.knowledge.store import KnowledgeStore
+    from personalclaw.memory import MemoryStore
+
+    kstore = KnowledgeStore(str(tmp_path / "k.db"))
+    memory = MemoryStore(workspace=tmp_path / "ws")
+    memory.init()
+
+    trigger = _watch(store)
+    pages = {"v": FEED_TWO}
+    web_poll.poll_one(
+        trigger, now=NOW, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=kstore
+    )
+    pages["v"] = FEED_THREE
+    web_poll.poll_one(
+        trigger, now=NOW + 400, base_dir=tmp_path, fetcher=_fetcher(pages), knowledge_store=kstore
+    )
+
+    # KNOWLEDGE gained the item …
+    assert kstore.search_items_fts_count("post-3") >= 1
+    # … and MEMORY was never touched: no history/preferences/projects writes beyond init defaults.
+    assert "post-3" not in memory.read_preferences()
+    assert "post-3" not in memory.read_projects()
+    hist = list((tmp_path / "ws" / "memory" / "history").glob("*.md"))
+    assert hist == [], "web_watch must not write memory history"
+
+
+def test_the_new_spec_keys_are_ACCEPTED_by_validation():
+    """`escalate_headless` / `max_headless_requests` must be in `SPEC_KEYS['web_watch']`, or an
+    opted-in watch validates with an 'unknown key' warning."""
+    from personalclaw.triggers.models import validate_spec
+
+    issues = validate_spec(
+        "web_watch",
+        {"url": "https://x.example", "escalate_headless": True, "max_headless_requests": 3},
+    )
+    assert issues == [], f"new headless keys must be recognised; got {issues}"

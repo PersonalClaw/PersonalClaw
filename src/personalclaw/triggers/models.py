@@ -215,7 +215,19 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
     "file": frozenset({"paths", "dedup"}),
     "webhook": frozenset({"token_ref"}),
     "view": frozenset({"surface_binding", "ttl_secs"}),
-    "web_watch": frozenset({"url", "poll_interval", "extraction", "novelty_key"}),
+    "web_watch": frozenset(
+        {
+            "url",
+            "poll_interval",
+            "extraction",
+            "novelty_key",
+            # The opt-in headless-Chromium escalation tier (WF2AUT-7). `escalate_headless` turns it
+            # on (default OFF, so an existing watch is byte-unchanged); `max_headless_requests`
+            # bounds the expensive render tier with its own daily budget.
+            "escalate_headless",
+            "max_headless_requests",
+        }
+    ),
     "manual": frozenset(),
 }
 
