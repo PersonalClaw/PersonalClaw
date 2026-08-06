@@ -39,6 +39,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Plan and hand it full tool access. An absent or non-string `mode` is now refused the
   same way an invalid one always was, and the response names the sessions it changed so a
   caller can tell a one-chat change from a fleet-wide one.
+- **A project could be pointed at your credential directories.** Binding a project's workspace
+  accepted `~/.ssh`, `~/.aws` or an OS system tree with no complaint — the same paths the
+  terminal refuses to open in — and a chat started under that project inherited the path as the
+  working directory of an unsandboxed agent. Binding one is now refused, on exactly the check
+  the terminal already used. Editing a project also stops accepting field names it never wrote:
+  an unrecognised field now comes back as an error naming it, instead of a silent no-op or a
+  blank "server error".
 
 - **One app could borrow another app's permission to run an agent, and read agent runs that
   weren't its own.** The permission check on the app agent-run endpoints read the app name out of
