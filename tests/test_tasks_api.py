@@ -346,6 +346,25 @@ async def test_create_with_project_id_attaches_general_list(tmp_path):
         assert t3["task_list_id"] == named["id"]
 
 
+# ── Create: non-string title guard (#774) ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", [12345, True, 1.5, [1], {"nested": "obj"}, None])
+async def test_non_string_title_is_400_not_500(tmp_path, shape):
+    """`body.get("title", "").strip()` raised AttributeError on every non-string
+    title — a 500 for what is plainly a client bug (same class as the comment-body
+    guard). A coerced-but-truthy value (e.g. str(12345)) must NOT be accepted as a
+    title either: it falls through to the emptiness guard and 400s without creating
+    a task."""
+    async with _client(tmp_path) as client:
+        r = await client.post("/api/tasks", json={"title": shape})
+        assert r.status == 400
+        assert (await r.json())["error"] == "title required"
+        # Refused means nothing was written — not a task titled "12345"/"None".
+        assert (await (await client.get("/api/tasks")).json())["total"] == 0
+
+
 # ── Ready / search ──
 
 
