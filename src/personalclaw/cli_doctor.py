@@ -356,6 +356,27 @@ def _doctor() -> None:
         else:
             print("  python:      ⚠️  python3 not found on PATH")
 
+    # WSL note: the background service depends on systemd, which WSL2 only runs
+    # when /etc/wsl.conf opts in. Detect it here so a Windows user knows whether
+    # `personalclaw service install` will actually persist. Best-effort; never
+    # raises — a probe failure must not fail the doctor.
+    try:
+        from personalclaw.env import _is_wsl
+        from personalclaw.service.common import Platform, current_platform
+
+        if _is_wsl():
+            print("  platform:    🪟 WSL detected (Windows Subsystem for Linux)")
+            if current_platform() is Platform.SYSTEMD:
+                print("  service:     ✅ systemd active — `personalclaw service install` works")
+            else:
+                print("  service:     ⚠️  systemd not active — background service won't persist")
+                print("               Fix: add `[boot]\\nsystemd=true` to /etc/wsl.conf, then")
+                print("               run `wsl --shutdown` from Windows and reopen the shell.")
+                print("               Without it, run the gateway in a foreground shell (or via")
+                print("               Windows Task Scheduler). See docs/guides/platforms.md.")
+    except Exception:
+        pass
+
     # ── Vector Memory / embeddings ──
     # Provider-agnostic: model providers (incl. Ollama, now the ollama-models app)
     # report their own availability via the Provider Health section above + each

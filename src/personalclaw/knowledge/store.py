@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime
 from uuid import uuid4
 
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,14 @@ def knowledge_db_path() -> pathlib.Path:
 
 class KnowledgeStore:
     def __init__(self, db_path: str):
+        # FTS5 is ESSENTIAL here: the schema creates the `items_fts` virtual table and
+        # every knowledge search (store.search_items_fts, HybridRetriever, the agent
+        # knowledge tools) goes through it — there is no non-FTS fallback, so a build
+        # without FTS5 cannot open a usable store. Fail AT INIT with the fixed remedy
+        # rather than letting the CREATE VIRTUAL TABLE (or a later MATCH) throw a raw
+        # traceback mid-query. Checked once per open; probe() is memoized.
+        if not probe().fts5:
+            raise RuntimeError(FTS5_REMEDY)
         self.db_path = db_path
         # check_same_thread=False: the process-wide store (get_knowledge_store) is
         # touched from both the event loop and run_in_executor threads (agent tools).

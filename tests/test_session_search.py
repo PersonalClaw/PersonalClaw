@@ -9,8 +9,6 @@ Two properties carry this feature, so most tests assert one of them:
   failure degrades to the linear scan rather than losing data or raising.
 """
 
-import sqlite3
-
 import pytest
 
 from personalclaw import session_restrictions
@@ -255,23 +253,20 @@ class TestDegradation:
         assert ss.stats()["sessions"] == 0
 
     def test_no_fts5_degrades_to_empty(self, monkeypatch):
-        """An FTS5-less SQLite build must fall back, not crash."""
+        """An FTS5-less SQLite build must fall back, not crash.
+
+        Simulated at the capability PROBE (PR-2's detection layer): ``_connect`` decides
+        the FTS5 question once via ``probe().fts5`` before it ever opens a connection, so a
+        no-FTS5 build is detected up front rather than by a mid-CREATE OperationalError.
+        Patch the name ``session_search`` imported so the guard sees ``fts5=False``."""
+        from personalclaw.sqlite_compat import SqliteCapabilities
+
         ss.reset_for_tests()
-        real_connect = sqlite3.connect
-
-        def _no_fts5(*args, **kwargs):
-            conn = real_connect(*args, **kwargs)
-            real_executescript = conn.executescript
-
-            def _fail(script):
-                if "fts5" in script.lower():
-                    raise sqlite3.OperationalError("no such module: fts5")
-                return real_executescript(script)
-
-            conn.executescript = _fail  # type: ignore[method-assign]
-            return conn
-
-        monkeypatch.setattr(sqlite3, "connect", _no_fts5)
+        monkeypatch.setattr(
+            ss,
+            "probe",
+            lambda: SqliteCapabilities(driver="sqlite3", version="3", fts5=False, json1=True),
+        )
         assert ss.search_sessions("anything") == []
         assert ss.index_session("k", "t", "b") is False
         assert ss.stats()["available"] is False

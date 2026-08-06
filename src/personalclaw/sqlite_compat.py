@@ -27,7 +27,18 @@ except ImportError:  # the platform's stdlib build
 
     _DRIVER = "sqlite3"
 
-__all__ = ["sqlite3", "SqliteCapabilities", "probe", "driver_name"]
+__all__ = ["sqlite3", "SqliteCapabilities", "probe", "driver_name", "FTS5_REMEDY"]
+
+# The one actionable remedy every FTS5 guard shows when the active SQLite build has
+# no FTS5 compiled in (PLATFORM-RESILIENCE PR-2). Names the concrete fix — the
+# ``pysqlite3-binary`` wheel bundles a SQLite with FTS5 — so a user (or the doctor)
+# sees what to install rather than a bare "FTS5 missing". Reused by every guard.
+FTS5_REMEDY = (
+    "This SQLite build has no FTS5 (full-text search) module compiled in. "
+    "Install the 'pysqlite3-binary' wheel (pip install pysqlite3-binary), which "
+    "bundles a SQLite built with FTS5, or run PersonalClaw against a SQLite build "
+    "that has FTS5 enabled."
+)
 
 
 def driver_name() -> str:

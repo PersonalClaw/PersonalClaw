@@ -58,8 +58,24 @@ def _id_of(row: dict) -> str:
     return str(row.get("id", ""))
 
 
+def _field(row: dict, name: str):
+    """A control field's value, wherever it lives in the row's two shapes.
+
+    A JSONL stream row carries its fields at the top level; an entity-dir row is the
+    exporter's ``{"id": <stem>, "data": <the file's JSON>}`` wrapper, so ``deleted_at`` /
+    ``updated_at`` live under ``data``. Check the top level first (JSONL, and a hand-built
+    row), then fall back to the ``data`` payload (entity-dir), so tombstones and LWW work
+    for BOTH shapes without the caller knowing which it holds."""
+    if name in row:
+        return row[name]
+    data = row.get("data")
+    if isinstance(data, dict):
+        return data.get(name)
+    return None
+
+
 def _is_tombstone(row: dict) -> bool:
-    return bool(row.get(_TOMBSTONE_FIELD))
+    return bool(_field(row, _TOMBSTONE_FIELD))
 
 
 def _lww_key(row: dict, field: str) -> str:
@@ -68,12 +84,12 @@ def _lww_key(row: dict, field: str) -> str:
     undated). ISO-8601 timestamps sort chronologically as strings, which is why the
     convention is strings; a numeric ``created_at`` is stringified consistently on
     both sides so the comparison stays total and deterministic."""
-    v = row.get(field, "")
+    v = _field(row, field)
     return str(v) if v else ""
 
 
 def _tomb_time(row: dict) -> str:
-    v = row.get(_TOMBSTONE_FIELD, "")
+    v = _field(row, _TOMBSTONE_FIELD)
     return str(v) if v else ""
 
 
