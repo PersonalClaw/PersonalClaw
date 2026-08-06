@@ -51,7 +51,13 @@ class ApplyResult:
 
 
 def _is_tombstone(row: dict) -> bool:
-    return bool(row.get(_TOMBSTONE_FIELD))
+    # A JSONL row carries deleted_at at the top level; an entity-dir row nests it under the
+    # exporter's {"id", "data"} wrapper. Check both so a synced delete removes the file for
+    # either shape (mirrors merge._field).
+    if row.get(_TOMBSTONE_FIELD):
+        return True
+    data = row.get("data")
+    return bool(isinstance(data, dict) and data.get(_TOMBSTONE_FIELD))
 
 
 def apply_rows(kind: str, dest: Path, rows: list[dict]) -> ApplyResult:
