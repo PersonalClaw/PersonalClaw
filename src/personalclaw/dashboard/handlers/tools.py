@@ -281,7 +281,10 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
                 status=403,
             )
 
-    provider_name = body.get("provider") or ""
+    provider_raw = body.get("provider")
+    if provider_raw is not None and not isinstance(provider_raw, str):
+        return web.json_response({"ok": False, "error": "provider must be a string"}, status=400)
+    provider_name = provider_raw or ""
 
     # Resolve the provider: explicit name, else the first provider advertising the tool.
     provider = None
