@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown } from 'lucide-react'
+import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
 import { FormFooter } from '../../ui/FormFooter'
@@ -115,6 +115,7 @@ function AgentAdvanced({ agentName }: { agentName: string }) {
       {open && (
         <div className="mt-m flex flex-col gap-l">
           <RoutingNotesEditor agentName={agentName} />
+          <RoutingStatusView agentName={agentName} />
           <AgentMcpView agentName={agentName} />
           <AgentHooksView />
         </div>
@@ -153,6 +154,43 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
           </div>
         </div>
+      )}
+    </Section>
+  )
+}
+
+/** Routing status: whether the auto-router has this agent MUTED (the user dismissed its
+ *  suggestion chip enough times that it stopped being suggested), with an Unmute control.
+ *  A muted agent is otherwise invisible on this page — the mute is a routing preference the
+ *  user set implicitly, so surfacing it here is the one place they can see and reverse it. */
+function RoutingStatusView({ agentName }: { agentName: string }) {
+  const [muted, setMuted] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    let alive = true
+    api.routingStatus()
+      .then((s) => { if (alive) setMuted((s.muted || []).includes(agentName)) })
+      .catch(() => { if (alive) setMuted(false) })
+    return () => { alive = false }
+  }, [agentName])
+  const unmute = async () => {
+    setBusy(true)
+    try { await api.routingUnmute(agentName); setMuted(false) }
+    catch { /* leave muted; the row stays so the user can retry */ }
+    setBusy(false)
+  }
+  if (muted === null) return <Section label="Routing status"><Skeleton className="h-6 w-40 rounded-md" /></Section>
+  return (
+    <Section label="Routing status">
+      {muted ? (
+        <div className="flex items-center gap-2 text-[0.8125rem]">
+          <span className="inline-flex items-center gap-1.5 text-on-surface-var">
+            <VolumeX size={14} /> Muted — the auto-router stopped suggesting this agent.
+          </span>
+          <Button size="sm" onClick={unmute} disabled={busy}>{busy ? 'Unmuting…' : 'Unmute'}</Button>
+        </div>
+      ) : (
+        <p className="text-on-surface-low text-[0.75rem]">Active — eligible for auto-routing suggestions.</p>
       )}
     </Section>
   )
