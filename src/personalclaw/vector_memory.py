@@ -2295,11 +2295,22 @@ class VectorMemoryStore(MemoryProvider):
         query_embedding: list[float] | None = None,
         query_text: str = "",
         cap: int = 3000,
+        *,
+        citations_out: list[dict] | None = None,
     ) -> str:
         """Format episodic search results for prompt injection.
 
         When vector search is used, results below ``_EPISODIC_RELEVANCE_THRESHOLD``
         cosine similarity are filtered out to avoid injecting irrelevant context.
+
+        When *citations_out* is supplied (MEMORY-GRAPH-AND-VAULT §5.4), each emitted
+        fragment is labelled ``[Memory N]`` (contiguous, 1-based) instead of ``N.``,
+        and a resolvable manifest entry ``{"n", "id", "preview"}`` is appended per
+        fragment — so the model can cite a fact by index and the frontend can turn
+        that token into a deep-link to the episode. The manifest carries the record
+        ``id`` (never the model), so a mis-cited or hallucinated index simply fails
+        to resolve rather than pointing at the wrong record. When it is ``None`` the
+        block is byte-identical to the pre-citation format (every non-chat caller).
         """
         if query_embedding is None and query_text and self.embed_fn is not None:
             query_embedding = self._try_embed(query_text)
@@ -2324,11 +2335,24 @@ class VectorMemoryStore(MemoryProvider):
                 if r["cosine_sim"] < threshold:
                     continue
             text = r["text"][:1500]
-            line = f"{i}. {text}"
+            # Citation mode numbers only EMITTED fragments (contiguous), so `[Memory N]`
+            # always maps 1:1 onto a manifest entry; legacy mode keeps the raw enumerate
+            # index (with its filter-induced gaps) for byte-identical output.
+            n = len(lines) + 1
+            line = f"[Memory {n}] {text}" if citations_out is not None else f"{i}. {text}"
             if total + len(line) > cap:
                 break
             lines.append(line)
             total += len(line) + 1
+            if citations_out is not None:
+                mem_id = r.get("id")
+                citations_out.append(
+                    {
+                        "n": n,
+                        "id": str(mem_id) if mem_id is not None else None,
+                        "preview": text[:120],
+                    }
+                )
         if not lines:
             return ""
         return (

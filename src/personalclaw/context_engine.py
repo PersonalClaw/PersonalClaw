@@ -104,7 +104,14 @@ class DefaultContextEngine:
         # suppresses writes but allows reads), and `build_message` has an explicit
         # signature that would reject an unknown kwarg.
         blocks_writes = kwargs.pop("blocks_writes", False)
-        full_message, hook_result = builder.build_message(text, is_new_session, **kwargs)
+        # Memory citations (MEMORY-GRAPH-AND-VAULT §5.4): collect the episodic block's
+        # `[Memory N]` → record manifest so the runner can attach it to the assistant
+        # message's meta and the frontend can deep-link each cited token. Filled only on
+        # a new session that injects episodic memory; stays [] otherwise.
+        memory_citations: list[dict] = []
+        full_message, hook_result = builder.build_message(
+            text, is_new_session, citations_out=memory_citations, **kwargs
+        )
         injected = max(0, len(full_message) - len(text)) if is_new_session else 0
         # Active recall (the assemble hook): on an eligible interactive turn,
         # surface query-relevant memory just before the reply. Skipped on
@@ -146,7 +153,10 @@ class DefaultContextEngine:
                 full_message = pushed + full_message
                 injected += len(pushed)
         return AssembledContext(
-            message=full_message, hook_result=hook_result, injected_chars=injected
+            message=full_message,
+            hook_result=hook_result,
+            injected_chars=injected,
+            metadata={"memory_citations": memory_citations} if memory_citations else {},
         )
 
     def after_turn(self, session_key: str) -> None:

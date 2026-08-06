@@ -703,3 +703,23 @@ a knowledge-repo-adjacent change with its own ingestion seam and is cleanly sepa
 
   **Gates:** `make lint` clean (mypy 563 files) · `make test` **9759 passed, 0 failed**.
   Tests: `tests/test_vector_memory.py::TestEmbeddingDimensionChange`, 7 cases.
+
+- **DONE — MGAV-7: memory citations in chat + admit-ignorance (§5.4).** Episodic-recall answers now
+  cite facts inline as `[Memory N]`, rendered as chips that deep-link to the episode
+  (`#/settings/memory?tab=studio&sel=epi:<id>`); the system prompt gains a cite-by-index clause
+  (only when the block carries markers) and an unconditional admit-ignorance clause when an episodic
+  block is injected. Implemented at the prompt + renderer level with **no new tool or API route**:
+  `get_episodic_context(citations_out=...)` numbers only emitted fragments and appends a
+  `{n,id,preview}` manifest; the engine threads it via `AssembledContext.metadata`; the chat runner
+  stamps it onto the assistant message's existing `meta` channel (persists to disk, rides the wire
+  via `_prepare_messages`); the FE hydrates it onto the turn and resolves each token by **record id**
+  (never the model's echoed text), so a mis-cited/hallucinated index degrades to plain text.
+  **DEVIATION (recorded):** the plan's `?tab=inspect&key=…` target was imprecise — episodics live in
+  the Memory **Studio** keyed `epi:<id>`, so the deep-link uses `?tab=studio&sel=epi:<id>` and a
+  small `initialSel` preselect was added to `MemoryStudio`. On a new session, episodic content can be
+  injected by two paths (the canonical block + active-recall's fenced block); only the canonical
+  block is cite-numbered, to keep `[Memory N]` a single unambiguous set. Non-citation callers are
+  byte-identical (param defaults to `None`). **Gates:** `make lint` clean (black+isort+flake8+mypy
+  692 files); backend `tests/test_vector_memory.py::TestEpisodicCitations` (4) +
+  `tests/test_context.py` citation clauses (3) + 152 context/memory tests pass; FE `npm run
+  typecheck` clean + `Markdown.citations.test.tsx` (4) pass.

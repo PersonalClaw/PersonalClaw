@@ -257,6 +257,7 @@ class _ChatSession:
         "_tab_id",
         "_disk_older_count",
         "_file_changes",
+        "_memory_citations",
         "_side",
         "_extra_tool_roots",
         "_unattended",
@@ -425,6 +426,11 @@ class _ChatSession:
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each _run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
+        # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt
+        # (MEMORY-GRAPH-AND-VAULT §5.4). Reset per turn, populated from the assembled
+        # context's metadata, and attached to each finalized assistant message's meta so
+        # the frontend can turn a `[Memory N]` token into a deep-link to the episode.
+        self._memory_citations: list[dict] = []
         # Ephemeral side-chat buffer (None = closed). Side Q&A lives ONLY here,
         # never in self.messages — see dashboard/side_state.py.
         self._side: "SideState | None" = None

@@ -43,7 +43,7 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity } from './chat/chatTypes'
 import { useIdentity, firstNameOf } from '../app/identity'
 import { useIsMac } from '../app/usePlatform'
 import { notify } from '../app/appSdk'
@@ -927,7 +927,37 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // skeleton, no visible reload) — the open tab already shows the right
         // content from streaming; we only bring the cached snapshot up to date.
         const sk = sessionRef.current
-        if (sk) api.chatSessionDetail(sk).then((d) => writeCachedDetail(sk, d)).catch(() => {})
+        if (sk) api.chatSessionDetail(sk).then((d) => {
+          writeCachedDetail(sk, d)
+          // Episodic citations (§5.4) live on the persisted assistant message's meta,
+          // not in the WS stream — so the just-streamed turn shows plain `[Memory N]`
+          // text until they're grafted on. Copy them from the fresh snapshot onto the
+          // matching in-place turns so the chips light up without a visible re-hydrate.
+          // Episodic recall injects once per session (the new-session turn), so there is
+          // at most one such message; a persisted turn matches by ts, and the trailing
+          // just-streamed turn (which has no ts yet) is grafted positionally. Cheap:
+          // no-op on the overwhelming majority of turns (no episodic recall).
+          if (sk !== sessionRef.current) return
+          const byTs = new Map<string, MemoryCitation[]>()
+          let lastCites: MemoryCitation[] | null = null
+          for (const m of d.messages || []) {
+            const c = m.meta?.memory_citations
+            if (m.role === 'assistant' && Array.isArray(c) && c.length) {
+              lastCites = c
+              if (m.ts) byTs.set(m.ts, c)
+            }
+          }
+          if (byTs.size || lastCites) setTurns((prev) => {
+            const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
+            return prev.map((t, i) => {
+              if (t.role !== 'assistant' || t.citations) return t
+              if (t.ts && byTs.has(t.ts)) return { ...t, citations: byTs.get(t.ts) }
+              // Trailing streamed turn with no ts → attach the session's one manifest.
+              if (i === lastIdx && !t.ts && lastCites) return { ...t, citations: lastCites }
+              return t
+            })
+          })
+        }).catch(() => {})
         break
       }
       // Visible message queue (mid-stream sends). The server owns the FIFO; these
@@ -2319,7 +2349,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips (CHAT-CRAFT S3) under the last assistant turn only,
@@ -2974,7 +3004,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey, citations }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
@@ -2982,6 +3012,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
   chatSessionKey?: string
+  citations?: MemoryCitation[]
 }) {
   const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
   // A restricted-mode turn may OFFER a one-click escalation to Agent (TM8).
@@ -3027,7 +3058,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     if (seg.kind === 'text') {
       // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose
       const body = parseSwitchToAgent(parseOptions(seg.text).body).body
-      return body ? <Markdown key={i} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming}>{body}</Markdown> : null
+      return body ? <Markdown key={i} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown> : null
     }
     return null
   }

@@ -20,6 +20,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Memory-backed answers cite their sources, and say so when memory is empty.** When a reply
+  draws on episodic memory recalled for the turn, it can cite a fact inline as `[Memory N]`, and the
+  chat renders each such token as a chip that deep-links to that episode in Settings → Memory. The
+  system prompt also instructs the model to answer only from the recalled memory — to say it doesn't
+  have something in memory rather than present an un-recalled fact as remembered. A citation resolves
+  through a per-message manifest keyed by the memory's record id (never the model's echoed text), so
+  a mis-cited or hallucinated `[Memory N]` degrades to plain text instead of a wrong link.
 - **A muted agent can be un-muted from its detail page.** When the auto-router stops suggesting an
   agent because you dismissed its chip enough times, the agent's Advanced → Routing status now shows
   that it's muted and offers an Unmute control to make it eligible for suggestions again — previously

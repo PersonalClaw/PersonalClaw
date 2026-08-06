@@ -16,6 +16,7 @@ import { createElement } from 'react'
 import { parseWidgetBlocks } from './widget/blocks'
 import { embedFor } from './content/contentTypes'
 import { MermaidBlock } from './widget/MermaidBlock'
+import type { MemoryCitation } from '../pages/chat/chatTypes'
 import 'katex/dist/katex.min.css'
 
 /** Full markdown renderer: react-markdown + remark-gfm (tables, task lists,
@@ -284,15 +285,59 @@ function linkifyFiles(children: any, onFileClick: (path: string) => void): any {
   })
 }
 
+// `[Memory N]` citation tokens the model emits when it used an injected episodic
+// memory (MEMORY-GRAPH-AND-VAULT §5.4). Bounded index so a stray "[Memory 999999]"
+// can't match something absurd; resolution against the manifest is what actually
+// gates whether a chip renders.
+const MEMORY_CITE_RE = /\[Memory (\d{1,4})\]/g
+
+/** Turn `[Memory N]` tokens in a markdown text node into deep-link chips to the
+ *  cited episode. `N` resolves against the turn's citation manifest; an
+ *  unresolvable index (hallucinated, or a memory with no record id) degrades to
+ *  the plain text so a bad citation is never a broken link. Mirrors linkifyFiles:
+ *  operates only on plain strings, leaving already-rendered React children alone. */
+function linkifyMemory(children: any, citations: MemoryCitation[]): any {
+  const byN = new Map(citations.map((c) => [c.n, c]))
+  return (Array.isArray(children) ? children : [children]).flatMap((child, ci) => {
+    if (typeof child !== 'string') return [child]
+    const parts: any[] = []
+    let last = 0, m: RegExpExecArray | null
+    MEMORY_CITE_RE.lastIndex = 0
+    while ((m = MEMORY_CITE_RE.exec(child)) !== null) {
+      const n = Number(m[1])
+      const cite = byN.get(n)
+      if (m.index > last) parts.push(child.slice(last, m.index))
+      // No manifest entry, or an entry with no record id → leave the literal token
+      // (honest: we can't point anywhere). A resolvable one becomes a compact chip.
+      if (!cite || !cite.id) {
+        parts.push(m[0])
+      } else {
+        const href = `#/settings/memory?tab=studio&sel=${encodeURIComponent(`epi:${cite.id}`)}`
+        parts.push(
+          <a key={`${ci}-${m.index}`} href={href} title={cite.preview || `Memory ${n}`}
+            className="mx-0.5 inline-flex items-baseline rounded-sm bg-surface-high px-1.5 align-baseline text-[0.8em] text-primary no-underline decoration-primary/40 transition-colors hover:bg-surface-highest hover:underline">
+            Memory {n}
+          </a>,
+        )
+      }
+      last = m.index + m[0].length
+    }
+    if (last < child.length) parts.push(child.slice(last))
+    return parts.length ? parts : [child]
+  })
+}
+
 /** When `onFileClick` is supplied, file mentions become clickable: inline-code
  *  that looks like a path renders as a link, AND bare paths inside prose
  *  (paragraphs / list items) are linkified — so file mentions are interactive
- *  right where they're read, whether the model used backticks or not. */
+ *  right where they're read, whether the model used backticks or not. When
+ *  `citations` is supplied, `[Memory N]` tokens become deep-link chips too. */
 function componentsWith(
   onFileClick?: (path: string) => void,
   chatSessionKey?: string,
+  citations?: MemoryCitation[],
 ): Record<string, React.ComponentType<any>> {
-  if (!onFileClick && !chatSessionKey) return COMPONENTS
+  if (!onFileClick && !chatSessionKey && !(citations && citations.length)) return COMPONENTS
   const base: Record<string, React.ComponentType<any>> = { ...COMPONENTS }
   // Scope the inline-image renderer to the chat session so a deleted image's
   // placeholder can offer "Regenerate" (re-runs at the same slug, server recovers
@@ -305,13 +350,22 @@ function componentsWith(
       return <InlineArtifactImage src={safe} alt={alt || ''} chatSessionKey={chatSessionKey} />
     }
   }
-  if (!onFileClick) return base
-  const L = (children: any) => linkifyFiles(children, onFileClick)
+  // Combined text transform: linkify file paths (when enabled) THEN resolve
+  // `[Memory N]` citation chips (when a manifest is present). Order is safe —
+  // linkifyMemory only touches remaining plain strings, leaving the file-link
+  // buttons linkifyFiles produced untouched. No file-click and no citations →
+  // identity, so p/li/td stay byte-identical to COMPONENTS.
+  const cites = citations && citations.length ? citations : null
+  const L = (children: any) => {
+    let out = onFileClick ? linkifyFiles(children, onFileClick) : children
+    if (cites) out = linkifyMemory(out, cites)
+    return out
+  }
   return {
     ...base,
     code({ className, children }: any) {
       const str = String(children).replace(/\n$/, '')
-      if (!className && looksLikeFile(str)) {
+      if (onFileClick && !className && looksLikeFile(str)) {
         return (
           <button type="button" onClick={() => onFileClick(str.trim())} title={`Open ${str.trim()}`}
             className="rounded-sm bg-surface-high px-1.5 py-0.5 align-baseline text-[0.85em] font-mono text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-surface-highest hover:decoration-primary">
@@ -342,13 +396,13 @@ function stringifyChildren(v: unknown): string {
 }
 
 /** Plain markdown (no widget split) — the inner renderer. */
-function MarkdownText({ children, onFileClick, chatSessionKey }: {
-  children: string; onFileClick?: (path: string) => void; chatSessionKey?: string
+function MarkdownText({ children, onFileClick, chatSessionKey, citations }: {
+  children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]
 }) {
-  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={componentsWith(onFileClick, chatSessionKey)}>{children}</ReactMarkdown>
+  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={componentsWith(onFileClick, chatSessionKey, citations)}>{children}</ReactMarkdown>
 }
 
-export const Markdown = memo(function Markdown({ children, className, onFileClick, chatSessionKey, messageTs, streaming }: {
+export const Markdown = memo(function Markdown({ children, className, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
   /** Chat session key — enables "Regenerate" on a deleted inline image's placeholder
    *  (re-runs at the same slug; server recovers the prompt from this session). */
@@ -357,6 +411,9 @@ export const Markdown = memo(function Markdown({ children, className, onFileClic
   messageTs?: string
   /** still streaming → render an unclosed trailing `<widget>` progressively. */
   streaming?: boolean
+  /** episodic memory manifest for THIS turn — resolves `[Memory N]` citation chips
+   *  (MEMORY-GRAPH-AND-VAULT §5.4). Absent → tokens render as plain text. */
+  citations?: MemoryCitation[]
 }) {
   // Defensive: callers occasionally pass agent/tool-authored content that isn't
   // a clean string (an object/array where a doc was expected). Coerce so a stray
@@ -366,7 +423,7 @@ export const Markdown = memo(function Markdown({ children, className, onFileClic
   // Split out `<widget>` blocks; render each as a sandboxed iframe, prose as MD.
   const segments = parseWidgetBlocks(text, streaming)
   if (segments.length === 1 && segments[0].type === 'md') {
-    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey}>{text}</MarkdownText></div>
+    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations}>{text}</MarkdownText></div>
   }
   let wi = 0
   return (
@@ -375,7 +432,7 @@ export const Markdown = memo(function Markdown({ children, className, onFileClic
     // keeps the float contained inside THIS turn.
     <div className={`flow-root text-on-surface ${className ?? ''}`}>
       {segments.map((seg, i) => {
-        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey}>{seg.content}</MarkdownText>
+        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations}>{seg.content}</MarkdownText>
         // Resolve the block's renderer through the ONE content registry (was a
         // hardcoded react/widget fork): adding an inline-embeddable type is now a
         // registry entry, not an edit here.
