@@ -1,6 +1,6 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
-  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins,
+  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -51,6 +51,11 @@ const useUsageToday = () => useCachedData('settings:usage-today', () => {
   return api.usageTotals({ since }).then((d) => d.totals).catch(() => null)
 }, { persist: false })
 const useModelsActive = () => useCachedData('settings:models-active', () => api.modelsActive().catch(() => null as Record<string, string[]> | null), { persist: true })
+// Routing efficiency for the default (chat, short_chat) bucket — the card's headline
+// is how many models are on the Pareto frontier there; deep-links into the subpage,
+// which lets the user pick any bucket. null on read failure (distinct from []=no data).
+const useRoutingTelemetry = () => useCachedData('settings:routing-telemetry:chat:short_chat',
+  () => api.modelsTelemetry({ use_case: 'chat', query_class: 'short_chat' }).then((d) => d.rows).catch(() => null), { persist: false })
 const useSearchEntity = () => useCachedData('settings:search', async () => {
   const [providers, active] = await Promise.all([
     api.searchProviders().catch(() => [] as SearchProviderInfo[]),
@@ -228,6 +233,29 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{shortModel(bound)}</span></span>
               : <span className="text-on-surface-low">—</span> }
           })} />}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'routing', group: 'AI & Models', label: 'Routing & Efficiency', icon: Route, size: 'sm',
+    description: 'Per-model efficiency for each kind of request — success, latency, cost — and which models are on the Pareto frontier. Observation only.',
+    useSearchText() {
+      const { data } = useRoutingTelemetry()
+      const frontier = (data ?? []).filter((r) => r.on_frontier).length
+      return `routing efficiency telemetry pareto frontier model latency cost success p50 p95 ${data ? `${data.length} models ${frontier} frontier` : ''}`
+    },
+    render(query, go) {
+      const { data } = useRoutingTelemetry()
+      const frontier = (data ?? []).filter((r) => r.on_frontier).length
+      return (
+        <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined}>
+          {data === null || (data && data.length === 0)
+            ? <div className="text-on-surface-low text-[0.8125rem]">Per-model success, latency, and cost for each kind of request land here as models handle work — showing which is most efficient.</div>
+            : data && <><BigStat value={data.length} caption={data.length === 1 ? 'model measured' : 'models measured'} />
+                <div className="mt-1 inline-flex items-center gap-1 text-on-surface-low text-[0.8125rem]">
+                  <Trophy size={11} className="text-ok" /> {frontier} on the frontier
+                </div></>}
         </BentoCard>
       )
     },
