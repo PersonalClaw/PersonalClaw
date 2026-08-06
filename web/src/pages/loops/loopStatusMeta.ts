@@ -10,6 +10,7 @@ export const LOOP_STATUS: Record<string, { label: string; tone: string }> = {
   running: { label: 'Running', tone: 'var(--color-ok)' },
   paused: { label: 'Paused', tone: 'var(--color-warn)' },
   stagnant: { label: 'Stagnant', tone: 'var(--color-warn)' },
+  blocked: { label: 'Blocked', tone: 'var(--color-warn)' },
   needs_input: { label: 'Needs input', tone: 'var(--color-info)' },
   complete: { label: 'Completed', tone: 'var(--color-primary)' },
   failed: { label: 'Failed', tone: 'var(--color-danger)' },
