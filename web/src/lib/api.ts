@@ -2524,6 +2524,14 @@ export const api = {
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   runStoreTrigger: (rawId: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
+  // The `view` kind's render caller (WF2AUT-6). A render surface pings this as it mounts/refreshes;
+  // any `view` trigger bound to `surface` and past its TTL refreshes (fire-and-forget on the
+  // gateway), the rest serve cache. Deliberately NOT a poll — R10: a view trigger costs nothing
+  // when nobody looks, so a render calls it rather than a background loop. Callers fire-and-forget
+  // (`.catch(() => {})`) — a background refresh must never block or error a render.
+  viewRender: (surface: string) =>
+    post<{ refreshed: string[]; served_cache: { trigger_id: string; reason: string }[] }>(
+      '/api/triggers/view/render', { surface }),
 
   // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),
