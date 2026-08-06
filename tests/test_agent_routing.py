@@ -122,7 +122,7 @@ class TestSuppressionStore:
         # Should be suppressed regardless of case
         assert routing.is_suppressed("dba", now=now + 3600, cooldown_hours=24.0)
         assert routing.is_suppressed("DbA", now=now + 3600, cooldown_hours=24.0)
-        
+
         # Unmuting should also be case-insensitive
         for _ in range(2):
             routing.record_dismiss("dBa", now=now)
