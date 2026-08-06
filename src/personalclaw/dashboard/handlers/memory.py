@@ -957,6 +957,8 @@ async def api_memory_import(request: web.Request) -> web.Response:
         data = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
     counts = store.import_memory(data)
     return web.json_response(counts)
 

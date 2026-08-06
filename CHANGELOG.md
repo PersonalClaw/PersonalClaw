@@ -29,6 +29,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   dated heading so the original skill and any earlier refinements are preserved. New-skill
   proposals are unaffected, and a refine whose target skill was since deleted quietly falls
   back to creating a new one instead of erroring.
+- **Importing a memory file that wasn't a JSON object failed with an unhelpful server error.**
+  Handing `POST /api/memory/import` (or `personalclaw memory import`) a JSON list, string, number,
+  `null`, or `true` crashed the import instead of telling you the file was the wrong shape. Both
+  now say so plainly, and a valid export imports as before.
 
 - **One app could borrow another app's permission to run an agent, and read agent runs that
   weren't its own.** The permission check on the app agent-run endpoints read the app name out of
