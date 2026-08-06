@@ -354,6 +354,12 @@ def run_sync_job() -> JobResult:
 
             home = _home()
             report = run_sync_cycle(transport, home, self_id=machine_id(home))
+            # GC tombstone side-logs past the sync horizon (DAS-6c-iii): once every peer
+            # has had a chance to see a delete (older than the staleness window * a safety
+            # factor), its marker is dead weight. Only after a SUCCESSFUL cycle — a failed
+            # push means peers may not have pulled the delete yet.
+            if report.ok:
+                _prune_tombstones(home, float(getattr(cfg, "sync_stale_after_secs", 900) or 900))
         except Exception as exc:  # noqa: BLE001 — a failed sync must not kill the loop
             logger.warning("durability: sync cycle raised", exc_info=True)
             _audit("durability_sync", f"failed: {exc}", outcome="denied")
@@ -373,6 +379,28 @@ def run_sync_job() -> JobResult:
             "seq_published": report.seq_published,
         },
     )
+
+
+def _prune_tombstones(home: Path, stale_after_secs: float) -> None:
+    """GC each tombstone-bearing entry's sync-only delete side-log (DAS-6c-iii).
+
+    Horizon = now − stale_after_secs × a safety factor, so a marker is only dropped well
+    after every peer that syncs within the window has had a chance to observe the delete.
+    Best-effort — a prune failure never affects the sync outcome."""
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        from personalclaw.durability import inventory as inv
+        from personalclaw.durability.tombstones import prune
+
+        # 4× the staleness window is a generous "everyone has surely pulled by now" margin.
+        horizon = datetime.now(timezone.utc) - timedelta(seconds=stale_after_secs * 4)
+        keep_after = horizon.isoformat()
+        for entry in inv.all_entries():
+            if entry.tombstones and entry.kind == inv.KIND_JSON_ENTITY_DIR:
+                prune(home / entry.path, keep_after=keep_after)
+    except Exception:  # noqa: BLE001
+        logger.debug("durability: tombstone prune skipped", exc_info=True)
 
 
 def _notify_drill(ok: bool, detail: str, notifier=None) -> None:

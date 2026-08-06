@@ -1391,3 +1391,31 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   `tests/test_durability_tombstones.py` (12: record/read/dedup/corrupt-skip/invisible-to-glob,
   fold appends-when-gone + drops-when-live + passthrough, prune horizon, end-to-end export fold)
   + shards/db-shards/sync-cycle regression (53) pass.
+
+## Execution log — DAS-6c-iii-b (wire the delete sites + prune) + a scoping discovery
+
+- **DAS-6c-iii-b DONE (the flat-entity delete sites + GC).** `tasks/native.py:delete_task` and
+  `hierarchy.py:delete_task_list` now call `record_tombstone` after their hard `unlink`, keyed by
+  the id the exporter emits for that file: a task's id is its stem (`<task_id>`), a task list's is
+  its relpath-stem under the `tasks` entry dir (`task_lists/<id>`). Both are best-effort (a failed
+  breadcrumb never fails the delete). `run_sync_job` calls a new `_prune_tombstones(home,
+  stale_after_secs)` after a SUCCESSFUL cycle — horizon = now − window×4 (a generous "every peer
+  has surely pulled by now" margin), walking every `tombstones=True` entity-dir entry. A
+  hard-deleted task's marker now rides the export end-to-end (verified: create two tasks, delete
+  one, export → the deleted id appears as a `deleted_at` row, the kept id as a live row).
+- **DISCOVERY (scoping, recorded for 6c-iii-c).** Two of the four hard-delete sites are NOT clean
+  flat-entity deletes, so they're deliberately deferred, not wired here:
+  - **`delete_project` deletes a SUBTREE** (`projects/<id>/project.json` + `context/` + worktrees),
+    and the exporter emits one row PER `*.json` file (id = relpath-stem), so a project is MANY
+    shard rows. One tombstone id can't capture it — 6c-iii-c must enumerate the subtree's rows (or
+    the merge/writeback need a prefix-tombstone concept). Deferred.
+  - **`delete_comment` REWRITES a sidecar** (`_comments_<task_id>.json`) — it's an UPDATE to an
+    existing entity file, not an entity unlink, so ordinary update-sync already carries it; no
+    tombstone is needed (and the sidecar is itself an entity row the exporter picks up). Correctly
+    out of scope.
+  So delete-convergence now holds for **tasks and task lists** (the common case); **project**
+  deletion convergence waits on 6c-iii-c. **Remaining:** 6c-iii-c (project-subtree tombstones),
+  DAS-6d (git-sync + dir-sync transport apps in PersonalClawApps + e2e criterion-4 over a real git
+  repo/folder). **Gates:** `make lint` clean (710 files); `tests/test_durability_tombstone_wiring.py`
+  (4: delete_task records a marker + it rides the export, delete_task_list records a relpath-keyed
+  marker, prune trims old markers) + tasks/durability/hierarchy regression (646 passed, 2 skipped).

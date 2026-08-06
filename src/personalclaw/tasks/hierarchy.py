@@ -361,4 +361,20 @@ class HierarchyStore:
         if not self._list_path(list_id).exists():
             return False
         self._list_path(list_id).unlink(missing_ok=True)
+        # Sync-only delete marker (DAS-6c-iii). The list's row id in the `tasks` shard is
+        # its path under the entry dir (`task_lists/<id>`), so the tombstone id must match.
+        self._record_list_tombstone(list_id)
         return True
+
+    def _record_list_tombstone(self, list_id: str) -> None:
+        """Append a sync-only delete marker for a hard-deleted task list. Best-effort —
+        never fails the delete. The side-log lives at the `tasks` entry dir root; the row
+        id is the list file's path relative to it (`task_lists/<id>`)."""
+        try:
+            from personalclaw.durability.tombstones import record_tombstone
+
+            rel = self._list_path(list_id).relative_to(self._base()).as_posix()
+            row_id = rel[:-5] if rel.endswith(".json") else rel  # strip .json → stem
+            record_tombstone(self._base(), row_id, now=_now_iso())
+        except Exception:  # noqa: BLE001
+            pass
