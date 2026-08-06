@@ -13,12 +13,14 @@ else (port, bind address, allowed origins) is derived from it.
 import ipaddress
 import logging
 import os
+import shutil
 import socket
+from collections.abc import Iterable
 from urllib.parse import parse_qs, quote, urlparse
 
 from aiohttp import web
 
-from personalclaw.auth.modes import AuthConfig, effective_bind
+from personalclaw.auth.modes import AuthConfig, AuthMode, effective_bind
 from personalclaw.config.loader import _DEFAULT_PORT
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,88 @@ def resolve_bind_host(auth_cfg: AuthConfig | None = None) -> str:
 def is_local_bind(bind_host: str) -> bool:
     """Return ``True`` if *bind_host* is the loopback address."""
     return bind_host == _BIND_LOCAL
+
+
+# ---------------------------------------------------------------------------
+# Tailnet reachability (MOBILE-COMPANION S1)
+# ---------------------------------------------------------------------------
+
+# Tailscale assigns every node an address in the documented CGNAT range
+# 100.64.0.0/10 (RFC 6598). That address is the stable, dependency-free signal
+# that this machine is *on a tailnet right now* — no tailscale library, no CLI
+# call required. The presence of the ``tailscale`` binary is corroborating
+# evidence only (it may be installed but logged out / down).
+_TAILNET_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _local_addresses() -> list[str]:
+    """Best-effort enumeration of this machine's local IPv4/IPv6 addresses.
+
+    Uses ``getaddrinfo(gethostname())`` — stdlib only, no network round-trip.
+    Never raises: address discovery failing is an empty list, not an error (the
+    caller treats "no tailnet found" the same either way).
+    """
+    addrs: set[str] = set()
+    try:
+        host = socket.gethostname()
+    except Exception:
+        return []
+    try:
+        for info in socket.getaddrinfo(host, None):
+            sockaddr = info[4]
+            if sockaddr and sockaddr[0]:
+                addrs.add(str(sockaddr[0]))
+    except Exception:
+        pass
+    return sorted(addrs)
+
+
+def tailnet_ip(addresses: Iterable[str] | None = None) -> str:
+    """Return this machine's tailnet address (100.64.0.0/10), or ``""`` if none.
+
+    *addresses* is an injectable seam: pass an explicit iterable to test without
+    touching the network (a fixture feeds ``["100.101.102.103"]`` for present,
+    ``["192.168.1.5"]`` for absent). When omitted, local addresses are discovered
+    via :func:`_local_addresses`.
+    """
+    candidates = list(addresses) if addresses is not None else _local_addresses()
+    for addr in candidates:
+        # Strip a zone id (e.g. fe80::1%en0) before parsing.
+        bare = addr.split("%", 1)[0]
+        try:
+            ip = ipaddress.ip_address(bare)
+        except ValueError:
+            continue
+        if ip.version == 4 and ip in _TAILNET_CGNAT:
+            return str(ip)
+    return ""
+
+
+def tailscale_cli_present() -> bool:
+    """Return ``True`` if the ``tailscale`` CLI is on PATH.
+
+    Corroborating evidence only — the CLI being installed does NOT mean this
+    machine is currently on a tailnet (it may be logged out). :func:`tailnet_ip`
+    is the authoritative "on a tailnet now" signal.
+    """
+    return shutil.which("tailscale") is not None
+
+
+def auth_is_off(auth_cfg: AuthConfig | None = None) -> bool:
+    """Return ``True`` when the gateway serves requests with NO authentication.
+
+    Two ways auth is genuinely off: ``AuthMode.NONE`` (pass-through), or the
+    blanket ``PERSONALCLAW_DEV_NO_AUTH=1`` middleware skip. Both are dev-only and
+    both are normally safe because ``effective_bind`` forces NONE to loopback —
+    but the ``PERSONALCLAW_BIND_HOST`` escape hatch can override that bind, which
+    is exactly the exposed-without-auth misconfiguration the reachability probe
+    warns about. ``local_token``/``api_key``/``oauth2`` are NOT "off": a
+    non-loopback bind under those still requires a token/credential.
+    """
+    if os.environ.get("PERSONALCLAW_DEV_NO_AUTH") == "1":
+        return True
+    cfg = auth_cfg if auth_cfg is not None else AuthConfig.from_env()
+    return cfg.mode == AuthMode.NONE
 
 
 # ---------------------------------------------------------------------------
