@@ -83,6 +83,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Deleting a knowledge item mid-enrichment crashed its background pipeline with a noisy
+  error.** If you deleted an item within the ~30 seconds its tags/insights were still being
+  extracted, the enrichment pipeline hit a `FOREIGN KEY constraint failed` error, logged a full
+  traceback, and then tried to record a "failed" status on the row you had just deleted. Deletion
+  itself always worked, but the orphaned pipeline made noise it shouldn't. A delete during
+  enrichment now aborts the pipeline quietly — the item is gone, so there is nothing left to
+  enrich. Genuine mid-pipeline failures (where the item still exists) still record as failed.
 - **"Run now" did nothing for almost every automation, while reporting success.** Clicking Run now
   (or dry-run's live counterpart) on a schedule or automation reported that it had run, but no
   action executed and nothing appeared in the run history — the Run button just sat on "Running…"
