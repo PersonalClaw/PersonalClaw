@@ -8,6 +8,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **Security docs now describe what the sandbox actually does — credential-hiding, not
+  confinement.** `docs/architecture/security.md` gains an explicit "what the sandbox does and does
+  not do" section (no network/process/write confinement beyond `~/.ssh`); the "bounded by
+  guardrails" claim is scoped to *unattended* work (interactive chat is never gated); and the
+  desktop shell is described as an experimental macOS-only build, not a shipped platform — matching
+  what CI actually releases. Documentation only; every change narrows a claim rather than widening
+  one.
+
 ### Added
 
 - **Mid-run steering now takes effect, and the judge leaves a paper trail.** A workflow's decision
