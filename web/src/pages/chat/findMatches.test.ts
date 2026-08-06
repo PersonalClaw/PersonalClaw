@@ -148,7 +148,13 @@ describe('findMatches', () => {
     const t0 = performance.now()
     const m = findMatches(turns, 'fox')
     const dt = performance.now() - t0
+    // Correctness is the real assertion — every occurrence is found across all turns.
     expect(m.length).toBe(500 * 6)
-    expect(dt).toBeLessThan(50) // generous ceiling; typically <10ms
+    // Regression guard, not a microbenchmark: the op is typically <10ms, so a real
+    // O(n²) blow-up on 500 turns would land in the seconds. The ceiling is a loaded-
+    // CI-realistic bound (a 50ms bound flaked at ~50.5ms on contended shared runners —
+    // a false red with no regression signal); 250ms keeps ~25× headroom while still
+    // catching an algorithmic regression.
+    expect(dt).toBeLessThan(250)
   })
 })

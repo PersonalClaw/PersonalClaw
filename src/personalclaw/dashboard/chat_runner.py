@@ -428,6 +428,34 @@ _MAX_FILE_SNAPSHOT = 200_000
 _APPROVAL_MIRROR_GRACE_SECS = 90.0
 
 
+def _turn_complete_line(
+    *,
+    events: int,
+    tool_calls: int,
+    context_pct: float,
+    input_tokens: int,
+    output_tokens: int,
+    cache_tokens: int,
+    cost_usd: float,
+    priced: bool,
+) -> str:
+    """Compose the live-only "Turn complete" telemetry line (CATO-6).
+
+    Appends a real cost + in/out token fragment to the existing events/tool-calls/
+    context summary. Honest-unpriced: a model with no price row renders ``unpriced``,
+    NEVER ``$0.00`` — so a missing price is never mistaken for a free turn. The cache
+    fragment is present only when cache tokens are non-zero (absent until
+    PROMPT-CACHE-SUBSTRATE lands and a provider actually reports them).
+    """
+    line = f"Turn complete: {events} events, {tool_calls} tool calls, context {round(context_pct)}%"
+    if input_tokens or output_tokens:
+        cost_str = f"${cost_usd:.4f}" if priced else "unpriced"
+        line += f" · {cost_str} · {input_tokens:,} in / {output_tokens:,} out tokens"
+        if cache_tokens:
+            line += f" · {cache_tokens:,} cached"
+    return line
+
+
 def _record_turn_usage(
     event: object,
     *,
@@ -437,37 +465,22 @@ def _record_turn_usage(
     provider: str,
     model: str,
 ) -> None:
-    """Append one row to the per-turn cost/token ledger for a completed turn
-    (COST-AND-TOKEN-OBSERVABILITY C2, chat write-site).
+    """Append one row to the per-turn cost/token ledger for a completed chat turn
+    (COST-AND-TOKEN-OBSERVABILITY C2, chat write-site). Thin wrapper over the shared
+    :func:`personalclaw.usage_ledger.record_from_event` seam (which owns the
+    vendor-cost-wins / honest-unpriced / fail-open logic)."""
+    from personalclaw.usage_ledger import record_from_event
 
-    ``priced`` is False ONLY when the model has no ``model_pricing.json`` row AND
-    the provider reported no cost — then ``cost_usd`` is an honest 0.0 the UI must
-    render "unpriced" (vendor-reported cost always wins when present). Fail-open:
-    ``record_turn`` never raises into the turn, so a ledger fault can't break chat.
-    """
-    from datetime import datetime, timezone
-
-    from personalclaw.pricing import has_pricing
-    from personalclaw.usage_ledger import TurnUsage, record_turn
-
-    cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
-    priced = bool(cost) or has_pricing(model)
-    record_turn(
-        TurnUsage(
-            ts=datetime.now(timezone.utc).isoformat(),
-            session_key=session_key,
-            source=source,
-            agent=agent,
-            provider=provider,
-            model=model,
-            input_tokens=int(getattr(event, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(event, "output_tokens", 0) or 0),
-            cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
-            cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
-            cost_usd=cost,
-            priced=priced,
-            duration_ms=int(getattr(event, "duration_ms", 0) or 0),
-        )
+    # estimate_if_missing=False: the chat EVENT_COMPLETE handler already resolved
+    # event.cost_usd via estimate_cost, so re-estimating here would double-count it.
+    record_from_event(
+        event,
+        source=source,
+        session_key=session_key,
+        agent=agent,
+        provider=provider,
+        model=model,
+        estimate_if_missing=False,
     )
 
 
@@ -1874,6 +1887,14 @@ async def _run_chat(
         # the live-only "Turn complete" stats line after the loop.
         _turn_event_count = 0
         _turn_tool_call_count = 0
+        # Cost/token accounting for the same "Turn complete" line (CATO-6). Captured
+        # at EVENT_COMPLETE; _turn_priced is False only when the model has no price
+        # row AND the provider reported no cost → render "unpriced", never $0.00.
+        _turn_input_tokens = 0
+        _turn_output_tokens = 0
+        _turn_cache_tokens = 0
+        _turn_cost_usd = 0.0
+        _turn_priced = False
         async for event in event_stream:
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
@@ -2800,6 +2821,17 @@ async def _run_chat(
                         provider=provider_kind or "",
                         model=_record_model or "",
                     )
+                    # Capture for the "Turn complete" cost line (CATO-6). priced is
+                    # False only with no price row AND no provider cost → "unpriced".
+                    from personalclaw.pricing import has_pricing as _has_pricing
+
+                    _turn_input_tokens = int(event.input_tokens or 0)
+                    _turn_output_tokens = int(event.output_tokens or 0)
+                    _turn_cache_tokens = int(event.cache_read_tokens or 0) + int(
+                        event.cache_creation_tokens or 0
+                    )
+                    _turn_cost_usd = float(event.cost_usd or 0.0)
+                    _turn_priced = bool(_turn_cost_usd) or _has_pricing(_record_model)
                 _stop_reason = event.stop_reason
                 _turn_event_count = event.event_count
                 _turn_tool_call_count = event.tool_call_count
@@ -2981,13 +3013,22 @@ async def _run_chat(
         # complete" line). Reads the provider-neutral counts carried on the
         # terminal complete event — populated identically by the native loop and
         # the ACP client — so both agent paths render the same chip.
-        if _turn_event_count or _turn_tool_call_count:
+        if _turn_event_count or _turn_tool_call_count or _turn_input_tokens or _turn_output_tokens:
             state.broadcast_ws(
                 "activity_event",
                 {
                     "session": session.key,
                     "kind": "stats",
-                    "text": f"Turn complete: {_turn_event_count} events, {_turn_tool_call_count} tool calls, context {round(pct)}%",  # noqa: E501
+                    "text": _turn_complete_line(
+                        events=_turn_event_count,
+                        tool_calls=_turn_tool_call_count,
+                        context_pct=pct,
+                        input_tokens=_turn_input_tokens,
+                        output_tokens=_turn_output_tokens,
+                        cache_tokens=_turn_cache_tokens,
+                        cost_usd=_turn_cost_usd,
+                        priced=_turn_priced,
+                    ),
                 },
             )
         _stop_text = redact_exfiltration_urls(assistant_text[:500])[0]

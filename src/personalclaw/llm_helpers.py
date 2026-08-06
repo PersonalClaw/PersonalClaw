@@ -63,6 +63,7 @@ async def stream_and_collect(
     hooks: "HookManager | None" = None,
     on_chunk: Callable[[str], None] | None = None,
     on_tool_approval: Callable[[LLMEvent], Awaitable[bool]] | None = None,
+    on_complete: Callable[[LLMEvent], None] | None = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -76,6 +77,12 @@ async def stream_and_collect(
         hooks: HookManager for HOOK_BASED approval policy.
         on_chunk: Optional callback invoked with each text chunk (for progress).
         on_tool_approval: Optional async callback for interactive approval.
+        on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE``
+            event (which carries the turn's token counts + cost) just before the
+            text is returned — the seam the cost/token ledger's non-``_run_chat``
+            write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). Default ``None``
+            leaves the streamed text byte-identical for every other caller. Never
+            raises into the turn: a callback fault is swallowed.
 
     Returns:
         The complete response text.
@@ -111,6 +118,11 @@ async def stream_and_collect(
                         event.tool_input,
                     )
                 elif event.kind == EVENT_COMPLETE:
+                    if on_complete is not None:
+                        try:
+                            on_complete(event)
+                        except Exception:  # noqa: BLE001 — telemetry must never break a turn
+                            logger.debug("stream_and_collect on_complete failed", exc_info=True)
                     break
             return result_text
         except AcpError as exc:
@@ -275,7 +287,11 @@ def save_conversation_turn(
 
 
 async def one_shot_completion(
-    prompt: str, *, use_case: str = "background", output_type: type | None = None
+    prompt: str,
+    *,
+    use_case: str = "background",
+    output_type: type | None = None,
+    model: str = "",
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
@@ -307,6 +323,14 @@ async def one_shot_completion(
     returned at every call site. Returns the raw text unchanged when ``output_type``
     is ``None`` (the response is still a ``str``; typed callers parse the returned
     text, e.g. via ``json.loads``).
+
+    ``model`` PINS resolution to one concrete model (a ``"Provider:model_id"`` ref,
+    or a bare id), bypassing the use case's active-selection CHAIN — a pin is not a
+    chain. This is the seam cross-model judge isolation needs (WF2LOO-11): the engine
+    resolves a different-FAMILY judge model up front, validates it against the
+    producing stage's model, and pins it here so the judge provably runs on the model
+    it was checked against. The default ``""`` keeps today's use-case-only resolution
+    byte-for-byte.
     """
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
@@ -346,6 +370,14 @@ async def one_shot_completion(
                 await provider.shutdown()
             except Exception:
                 pass
+
+    # A pinned model bypasses the active-selection chain entirely — a pin is not a
+    # chain (WF2LOO-11). The caller has already decided WHICH model must run (a
+    # cross-model judge validated against the worker's family), so walking the
+    # use-case fallback chain would defeat the pin: a fallback entry could be the
+    # very family the isolation control excluded. Resolve the one model and run it.
+    if model:
+        return await _run(resolve_provider_for_use_case(resolved_uc, model_override=model))
 
     # Call-failure chain advance (MODEL-USE-CASES-V2 T2.4): with a multi-entry
     # chain declared, a CircuitOpenError/provider failure from entry N advances to

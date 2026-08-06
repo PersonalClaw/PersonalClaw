@@ -20,6 +20,38 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of
+  work.** Settings → Routing & Efficiency lets you pick a use case (chat / code & tools / reasoning)
+  and a request kind (short chat, code, summarize, extract structured, long reasoning — both
+  round-trip the URL) and shows, per model, the real success rate, p50/p95 latency, and cost per
+  call for that kind of request, with the ones on the efficiency **frontier** (not beaten on all of
+  quality, speed, and cost) flagged and floated to the top. Observation only — it visualizes
+  already-recorded telemetry and does not change how requests are routed. A bucket with no data yet
+  shows a friendly "fills in as models handle this kind of request" note; a local/zero-cost model
+  reads "free," never a misleading "$0.00."
+- **A Usage panel in Settings shows what you're spending.** Settings → Usage renders Today / 7-day /
+  30-day cost + token totals (the period control round-trips the URL), a by-model and a by-source
+  table with each row's share, a cache-savings line, and — when you've set a daily budget in
+  Guardrails — a read-only "spent $X of your $Y cap" (automations only; interactive chat is
+  uncapped). A period that includes a model with no price row shows a "partial — N unpriced models"
+  marker instead of a misleadingly complete figure. Observation only — nothing here caps or throttles
+  a turn. This completes cost observability: per-turn, per-conversation, and per-account.
+- **The chat header shows what the whole conversation has cost.** A cost chip — e.g.
+  `$0.19 · 46k tokens` — appears in the session header once a chat has recorded usage, reading the
+  per-turn ledger scoped to that session. A conversation whose models are all priced shows a real
+  dollar figure; one that used a model with no price row shows `unpriced` rather than a misleadingly
+  precise total.
+- **The "Turn complete" line now shows what the turn cost.** When a turn finishes, its telemetry
+  line (in the collapsible per-turn details) reports real USD plus in/out token counts — e.g.
+  `$0.0123 · 1,200 in / 340 out tokens`. A model with no price row shows `unpriced` rather than a
+  misleading `$0.00`, and a cache fragment appears only when the provider actually reported cached
+  tokens. Cost is provider-reported when available, otherwise derived from the pricing table.
+- **`personalclaw doctor` now reports your SQLite driver and its capabilities.** The Dependencies
+  section shows the resolved driver (`pysqlite3` or the stdlib `sqlite3`), its version, and whether
+  FTS5 and JSON1 are compiled in — with a fix hint (`pip install pysqlite3-binary`) when FTS5 is
+  missing, since the knowledge and memory search paths need it. Under the hood the driver is now
+  selected in one place (`sqlite_compat`) instead of seven, so every subsystem shares one honest
+  answer.
 - **Memory-backed answers cite their sources, and say so when memory is empty.** When a reply
   draws on episodic memory recalled for the turn, it can cite a fact inline as `[Memory N]`, and the
   chat renders each such token as a chip that deep-links to that episode in Settings → Memory. The

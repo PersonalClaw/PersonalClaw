@@ -76,6 +76,66 @@ def record_turn(u: TurnUsage) -> None:
         logger.debug("usage ledger append failed", exc_info=True)
 
 
+def record_from_event(
+    event: object,
+    *,
+    source: str,
+    session_key: str = "",
+    agent: str = "",
+    provider: str = "",
+    model: str = "",
+    estimate_if_missing: bool = True,
+) -> None:
+    """Record one ledger row from a terminal ``EVENT_COMPLETE`` LLM event (C2).
+
+    The one seam every write-site shares: it reads the token counts + provider cost
+    off the event, derives cost via ``pricing.estimate_cost`` ONLY when the provider
+    reported none (vendor cost wins when present), and sets ``priced`` False only when
+    the model has no price row AND the provider reported no cost — then ``cost_usd`` is
+    an honest 0.0 the UI renders "unpriced". Fail-open through :func:`record_turn`.
+
+    ``estimate_if_missing=False`` skips the fallback estimate — for a caller (the chat
+    write-site) that ALREADY resolved ``event.cost_usd`` via ``estimate_cost`` itself,
+    so re-estimating here would both waste the call and double-count it. ``priced`` still
+    reflects the price table (``has_pricing``) so an unpriced model with a caller-supplied
+    0.0 renders "unpriced", not a free turn.
+    """
+    from datetime import datetime, timezone
+
+    from personalclaw.pricing import estimate_cost, has_pricing
+
+    input_tokens = int(getattr(event, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(event, "output_tokens", 0) or 0)
+    cache_read = int(getattr(event, "cache_read_tokens", 0) or 0)
+    cache_creation = int(getattr(event, "cache_creation_tokens", 0) or 0)
+    cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
+    if not cost and model and estimate_if_missing:
+        cost = estimate_cost(
+            model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+        )
+    record_turn(
+        TurnUsage(
+            ts=datetime.now(timezone.utc).isoformat(),
+            session_key=session_key,
+            source=source,
+            agent=agent,
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            cost_usd=cost,
+            priced=bool(cost) or has_pricing(model),
+            duration_ms=int(getattr(event, "duration_ms", 0) or 0),
+        )
+    )
+
+
 def _maybe_trim(p: Path) -> None:
     """Trim to the newest ``_CAP`` lines when the file exceeds 2× (atomic rewrite)."""
     try:
@@ -145,20 +205,32 @@ def _fold(agg: dict, row: dict) -> None:
         agg["priced"] = False
 
 
-def rollup(*, since: str = "", until: str = "", group_by: str = "model") -> list[dict]:
+def _row_selected(row: dict, since: str, until: str, session_key: str) -> bool:
+    """Whether a ledger row is in the query window AND (if given) its session."""
+    if not _in_window(str(row.get("ts", "")), since, until):
+        return False
+    if session_key and str(row.get("session_key", "")) != session_key:
+        return False
+    return True
+
+
+def rollup(
+    *, since: str = "", until: str = "", group_by: str = "model", session_key: str = ""
+) -> list[dict]:
     """Aggregate the ledger, grouped by one of ``model|source|agent|provider|day``.
 
     Rows carry summed tokens + cost + a ``priced`` flag that is False when ANY
     constituent row was unpriced (so a partially-unpriced group can't look complete).
     Sorted by descending cost then the group key, for a stable, useful default order.
+    ``session_key`` (when given) restricts to one session — the session-total surface.
     """
     if group_by not in _GROUP_KEYS:
         raise ValueError(f"group_by must be one of {_GROUP_KEYS}, got {group_by!r}")
     groups: dict[str, dict] = {}
     for row in _iter_rows():
-        ts = str(row.get("ts", ""))
-        if not _in_window(ts, since, until):
+        if not _row_selected(row, since, until, session_key):
             continue
+        ts = str(row.get("ts", ""))
         key = _day_of(ts) if group_by == "day" else str(row.get(group_by, ""))
         agg = groups.setdefault(key, _blank_agg())
         _fold(agg, row)
@@ -167,10 +239,11 @@ def rollup(*, since: str = "", until: str = "", group_by: str = "model") -> list
     return out
 
 
-def totals(*, since: str = "", until: str = "") -> dict:
-    """Grand total over the window — the same agg shape, ungrouped."""
+def totals(*, since: str = "", until: str = "", session_key: str = "") -> dict:
+    """Grand total over the window — the same agg shape, ungrouped. ``session_key``
+    (when given) restricts to one session, answering "what did this chat cost?"."""
     agg = _blank_agg()
     for row in _iter_rows():
-        if _in_window(str(row.get("ts", "")), since, until):
+        if _row_selected(row, since, until, session_key):
             _fold(agg, row)
     return agg

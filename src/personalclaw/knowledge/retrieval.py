@@ -5,10 +5,7 @@ import re
 import struct
 from collections import defaultdict
 
-try:
-    import pysqlite3 as sqlite3
-except ImportError:
-    import sqlite3
+from personalclaw.sqlite_compat import sqlite3
 
 from .store import KnowledgeStore
 

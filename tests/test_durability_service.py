@@ -694,6 +694,10 @@ class TestConfigContract:
         "keep_weekly",
         "keep_monthly",
         "restore_drills",
+        # DURABILITY-AND-SYNC §4 — the runtime-editable sync knobs (DAS-6c-ii-j).
+        "sync_enabled",
+        "sync_transport",
+        "sync_stale_after_secs",
     )
 
     def test_every_field_is_patchable(self):

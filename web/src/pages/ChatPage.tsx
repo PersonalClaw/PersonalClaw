@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Coins, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -126,6 +126,14 @@ function greeting(name: string): string {
   const h = new Date().getHours()
   const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
   return `Good ${part}, ${firstNameOf(name)}`
+}
+
+/** Compact token count for the session cost chip: 940 → "940", 46_000 → "46k",
+ *  1_200_000 → "1.2M". Keeps the header chip short (the plan's "$0.19 · 46k tokens"). */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return String(n)
 }
 
 /** Contextual prompt-starter chips on the empty-chat hero. Sourced from the
@@ -429,6 +437,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     api.project(projectId).then((p) => { if (alive) setProjectName(p?.name || '') }).catch(() => {})
     return () => { alive = false }
   }, [projectId])
+  // Session cost total (COST-AND-TOKEN-OBSERVABILITY CATO-7): "$X · N tokens" for
+  // THIS chat, read from the usage rollup scoped to the session key. Refreshed on
+  // load + after each chat_done. `priced=false` ⇒ the total mixes an unpriced model,
+  // so we show a "~" prefix rather than a confidently-complete figure.
+  const [sessionCost, setSessionCost] = useState<{ cost: number; tokens: number; priced: boolean } | null>(null)
+  const refreshSessionCost = useCallback((key: string | null) => {
+    if (!key) { setSessionCost(null); return }
+    api.usageTotals({ session: key }).then((d) => {
+      const t = d.totals
+      const tokens = (t.input_tokens || 0) + (t.output_tokens || 0)
+      // Show the chip only once the session has recorded real usage.
+      setSessionCost(t.turns > 0 && tokens > 0 ? { cost: t.cost_usd, tokens, priced: t.priced } : null)
+    }).catch(() => { /* leave the chip as-is; a transient read failure isn't worth clearing it */ })
+  }, [])
   // Instant-paint seed: if we have a cached detail for this session, hydrate its
   // turns synchronously so the transcript paints on the FIRST frame (skeleton only
   // shows for a genuinely-uncached first open). The load effect below revalidates.
@@ -701,6 +723,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         return acc
       }, []).slice(-50))
       setTitle(d.title || '')
+      // Seed the session cost chip from the ledger for a revisited chat (CATO-7).
+      refreshSessionCost(sessionId)
       // Restore BOTH composer axes to the session's actual posture. Unlike
       // agent/model (which must resolve against the discovered-agent catalog
       // below), task_mode + approval are plain enums the backend hands back
@@ -927,6 +951,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // skeleton, no visible reload) — the open tab already shows the right
         // content from streaming; we only bring the cached snapshot up to date.
         const sk = sessionRef.current
+        // Refresh the session cost chip now the turn's ledger row has landed (CATO-7).
+        refreshSessionCost(sk)
         if (sk) api.chatSessionDetail(sk).then((d) => {
           writeCachedDetail(sk, d)
           // Episodic citations (§5.4) live on the persisted assistant message's meta,
@@ -2221,6 +2247,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var hover:text-on-surface" title={`Scoped to project: ${projectName}`}>
                   <FolderKanban size={12} className="text-primary" /> {projectName}
                 </button>
+              )}
+              {/* Session cost (CATO-7): what this conversation cost, read from the
+                  usage ledger scoped to the session key. "~" prefix + "unpriced"
+                  when the total mixes a model with no price row (honest, never a
+                  confidently-complete $0.00). */}
+              {sessionCost && (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var"
+                  title={sessionCost.priced ? 'What this conversation has cost so far' : 'Cost so far — includes a model with no price row, so this is a partial total'}>
+                  <Coins size={12} className="text-primary" />
+                  {sessionCost.priced ? `$${sessionCost.cost.toFixed(sessionCost.cost < 1 ? 4 : 2)}` : 'unpriced'}
+                  {' · '}{fmtTokens(sessionCost.tokens)} tokens
+                </span>
               )}
               {/* Investigate origin (plan 60): the entity this chat was opened to
                   investigate; click deep-links back to the source surface. */}

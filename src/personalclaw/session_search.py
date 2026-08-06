@@ -23,9 +23,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-import sqlite3
 import time
 from pathlib import Path
+
+from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
 
 _db: sqlite3.Connection | None = None
 _db_path_cache: str = ""
+_fts_unavailable_logged: bool = False
 
 
 def db_path() -> Path:
@@ -76,7 +78,17 @@ def _connect() -> "sqlite3.Connection | None":
     knowledge store uses, because `snippet()` needs the text in the index and the
     transcripts aren't rows in a SQL table to delegate to.
     """
-    global _db, _db_path_cache
+    global _db, _db_path_cache, _fts_unavailable_logged
+    # DEGRADE (not raise): the whole module is a disposable index whose failure mode is
+    # "fall back to the linear scan" (every reader treats None / [] that way). Decide the
+    # FTS5 question ONCE via the probe, before opening a connection — so a build without
+    # FTS5 skips the index cleanly and logs the remedy a single time, rather than each
+    # _connect() re-attempting the CREATE VIRTUAL TABLE and swallowing the error per call.
+    if not probe().fts5:
+        if not _fts_unavailable_logged:
+            logger.warning("Session full-text search disabled. %s", FTS5_REMEDY)
+            _fts_unavailable_logged = True
+        return None
     path = str(db_path())
     if _db is not None and _db_path_cache == path:
         return _db
@@ -97,8 +109,9 @@ def _connect() -> "sqlite3.Connection | None":
             logger.debug("session_search: pragma setup skipped", exc_info=True)
         conn.executescript(_SCHEMA)
     except sqlite3.OperationalError:
-        # No FTS5 in this SQLite build — the caller falls back to the linear scan.
-        logger.debug("session_search: FTS5 unavailable", exc_info=True)
+        # FTS5 presence was already settled by the probe above; a failure here is an
+        # unwritable/locked index. The caller falls back to the linear scan.
+        logger.debug("session_search: cannot open index", exc_info=True)
         return None
     except Exception:  # noqa: BLE001
         logger.debug("session_search: cannot open index", exc_info=True)
@@ -110,7 +123,7 @@ def _connect() -> "sqlite3.Connection | None":
 
 def reset_for_tests() -> None:
     """Drop the cached connection so a test's temp home is honored."""
-    global _db, _db_path_cache
+    global _db, _db_path_cache, _fts_unavailable_logged
     if _db is not None:
         try:
             _db.close()
@@ -118,6 +131,7 @@ def reset_for_tests() -> None:
             pass
     _db = None
     _db_path_cache = ""
+    _fts_unavailable_logged = False
 
 
 # ── restriction gate ───────────────────────────────────────────────────────────

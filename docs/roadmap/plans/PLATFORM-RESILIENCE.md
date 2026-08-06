@@ -681,3 +681,35 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   authenticated ACP CLI to validate) and a distinct visual chip in the transcript body —
   the steered strip renders above the composer instead, which keeps it beside the queued
   strip it must be distinguished from.
+
+## Execution log — PR-2 (FTS5 capability guard at init)
+
+- **PR-2 DONE.** Every FTS5-dependent module now checks `sqlite_compat.probe().fts5` ONCE at init and
+  fails/degrades with a shared `FTS5_REMEDY` constant (added to `sqlite_compat.py`, `__all__`-exported,
+  naming the concrete fix: the `pysqlite3-binary` wheel) — never a mid-query `no such module: fts5`
+  traceback. **3 FTS5-creating modules guarded** (the plan's "6 modules" = 3 creators + 3 query-only
+  consumers of `items_fts`; guarding the creators transitively covers the consumers — reconciliation
+  recorded rather than inventing 3 nonexistent sites):
+  - **`knowledge/store.py` → RAISE** (`KnowledgeStore.__init__`, before connect): FTS5 is ESSENTIAL —
+    every knowledge search is `items_fts MATCH` with no non-FTS path, so a no-FTS5 build can't produce
+    a usable store; failing at open is honest. Its lazy singleton `get_knowledge_store()` fires the
+    guard once, covering `retrieval.py` + the two knowledge action providers.
+  - **`memory.py` → DEGRADE** (`_fts_available = probe().fts5` at `__init__`): the markdown projection
+    (preferences/projects/history) is the real job; FTS5 only powers optional `search()`. On a no-FTS5
+    build it logs the remedy once and `search`/`rebuild_index`/`_index_file` no-op; read/write untouched.
+  - **`session_search.py` → DEGRADE** (`_connect` returns None before connect): a disposable index whose
+    documented fallback is a linear scan; readers already treat `None`/`[]` that way.
+- **DISCOVERY (a PR-1 unification miss, corrected):** `session_search.py` used a **bare stdlib
+  `import sqlite3`**, not the shared `sqlite_compat` driver — one of PR-1's seven bind points it missed.
+  A `probe()`-based guard there would have been CATEGORY-WRONG (probe measures the compat/pysqlite3
+  driver; queries ran on stdlib). Switched it to `from personalclaw.sqlite_compat import sqlite3` so the
+  guarded capability and the actual query driver are the same one, and corrected a now-stale
+  `except OperationalError` comment. (`vector_memory.py::_fts5_episodic_search` is named "fts5" but is a
+  LIKE fallback — no virtual table, no guard needed.)
+- **Dead-control hazard avoided:** the guard is a NO-OP on a normal FTS5-present build (probe().fts5 True),
+  so the happy path is provably unaffected — all existing memory/knowledge/session tests pass unchanged.
+  No user surface (it changes only the no-FTS5 failure mode from a mid-query crash to an init-time
+  actionable message) → no CHANGELOG. **Gates:** `make lint` clean (715 files);
+  `tests/test_fts5_capability_guard.py` (11: RAISE raises-with-remedy + no DB file created + happy path;
+  memory degrade + happy-path finds; session connect→None-logs-once + degrade + happy path) +
+  memory/knowledge/session/sqlite_compat regression (my run 178, subagent's broader run 186+35) pass.

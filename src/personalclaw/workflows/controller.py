@@ -58,7 +58,12 @@ from personalclaw.workflows.effects import (
     redo_blocked,
     run_teardown,
 )
-from personalclaw.workflows.engine import NodeResult, dispatch
+from personalclaw.workflows.engine import (
+    DEFAULT_MODEL_TIERS,
+    NodeResult,
+    dispatch,
+    resolve_axis_model,
+)
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.loop_middleware import InterruptQueue
@@ -237,6 +242,10 @@ class RunController:
         #: session through the composer @-picker or the agent's `knowledge_search` tool, both of
         #: which are the user asking. Nothing here is reachable from a chat-context path.
         self._brief: Any = None
+        #: The run's worker model, resolved ONCE (see `_worker_model`) — the family a `cross_model`
+        #: judge gate must avoid (WF2LOO-11). The active selection does not change mid-run, so
+        #: re-resolving per gate would re-read the model store for an answer that cannot change.
+        self._worker_model_cache: str | None = None
         #: Long-run watcher state (KNOWLEDGE-SYNTHESIS §4.1), keyed by the loop's path. Journaled
         #: on every cycle and replayed on resume: held only in memory it would reset on every
         #: gateway restart, which is precisely when a months-long watcher is most likely to be
@@ -1420,6 +1429,25 @@ class RunController:
         out.config["prompt"] = f"{carried}\n\n---\n\n{prompt}"
         return out
 
+    def _worker_model(self) -> str:
+        """The concrete model this run's WORKERS resolve to — the family a `cross_model`
+        judge gate must avoid (WF2LOO-11).
+
+        A stage spawn records no model synchronously (it returns RUNNING with a
+        subagent id and the model is chosen inside the async turn), so the honest,
+        available source is the SAME resolution a worker stage performs: its
+        `model_tier` maps to a use case (the default `standard` tier → the
+        `orchestration` axis that model-less subagent spawns run under), and the
+        engine resolves that axis to the head of its active-selection chain. That is
+        exactly the model a worker WILL run on, which is what the judge must differ
+        from. Memoized: the active selection does not change mid-run, and the family
+        is all the check needs.
+        """
+        if self._worker_model_cache is None:
+            worker_uc = self.services.model_tiers.get("standard", DEFAULT_MODEL_TIERS["standard"])
+            self._worker_model_cache = resolve_axis_model(worker_uc)
+        return self._worker_model_cache
+
     async def _execute(self, item: ReadyNode, ctx: BindingContext) -> NodeResult:
         """Run a dispatcher under the total-timeout knob.
 
@@ -1465,6 +1493,10 @@ class RunController:
             # `timeout_stall` fires on any node slower than the window, which makes the two timeout
             # knobs one knob and kills a node that is visibly working.
             on_progress=lambda path=item.path: self.note_progress(path),
+            # The worker model a `cross_model` judge gate must differ from (WF2LOO-11). Resolved
+            # from the run's worker axis; only the JUDGE branch reads it, so a run with no
+            # cross_model gate pays nothing.
+            worker_model=self._worker_model(),
         )
         if total and total > 0:
             try:

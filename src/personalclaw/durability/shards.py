@@ -117,11 +117,29 @@ class ShardFile:
 
 
 @dataclass
+class DbCopy:
+    """A consistent whole-database copy staged for sync (DAS-6c-ii-g).
+
+    The diffable row shards store byte/embedding columns as size placeholders, so they
+    can't rebuild a DB losslessly; a sync export additionally stages the real DB file
+    (backup-API copy, WAL-checkpointed) under ``db/<entry_id>.db`` so the merger can
+    ATTACH it. Only written when ``export_shards(include_databases=True)`` — the hourly
+    incremental backup never carries these, so its determinism is untouched.
+    """
+
+    path: str  # relative to the shards root (db/<entry_id>.db)
+    entry_id: str
+    bytes: int
+    sha256: str
+
+
+@dataclass
 class ExportResult:
     entries: int = 0
     shards: list[ShardFile] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)  # entry id -> reason
     blobs: int = 0
+    databases: list[DbCopy] = field(default_factory=list)  # sync-only whole-DB copies
 
     @property
     def rows(self) -> int:
@@ -325,12 +343,42 @@ def _export_blobs(root: Path, src_dir: Path) -> int:
     return count
 
 
-def export_shards(home: Path, out_dir: Path, *, entries: list[str] | None = None) -> ExportResult:
+def _stage_db_copy(out_dir: Path, entry_id: str, src_copy: Path) -> DbCopy | None:
+    """Stage a consistent whole-DB copy under ``db/<entry_id>.db`` for the sync merger.
+
+    ``src_copy`` is the already-consistent backup-API copy the exporter made for row
+    extraction, so this is a plain byte copy (no second live-DB read). Returns the
+    :class:`DbCopy` record, or None if the copy can't be read."""
+    try:
+        data = src_copy.read_bytes()
+    except OSError:
+        logger.debug("shards: cannot stage db copy for %s", entry_id, exc_info=True)
+        return None
+    rel = f"db/{entry_id}.db"
+    dest = out_dir / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(dest, data)
+    return DbCopy(path=rel, entry_id=entry_id, bytes=len(data), sha256=_sha256(data))
+
+
+def export_shards(
+    home: Path,
+    out_dir: Path,
+    *,
+    entries: list[str] | None = None,
+    include_databases: bool = False,
+) -> ExportResult:
     """Export state to deterministic shards under ``out_dir``.
 
     ``entries`` optionally restricts to specific inventory entry ids (the hourly
     incremental path exports only dirty entries). Secrets and derived data are
     never exported.
+
+    ``include_databases`` (sync only) additionally stages a consistent whole-DB copy for
+    each ``KIND_SQLITE`` entry under ``db/<entry_id>.db``, because the diffable row shards
+    store embedding/byte columns as placeholders and can't rebuild a DB losslessly. The
+    hourly incremental backup leaves this False, so its byte-for-byte determinism (and its
+    tests) are unaffected — DB copies are not byte-identical across runs by nature.
     """
     result = ExportResult()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -358,8 +406,19 @@ def export_shards(home: Path, out_dir: Path, *, entries: list[str] | None = None
                 for table in tables:
                     rows = _sqlite_rows(copy, table)
                     result.shards.extend(_write_shard(out_dir, f"{entry.id}/{table}.jsonl", rows))
+                if include_databases:
+                    # Sync also needs the real DB (embeddings/blobs the row shards drop).
+                    staged = _stage_db_copy(out_dir, entry.id, copy)
+                    if staged is not None:
+                        result.databases.append(staged)
             elif entry.kind == inv.KIND_JSON_ENTITY_DIR:
                 rows = _json_rows_from_entity_dir(src) if src.is_dir() else []
+                if entry.tombstones and src.is_dir():
+                    # Fold the hard-delete side-log so a deleted row's marker rides the
+                    # export (DAS-6c-iii). Only for tombstone entries; a no-op otherwise.
+                    from personalclaw.durability.tombstones import merge_into_rows
+
+                    rows = merge_into_rows(src, rows)
                 result.shards.extend(_write_shard(out_dir, f"{entry.id}/entities.jsonl", rows))
             elif entry.kind == inv.KIND_JSON_FILE:
                 rows = _json_rows_from_file(src) if src.is_file() else []
@@ -435,6 +494,10 @@ def _write_manifest(home: Path, out_dir: Path, result: ExportResult) -> None:
         "shards": [
             {"path": s.path, "bytes": s.bytes, "rows": s.rows, "sha256": s.sha256}
             for s in result.shards
+        ],
+        "databases": [
+            {"path": d.path, "entry_id": d.entry_id, "bytes": d.bytes, "sha256": d.sha256}
+            for d in result.databases
         ],
     }
     atomic_write(out_dir / _MANIFEST, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -519,6 +582,21 @@ def validate(shard_dir: Path) -> ValidationResult:
         rel = path.relative_to(shard_dir).as_posix()
         if rel not in declared:
             result.problems.append(f"{rel}: present on disk but not declared in the manifest")
+
+    # Sync-only whole-DB copies (DAS-6c-ii-g): verify each declared db/ file's bytes + sha.
+    # A manifest with no `databases` key (an incremental/row-only export) is valid — the
+    # field is absent, not empty-and-wrong.
+    for record in manifest.get("databases", []) or []:
+        rel = str(record.get("path", ""))
+        path = shard_dir / rel
+        if not path.is_file():
+            result.problems.append(f"{rel}: declared database missing on disk")
+            continue
+        data = path.read_bytes()
+        if len(data) != record.get("bytes"):
+            result.problems.append(f"{rel}: db size {len(data)} != manifest {record.get('bytes')}")
+        if _sha256(data) != record.get("sha256"):
+            result.problems.append(f"{rel}: db sha256 mismatch (content changed)")
     return result
 
 
@@ -552,6 +630,8 @@ class ImportResult:
     blobs: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     machine_id: str = ""
+    # entry id -> shard-dir-relative path of its whole-DB copy (sync-only, DAS-6c-ii-g).
+    databases: dict[str, str] = field(default_factory=dict)
 
     @property
     def entries(self) -> int:
@@ -633,6 +713,17 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
             for p in blob_root.rglob("*")
             if p.is_file() and not p.is_symlink()
         )
+
+    # Sync-only whole-DB copies (DAS-6c-ii-g): map each entry id to its db/ file so the
+    # DB merger can ATTACH the real database (validate() already verified its bytes/sha).
+    for record in manifest.get("databases", []) or []:
+        rel = str(record.get("path", ""))
+        entry_id = str(record.get("entry_id", ""))
+        if not rel or not entry_id:
+            continue
+        if wanted is not None and entry_id not in wanted:
+            continue
+        result.databases[entry_id] = rel
     return result
 
 
