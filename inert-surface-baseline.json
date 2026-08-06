@@ -1,0 +1,383 @@
+{
+  "generated_from": "scripts/generate_inert_surface_baseline.py",
+  "per_file": {
+    "src/personalclaw/inbox.py": {
+      "inert": 3,
+      "surfaces": [
+        "enum:ItemKind.EMAIL",
+        "enum:ItemKind.MENTION",
+        "enum:ItemStatus.SENT"
+      ]
+    },
+    "src/personalclaw/learning/gate.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:Cadence.RUN_END"
+      ]
+    },
+    "src/personalclaw/learning/staging.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:FlushOutcome.FLUSH_SKIPPED"
+      ]
+    },
+    "src/personalclaw/llm/capabilities.py": {
+      "inert": 2,
+      "surfaces": [
+        "enum:StructuredOutput.JSON_MODE",
+        "enum:StructuredOutput.JSON_SCHEMA"
+      ]
+    },
+    "src/personalclaw/loop/loop.py": {
+      "inert": 3,
+      "surfaces": [
+        "enum:LoopKind.DESIGN",
+        "enum:LoopKind.GENERAL",
+        "enum:LoopKind.GOAL"
+      ]
+    },
+    "src/personalclaw/memory_record.py": {
+      "inert": 2,
+      "surfaces": [
+        "enum:MemoryScope.WORKSPACE",
+        "enum:MemoryTier.SEGMENT"
+      ]
+    },
+    "src/personalclaw/sdk/acp.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:is_npx_fallback",
+        "sdk_export:node_manager_bin_globs",
+        "sdk_export:provision_acp_adapter",
+        "sdk_export:register_acp_cli_entry",
+        "sdk_export:resolve_acp_cli"
+      ]
+    },
+    "src/personalclaw/sdk/action.py": {
+      "inert": 3,
+      "surfaces": [
+        "sdk_export:ActionContext",
+        "sdk_export:ActionProvider",
+        "sdk_export:ActionResult"
+      ]
+    },
+    "src/personalclaw/sdk/cli.py": {
+      "inert": 1,
+      "surfaces": [
+        "sdk_export:DoctorStatus"
+      ]
+    },
+    "src/personalclaw/sdk/credentials.py": {
+      "inert": 2,
+      "surfaces": [
+        "sdk_export:Credential",
+        "sdk_export:CredentialStore"
+      ]
+    },
+    "src/personalclaw/sdk/diarization.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:DiarizationModel",
+        "sdk_export:DiarizationProvider",
+        "sdk_export:LocalModelProvider",
+        "sdk_export:SpeakerTurn",
+        "sdk_export:ensure_ffmpeg_in_path"
+      ]
+    },
+    "src/personalclaw/sdk/embedding.py": {
+      "inert": 2,
+      "surfaces": [
+        "sdk_export:EmbeddingModel",
+        "sdk_export:EmbeddingProvider"
+      ]
+    },
+    "src/personalclaw/sdk/feedback.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:FeedbackRecord",
+        "sdk_export:PRODUCER_KINDS",
+        "sdk_export:TARGET_KINDS",
+        "sdk_export:current_verdict",
+        "sdk_export:record_feedback"
+      ]
+    },
+    "src/personalclaw/sdk/image.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:ImageGenError",
+        "sdk_export:ImageGenModel",
+        "sdk_export:ImageGenProvider",
+        "sdk_export:ImageResult",
+        "sdk_export:active_image_gen"
+      ]
+    },
+    "src/personalclaw/sdk/inbox.py": {
+      "inert": 2,
+      "surfaces": [
+        "sdk_export:IncomingMessage",
+        "sdk_export:MessageSourceProvider"
+      ]
+    },
+    "src/personalclaw/sdk/knowledge.py": {
+      "inert": 3,
+      "surfaces": [
+        "sdk_export:KnowledgeItem",
+        "sdk_export:KnowledgeProvider",
+        "sdk_export:KnowledgeSource"
+      ]
+    },
+    "src/personalclaw/sdk/local_model.py": {
+      "inert": 2,
+      "surfaces": [
+        "sdk_export:LocalModel",
+        "sdk_export:LocalModelProvider"
+      ]
+    },
+    "src/personalclaw/sdk/manifest.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:AppManifest",
+        "sdk_export:BackendConfig",
+        "sdk_export:Permissions",
+        "sdk_export:ProviderConfig",
+        "sdk_export:SetupConfig"
+      ]
+    },
+    "src/personalclaw/sdk/mcp.py": {
+      "inert": 3,
+      "surfaces": [
+        "sdk_export:get_current_session_key",
+        "sdk_export:get_mcp_client_registry",
+        "sdk_export:infer_risk_from_name"
+      ]
+    },
+    "src/personalclaw/sdk/memory.py": {
+      "inert": 1,
+      "surfaces": [
+        "sdk_export:MemoryProvider"
+      ]
+    },
+    "src/personalclaw/sdk/model.py": {
+      "inert": 29,
+      "surfaces": [
+        "sdk_export:AnthropicProvider",
+        "sdk_export:CancelOutcome",
+        "sdk_export:Capability",
+        "sdk_export:Credential",
+        "sdk_export:CredentialMissing",
+        "sdk_export:EVENT_COMPLETE",
+        "sdk_export:EVENT_TEXT_CHUNK",
+        "sdk_export:EVENT_THINKING_CHUNK",
+        "sdk_export:EVENT_TOOL_CALL",
+        "sdk_export:KIND_OUTSIDE",
+        "sdk_export:LLMEvent",
+        "sdk_export:MediaCatalog",
+        "sdk_export:MediaModel",
+        "sdk_export:ModelCatalog",
+        "sdk_export:ModelInfo",
+        "sdk_export:ModelManager",
+        "sdk_export:ModelProvider",
+        "sdk_export:OpenAIProvider",
+        "sdk_export:ProviderCapability",
+        "sdk_export:ProviderEntry",
+        "sdk_export:ProviderResolutionError",
+        "sdk_export:PullProgress",
+        "sdk_export:get_default_registry",
+        "sdk_export:infer_capabilities",
+        "sdk_export:make_think_splitter",
+        "sdk_export:model_context_window",
+        "sdk_export:openai_compatible_list_models",
+        "sdk_export:register_media_catalog",
+        "sdk_export:register_scanner"
+      ]
+    },
+    "src/personalclaw/sdk/net.py": {
+      "inert": 7,
+      "surfaces": [
+        "sdk_export:EgressPolicy",
+        "sdk_export:GuardDecision",
+        "sdk_export:WEBHOOK",
+        "sdk_export:evaluate",
+        "sdk_export:record_seen_urls",
+        "sdk_export:web_extract",
+        "sdk_export:web_fetch"
+      ]
+    },
+    "src/personalclaw/sdk/prompt.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:PromptProvider",
+        "sdk_export:PromptRenderError",
+        "sdk_export:PromptSnippet",
+        "sdk_export:PromptTemplate",
+        "sdk_export:PromptVariable"
+      ]
+    },
+    "src/personalclaw/sdk/search.py": {
+      "inert": 9,
+      "surfaces": [
+        "sdk_export:DEFAULT_DEPTH",
+        "sdk_export:DEFAULT_SEARCH_USE_CASE",
+        "sdk_export:FetchResult",
+        "sdk_export:SearchCapabilities",
+        "sdk_export:SearchHit",
+        "sdk_export:SearchResult",
+        "sdk_export:VALID_DEPTHS",
+        "sdk_export:VALID_SEARCH_USE_CASES",
+        "sdk_export:search_with_fallback"
+      ]
+    },
+    "src/personalclaw/sdk/security.py": {
+      "inert": 1,
+      "surfaces": [
+        "sdk_export:fence_untrusted"
+      ]
+    },
+    "src/personalclaw/sdk/settings.py": {
+      "inert": 1,
+      "surfaces": [
+        "sdk_export:ProviderSettings"
+      ]
+    },
+    "src/personalclaw/sdk/skill.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:SkillDetail",
+        "sdk_export:SkillEntry",
+        "sdk_export:SkillsMarketplace",
+        "sdk_export:get_default_skills_registry",
+        "sdk_export:read_skill_file_entry"
+      ]
+    },
+    "src/personalclaw/sdk/stt.py": {
+      "inert": 6,
+      "surfaces": [
+        "sdk_export:SttModel",
+        "sdk_export:SttProvider",
+        "sdk_export:TranscriptResult",
+        "sdk_export:TranscriptSegment",
+        "sdk_export:TranscriptWord",
+        "sdk_export:ensure_ffmpeg_in_path"
+      ]
+    },
+    "src/personalclaw/sdk/tool.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:DEFAULT_TOOL_OUTPUT_CAP",
+        "sdk_export:ProjectionRule",
+        "sdk_export:ToolDefinition",
+        "sdk_export:ToolResult",
+        "sdk_export:project_and_retain"
+      ]
+    },
+    "src/personalclaw/sdk/tts.py": {
+      "inert": 3,
+      "surfaces": [
+        "sdk_export:LocalTtsProvider",
+        "sdk_export:TtsProvider",
+        "sdk_export:TtsVoice"
+      ]
+    },
+    "src/personalclaw/sdk/util.py": {
+      "inert": 4,
+      "surfaces": [
+        "sdk_export:app_data_dir",
+        "sdk_export:atomic_write",
+        "sdk_export:config_dir",
+        "sdk_export:sandbox_wrap_argv"
+      ]
+    },
+    "src/personalclaw/sdk/video.py": {
+      "inert": 5,
+      "surfaces": [
+        "sdk_export:VideoGenError",
+        "sdk_export:VideoGenModel",
+        "sdk_export:VideoGenProvider",
+        "sdk_export:VideoResult",
+        "sdk_export:active_video_gen"
+      ]
+    },
+    "src/personalclaw/tasks/models.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:DependencyType.REQUIRED_FOR"
+      ]
+    },
+    "src/personalclaw/triggers/dispatch.py": {
+      "inert": 2,
+      "surfaces": [
+        "enum:DrainAction.SKIP_CYCLE",
+        "enum:DrainAction.SKIP_DUPLICATE"
+      ]
+    },
+    "src/personalclaw/workflows/autonomy.py": {
+      "inert": 2,
+      "surfaces": [
+        "enum:Interrupt.CONFLICTING",
+        "enum:Interrupt.UNINFERABLE"
+      ]
+    },
+    "src/personalclaw/workflows/batch_compile.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:Capability.MUTATING"
+      ]
+    },
+    "src/personalclaw/workflows/confirmation.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:Status.RESOLVED"
+      ]
+    },
+    "src/personalclaw/workflows/containers.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:Completeness.INFERRED"
+      ]
+    },
+    "src/personalclaw/workflows/judge_actors.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:Actor.WORKER"
+      ]
+    },
+    "src/personalclaw/workflows/judge_contract.py": {
+      "inert": 2,
+      "surfaces": [
+        "enum:Ratchet.RELAXED",
+        "enum:Verdict.REPLAN"
+      ]
+    },
+    "src/personalclaw/workflows/models.py": {
+      "inert": 3,
+      "surfaces": [
+        "enum:ItemErrorPolicy.COLLECT",
+        "enum:OverlapPolicy.QUEUE",
+        "enum:SessionMode.CONTINUOUS"
+      ]
+    },
+    "src/personalclaw/workflows/publish.py": {
+      "inert": 2,
+      "surfaces": [
+        "enum:Lineage.INFORMED_BY",
+        "enum:Lineage.RELATED"
+      ]
+    },
+    "src/personalclaw/workflows/surfacing.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:Lifecycle.UNTIL_DEACTIVATED"
+      ]
+    }
+  },
+  "totals": {
+    "by_kind": {
+      "config": 0,
+      "editable_config": 0,
+      "enum": 29,
+      "sdk_export": 124,
+      "trigger_kind": 0
+    },
+    "inert": 153
+  }
+}
