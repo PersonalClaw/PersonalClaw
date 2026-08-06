@@ -210,3 +210,68 @@ class TestChatWriteSite:
 
         monkeypatch.setattr(_ul, "_path", _boom)
         self._call(self._event(cost_usd=0.1))  # must not raise
+
+
+# ── CATO-3: the subagent write-site (SubagentManager._record_subagent_usage) ──
+
+
+class TestSubagentWriteSite:
+    """A completed subagent turn lands one row keyed to the PARENT session, so a
+    fan-out's cost is attributable per child (source='subagent')."""
+
+    def _info(self, **over):
+        from personalclaw.subagent import SubagentInfo
+
+        base = dict(id="a1", task="do a thing", parent_session_key="dashboard:parent")
+        base.update(over)
+        return SubagentInfo(**base)
+
+    def _event(self, **over):
+        base = dict(
+            input_tokens=80,
+            output_tokens=15,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.0,
+            duration_ms=900,
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def test_one_row_keyed_to_parent_session(self, _home):
+        from personalclaw.subagent import SubagentManager
+
+        info = self._info(agent="researcher", model="claude-opus-4.5")
+        SubagentManager._record_subagent_usage(info, "subagent:a1", self._event(cost_usd=0.3), 0.3)
+        rows = ul._iter_rows()
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["source"] == "subagent" and r["provider"] == "acp"
+        assert r["session_key"] == "dashboard:parent"  # parent, not the child session
+        assert r["agent"] == "researcher" and r["cost_usd"] == 0.3 and r["priced"] is True
+
+    def test_fanout_of_three_yields_three_rows(self, _home):
+        from personalclaw.subagent import SubagentManager
+
+        for i in range(3):
+            info = self._info(id=f"a{i}", model="claude-opus-4.5")
+            SubagentManager._record_subagent_usage(
+                info, f"subagent:a{i}", self._event(cost_usd=0.1), 0.1
+            )
+        rows = ul._iter_rows()
+        assert len(rows) == 3
+        assert all(r["source"] == "subagent" for r in rows)
+        assert round(ul.totals()["cost_usd"], 6) == 0.3
+
+    def test_unpriced_subagent_model_is_priced_false(self, _home):
+        from personalclaw.subagent import SubagentManager
+
+        info = self._info(model="some-unknown-local-model")
+        SubagentManager._record_subagent_usage(info, "subagent:a1", self._event(cost_usd=0.0), 0.0)
+        r = ul._iter_rows()[0]
+        assert r["priced"] is False and r["cost_usd"] == 0.0
+
+    def test_subagent_info_carries_tokens_after_capture(self):
+        """SubagentInfo gained the token/cost fields (default 0.0) for delivery."""
+        info = self._info()
+        assert info.input_tokens == 0 and info.output_tokens == 0 and info.cost_usd == 0.0
