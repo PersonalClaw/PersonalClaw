@@ -1125,3 +1125,57 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   **Gates:** `make lint` clean (705 files); `tests/test_durability_reconcile.py` (9: remote-only
   brought in, empty-local takes all, tombstone delete propagates, two-machine convergence,
   delete-stays-deleted, sqlite/tree declined, handles_kind predicate, poison→payload-bad) pass.
+
+## Execution log — DAS-6c-ii-e (transport-driven pull engine)
+
+- **DAS-6c-ii-e DONE.** Where the pure pieces meet a real remote: `durability/pull_engine.py`.
+  `pull_from_peers(transport, home, registry, cursor, *, self_id, db_merger=None)` walks each
+  peer's unseen shard sets oldest-first (`registry.peers` × cursor gap), and per seq:
+  `transport.list_remote(prefix)` → `transport.pull(refs)` → `_materialize` into a validatable
+  shard dir (strip the `machines/<id>/seq-NNNN/` prefix) → `import_shards` (6b, validates +
+  reassembles) → route each entry through `reconcile.reconcile_entry` (6c-i+c+d) → aggregate a
+  cursor verdict → `cursor.record` (6c-ii-b, consumed-only). **DISCOVERY (recon):** the sqlite
+  export is deliberately LOSSY — `_sqlite_rows` stores byte/embedding columns as `{"__bytes__": n}`
+  size placeholders and `_sqlite_tables` drops FTS shadow tables (derived) — so a `sqlite`/`tree`
+  entry can NOT be losslessly rebuilt from row shards; it needs the DB-to-DB ATTACH path
+  (`snapshot._merge_sqlite_attach`) and an embeddings-rebuilt-vs-round-tripped decision. That is
+  6c-ii-f's design call, NOT a blocker here: the DB path is an **injected `db_merger` seam**, and
+  until it's supplied a seq containing a DB/unknown entry is **HELD** (cursor not advanced,
+  re-pulled next cycle) rather than silently skipping unmerged database data (§4.1: advance only
+  on consumed rows). The row-entry convergence path (criterion 4 — tasks, entity dirs, JSONL) is
+  fully live today. Also faithful to §4.1: a partial push (prefix announced but no bytes) HOLDS;
+  an unknown entry id HOLDS (an older reader never drops a newer peer's entry); a structurally
+  invalid import → `payload-bad` (advance past it); and a held seq **stops contiguity** so seq+1
+  isn't pulled past its unmet prerequisite. **Remaining:** 6c-ii-f (the DB/tree `db_merger`
+  implementation — ATTACH-IGNORE for DBs incl. the embeddings decision, blob rehydrate for trees;
+  its own tick), 6c-ii-g (the push half: export-union + CAS-retry registry bump + outbox drain +
+  `stale_after_secs`), then wire the whole cycle into `service.py::run_due_jobs` and DAS-6d
+  (git-sync/dir-sync installable `sync` apps + end-to-end criterion-4 over a real git repo/folder).
+  **Gates:** `make lint` clean (706 files); `tests/test_durability_pull_engine.py` (6, driven by an
+  in-memory `FakeTransport`: pull+reconcile a peer seq into the live store, cursor skips already-seen,
+  partial-push holds, held-seq stops contiguity, DB entry holds without a merger, DB seam lets it
+  advance) pass.
+
+### Design note for DAS-6c-ii-f (the DB/tree db_merger) — decided, precedent-matching (no owner block)
+
+The 6c-ii-e recon surfaced the fork and it resolves cleanly against existing behavior, so the DB
+merger is a defensible clean-break, not an escalation:
+
+- **Sqlite entries sync the real DB file, not the lossy row shards.** `_sqlite_rows` intentionally
+  replaces byte/embedding columns with `{"__bytes__": n}` placeholders (human-diffable shards), so
+  row shards can NOT rebuild a DB losslessly. The snapshot path already proves the answer:
+  `_merge_memory` carries the `embedding` column and `_merge_sqlite_attach` ATTACH-merges every
+  real table with `INSERT OR IGNORE`. So 6c-ii-f: (a) the export stages a **consistent DB copy**
+  for each `KIND_SQLITE` entry (reusing `_consistent_db_copy`, already present — sqlite backup API,
+  WAL-checkpointed) under a `db/<entry>.db` path in the shard set, alongside the diffable rows;
+  (b) `import_shards`/`ImportResult` surfaces that DB path; (c) the `db_merger` ATTACHes it via the
+  existing `snapshot._merge_sqlite_attach` (memory.db keeps its `is_deleted=0` executor so deletes
+  aren't resurrected).
+- **Derived indexes are rebuilt, never synced** — `memory.faiss` / `memory_index.db` are
+  `derived=True`; the merger rebuilds them locally after the ATTACH (the FTS `'rebuild'` command the
+  snapshot path already runs), matching §4.1 "indexes rebuilt on import, never synced". Embeddings
+  themselves live IN `memory.db` and ride the ATTACH (they are NOT rebuilt — carrying them is the
+  snapshot precedent), so a synced memory is searchable without re-embedding.
+- **Tree entries** rehydrate from the content-addressed `blobs/` the exporter already writes.
+This keeps the whole thing lossless, reuses proven machinery, and needs no new format concept
+beyond staging the DB copy the exporter already knows how to make.
