@@ -1099,3 +1099,29 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   `tests/test_durability_writeback.py` (14: entity-dir write/round-trip/tombstone/skip, json-file
   write/empty/tombstone/last-wins, jsonl single-file + year-shard + round-trip, sqlite/tree/unknown
   raises) pass.
+
+## Execution log — DAS-6c-ii-d (reconcile a peer's rows into the live store)
+
+- **DAS-6c-ii-d DONE.** The bridge that turns "I pulled a peer's shards" into "the peer's rows
+  are now in my live store", composing the three pure pieces already shipped:
+  `durability/reconcile.py::reconcile_entry(home, entry, remote_rows)` reads the entry's on-disk
+  rows the SAME way `export_shards` extracts them (so both sides of the merge speak one row shape
+  — the invariant convergence depends on) → `merge.merge_rows(entry.merge, local, remote,
+  tombstones=entry.tombstones)` → `writeback.apply_rows(entry.kind, dest, merged.rows)`. Row path
+  only: for a `sqlite` entry (merged by ATTACH-OR-IGNORE in `snapshot.py`) or a `tree` entry
+  (rehydrated from the content-addressed blob store) it DECLINES — returns `handled=False` so the
+  cycle engine routes it to the DB/blob path, rather than raising. Returns a cursor verdict
+  (`ReconcileResult.verdict`): `consumed` on a clean merge; a row entry that throws mid-merge is
+  caught and reported `payload-bad` (with `handled=True`) so one poison entry advances the cursor
+  past itself instead of aborting the whole pull (§4.1). Proves **criterion 4 at the reconcile
+  layer**: two machines each reconciling the other's rows converge to the same id set; a
+  tombstoned delete on A stays deleted on B (no resurrection). Pure bridge over pure pieces, no
+  transport, no user surface → no CHANGELOG. **Remaining:** 6c-ii-e — the transport-driven ENGINE
+  (walk the 6c-ii-a registry's `new_prefixes_since`, pull each prefix via the 6a transport,
+  `import_shards` 6b, route each entry through `reconcile_entry` OR the sqlite ATTACH-IGNORE path,
+  record the 6c-ii-b cursor verdict, then export-union + push through the outbox with the registry
+  CAS-retry loop + `stale_after_secs` window), then DAS-6d (git-sync + dir-sync apps as installable
+  `sync` provider apps + the end-to-end criterion-4 convergence over a real git repo/folder).
+  **Gates:** `make lint` clean (705 files); `tests/test_durability_reconcile.py` (9: remote-only
+  brought in, empty-local takes all, tombstone delete propagates, two-machine convergence,
+  delete-stays-deleted, sqlite/tree declined, handles_kind predicate, poison→payload-bad) pass.
