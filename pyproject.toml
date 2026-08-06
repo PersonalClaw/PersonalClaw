@@ -28,7 +28,7 @@ classifiers = [
 # Runtime dependencies
 dependencies = [
     "aiohttp>=3.9,<4",
-    "websockets>=12,<17",
+    "websockets>=12,<18",
     "cron-descriptor>=1.4,<3",
     "croniter>=2.0,<7",
     # numpy is a CORE dep — it's the vector-math substrate for the Tier-1 native
@@ -53,7 +53,7 @@ dependencies = [
     # no torch weight, so it clears the same bar the reader block above already cleared.
     # Deliberately NOT in personalclaw-backend.spec's excludes (unlike faiss/torch): a
     # PDF writer that vanished in the desktop build would recreate that same problem.
-    "reportlab>=4,<5",
+    "reportlab>=4,<6",
     # Web fetch/extract core (web/extract.py): boilerplate-free main-content extraction
     # (trafilatura, ~0.91 F1 vs html2text ~0.66) + HTML sanitization of untrusted pages
     # (nh3). Shared by web_fetch and the knowledge web-url connector.
