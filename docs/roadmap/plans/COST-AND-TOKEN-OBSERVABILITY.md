@@ -237,3 +237,18 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   CHANGELOG. **Gates:** `make lint` clean (699 files); `tests/test_usage_routes.py` (6: rollup by
   source, default-model, bad-group_by→400 envelope, totals, window-filter threading, empty-ledger-ok)
   + `test_agent_reference.py` (7) pass.
+
+- **CATO-6 DONE — the turn-complete cost readout (S2, first user-visible surface).** The existing
+  live-only "Turn complete" stats line (`chat_runner.py`, a `kind:stats` activity_event rendered by
+  the FE `ContextLedger`'s Telemetry row) now carries real cost + tokens. Extracted a testable
+  `_turn_complete_line(...)` composer: appends `· $X.XXXX · N in / N out tokens` for a priced turn;
+  `· unpriced · …` (NEVER `$0.00`) for a model with no price row; a `· N cached` fragment ONLY when
+  cache tokens are non-zero (absent until PROMPT-CACHE lands + a provider reports them). Captured the
+  turn's tokens/cost/priced at EVENT_COMPLETE into function-scoped vars (mirroring the existing
+  `_turn_event_count`), and broadened the emit gate to also fire on a token-only turn. FE needed no
+  structural change — `ContextLedger` already renders the stats text verbatim, so the cost now shows
+  where users already look; the backend line composer is the update. First user-visible CATO surface
+  → **CHANGELOG entry added.** Scope: turn readout only — session-header (CATO-7) + Usage panel
+  (CATO-8) remain. **Gates:** `make lint` clean (699 files); `tests/test_usage_ledger.py::TestTurnCompleteLine`
+  (5: priced shows USD+tokens, unpriced never `$0.00`, cache-only-when-nonzero, no-token backward-compatible
+  bare line, priced-zero-cost still shows `$` not unpriced) + usage-ledger + chat-runner-wiring = 35 passed.
