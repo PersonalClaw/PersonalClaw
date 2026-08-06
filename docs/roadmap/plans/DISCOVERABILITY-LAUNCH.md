@@ -1,3 +1,12 @@
+# DISCOVERABILITY-LAUNCH
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/DL.md`](../atomic/DL.md) as 9 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Discoverability & Launch — Existing in Both Search Channels
 
 **Status:** IN PROGRESS — S1 (claim + org migration) and S2 (docs site + machine-readable surface)
@@ -29,7 +38,7 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 - **Website repo `personalclaw/personalclaw.dev`:** Astro + Starlight (static, fast, docs-native, MD/MDX — the docs tree drops in nearly verbatim; solid sitemap/SEO defaults; no runtime JS requirement). Structure: `src/content/docs/` populated **at build** by a sync script pulling `docs/{guides,reference,architecture,security}` + curated `research/learnings` from the core repo (git submodule or CI checkout — CI checkout preferred, no submodule friction); landing page + comparison pages authored in the site repo (they're marketing, not product docs); `public/install` (DISTRIBUTION T2.2's script), `public/llms.txt`, `public/llms-full.txt` (generated: llms.txt = curated index with one-line descriptions; llms-full = concatenated docs), OG/social images. Deploy: GitHub Pages via Actions (custom domain + HTTPS; zero external hosting accounts) — Pages is the default; any later host swap is invisible behind the domain.
 - **Landing page above the fold:** category claim ("An agentic operating system for one person"), hero GIF, the bootstrap one-liner, badge row, three differentiator cards (security architecture → threat model; memory + knowledge depth; provider *and runtime* agnosticism/ACP), "**Zero telemetry** — your machine, your data, no phoning home" as a named feature card.
 - **Launch assets:** screenshot set (dashboard home, chat with a tool-approval brief, loop cockpit mid-run, knowledge answer with citations, Store consent surface showing declared permissions) + a 60-90s silent capture (chat→approval→loop→knowledge→artifact/widget produced — the Canvas counter). Captured on a **seeded demo home** (`--seed` fixture; never the owner's real data). README rework: GIF above the fold, 3-command install, badges, highlights table, security section (plan 35 T2.4).
-- **Comparison pages (S4):** `/compare/openclaw`, `/compare/hermes-agent` — feature matrix + philosophy + honest "choose them if" columns. Claims about competitors carry retrieval dates; matrix rows only for verifiable public facts.
+- **Comparison pages (S4):** `/compare/{peer-product}` pages — feature matrix + philosophy + honest "choose them if" columns. Claims about compared products carry retrieval dates; matrix rows only for verifiable public facts.
 - **Listings (S4):** awesome-self-hosted + awesome-ai-agents PRs (follow each list's contribution rules), selfh.st, AlternativeTo; Show HN + r/selfhosted + r/LocalLLaMA — **gated on the P0 gate**: CI green, one-liner works, real screenshots live. Launch post: the architecture-receipts narrative citing the threat model.
 - **Research republication (S5, owner #15):** curated learnings topics as a site section with a preface owning the built-agentically story.
 
@@ -37,7 +46,7 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 
 - **Docs-sync contract (`scripts/sync-docs.mjs`, site repo):** build-time only; checks out core `docs/{guides,reference,architecture,security}` → Starlight content. **The site repo commits NO copies of core docs** (drift rail — a link-check + a "no committed docs/ copies" CI assertion enforce it). One canonical source per the tenet.
 - **`llms.txt` format:** the emerging convention — `# PersonalClaw` H1, one-paragraph what-it-is, then `## Docs` with `- [Title](url): one-line` bullets for the key pages; `llms-full.txt` = build-time concatenation of guides+reference. Both at domain root, `text/plain`.
-- **Comparison data (`src/data/comparisons.json`):** `{competitor, claims:[{feature, personalclaw, them, source_url, retrieved:"<ISO>"}]}` — **every competitor claim carries a source URL + retrieval date** (anti-staleness + honesty rail).
+- **Comparison data (`src/data/comparisons.json`):** `{product, claims:[{feature, personalclaw, them, source_url, retrieved:"<ISO>"}]}` — **every compared-product claim carries a source URL + retrieval date** (anti-staleness + honesty rail).
 - **Integration points:** consumes DISTRIBUTION's `/install` script (T2.2), SECURITY-LEGIBILITY's threat-model, LEARNING-VISIBILITY's benchmark results, the research-learnings corpus (owner #15). Org/domain owner tasks gate S1.
 
 ## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
@@ -76,7 +85,7 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T4.1 | Comparison matrix data file (claims + sources + retrieved dates) then `/compare/openclaw` and `/compare/hermes-agent` pages rendered from it | site repo: `src/data/comparisons.json` + pages | every competitor claim has source+date; "choose them if" section present on both |
+| T4.1 | Comparison matrix data file (claims + sources + retrieved dates) then `/compare/{peer-product}` pages rendered from it | site repo: `src/data/comparisons.json` + pages | every compared-product claim has source+date; "choose them if" section present on both |
 | T4.2 | Listing submissions: PRs to awesome-self-hosted + awesome-ai-agents per their CONTRIBUTING rules; selfh.st + AlternativeTo entries drafted (owner submits where accounts are needed) | external + `docs/roadmap/plans/` Execution log records URLs | PRs open; entries drafted with copy + links |
 | T4.3 | Launch checklist doc: the P0 gate items + posting plan (Show HN title/body draft, r/selfhosted + r/LocalLLaMA post drafts adapted per community norms) | site repo: `launch-checklist.md` (internal) | drafts ready; gate items each link to their proof (CI badge, install VM log, screenshots) |
 | V4 | Validation: comparison pages fact-checked against sources; gate checklist all-green before any owner posting | — | holds |

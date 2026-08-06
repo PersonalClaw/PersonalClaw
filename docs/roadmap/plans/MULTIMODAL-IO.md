@@ -1,3 +1,12 @@
+# MULTIMODAL-IO
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/MI.md`](../atomic/MI.md) as 5 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Multimodal I/O — Voice Profiles, Cloning TTS, Duplex Hardening, Screen-Context Channel
 
 **Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog)

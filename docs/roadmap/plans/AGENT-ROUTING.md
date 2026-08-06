@@ -1,3 +1,12 @@
+# AGENT-ROUTING
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/AR2.md`](../atomic/AR2.md) as 8 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Agent Routing — Suggest the Right Specialist, Never Route Silently
 
 **Status:** DONE — S1+S2 shipped 2026-07-27 on `feature-agent-routing` (see `## Execution log`):

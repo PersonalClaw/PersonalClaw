@@ -1,3 +1,12 @@
+# WATCHED-SOURCES
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WS.md`](../atomic/WS.md) as 9 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Watched Sources — Any Page, Feed, or Folder Becomes a Structured Item Stream
 
 **Status:** PROPOSED (rev 2 — research-integrated 2026-07-12). Not started — verified 2026-08-04: no

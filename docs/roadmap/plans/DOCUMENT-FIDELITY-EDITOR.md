@@ -1,3 +1,12 @@
+# DOCUMENT-FIDELITY-EDITOR
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/DFE.md`](../atomic/DFE.md) as 8 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Document Fidelity Editor — Editing a Real Document, With Layout Control
 
 **Status:** DESIGNED — created 2026-07-30 (owner ask, 2026-07-29: a WYSIWYG editor as a

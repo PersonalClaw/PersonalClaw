@@ -1,3 +1,12 @@
+# WORKFLOWS-V2-AUTOMATION-SUBSTRATE
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2AUT.md`](../atomic/WF2AUT.md) as 12 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: One Automation Substrate — Triggers Fire (or Resume) Workflow Runs
 
 **Status:** DONE — sessions 62-70 + S81-S143 shipped (PRs #216-#543): the unified `triggers.json`

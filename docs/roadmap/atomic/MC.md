@@ -1,0 +1,105 @@
+# MOBILE-COMPANION — atomic plans
+
+**Source plan:** [`MOBILE-COMPANION`](../plans/MOBILE-COMPANION.md)  
+**Code:** `MC`  
+**Source status:** proposed
+
+Decomposed MOBILE-COMPANION into 10 todo atoms along the 2026-07-26 Amendment's session placement (push-to-approval is milestone 1). Nothing has shipped (DESIGNED, no execution log). Device sessions/tokens (MC-2) and QR pairing (MC-8) are SUPERSEDED — they consume COMPANION-APPS (plan 54) + REMOTE-USER-AUTH (plan 53) contracts rather than editing token_auth.py. Push atoms (MC-5/6/9) edge on INBOX-NOTIFICATIONS-UNIFICATION (plan 42) push target/rules. The pre-existing docs/guides/remote-access.md is plan 53's artifact, not MC-1 done-work.
+
+Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
+
+| Atom | Status | Title | Depends on | Done when |
+|---|---|---|---|---|
+| `MC-1` | ⬜ | S1 remote-access story: Tailscale-first guide + doctor reachability probe | — | A reader on cell data reaches their dashboard via tailnet following docs/guides/remote-access.md verbatim; `doctor` detects the tailscale interface and prints the phone-ready tokenized URL, and warns when the bind host exposes beyond loopback without auth (tailnet + misconfig fixtures pass). |
+| `MC-2` | ⬜ | S2 device-session consumption + Devices list in Settings | `EXT:COMPANION-APPS:device-session model + unified pairing contract`, `EXT:REMOTE-USER-AUTH:durable session store (auth/sessions.json)` | A roaming-IP phone keeps its device session valid per the plan-54 contract; the Settings > Devices list renders name/minted/last-seen and Revoke; revoking kills the device session on the next request. No new claim added to token_auth.py — the device session comes from plan 54. |
+| `MC-3` | ⬜ | S2 approvals-first companion route + approve/reject wiring | — | On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds. |
+| `MC-4` | ⬜ | S3 PWA installability: manifest + service worker (app-shell precache, /api never cached) | `MC-3` | Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle). |
+| `MC-5` | ⬜ | S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval | `MC-3`, `MC-4`, `MC-2`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:rules-engine push target must exist` | VAPID keypair generated via `personalclaw push init` (keys in credential store), per-device subscription endpoint, and a content-free {kind,item_id} sender are wired as plan-42's `push` target; ntfy topic-URL adapter is an alternative backend (config mobile.push_backend/ntfy_topic_url); a locked-phone push → tap opens #/companion?approval=<id> with the correct card focused → approve → the paused run proceeds, <30s on cell data (timed); payload inspection shows ids only. |
+| `MC-6` | ⬜ | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping | `MC-3`, `MC-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:per-(source,kind) sound/badge rules field + inbox resolve API` | Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI). |
+| `MC-7` | ⬜ | S4 Capacitor shell wrapping the served companion route | `MC-3`, `MC-2` | A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device token and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion. |
+| `MC-8` | ⬜ | S4 QR pairing screen (renders COMPANION-APPS pairing routes) | `MC-7`, `MC-2`, `EXT:COMPANION-APPS:unified pairing routes /api/devices/pair/start|complete` | Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here. |
+| `MC-9` | ⬜ | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring | `MC-7`, `MC-5` | ntfy-app integration works as the documented default; the optional stateless open-source push-relay (org repo) plus APNs/FCM wiring in the shell also delivers; an audit fixture confirms relay logs contain no content (ids-only pings). |
+| `MC-10` | ⬜ | S4 store packaging + mobile-release docs | `MC-7`, `MC-9` | Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions). |
+
+## Atom scopes
+
+### `MC-1` — S1 remote-access story: Tailscale-first guide + doctor reachability probe
+
+**Status:** todo
+
+Session 1 — Remote access story (T1.1 remote-access guide, T1.2 doctor probe, V1)
+
+**Done when:** A reader on cell data reaches their dashboard via tailnet following docs/guides/remote-access.md verbatim; `doctor` detects the tailscale interface and prints the phone-ready tokenized URL, and warns when the bind host exposes beyond loopback without auth (tailnet + misconfig fixtures pass).
+
+### `MC-2` — S2 device-session consumption + Devices list in Settings
+
+**Status:** todo
+
+Session 2 T2.3/T2.4 + C1 Device token (SUPERSEDED — consumes COMPANION-APPS §C1/C2 device sessions on REMOTE-USER-AUTH's durable store, not token_auth.py)
+
+**Done when:** A roaming-IP phone keeps its device session valid per the plan-54 contract; the Settings > Devices list renders name/minted/last-seen and Revoke; revoking kills the device session on the next request. No new claim added to token_auth.py — the device session comes from plan 54.
+
+### `MC-3` — S2 approvals-first companion route + approve/reject wiring
+
+**Status:** todo
+
+Amendment §Session placement S2 — Approvals-first companion (T2.1r) + C2 Companion route API map
+
+**Done when:** On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds.
+
+### `MC-4` — S3 PWA installability: manifest + service worker (app-shell precache, /api never cached)
+
+**Status:** todo
+
+Session 3 T3.1 + C2 service-worker rule (network-first; explicit no-cache for /api/*)
+
+**Done when:** Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle).
+
+### `MC-5` — S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval
+
+**Status:** todo
+
+Amendment §S3 Push-to-approval (T3.2 web push, T3.3 ntfy/UnifiedPush adapter, T3.4 SW deep link, V3) + C3 Push
+
+**Done when:** VAPID keypair generated via `personalclaw push init` (keys in credential store), per-device subscription endpoint, and a content-free {kind,item_id} sender are wired as plan-42's `push` target; ntfy topic-URL adapter is an alternative backend (config mobile.push_backend/ntfy_topic_url); a locked-phone push → tap opens #/companion?approval=<id> with the correct card focused → approve → the paused run proceeds, <30s on cell data (timed); payload inspection shows ids only.
+
+### `MC-6` — S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping
+
+**Status:** todo
+
+Amendment §S3.5 (T3.5.1) — former S2 T2.1/T2.2 breadth
+
+**Done when:** Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI).
+
+### `MC-7` — S4 Capacitor shell wrapping the served companion route
+
+**Status:** todo
+
+Sessions 4-6 Wrapper tier — T4.1 Capacitor shell
+
+**Done when:** A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device token and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion.
+
+### `MC-8` — S4 QR pairing screen (renders COMPANION-APPS pairing routes)
+
+**Status:** todo
+
+Sessions 4-6 — T4.2 QR pairing + C4 (SUPERSEDED — renders plan-54 §C2 /api/devices/pair/* rather than defining them)
+
+**Done when:** Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here.
+
+### `MC-9` — S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring
+
+**Status:** todo
+
+Sessions 4-6 — T4.3 Platform push
+
+**Done when:** ntfy-app integration works as the documented default; the optional stateless open-source push-relay (org repo) plus APNs/FCM wiring in the shell also delivers; an audit fixture confirms relay logs contain no content (ids-only pings).
+
+### `MC-10` — S4 store packaging + mobile-release docs
+
+**Status:** todo
+
+Sessions 4-6 — T4.4 Store packaging + Owner tasks 3-4
+
+**Done when:** Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions).
+

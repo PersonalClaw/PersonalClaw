@@ -1,3 +1,12 @@
+# HARNESS-CRAFT
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/HC.md`](../atomic/HC.md) as 5 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Harness Craft — Fast Worktrees + Best-of-N + Check-Work
 
 **Status:** PROPOSED (created 2026-07-17 from grok-build analysis — xai-org/grok-build, Apache-2.0, opened 2026-07-14)

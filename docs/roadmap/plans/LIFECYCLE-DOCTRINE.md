@@ -1,3 +1,12 @@
+# LIFECYCLE-DOCTRINE
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/LD.md`](../atomic/LD.md) as 4 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Lifecycle Doctrine & API Stability — From Clean-Break to Shipped-Product Discipline
 
 **Status:** DESIGNED, **DEFERRED BY OWNER DECISION** — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18 from the pre-launch investigation & owner alignment review). **Owner decision reaffirmed 2026-07-28: this plan lands near the END of roadmap execution, once the architecture has stopped moving.** Until then the project runs an explicit two-standard posture, now written into the contributor-facing docs (`CONTRIBUTING.md#breaking-changes`, `AGENTS.md`, the README pre-1.0 banner, the PR template): the **maintainer** makes breaking, backward-incompatible clean-break architectural changes with **no migrations** (release notes advise `personalclaw snapshot`), while **contributors are not expected to** — contributor guidance keeps lifecycle-doctrine-shaped rules (stay additive, don't hand-roll gate/migration machinery, surface a needed break instead of shipping it). Consequently: **no `lifecycle/` package exists** (verified 2026-07-28), and any plan task that references `lifecycle/gates.py` or `lifecycle/migrations/` **re-scopes to clean-break form** when the maintainer executes it — the gate is dropped, the migration becomes an idempotent backfill keyed on inspecting the data, and the executor records a DEVIATION and keeps building.

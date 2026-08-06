@@ -1,0 +1,114 @@
+# PLATFORM-HARDENING-FLOORS — atomic plans
+
+**Source plan:** [`PLATFORM-HARDENING-FLOORS`](../plans/PLATFORM-HARDENING-FLOORS.md)  
+**Code:** `PHF`  
+**Source status:** todo
+
+Enforcement floors, trust seams, and gate ergonomics for the platform. It corrects an unsafe resource-ceiling delivery mechanism (deliver rlimits after exec via a stdlib shim instead of a fork-unsafe preexec_fn), closes the unauthenticated app-backend inbound trust boundary with a proxy HMAC signature, and adds config/inert-surface drift baselines, an offline fake-model E2E harness, ceiling-intersect-profile guardrail wiring, flake root-cause fixes, and docs/aggregate-gate legibility. Most atoms originate here or deliver a specific mechanism correction; cross-plan edges mark work that lands into a plan another owner holds.
+
+Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
+
+| Atom | Status | Title | Depends on | Done when |
+|---|---|---|---|---|
+| `PHF-1` | ⬜ | Post-exec resource-ceiling shim + spawn tripwires | — | A child reports the ceiling via ulimit -n; the shim imports and runs with no core dependency; config round-trips; ACP sessions still open with multiple MCP servers (no EMFILE regression); adding an unmapped Popen site or an async preexec_fn reds CI naming file:line; validated on the dev gateway (ulimit, bounded fork bomb contained, terminal open with no shim cost, watchdog-revived backend carries the ceiling); the two hazard-site audits either yield a wedge regression test or a recorded finding that they are safe. |
+| `PHF-2` | ⬜ | cgroup v2 second enforcement tier | `PHF-1` | On a Linux fixture a fork bomb hits pids.max and dies contained; on macOS one warning states pids/RSS are not enforced; the probe never raises under any environment. |
+| `PHF-3` | ⬜ | App-backend inbound proxy-signature authentication | — | A direct curl to the backend port is refused; a signed request replayed after the window is refused; a valid proxied request succeeds; the secret file is 0600 and never logged; every first-party backend refuses unsigned requests and the full app-boot path runs green; the doc states what each layer does and does not buy. |
+| `PHF-4` | ⬜ | Environment-inheritance allowlist sweep for shell hooks and cron scripts | `EXT:EXECUTION-ISOLATION:D1-allowlist-shape` | A planted secret in the gateway env is absent from a hook child, a cron-script child, and a bash-action child, proven by one regression test per site. |
+| `PHF-5` | ⬜ | Committed config-schema baseline + drift gate | — | Renaming a config field without regenerating reds CI naming the path; regeneration is byte-identical on re-run; adding a field without regenerating is caught. |
+| `PHF-6` | ⬜ | Inert-control inventory baseline (writer/reader ratchet) | `PHF-5` | The current inert population is measured and committed; adding a declared-but-unread surface reds CI; each cleanup commit shrinks a counter with a test proving the writer now exists; the forbidden-to-raise doc line is present. |
+| `PHF-7` | ⬜ | Offline fake-model E2E harness + a11y rail | `EXT:DESIGN-SYSTEM-CONSISTENCY:deferred-axe-per-route-a11y-tail` | A gateway boots on the fake provider and completes a scripted chat turn with no credentials present; make test-e2e runs the browser gate offline and a bare pytest does not run it; every authenticated route is axe-scanned in CI; a deliberately raw call that skips the enforced helper reds the gate; validated with network off and no provider credentials, runtime recorded. |
+| `PHF-8` | ⬜ | Ceiling-intersect-profile guardrail wiring | `PHF-1`, `EXT:AUTONOMY-GUARDRAILS:SafetyProfile-S5.2-wiring` | A profile cannot widen the ceiling (test per archetype); an unknown matcher aborts boot with a WHAT/WHY/FIX error; a normpath-on-pattern implementation reds the matcher tests; a real unattended trigger resolves through the headless profile with a live reader; a narrower profile bites and a widening attempt is refused, confirmed from logs/SEL. |
+| `PHF-9` | ⬜ | Suite flake root-cause fixes + xdist scheduler decision | `EXT:CI-RELEASE-ENGINEERING:xdist-worksteal-escape-hatch` | The full suite runs 5x consecutively with zero unclosed-database resource warnings and both named tests pass deterministically; a genuine SEL write failure now raises rather than skipping; the scheduler wall-time measurement is recorded and the decision made; both flake memories are updated or deleted. |
+| `PHF-10` | ⬜ | Docs-lint + plan-hygiene gate | — | A dead link or a stale file:line citation reds CI; the current population is committed (not zero); the plan-hygiene checker reproduces the known stale-header audit findings on a seeded stale header. |
+| `PHF-11` | ⬜ | Aggregate gates report, they don't short-circuit | — | A tree with three independent failures reports all three in one run; each aggregate prints one result table with every failure visible in a single run. |
+
+## Atom scopes
+
+### `PHF-1` — Post-exec resource-ceiling shim + spawn tripwires
+
+**Status:** todo
+
+Replace the unsafe preexec_fn ceiling-delivery mechanism (it forces a full fork() of the multi-threaded gateway and can wedge a child holding inherited fds like gateway.lock and the listening socket, blocking the event loop with no await point) with a stdlib-only exec shim prepended to argv that setrlimits in the already-exec'd single-threaded child then os.execv's the real target. Add ResourceCeilings plus four profiles: tool (default, full ceiling + oom_score_adj bias to prefer killing agent work), session_host (raises NOFILE to the inherited hard limit for ACP hosts multiplexing many MCP pipes, no OOM bias), build (keeps OOM bias), none (user terminal, no limits/no bias). Add spawn_shim_argv/create_subprocess_limited and wire sandbox.nofile/max_pids/max_rss_mb config 4-point (dataclass + _meta, load, to_dict, write path). Route all agent-influenced async seams (native bash, bash action provider, subagent, app backends, MCP stdio, ACP transport, loop gates/worktree) through the shim; terminal gets none; frontend/service/update spawns operator-exempt. Add two AST tripwires: every subprocess/Popen/run/StdioServerParameters site is in a ceiling-wrapped-or-operator-exempt allowlist, and no async spawn site passes preexec_fn (documented exceptions only). Audit the watchdog-thread backend respawn and the event-loop bash spawn for the pre-existing wedge form. This supersedes and rewrites the EXECUTION-ISOLATION EI-A1/EI-A2/EI-A3 mechanism, whose single-threaded-at-fork premise is false (67 thread-creation sites; backends respawn off a daemon thread).
+
+**Done when:** A child reports the ceiling via ulimit -n; the shim imports and runs with no core dependency; config round-trips; ACP sessions still open with multiple MCP servers (no EMFILE regression); adding an unmapped Popen site or an async preexec_fn reds CI naming file:line; validated on the dev gateway (ulimit, bounded fork bomb contained, terminal open with no shim cost, watchdog-revived backend carries the ceiling); the two hazard-site audits either yield a wedge regression test or a recorded finding that they are safe.
+
+### `PHF-2` — cgroup v2 second enforcement tier
+
+**Status:** todo
+
+Add an opt-in sandbox.cgroup_scopes tier on Linux as a second enforcement layer above the NOFILE floor: systemd-run --user --scope with TasksMax, MemoryMax, and MemorySwapMax=0. Probe once for a unified cgroup hierarchy plus a systemd user session and add the probe line to the doctor. On macOS, non-systemd, or containers, emit exactly one loud warning naming what is not enforced (pids/RSS) while NOFILE still applies; the probe never raises.
+
+**Done when:** On a Linux fixture a fork bomb hits pids.max and dies contained; on macOS one warning states pids/RSS are not enforced; the probe never raises under any environment.
+
+### `PHF-3` — App-backend inbound proxy-signature authentication
+
+**Status:** todo
+
+Close the unauthenticated inbound half of the app-platform trust boundary. App backends bind loopback with no caller check, so any local process that finds the port talks to the backend directly, bypassing the gateway proxy, session auth, and the app permission middleware; loopback binding is a network boundary, not an authorization one. Mint a per-app proxy secret at install/first-boot (apps_dir/<app>/.app_secret, mode 0600) and hand it to the backend by env. Sign every proxied request in the app proxy: X-PersonalClaw-Proxy: <ts>:<hmac> over <ts>:<METHOD>:<path>[?query]:<sha256(body)>. Verify fail-closed in the SDK app-server helper (absent/malformed/stale beyond +-60s/wrong signature -> 401, no route body runs, constant-time compare, denials to SEL). Roll every first-party backend onto the verifying helper (cross-repo, core helper first then apps in the same session). Document honestly that loopback is not authorization and the signature is what makes the permission model hold; add a CHANGELOG entry. Secret mint is also fail-closed: a backend that cannot read its secret does not start rather than starting unprotected.
+
+**Done when:** A direct curl to the backend port is refused; a signed request replayed after the window is refused; a valid proxied request succeeds; the secret file is 0600 and never logged; every first-party backend refuses unsigned requests and the full app-boot path runs green; the doc states what each layer does and does not buy.
+
+### `PHF-4` — Environment-inheritance allowlist sweep for shell hooks and cron scripts
+
+**Status:** todo
+
+Apply the minimal-allowlist child-env shape (PATH, locale, home-equivalent, the three PersonalClaw vars, plus declared needs, with _SENSITIVE_ENV_PREFIXES as the floor) to the agent-influenced spawn sites not already covered: shell hooks and cron scripts. Confirm the bash action provider's existing _scrub_env is the allowlist shape or align it. Reuses the allowlist shape already specified by EXECUTION-ISOLATION's D1; this only extends it to the sites D1 does not name.
+
+**Done when:** A planted secret in the gateway env is absent from a hook child, a cron-script child, and a bash-action child, proven by one regression test per site.
+
+### `PHF-5` — Committed config-schema baseline + drift gate
+
+**Status:** todo
+
+Add scripts/generate_config_baseline.py that walks the existing _meta registry and emits a committed config-baseline.json (flat path list + type + default + sensitive flag), plus a CI job asserting regeneration is a no-op. This catches drift a round-trip test cannot see: a renamed key, a silently dropped _meta, or a field that stopped being written. Generator must be deterministic (byte-identical on re-run).
+
+**Done when:** Renaming a config field without regenerating reds CI naming the path; regeneration is byte-identical on re-run; adding a field without regenerating is caught.
+
+### `PHF-6` — Inert-control inventory baseline (writer/reader ratchet)
+
+**Status:** todo
+
+Add tests/test_inert_surface_baseline.py plus a committed inert-surface-baseline.json recording, for each declared surface (config keys, enum members, registered kinds/runtimes, _EDITABLE_CONFIG entries, SDK exports), whether a writer and a reader exist. This targets the recurring defect where something is declared and nothing on the other side of the seam consumes or produces it while hand-built test state hides it. Per-file counters may only shrink; ship at the measured population (not zero, since a never-run gate given teeth at zero is an outage) with a doc line forbidding raising a number to go green. Drive the top offenders down one file per commit, each commit proving the writer now exists. SafetyProfile is expected to appear and is left for PHF-8 to fix.
+
+**Done when:** The current inert population is measured and committed; adding a declared-but-unread surface reds CI; each cleanup commit shrinks a counter with a test proving the writer now exists; the forbidden-to-raise doc line is present.
+
+### `PHF-7` — Offline fake-model E2E harness + a11y rail
+
+**Status:** todo
+
+Build a deterministic scripted fake model provider fixture (scripted responses, tool-call emission, zero network) usable as a real bound provider, reusing the empty seed fixture path. Add make test-e2e that boots a real gateway on the fake provider with a seeded authenticated session then runs web/e2e/ — skipped unless PERSONALCLAW_E2E=1, forced serial with addopts cleared, its own high timeout, and no coverage instrumentation on the subprocess gateway. Mount the deferred axe-per-route accessibility rail on the harness and add it to CI so every authenticated route is axe-scanned and a new WCAG AA violation reds the build. Add a strict-mode env flag that turns one persistence/fencing convention (on-loop persistence, atomic writes, or is_fenced) into a hard failure for the gate's duration. Port the manual UI-validation click-path into web/e2e/ specs so it is reproducible in CI.
+
+**Done when:** A gateway boots on the fake provider and completes a scripted chat turn with no credentials present; make test-e2e runs the browser gate offline and a bare pytest does not run it; every authenticated route is axe-scanned in CI; a deliberately raw call that skips the enforced helper reds the gate; validated with network off and no provider credentials, runtime recorded.
+
+### `PHF-8` — Ceiling-intersect-profile guardrail wiring
+
+**Status:** todo
+
+Wire the SafetyProfile family, which shipped with zero non-test callers (a declared decision object nothing consults). Add a Ceiling loaded once at boot from an operator-owned path the agent process cannot weaken; resolve(ceiling, profile) returns the intersection under tightest-wins (the profile may only narrow). Implement four archetypes each with one compose function (ScopedRuleset, OrdinalControl, CapabilityGate, ScopedMap), dispatching on archetype not scope name so adding a scope is data, not engine code; matchers and ordinal scales live in enforcer-owned registries; an unknown matcher aborts governance boot fail-closed. Encode the path-matcher rule as table-driven tests: normalize only the queried item (expand ~ and $VAR, then abspath) and never run the pattern through normpath (normpath treats */** as ordinary segments and collapses an adjacent .. against them, e.g. /a/**/../b -> /a/b, silently dropping the ** and widening an allow or shrinking a deny); cover /a/**/../b, a .. traversal against an allow-prefix, and a relative item against an absolute deny. Wire profile_for_session into the three dispatch seams plus spawn so the guardrail success criterion holds in code, proven by driving a real unattended trigger rather than a constructed object; composes with PHF-1 (profile picks tools/egress, the sandbox ceilings pick blast radius). Owner decision required on the ceiling's trust-root path and how it is protected from the agent on a single-user machine; document what the layer does and does not buy.
+
+**Done when:** A profile cannot widen the ceiling (test per archetype); an unknown matcher aborts boot with a WHAT/WHY/FIX error; a normpath-on-pattern implementation reds the matcher tests; a real unattended trigger resolves through the headless profile with a live reader; a narrower profile bites and a widening attempt is refused, confirmed from logs/SEL.
+
+### `PHF-9` — Suite flake root-cause fixes + xdist scheduler decision
+
+**Status:** todo
+
+Fix two suite flakes at their root, then decide the parallel scheduler with measurements. Knowledge-merge flake: close the KnowledgeStore connection in fixture teardown (no rerun, no xfail) so the suite runs clean of unclosed-sqlite resource warnings. Subagent SEL flake: the SEL audit call sits inside a swallowing except Exception, so contention makes the patched mock never fire; narrow the except so a genuine audit-write failure surfaces instead of vanishing, and give the two tests an isolated home — a silently-swallowed SEL write is a security-audit gap, not a test problem. Only after the root causes are gone, decide the xdist scheduler last and with measurements: switch --dist worksteal to loadgroup only if the suite wall-time regression is acceptable, recording the before/after either way (the serialization group mark is the real deliverable, not the scheduler choice). Reconcile the two flake memories so a fixed flake is not left documented as pre-existing.
+
+**Done when:** The full suite runs 5x consecutively with zero unclosed-database resource warnings and both named tests pass deterministically; a genuine SEL write failure now raises rather than skipping; the scheduler wall-time measurement is recorded and the decision made; both flake memories are updated or deleted.
+
+### `PHF-10` — Docs-lint + plan-hygiene gate
+
+**Status:** todo
+
+Add scripts/docs_lint.py, make docs-lint, and a blocking CI job checking dead relative links, missing anchors, file.py:NNN citations whose file no longer exists, and code-fence language tags; ship at the measured population with a shrink-only allowlist rather than at zero. Extend it to plan hygiene in report-only mode: a plan whose Status: DONE header has unchecked task rows, or whose header contradicts its Execution log, is reported — the log and the code win over the header, so this ratchets rather than blocks.
+
+**Done when:** A dead link or a stale file:line citation reds CI; the current population is committed (not zero); the plan-hygiene checker reproduces the known stale-header audit findings on a seeded stale header.
+
+### `PHF-11` — Aggregate gates report, they don't short-circuit
+
+**Status:** todo
+
+Convert run_prepush.sh from a short-circuiting && chain into a runner: run every independent check, capture all output, print one result table, and exit non-zero if any failed, with the verdict computed from the collected data rather than inline. Do the same for the website's test:ci aggregate, respecting the repo-owned pre-push hook and never weakening an assertion to go green. An && chain of N independent checks reports only the first failure, so a tree with several unrelated problems costs multiple push/wait rounds to discover over independent measurements of the same commit.
+
+**Done when:** A tree with three independent failures reports all three in one run; each aggregate prints one result table with every failure visible in a single run.
+
