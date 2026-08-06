@@ -71,7 +71,6 @@ from personalclaw.learn import LessonStore
 from personalclaw.llm.base import LLMEvent
 from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
-    ToolApprovalPolicy,
     stream_and_collect,
 )
 from personalclaw.memory import MemoryStore
@@ -1687,8 +1686,16 @@ class GatewayOrchestrator:
                 full_message, _ = self.ctx_builder.build_message(task_text, is_new)
 
                 # Heartbeat is a pure UNATTENDED background loop — no user present.
+                # The approval policy is DERIVED from the session's SafetyProfile, not
+                # hardcoded: `_bg` classifies as unattended, so `profile_for_session`
+                # resolves to HEADLESS and its approval ("hook_based") maps to
+                # HOOK_BASED — the unattended heartbeat resolves through HEADLESS by
+                # construction (AUTONOMY-GUARDRAILS Success Criterion #7). This is
+                # behavior-preserving: HEADLESS.approval == the prior HOOK_BASED literal.
                 # HOOK_BASED keeps the security hooks; hook-neutral tools auto-approve
                 # (no interactive callback), never hanging on an unanswerable prompt.
+                from personalclaw.guardrails.policy import approval_policy_for_session
+
                 _hb_model = getattr(getattr(client, "client", None), "_model", "") or ""
 
                 def _hb_usage(event: object, _m: str = _hb_model) -> None:
@@ -1705,7 +1712,7 @@ class GatewayOrchestrator:
                 result_text = await stream_and_collect(
                     client,
                     full_message,
-                    approval_policy=ToolApprovalPolicy.HOOK_BASED,
+                    approval_policy=approval_policy_for_session(session_key),
                     hooks=self.ctx_builder.hooks,
                     on_tool_approval=None,
                     on_complete=_hb_usage,
