@@ -839,10 +839,17 @@ class ContextBuilder:
         # Honour AppConfig.timezone (e.g. "Asia/Tokyo") so the LLM sees
         # the user's local time instead of the gateway host's system TZ, which
         # is often UTC on remote/server hosts and makes "today" ambiguous.
-
+        #
+        # PROMPT-CACHE-SUBSTRATE §C3: the date line is NOT appended into `parts` here —
+        # `parts` is joined and hard-truncated at `_MAX_CONTEXT_CHARS` below, and
+        # truncation cuts from the END, so a tail-positioned date would be the FIRST
+        # thing a large context loses (silently regressing "what day is it" for the
+        # heaviest users). Instead the assembled block is built and truncated first,
+        # THEN the date is appended AFTER truncation (see the return path below), so it
+        # always survives. Rendered once here so the timestamp is captured at assembly.
         _, tz = get_local_tz()
         now = datetime.now(tz)
-        parts.append(f"[CURRENT DATE] {now.strftime('%A, %Y-%m-%d %H:%M %Z')}\n\n")
+        current_date_line = f"[CURRENT DATE] {now.strftime('%A, %Y-%m-%d %H:%M %Z')}\n\n"
 
         # Agent identity and runtime — inject for ALL agents so the LLM
         # knows which agent it is and where it's running.  Without this,
@@ -1085,6 +1092,12 @@ class ContextBuilder:
             last_nl = context.rfind("\n")
             if last_nl > 0:
                 context = context[: last_nl + 1]
+
+        # Append the date AFTER truncation (§C3) so it survives even an oversized
+        # context — truncation cut from the end, so a date placed earlier could have
+        # been dropped. Appended for both the custom and personalclaw paths (this is
+        # the single assembly tail both take).
+        context += current_date_line
 
         logger.debug(
             "Session context: agent=%s, custom=%s, %d chars",

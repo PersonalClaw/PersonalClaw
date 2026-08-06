@@ -197,6 +197,45 @@ class TestContextBuilder:
         assert "lobsters" in msg
         assert "hello" in msg
 
+    def test_current_date_appended_after_truncation(self, tmp_path, monkeypatch):
+        """PROMPT-CACHE-SUBSTRATE §C3: `[CURRENT DATE]` is appended AFTER the
+        `_MAX_CONTEXT_CHARS` truncation, so it survives an oversized context (it is
+        the first thing a tail-truncated context would otherwise lose). We shrink the
+        cap so the assembled body reliably exceeds it regardless of per-component caps."""
+        import personalclaw.context as ctx_mod
+
+        monkeypatch.setattr(ctx_mod, "_MAX_CONTEXT_CHARS", 200)
+        ws = tmp_path / "ws"
+        store = MemoryStore(workspace=ws)
+        store.write("# Memory\n\n" + "User likes lobsters. " * 200)
+        builder = ContextBuilder(
+            memory=store,
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context(session_key="s1", cwd=str(ws))
+        # The body was hard-truncated at the (shrunken) cap, yet the date line is
+        # present AND is the tail — proving it was appended AFTER truncation. (A body
+        # comfortably larger than the 200-char cap confirms truncation actually ran.)
+        assert len(store.read()) > 400  # the memory doc alone dwarfs the cap
+        assert "[CURRENT DATE]" in ctx
+        # It is the LAST block: nothing but the date line (+ trailing blank) follows it.
+        tail = ctx[ctx.rindex("[CURRENT DATE]") :]
+        assert tail.startswith("[CURRENT DATE]")
+        assert "\n\n" not in tail.rstrip("\n"), "content leaked after the date line"
+        assert ctx.count("[CURRENT DATE]") == 1  # exactly once, never duplicated
+
+    def test_current_date_present_on_small_context(self, tmp_path):
+        """A normal (un-truncated) session still carries the date line exactly once,
+        and it is the final block of the assembled context."""
+        builder = ContextBuilder(
+            memory=MemoryStore(workspace=tmp_path / "ws"),
+            skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+        )
+        ctx = builder.build_session_context(session_key="s1")
+        assert ctx.count("[CURRENT DATE]") == 1
+        tail = ctx[ctx.rindex("[CURRENT DATE]") :]
+        assert "\n\n" not in tail.rstrip("\n"), "content leaked after the date line"
+
     def _memory_citation_builder(self, tmp_path):
         return ContextBuilder(
             memory=MemoryStore(workspace=tmp_path / "ws"),
