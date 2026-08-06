@@ -135,7 +135,7 @@ async def test_default_agent_missing_key_is_400_not_silent_clear(monkeypatch, tm
 
 
 def test_is_reserved_agent_case_insensitive():
-    from personalclaw.agents.defaults import is_reserved_agent, LOOP_WORKER_AGENT_NAME
+    from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME, is_reserved_agent
 
     reserved = LOOP_WORKER_AGENT_NAME
     assert is_reserved_agent(reserved)
@@ -155,12 +155,13 @@ async def test_api_agents_create_rejects_non_alphanumeric(monkeypatch, tmp_path)
     req.json = _j
     resp = await _agents_h.api_personalclaw_agents_create(req)
     assert resp.status == 400
-    assert "least one letter or digit" in _json.loads(resp.body.decode())["error"]
+    assert "Agent name must match" in _json.loads(resp.body.decode())["error"]
 
 
 @pytest.mark.asyncio
 async def test_api_agents_create_case_insensitive_conflict(monkeypatch, tmp_path):
     from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME
+
     _acfg(monkeypatch, tmp_path, {LOOP_WORKER_AGENT_NAME: {}})
     req = make_mocked_request("POST", "/api/agents")
 
