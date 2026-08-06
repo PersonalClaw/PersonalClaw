@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload,
+  HardDriveDownload, Coins,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -28,6 +28,7 @@ import { VoicePanel } from './VoicePanel'
 import { UpdatesPanel } from './UpdatesPanel'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { FeedbackPanel } from './FeedbackPanel'
+import { UsagePanel } from './UsagePanel'
 import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
 import { GuardrailsPanel } from './GuardrailsPanel'
@@ -74,6 +75,7 @@ const SUBPAGES: SubPage[] = [
   { id: 'diagnostics', label: 'Diagnostics', icon: Activity, render: () => <DiagnosticsPanel /> },
   { id: 'tool-output', label: 'Tool output', icon: Scissors, render: () => <ProjectionRulesPanel /> },
   { id: 'feedback', label: 'AI feedback', icon: ThumbsUp, render: () => <FeedbackPanel /> },
+  { id: 'usage', label: 'Usage', icon: Coins, render: (c) => <UsagePanel query={c.query} setQuery={c.setQuery} /> },
   { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },
   { id: 'archive', label: 'Archive', icon: Archive, render: () => <ArchivePanel /> },
   { id: 'portability', label: 'Import / Export', icon: FolderSync, render: () => <PortabilityPanel /> },

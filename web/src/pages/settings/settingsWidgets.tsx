@@ -1,6 +1,6 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
-  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload,
+  Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -44,6 +44,12 @@ const shortModel = (ref: string) => { const i = ref.indexOf(':'); return i >= 0 
 // ─────────────────────────────────────────────────────────────────────────────
 const useSecurity = () => useCachedData('settings:security', () => api.securityStats().catch(() => null as SecurityStats | null), { persist: true })
 const useMemoryStats = () => useCachedData('settings:memory-stats', () => api.memoryStats().catch(() => null as MemoryStats | null), { persist: true })
+// Today's spend for the Usage bento tile (COST-AND-TOKEN-OBSERVABILITY). Midnight-UTC
+// window matches the Usage panel's "Today"; a null means the ledger read failed.
+const useUsageToday = () => useCachedData('settings:usage-today', () => {
+  const since = `${new Date().toISOString().slice(0, 10)}T00:00:00+00:00`
+  return api.usageTotals({ since }).then((d) => d.totals).catch(() => null)
+}, { persist: false })
 const useModelsActive = () => useCachedData('settings:models-active', () => api.modelsActive().catch(() => null as Record<string, string[]> | null), { persist: true })
 const useSearchEntity = () => useCachedData('settings:search', async () => {
   const [providers, active] = await Promise.all([
@@ -570,6 +576,28 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 <div className="mt-1 text-on-surface-low text-[0.8125rem]">
                   {rated.length ? `${rated.length} rated` : 'collecting verdicts'}
                   {suppressed ? ` · ${suppressed} suppressed` : ''}
+                </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'usage', group: 'System', label: 'Usage', icon: Coins, size: 'sm',
+    description: "Real cost + tokens spent across every turn — chat, subagents, loops, automations.",
+    useSearchText() {
+      const { data } = useUsageToday()
+      return `usage cost tokens spend dollars price budget model source ${data ? `${data.cost_usd} ${data.turns} turns` : ''}`
+    },
+    render(query, go) {
+      const { data } = useUsageToday()
+      const tokens = data ? (data.input_tokens || 0) + (data.output_tokens || 0) : 0
+      return (
+        <BentoCard icon={Coins} title="Usage" query={query} onClick={() => go('usage')} loading={data === undefined}>
+          {!data || data.turns === 0
+            ? <div className="text-on-surface-low text-[0.8125rem]">Real cost + tokens for every turn — chat, subagents, loops, automations — land here once usage is recorded.</div>
+            : <><BigStat value={data.priced ? (data.cost_usd >= 1 ? `$${data.cost_usd.toFixed(2)}` : `$${data.cost_usd.toFixed(4)}`) : 'unpriced'} caption="today" />
+                <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+                  {tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tokens · {data.turns} {data.turns === 1 ? 'turn' : 'turns'}
                 </div></>}
         </BentoCard>
       )
