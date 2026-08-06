@@ -29,10 +29,21 @@ import shutil
 import time
 from typing import Any
 
-from personalclaw.workflows import attention, blocks
+from personalclaw.workflows import (
+    attention,
+    blocks,
+)
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import macros, models, mutations, secrets, store, template_lint
+from personalclaw.workflows import (
+    judge_calibration,
+    macros,
+    models,
+    mutations,
+    secrets,
+    store,
+    template_lint,
+)
 from personalclaw.workflows.models import (
     TERMINAL_RUN_STATUSES,
     InstanceState,
@@ -207,8 +218,32 @@ async def get_def(name: str) -> dict[str, Any]:
         if found is None:
             continue
         raw = found if isinstance(found, dict) else getattr(found, "to_dict", lambda: {})()
-        return _ok(definition=secrets.strip_secrets(raw), provider=provider_name)
+        return _ok(
+            definition=secrets.strip_secrets(raw),
+            provider=provider_name,
+            default_eligibility=_default_eligibility(name),
+        )
     return _err("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+
+
+def _default_eligibility(name: str) -> dict[str, Any]:
+    """R6a: may this template become its kind's default? (LOOPS-EVOLUTION R6 criterion 1).
+
+    Reads every `judge_verdict` this template's runs recorded to the ledger and asks the
+    nodding-loop detector. A gate that has never rejected across enough real runs blocks the
+    template from becoming a default and surfaces as a warning badge. Read-only projection over
+    the ledger — no model call, no separate store.
+    """
+    records: list[judge_calibration.VerdictRecord] = []
+    runs, _total = store.list_runs(workflow_name=name, limit=200)
+    for run in runs:
+        run_id = getattr(run, "id", "")
+        if not run_id:
+            continue
+        entries = journal_mod.ledger(run_id, kinds={journal_mod.JUDGE_VERDICT})
+        records.extend(judge_calibration.verdicts_from_journal(entries))
+    allowed, reason = judge_calibration.may_become_default(records, template=name)
+    return {"may_become_default": allowed, "reason": reason, "verdicts": len(records)}
 
 
 async def author_def(

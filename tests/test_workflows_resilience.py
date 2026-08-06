@@ -506,7 +506,11 @@ class TestJudgeGate:
         )
         r = await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
         assert r.state == InstanceState.DONE
-        assert r.output == {"verdict": "PASS"}
+        # The verdict rides out with its evidence chain now (LOOPS-EVOLUTION R3): the controller
+        # emits `judge_verdict` from these fields. Additive — `verdict` is unchanged.
+        assert r.output["verdict"] == "PASS"
+        assert r.output["judge_status"] == "kept"
+        assert r.output["judge_evidence"]["samples"] == ["PASS"]
 
     async def test_each_verdict_maps_to_a_distinct_state(self) -> None:
         """RETRY and ESCALATE are separate because they mean different things to a human."""
