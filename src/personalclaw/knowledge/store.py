@@ -7,12 +7,9 @@ from collections import defaultdict
 from datetime import datetime
 from uuid import uuid4
 
-logger = logging.getLogger(__name__)
+from personalclaw.sqlite_compat import sqlite3
 
-try:
-    import pysqlite3 as sqlite3
-except ImportError:
-    import sqlite3
+logger = logging.getLogger(__name__)
 
 # Query params that only track marketing/analytics — never identify the resource.
 # Stripped during URL normalization so a link saved with a tracking tag dedups

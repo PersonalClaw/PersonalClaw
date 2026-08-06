@@ -20,6 +20,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **`personalclaw doctor` now reports your SQLite driver and its capabilities.** The Dependencies
+  section shows the resolved driver (`pysqlite3` or the stdlib `sqlite3`), its version, and whether
+  FTS5 and JSON1 are compiled in — with a fix hint (`pip install pysqlite3-binary`) when FTS5 is
+  missing, since the knowledge and memory search paths need it. Under the hood the driver is now
+  selected in one place (`sqlite_compat`) instead of seven, so every subsystem shares one honest
+  answer.
 - **Memory-backed answers cite their sources, and say so when memory is empty.** When a reply
   draws on episodic memory recalled for the turn, it can cite a fact inline as `[Memory N]`, and the
   chat renders each such token as a chip that deep-links to that episode in Settings → Memory. The

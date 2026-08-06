@@ -151,6 +151,19 @@ def _doctor() -> None:
         print(f"  node:        ⚠️  not found (frontend needs Node {_MIN_NODE_VERSION}+)")
         print("               Fix: install Node.js >= 16")
 
+    # SQLite driver + capabilities (PLATFORM-REACH PR-1): FTS5/JSON1 are what the
+    # knowledge + memory search paths need, and the bundled stdlib build lacks them
+    # on some platforms — so report the resolved driver and whether they're present.
+    from personalclaw.sqlite_compat import probe as _sqlite_probe
+
+    _sq = _sqlite_probe()
+    _fts = "✅" if _sq.fts5 else "❌"
+    _json1 = "✅" if _sq.json1 else "❌"
+    print(f"  SQLite:      {_sq.driver} {_sq.version}, FTS5 {_fts}, JSON1 {_json1}")
+    if not _sq.fts5:
+        print("               Fix: pip install pysqlite3-binary (bundles FTS5)")
+        issues.append("sqlite fts5")
+
     # Unified venv detection — used for runtime section
     venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python3"
     is_venv_install = venv_py.is_file()

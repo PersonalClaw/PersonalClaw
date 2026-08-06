@@ -1168,6 +1168,12 @@ class TestPysqlite3Fallback:
 
         evicted: dict[str, object] = {}
         saved_pysqlite3 = sys.modules.pop("pysqlite3", None)
+        # The driver choice now lives in `personalclaw.sqlite_compat` (PR-1), which the
+        # consumer imports `sqlite3` FROM. It's cached in sys.modules bound to whatever
+        # resolved at first import, so evict it too — otherwise reimporting the consumer
+        # with pysqlite3 blocked would still get the cached (pysqlite3) binding and the
+        # fallback would never be exercised.
+        saved_compat = sys.modules.pop("personalclaw.sqlite_compat", None)
         for mod in list(sys.modules):
             if mod == module_name or mod.startswith(module_name + "."):
                 evicted[mod] = sys.modules.pop(mod)
@@ -1180,10 +1186,14 @@ class TestPysqlite3Fallback:
             del sys.modules["pysqlite3"]
             if saved_pysqlite3 is not None:
                 sys.modules["pysqlite3"] = saved_pysqlite3
-            # Drop the reloaded copies, then restore the original objects.
+            # Drop the reloaded copies, then restore the original objects (including
+            # the original sqlite_compat, so later tests see the real driver binding).
             for mod in list(sys.modules):
                 if mod == module_name or mod.startswith(module_name + "."):
                     sys.modules.pop(mod)
+            sys.modules.pop("personalclaw.sqlite_compat", None)
+            if saved_compat is not None:
+                sys.modules["personalclaw.sqlite_compat"] = saved_compat
             sys.modules.update(evicted)
             if parent_mod is not None and saved_parent_attr is not None:
                 setattr(parent_mod, leaf, saved_parent_attr)

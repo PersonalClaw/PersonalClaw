@@ -15,13 +15,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-try:
-    import pysqlite3 as sqlite3
-except ImportError:
-    import sqlite3
-
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
+from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:
     from personalclaw.vector_memory import VectorMemoryStore

@@ -24,14 +24,10 @@ from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
 
-try:
-    import pysqlite3 as sqlite3
-except ImportError:
-    import sqlite3
-
 from personalclaw.config.loader import config_dir
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
+from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:
     from personalclaw.memory_graph import AliasIndex, MemoryGraph
