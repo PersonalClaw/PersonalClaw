@@ -20,7 +20,8 @@ It is local-first, provider-agnostic, and MIT-licensed.
 2. **Agentic chat** — conversational sessions where the agent acts with full tool access.
 3. **Automation** — triggers, schedules, and workflows that fire without the user present.
 
-**Delivery surfaces** (same core everywhere): local server, Docker compose, desktop app.
+**Delivery surfaces** (same core everywhere): local server, Docker compose. (An experimental
+macOS-only desktop shell exists but is not yet built or released by CI.)
 
 ---
 
@@ -41,9 +42,11 @@ It is local-first, provider-agnostic, and MIT-licensed.
 4. **One path per concern.** Each piece of logic, each event transport, each storage
    access has exactly one implementation path. Dual paths are drift waiting to happen.
 
-5. **Autonomy bounded by deterministic guardrails.** Safety is enforced by failure
-   breakers, expiring trust, approval timeouts, deny-lists, and single-flight locks —
-   never by the model's self-judgment.
+5. **Unattended autonomy bounded by deterministic guardrails.** The guardrails are the
+   personal safety floor **for unattended work** — a daily spend ceiling, an outbound secret
+   scan, provider circuit breakers, expiring trust, approval timeouts, deny-lists, single-flight
+   locks, and a kill switch — enforced deterministically, never by the model's self-judgment.
+   Interactive chat is never affected by these.
 
 6. **As-built is the spec.** The architecture documents describe the code's current
    reality; the roadmap plans describe intended changes. No document is authoritative
