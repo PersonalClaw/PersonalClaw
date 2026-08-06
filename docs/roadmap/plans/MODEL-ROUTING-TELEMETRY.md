@@ -290,3 +290,33 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
 | T-U1 | Usage fold: `routing/usage.py` (purpose mapping, per-day rollup, rebuild-from-JSONL path shared with §1.3), `GET /api/usage` | `routing/usage.py`, dashboard route, tests | fold matches a hand-computed fixture over 50 audit lines; rebuild after deleting the fold reproduces it; estimated_share correct |
 | T-U2 | Usage UI: daily/weekly charts (model/provider/purpose group-by), per-run cost line on run/loop detail surfaces via `run_totals` | Settings → Models Usage section, run detail component | charts render from real dev-home traffic; a loop's detail shows "~$X this run" |
 | T-U3 | Monthly recap: template renderer + system cron + delivery through the rules engine as a `digest`-mode notification | `routing/usage.py`, cron registration site | fixture month renders the recap verbatim-predictable; notification obeys quiet hours/mute |
+
+## Execution log — MRT-1a (pure query classifier) + MRT decomposition
+
+- **MRT plan DECOMPOSED (tick-12 design verdict).** The two whole-plan atoms split: MRT-1 →
+  1a classifier / 1b audit `query_class` field / 1c `routing_stats.json` fold+rebuild / 1d
+  `GET /api/models/telemetry` / 1e Routing FE tab; MRT-2 → 2a `rate_for`+`model_rates.json` overlay
+  (clean addition) / **2b = OWNER DECISION** (consolidating `pricing.py` onto `rate_for` re-keys the
+  SHIPPED CATO cost seam by `(provider,model)` across 6 modules — `usage_ledger`/`subagent`/
+  `chat_runner`/`guardrails.model_call` + `pricing.py` + `model_pricing.json`, and `test_pricing.py`
+  locks the model-only signatures). 2b DEFERRED until the owner rules; recorded in dag.json.
+- **MRT-1a DONE.** `routing/classifier.py::classify_query(text, use_case="", *, wants_structured_output=False)`
+  — the pure heuristic routing needs so it never spends an LLM call to decide. Maps every request
+  into the fixed 5-class vocabulary `short_chat | code | summarize | extract_structured |
+  long_reasoning` (module constant `QUERY_CLASSES`), versioned by `CLASSIFIER_VERSION` so the stats
+  layer buckets by `(use_case, query_class)` and starts fresh on a vocabulary change. Precedence:
+  structured-output request (flag OR text signal) → `extract_structured`; code fence / `code_tools`
+  use-case / real code-shaped signal → `code`; explicit condense ask → `summarize`; long text /
+  `reasoning` use-case / reasoning-marker words → `long_reasoning`; else `short_chat` (the
+  cheapest-model-safe fallback, incl. empty/None). Pure, deterministic, no I/O, no model call, no
+  provider import (use-case labels are bare strings). **A false-positive my own test caught:** the
+  first code regex matched the English word "function" ("the function of the mitochondria"); tightened
+  so code keywords require code shape (`def name(`, `class Name:`, `function(`, `SELECT…FROM`,
+  line-start imports, code punctuation) — prose using function/class/return as words is not miscalled.
+  Dep (guardrails `model_calls.jsonl` + `ModelCallGuard` seam, AG-1) verified SHIPPED; the seam
+  `query_class` threads through is `AttemptRecord` (audit.py:39) set in `ModelCallGuard._audit`
+  (model_call.py:381) — that's MRT-1b. No caller yet in this atom (the classifier is consumed by 1b);
+  it's a pure library with a full test suite. No user surface → no CHANGELOG. **Gates:** `make lint`
+  clean (712 files); `tests/test_routing_classifier.py` (21: vocab/version constants, all 5 classes,
+  precedence incl. structured>code and summarize>length, the function-prose false-positive guard,
+  empty/None/mid-length fallback, purity/determinism) pass.
