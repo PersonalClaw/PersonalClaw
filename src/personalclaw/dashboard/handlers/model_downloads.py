@@ -86,8 +86,19 @@ async def api_local_model_delete(request: web.Request) -> web.Response:
 
     Generic across every local-model provider (faster-whisper, piper,
     sentence-transformers, the diarization backends, ollama, …): resolves the named
-    provider from the local-model registry and drives its ``delete_model``. Replaces
-    the old per-kind delete routes (one uniform path)."""
+    provider from the local-model registry.
+
+    Freeing the disk is the SHARED layout sweep (:func:`layouts.delete_all_layouts`),
+    not each provider's own ``delete_model`` — that is Success Criterion 2. A model
+    fetched twice by different paths (a provider ``save()`` and later an HF snapshot)
+    leaves two copies on disk; a ``delete_model`` that only knows its own ``save()``
+    layout frees one and the disk never fully frees. When the provider exposes a
+    cache root (``cache_dir()``), the greedy sweep removes EVERY layout that root
+    holds for the model — so a twice-fetched model actually frees. ``delete_model``
+    still runs afterward for provider-specific teardown (an index entry, a manifest,
+    an ollama registry blob) and as the authoritative path for a provider whose
+    weights don't live under a ``cache_dir()`` (``cache_dir()`` is None)."""
+    from personalclaw.local_models import layouts
     from personalclaw.local_models.registry import get_provider
 
     provider_name = request.match_info["provider"]
@@ -95,13 +106,106 @@ async def api_local_model_delete(request: web.Request) -> web.Response:
     provider = get_provider(provider_name)
     if provider is None:
         return web.json_response({"error": f"Unknown provider {provider_name!r}"}, status=404)
+
+    swept: list = []
+    cache_root = _provider_cache_dir(provider)
+    if cache_root is not None:
+        swept = layouts.delete_all_layouts(cache_root, model)
     try:
         ok = await provider.delete_model(model)
     except Exception as exc:  # noqa: BLE001 — surface a delete failure honestly
         return web.json_response({"error": str(exc)[:200]}, status=500)
-    if ok:
-        return web.json_response({"ok": True})
+    # The delete succeeded if either teardown path removed something: the shared
+    # sweep freed a layout, or the provider's own teardown reported success.
+    if ok or swept:
+        return web.json_response({"ok": True, "swept": len(swept)})
     return web.json_response({"error": "model not found or delete failed"}, status=404)
+
+
+def _provider_cache_dir(provider) -> str | None:
+    """The provider's cache root for the layout sweep, or None (best-effort).
+
+    A provider MAY expose ``cache_dir()`` (the dir whose growth tracks a download,
+    typed ``str | None`` on the local-model provider ABC). When it returns a path,
+    that is the root the shared layout sweep works over; a None / raising provider
+    degrades to provider-only teardown."""
+    getter = getattr(provider, "cache_dir", None)
+    if not callable(getter):
+        return None
+    try:
+        got = getter()
+    except Exception:  # noqa: BLE001 — a provider cache_dir must never break delete
+        return None
+    return str(got) if got else None
+
+
+def _provider_cache_roots() -> list:
+    """Every registered local provider's cache root, deduped in registration order.
+
+    The set the cleanup affordance scans: a partial-download leftover can live under
+    ANY provider's cache root, so "Reclaim N GB" enumerates them all. Two providers
+    that share a root (both under the shared HF hub cache) contribute it once."""
+    from personalclaw.local_models.registry import list_providers
+
+    roots: list = []
+    seen: set[str] = set()
+    for provider in list_providers():
+        root = _provider_cache_dir(provider)
+        if root is None:
+            continue
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
+
+
+async def api_model_download_cleanup_candidates(request: web.Request) -> web.Response:
+    """GET /api/models/downloads/cleanup-candidates — partial-download leftovers.
+
+    Enumerates ``*.part``/``*.tmp``/``*.incomplete`` files across every local
+    provider's cache root (:func:`layouts.cleanup_candidates`) — the files a
+    cancelled or crashed fetch leaves behind, which are otherwise invisible because
+    nothing lists them. Powers the "Reclaim N GB" affordance."""
+    from personalclaw.local_models import layouts
+
+    candidates: list[dict] = []
+    for root in _provider_cache_roots():
+        candidates.extend(layouts.cleanup_candidates(root))
+    candidates.sort(key=lambda c: c["bytes"], reverse=True)
+    total = sum(c["bytes"] for c in candidates)
+    return web.json_response({"candidates": candidates, "total_bytes": total})
+
+
+async def api_model_download_cleanup(request: web.Request) -> web.Response:
+    """POST /api/models/downloads/cleanup — delete the partial-download leftovers.
+
+    Body ``{confirm: true}`` (guarded — a missing/false ``confirm`` returns 400,
+    because this unlinks files). Re-enumerates candidates across every provider's
+    cache root and unlinks them best-effort per file, returning what actually went."""
+    import os
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not (isinstance(body, dict) and body.get("confirm") is True):
+        return web.json_response({"error": "confirm:true required"}, status=400)
+
+    from personalclaw.local_models import layouts
+
+    removed = 0
+    freed = 0
+    for root in _provider_cache_roots():
+        for cand in layouts.cleanup_candidates(root):
+            try:
+                os.unlink(cand["path"])
+                removed += 1
+                freed += int(cand["bytes"])
+            except OSError:
+                continue  # best-effort per file; a race/permission skip is fine
+    return web.json_response({"removed": removed, "freed_bytes": freed})
 
 
 async def api_local_model_search(request: web.Request) -> web.Response:
@@ -130,6 +234,12 @@ def register_model_download_routes(app: web.Application) -> None:
     """Register /api/models/downloads/* routes."""
     app.router.add_get("/api/models/downloads", api_model_downloads_list)
     app.router.add_post("/api/models/downloads", api_model_download_start)
+    # Literal-path routes BEFORE the {id}-param routes (aiohttp matches in
+    # registration order) so `cleanup-candidates`/`cleanup` never fall into `{id}`.
+    app.router.add_get(
+        "/api/models/downloads/cleanup-candidates", api_model_download_cleanup_candidates
+    )
+    app.router.add_post("/api/models/downloads/cleanup", api_model_download_cleanup)
     app.router.add_get("/api/models/downloads/{id}/stream", api_model_download_stream)
     app.router.add_delete("/api/models/downloads/{id}", api_model_download_cancel)
     # Generic per-provider local-model management (replaces the per-kind routes).
