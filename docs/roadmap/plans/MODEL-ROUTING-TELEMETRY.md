@@ -344,3 +344,31 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   stamped for stream/complete/stream_command, short_chat default, use-case prior flows in, fail-open
   on a broken classifier, AttemptRecord column round-trips + defaults empty, `_joined_content` from
   string+blocks + junk-tolerant) + guardrails/classifier regression (50) + audit consumers (164) pass.
+
+## Execution log — MRT-1c (rolling routing-stats fold + rebuild)
+
+- **MRT-1c DONE.** `routing/stats.py` — the incremental `routing_stats.json` fold keyed
+  `(use_case → query_class → "provider:model_id" ref)` so the router reads an O(1) fold instead of
+  scanning `model_calls.jsonl` per call. `fold_record` maintains conservative online estimates
+  (EMA, alpha 0.2 — one bad night never flips a policy): `n`, `success_rate` (EMA of `passed`),
+  `avg_ms`, `avg_cost_usd`, `feedback`/`feedback_n` (0 until Session-3 feedback extraction), and
+  `score` (§4.2 0.60·success + 0.40·feedback, but **collapsing onto success_rate when feedback_n=0**
+  so an unrated ref isn't docked for a signal it can't have). First sample seeds the EMAs with the
+  observed values; a row lacking `use_case` or `query_class` (an unclassified call) is skipped (can't
+  attribute it). `ref_of` joins on the ref's natural spelling so a colon-bearing model id
+  (`gpt-oss:20b` → `provider:gpt-oss:20b`) round-trips. `record_routing_stats` is the post-attempt
+  hook wired into `ModelCallGuard._audit` (folds the SAME `AttemptRecord` — parsed via
+  `to_json_line` so the live fold and rebuild see byte-identical row shapes) — best-effort, never
+  breaks a call. `rebuild(home, audit_path)` = the `--rebuild-routing-stats` refold over the
+  (capped/rotated) JSONL, so the fold is the durable long-horizon record and the JSONL the recent
+  forensic one. **DEVIATION (documented in the module):** §1.3's JSON example shows `p50_ms`/`p95_ms`
+  in the fold, but true percentiles can't be maintained incrementally from an EMA; per §1.5 the
+  telemetry route (MRT-1d) derives p50/p95 at READ time "from routing_stats.json + a bounded tail of
+  model_calls.jsonl", so the fold keeps `avg_ms` and stays a true O(1) update rather than a growing
+  per-ref latency reservoir. No user surface (the fold is consumed by the MRT-1d route + the Session-3
+  router) → no CHANGELOG. **Remaining in MRT-1:** 1d (`GET /api/models/telemetry` deriving per-model
+  rows incl. read-time p50/p95 + the ~20-line frontier-dominance check), 1e (Routing FE tab). MRT-2a
+  clean-addition + 2b owner-gated pricing consolidation still deferred. **Gates:** `make lint` clean
+  (713 files); `tests/test_routing_stats.py` (11: EMA blend + first-sample seed, score-collapse
+  without feedback, colon-model ref, unclassified skip, load/save round-trip + corrupt-degrades,
+  rebuild-from-JSONL + missing-JSONL, live guard→fold hook) + guardrails/classifier regression (50) pass.
