@@ -224,6 +224,33 @@ class TestNativeProviderDag:
 
         _run(go())
 
+    def test_removing_last_dependency_unblocks_not_strands_manual(self, provider):
+        # #775: editing dependencies (without touching status) must let reconcile
+        # auto-unblock — NOT reclassify an incidentally-still-blocked task as manual.
+        async def go():
+            a = await provider.create_task(title="A")
+            d = await provider.create_task(title="D", dependencies=[{"depends_on_task_id": a.id}])
+            d0 = await provider.get_task(d.id)
+            assert d0.status == TaskStatus.BLOCKED and d0.blocked_reason_kind == "auto"
+            # Remove the only dependency: D should return to open, not strand as manual.
+            await provider.update_task(d.id, dependencies=[])
+            d1 = await provider.get_task(d.id)
+            assert d1.status == TaskStatus.OPEN
+            assert d1.blocked_reason_kind == ""
+
+        _run(go())
+
+    def test_explicit_status_blocked_no_prereqs_is_manual(self, provider):
+        # Contrast to #775: a direct status:blocked write with no unfinished prereqs
+        # is a deliberate manual block and must still be classified "manual".
+        async def go():
+            a = await provider.create_task(title="A")
+            await provider.update_task(a.id, status="blocked")
+            r = await provider.get_task(a.id)
+            assert r.status == TaskStatus.BLOCKED and r.blocked_reason_kind == "manual"
+
+        _run(go())
+
     def test_delete_prereq_unblocks(self, provider):
         async def go():
             a = await provider.create_task(title="A")
