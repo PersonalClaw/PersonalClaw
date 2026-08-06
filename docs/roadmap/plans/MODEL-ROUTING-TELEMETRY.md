@@ -372,3 +372,26 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   (713 files); `tests/test_routing_stats.py` (11: EMA blend + first-sample seed, score-collapse
   without feedback, colon-model ref, unclassified skip, load/save round-trip + corrupt-degrades,
   rebuild-from-JSONL + missing-JSONL, live guard→fold hook) + guardrails/classifier regression (50) pass.
+
+## Execution log — MRT-1d (GET /api/models/telemetry read route)
+
+- **MRT-1d DONE.** The read-model + route behind the Pareto/efficiency view. `routing/telemetry.py`
+  is the PURE read-model: `telemetry_rows(stats, audit_rows, use_case, query_class)` derives one row
+  per candidate ref `{ref, n, success, feedback, avg_cost_usd, p50_ms, p95_ms, on_frontier}` from the
+  O(1) fold (MRT-1c `routing_stats.json`, supplying n/success/feedback/cost) PLUS a bounded
+  `model_calls.jsonl` tail (supplying READ-TIME p50/p95 — the fold keeps EMA `avg_ms`; true
+  percentiles can't be EMA'd, the deviation documented in 1c, resolved here per §1.5). `on_frontier`
+  = the ~20-line dominance check: a row is on the frontier unless another ref dominates it (no worse
+  on quality↑/latency↓/cost↓ and strictly better on one). A ref with no latency samples has
+  `p50_ms=0`, treated as unknown/∞ so it never falsely knocks a measured row off. Pure given its two
+  inputs (fold dict + JSONL rows), so trivially testable. `dashboard/handlers/model_telemetry.py`
+  is the thin route `GET /api/models/telemetry?use_case=&query_class=` (both required → clean 400;
+  §2.2 error envelope; read-only, 500-safe), registered in `server.py` beside the usage routes. It
+  reads `config_dir()`'s fold + a 2000-row JSONL tail. Nothing here ROUTES or decides — it shapes a
+  view (the Session-3 router is the consumer of the fold, separately). No CHANGELOG (the FE tab
+  MRT-1e is the user surface; this is its data). **Remaining in MRT-1:** 1e (Routing & Efficiency FE
+  tab rendering this). MRT-2a clean-addition + 2b owner-gated pricing consolidation still deferred.
+  **Gates:** `make lint` clean (715 files); `tests/test_routing_telemetry.py` (12: nearest-rank
+  percentile, dominance incl. tradeoff-neither + unknown-latency, fold+latency join, frontier marks
+  both on a tradeoff + drops a dominated row, empty bucket; route 400-on-missing-params +
+  rows-for-a-bucket + empty-200) pass.
