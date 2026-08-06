@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { IconButton } from '../../ui/IconButton'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
-import { confirm } from '../../ui/dialog'
+import { confirm, confirmDelete } from '../../ui/dialog'
 import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/api'
 import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount } from './taskMeta'
 import { prereqIds } from './dag'
@@ -267,14 +268,25 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
     try { await api.addTaskComment(taskId, body, provider); setDraft(''); await load() } catch { /* ignore */ } finally { setSending(false) }
   }
 
+  // A comment has no edit path, so removal is the only way to take back a wrong one.
+  async function remove(commentId: string) {
+    if (!(await confirmDelete('comment'))) return
+    try { await api.deleteTaskComment(taskId, commentId, provider); await load() } catch { /* ignore */ }
+  }
+
   return (
     <SectionLabel label={`Comments${comments?.length ? ` · ${comments.length}` : ''}`}>
       <div className="flex flex-col gap-s">
         {comments?.map((c) => (
-          <div key={c.id} className="flex gap-s">
+          <div key={c.id} className="group flex gap-s">
             <CornerDownRight size={14} className="text-on-surface-low shrink-0 mt-1" />
             <div className="flex-1 rounded-md bg-surface-container px-m py-2">
-              <div className="flex items-center gap-s text-[0.75rem] text-on-surface-low mb-0.5"><span className="text-on-surface-var">{c.author || 'you'}</span><span>{relTime(c.created_at)}</span></div>
+              <div className="flex items-center gap-s text-[0.75rem] text-on-surface-low mb-0.5">
+                <span className="text-on-surface-var">{c.author || 'you'}</span>
+                <span>{relTime(c.created_at)}</span>
+                <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id)} size={24} iconSize={13}
+                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger" />
+              </div>
               <p className="text-on-surface text-[0.8125rem] whitespace-pre-wrap">{c.body}</p>
             </div>
           </div>

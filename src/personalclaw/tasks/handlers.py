@@ -300,16 +300,52 @@ async def api_tasks_comments_post(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    message = body.get("body", "").strip()
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    # An explicit `author` is REFUSED, not ignored. This endpoint used to pass the
+    # caller's string straight through, so any authenticated client could sign a
+    # comment as anyone. Silently dropping the field would answer 201 while storing a
+    # different author than the caller asked for — a forging client would believe it
+    # succeeded and an honest one would never learn its attribution was discarded.
+    if "author" in body:
+        return web.json_response(
+            {"error": "author is server-derived and must not be supplied"}, status=400
+        )
+    raw = body.get("body")
+    # A non-string body is a client bug, not a comment — say so instead of crashing on
+    # .strip(). Absent/null stays valid here and falls through to "body required".
+    if raw is not None and not isinstance(raw, str):
+        return web.json_response({"error": "body must be a string"}, status=400)
+    message = (raw or "").strip()
     if not message:
         return web.json_response({"error": "body required"}, status=400)
     provider = body.get("provider")
+    # Attribution comes from the server's own view of who is acting — the same handle
+    # `Task.author` is stamped with on create, so a task and its comments agree.
     comment = await registry.add_comment(
-        task_id, body=message, author=body.get("author", ""), provider_name=provider
+        task_id, body=message, author=_owner_username(), provider_name=provider
     )
     if not comment:
         return web.json_response({"error": "task not found"}, status=404)
     return web.json_response(comment.to_dict(), status=201)
+
+
+async def api_tasks_comments_delete(request: web.Request) -> web.Response:
+    """DELETE /api/tasks/{task_id}/comments/{comment_id}
+
+    A comment is the one task field with no edit path, so without this a wrong one
+    was permanent through the API and only removable by hand-editing the sidecar.
+    """
+    task_id = request.match_info["task_id"]
+    comment_id = request.match_info["comment_id"]
+    provider = request.query.get("provider")
+    try:
+        deleted = await registry.delete_comment(task_id, comment_id, provider_name=provider)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not deleted:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True, "id": comment_id})
 
 
 async def api_tasks_providers(request: web.Request) -> web.Response:
@@ -335,5 +371,6 @@ def register_task_routes(app: web.Application) -> None:
     app.router.add_delete("/api/tasks/{task_id}", api_tasks_delete)
     app.router.add_get("/api/tasks/{task_id}/comments", api_tasks_comments_get)
     app.router.add_post("/api/tasks/{task_id}/comments", api_tasks_comments_post)
+    app.router.add_delete("/api/tasks/{task_id}/comments/{comment_id}", api_tasks_comments_delete)
 
     register_hierarchy_routes(app)

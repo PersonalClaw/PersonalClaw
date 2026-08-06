@@ -76,6 +76,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   and telling you to re-embed, so the worst case is that older memories are temporarily missing
   from semantic search instead of new ones being lost entirely. If you have hit this, your
   memories are still there: re-embed to bring them back into search.
+- **A task comment could be signed as anyone, and never taken back.** The comment endpoint took
+  the author straight from the request, so any client reaching your gateway could post a comment
+  under your name — and with no delete, a forged one was permanent short of hand-editing files.
+  The author is now derived on the server from your configured username, sending an `author` is
+  rejected outright rather than quietly ignored, and comments can be deleted from the task panel.
+  A malformed comment body now answers 400 instead of failing with a server error.
 
 ## [0.1.3] — 2026-07-30
 
