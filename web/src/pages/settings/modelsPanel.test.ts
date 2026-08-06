@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { capableModels } from './ModelsPanel'
+import { capableModels, modelChips } from './ModelsPanel'
 import type { AvailableModel } from '../../lib/api'
 
 const M = (provider: string, id: string, caps: string[], downloaded?: boolean): AvailableModel =>
@@ -54,5 +54,38 @@ describe('capableModels', () => {
       const out = capableModels(uc, all, [])
       expect(out.map((m) => `${m.provider}:${m.id}`)).toEqual(['OpenAI:gpt-4'])
     }
+  })
+})
+
+// The catalog-contract chips (LMMV §2.2/§2.3). modelChips is pure so the mapping is
+// tested independently of rendering.
+const MC = (fields: Partial<AvailableModel>): AvailableModel =>
+  ({ id: 'm', name: 'm', provider: 'p', capabilities: [], ...fields } as AvailableModel)
+
+describe('modelChips', () => {
+  it('shows no chips for a plain (hosted/remote) model', () => {
+    expect(modelChips(MC({ status: 'active' }))).toEqual([])
+    expect(modelChips(MC({}))).toEqual([]) // no catalog fields at all
+  })
+
+  it('shows a status chip for deprecated and sunset (still bindable)', () => {
+    expect(modelChips(MC({ status: 'deprecated' }))).toEqual(['status'])
+    expect(modelChips(MC({ status: 'sunset' }))).toEqual(['status'])
+  })
+
+  it('shows a non-commercial warning chip at bind time (Success Criterion 7)', () => {
+    expect(modelChips(MC({ non_commercial: true, license: 'CC-BY-NC-4.0' }))).toContain('non-commercial')
+    expect(modelChips(MC({ non_commercial: false, license: 'MIT' }))).not.toContain('non-commercial')
+  })
+
+  it('shows a truncated chip (whose row carries Repair) only when integrity is truncated', () => {
+    expect(modelChips(MC({ integrity: 'truncated' }))).toContain('truncated')
+    expect(modelChips(MC({ integrity: '' }))).not.toContain('truncated')
+    expect(modelChips(MC({ downloaded: true }))).not.toContain('truncated')
+  })
+
+  it('stacks every applicable chip', () => {
+    const chips = modelChips(MC({ status: 'deprecated', non_commercial: true, integrity: 'truncated' }))
+    expect(chips).toEqual(['status', 'non-commercial', 'truncated'])
   })
 })

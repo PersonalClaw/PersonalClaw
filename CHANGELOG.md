@@ -20,6 +20,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Local models now carry a capability matrix and a runtime/license contract from a declarative
+  catalog.** A local-model provider can describe its models in a `catalog.json` — per-model feature
+  flags (word/segment timestamps, speaker labels, hotword budget, languages), runtime and
+  runtime-contract tags, SPDX license, and context/output budgets — which flow to
+  `GET /api/models/available` and render as chips in Settings → Models. A non-commercial license
+  shows a warning chip at bind time; a deprecated model shows a chip but stays bindable; and a
+  download whose weights are incomplete (under 60% of the declared size) is flagged `truncated` with
+  a Repair action that re-downloads it. Config-only pipeline repos (no local weights) are never
+  mis-flagged.
 - **Mid-run steering now takes effect, and the judge leaves a paper trail.** A workflow's decision
   layers are wired into the run loop: an instruction you queue while a loop is running is consumed
   at the next iteration boundary and re-ranks the plan (rather than sitting unread until the run
