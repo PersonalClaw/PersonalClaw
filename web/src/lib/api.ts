@@ -1679,6 +1679,22 @@ export interface UsageAgg {
   cost_usd: number; turns: number; priced: boolean
 }
 
+/** One per-model efficiency row for a (use_case, query_class) bucket
+ *  (MODEL-ROUTING-TELEMETRY, MRT-1d/1e). Observation only — the fold supplies
+ *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
+ *  `on_frontier` = this ref is not dominated by another on (success↑, p50_ms↓,
+ *  avg_cost_usd↓). `feedback`/latency are 0 when no signal has landed yet. */
+export interface TelemetryRow {
+  ref: string
+  n: number
+  success: number
+  feedback: number
+  avg_cost_usd: number
+  p50_ms: number
+  p95_ms: number
+  on_frontier: boolean
+}
+
 /** Build the ?since=&until=&session=&group_by= query for the usage endpoints
  *  (empty/absent params omitted). */
 function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
@@ -1713,6 +1729,15 @@ export const api = {
   // partial (render "unpriced" / a partial marker — never a confidently-complete $).
   usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
   usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
+  // Per-model routing efficiency for one (use_case, query_class) bucket
+  // (MODEL-ROUTING-TELEMETRY, MRT-1d). BOTH params are required (a missing either
+  // is a 400); `rows` may be empty for a bucket with no telemetry yet. Read-only —
+  // this only visualizes; nothing here changes routing. The Routing & Efficiency
+  // settings panel (MRT-1e) renders it.
+  modelsTelemetry: (opts: { use_case: string; query_class: string }) =>
+    get<{ use_case: string; query_class: string; rows: TelemetryRow[] }>(
+      `/api/models/telemetry?use_case=${encodeURIComponent(opts.use_case)}&query_class=${encodeURIComponent(opts.query_class)}`,
+    ),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),

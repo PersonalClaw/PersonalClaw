@@ -20,6 +20,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of
+  work.** Settings → Routing & Efficiency lets you pick a use case (chat / code & tools / reasoning)
+  and a request kind (short chat, code, summarize, extract structured, long reasoning — both
+  round-trip the URL) and shows, per model, the real success rate, p50/p95 latency, and cost per
+  call for that kind of request, with the ones on the efficiency **frontier** (not beaten on all of
+  quality, speed, and cost) flagged and floated to the top. Observation only — it visualizes
+  already-recorded telemetry and does not change how requests are routed. A bucket with no data yet
+  shows a friendly "fills in as models handle this kind of request" note; a local/zero-cost model
+  reads "free," never a misleading "$0.00."
 - **A Usage panel in Settings shows what you're spending.** Settings → Usage renders Today / 7-day /
   30-day cost + token totals (the period control round-trips the URL), a by-model and a by-source
   table with each row's share, a cache-savings line, and — when you've set a daily budget in

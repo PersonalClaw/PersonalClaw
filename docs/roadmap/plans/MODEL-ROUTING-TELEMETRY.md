@@ -395,3 +395,30 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   percentile, dominance incl. tradeoff-neither + unknown-latency, fold+latency join, frontier marks
   both on a tradeoff + drops a dominated row, empty bucket; route 400-on-missing-params +
   rows-for-a-bucket + empty-200) pass.
+
+## Execution log — MRT-1e (Routing & Efficiency FE tab) — MRT Session-1 COMPLETE
+
+- **MRT-1e DONE; MRT-1 (telemetry + Pareto view) COMPLETE.** The read-only "Routing & Efficiency"
+  settings surface rendering `GET /api/models/telemetry` (MRT-1d). `web/src/pages/settings/RoutingPanel.tsx`:
+  two selectors — use_case (`chat`/`code_tools`/`reasoning`, reusing ModelsPanel's USE_CASE_META
+  labels, 3 → `Segmented`) and query_class (the 5 `QUERY_CLASSES`, >4 → a `Select` from `ui/forms`) —
+  both URL-round-tripped via `useQueryParam` (`?uc=`/`?qc=`) so a reload restores the view. Fetches
+  via a new `api.modelsTelemetry({use_case, query_class})` (+ `TelemetryRow` interface mirroring the
+  1d JSON) through `useCachedData` keyed by both params. Renders a table (ref/n/success%/feedback/
+  p50/p95/cost) with the **Pareto frontier** made visible: `on_frontier` rows floated to the top
+  (`sortByFrontier`) and flagged with a `Trophy` badge (text label + `title`, `aria-hidden` icon —
+  never color-only) plus an "N of M models on the frontier" summary. THREE distinct states —
+  loading (`undefined`), graceful inline error (`.catch→null`), and a friendly empty-bucket message
+  (`rows.length===0`) — so a bucket with no telemetry yet never renders broken. Cost shows `free`
+  for local/0-cost (honest, not `$0.00`); feedback/latency show `—` when absent. Registered in BOTH
+  `SUBPAGES` (SettingsPage.tsx) and `settingsWidgets.tsx` (bento, "AI & Models" group) — the
+  two-registration contract. Primitives + token colors only (no ratchet moved). Scatter plot
+  DEFERRED (a dependency-free table + frontier flag fully satisfies the visibility goal — no
+  charting dep pulled in). Class-B UI, user-facing → CHANGELOG-worthy, but this is the read-only
+  view of already-recorded telemetry with no behavior change; noted as a feature addition. **MRT
+  Session-1 (1a classifier → 1b audit field → 1c stats fold → 1d read route → 1e visualization) is
+  COMPLETE**: local-vs-cloud efficiency is now visible with zero routing. **Remaining MRT:** 2a
+  (rate_for overlay, clean addition) + 2b (OWNER-GATED pricing consolidation, deferred) are Session-1
+  pricing; MRT-3/4/5 (usage read-model, heuristic router, learned policy) are Sessions 2-3. **Gates:**
+  `npm run typecheck` clean; `npm test --workspace web` 753 pass (65 files, 11 new routingPanel + all
+  design ratchets green); `npm run build` green.
