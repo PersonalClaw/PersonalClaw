@@ -20,6 +20,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A muted agent can be un-muted from its detail page.** When the auto-router stops suggesting an
+  agent because you dismissed its chip enough times, the agent's Advanced → Routing status now shows
+  that it's muted and offers an Unmute control to make it eligible for suggestions again — previously
+  the mute was invisible and irreversible from the UI.
 - **Local models now carry a capability matrix and a runtime/license contract from a declarative
   catalog.** A local-model provider can describe its models in a `catalog.json` — per-model feature
   flags (word/segment timestamps, speaker labels, hotword budget, languages), runtime and
