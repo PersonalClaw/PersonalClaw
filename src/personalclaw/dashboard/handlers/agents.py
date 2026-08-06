@@ -690,22 +690,18 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     if not name:
         return web.json_response({"error": "Agent name is required"}, status=400)
     # Restrict to a safe character set so names can't be later interpolated
-    # into filesystem paths or shell commands. Same shape as the prompt-name
-    # regex.
-    import re as _re
+    name = name.lower()
 
-    if not _re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
+    import re as _re
+    # The canonical agent name validator (matches marketplace.py)
+    if not _re.fullmatch(r"^[a-z0-9][a-z0-9-]{0,62}$", name):
         return web.json_response(
             {
-                "error": "Agent name must match ^[a-zA-Z0-9_-]{1,64}$ (letters, digits, dashes, underscores)"  # noqa: E501
+                "error": "Agent name must match ^[a-z0-9][a-z0-9-]{0,62}$ (lowercase letters, digits, dashes, no leading dash)"  # noqa: E501
             },
             status=400,
         )
-    name = name.lower()
-    if not any(c.isalnum() for c in name):
-        return web.json_response(
-            {"error": "Agent name needs at least one letter or digit"}, status=400
-        )
+
     async with _get_config_lock():
         cfg = AppConfig.load()
         if _resolve_agent_name(name, cfg):
