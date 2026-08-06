@@ -263,9 +263,42 @@ class HierarchyStore:
         # / left orphaned-by-list — the task provider owns task deletion).
         for tl in self.list_task_lists(project_id=project_id):
             self._list_path(tl.id).unlink(missing_ok=True)
+            self._record_list_tombstone(tl.id)  # cascade delete needs its marker too
+        # Record sync tombstones for EVERY synced row the subtree contributed BEFORE the
+        # rmtree — a project is a subtree, so the exporter emits one row per *.json (id =
+        # relpath under the `projects` entry dir), and a single project-id tombstone would
+        # not cover project.json + context/*.json. Enumerate now; worktrees are derived
+        # (excluded from export), so they get no tombstone (DAS-6c-iii-c).
+        self._record_project_subtree_tombstones(project_id)
         # Remove the whole project dir (project.json + context/ + worktrees/).
         shutil.rmtree(self._project_dir(project_id), ignore_errors=True)
         return True
+
+    def _record_project_subtree_tombstones(self, project_id: str) -> None:
+        """Tombstone every synced entity row in a project's subtree before it's removed.
+
+        The `projects` entry is a KIND_JSON_ENTITY_DIR whose export emits a row per *.json
+        with id = the file's path relative to the entry dir. So each row id is
+        `<project_id>/project.json` → stem `<project_id>/project`, `<project_id>/context/x.json`
+        → `<project_id>/context/x`, etc. `worktrees/` is `derived_within` (never exported),
+        so its files are skipped. Best-effort — never fails the delete."""
+        try:
+            from personalclaw.durability.tombstones import record_tombstone
+
+            projects_root = self._projects_dir()  # the `projects` entry dir
+            pdir = self._project_dir(project_id)
+            if not pdir.is_dir():
+                return
+            now = _now_iso()
+            for path in sorted(pdir.rglob("*.json")):
+                rel_to_project = path.relative_to(pdir).as_posix()
+                if rel_to_project.startswith("worktrees/") or "/worktrees/" in rel_to_project:
+                    continue  # derived, never synced — no tombstone
+                rel = path.relative_to(projects_root).as_posix()
+                row_id = rel[:-5] if rel.endswith(".json") else rel  # strip .json → stem
+                record_tombstone(projects_root, row_id, now=now)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ── Task lists ──
 

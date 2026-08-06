@@ -1419,3 +1419,25 @@ half) is live and safe today; only cross-machine DELETE convergence waits on thi
   repo/folder). **Gates:** `make lint` clean (710 files); `tests/test_durability_tombstone_wiring.py`
   (4: delete_task records a marker + it rides the export, delete_task_list records a relpath-keyed
   marker, prune trims old markers) + tasks/durability/hierarchy regression (646 passed, 2 skipped).
+
+## Execution log — DAS-6c-iii-c (project-subtree delete tombstones) — DAS-6c-iii COMPLETE
+
+- **DAS-6c-iii-c DONE; DAS-6c-iii COMPLETE.** A project is a SUBTREE
+  (`projects/<id>/project.json` + `context/*.json`), and the `projects` entity-dir export emits
+  one row per `*.json` with id = its path relative to the entry dir — so a single project-id
+  tombstone couldn't cover it. `hierarchy.delete_project` now enumerates every synced `*.json` in
+  the subtree BEFORE the `rmtree` and records a tombstone per relpath-stem
+  (`<id>/project`, `<id>/context/<name>`, …), skipping `worktrees/` (it's `derived_within` on the
+  inventory entry — never exported, so it must never be tombstoned either). The cascade that drops
+  the project's task lists now also records THEIR tombstones (the cascade unlinks directly, so it
+  needed the marker too). Verified end-to-end: delete a project → every synced row (project +
+  context) rides the export as a `deleted_at` row while a kept project stays live; the default
+  project still can't be deleted and leaves no marker. **DAS-6c-iii is now COMPLETE** —
+  delete-convergence holds for ALL entity-dir entries: tasks, task lists (6c-iii-b), and projects
+  incl. their context (6c-iii-c). (`delete_comment` needs no tombstone — it rewrites a sidecar,
+  an update ordinary sync carries.) **Remaining in DAS-6:** only DAS-6d (git-sync + dir-sync
+  installable `sync` transport apps in the sibling PersonalClawApps repo + the end-to-end
+  criterion-4 over a real git repo/folder — the last piece of Session 3). **Gates:** `make lint`
+  clean (710 files); `tests/test_durability_project_tombstones.py` (3: every synced subtree row
+  tombstoned + worktrees skipped, markers ride the export, default-project guarded) + hierarchy/
+  tasks/tombstone regression (553 passed, 2 skipped).
