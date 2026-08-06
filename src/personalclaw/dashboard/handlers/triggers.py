@@ -1189,12 +1189,19 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     return web.json_response({"ok": ran, "name": row.trigger.name, "result": note + paused_note})
 
 
-async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> tuple[bool, str]:
+async def _dispatch_store_action(
+    trigger: Any, payload: dict[str, Any], *, event: str = "manual.run"
+) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
     The same path `gateway._fire_file_trigger` uses — a manual Run and an autonomous fire share one
     dispatch so their behaviour cannot drift. Returns `(ran, note)`: whether the action actually
     executed, and a short status string for the run result.
+
+    `event` labels the source to the action provider the way `gateway._fire_store_trigger` does
+    (`file.changed`, `trigger.chained`): a manual Run keeps the default `manual.run`, a pull-on-view
+    refresh passes `view.rendered`. It is a label only — the dispatch is the ONE store-action path,
+    not a per-caller fork.
 
     🔴 BOTH ACTION SHAPES, because a real store holds both (#395). This read the FLAT
     `workflow["provider"]` only, and every trigger the API/CLI/app-reconciler/digest writes nests
@@ -1236,8 +1243,9 @@ async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> tuple
     # their behaviour cannot drift", and recording is exactly where it had drifted.
     # `_record_manual_run` reuses the SAME `ScheduleRunStore` ledger and the SAME
     # `last_success_at`/`last_failure_at` stamp, tagged `manual` — see its docstring for why
-    # `run_count` (the fire budget) is not spent.
-    ctx = ActionContext(event="manual.run", context="", payload=payload)
+    # `run_count` (the fire budget) is not spent. A `view.rendered` refresh (WF2AUT-6) flows through
+    # this same recorder, so a pull-on-view fire leaves the same run evidence a manual Run does.
+    ctx = ActionContext(event=event, context="", payload=payload)
     started = time.time()
     try:
         result = await provider.execute(action.get("config") or {}, ctx)
@@ -1353,6 +1361,62 @@ async def _record_manual_run(
         store.upsert(live)
     except Exception:  # noqa: BLE001 - see the docstring: recording must never fail the run
         logger.debug("could not record the manual run for %s", trigger, exc_info=True)
+
+
+async def api_trigger_view_render(request: web.Request) -> web.Response:
+    """POST /api/triggers/view/render — the `view` kind's production render caller (WF2AUT-6).
+
+    🔴 THE WIRING THIS CLOSES. `pull_on_view` ships a complete `view`-kind runtime — TTL decide,
+    freshness sidecar, render fan-out — whose ONLY caller was its own tests, so `surface_binding`
+    was set by authors and read by nothing: a `view` trigger could never actually fire. A real
+    render surface (an artifact opening, a dashboard tile mounting) POSTs `{surface}` here as it
+    renders; every bound `view` trigger past its TTL refreshes, the rest serve cache.
+
+    It is NOT a poll. §3/R10: a `view` trigger must cost nothing when nobody is looking, so the
+    runtime is a function a RENDER calls — a background loop would reintroduce the 1440-run-dirs-a-
+    day cost the kind exists to avoid. The `pull_on_view` import is function-local for exactly that
+    reason: the gateway module must never import it as a loop (the `test_triggers_chain` runtime map
+    and `test_NO_background_loop_polls_this_kind` guard depend on it).
+
+    FIRE-AND-FORGET. A synchronous HTTP render must never block on an LLM turn, so each refresh is
+    scheduled on the event loop and the decision (what refreshed, what served cache) returns
+    immediately — the same background-task idiom the webhook-agent and MCP-probe handlers use.
+
+    A surface with no bound `view` triggers is a 200 with empty lists, not an error: most renders in
+    the product bind no trigger, and a 4xx there would make every artifact-open log a failure.
+    """
+    import time as _time
+
+    from personalclaw.triggers import pull_on_view as _view
+
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    surface = str((body or {}).get("surface", "") or "").strip() if isinstance(body, dict) else ""
+    if not surface:
+        return web.json_response({"refreshed": [], "served_cache": []})
+
+    store = _trigger_store()
+    payloads, cached = _view.renders(store, surface=surface, now=_time.time())
+
+    refreshed: list[str] = []
+    for payload in payloads:
+        row = store.get(str(payload.get("trigger_id") or ""))
+        if row is None:
+            continue
+        # Schedule the dispatch and return — never await the LLM turn in the request. Tracked on
+        # `state._background_tasks` so a fire-and-forget refresh is not garbage-collected mid-run,
+        # the idiom every other fire-and-forget handler here follows.
+        task = asyncio.create_task(
+            _dispatch_store_action(row.trigger, payload, event="view.rendered")
+        )
+        state._background_tasks.add(task)
+        task.add_done_callback(state._background_tasks.discard)
+        refreshed.append(row.trigger.id)
+
+    return web.json_response({"refreshed": refreshed, "served_cache": cached})
 
 
 async def _run_event(raw: str, request: web.Request) -> web.Response:
@@ -1753,6 +1817,9 @@ def register_trigger_routes(app: web.Application) -> None:
     # the ordering landmine S67 already paid for with `/surfacing`.
     app.router.add_get("/api/triggers/week", api_triggers_week)
     app.router.add_get("/api/triggers/doctor", api_triggers_doctor)
+    # The `view` kind's render caller (WF2AUT-6). Literal path, registered BEFORE `/{id}` for the
+    # same S67 reason as `/week` and `/doctor` — otherwise aiohttp captures `view` as a trigger id.
+    app.router.add_post("/api/triggers/view/render", api_trigger_view_render)
     app.router.add_put("/api/triggers/{id}", api_trigger_detail)
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)
