@@ -1264,3 +1264,39 @@ beyond staging the DB copy the exporter already knows how to make.
   fresh-machine wholesale copy, INSERT-OR-IGNORE union keeps local + brings remote-only,
   memory.db routes through `_merge_memory` not the generic path, tree consumed, missing-copy holds,
   corrupt-merge payload-bad, end-to-end peer-DB-syncs-onto-fresh-machine through the pull engine) pass.
+
+## Execution log — DAS-6c-ii-i (assemble run_sync_cycle) + two discoveries
+
+- **DAS-6c-ii-i DONE.** `durability/sync_cycle.py::run_sync_cycle(transport, home, *, self_id, …)`
+  assembles every piece into the §4.1 loop: `read_registry(transport)` (the one new transport
+  read — pulls + parses `registry.json`, absent → empty) → `pull_from_peers(..., db_merger=
+  make_db_merger(home))` (6c-ii-e + 6c-ii-h) → `export_shards(home, out, include_databases=True)`
+  (6b + 6c-ii-g) → `publish_export(..., reload_registry=lambda: read_registry(transport))`
+  (6c-ii-f + CAS bump). Clock-free (`now` passed in); never raises — any transport error lands in
+  `SyncCycleReport` so a bad cycle can't kill the service loop. Scheduling (`stale_after_secs`) and
+  transport/enabled resolution stay in the service layer (6c-ii-j). **Proves the plan's Success
+  Criterion 4 end-to-end** through a shared in-memory store: two machines converge on tasks after a
+  cycle each way; a peer's `memory.db` row lands on a fresh machine (DB rides along).
+- **DISCOVERY 1 (FIXED here — a real bug the assembly caught).** The exporter wraps an entity file
+  as `{"id": <stem>, "data": <content>}`, so a `deleted_at` tombstone (and any LWW field like
+  `updated_at`) lives at `row["data"][field]`, NOT the top level. `merge`/`writeback` checked only
+  the top level — so tombstone precedence and LWW silently no-op'd for the entity-dir kind (the
+  earlier unit tests used synthetic FLAT rows and missed it). Fixed: `merge._field` /
+  `writeback._is_tombstone` now check top-level (JSONL streams) then fall back to `data`
+  (entity-dir wrappers), so both shapes work. Lesson: a control field's LOCATION is part of the
+  contract — unit-test against the REAL producer's row shape, not a hand-built one.
+- **DISCOVERY 2 (recorded, its own atom — a producer gap).** `tasks`/`projects` declare
+  `tombstones=True`, but `tasks/native.py:delete_task` does a **hard `path.unlink()`** — no
+  `deleted_at` marker is ever written. So the tombstone MECHANISM is complete and correct (a
+  tombstone that exists is honored end-to-end, verified), but nothing PRODUCES one: a real
+  delete-then-sync would resurrect the task via union-merge on a peer that still holds it live.
+  Closing this is a distinct cross-cutting change (soft-delete write path + read-path filtering
+  across the tasks/projects subsystem + its FE), NOT a bolt-on to the sync engine — filed as
+  **DAS-6c-iii (tombstone producers)**. This is the honest edge of the slice: sync is safe for
+  create/update convergence today; delete-convergence for tasks/projects waits on 6c-iii.
+  **Remaining:** 6c-ii-j (service wiring: `run_due_jobs` sync job + `stale_after_secs` per-process
+  memo + `DurabilityConfig.sync_enabled/sync_transport/sync_stale_after_secs` config round-trip),
+  6c-iii (tombstone producers), DAS-6d (git-sync + dir-sync installable apps + e2e over a real git
+  repo/folder). **Gates:** `make lint` clean (709 files); `tests/test_durability_sync_cycle.py` (7:
+  first-publish, transport-failure contained, two-machine convergence, delete-propagates,
+  DB-rides-along, empty/written registry) + the full durability suite (242 passed, 2 skipped) pass.
