@@ -205,20 +205,32 @@ def _fold(agg: dict, row: dict) -> None:
         agg["priced"] = False
 
 
-def rollup(*, since: str = "", until: str = "", group_by: str = "model") -> list[dict]:
+def _row_selected(row: dict, since: str, until: str, session_key: str) -> bool:
+    """Whether a ledger row is in the query window AND (if given) its session."""
+    if not _in_window(str(row.get("ts", "")), since, until):
+        return False
+    if session_key and str(row.get("session_key", "")) != session_key:
+        return False
+    return True
+
+
+def rollup(
+    *, since: str = "", until: str = "", group_by: str = "model", session_key: str = ""
+) -> list[dict]:
     """Aggregate the ledger, grouped by one of ``model|source|agent|provider|day``.
 
     Rows carry summed tokens + cost + a ``priced`` flag that is False when ANY
     constituent row was unpriced (so a partially-unpriced group can't look complete).
     Sorted by descending cost then the group key, for a stable, useful default order.
+    ``session_key`` (when given) restricts to one session — the session-total surface.
     """
     if group_by not in _GROUP_KEYS:
         raise ValueError(f"group_by must be one of {_GROUP_KEYS}, got {group_by!r}")
     groups: dict[str, dict] = {}
     for row in _iter_rows():
-        ts = str(row.get("ts", ""))
-        if not _in_window(ts, since, until):
+        if not _row_selected(row, since, until, session_key):
             continue
+        ts = str(row.get("ts", ""))
         key = _day_of(ts) if group_by == "day" else str(row.get(group_by, ""))
         agg = groups.setdefault(key, _blank_agg())
         _fold(agg, row)
@@ -227,10 +239,11 @@ def rollup(*, since: str = "", until: str = "", group_by: str = "model") -> list
     return out
 
 
-def totals(*, since: str = "", until: str = "") -> dict:
-    """Grand total over the window — the same agg shape, ungrouped."""
+def totals(*, since: str = "", until: str = "", session_key: str = "") -> dict:
+    """Grand total over the window — the same agg shape, ungrouped. ``session_key``
+    (when given) restricts to one session, answering "what did this chat cost?"."""
     agg = _blank_agg()
     for row in _iter_rows():
-        if _in_window(str(row.get("ts", "")), since, until):
+        if _row_selected(row, since, until, session_key):
             _fold(agg, row)
     return agg

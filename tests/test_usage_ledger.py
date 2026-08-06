@@ -416,3 +416,40 @@ class TestTurnCompleteLine:
         # dollar amount, not "unpriced" (which means "no price row").
         line = self._line(cost_usd=0.0, priced=True)
         assert "$0.0000" in line and "unpriced" not in line
+
+
+# ── CATO-7: session-scoped rollup/totals ──────────────────────────────────────
+
+
+class TestSessionScopedAggregation:
+    """rollup/totals accept a session_key filter — the session-total surface."""
+
+    def _seed(self):
+        for sk, cost in (("dashboard:a", 1.0), ("dashboard:a", 2.0), ("dashboard:b", 0.5)):
+            ul.record_turn(_u(session_key=sk, cost_usd=cost))
+
+    def test_totals_scoped_to_one_session(self, _home):
+        self._seed()
+        assert ul.totals(session_key="dashboard:a")["cost_usd"] == 3.0
+        assert ul.totals(session_key="dashboard:a")["turns"] == 2
+        assert ul.totals(session_key="dashboard:b")["cost_usd"] == 0.5
+        # No filter = the whole ledger.
+        assert ul.totals()["cost_usd"] == 3.5 and ul.totals()["turns"] == 3
+
+    def test_session_total_matches_sum_of_its_turns(self, _home):
+        # The done-when invariant: a multi-turn session's reported total == the sum
+        # of the individual turn rows for that session.
+        self._seed()
+        rows = [r for r in ul._iter_rows() if r["session_key"] == "dashboard:a"]
+        expected = round(sum(r["cost_usd"] for r in rows), 6)
+        assert round(ul.totals(session_key="dashboard:a")["cost_usd"], 6) == expected
+
+    def test_rollup_scoped_to_one_session(self, _home):
+        self._seed()
+        by_model = ul.rollup(group_by="source", session_key="dashboard:a")
+        assert round(sum(r["cost_usd"] for r in by_model), 6) == 3.0
+
+    def test_unknown_session_is_empty_not_error(self, _home):
+        self._seed()
+        assert ul.totals(session_key="dashboard:nope")["turns"] == 0
+        assert ul.rollup(group_by="source", session_key="dashboard:nope") == []
