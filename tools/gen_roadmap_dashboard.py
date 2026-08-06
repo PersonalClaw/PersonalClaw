@@ -480,13 +480,43 @@ TEMPLATE = """<!doctype html>
   .tiers .tier {{ display:flex; gap:11px; align-items:flex-start; padding:7px 0;
     border-top:1px solid var(--border); }}
   .tiers .tier:first-of-type {{ border-top:none; }}
-  .tier-n {{ flex:0 0 74px; font-size:11px; color:var(--muted);
+  .tier-n {{ flex:0 0 92px; font-size:11px; color:var(--muted);
     font-variant-numeric:tabular-nums; }}
   .tier-c {{ display:block; color:var(--text); font-size:14px; font-weight:700; }}
+  .tier-bar {{ display:flex; height:4px; border-radius:2px; overflow:hidden; margin-top:4px;
+    background:#21262d; }}
+  .tier-bar i {{ display:block; height:100%; }}
   .tier-atoms {{ display:flex; flex-wrap:wrap; gap:4px; }}
   .atom {{ background:var(--c); color:#0d1117; font-weight:700; font-size:10.5px;
     padding:2px 6px; border-radius:5px; cursor:help;
     border-bottom:2px solid rgba(0,0,0,.28); }}
+  /* DAG status colors — one source of truth */
+  .st-done {{ --c:#3fb950; }}      /* green  = done */
+  .st-inprog {{ --c:#d29922; }}    /* amber  = in progress */
+  .st-ready {{ --c:#58a6ff; }}     /* blue   = startable (all deps done) */
+  .st-blocked {{ --c:#6e7681; }}   /* grey   = blocked (unmet deps) */
+  .atom.st-blocked {{ color:#c9d1d9; background:#30363d; border-bottom-color:rgba(0,0,0,.4); }}
+  /* overall + per-plan status bars */
+  .statbar {{ display:flex; height:22px; width:100%; border-radius:6px; overflow:hidden;
+    background:#21262d; margin:2px 0 12px; }}
+  .statbar i {{ display:flex; align-items:center; justify-content:center; height:100%;
+    font-size:10.5px; font-weight:700; color:#0d1117; min-width:0; overflow:hidden;
+    white-space:nowrap; }}
+  .statbar i.st-blocked {{ color:#c9d1d9; }}
+  .legend {{ display:flex; flex-wrap:wrap; gap:14px; margin:4px 0 14px; font-size:11.5px;
+    color:var(--muted); }}
+  .legend span {{ display:inline-flex; align-items:center; gap:5px; }}
+  .legend b {{ width:11px; height:11px; border-radius:3px; display:inline-block; }}
+  .planbars {{ display:grid; grid-template-columns:1fr 1fr; gap:5px 20px; }}
+  @media (max-width:900px) {{ .planbars {{ grid-template-columns:1fr; }} }}
+  .pb {{ display:grid; grid-template-columns:150px 1fr 40px; gap:9px; align-items:center;
+    font-size:11.5px; padding:2px 0; }}
+  .pb .pb-name {{ color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  .pb .pb-name b {{ color:var(--muted); font-weight:600; font-size:10px; }}
+  .pb .pb-track {{ display:flex; height:9px; border-radius:3px; overflow:hidden; background:#21262d; }}
+  .pb .pb-track i {{ display:block; height:100%; }}
+  .pb .pb-pct {{ color:var(--muted); text-align:right; font-variant-numeric:tabular-nums; }}
+  .pb.done .pb-pct {{ color:#3fb950; }}
 </style></head>
 <body><div class="wrap">
   <h1>PersonalClaw Roadmap</h1>
@@ -607,14 +637,93 @@ def dag_layers(atoms: dict[str, dict]) -> list[list[dict]]:
     return layers
 
 
+# DAG status vocabulary — one source of truth shared by every bar and chip.
+# done / in_progress come straight from the atom; a `todo` atom is `ready` when every
+# dependency is done, else `blocked`. Labels, CSS classes, and colors travel together.
+DAG_STATES = (
+    ("done", "st-done", "#3fb950", "done"),
+    ("in_progress", "st-inprog", "#d29922", "in progress"),
+    ("ready", "st-ready", "#58a6ff", "startable"),
+    ("blocked", "st-blocked", "#6e7681", "blocked"),
+)
+_DAG_CLASS = {k: c for k, c, _, _ in DAG_STATES}
+_DAG_COLOR = {k: col for k, _, col, _ in DAG_STATES}
+
+
+def classify_atom(atom: dict, ready_ids: set[str]) -> str:
+    """One of done | in_progress | ready | blocked.
+
+    done/in_progress come from the atom; a `todo` atom is `ready` iff it is in the DAG's
+    authoritative ready-frontier (which resolves cross-plan EXT edges to concrete atoms),
+    else `blocked`. Using the frontier keeps the chip colors identical to the
+    "Startable now" panel — a chip is blue exactly when that atom is listed as startable.
+    """
+    st = atom.get("status", "todo")
+    if st in ("done", "in_progress"):
+        return st
+    return "ready" if atom.get("id") in ready_ids else "blocked"
+
+
+def _statbar(counts: dict[str, int], total: int, label_min: int = 4) -> str:
+    """A single stacked horizontal bar over the four states (widths = share of total)."""
+    if not total:
+        return '<div class="statbar"></div>'
+    segs = ""
+    for key, cls, _, lbl in DAG_STATES:
+        n = counts.get(key, 0)
+        if not n:
+            continue
+        pct = n / total * 100
+        text = f"{n} {lbl}" if pct >= 11 else (str(n) if pct >= label_min else "")
+        segs += f'<i class="{cls}" style="width:{pct:.3f}%" title="{n} {lbl}">{text}</i>'
+    return f'<div class="statbar">{segs}</div>'
+
+
 def render_dag(dag: dict) -> str:
-    """The DAG section: ready frontier, tiered graph, validation problems."""
+    """The DAG section: color-coded status rollups, ready frontier, tiered graph, validation."""
     if not dag:
         return ""
     atoms = dag["atoms"]
     layers = dag_layers(atoms)
     total = len(atoms)
-    done = sum(1 for a in atoms.values() if a.get("status") == "done")
+
+    # classify every atom once, against the DAG's authoritative ready-frontier
+    ready_ids = {r.get("id") for r in (dag.get("ready") or [])}
+    state = {aid: classify_atom(a, ready_ids) for aid, a in atoms.items()}
+    overall = {k: 0 for k, *_ in DAG_STATES}
+    for s in state.values():
+        overall[s] += 1
+    done = overall["done"]
+
+    legend = "".join(
+        f'<span><b style="background:{col}"></b>{lbl} ({overall[key]})</span>'
+        for key, _cls, col, lbl in DAG_STATES
+    )
+
+    # per-plan stacked bars, most-remaining first so attention lands where work is
+    per_plan: dict[str, dict] = {}
+    for aid, a in atoms.items():
+        p = per_plan.setdefault(
+            a.get("plan_code") or a.get("plan", "?"),
+            {"name": a.get("plan", ""), "code": a.get("plan_code", ""),
+             "done": 0, "in_progress": 0, "ready": 0, "blocked": 0, "total": 0},
+        )
+        p[state[aid]] += 1
+        p["total"] += 1
+    plan_rows = ""
+    for p in sorted(per_plan.values(), key=lambda x: (x["done"] == x["total"], -x["total"])):
+        segs = "".join(
+            f'<i class="{cls}" style="width:{p[key] / p["total"] * 100:.3f}%" '
+            f'title="{p[key]} {lbl}"></i>'
+            for key, cls, _c, lbl in DAG_STATES if p[key]
+        )
+        pct = round(p["done"] / p["total"] * 100) if p["total"] else 0
+        cls = "pb done" if pct == 100 else "pb"
+        plan_rows += (
+            f'<div class="{cls}"><span class="pb-name" title="{esc(p["name"])}">'
+            f'{esc(p["name"] or p["code"])} <b>{esc(p["code"])}</b></span>'
+            f'<span class="pb-track">{segs}</span><span class="pb-pct">{pct}%</span></div>'
+        )
 
     ready = dag.get("ready") or []
     ready_html = (
@@ -629,19 +738,27 @@ def render_dag(dag: dict) -> str:
     tiers = ""
     for i, layer in enumerate(layers):
         chips = ""
+        tcounts = {k: 0 for k, *_ in DAG_STATES}
         for a in layer:
-            st = a.get("status", "todo")
-            color = {"done": "#3fb950", "in_progress": "#d29922"}.get(st, "#8b949e")
+            s = state.get(a.get("id", ""), "blocked")
+            tcounts[s] += 1
             deps = ", ".join(a.get("deps") or []) or "no deps"
+            _, _, _, lbl = next(d for d in DAG_STATES if d[0] == s)
             chips += (
-                f'<span class="atom" style="--c:{color}" '
-                f'title="{esc(a.get("title", ""))}\n\nplan: {esc(a.get("plan", ""))}'
-                f'\nstatus: {esc(st)}\ndeps: {esc(deps)}\n\n{esc((a.get("scope") or "")[:260])}">'
+                f'<span class="atom {_DAG_CLASS[s]}" '
+                f'title="{esc(a.get("id", ""))} — {esc(a.get("title", ""))}\n\n'
+                f'plan: {esc(a.get("plan", ""))}\nstatus: {esc(lbl)}\ndeps: {esc(deps)}'
+                f'\n\n{esc((a.get("scope") or "")[:260])}">'
                 f'{esc(a.get("id", ""))}</span>'
             )
+        barsegs = "".join(
+            f'<i class="{cls}" style="width:{tcounts[k] / len(layer) * 100:.3f}%"></i>'
+            for k, cls, _c, _l in DAG_STATES if tcounts[k]
+        )
         tiers += (
             f'<div class="tier"><div class="tier-n">tier {i}'
-            f'<span class="tier-c">{len(layer)}</span></div>'
+            f'<span class="tier-c">{len(layer)}</span>'
+            f'<span class="tier-bar">{barsegs}</span></div>'
             f'<div class="tier-atoms">{chips}</div></div>'
         )
 
@@ -665,9 +782,12 @@ def render_dag(dag: dict) -> str:
     if not problems:
         problems = "<div class='prob ok'>No cycles, no dangling edges — the DAG is clean.</div>"
 
+    pct_done = round(done / total * 100) if total else 0
     return f"""
       <h2 class="section" style="margin-top:26px">Execution DAG — {total} atoms
-        ({done} done, {dag.get('edges', 0)} edges)</h2>
+        ({pct_done}% done · {dag.get('edges', 0)} edges)</h2>
+      {_statbar(overall, total)}
+      <div class="legend">{legend}</div>
       <div class="dag-cols">
         <div class="box ready">
           <h3>Startable now ({len(ready)})</h3>
@@ -680,9 +800,13 @@ def render_dag(dag: dict) -> str:
           {problems}
         </div>
       </div>
+      <div class="box"><h3>Status by plan</h3>
+        <p class="ready-hint">Each bar is one plan's atoms, colored by state; sorted by
+           remaining work. Green = done, amber = in progress, blue = startable, grey = blocked.</p>
+        <div class="planbars">{plan_rows}</div></div>
       <div class="box tiers"><h3>Dependency tiers</h3>
-        <p class="ready-hint">Tier 0 depends on nothing outstanding. Hover an atom for its
-           scope and dependencies.</p>{tiers}</div>"""
+        <p class="ready-hint">Tier 0 depends on nothing outstanding; each higher tier depends
+           only on lower ones. Bar per tier shows its status mix; hover an atom for scope + deps.</p>{tiers}</div>"""
 
 
 def main() -> int:
