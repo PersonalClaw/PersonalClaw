@@ -217,32 +217,10 @@ def _load_store() -> dict:
         return {}
     if not isinstance(raw, dict):
         return {}
-
-    # Migrate to lowercase keys
-    migrated = False
-    muted = raw.get("muted") or []
-    new_muted = []
-    for m in muted:
-        lm = m.lower()
-        if lm not in new_muted:
-            new_muted.append(lm)
-        if m != lm:
-            migrated = True
-            
-    dismissals = raw.get("dismissals") or {}
-    new_dismissals = {}
-    for k, v in dismissals.items():
-        lk = k.lower()
-        if lk not in new_dismissals or v.get("last_dismissed_at", 0) > new_dismissals[lk].get("last_dismissed_at", 0):
-            new_dismissals[lk] = v
-        if k != lk:
-            migrated = True
-            
-    if migrated:
-        raw["muted"] = new_muted
-        raw["dismissals"] = new_dismissals
-        _save_store(raw)
-        
+    raw["muted"] = list(dict.fromkeys(str(m).lower() for m in (raw.get("muted") or [])))
+    raw["dismissals"] = {
+        str(k).lower(): v for k, v in (raw.get("dismissals") or {}).items()
+    }
     return raw
 
 
