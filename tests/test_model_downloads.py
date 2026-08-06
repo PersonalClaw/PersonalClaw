@@ -62,10 +62,10 @@ async def test_start_runs_to_done():
     reg = M.ModelDownloadRegistry()
     job, err = reg.start("sentence-transformers", "good")
     assert err is None and job is not None
-    assert job.status == "running"
-    assert job.size_bytes == 4 * 1024 * 1024
+    assert job.state in ("queued", "running")
+    assert job.total_bytes == 4 * 1024 * 1024
     await _settle()
-    assert reg.get(job.id).status == "done"
+    assert reg.get(job.id).state == "done"
 
 
 @pytest.mark.asyncio
@@ -75,7 +75,7 @@ async def test_start_records_error():
     assert err is None
     await _settle()
     done = reg.get(job.id)
-    assert done.status == "error"
+    assert done.state == "error"
     assert "exploded" in done.error
 
 
@@ -106,8 +106,8 @@ async def test_already_downloaded_short_circuits():
     reg = M.ModelDownloadRegistry()
     job, err = reg.start("sentence-transformers", "already")
     assert err is None
-    assert job.status == "done"
-    assert job.bytes == job.size_bytes  # reported complete immediately
+    assert job.state == "done"
+    assert job.downloaded_bytes == job.total_bytes  # reported complete immediately
 
 
 @pytest.mark.asyncio
