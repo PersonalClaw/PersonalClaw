@@ -18,14 +18,36 @@ updates:
   # dashboard came from a dependabot React bump whose failure mode was invisible
   # to typecheck/vitest/build — never merge a toolchain/React bump on green
   # static checks alone.
+  #
+  # The framework/build/test-runtime packages below are DELIBERATELY excluded from
+  # the js-deps group so each arrives as its own PR and gets individually
+  # validated — a React/vite/vitest/TS major is a migration, not a bump, and must
+  # never ride in a group PR where its breakage blocks safe minor/patch updates
+  # (see the deferred grouped bump that mixed React 18->19, TS 5->7, vite 6->8,
+  # vitest 2->4, jsdom 25->30 into one un-mergeable PR).
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     groups:
       js-deps:
         patterns: ["*"]
+        exclude-patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+          - "typescript"
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "@tailwindcss/vite"
+          - "esbuild"
+          - "rollup"
+          - "vitest"
+          - "@vitest/*"
+          - "jsdom"
+          - "@testing-library/*"
 
   # The GitHub Actions the workflows pin (setup-uv, setup-node, publish, buildx, …).
   - package-ecosystem: github-actions
