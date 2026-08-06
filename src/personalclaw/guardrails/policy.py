@@ -21,8 +21,12 @@ for the unattended paths that exist today.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from personalclaw.guardrails.budgets import Budget
+
+if TYPE_CHECKING:
+    from personalclaw.llm_helpers import ToolApprovalPolicy
 
 # Tool-grant tiers. ``read`` = read-only tools only (default-deny write/execute);
 # ``read_write`` = full grant (today's interactive default); ``custom`` = an explicit
@@ -152,10 +156,16 @@ _LOOP_PREFIXES = ("loop-", "loop:")
 
 def is_unattended_session(session_key: str) -> bool:
     """True when ``session_key`` names an unattended run (cron/subagent/channel/inbox/
-    side/loop worker) — the keys that resolve through HEADLESS by construction."""
-    from personalclaw.session import _STATELESS_PREFIXES
+    side/loop worker, or the ``_bg`` background key) — the keys that resolve through
+    HEADLESS by construction."""
+    from personalclaw.session import _STATELESS_PREFIXES, BACKGROUND_KEY
 
     key = session_key or ""
+    # ``_bg`` is the shared background/heartbeat/cron/lessons session key (see
+    # session.py) — genuinely unattended, so it resolves through HEADLESS even though
+    # it matches no prefix. It's an exact key, not a prefix, hence the equality check.
+    if key == BACKGROUND_KEY:
+        return True
     return any(key.startswith(p) for p in (*_STATELESS_PREFIXES, *_LOOP_PREFIXES))
 
 
@@ -169,3 +179,29 @@ def profile_for_session(session_key: str) -> SafetyProfile:
     branch. Operator config is layered in via ``safety_profile_for``."""
     base = HEADLESS if is_unattended_session(session_key) else INTERACTIVE
     return safety_profile_for(base)
+
+
+def approval_policy_for_session(session_key: str) -> "ToolApprovalPolicy":
+    """Resolve a session's tool-approval policy from its SafetyProfile.
+
+    The first production reader of ``SafetyProfile.approval`` — it replaces the
+    ad-hoc hardcoded approval pick at the unattended dispatch seams (the gateway's
+    heartbeat/background loop) with a value DERIVED from ``profile_for_session``.
+    ``ToolApprovalPolicy`` is imported lazily to keep this module importable without
+    dragging in ``llm_helpers`` (and to keep the guardrails↔llm layering one-way).
+
+    Mapping from ``profile.approval``:
+      * ``auto``       → AUTO_APPROVE
+      * ``hook_based`` → HOOK_BASED
+      * ``ask``        → HOOK_BASED  — an unattended run has no human to ask, so
+        HOOK_BASED keeps the security-hook deny gate rather than auto-approving.
+        Interactive paths keep their own interactive-callback flow and never call
+        this helper, so ``ask`` reaching here only means a run with no interactive
+        callback, where HOOK_BASED is the safe resolution.
+    """
+    from personalclaw.llm_helpers import ToolApprovalPolicy
+
+    approval = profile_for_session(session_key).approval
+    if approval == "auto":
+        return ToolApprovalPolicy.AUTO_APPROVE
+    return ToolApprovalPolicy.HOOK_BASED

@@ -10,12 +10,15 @@ from personalclaw.guardrails.policy import (
     HEADLESS,
     INTERACTIVE,
     SafetyProfile,
+    approval_policy_for_session,
     get_profile,
     is_unattended_session,
     profile_for_session,
     safety_profile_for,
 )
+from personalclaw.llm_helpers import ToolApprovalPolicy
 from personalclaw.net.policy import REGISTRY, egress_policy_for_tier, get_policy
+from personalclaw.session import BACKGROUND_KEY
 
 # ── §3 SafetyProfile ─────────────────────────────────────────────────────────
 
@@ -59,6 +62,47 @@ def test_profile_for_session_by_construction():
     assert profile_for_session("cron:nightly").name == "headless"
     assert profile_for_session("loop-abc").name == "headless"
     assert profile_for_session("chat:main").name == "interactive"
+
+
+def test_background_key_is_headless():
+    # AG-5 edit 1: `_bg` (the shared background/heartbeat/cron/lessons key) matches no
+    # unattended prefix, so it must be classified explicitly — it is genuinely
+    # unattended and must resolve through HEADLESS, not INTERACTIVE.
+    assert is_unattended_session(BACKGROUND_KEY) is True
+    assert profile_for_session(BACKGROUND_KEY).name == "headless"
+
+
+def test_approval_policy_for_session_maps_from_profile():
+    # The helper MUST derive from `profile_for_session(...).approval`, not a constant.
+    # Unattended keys resolve to HEADLESS (approval == "hook_based") → HOOK_BASED.
+    assert profile_for_session(BACKGROUND_KEY).approval == "hook_based"
+    assert approval_policy_for_session(BACKGROUND_KEY) is ToolApprovalPolicy.HOOK_BASED
+    assert approval_policy_for_session("cron:x") is ToolApprovalPolicy.HOOK_BASED
+    assert approval_policy_for_session("subagent:x") is ToolApprovalPolicy.HOOK_BASED
+
+    # An INTERACTIVE key: INTERACTIVE.approval == "ask", which this helper maps to
+    # HOOK_BASED (an unattended reach with no human to ask keeps the security gate).
+    # Assert the MAP against the profile's declared approval, not a bare constant.
+    interactive_approval = profile_for_session("chat:main").approval
+    assert interactive_approval == "ask"
+    expected = (
+        ToolApprovalPolicy.AUTO_APPROVE
+        if interactive_approval == "auto"
+        else ToolApprovalPolicy.HOOK_BASED
+    )
+    assert approval_policy_for_session("chat:main") is expected
+    assert approval_policy_for_session("") is expected
+
+
+def test_approval_policy_auto_maps_to_auto_approve(monkeypatch):
+    # Prove the "auto" branch is live: a profile with approval="auto" maps to
+    # AUTO_APPROVE. Patch the resolver so the map, not a fixed profile, is exercised.
+    import personalclaw.guardrails.policy as policy
+
+    monkeypatch.setattr(
+        policy, "profile_for_session", lambda _k: SafetyProfile(name="x", approval="auto")
+    )
+    assert approval_policy_for_session("whatever") is ToolApprovalPolicy.AUTO_APPROVE
 
 
 def test_safety_profile_for_layers_config(monkeypatch, tmp_path):
