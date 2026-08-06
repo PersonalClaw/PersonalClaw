@@ -20,6 +20,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A Usage panel in Settings shows what you're spending.** Settings → Usage renders Today / 7-day /
+  30-day cost + token totals (the period control round-trips the URL), a by-model and a by-source
+  table with each row's share, a cache-savings line, and — when you've set a daily budget in
+  Guardrails — a read-only "spent $X of your $Y cap" (automations only; interactive chat is
+  uncapped). A period that includes a model with no price row shows a "partial — N unpriced models"
+  marker instead of a misleadingly complete figure. Observation only — nothing here caps or throttles
+  a turn. This completes cost observability: per-turn, per-conversation, and per-account.
 - **The chat header shows what the whole conversation has cost.** A cost chip — e.g.
   `$0.19 · 46k tokens` — appears in the session header once a chat has recorded usage, reading the
   per-turn ledger scoped to that session. A conversation whose models are all priced shows a real

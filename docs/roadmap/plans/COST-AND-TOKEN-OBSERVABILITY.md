@@ -266,3 +266,26 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   typecheck` + `npm run build` clean; `tests/test_usage_ledger.py::TestSessionScopedAggregation` (4:
   session-scoped totals, sum-matches-turns invariant, scoped rollup, unknown-session-empty) +
   `test_usage_routes.py` session-filter route test + full usage suites pass.
+
+- **CATO-8 DONE — the account-level Usage panel (S2c). PLAN COMPLETE.** New `web/src/pages/settings/UsagePanel.tsx`
+  registered in BOTH `SUBPAGES` (Settings → Usage, `Coins` icon) AND the `settingsWidgets` bento (the
+  recurring miss — not missed): a `Segmented` period control (Today/7d/30d, state round-trips the URL
+  via `useQueryParam`), Today/7d/30d cost+token+turns `BigStat`s, by-model + by-source tables (tokens/
+  cost/share, "unpriced"/"—" for a no-price-row row), a cache-savings line (0 when no cache activity),
+  and a read-only "spent $X of your $Y daily cap" reading `guardrails.budgets.max_dollars_per_day`
+  from `personalclawConfig` (SpendMeter's config — NEVER written; observation only). Honest-partial: a
+  period with any unpriced model shows a "partial — N unpriced models" `role=status` marker, never a
+  confidently-complete total. Generalized `api.usageTotals`/`usageRollup` to a `{since,until,session,
+  group_by}` options shape (+ fixed CATO-7's call site) and added the `UsageAgg` type. **Wired the
+  orphaned `SystemAgentStats.input_tokens`** (`SystemInfo.stats`, typed at api.ts but rendered by no
+  component): the panel's "Since gateway start" section renders the in-memory process-lifetime
+  counters as a live cross-check on the durable ledger — no parallel type added. **MUST-NOTs honored:**
+  no `spend.json` write, no cap/gate/throttle. **Ratchet + a11y:** primitiveAdoption (Button/Segmented/
+  table — zero raw `<button>`/`<input>`) + tokenLint + consistency + contrast all green. Third +
+  final user-visible surface → **CHANGELOG.** **Gates:** `make lint` clean (699 files); `npm run
+  typecheck` + `npm run build` clean; FE suite 742 passed; design suites (primitiveAdoption 5 +
+  tokenLint/consistency/contrast/inert 81) passed; backend usage suites 43 passed.
+
+  **COST-AND-TOKEN-OBSERVABILITY is now fully shipped:** store (CATO-1) → 4 write-sites (CATO-2/3/4) →
+  read API (CATO-5) → turn / session / account surfaces (CATO-6/7/8). Every soul guardrail held (one
+  real meter, honest-unpriced, observation-only).

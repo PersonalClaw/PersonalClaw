@@ -444,7 +444,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const [sessionCost, setSessionCost] = useState<{ cost: number; tokens: number; priced: boolean } | null>(null)
   const refreshSessionCost = useCallback((key: string | null) => {
     if (!key) { setSessionCost(null); return }
-    api.usageTotals(key).then((d) => {
+    api.usageTotals({ session: key }).then((d) => {
       const t = d.totals
       const tokens = (t.input_tokens || 0) + (t.output_tokens || 0)
       // Show the chip only once the session has recorded real usage.

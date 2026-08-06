@@ -1670,6 +1670,27 @@ export interface Artifact {
   collection?: string
 }
 
+// One usage-ledger aggregate (COST-AND-TOKEN-OBSERVABILITY). `priced` is false when
+// the group/window mixes a model with no price row → the cost is a partial, render
+// "unpriced"/a partial marker, never a confidently-complete figure.
+export interface UsageAgg {
+  input_tokens: number; output_tokens: number
+  cache_read_tokens: number; cache_creation_tokens: number
+  cost_usd: number; turns: number; priced: boolean
+}
+
+/** Build the ?since=&until=&session=&group_by= query for the usage endpoints
+ *  (empty/absent params omitted). */
+function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
+  const p = new URLSearchParams()
+  if (opts?.group_by) p.set('group_by', opts.group_by)
+  if (opts?.since) p.set('since', opts.since)
+  if (opts?.until) p.set('until', opts.until)
+  if (opts?.session) p.set('session', opts.session)
+  const q = p.toString()
+  return q ? `?${q}` : ''
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -1686,10 +1707,12 @@ export const api = {
   routingDismiss: (agent: string) => post<{ ok: boolean; count: number; muted: boolean }>('/api/agents/routing/dismiss', { agent }),
   routingUnmute: (agent: string) => post<{ ok: boolean }>('/api/agents/routing/unmute', { agent }),
   routingStatus: () => get<{ enabled: boolean; muted: string[]; dismissals: Record<string, { count: number; last_dismissed_at: number }> }>('/api/agents/routing/status'),
-  // Cost/token usage totals (COST-AND-TOKEN-OBSERVABILITY). `session` scopes to one
-  // chat (the header chip); omit for the account-wide total. `priced=false` ⇒ the
-  // window mixes a model with no price row, so the cost is a partial (render "unpriced"-ish).
-  usageTotals: (session?: string) => get<{ session: string; totals: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number; turns: number; priced: boolean } }>(`/api/usage/totals${session ? `?session=${encodeURIComponent(session)}` : ''}`),
+  // Cost/token usage (COST-AND-TOKEN-OBSERVABILITY). `session` scopes to one chat
+  // (the header chip); `since`/`until` bound a period (the Usage panel's Today/7d/30d).
+  // `priced=false` ⇒ the window mixes a model with no price row, so the total is a
+  // partial (render "unpriced" / a partial marker — never a confidently-complete $).
+  usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
+  usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
