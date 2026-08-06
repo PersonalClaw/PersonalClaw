@@ -1179,3 +1179,31 @@ merger is a defensible clean-break, not an escalation:
 - **Tree entries** rehydrate from the content-addressed `blobs/` the exporter already writes.
 This keeps the whole thing lossless, reuses proven machinery, and needs no new format concept
 beyond staging the DB copy the exporter already knows how to make.
+
+## Execution log — DAS-6c-ii-f (transport-driven push engine)
+
+- **DAS-6c-ii-f DONE. (Note: the DB/tree db_merger — earlier called 6c-ii-f — is renumbered
+  6c-ii-g; the push half is taken first because it's self-contained and doesn't touch the fragile
+  shard export format.)** `durability/push_engine.py::publish_export` is the mirror of the pull
+  engine: `registry.bump(self_id, …)` (6c-ii-a, monotonic) → keys every file of a fresh
+  `export_shards` dir under `machines/<self_id>/seq-NNNN/<rel>` (exact inverse of the pull engine's
+  `_materialize`) → **records the durable outbox obligation FIRST** (6c-ii-b) so a crash between
+  push and registry-commit leaves a pending entry the next cycle re-drains (insert-only keys make
+  that a no-op) → `transport.push` → `outbox.record_outcome` → **only on a delivered push**,
+  CAS-commit the registry via `transport.cas_registry(expected_sha, registry.to_bytes())`. A
+  transient/permanent push does NOT announce the seq (a peer must never pull a prefix whose objects
+  are missing) — the outbox retries. On a lost CAS race the loop calls an injected
+  `reload_registry()`, re-applies our bump on top of the peers' latest, carries peers' higher seqs
+  forward, and retries — bounded to 5 attempts so a pathological race can't spin (idempotent object
+  keys make each retry free, per §4.1). Clock-free (timestamp passed in). Composes only
+  already-shipped pieces; touches no export-format code. No user surface yet → no CHANGELOG.
+  **Remaining:** 6c-ii-g (the DB/tree `db_merger` + the shard-format extension to carry consistent
+  DB copies — the design decided in the note above: DB-file ATTACH, not lossy rows; `import_shards`
+  can't carry a binary `.db` in its JSONL `shards` list, so this needs a parallel manifest field
+  next to `blobs`), then 6c-ii-h (assemble pull+push into one `run_sync_cycle` with the
+  `stale_after_secs` window + wire into `service.py::run_due_jobs` + `DurabilityConfig.sync_*`), then
+  DAS-6d (git-sync + dir-sync installable `sync` apps + end-to-end criterion-4 over a real git
+  repo/folder). **Gates:** `make lint` clean (707 files); `tests/test_durability_push_engine.py`
+  (7: publishes objects + commits registry, obligation-before-push, transient-doesn't-announce,
+  monotonic seq across publishes, lost-race-then-win reload+retry preserving both seqs, no-reloader
+  gives up, persistent race gives up bounded at 5) pass.
