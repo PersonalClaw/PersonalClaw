@@ -2322,6 +2322,34 @@ class DurabilityConfig:
             "Never touches live data; reports pass or fail.",
         ),
     )
+    # ── sync (DURABILITY-AND-SYNC §4) — off by default; needs a configured transport ──
+    sync_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Sync between machines",
+            "Keep this PersonalClaw in sync with your other machines through a shared "
+            "remote (a git repo or a synced folder). Off by default; turning it on also "
+            "requires choosing a sync transport. Sync never overwrites — it merges, and "
+            "your local data is always kept.",
+        ),
+    )
+    sync_transport: str = field(
+        default="",
+        metadata=_meta(
+            "Sync transport",
+            "Which installed sync transport to use (e.g. git-sync, dir-sync). Empty "
+            "means no transport is chosen yet, so sync stays idle even if enabled.",
+        ),
+    )
+    sync_stale_after_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Sync staleness window (seconds)",
+            "How long to trust a recent remote check before pulling again. A short "
+            "window syncs sooner at the cost of more remote polls; the default (15 "
+            "minutes) balances freshness against chattiness.",
+        ),
+    )
 
 
 @dataclass
@@ -2922,6 +2950,12 @@ class AppConfig:
                 keep_weekly=_safe_int(durability_data.get("keep_weekly"), 8),
                 keep_monthly=_safe_int(durability_data.get("keep_monthly"), 12),
                 restore_drills=_guard_flag(durability_data.get("restore_drills")),
+                # Sync is fail-CLOSED (unlike backups): a sync surface that turns itself
+                # on when config is unreadable would move data off-box unexpectedly, so a
+                # missing/garbage value reads False, not True.
+                sync_enabled=bool(durability_data.get("sync_enabled", False)),
+                sync_transport=str(durability_data.get("sync_transport", "") or ""),
+                sync_stale_after_secs=_safe_int(durability_data.get("sync_stale_after_secs"), 900),
             ),
             inbox=InboxConfig(
                 enabled=bool(inbox_data.get("enabled", False)),
