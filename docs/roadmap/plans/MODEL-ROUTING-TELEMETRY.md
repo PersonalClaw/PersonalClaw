@@ -320,3 +320,27 @@ Folded into **Session 1** as its second half (Session 1 was already "telemetry r
   clean (712 files); `tests/test_routing_classifier.py` (21: vocab/version constants, all 5 classes,
   precedence incl. structured>code and summarize>length, the function-prose false-positive guard,
   empty/None/mid-length fallback, purity/determinism) pass.
+
+## Execution log — MRT-1b (thread query_class onto the attempt audit)
+
+- **MRT-1b DONE.** The pure classifier (MRT-1a) is now WIRED into the one seam every non-interactive
+  model call passes through. `AttemptRecord` (guardrails/audit.py) gains a first-class
+  `query_class: str = ""` column (not an `extra` field — the stats layer folds per
+  `(use_case, query_class)`). `ModelCallGuard` classifies the CURRENT call at each entry point that
+  holds the prompt text — `stream`/`stream_command` (raw text) and `complete` (via a new
+  `_joined_content` helper that joins the user turns' text, handling both string and typed-block
+  content shapes) — stores it on `self._query_class`, and stamps it onto every attempt row via
+  `_audit`. Classification is **fail-open**: a `_classify` helper swallows any classifier error and
+  leaves `query_class=""`, so a telemetry field can never break a model call (verified — a boom
+  classifier still completes the call and audits an empty class). The guard passes its own
+  `use_case` into `classify_query`, so the use-case prior flows through (a `code_tools` call →
+  `code`). Every `model_calls.jsonl` row now carries the query class the routing stats layer
+  (MRT-1c) will fold on. No user surface → no CHANGELOG; the new audit column is additive (no
+  ratchet trips — verified against the audit's consumers: portability, snapshot, learning-detectors,
+  budgets/profiles/flags). **Remaining in MRT-1:** 1c (`routing_stats.json` fold + rebuild reading
+  this column), 1d (`GET /api/models/telemetry`), 1e (Routing FE tab). MRT-2a (rate_for overlay) is
+  a clean addition but pointless without the owner-gated 2b (pricing consolidation) — both deferred.
+  **Gates:** `make lint` clean (712 files); `tests/test_guardrails_query_class.py` (10: query_class
+  stamped for stream/complete/stream_command, short_chat default, use-case prior flows in, fail-open
+  on a broken classifier, AttemptRecord column round-trips + defaults empty, `_joined_content` from
+  string+blocks + junk-tolerant) + guardrails/classifier regression (50) + audit consumers (164) pass.
