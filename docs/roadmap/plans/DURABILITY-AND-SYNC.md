@@ -1021,3 +1021,30 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   (git-sync + dir-sync apps + two-machine convergence). **Gates:** `make lint` clean (700 files);
   `tests/test_durability_merge.py` (21: per-strategy, tombstone precedence, LWW ties/undated,
   append no-op, dispatch guards, convergence + idempotency) pass.
+
+## Execution log — DAS-6c-ii-a (the versioned registry model; DAS-6c-ii re-scoped)
+
+- **DAS-6c-ii RE-SCOPED; DAS-6c-ii-a DONE.** The DAS-6c-ii cycle orchestration is itself
+  multi-mechanism (versioned registry + CAS-retry loop + durable outbox/consumed-only cursor +
+  the pull→merge-import→export-union→push engine), so it splits like DAS-6/6c before it. First
+  completable sub-atom = the **pure registry model** every other piece turns on. Added
+  `durability/registry.py`: `Registry`/`MachineEntry` parse & canonically serialize `registry.json`
+  (`{"machines": {id: {seq, last_export_at, manifest_sha}}}`), `.sha()` over the canonical bytes
+  (the `expected_sha` a CAS compares — `canonical_json` reused so two machines writing the same
+  logical registry produce byte-identical output), `bump()` monotonic seq advance on a fresh export
+  (a stale registry from a lost race can never lower the mark), `shard_prefix(id, seq)` = the
+  insert-only `machines/<id>/seq-NNNN/` key (zero-padded so a lexical list-sort is chronological),
+  and the peer-discovery seam the cycle drains through: `new_prefixes_since(self, seen)` yields
+  exactly the unseen peer shard prefixes ascending (cursor-driven, re-poll idempotent) and
+  `advanced_over(prior, self_id)` reports who moved during a mid-cycle re-pull. Clock-free (the
+  timestamp is passed in) and I/O-free — the transport owns the CAS write (`cas_registry`, 6a) and
+  6c-ii-b composes model+transport into the retry loop; keeping the model pure is what makes the
+  CAS contract testable without a remote and a lost-race retry free. Corrupt/forward-version fields
+  degrade to 0 (re-publish), a genuinely unparseable registry RAISES (a mis-parsed coordinator would
+  let two machines both own a seq). Pure core, no user surface → no CHANGELOG. **Remaining:**
+  6c-ii-b (CAS-retry push loop + durable outbox + consumed-only cursor), 6c-ii-c (the
+  pull→merge-import→export-union engine composing 6a transport + 6b import + 6c-i merge + this
+  registry), DAS-6d (git-sync + dir-sync apps + criterion-4 two-machine convergence). **Gates:**
+  `make lint` clean (701 files); `tests/test_durability_registry.py` (23: prefix zero-pad/sort,
+  canonical byte-stability + sha, empty/corrupt/malformed handling, monotonic bump, peer ordering,
+  cursor-driven `new_prefixes_since` + idempotent re-poll, `advanced_over`) pass.
