@@ -8,6 +8,8 @@ the `usage` entry and fails WITHOUT it — both proven, per the done-when).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from personalclaw import usage_ledger as ul
@@ -146,3 +148,65 @@ def test_audit_home_fails_without_registration(_home, monkeypatch):
     monkeypatch.setattr(inv, "INVENTORY", stripped)
     result = inv.audit_home(_home)
     assert "usage/" in result.unclaimed
+
+
+# ── CATO-2: the chat write-site (_record_turn_usage) ──────────────────────────
+
+
+class TestChatWriteSite:
+    """`_record_turn_usage` lands exactly one row with the right priced/cost logic."""
+
+    def _event(self, **over):
+        base = dict(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.0,
+            duration_ms=1234,
+        )
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _call(self, event, model="claude-opus-4.5"):
+        from personalclaw.dashboard.chat_runner import _record_turn_usage
+
+        _record_turn_usage(
+            event,
+            session_key="dashboard:s1",
+            source="chat",
+            agent="",
+            provider="anthropic",
+            model=model,
+        )
+
+    def test_one_row_with_provider_reported_cost_is_priced(self, _home):
+        self._call(self._event(cost_usd=0.42))
+        rows = ul._iter_rows()
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["source"] == "chat" and r["provider"] == "anthropic"
+        assert r["model"] == "claude-opus-4.5" and r["input_tokens"] == 100
+        assert r["cost_usd"] == 0.42 and r["priced"] is True
+
+    def test_priced_model_with_zero_cost_still_priced(self, _home):
+        # No provider cost, but the model HAS a price row → priced=True (cost may be
+        # a real estimate the caller already set, or 0.0 for a tiny turn).
+        self._call(self._event(cost_usd=0.0), model="claude-opus-4.5")
+        r = ul._iter_rows()[0]
+        assert r["priced"] is True
+
+    def test_unpriced_model_writes_priced_false_and_zero(self, _home):
+        self._call(self._event(cost_usd=0.0), model="some-unknown-local-model")
+        r = ul._iter_rows()[0]
+        assert r["priced"] is False and r["cost_usd"] == 0.0
+
+    def test_write_site_is_fail_open(self, monkeypatch, _home):
+        """A ledger write failure must not raise into the turn."""
+        import personalclaw.usage_ledger as _ul
+
+        def _boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_ul, "_path", _boom)
+        self._call(self._event(cost_usd=0.1))  # must not raise
