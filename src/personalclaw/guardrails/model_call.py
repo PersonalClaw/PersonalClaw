@@ -65,6 +65,21 @@ def _new_audit_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+def _iso_now() -> str:
+    """Wall-clock ISO-UTC stamp for the routing-stats fold's ``updated_at``."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _asdict_row(rec) -> dict:
+    """The attempt as the SAME flat dict the JSONL carries, so the live fold and the
+    rebuild-from-JSONL path (routing.stats) see byte-identical row shapes."""
+    import json as _json
+
+    return _json.loads(rec.to_json_line())
+
+
 def _joined_content(messages: list[dict]) -> str:
     """The user-authored text of a structured message list, for query classification.
 
@@ -424,27 +439,36 @@ class ModelCallGuard(ModelProvider):
         *,
         dollars: float = 0.0,
     ) -> None:
-        record_attempt(
-            AttemptRecord(
-                audit_id=audit_id,
-                ts=time.time(),
-                use_case=self._use_case,
-                provider=self._provider_name,
-                model=self._model,
-                attempt=attempt,
-                failure_mode=mode.value,
-                latency_ms=round(latency_ms, 1),
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                dollars_est=round(dollars, 6),
-                # Estimated unless the provider reported a real cost_usd (which
-                # _estimate_dollars prefers); a heuristic-derived value is flagged.
-                estimated=True,
-                passed=passed,
-                strategy=strategy,
-                query_class=self._query_class,
-            )
+        rec = AttemptRecord(
+            audit_id=audit_id,
+            ts=time.time(),
+            use_case=self._use_case,
+            provider=self._provider_name,
+            model=self._model,
+            attempt=attempt,
+            failure_mode=mode.value,
+            latency_ms=round(latency_ms, 1),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            dollars_est=round(dollars, 6),
+            # Estimated unless the provider reported a real cost_usd (which
+            # _estimate_dollars prefers); a heuristic-derived value is flagged.
+            estimated=True,
+            passed=passed,
+            strategy=strategy,
+            query_class=self._query_class,
         )
+        record_attempt(rec)
+        # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY
+        # §1.3, MRT-1c) — the router reads that O(1) fold, never scans the JSONL per call.
+        # Best-effort inside record_routing_stats; a fold failure never breaks a call.
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.routing.stats import record_routing_stats
+
+            record_routing_stats(_asdict_row(rec), home=config_dir(), now=_iso_now())
+        except Exception:  # noqa: BLE001 — observability, never load-bearing
+            pass
 
     @staticmethod
     async def _aclose(source: AsyncIterator[LLMEvent]) -> None:
