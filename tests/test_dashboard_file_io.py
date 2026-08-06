@@ -956,3 +956,95 @@ class TestDashboardRootsProjectWorkspace:
         # /etc (and files under it) stay blocked — not admitted via the binding.
         assert _validate_dashboard_path("/etc") is None
         assert _validate_dashboard_path("/etc/passwd") is None
+
+
+class TestBlocklistCaseInsensitive:
+    """Issue #690: the credential blocklist in ``_validate_dashboard_path`` compared
+    basenames and suffixes case-SENSITIVELY, so on a case-INSENSITIVE filesystem
+    (macOS/APFS, Windows/NTFS) an uppercase spelling (``.LOCAL_SECRET``) skipped the
+    block yet resolved to the real credential bytes. Every blocked entry must be
+    refused in lower, UPPER, and mixed case, and blocked suffixes in any case.
+
+    One validator (``_validate_dashboard_path``) guards all 16 file routes, so this
+    covers both the read and write directions.
+    """
+
+    # Extensionless / dotfile basenames — layer-1 spelling defence.
+    BLOCKED_BASENAMES = (
+        "sel_hmac.key",
+        ".local_secret",
+        "telemetry_salt",
+        ".env",
+        "session_key",
+        "sessions.json",
+    )
+    # Blocked suffixes — a name that only matches via its extension.
+    BLOCKED_SUFFIX_NAMES = (
+        "cert.key",
+        "cert.pem",
+        "token.secret",
+    )
+
+    @staticmethod
+    def _variants(name: str) -> list[str]:
+        """lower / UPPER / MiXeD spellings of a basename."""
+        mixed = "".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(name))
+        return [name.lower(), name.upper(), mixed]
+
+    def _all_blocked_variants(self) -> list[str]:
+        out: list[str] = []
+        for name in self.BLOCKED_BASENAMES + self.BLOCKED_SUFFIX_NAMES:
+            out.extend(self._variants(name))
+        # Explicit spellings named in the issue so a regression is unmistakable.
+        out += [
+            ".LOCAL_SECRET",
+            ".Local_Secret",
+            "SESSION_KEY",
+            "SESSIONS.JSON",
+            "TELEMETRY_SALT",
+            "SEL_HMAC.KEY",
+            "secret.KEY",
+            "cert.PEM",
+        ]
+        return out
+
+    def test_every_blocklist_entry_refused_in_any_case(self, home_patch):
+        """Each blocked basename/suffix, in lower/UPPER/mixed case, resolves to None.
+
+        The file is materialised under the (case-insensitive on macOS) home root so
+        the identity layer also has a real inode to see; on a case-sensitive volume
+        the spelling layer alone must still refuse it.
+        """
+        from personalclaw.dashboard.handlers.files import _validate_dashboard_path
+
+        # One real credential file per canonical name, so a case-variant request on a
+        # case-insensitive FS opens the SAME inode the exploit would have leaked.
+        for canonical in self.BLOCKED_BASENAMES + self.BLOCKED_SUFFIX_NAMES:
+            (home_patch / canonical).write_bytes(b"REALSECRET")
+
+        failures = []
+        for spelling in self._all_blocked_variants():
+            target = str(home_patch / spelling)
+            if _validate_dashboard_path(target) is not None:
+                failures.append(spelling)
+        assert not failures, f"blocklist bypassed for case variants: {failures}"
+
+    def test_non_sensitive_names_still_allowed(self, home_patch):
+        """The case-fold must not over-block ordinary files that merely resemble a
+        blocked name (a longer stem, a different extension)."""
+        from personalclaw.dashboard.handlers.files import _validate_dashboard_path
+
+        for ok_name in ("keynote.md", "notes.txt", "README.md", "my_session_key.md"):
+            (home_patch / ok_name).write_text("ok")
+            assert (
+                _validate_dashboard_path(str(home_patch / ok_name)) is not None
+            ), f"{ok_name} should be allowed"
+
+    def test_nonexistent_target_not_rejected_by_identity_layer(self, home_patch):
+        """create/write/move/upload validate paths for files that need not exist yet.
+        A non-sensitive, not-yet-created target must pass (identity layer skipped)."""
+        from personalclaw.dashboard.handlers.files import _validate_dashboard_path
+
+        target = str(home_patch / "brand-new-doc.md")
+        assert not os.path.exists(target)
+        assert _validate_dashboard_path(target) is not None
