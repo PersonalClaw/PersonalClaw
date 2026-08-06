@@ -1212,6 +1212,8 @@ async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> tuple
     a run that resolved no provider is not a success, and reporting `ok: true` for it is what let
     this bug hide behind a 200 for a whole release.
     """
+    import time
+
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
 
@@ -1225,9 +1227,132 @@ async def _dispatch_store_action(trigger: Any, payload: dict[str, Any]) -> tuple
     provider = get_action_provider(provider_name)
     if provider is None:
         return False, f"unknown action provider {provider_name!r}"
+    # 🔴 RECORD THE RUN (#308). #702 made this path resolve and dispatch the nested action, but it
+    # recorded NOTHING — no `ScheduleRunStore` row, no `last_run_ts` stamp. So the action ran while
+    # `GET .../history` gained no row and the trigger's last-run stamp never moved, and the UI's
+    # completion watcher (`ScheduleDetail`/`StoreTriggerDetail`) waited on a `last_run_ts` that
+    # would never change — the "Running…" pill stuck forever. The autonomous fire path records via
+    # `gateway._record_fire_outcome`; the docstring above claims the two "share one dispatch so
+    # their behaviour cannot drift", and recording is exactly where it had drifted.
+    # `_record_manual_run` reuses the SAME `ScheduleRunStore` ledger and the SAME
+    # `last_success_at`/`last_failure_at` stamp, tagged `manual` — see its docstring for why
+    # `run_count` (the fire budget) is not spent.
     ctx = ActionContext(event="manual.run", context="", payload=payload)
-    await provider.execute(action.get("config") or {}, ctx)
+    started = time.time()
+    try:
+        result = await provider.execute(action.get("config") or {}, ctx)
+    except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
+        await _record_manual_run(trigger, started=started, exc=exc)
+        return False, f"failed: {type(exc).__name__}: {exc}"
+    await _record_manual_run(trigger, started=started, result=result)
+    if result is not None and not bool(getattr(result, "success", True)):
+        note = str(getattr(result, "error", "") or "") or "the action reported failure"
+        return False, f"failed: {note}"
     return True, "ran"
+
+
+async def _record_manual_run(
+    trigger: Any, *, started: float, result: Any = None, exc: BaseException | None = None
+) -> None:
+    """Append a MANUAL run record and advance the trigger's last-run stamp (#308).
+
+    Reuses the SAME ledger the autonomous fire path appends to — `ScheduleRunStore`, keyed by the
+    trigger id (via this module's `_runs_store()`) — and the SAME
+    `last_success_at`/`last_failure_at` stamp `gateway._record_fire_outcome` writes, so a Run button
+    and an autonomous tick leave the same evidence that a run happened. This is not a parallel
+    recorder: it writes the identical `ScheduleRun` shape to the identical store, and stamps the
+    identical trigger fields. The read surfaces (`/history`, `_last_run_ts`, the completion watcher)
+    already work — they were simply reading a store nothing wrote to on this path.
+
+    Tagged `trigger="manual"`, not the autonomous exit type, for two behaviours the run store
+    already depends on: `ScheduleRunStore.count_since` excludes `manual` rows from the hourly cap (a
+    person clicking Run is not the machine running away), and `autopause.consecutive_failures_from`
+    treats a `manual` exit as transparent — so testing a broken automation by hand can neither
+    autopause it nor reset a real failure streak.
+
+    🔴 `run_count` is deliberately NOT incremented and the autopause engine is deliberately NOT run
+    — this records the run HISTORY the manual path was missing, never the fire ALLOWANCE it
+    correctly skips. `Trigger.run_count` is the `max_fires` fire-budget meter
+    (`service._budget_remaining` reads it, written only at the autonomous fire-GRANT in
+    `service.tick`), and `tools.MANUAL_NEVER_BYPASSES` pins `budget` among the gates a manual fire
+    never spends — the same reason `_run_event` skips `record_fire` and `count_since` excludes
+    manual rows. Spending the budget from a Run button would let a user lock themselves out of their
+    own automation by testing it. Likewise a manual run must not drive `state`/`health`/`enabled`: a
+    hand-run of a healthy trigger that fails once is not the machine deciding to autopause itself.
+
+    Never raises: a bookkeeping failure must not turn a completed manual run into a crashed request,
+    the same contract `_record_fire_outcome` holds. Losing a run record is recoverable; losing the
+    response is not.
+    """
+    try:
+        import time
+        from datetime import datetime, timezone
+
+        from personalclaw.schedule_history import ScheduleRun
+
+        trigger_id = str(getattr(trigger, "id", "") or "")
+        if not trigger_id:
+            return
+        finished = time.time()
+
+        if exc is not None:
+            status = "failure"
+            error = f"{type(exc).__name__}: {exc}"
+            summary = error
+        elif result is not None and not bool(getattr(result, "success", True)):
+            status = "failure"
+            error = str(getattr(result, "error", "") or "") or "the action reported failure"
+            summary = error
+        elif result is not None and str(getattr(result, "outcome", "") or "") == "launched":
+            # T7: the action only STARTED background work; its real outcome is its OWN run's, so the
+            # honest status is "launched", not "success" — matching `_record_fire_outcome`.
+            status = "launched"
+            error = ""
+            summary = str(getattr(result, "stdout", "") or "")
+        else:
+            status = "success"
+            error = ""
+            summary = str(getattr(result, "stdout", "") or "") if result is not None else ""
+
+        run_id = f"manual-{int(finished * 1000)}"
+        # The same store the autonomous recorder appends to; `_append_sync` credential-redacts
+        # summary/trace/error on write, so no redaction is owed here.
+        await _runs_store().append(
+            ScheduleRun(
+                run_id=run_id,
+                job_id=trigger_id,
+                trigger="manual",
+                started_at=started,
+                finished_at=finished,
+                duration_ms=int(max(0.0, finished - started) * 1000),
+                status=status,
+                summary=summary,
+                trace=summary,
+                error=error,
+            )
+        )
+
+        # Advance the SAME last-run stamp the autonomous recorder writes, so `_last_run_ts` moves
+        # and the completion watcher clears the pill. `state`/`health`/`enabled` are left untouched
+        # — a manual run reports that it ran; it does not drive the lifecycle the autonomous path
+        # does.
+        store = _trigger_store()
+        row = store.get(trigger_id)
+        if row is None:
+            return
+        live = row.trigger
+        live.last_run_id = run_id
+        stamp = datetime.now(timezone.utc).isoformat()
+        if status == "failure":
+            live.last_failure_at = stamp
+            # Serializers redact this on the way out (`_serialize_store` / `_schedule_row_for`),
+            # exactly as `_record_fire_outcome` relies on.
+            live.last_error_summary = (error or "manual run failed")[:200]
+        else:
+            live.last_success_at = stamp
+        store.upsert(live)
+    except Exception:  # noqa: BLE001 - see the docstring: recording must never fail the run
+        logger.debug("could not record the manual run for %s", trigger, exc_info=True)
 
 
 async def _run_event(raw: str, request: web.Request) -> web.Response:
