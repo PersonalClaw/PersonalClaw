@@ -628,6 +628,46 @@ def test_runner_marks_failed_on_mid_pipeline_error(store, monkeypatch):
     assert "LLM socket closed" in (item.get("processing_error") or "")
 
 
+class _DeletingPool:
+    """LLM pool stub that deletes the item mid-``send`` — faithfully reproducing a user
+    deleting an item during the ~30s insights model call — then returns topics that would
+    drive a terminal ``item_tags`` write against the now-gone parent row."""
+
+    def __init__(self, target_store, target_id: str):
+        self._store = target_store
+        self._id = target_id
+
+    async def send(self, prompt: str, timeout: float | None = None) -> str:
+        self._store.delete_item(self._id)
+        return '{"summary": "s", "topics": ["caching", "redis"]}'
+
+
+def test_runner_aborts_quietly_when_item_deleted_mid_enrichment(store, caplog):
+    """Deleting an item while its async enrichment is running must abort the pipeline
+    QUIETLY (#756). The parent ``knowledge_items`` row is gone, so a terminal write —
+    here ``_write_item_tags`` re-inserting ``item_tags`` from the AI topics — raises
+    ``sqlite3.IntegrityError: FOREIGN KEY constraint failed``. That is not a processing
+    fault: there is nothing left to enrich. The runner must NOT emit a traceback and must
+    NOT write ``processing_status='failed'`` to a row that no longer exists — it aborts as
+    ``deleted``, exactly like the post-graph delete guard."""
+    import logging
+
+    ensure_nodes_registered()
+    iid = store.create_typed_item(
+        item_type="note", title="N", content="the body text about caching"
+    )
+
+    with caplog.at_level(logging.ERROR, logger="personalclaw.knowledge.pipeline.runner"):
+        status = _run(ingest_item(store, iid, insights_pool=_DeletingPool(store, iid)))
+
+    assert status == "deleted"
+    # The item stays deleted — no 'failed' row is resurrected against the gone id.
+    assert store.get_item(iid) is None
+    # A genuine mid-pipeline fault logs "…failed mid-pipeline…" with a traceback; a benign
+    # delete race must not. The FK error was swallowed as the expected "item removed" case.
+    assert not any("failed mid-pipeline" in r.getMessage() for r in caplog.records)
+
+
 def test_runner_marks_partial_when_insights_model_unavailable(store, monkeypatch):
     """If the insights stage can't reach a model (cold/unavailable pool — a graceful
     failure, not an exception), the item must NOT be marked 'done' with stale/empty

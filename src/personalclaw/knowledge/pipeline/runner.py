@@ -187,6 +187,19 @@ async def ingest_item(
         if dedup_result:
             _emit("dedup", **dedup_result)
     except Exception as exc:
+        # The item may have been DELETED mid-enrichment — the terminal stages above (the
+        # ~30s insights/entity model calls) are exactly the window a user cancels a wrong
+        # item in. Its parent `items` row is then gone, so the next terminal write
+        # raises `sqlite3.IntegrityError: FOREIGN KEY constraint failed` (e.g.
+        # `_write_item_tags` re-inserting `item_tags` from the AI topics). That is not a
+        # processing fault: there is nothing left to enrich. Abort quietly exactly like
+        # the post-graph delete guard above — sweep any late-written artifacts, emit no
+        # traceback, and do NOT write `processing_status='failed'` to a row that no longer
+        # exists. Genuine mid-pipeline failures (item still present) fall through and are
+        # recorded `failed` as before.
+        if store.get_item(item_id) is None:
+            _cleanup_orphaned_artifacts(item_id)
+            return "deleted"
         logger.exception("knowledge ingest failed mid-pipeline for %s", item_id)
         store.update_item(
             item_id, processing_status="failed", processing_error=str(exc)[:500], touch=False
