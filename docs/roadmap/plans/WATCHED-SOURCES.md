@@ -342,3 +342,31 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
 10. A saved source query ("intitle:release !beta") matches new items with zero tokens and emits `SourceQueryMatched`; a Trigger subscribed to it fires; the morning-digest template produces ONE knowledge item + one notification through `notification_allowed()`.
 11. Every fetch in a 24h soak appears in SEL/egress audit with the `SOURCE` policy; no socket is opened outside `net.fetch`/`web/render.py` (asserted by test instrumentation).
 12. `SourcesConfig` knobs round-trip: PATCH via `_EDITABLE_CONFIG`, survive `AppConfig.load()`, appear in `to_dict()`, and render in Settings (the four-point wiring verified by the schema reachability tests).
+
+## Execution log
+
+- [WS-1] DONE: **§1.1 contract + §1.3 fix 1 (KnowledgeTypeHandler).** Defined the poll contract in
+  `knowledge_providers/base.py` — `SourceItem` (guid/title/content/url/published_at/also_seen_in),
+  `SourcePollResult` (items/cursor/error), and `KnowledgeSourceProvider(KnowledgeProvider)` adding
+  `poll(source_id, cursor) -> SourcePollResult` + `poll_interval_seconds` — and re-exported all three
+  via `sdk/knowledge.py`. Replaced the `knowledge` `EntitySeamHandler` no-op with a real
+  `KnowledgeTypeHandler` in `providers/registry.py` that registers an external provider into
+  `knowledge_providers.registry` (consumed by `list_provider_info` + `search_all`); moved `knowledge`
+  from `SEAM_TYPES` to `REAL_REGISTRY_TYPES` in `test_entity_seam_handlers.py`. A `KnowledgeProvider`
+  fixture registers through the handler and appears in `list_provider_info` as `kind:external`; the
+  `#47` `PROVIDER_TYPES`↔handlers parity test stays green (`knowledge` was already in `PROVIDER_TYPES`).
+  **DEVIATION (recorded, owner licence):** the atom's clause "`create_native_provider` returns a real
+  factory (no longer None)" was RE-SCOPED. The registry-level factory stays `None` **by design**: the
+  native provider needs the `DashboardState` store/queue (unavailable at manifest-factory time) and
+  self-registers via `state.knowledge_provider()` — the single source of truth. `_enable_one` skips
+  `register()` for a `None` instance, so enabling `native-knowledge` through the now-real handler does
+  NOT double-register it (the exact "second source of truth" trap the seam docstring warns against).
+  Making it return a real instance would require store-injection into the manifest path or a second
+  registration — neither is a clean break, and the `done_when`'s observable goal (an EXTERNAL provider
+  appears as `kind:external`) is fully met by the real handler. `§1.3 fix 2/3` (search_all non-goal /
+  further create_native_provider work) belong to later WS atoms with a real consumer. Fixed a latent
+  bug found in review: the handler's `deregister` used a `getattr(instance, "name", ext.name)` default
+  that eagerly dereferenced `ext` — now computes the fallback lazily. **Gates:** `make lint` clean
+  (692 files); `test_entity_seam_handlers.py` (10) + `test_provider_registry.py` + `test_app_manifest.py`
+  (incl. #47 parity) + `test_knowledge_provider*` = 80 passed. Contract-only; no user-facing surface
+  yet (WS-2's SourceEngine is the consumer) → no CHANGELOG entry.
