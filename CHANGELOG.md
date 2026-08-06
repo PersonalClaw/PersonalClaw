@@ -8,6 +8,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Security
+
+- **App backends now authenticate inbound requests, closing a direct-to-port bypass.** An app's
+  backend subprocess binds on loopback (`127.0.0.1:<port>`), which is a network boundary, not an
+  authorization one — before this change any local process that found the port could talk to the
+  backend directly, bypassing the gateway proxy and therefore session auth and the app-permission
+  middleware. Every request the proxy forwards now carries an HMAC signature
+  (`X-PersonalClaw-Proxy: <ts>:<hmac>` over `<ts>:<METHOD>:<path?query>:<sha256(body)>`, ±60s
+  replay window, constant-time compare) keyed by a per-app 256-bit secret minted 0600 at
+  `apps_dir()/<app>/.app_secret`. The backend verifies it **fail-closed** via the new
+  `personalclaw.sdk.security.require_proxy_signature()` middleware — no/stale/bad signature ⇒ 401
+  before any route runs; a backend that cannot obtain a verifiable secret does not start. `/health`
+  is exempt so the watchdog can probe it. Both first-party backends adopt the middleware. This
+  proves a request came from the gateway proxy; it does not encrypt loopback traffic or defend
+  against a process that can read the root-only secret file (see
+  `docs/architecture/app-platform.md`).
+
 ### Changed
 
 - **Security docs now describe what the sandbox actually does — credential-hiding, not

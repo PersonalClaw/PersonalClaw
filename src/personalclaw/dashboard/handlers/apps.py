@@ -931,7 +931,26 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     if rb is None:
         return web.json_response({"error": f"app {name!r} backend not running"}, status=502)
 
-    target = f"{rb.base_url}/{tail}"
+    # The tail path (plus any query string) is exactly what the backend's aiohttp sees
+    # as request.raw_path, so we sign THAT — the verifier reconstructs the identical
+    # string. Build the upstream URL from the same target so the two never drift.
+    from yarl import URL
+
+    from personalclaw.apps.app_secret import read_app_secret
+    from personalclaw.sdk.security import PROXY_SIGNATURE_HEADER, sign_proxy_request
+
+    target_url = URL(rb.base_url).with_path(f"/{tail}").with_query(request.rel_url.query)
+    path_qs = target_url.raw_path_qs
+
+    # Fail closed: without the per-app secret we cannot prove this request came from the
+    # gateway proxy, so we must NOT forward it unsigned (that would defeat the whole
+    # inbound-auth boundary). The supervisor minted it at start(); a missing secret means
+    # the backend was never started protected.
+    proxy_secret = read_app_secret(name)
+    if not proxy_secret:
+        logger.warning("app %s proxy: secret missing; refusing to forward unsigned", name)
+        return web.json_response({"error": "app backend not available"}, status=502)
+
     # Strip the owner credential (cookie + Authorization) and any inbound app-identity
     # headers, then attach a fresh app-scoped token so the backend is bounded to its
     # own permissions rather than borrowing the owner's session.
@@ -943,14 +962,19 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     )
     fwd_headers["X-PersonalClaw-App"] = name
     body = await request.read()
+    # Sign the request so the backend's fail-closed middleware can prove it came from the
+    # gateway proxy. The signature covers ts + method + the exact wire path + a hash of
+    # the body, within a ±60s window (replay protection).
+    fwd_headers[PROXY_SIGNATURE_HEADER] = sign_proxy_request(
+        proxy_secret, request.method, path_qs, body
+    )
     timeout = aiohttp.ClientTimeout(total=_PROXY_TIMEOUT)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.request(
                 request.method,
-                target,
+                target_url,
                 headers=fwd_headers,
-                params=request.rel_url.query,
                 data=body or None,
                 allow_redirects=False,
             ) as upstream:
