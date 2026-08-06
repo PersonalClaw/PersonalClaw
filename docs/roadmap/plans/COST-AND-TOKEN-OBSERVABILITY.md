@@ -175,3 +175,17 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   files); `tests/test_usage_ledger.py` (12: round-trip, all 5 group keys, tainted-total rule,
   window filter, fail-open, corrupt-line tolerance, inventory audit both ways) + `test_durability_inventory.py`
   (22) pass.
+
+- **CATO-2 DONE — the chat write-site (C2, 1 of 4).** A real dashboard chat turn now writes exactly
+  one ledger row at the `EVENT_COMPLETE` handler (`chat_runner.py`, beside the existing
+  `stats.inc_cost_usd`), via a new `_record_turn_usage(event, *, session_key, source, agent, provider,
+  model)` helper. Vendor-reported cost wins when present; when the provider reported none the caller's
+  `estimate_cost` fallback (already resolved at that site) is recorded. `priced` is False ONLY when the
+  model has no `model_pricing.json` row (via the existing `pricing.has_pricing`) AND the provider
+  reported no cost — then `cost_usd` is an honest 0.0 the UI renders "unpriced". `record_turn` is
+  fail-open, so a ledger fault can't break a turn. Scope: the CHAT write-site only — the subagent /
+  loop-cron / channel-cli sites (the other three of C2) and the surfaces (S2) are later atoms, so
+  still no user-visible readout → no CHANGELOG. **Gates:** `make lint` clean (697 files);
+  `tests/test_usage_ledger.py::TestChatWriteSite` (4: one row with provider cost=priced, priced-model
+  zero-cost still priced, unpriced-model→priced=False+0.0, write-site fail-open) + full usage-ledger
+  suite (16) + `test_chat_runner_procedural_wiring` (3) pass.
