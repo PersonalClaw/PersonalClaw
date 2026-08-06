@@ -413,6 +413,12 @@ def export_shards(
                         result.databases.append(staged)
             elif entry.kind == inv.KIND_JSON_ENTITY_DIR:
                 rows = _json_rows_from_entity_dir(src) if src.is_dir() else []
+                if entry.tombstones and src.is_dir():
+                    # Fold the hard-delete side-log so a deleted row's marker rides the
+                    # export (DAS-6c-iii). Only for tombstone entries; a no-op otherwise.
+                    from personalclaw.durability.tombstones import merge_into_rows
+
+                    rows = merge_into_rows(src, rows)
                 result.shards.extend(_write_shard(out_dir, f"{entry.id}/entities.jsonl", rows))
             elif entry.kind == inv.KIND_JSON_FILE:
                 rows = _json_rows_from_file(src) if src.is_file() else []

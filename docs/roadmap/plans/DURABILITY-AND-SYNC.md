@@ -1329,7 +1329,16 @@ beyond staging the DB copy the exporter already knows how to make.
   (10) + `test_durability_service.py` + `test_config_roundtrip.py` + full durability suite
   (257 passed, 2 skipped) pass.
 
-## BLOCKED — DAS-6c-iii (tombstone producers) needs an owner design decision (2026-08-06)
+## RESOLVED — DAS-6c-iii owner decision: Fork B (sync-only tombstone side-log), 2026-08-06
+
+Owner chose **Fork B**: hard-delete stays, plus a durability-isolated `_tombstones.jsonl`
+side-log — no tasks-subsystem/FE churn, no user-facing undo/retention surface, shipped #809
+writeback unchanged. **DAS-6c-iii-a DONE** (the log primitive + export fold); **6c-iii-b** wires
+the delete write-sites (`tasks/native.py:delete_task`/`delete_comment`,
+`hierarchy.delete_project`/`delete_task_list`) to call `record_tombstone`, and adds the GC to the
+sync cycle. See the log entry below the original fork writeup.
+
+## (original fork writeup) DAS-6c-iii tombstone-producer options (2026-08-06)
 
 The sync tombstone MECHANISM is complete and correct end-to-end (verified: a tombstone that
 exists propagates a delete and is honored by merge + writeback). But NOTHING produces one:
@@ -1357,3 +1366,28 @@ semantics (A) vs. a durability-local mechanism (B), and it decides whether shipp
 writeback unlink is final or must persist markers. Everything through #819 is unaffected: sync is
 OFF by default and has no tombstone producers, so create/update convergence (Criterion 4's build
 half) is live and safe today; only cross-machine DELETE convergence waits on this decision.
+
+## Execution log — DAS-6c-iii-a (tombstone side-log primitive + export fold; owner Fork B)
+
+- **DAS-6c-iii-a DONE.** `durability/tombstones.py` — the sync-only delete side-log Fork B calls
+  for. `record_tombstone(entry_dir, row_id, *, now)` appends `{"id", "deleted_at"}` to
+  `<entry_dir>/_tombstones.jsonl` (best-effort, never raises — a delete must not fail because its
+  sync breadcrumb couldn't be written). `read_tombstones` returns newest-per-id, id-sorted,
+  corrupt-lines-skipped. `merge_into_rows(entry_dir, live_rows)` folds the log into an entity-dir
+  export: a tombstone whose id is GONE from the live rows is appended (the delete marker is all
+  that remains); a tombstone whose id is LIVE AGAIN (recreated after delete) is DROPPED, so a stale
+  marker can't delete a resurrected entity. `prune(entry_dir, *, keep_after)` GCs entries past the
+  sync horizon so the log can't grow unbounded. Wired into `export_shards`' entity-dir branch,
+  guarded by `entry.tombstones` (so only tasks/projects pay for it) — a hard-deleted task's marker
+  now rides the export as a tombstone row, which merge+writeback already honor (verified
+  end-to-end). The `_`+`.jsonl` name keeps it invisible to BOTH the store's `*.json` reads and the
+  exporter's entity extraction (proven). Clock-free at the seam (`now`/`keep_after` passed in).
+  Determinism guarantee intact (33 shards tests + 20 db-shards/sync-cycle tests green). No user
+  surface → no CHANGELOG. **Remaining (6c-iii-b):** call `record_tombstone` from the four hard-delete
+  sites (`tasks/native.py:delete_task`/`delete_comment`, `hierarchy.delete_project`/
+  `delete_task_list`) + invoke `prune` from the sync cycle with a horizon derived from
+  `sync_stale_after_secs`. Then DAS-6d (git-sync + dir-sync transport apps in PersonalClawApps +
+  e2e criterion-4 over a real git repo/folder). **Gates:** `make lint` clean (710 files);
+  `tests/test_durability_tombstones.py` (12: record/read/dedup/corrupt-skip/invisible-to-glob,
+  fold appends-when-gone + drops-when-live + passthrough, prune horizon, end-to-end export fold)
+  + shards/db-shards/sync-cycle regression (53) pass.
