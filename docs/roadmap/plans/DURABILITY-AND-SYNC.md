@@ -1207,3 +1207,32 @@ beyond staging the DB copy the exporter already knows how to make.
   (7: publishes objects + commits registry, obligation-before-push, transient-doesn't-announce,
   monotonic seq across publishes, lost-race-then-win reload+retry preserving both seqs, no-reloader
   gives up, persistent race gives up bounded at 5) pass.
+
+## Execution log — DAS-6c-ii-g (whole-DB copies in the shard format)
+
+- **DAS-6c-ii-g DONE (the format half of the DB path).** The diffable row shards store
+  embedding/byte columns as `{"__bytes__": n}` placeholders, so they can't rebuild a DB
+  losslessly. Extended the shard format to carry the real database: `export_shards` gains a
+  keyword-only `include_databases=False` — when a SYNC export sets it True, each `KIND_SQLITE`
+  entry additionally stages its already-consistent backup-API copy (the one the exporter already
+  makes for row extraction — no second live read) under `db/<entry_id>.db`, recorded as a new
+  `DbCopy` in `ExportResult.databases` and declared in the manifest's new `databases` list.
+  `validate()` verifies each DB copy's bytes + sha256 (a corrupted copy is named), and treats an
+  absent `databases` key as valid (a row-only/incremental export). `import_shards` surfaces
+  `ImportResult.databases` = `{entry_id: db/<entry>.db}` (respecting the `entries` filter) so the
+  6c-ii-h DB merger can ATTACH the real database. **The hourly incremental backup path is
+  untouched** — it never passes `include_databases`, so its byte-for-byte determinism (DB files
+  aren't byte-stable across runs by nature) and all 33 existing `test_durability_shards.py` cases
+  still pass, and `test_snapshot.py` (111) is green. The row shards are STILL written alongside the
+  DB (human-diffable review + the append/entity merge paths); the DB copy is only the merge source
+  for sqlite entries. Clean break; the new field has its consumer in 6c-ii-h. No user surface → no
+  CHANGELOG. **Remaining:** 6c-ii-h (the DB merger seam itself — `db_merger(entry, shard_dir)` that
+  ATTACHes `import_shards().databases[entry.id]` via `snapshot._merge_sqlite_attach`, keeping
+  memory.db's `is_deleted=0` executor, then rebuilds derived faiss/index — the callback the pull
+  engine already accepts + `include_databases=True` on the push engine's export), then 6c-ii-i
+  (assemble `run_sync_cycle` + `stale_after_secs` + service wiring + `DurabilityConfig.sync_*`),
+  then DAS-6d (git/dir-sync apps + e2e criterion-4). **Gates:** `make lint` clean (707 files);
+  `tests/test_durability_db_shards.py` (13: default stages nothing, sync stages a lossless openable
+  DB, rows written alongside, manifest declares dbs, validate passes + catches a corrupted copy +
+  accepts a row-only export, import maps entry→path + respects the filter, determinism untouched) +
+  `test_durability_shards.py` (33) + `test_snapshot.py` (111) all pass.
