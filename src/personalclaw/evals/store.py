@@ -1,9 +1,10 @@
 """The evals store layout + helpers (EVALUATION-SUBSTRATE §1.1).
 
 Everything lives under ``~/.personalclaw/evals/``. Whole-file JSON artifacts
-(``experiment.json``/``aggregates.json`` per matrix) go through ``atomic_write``;
-the cross-run ``results.tsv`` ledger is append-only — a plain ``open(..., "a")``
-with the parent ensured, matching how the guardrails audit appends its jsonl.
+(``experiment.json``/``aggregates.json``/``trials.json`` per matrix) go through
+``atomic_write``; the cross-run ``results.tsv`` ledger is append-only — a plain
+``open(..., "a")`` with the parent ensured, matching how the guardrails audit
+appends its jsonl.
 
 ES-1a physically supports the ``matrices/`` subtree and the ``results.tsv`` ledger.
 The ``studies/``/``benchmarks/``/``trust/`` subtrees named in §1.1 are owned by
@@ -141,6 +142,29 @@ def write_matrix_aggregates(matrix_id: str, agg_dict: dict) -> Path:
 def read_matrix_aggregates(matrix_id: str) -> dict | None:
     """Read a matrix's ``aggregates.json``, or ``None`` if it doesn't exist."""
     path = matrix_dir(matrix_id) / "aggregates.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_matrix_trials(matrix_id: str, cells: list) -> Path:
+    """Persist a matrix's per-cell ``trials.json`` via ``atomic_write``.
+
+    Each entry is one cell's coords/outcome/score/artifact_ref — the drill-down
+    behind the ``aggregates.json`` summary (§1.2's "a surprising aggregate is always
+    drillable to the run that produced it"). ``cells`` are :class:`CellResult`-shaped
+    objects; they are serialized through their ``to_dict`` so this store stays
+    dataclass-agnostic (no import of the matrix TYPES, no cycle).
+    """
+    path = matrix_dir(matrix_id) / "trials.json"
+    rows = [c.to_dict() if hasattr(c, "to_dict") else dict(c) for c in cells]
+    atomic_write(path, json.dumps(rows, indent=2, sort_keys=True))
+    return path
+
+
+def read_matrix_trials(matrix_id: str) -> list | None:
+    """Read a matrix's ``trials.json``, or ``None`` if it doesn't exist."""
+    path = matrix_dir(matrix_id) / "trials.json"
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
