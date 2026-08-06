@@ -416,6 +416,39 @@ class ChannelTypeHandler(_TypeHandler):
         unregister_transport(getattr(instance, "name", ext.name))
 
 
+class SyncTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'sync'`` extensions (durability sync transports).
+
+    Builds a ``SyncTransportProvider`` via the manifest factory and registers it in the
+    ``sync_transports`` registry so the sync cycle can resolve the configured back-end by
+    name. Enabling ``git-sync`` registers the git transport; disabling it unregisters it —
+    the same one-source-of-truth lifecycle the channel transports follow. Lands in the same
+    commit as the ``sync`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.sync_transports import register_transport
+
+        register_transport(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.sync_transports import unregister_transport
+
+        # Fallback computed without a getattr default so ``ext`` is not dereferenced
+        # when the instance already carries a name (ext may be absent in tests).
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_transport(name)
+
+
 class PromptTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'prompt'`` extensions.
 
@@ -758,6 +791,7 @@ def get_provider_registry() -> ProviderRegistry:
             ),
         )
         _registry.register_type_handler("channel", ChannelTypeHandler())
+        _registry.register_type_handler("sync", SyncTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
         # a pluggable provider family — so Spaces config lives under Settings >
