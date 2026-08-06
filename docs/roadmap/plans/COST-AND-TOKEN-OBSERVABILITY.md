@@ -158,4 +158,20 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
 
 ## Execution log
 
-_(empty — no session has run yet)_
+- **CATO-1 (T1.1) DONE — the ledger store.** Added `src/personalclaw/usage_ledger.py`: the
+  `TurnUsage` dataclass (§C1 shape — session/source/agent/provider/model + four token classes +
+  cost_usd + `priced` + duration_ms), `record_turn` (append-only JSONL at
+  `config_dir()/usage/turns.jsonl`, fail-open — a write failure DEBUG-logs and never raises into a
+  turn, §2.7; 2×-cap atomic-rewrite trim per the feedback.py house convention), `rollup(group_by ∈
+  {model,source,agent,provider,day})` and `totals` — both fold a `priced` flag that goes False when
+  ANY constituent row is unpriced (a partial total can't present as complete), sorted by descending
+  cost. Registered the path in `durability/inventory.py` as `usage_ledger` (`KIND_JSONL_APPEND`,
+  `DOMAIN_PLATFORM`, `derived=True`, `secret=False`) so `audit_home()` claims it — proven both ways
+  (passes WITH the entry, reports `usage/` unclaimed WITHOUT). Scope: T1.1 ONLY — the four write
+  sites (C2) and the three surfaces (S2) are separate atoms, so no user-facing readout yet → no
+  CHANGELOG entry (the store is invisible until S2). Soul guardrails honored: observation-only (no
+  enforcement — that's SpendMeter), honest-zero (`priced=False` never renders `$0.00`), one meter
+  (real provider tokens + USD, never an invented unit). **Gates:** `make lint` clean (697 source
+  files); `tests/test_usage_ledger.py` (12: round-trip, all 5 group keys, tainted-total rule,
+  window filter, fail-open, corrupt-line tolerance, inventory audit both ways) + `test_durability_inventory.py`
+  (22) pass.
