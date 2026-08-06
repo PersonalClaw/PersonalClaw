@@ -223,3 +223,17 @@ Frontend rules that apply (non-negotiable, from the protocol): filter state live
   (7: vendor-cost-wins, estimate-when-absent, honest-zero, all-six-sources-in-rollup, fail-open,
   on_complete fires with the event, None→byte-identical) + full usage-ledger + `test_subagent.py`
   (65) + `test_llm_helpers.py` = 92 passed.
+
+- **CATO-5 DONE — the usage read API.** `dashboard/handlers/usage.py`: `GET /api/usage/rollup?group_by=&since=&until=`
+  (group_by ∈ model|source|agent|provider|day, defaults model) and `GET /api/usage/totals?since=&until=`,
+  both thin read-only wrappers over `usage_ledger.rollup`/`totals`, registered via `register_usage_routes`
+  in `server.py`. A bad `group_by` is a §2.2 `{error:{code,message}}` 400 (validated at the boundary,
+  not a 500); a ledger read fault degrades to a 500 envelope rather than propagating; an empty ledger
+  returns `rows:[]`/`turns:0`, not an error. Read-only — this plan is observation, never enforcement,
+  so there is no mutate route. Per the done-when, regenerated the offline agent reference
+  (`python -m personalclaw.manifest_reference` → `routes.md`+`index.md` picked up the two new routes)
+  and the drift test is green. Scope: API only — the surfaces that render it (S2: turn readout /
+  session header / Usage panel = CATO-6..8) are later atoms, so no user-visible readout yet → no
+  CHANGELOG. **Gates:** `make lint` clean (699 files); `tests/test_usage_routes.py` (6: rollup by
+  source, default-model, bad-group_by→400 envelope, totals, window-filter threading, empty-ledger-ok)
+  + `test_agent_reference.py` (7) pass.

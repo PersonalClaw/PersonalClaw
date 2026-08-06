@@ -440,6 +440,10 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
     register_feedback_routes(app)
+    # Cost & token observability — read-only rollup/totals over the usage ledger.
+    from personalclaw.dashboard.handlers.usage import register_usage_routes
+
+    register_usage_routes(app)
     # Learning Flywheel §6.1 — the Proposal Inbox + the staging week panel. Its accept route is the
     # HTTP half of §7's human-installs invariant: the actor is derived from the request, never the
     # body, so an app-scoped token cannot name itself a reviewer.
