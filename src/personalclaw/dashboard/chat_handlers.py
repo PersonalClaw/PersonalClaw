@@ -2016,8 +2016,9 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
       - ``plan``:  the agent plans; NO tool executes
       - ``build``: scoped to producing an artifact/widget/skill
 
-    Body: ``{mode: <task mode>, session?: <key>}``. When ``session`` is omitted the
-    mode applies to all sessions (mirrors the approval handler's broadcast shape).
+    Body: ``{mode: <task mode>, session?: <key>}``. ``mode`` is REQUIRED. When
+    ``session`` is omitted the mode applies to all sessions (mirrors the approval
+    handler's broadcast shape); the response names the sessions it changed.
     """
     state: DashboardState = request.app["state"]
     try:
@@ -2026,7 +2027,11 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    mode = body.get("mode", "agent")
+    # No default: an absent (or non-string) mode is refused, not read as ``agent``.
+    # Defaulting made the most under-specified request the most permissive one — a
+    # bodiless POST relaxed every ask/plan session to full execution. A caller that
+    # cannot name the mode it wants is not asking to widen the tool gate.
+    mode = body.get("mode")
     if mode not in VALID_TASK_MODES:
         return web.json_response(
             {"error": f"invalid task mode (expected one of {VALID_TASK_MODES})"}, status=400
@@ -2057,7 +2062,9 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
         logger.warning("SEL audit failed for task-mode change", exc_info=True)
 
     state.push_sessions_update()
-    return web.json_response({"ok": True, "task_mode": mode})
+    # Name the sessions actually changed: the broadcast form is still supported, so a
+    # caller must be able to tell a one-session change from a fleet-wide one.
+    return web.json_response({"ok": True, "task_mode": mode, "sessions": [s.key for s in targets]})
 
 
 async def api_chat_session_approve(request: web.Request) -> web.Response:
