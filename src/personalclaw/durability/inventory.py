@@ -463,6 +463,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_APPEND_DEDUP,
         help="one line per model-call attempt",
     ),
+    StateEntry(
+        # COST-AND-TOKEN-OBSERVABILITY §2.4: the per-turn cost/token ledger. Derived =
+        # reconstructible telemetry-of-self (rebuildable from the SEL/event stream), not
+        # irreplaceable user content, so export/retention treats it as disposable.
+        id="usage_ledger",
+        kind=KIND_JSONL_APPEND,
+        path="usage",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="per-turn token + cost ledger (usage/turns.jsonl)",
+    ),
     # Both index stores declare themselves disposable in their own docstrings — session_search
     # "holds no truth of its own … better rebuilt than restored", codegraph re-parses on mtime — so
     # they are DERIVED, which keeps them out of `backup_entries()` while still being claimed. Not
