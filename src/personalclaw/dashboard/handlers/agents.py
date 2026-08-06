@@ -693,6 +693,7 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     name = name.lower()
 
     import re as _re
+
     # The canonical agent name validator (matches marketplace.py)
     if not _re.fullmatch(r"^[a-z0-9][a-z0-9-]{0,62}$", name):
         return web.json_response(

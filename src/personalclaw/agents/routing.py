@@ -218,9 +218,7 @@ def _load_store() -> dict:
     if not isinstance(raw, dict):
         return {}
     raw["muted"] = list(dict.fromkeys(str(m).lower() for m in (raw.get("muted") or [])))
-    raw["dismissals"] = {
-        str(k).lower(): v for k, v in (raw.get("dismissals") or {}).items()
-    }
+    raw["dismissals"] = {str(k).lower(): v for k, v in (raw.get("dismissals") or {}).items()}
     return raw
 
 
