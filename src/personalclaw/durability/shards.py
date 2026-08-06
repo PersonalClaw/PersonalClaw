@@ -528,6 +528,114 @@ def export_and_validate(home: Path, out_dir: Path) -> tuple[ExportResult, Valida
     return exported, validate(out_dir)
 
 
+# ── import (the read side; DURABILITY-AND-SYNC DAS-6) ────────────────────────
+# S2k shipped the export half write-only: shards could be produced + validated but
+# nothing read them back. The sync cycle (DAS-6c) merges shards from a remote into
+# the local state, and a restore reconstructs a home from shards — both need to turn
+# a shard directory back into rows, keyed by the inventory entry that owns them. This
+# is that read side: the exact inverse of `export_shards`' row extraction, so an
+# export→import round-trip returns every non-secret, non-derived row unchanged.
+
+
+@dataclass
+class ImportResult:
+    """What :func:`import_shards` read back from a shard directory.
+
+    ``rows`` maps an inventory entry id → its rows, reassembled across year buckets,
+    sqlite tables, and ``part-NNNN`` splits (so the caller sees one flat list per
+    entry, exactly what `export_shards` was handed). ``blobs`` lists the content-addressed
+    blob paths present under ``blobs/`` (KIND_TREE payloads), relative to the shard dir.
+    ``problems`` carries any non-fatal read issue; a structurally broken export raises.
+    """
+
+    rows: dict[str, list[dict]] = field(default_factory=dict)
+    blobs: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)
+    machine_id: str = ""
+
+    @property
+    def entries(self) -> int:
+        return len(self.rows)
+
+    @property
+    def total_rows(self) -> int:
+        return sum(len(v) for v in self.rows.values())
+
+
+def _entry_id_of(rel: str) -> str:
+    """The inventory entry id that owns a shard — its first path segment.
+
+    Mirrors ``_merged_shard_records``' matching rule: every shard `export_shards`
+    writes is rooted at ``<entry_id>/…`` (``tasks/entities.jsonl``,
+    ``memory_db/semantic_memory.jsonl``, ``sessions/2026.jsonl``, possibly with a
+    ``.part-0001`` suffix), so the leading segment is the entry that produced it.
+    """
+    return rel.split("/", 1)[0]
+
+
+def _rows_of_shard(shard_dir: Path, rel: str) -> list[dict]:
+    """Parse one shard file's canonical-JSONL rows (blank lines skipped)."""
+    data = (shard_dir / rel).read_bytes()
+    out: list[dict] = []
+    for line in data.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        out.append(json.loads(line))
+    return out
+
+
+def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> ImportResult:
+    """Read a shard directory back into rows keyed by inventory entry id.
+
+    The inverse of :func:`export_shards`. Runs :func:`validate` first — a shard whose
+    bytes/sha/row-count drifted from the manifest is not trustworthy input for a merge
+    or restore, so a failed validation raises :class:`ValueError` rather than importing
+    silently corrupt data. ``entries`` optionally restricts to specific entry ids (the
+    sync cycle imports only the entries a remote actually changed).
+
+    Rows for an entry are reassembled across every shape the exporter splits into —
+    sqlite tables (``<entry>/<table>.jsonl``), year buckets (``<entry>/2026.jsonl``),
+    and deterministic ``part-NNNN`` files — into one flat, order-preserving list, so a
+    round-trip yields exactly the rows that were exported.
+    """
+    report = validate(shard_dir)
+    if not report.ok:
+        raise ValueError(
+            "refusing to import an invalid shard export:\n" + "\n".join(report.problems)
+        )
+
+    manifest = json.loads((shard_dir / _MANIFEST).read_text(encoding="utf-8"))
+    result = ImportResult(machine_id=str(manifest.get("machine_id", "")))
+    wanted = set(entries) if entries else None
+
+    # Read declared shards in manifest order so part-NNNN splits reassemble in the
+    # same order they were written (the manifest's `shards` list is path-sorted).
+    for record in manifest.get("shards", []):
+        rel = str(record.get("path", ""))
+        if not rel:
+            continue
+        entry_id = _entry_id_of(rel)
+        if wanted is not None and entry_id not in wanted:
+            continue
+        try:
+            result.rows.setdefault(entry_id, []).extend(_rows_of_shard(shard_dir, rel))
+        except (OSError, json.JSONDecodeError) as exc:
+            # validate() already re-parsed every row, so this is unreachable in
+            # practice; kept as a non-fatal guard rather than a crash on a race.
+            result.problems.append(f"{rel}: unreadable during import ({exc})")
+
+    # KIND_TREE payloads live under blobs/<sha[:2]>/<sha>; enumerate them so a
+    # restore/merge can rehydrate the tree. Content-addressed, so listing is enough.
+    blob_root = shard_dir / "blobs"
+    if blob_root.is_dir():
+        result.blobs = sorted(
+            p.relative_to(shard_dir).as_posix()
+            for p in blob_root.rglob("*")
+            if p.is_file() and not p.is_symlink()
+        )
+    return result
+
+
 def dirty_entries(home: Path, state_path: Path) -> list[str]:
     """Inventory entry ids whose content changed since the last export.
 

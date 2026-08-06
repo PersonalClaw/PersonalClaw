@@ -983,3 +983,18 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   personalclaw.manifest_reference` and amended into the DAS-6a commit; cascade-rebased CATO-1 + PCS-2.
   Lesson: a new `PROVIDER_TYPES` entry MUST regenerate `reference/providers.md` in the same commit —
   the full-suite `test` job catches it even when file-scoped tests + `make lint` are green.
+
+- **DAS-6b DONE — the shard IMPORT (read) side.** S2k shipped `shards.py` write-only: shards could be
+  produced + `validate`d but nothing read them back. Added `import_shards(shard_dir, entries=None) ->
+  ImportResult` — the exact inverse of `export_shards`' row extraction: it `validate`s first (a shard
+  whose bytes/sha/row-count drifted from the manifest is untrustworthy input for a merge/restore, so a
+  failed validation RAISES rather than importing silently-corrupt data), then reads every declared
+  shard in manifest order into `{entry_id: [rows]}`, reassembling across sqlite tables, year buckets,
+  and deterministic `part-NNNN` splits into one flat order-preserving list per entry. `ImportResult`
+  also enumerates content-addressed `blobs/` (KIND_TREE payloads) and carries the source `machine_id`.
+  Scope: the read primitive ONLY — the restore-into-live-home-with-merges and the pull→merge→push
+  cycle are DAS-6c; two-machine convergence is DAS-6d. Contract/primitive, no user surface → no
+  CHANGELOG. **Gates:** `make lint` clean (697 files); `tests/test_durability_shards.py::TestImport`
+  (8: full round-trip row-count/entry parity, entity-dir by-id, sqlite-table reassembly, year-bucket
+  merge, secrets-absent, entries-filter, invalid-export-refuses, part-split reassembly-in-order) +
+  the full shards suite = 36 passed.
