@@ -258,7 +258,7 @@ class HierarchyStore:
         if not project:
             return False
         if project.is_default_project():
-            raise ValueError(f"the default project '{project.name}' cannot be deleted")
+            raise ValueError(f"built-in project '{project.name}' cannot be deleted")
         # Cascade: drop the project's task lists (tasks are re-homed by the caller
         # / left orphaned-by-list — the task provider owns task deletion).
         for tl in self.list_task_lists(project_id=project_id):
