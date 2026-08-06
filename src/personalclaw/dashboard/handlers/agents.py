@@ -616,6 +616,15 @@ async def api_agent_detail(request: web.Request) -> web.Response:
 # ── PersonalClaw Agent CRUD API ──
 
 
+def _resolve_agent_name(name: str, cfg) -> str | None:
+    """Case-insensitively resolve an agent name against the loaded config."""
+    name_lower = name.lower()
+    for existing in cfg.agents:
+        if existing.lower() == name_lower:
+            return existing
+    return None
+
+
 async def api_personalclaw_agents(request: web.Request) -> web.Response:
     """GET /api/agents — list all PersonalClaw agent definitions."""
     from personalclaw.agents.defaults import is_reserved_agent
@@ -694,7 +703,7 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
         )
     async with _get_config_lock():
         cfg = AppConfig.load()
-        if name in cfg.agents:
+        if _resolve_agent_name(name, cfg):
             return web.json_response({"error": f"Agent '{name}' already exists"}, status=409)
         cfg.agents[name] = AgentProfile(
             provider=body.get("provider", ""),
@@ -757,9 +766,10 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
             )
     async with _get_config_lock():
         cfg = AppConfig.load()
-        if name not in cfg.agents:
+        actual_name = _resolve_agent_name(name, cfg)
+        if not actual_name:
             return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
-        agent = cfg.agents[name]
+        agent = cfg.agents[actual_name]
         changed: list[str] = []
         if "provider" in body:
             agent.provider = body.get("provider", "")
@@ -834,14 +844,15 @@ async def api_personalclaw_agent_delete(request: web.Request) -> web.Response:
         )
     async with _get_config_lock():
         cfg = AppConfig.load()
-        if name not in cfg.agents:
+        actual_name = _resolve_agent_name(name, cfg)
+        if not actual_name:
             return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
-        if name == cfg.default_agent:
+        if actual_name == getattr(cfg, "default_agent", ""):
             return web.json_response(
-                {"error": f"Cannot delete default agent '{name}'. Change default_agent first."},
+                {"error": f"Cannot delete default agent '{actual_name}'. Change default_agent first."},
                 status=409,
             )
-        del cfg.agents[name]
+        del cfg.agents[actual_name]
         cfg.save()
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
@@ -873,10 +884,12 @@ def _regen_orchestrator() -> None:
 async def api_agent_metadata_get(request: web.Request) -> web.Response:
     """GET /api/agent-metadata/{name} — read agent routing metadata."""
     name = request.match_info["name"]
+    cfg = AppConfig.load()
+    actual_name = _resolve_agent_name(name, cfg) or name
     from personalclaw.agent_metadata import load  # noqa: F811
 
-    content = load(name)
-    return web.json_response({"name": name, "content": content})
+    content = load(actual_name)
+    return web.json_response({"name": actual_name, "content": content})
 
 
 async def api_agent_metadata_put(request: web.Request) -> web.Response:
@@ -895,6 +908,8 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
             logger.warning("SEL logging failed", exc_info=True)
         return web.json_response({"error": "authentication required"}, status=401)
     name = request.match_info["name"]
+    cfg = AppConfig.load()
+    actual_name = _resolve_agent_name(name, cfg) or name
     try:
         body = await request.json()
     except Exception:
@@ -906,15 +921,15 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         return web.json_response({"error": "content required"}, status=400)
     from personalclaw.agent_metadata import save  # noqa: F811
 
-    save(name, content)
+    save(actual_name, content)
     _regen_orchestrator()
     try:
         _sel().log_api_access(
-            caller=caller, operation="agent_metadata.put", outcome="ok", resources=name
+            caller=caller, operation="agent_metadata.put", outcome="ok", resources=actual_name
         )
     except Exception:
         logger.warning("SEL logging failed", exc_info=True)
-    return web.json_response({"ok": True, "name": name})
+    return web.json_response({"ok": True, "name": actual_name})
 
 
 async def api_agent_metadata_delete(request: web.Request) -> web.Response:
@@ -933,9 +948,11 @@ async def api_agent_metadata_delete(request: web.Request) -> web.Response:
             logger.warning("SEL logging failed", exc_info=True)
         return web.json_response({"error": "authentication required"}, status=401)
     name = request.match_info["name"]
+    cfg = AppConfig.load()
+    actual_name = _resolve_agent_name(name, cfg) or name
     from personalclaw.agent_metadata import delete  # noqa: F811
 
-    delete(name)
+    delete(actual_name)
     _regen_orchestrator()
     try:
         _sel().log_api_access(
