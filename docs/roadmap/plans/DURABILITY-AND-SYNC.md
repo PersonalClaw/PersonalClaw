@@ -1075,3 +1075,27 @@ was delivered, and the gateway log was clean. Full suite 8679 passed; lint clean
   `tests/test_durability_outbox.py` (23: enqueue idempotency, all four outcome→status transitions incl.
   unclassified-as-transient, one-target-give-up-doesn't-block-others, persistence across handles, stats,
   corrupt-file skip; cursor consumed/hold/payload-bad/monotonic/copy/unknown-verdict/reload/corrupt) pass.
+
+## Execution log — DAS-6c-ii-c (apply merged rows back to the live store)
+
+- **DAS-6c-ii-c DONE.** The sync cycle's last pure primitive: `durability/writeback.py::apply_rows`,
+  the exact inverse of `shards.py`'s per-kind row *extraction*. After `merge` reconciles a peer's
+  rows with the local ones, this writes the merged set back into each inventory entry's native
+  on-disk shape, dispatched by `kind` — the mirror of `export_shards`' dispatch, so a round-trip
+  (extract → apply) reproduces the same files (proven by tests re-extracting the written output).
+  `json_entity_dir` → one JSON file per `{"id","data"}` row (a `deleted_at` **tombstone** row
+  removes the file, so a peer's delete propagates instead of resurrecting); `json_file` → the one
+  row's `data` (tombstone removes; >1 row is a merge bug → last-wins + warn); `jsonl_append` →
+  canonical JSONL, year-sharded exactly as the exporter shards a directory stream
+  (`<dest>/<year>.jsonl`) or one file for a single-file stream, order preserved. `sqlite`/`tree`
+  RAISE (the cycle merges DBs via ATTACH-OR-IGNORE — `snapshot.py` — and rehydrates tree payloads
+  from the content-addressed blob store), mirroring `merge.merge_rows`; unknown kind raises. Atomic
+  per file (temp + rename). A malformed row is skipped + logged, never fatal. Pure primitive, no
+  user surface → no CHANGELOG. **Remaining:** 6c-ii-d — the ENGINE that orchestrates these pure
+  pieces (pull via 6a transport → import_shards 6b → merge_rows 6c-i / ATTACH-IGNORE for DBs →
+  apply_rows this → export union → push, with the 6c-ii-a registry CAS-retry loop, 6c-ii-b
+  outbox/cursor, and stale_after_secs staleness window), then DAS-6d (git-sync + dir-sync apps +
+  criterion-4 two-machine convergence). **Gates:** `make lint` clean (704 files);
+  `tests/test_durability_writeback.py` (14: entity-dir write/round-trip/tombstone/skip, json-file
+  write/empty/tombstone/last-wins, jsonl single-file + year-shard + round-trip, sqlite/tree/unknown
+  raises) pass.
