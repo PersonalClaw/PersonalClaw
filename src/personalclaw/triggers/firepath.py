@@ -69,6 +69,7 @@ GATE_ORDER: tuple[str, ...] = (
     "budget",
     "claim",
     "slot",
+    "active",
     "yield",
     "capability",
 )
@@ -95,6 +96,11 @@ GATE_OUTCOMES: dict[str, str] = {
     # ledger row)". DEFERRED rather than a skip: the slot frees on its own, so this fire
     # is postponed by contention, not dropped by policy.
     "slot": Outcome.DEFERRED.value,
+    # §3.5's `skip_if_active` liveness guard (WF2AUT-9). DEFERRED for the same reason as `slot`
+    # and `yield`: the target that looks busy (a dirty worktree, a lock file, a just-touched
+    # path) settles on its own, so the fire is postponed by state, not dropped by policy — it
+    # re-evaluates next tick with no auto-retry storm.
+    "active": Outcome.DEFERRED.value,
     "yield": Outcome.DEFERRED.value,
     "capability": Outcome.REFUSED.value,
 }
@@ -149,6 +155,13 @@ class FireContext:
     #: `(slot, holder_trigger_id)` when a named resource slot this fire needs is held by
     #: ANOTHER running trigger (§3.5). Supplied by `service.tick` from the claim store.
     busy_slot: tuple[str, str] = ("", "")
+    #: The PRE-COMPUTED `skip_if_active` liveness signal (§3.5 / WF2AUT-9). True when the target the
+    #: fire would act on looks busy — a dirty worktree, a present lock file, a just-modified path.
+    #: Supplied by `service.tick` from `liveness.is_target_active`, gathered up front so the walk
+    #: stays PURE: a gate that ran its own `git status` mid-walk would be the self-fetching I/O the
+    #: module docstring forbids. `target_active_reason` names WHICH signal fired, for the row.
+    target_active: bool = False
+    target_active_reason: str = ""
 
 
 @dataclass
@@ -420,6 +433,28 @@ async def evaluate(ctx: FireContext) -> FireDecision:
             claim=claim,
         )
     passed.append("slot")
+
+    # ── 5c. skip_if_active liveness guard (§3.5 / WF2AUT-9) ──
+    #
+    # §3.5 asks for an OPTIONAL guard on a mutating trigger "using cheap liveness heuristics (dirty
+    # worktree, lockfiles, recent mtime) at fire time … a busy target defers rather than fires". The
+    # signal is PRE-COMPUTED by the caller (`service.tick` → `liveness.is_target_active`) and only
+    # honoured here, exactly as `busy_slot`/`user_active` are — a gate that ran its own `git status`
+    # mid-walk would break the purity the module docstring depends on.
+    #
+    # AFTER the slot gate, deliberately: both are "the target isn't ready → DEFERRED", and this is
+    # the same class of deferral as a contended slot (the resource is the working STATE, not a
+    # named slot). The claim is threaded back on the decision (`claim=claim`) so the caller RELEASES
+    # it — a deferred fire that kept the lock would block the very retry it is waiting for, the same
+    # reason the `slot` and `yield` gates hand their claim back.
+    if ctx.target_active:
+        return _refuse(
+            "active",
+            ctx.target_active_reason or "the target is active; deferred until it settles",
+            passed,
+            claim=claim,
+        )
+    passed.append("active")
 
     # ── 6. foreground yield / resource slots (§3.5) ──
     if ctx.yield_to_user and ctx.user_active:

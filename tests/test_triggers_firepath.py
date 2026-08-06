@@ -458,3 +458,74 @@ class TestRateGate:
         assert "rate" in FAIL_OPEN_GATES and "rate" not in FAIL_CLOSED_GATES
         for key in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour"):
             assert key in FAIL_OPEN_GATES, key
+
+
+# ── the skip_if_active liveness gate (§3.5 / WF2AUT-9) ──
+
+
+class TestSkipIfActiveGate:
+    """🔴 §3.5 asks for an OPTIONAL fire-time liveness guard on a mutating trigger: "cheap liveness
+    heuristics (dirty worktree, lockfiles, recent mtime) … a busy target defers rather than fires".
+
+    The signal is PRE-COMPUTED by the caller (`service.tick` → `liveness.is_target_active`) and only
+    honoured in the walk, exactly as `busy_slot`/`user_active` are — so these drive the gate through
+    the two `FireContext` fields it reads (`target_active` / `target_active_reason`). The helper's
+    own filesystem heuristics are exercised in `test_triggers_liveness.py`.
+    """
+
+    def test_the_default_never_defers(self) -> None:
+        """The non-breaking baseline: a trigger that declared no guard has `target_active=False`, so
+        the gate passes and appends `active` to the walk like any other clean gate."""
+        decision, _ = _evaluate()
+        assert decision.allowed is True
+        assert "active" in decision.passed
+
+    def test_a_busy_target_DEFERS(self) -> None:
+        decision, _ = _evaluate(
+            target_active=True, target_active_reason="git worktree /w has uncommitted changes"
+        )
+        assert decision.allowed is False
+        assert decision.gate == "active"
+        assert decision.outcome == Outcome.DEFERRED.value
+
+    def test_a_deferred_fire_RETURNS_its_claim_so_it_cannot_wedge(self) -> None:
+        """The gate lands after the claim is acquired, so a defer that kept the lock would block the
+        very retry it is waiting for — the claim is threaded back for release, like `slot`/`yield`.
+        """
+        decision, _ = _evaluate(target_active=True, target_active_reason="a lock file is present")
+        assert decision.gate == "active"
+        assert decision.claim is not None
+
+    def test_the_reason_is_carried_onto_the_row(self) -> None:
+        decision, ctx = _evaluate(
+            target_active=True, target_active_reason="notes/todo.md was modified within 300s"
+        )
+        row = F.ledger_row(decision, ctx)
+        assert row["outcome"] == Outcome.DEFERRED.value
+        assert "modified within 300s" in row["reason"]
+
+    def test_an_active_target_with_no_reason_still_defers_with_a_default(self) -> None:
+        """A reason is MANDATORY for a suppression (crit 8); a caller that set the flag but no text
+        must not produce a reasonless row."""
+        decision, ctx = _evaluate(target_active=True, target_active_reason="")
+        assert decision.gate == "active"
+        assert F.ledger_row(decision, ctx)["reason"]
+
+    def test_active_runs_AFTER_the_slot_gate(self) -> None:
+        """Both are "target not ready → DEFERRED"; `skip_if_active` is the same class of deferral as
+        a contended slot (the resource is the working state, not a named slot), so it follows it."""
+        assert F.GATE_ORDER.index("active") > F.GATE_ORDER.index("slot")
+        assert F.GATE_ORDER.index("active") > F.GATE_ORDER.index("claim")
+
+    def test_active_is_classified_FAIL_OPEN(self) -> None:
+        """S130's classifier must know the new gate — an unclassified gate defaults to closed, and a
+        stuck-closed liveness gate would defer an automation forever the moment its git check broke.
+        """
+        from personalclaw.triggers.models import FAIL_CLOSED_GATES, FAIL_OPEN_GATES
+
+        assert "active" in FAIL_OPEN_GATES
+        assert "active" not in FAIL_CLOSED_GATES
+
+    def test_active_has_a_typed_outcome_in_the_vocabulary(self) -> None:
+        assert F.GATE_OUTCOMES["active"] in FIRE_OUTCOMES
+        assert F.gate_order_is_intact() == []

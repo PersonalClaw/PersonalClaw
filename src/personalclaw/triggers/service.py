@@ -529,6 +529,14 @@ async def tick(
             fires_in_window=await _fires_in_window(trigger, now=now),
             since_last_fire=_since_last_fire(trigger, now=now),
             busy_slot=claims.busy_slot(trigger, holders=slot_map),
+            # 🔴 THE LIVENESS SIGNAL (§3.5 / WF2AUT-9). `skip_if_active` was undeclared anywhere
+            # before this — a new entity scope, not a gap-fill — and its guard (dirty worktree /
+            # lock file / recent mtime) is evaluated HERE, up front, so `evaluate` stays pure and
+            # never runs a `git status` mid-walk. Computed only when the trigger opts in (an empty
+            # dict is the default → never busy), so an unguarded trigger pays nothing. Fail-open in
+            # `liveness.is_target_active`: a broken git check reads as NOT busy rather than
+            # deferring forever. Unpacked into the two FireContext fields the gate reads.
+            **_target_active_kwargs(trigger, now=now, base_dir=base_dir),
             # 🔴 The EXISTING claim, read from the shared claim store. Measured: this was never
             # supplied, so `claim_fire` always saw `existing=None` and always granted — a trigger
             # whose previous run was still going fired again anyway, which is the precise failure
@@ -749,6 +757,26 @@ def _since_last_fire(trigger: Any, *, now: float) -> float | None:
     if stamp <= 0:
         return None
     return max(0.0, now - stamp)
+
+
+def _target_active_kwargs(trigger: Any, *, now: float, base_dir: Any) -> dict[str, Any]:
+    """The `FireContext` liveness kwargs for one trigger (§3.5 / WF2AUT-9).
+
+    Computes the `skip_if_active` signal ONCE, up front, so `firepath.evaluate` never runs I/O
+    mid-walk. Returned as a dict so the two fields (`target_active`, `target_active_reason`) unpack
+    into the `FireContext` constructor beside the other pre-gathered inputs, and a trigger that
+    declares no guard (the default empty dict) skips the probe entirely — `is_target_active` returns
+    `(False, "")` for an empty spec, so an unguarded automation pays nothing.
+
+    `base_dir` is threaded through so a relative path in `skip_if_active` resolves under the store's
+    own root, exactly as the claim store roots its sidecars — a probe over a `tmp_path` store must
+    never stat the real home. Never raises: `is_target_active` is itself fail-open and wrapped.
+    """
+    from personalclaw.triggers.liveness import is_target_active
+
+    skip = getattr(trigger, "skip_if_active", None)
+    active, reason = is_target_active(skip, now=now, base_dir=base_dir)
+    return {"target_active": active, "target_active_reason": reason}
 
 
 def _budget_remaining(trigger: Any) -> float | None:
