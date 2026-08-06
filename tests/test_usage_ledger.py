@@ -366,3 +366,53 @@ class TestStreamAndCollectOnComplete:
                 yield LLMEvent(kind=EVENT_COMPLETE)
 
         assert asyncio.run(stream_and_collect(_Provider(), "hi")) == "abc"
+
+
+# ── CATO-6: the "Turn complete" cost line composer ────────────────────────────
+
+
+class TestTurnCompleteLine:
+    """`_turn_complete_line` shows real USD + tokens, honest 'unpriced', and the
+    cache fragment only when cache tokens are non-zero."""
+
+    def _line(self, **over):
+        from personalclaw.dashboard.chat_runner import _turn_complete_line
+
+        base = dict(
+            events=3,
+            tool_calls=1,
+            context_pct=42.0,
+            input_tokens=1200,
+            output_tokens=340,
+            cache_tokens=0,
+            cost_usd=0.0123,
+            priced=True,
+        )
+        base.update(over)
+        return _turn_complete_line(**base)
+
+    def test_priced_turn_shows_usd_and_tokens(self):
+        line = self._line()
+        assert "Turn complete: 3 events, 1 tool calls, context 42%" in line
+        assert "$0.0123" in line
+        assert "1,200 in / 340 out tokens" in line
+
+    def test_unpriced_never_renders_dollar_zero(self):
+        line = self._line(cost_usd=0.0, priced=False)
+        assert "unpriced" in line
+        assert "$0.00" not in line and "$" not in line
+
+    def test_cache_fragment_only_when_nonzero(self):
+        assert "cached" not in self._line(cache_tokens=0)
+        assert "2,000 cached" in self._line(cache_tokens=2000)
+
+    def test_no_tokens_is_backward_compatible_bare_line(self):
+        # A turn with no token counts renders exactly the pre-CATO-6 line.
+        line = self._line(input_tokens=0, output_tokens=0, cost_usd=0.0, priced=False)
+        assert line == "Turn complete: 3 events, 1 tool calls, context 42%"
+
+    def test_priced_zero_cost_still_shows_dollar_not_unpriced(self):
+        # A priced model whose tiny turn rounds to $0.0000 is still PRICED — show the
+        # dollar amount, not "unpriced" (which means "no price row").
+        line = self._line(cost_usd=0.0, priced=True)
+        assert "$0.0000" in line and "unpriced" not in line

@@ -20,6 +20,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The "Turn complete" line now shows what the turn cost.** When a turn finishes, its telemetry
+  line (in the collapsible per-turn details) reports real USD plus in/out token counts — e.g.
+  `$0.0123 · 1,200 in / 340 out tokens`. A model with no price row shows `unpriced` rather than a
+  misleading `$0.00`, and a cache fragment appears only when the provider actually reported cached
+  tokens. Cost is provider-reported when available, otherwise derived from the pricing table.
 - **`personalclaw doctor` now reports your SQLite driver and its capabilities.** The Dependencies
   section shows the resolved driver (`pysqlite3` or the stdlib `sqlite3`), its version, and whether
   FTS5 and JSON1 are compiled in — with a fix hint (`pip install pysqlite3-binary`) when FTS5 is
