@@ -498,6 +498,229 @@ def test_an_actionless_trigger_is_ok_FALSE(home, state):
     assert _body(resp)["result"].startswith("no action provider configured")
 
 
+# ── 🔴 #308: a manual run executed but recorded NOTHING, so the pill stuck forever ──
+
+
+def _result_spy(monkeypatch, *, result=None, raises=None):
+    """Register a spy on the `notify` provider that returns `result` (or raises `raises`).
+
+    Unlike `_notify_spy`, this returns a real `ActionResult` so the recording path can classify the
+    run's status — the whole point of #308 is that a run's OUTCOME reaches the ledger.
+    """
+    from personalclaw.action_providers.registry import (
+        _ensure_default_providers_registered,
+        get_action_provider,
+    )
+
+    _ensure_default_providers_registered()
+
+    async def spy(action_config, ctx, timeout=30):
+        if raises is not None:
+            raise raises
+        return result
+
+    monkeypatch.setattr(get_action_provider("notify"), "execute", spy)
+
+
+def test_a_manual_run_APPENDS_a_history_row_tagged_manual_and_advances_last_run(
+    home, state, monkeypatch
+):
+    """🔴 THE #308 DEFECT. After #702 the manual path dispatched the action but recorded NOTHING:
+    `GET .../history` gained no row and the trigger's last-run stamp never moved, so the completion
+    watcher waited on a `last_run_ts` that would never change and the "Running…" pill stuck forever.
+
+    The autonomous fire path records via `gateway._record_fire_outcome` — a `ScheduleRun` in
+    `ScheduleRunStore` plus a `last_success_at` stamp. This asserts a manual run now leaves the SAME
+    evidence, tagged `manual`, reusing that ledger rather than a parallel one.
+    """
+    from personalclaw.action_providers import ActionResult
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"inline": {"provider": "notify", "config": {"title_template": "t"}}},
+        )
+    )
+    _result_spy(monkeypatch, result=ActionResult(success=True, stdout="notified: t"))
+
+    # Nothing recorded before the run — this is the state a fresh trigger is in.
+    before_runs, before_total = _run(T._runs_store().list_for_job("file:notes", 0, 10))
+    assert before_total == 0
+    assert not _store(home).get("file:notes").trigger.last_success_at
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+    assert _body(resp)["ok"] is True
+
+    # A NEW row appeared, tagged `manual` and marked success.
+    runs, total = _run(T._runs_store().list_for_job("file:notes", 0, 10))
+    assert total == 1, "the manual run must append exactly one history row"
+    assert runs[0]["trigger"] == "manual"
+    assert runs[0]["status"] == "success"
+
+    # The last-run stamp advanced — this is what the completion watcher reads to clear the pill.
+    live = _store(home).get("file:notes").trigger
+    assert live.last_success_at, "last_success_at must advance so last_run_ts moves"
+    assert live.last_run_id == runs[0]["run_id"]
+
+
+def test_a_manual_run_does_NOT_spend_the_max_fires_budget(home, state, monkeypatch):
+    """🔴 DEVIATION from a literal reading of #308's brief, and the reason for it.
+    `Trigger.run_count` is not a display counter for a store/schedule trigger — it is the
+    `max_fires` fire-budget meter (`service._budget_remaining` reads it, written only at the
+    autonomous fire-GRANT), and `tools.MANUAL_NEVER_BYPASSES` pins `budget` among the gates a manual
+    fire never spends. Advancing it here would let a user lock themselves out of their own
+    automation by testing it — the same asymmetry that makes `_run_event` skip `record_fire` and
+    `count_since` exclude manual rows.
+
+    So a manual run records HISTORY (which clears the pill) without spending the ALLOWANCE. The
+    completion watcher keys on `last_run_ts`, never on `run_count`, so the UI fix does not need it.
+    """
+    from personalclaw.action_providers import ActionResult
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            run_count=4,
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    _result_spy(monkeypatch, result=ActionResult(success=True))
+
+    _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+
+    assert (
+        _store(home).get("file:notes").trigger.run_count == 4
+    ), "the fire budget must not be spent"
+    # And the manual row is excluded from the hourly cap the count feeds.
+    import time as _time
+
+    assert _run(T._runs_store().count_since("file:notes", _time.time() - 3600.0)) == 0
+
+
+def test_a_FAILED_manual_run_is_recorded_as_a_failure_not_swallowed(home, state, monkeypatch):
+    """A provider returning `success=False` must record a FAILED run and answer `ok: false` — not a
+    silent success. Mirrors `_record_fire_outcome`'s classification of a non-raising failure."""
+    from personalclaw.action_providers import ActionResult
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    _result_spy(monkeypatch, result=ActionResult(success=False, error="notify failed: no channel"))
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+    assert _body(resp)["ok"] is False
+    assert "notify failed" in _body(resp)["result"]
+
+    runs, total = _run(T._runs_store().list_for_job("file:notes", 0, 10))
+    assert total == 1
+    assert runs[0]["trigger"] == "manual"
+    assert runs[0]["status"] == "failure"
+    live = _store(home).get("file:notes").trigger
+    assert live.last_failure_at, "a failed manual run stamps last_failure_at"
+
+
+def test_a_RAISING_provider_is_recorded_as_a_failure_not_a_500(home, state, monkeypatch):
+    """A provider that raises must be caught, recorded as a failed run, and reported `ok: false` —
+    the request completed and was answered honestly, and the ledger keeps the evidence."""
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    _result_spy(monkeypatch, raises=RuntimeError("boom"))
+
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+    assert resp.status == 200
+    assert _body(resp)["ok"] is False
+    assert "RuntimeError: boom" in _body(resp)["result"]
+
+    runs, total = _run(T._runs_store().list_for_job("file:notes", 0, 10))
+    assert total == 1 and runs[0]["status"] == "failure"
+    assert "RuntimeError: boom" in runs[0]["error"]
+
+
+def test_recording_a_manual_run_never_fails_the_request(home, state, monkeypatch):
+    """A ledger write failure must not turn a completed run into a crashed request — the same
+    best-effort contract `_record_fire_outcome` holds."""
+    from personalclaw.action_providers import ActionResult
+    from personalclaw.triggers.models import Trigger
+
+    _store(home).upsert(
+        Trigger(
+            id="file:notes",
+            name="Notes",
+            kind="file",
+            enabled=True,
+            spec={"paths": ["~/x/**"]},
+            workflow={"inline": {"provider": "notify", "config": {}}},
+        )
+    )
+    _result_spy(monkeypatch, result=ActionResult(success=True))
+
+    def boom():
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(T, "_runs_store", boom)
+    resp = _run(
+        T.api_trigger_run(
+            _req(
+                "POST", "/api/triggers/x/run", state, body={}, match_info={"id": "store:file:notes"}
+            )
+        )
+    )
+    # The run itself succeeded; only the bookkeeping failed, and that is swallowed.
+    assert _body(resp)["ok"] is True
+
+
 def test_the_manual_path_reads_the_SAME_shapes_as_the_autonomous_one(home, state, monkeypatch):
     """A STRUCTURAL guard on the property `_dispatch_store_action`'s docstring claims: "a manual Run
     and an autonomous fire share one dispatch so their behaviour cannot drift". They HAD drifted —
