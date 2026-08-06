@@ -1,6 +1,6 @@
 # CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
 # Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
-# lint · test · web · rails · client · dco (PR-only). Heavier matrix/coverage/audit live in full.yml (main + nightly).
+# lint · test · web · rails · harness · client · dco (PR-only). Heavier matrix/coverage/audit live in full.yml (main + nightly).
 name: CI
 
 on:
@@ -28,12 +28,16 @@ jobs:
           enable-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
+      # `harness/` is repo-inner dev infra beside src/ (SELF-VERIFICATION). `make lint`
+      # lints it under the same tools as core; CI used to skip it, so a harness-only
+      # lint break went green here and red for a local contributor. Same scope as the
+      # Makefile now (black/isort/flake8 over src+tests+harness, mypy over src+harness).
       - name: lint (black --check · isort --check · flake8 · mypy)
         run: |
-          uv run black --check src/personalclaw tests
-          uv run isort --check-only src/personalclaw tests
-          uv run flake8 src/personalclaw tests
-          uv run mypy src/personalclaw
+          uv run black --check src/personalclaw tests harness
+          uv run isort --check-only src/personalclaw tests harness
+          uv run flake8 src/personalclaw tests harness
+          uv run mypy src/personalclaw harness
 
   test:
     runs-on: ubuntu-latest
@@ -120,6 +124,33 @@ jobs:
           for t in tests/test_lifecycle_gates.py tests/test_stability_inventory.py; do
             if [ -f "$t" ]; then uv run pytest "$t" -n0; fi
           done
+
+  harness:
+    # Self-verification gate (SELF-VERIFICATION SV-7): the repo-inner harness/ package
+    # validates its own spec set and runs the static boundary scanner over this change.
+    # `validate` shape-checks every spec + resolves references (dangling test node-ids,
+    # unknown profiles/scanner-checks) — a spec regression reds here. `scan --diff` runs
+    # the boundary scanner over the PR's changed lines and fails on any ERROR finding
+    # (WARNINGs stay advisory). The harness/ unit tests themselves ride the `test` job
+    # (they live under tests/, which is on pytest's testpaths).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # scan --diff bases on the merge-base with origin/main; fetch full history
+          # so that ref resolves (it falls back to main / HEAD~1, but the true base
+          # is what makes the diff scoped rather than whole-tree).
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: harness validate (spec shape + reference resolution)
+        run: uv run python -m harness validate
+      - name: harness scan (static boundary scanner over the diff)
+        run: uv run python -m harness scan --diff
 
   client:
     # personalclaw-client (packages/personalclaw-client-py) is versioned + published
