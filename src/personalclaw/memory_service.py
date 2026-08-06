@@ -283,10 +283,24 @@ class MemoryService:
         block = "\n".join(f"- {ln}" for ln in lines)
         return block[:cap]
 
-    def episodic_context(self, query_text: str, *, cap: int = 3000) -> str:
-        """Episodic context block for a query (new-session injection), or ""."""
+    def episodic_context(
+        self, query_text: str, *, cap: int = 3000, citations_out: list[dict] | None = None
+    ) -> str:
+        """Episodic context block for a query (new-session injection), or "".
+
+        When *citations_out* is supplied, the block labels each fragment
+        ``[Memory N]`` and appends a resolvable manifest entry per fragment
+        (MEMORY-GRAPH-AND-VAULT §5.4) — see ``VectorMemoryStore.get_episodic_context``.
+        """
         vs = self._vs
-        return (vs.get_episodic_context(query_text=query_text, cap=cap) or "") if vs else ""
+        return (
+            (
+                vs.get_episodic_context(query_text=query_text, cap=cap, citations_out=citations_out)
+                or ""
+            )
+            if vs
+            else ""
+        )
 
     def semantic_context(self, query_text: str = "", *, cap: int = 1500) -> str:
         vs = self._vs

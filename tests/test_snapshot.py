@@ -1574,7 +1574,16 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
     from personalclaw import snapshot
     from personalclaw.durability import inventory as inv
 
-    declared = {e.path: e for e in inv.INVENTORY if e.merge == inv.MERGE_APPEND_DEDUP}
+    # Scope the ratchet to the entries that actually flow through `_do_merge`. A
+    # DERIVED append_dedup entry is excluded from `backup_entries()` (snapshot.py's
+    # merge loop is `for e in backup_entries() ... and not e.derived`), so it never
+    # reaches a merge executor — demanding one for it would be demanding dead code.
+    # `derived` telemetry-of-self (e.g. the CATO usage ledger) rebuilds from the SEL
+    # rather than merging, so its `append_dedup` is a declared identity, not a merge
+    # path. Non-derived append_dedup is still the pinned set the ratchet guards.
+    declared = {
+        e.path: e for e in inv.INVENTORY if e.merge == inv.MERGE_APPEND_DEDUP and not e.derived
+    }
     assert set(declared) == {
         "cron-history",
         "notifications.jsonl",
@@ -1585,7 +1594,7 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path) -> Non
         "model_calls.jsonl",
         "crashes",
         "sessions",
-    }, "a new append_dedup entry appeared — give it an executor, not copy-if-missing"
+    }, "a new NON-DERIVED append_dedup entry appeared — give it an executor, not copy-if-missing"
 
     # Named explicitly rather than derived from the path: `cron-history`'s executor is
     # `_merge_run_history`, so a stem-to-symbol guess would pass for the wrong reason.

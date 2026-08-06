@@ -190,3 +190,17 @@ class FeedbackConfig:
 - [2026-07-27][S3] DEVIATION: `skills/surfacing.py` was NOT wired to `suppressed_producers()` — recon showed skills have no per-skill producer identity in the C1 vocabulary yet (`skill_synthesis:ladder` names the SYNTHESIZER, not individual skills; per-skill verdicts have no capture surface in v1). Consulting suppression there would be dead code. Wire it when a skill-level target kind exists (flywheel territory). Workflow surfacing IS wired (it has the `workflow_surfacing:<id>` producer + a real gate).
 - [2026-07-27][S1-3] Tests: `tests/test_feedback.py` (20 — capture round-trip/supersede/reason rules/corrupt-line/trim/0600, GROUP BY + window + per-producer separation, thresholds incl. fail-open + one-time retire + snooze-reset + kill-switch, workflow surfacing suppression round-trip), `tests/test_feedback_routes.py` (8 — record/hydrate, envelope 400s, app-namespace forcing, kill-switch 404s, min-N gating, suppressed flag, snooze/clear round-trip). Reference regenerated (+5 routes). Gate: `make lint` green (506 files), `make test` 8077 passed / 28 skipped / 13 xfailed, web typecheck + vitest (238) + build green.
 - [2026-07-27][S3] Validated as-a-user on an isolated gateway (:10014, fresh dev home): seeded 3 producer kinds via the real API — GROUP BY correct (5-down prompt → accuracy 0 + suppressed; sub-min-N rows "collecting"); JSONL human-readable, mode 0600; the retire check fired LIVE on the maintenance path (a real `feedback_retire` notification appeared in the bell + notifications.jsonl); Settings → AI feedback rendered all three sources with honest counts; the Snooze button cleared the suppressed badge live and persisted (`entity_settings/feedback.json` snoozed entry + retire_proposed reset). Thumbs-on-inbox-card flow untestable without a bound model (no classified items in the sandbox) — the affordance + hydration path is unit/route-locked instead; dogfooding on the real instance is Owner task 2.
+- [S2][FS-4] DONE: **App-path validation fixture (T2.4, contract C3).** `tests/test_feedback_app_path.py`
+  installs a real fixture app (`feedback-fixture`) declaring `/api/feedback` in `permissions.api` and
+  drives the boundary end to end through the REAL feedback route + a mirror of server.py's
+  `app_permission_middleware`: (1) a declared POST /api/feedback lands a record with `source_app`
+  stamped **server-side** and the producer forced to `app:<name>:<producer>` even when the body
+  claims a core `prompt` producer (the impersonation attempt is discarded); (2) an omitted
+  producer_id defaults to `<name>:default`; (3) an **undeclared** app path (`/api/secrets`) 403s
+  before the handler; (4) the in-process `sdk.feedback.record_feedback` path lands an equivalent
+  app-namespaced record and is the same object as core's `record_feedback`. Test-only atom — the
+  route/middleware/SDK machinery already shipped in S1-S2 (T2.4 "remain unwired by design" beyond
+  what exists); this is its executable proof. Distinct from `test_feedback_routes.py`'s
+  namespace-forcing test, which uses no manifest and skips the permission middleware. Gate: `make
+  lint` clean (692 files); `test_feedback_app_path.py` (4) + `test_app_permissions.py` +
+  `test_feedback.py` = 35 passed.

@@ -440,6 +440,15 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
     register_feedback_routes(app)
+    # Cost & token observability — read-only rollup/totals over the usage ledger.
+    from personalclaw.dashboard.handlers.usage import register_usage_routes
+
+    register_usage_routes(app)
+    # MODEL-ROUTING-TELEMETRY §1.5 — the read-only per-model efficiency view (routing fold +
+    # a bounded model_calls.jsonl tail); the Routing & Efficiency tab (MRT-1e) renders it.
+    from personalclaw.dashboard.handlers.model_telemetry import register_model_telemetry_routes
+
+    register_model_telemetry_routes(app)
     # Learning Flywheel §6.1 — the Proposal Inbox + the staging week panel. Its accept route is the
     # HTTP half of §7's human-installs invariant: the actor is derived from the request, never the
     # body, so an app-scoped token cannot name itself a reviewer.

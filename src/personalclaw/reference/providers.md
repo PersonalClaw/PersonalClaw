@@ -16,6 +16,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - `prompt`
 - `search`
 - `skills`
+- `sync`
 - `task`
 - `tool`
 - `workflow`

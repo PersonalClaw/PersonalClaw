@@ -54,6 +54,10 @@ class AttemptRecord:
     passed: bool = False
     strategy: str = "direct"  # direct | retry | fallback
     degraded: bool = False  # satisfied only by a fallback ref (discount downstream)
+    # The routing query class (MODEL-ROUTING-TELEMETRY §2) this attempt served, from the
+    # pure classifier — "" when routing/classification didn't run. The stats layer folds
+    # per (use_case, query_class), so it's a first-class column, not an ``extra`` field.
+    query_class: str = ""
     extra: dict = field(default_factory=dict)
 
     def to_json_line(self) -> str:

@@ -282,6 +282,12 @@ class SubagentInfo:
     elapsed: float = 0.0
     _raw_task: str = ""  # unredacted task for ACP agent execution prompt
     model: str = ""
+    # Per-child token/cost accounting (COST-AND-TOKEN-OBSERVABILITY C2, subagent
+    # write-site): carried onto the completion delivery so a fan-out's cost is
+    # visible per child, not discarded at EVENT_COMPLETE.
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
     # Optional subprocess cwd override. When set, the subagent ACP agent
     # process launches here instead of the default ``subagent_<id>`` sandbox, so
     # cwd-relative resource globs (``.personalclaw/steering/**/*.md``, ``AGENTS.md``)
@@ -1702,6 +1708,29 @@ class SubagentManager:
                     agent_role=info.agent,
                 )
             elif event.kind == EVENT_COMPLETE:
+                # Capture the child's token/cost accounting before breaking — S2k
+                # discarded it here (COST-AND-TOKEN-OBSERVABILITY C2, subagent site).
+                info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
+                info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
+                cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
+                if not cost and info.model:
+                    from personalclaw.pricing import estimate_cost
+
+                    cost = estimate_cost(
+                        info.model,
+                        input_tokens=info.input_tokens,
+                        output_tokens=info.output_tokens,
+                        cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
+                        cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
+                    )
+                info.cost_usd = cost
+                # Write the resolved cost back so the ledger records it without a
+                # redundant second estimate (see _record_subagent_usage).
+                try:
+                    event.cost_usd = cost  # type: ignore[attr-defined]
+                except (AttributeError, TypeError):
+                    pass
+                self._record_subagent_usage(info, session_key, event)
                 break
 
         # Strip [OPTIONS: ...] tags and redact sensitive content
@@ -1729,6 +1758,26 @@ class SubagentManager:
         self._sessions.record_success(session_key)
         Stats().inc_subagent_completed()
         logger.info("Subagent %s completed", info.id)
+
+    @staticmethod
+    def _record_subagent_usage(info: "SubagentInfo", session_key: str, event: object) -> None:
+        """Append one usage-ledger row for a completed subagent turn (source='subagent').
+
+        A fan-out of N children yields N rows, each keyed to the PARENT session so a
+        fan-out's total cost is attributable per child. Delegates to the shared
+        :func:`personalclaw.usage_ledger.record_from_event` seam — the caller already
+        set ``info.cost_usd``/``cost`` from the same event, so the derived cost matches;
+        the ledger writes provider-cost-wins / honest-unpriced / fail-open."""
+        from personalclaw.usage_ledger import record_from_event
+
+        record_from_event(
+            event,
+            source="subagent",
+            session_key=info.parent_session_key or session_key,
+            agent=info.agent or "",
+            provider="acp",  # subagents run through the ACP runtime
+            model=info.model or "",
+        )
 
     async def cancel(self, agent_id: str) -> bool:
         """Cancel a single running subagent. Returns True if found and cancelled."""

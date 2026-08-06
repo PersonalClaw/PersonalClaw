@@ -320,6 +320,89 @@ def run_restore_drill(*, notifier=None) -> JobResult:
     )
 
 
+def run_sync_job() -> JobResult:
+    """Run one sync cycle against the configured transport, if sync is enabled (§4).
+
+    Guarded and fail-quiet: sync stays idle unless ``durability.sync_enabled`` is on AND
+    a ``sync_transport`` is both named and registered (an installed, enabled transport).
+    Any of those absent is a ``skipped`` result, not an error — a not-yet-configured sync
+    is a normal state, not a failure. The cycle itself never raises (its report carries
+    the error), and it runs under ``single_flight`` so it never overlaps an export.
+    """
+    from personalclaw.concurrency import single_flight
+
+    started = time.monotonic()
+    cfg = _cfg()
+    if not getattr(cfg, "sync_enabled", False):
+        return JobResult("sync", skipped="sync disabled")
+    transport_name = getattr(cfg, "sync_transport", "") or ""
+    if not transport_name:
+        return JobResult("sync", skipped="no sync transport configured")
+
+    from personalclaw.sync_transports.registry import get_transport
+
+    transport = get_transport(transport_name)
+    if transport is None:
+        return JobResult("sync", skipped=f"transport {transport_name!r} not installed/enabled")
+
+    with single_flight("durability:sync") as acquired:
+        if not acquired:
+            return JobResult("sync", skipped="another sync/export is already running")
+        try:
+            from personalclaw.durability.shards import machine_id
+            from personalclaw.durability.sync_cycle import run_sync_cycle
+
+            home = _home()
+            report = run_sync_cycle(transport, home, self_id=machine_id(home))
+            # GC tombstone side-logs past the sync horizon (DAS-6c-iii): once every peer
+            # has had a chance to see a delete (older than the staleness window * a safety
+            # factor), its marker is dead weight. Only after a SUCCESSFUL cycle — a failed
+            # push means peers may not have pulled the delete yet.
+            if report.ok:
+                _prune_tombstones(home, float(getattr(cfg, "sync_stale_after_secs", 900) or 900))
+        except Exception as exc:  # noqa: BLE001 — a failed sync must not kill the loop
+            logger.warning("durability: sync cycle raised", exc_info=True)
+            _audit("durability_sync", f"failed: {exc}", outcome="denied")
+            return JobResult(
+                "sync", ok=False, detail=str(exc), duration_secs=time.monotonic() - started
+            )
+    outcome = "allowed" if report.ok else "denied"
+    _audit("durability_sync", report.detail, outcome=outcome)
+    return JobResult(
+        "sync",
+        ok=report.ok,
+        detail=report.detail,
+        duration_secs=time.monotonic() - started,
+        extra={
+            "rows_added": report.rows_added,
+            "rows_removed": report.rows_removed,
+            "seq_published": report.seq_published,
+        },
+    )
+
+
+def _prune_tombstones(home: Path, stale_after_secs: float) -> None:
+    """GC each tombstone-bearing entry's sync-only delete side-log (DAS-6c-iii).
+
+    Horizon = now − stale_after_secs × a safety factor, so a marker is only dropped well
+    after every peer that syncs within the window has had a chance to observe the delete.
+    Best-effort — a prune failure never affects the sync outcome."""
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        from personalclaw.durability import inventory as inv
+        from personalclaw.durability.tombstones import prune
+
+        # 4× the staleness window is a generous "everyone has surely pulled by now" margin.
+        horizon = datetime.now(timezone.utc) - timedelta(seconds=stale_after_secs * 4)
+        keep_after = horizon.isoformat()
+        for entry in inv.all_entries():
+            if entry.tombstones and entry.kind == inv.KIND_JSON_ENTITY_DIR:
+                prune(home / entry.path, keep_after=keep_after)
+    except Exception:  # noqa: BLE001
+        logger.debug("durability: tombstone prune skipped", exc_info=True)
+
+
 def _notify_drill(ok: bool, detail: str, notifier=None) -> None:
     """Surface a drill outcome through the dashboard's notification gate.
 
@@ -375,6 +458,19 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
         if not result.skipped:
             state["last_drill"] = stamp
 
+    # Sync (§4): the staleness window is the schedule — pull+push no more often than
+    # sync_stale_after_secs. `run_sync_job` is self-guarding (disabled/unconfigured →
+    # skipped), so it's cheap to reach here every stale window and let it decide.
+    cfg = _cfg()
+    if getattr(cfg, "sync_enabled", False):
+        stale = float(getattr(cfg, "sync_stale_after_secs", 900) or 900)
+        if force == "sync" or _due(state, "last_sync", stale, now=stamp):
+            result = run_sync_job()
+            results.append(result)
+            # Stamp even on a skip/failure so a disabled-but-enabled or erroring sync
+            # doesn't hammer the remote every tick — the staleness window rate-limits it.
+            state["last_sync"] = stamp
+
     if results:
         save_state(state)
     return results
@@ -393,11 +489,18 @@ def status() -> dict:
             "due": _due(state, key, interval, now=now),
         }
 
+    cfg = _cfg()
+    stale = float(getattr(cfg, "sync_stale_after_secs", 900) or 900)
     return {
         "enabled": enabled(),
         "export": _entry("last_export", HOURLY_SECS),
         "snapshot": _entry("last_snapshot", NIGHTLY_SECS),
         "drill": _entry("last_drill", DRILL_SECS),
+        "sync": {
+            **_entry("last_sync", stale),
+            "enabled": bool(getattr(cfg, "sync_enabled", False)),
+            "transport": getattr(cfg, "sync_transport", "") or "",
+        },
     }
 
 

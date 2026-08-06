@@ -14,11 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from personalclaw.atomic_write import atomic_write
-
-try:
-    import pysqlite3 as sqlite3
-except ImportError:
-    import sqlite3
+from personalclaw.sqlite_compat import sqlite3
 
 VALID_COMPONENTS = (
     "memory",

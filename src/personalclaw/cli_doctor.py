@@ -151,6 +151,19 @@ def _doctor() -> None:
         print(f"  node:        ⚠️  not found (frontend needs Node {_MIN_NODE_VERSION}+)")
         print("               Fix: install Node.js >= 16")
 
+    # SQLite driver + capabilities (PLATFORM-REACH PR-1): FTS5/JSON1 are what the
+    # knowledge + memory search paths need, and the bundled stdlib build lacks them
+    # on some platforms — so report the resolved driver and whether they're present.
+    from personalclaw.sqlite_compat import probe as _sqlite_probe
+
+    _sq = _sqlite_probe()
+    _fts = "✅" if _sq.fts5 else "❌"
+    _json1 = "✅" if _sq.json1 else "❌"
+    print(f"  SQLite:      {_sq.driver} {_sq.version}, FTS5 {_fts}, JSON1 {_json1}")
+    if not _sq.fts5:
+        print("               Fix: pip install pysqlite3-binary (bundles FTS5)")
+        issues.append("sqlite fts5")
+
     # Unified venv detection — used for runtime section
     venv_py = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python3"
     is_venv_install = venv_py.is_file()
@@ -342,6 +355,27 @@ def _doctor() -> None:
                 issues.append("python deps")
         else:
             print("  python:      ⚠️  python3 not found on PATH")
+
+    # WSL note: the background service depends on systemd, which WSL2 only runs
+    # when /etc/wsl.conf opts in. Detect it here so a Windows user knows whether
+    # `personalclaw service install` will actually persist. Best-effort; never
+    # raises — a probe failure must not fail the doctor.
+    try:
+        from personalclaw.env import _is_wsl
+        from personalclaw.service.common import Platform, current_platform
+
+        if _is_wsl():
+            print("  platform:    🪟 WSL detected (Windows Subsystem for Linux)")
+            if current_platform() is Platform.SYSTEMD:
+                print("  service:     ✅ systemd active — `personalclaw service install` works")
+            else:
+                print("  service:     ⚠️  systemd not active — background service won't persist")
+                print("               Fix: add `[boot]\\nsystemd=true` to /etc/wsl.conf, then")
+                print("               run `wsl --shutdown` from Windows and reopen the shell.")
+                print("               Without it, run the gateway in a foreground shell (or via")
+                print("               Windows Task Scheduler). See docs/guides/platforms.md.")
+    except Exception:
+        pass
 
     # ── Vector Memory / embeddings ──
     # Provider-agnostic: model providers (incl. Ollama, now the ollama-models app)

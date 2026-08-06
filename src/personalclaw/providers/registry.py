@@ -416,6 +416,39 @@ class ChannelTypeHandler(_TypeHandler):
         unregister_transport(getattr(instance, "name", ext.name))
 
 
+class SyncTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'sync'`` extensions (durability sync transports).
+
+    Builds a ``SyncTransportProvider`` via the manifest factory and registers it in the
+    ``sync_transports`` registry so the sync cycle can resolve the configured back-end by
+    name. Enabling ``git-sync`` registers the git transport; disabling it unregisters it —
+    the same one-source-of-truth lifecycle the channel transports follow. Lands in the same
+    commit as the ``sync`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.sync_transports import register_transport
+
+        register_transport(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.sync_transports import unregister_transport
+
+        # Fallback computed without a getattr default so ``ext`` is not dereferenced
+        # when the instance already carries a name (ext may be absent in tests).
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_transport(name)
+
+
 class PromptTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'prompt'`` extensions.
 
@@ -463,6 +496,48 @@ class MemoryTypeHandler(_TypeHandler):
 
         provider_name = getattr(instance, "name", ext.name)
         unregister_provider(provider_name)
+
+
+class KnowledgeTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'knowledge'`` extensions (WATCHED-SOURCES §1.3).
+
+    Builds a :class:`~personalclaw.knowledge_providers.base.KnowledgeProvider` via
+    the manifest factory and registers it in ``knowledge_providers.registry`` so
+    ``list_provider_info`` surfaces it as ``kind:external`` and ``search_all`` can
+    fan queries to it. This graduates ``knowledge`` from an :class:`EntitySeamHandler`
+    no-op to a real handler now that the registry has a consumer (the knowledge
+    handlers + WATCHED-SOURCES' engine).
+
+    The bundled native provider's manifest factory returns ``None`` (its instance
+    needs the ``DashboardState`` store, so it self-registers via
+    ``state.knowledge_provider()`` — the single source of truth); ``_enable_one``
+    skips ``register`` for a ``None`` instance, so enabling ``native-knowledge`` is a
+    clean no-op here rather than a second registration. An EXTERNAL app whose
+    factory returns a real provider IS registered — that is the point.
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.knowledge_providers.registry import register_provider
+
+        register_provider(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.knowledge_providers.registry import unregister_provider
+
+        # Prefer the provider's own name; fall back to the extension name. Computed
+        # without a getattr default so ``ext`` is not dereferenced when the instance
+        # already carries a name (ext may be absent in direct handler tests).
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_provider(name)
 
 
 class EntitySeamHandler(_TypeHandler):
@@ -691,14 +766,13 @@ def get_provider_registry() -> ProviderRegistry:
                 "None by design (agents are config-based, not instances).",
             ),
         )
-        _registry.register_type_handler(
-            "knowledge",
-            EntitySeamHandler(
-                source_of_truth="personalclaw.knowledge.* store/pipeline/retrieval "
-                "(dashboard.handlers.knowledge). Factory returns None by design; "
-                "knowledge_providers.registry has no consumer.",
-            ),
-        )
+        # Real handler (WATCHED-SOURCES §1.3): an external knowledge/source provider
+        # registers into knowledge_providers.registry, which list_provider_info +
+        # search_all consume. The native provider's factory returns None (it needs the
+        # DashboardState store, so it self-registers via state.knowledge_provider());
+        # _enable_one skips register() for a None instance, so there is still ONE source
+        # of truth for the native provider.
+        _registry.register_type_handler("knowledge", KnowledgeTypeHandler())
         _registry.register_type_handler(
             "inbox",
             EntitySeamHandler(
@@ -717,6 +791,7 @@ def get_provider_registry() -> ProviderRegistry:
             ),
         )
         _registry.register_type_handler("channel", ChannelTypeHandler())
+        _registry.register_type_handler("sync", SyncTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
         # a pluggable provider family — so Spaces config lives under Settings >

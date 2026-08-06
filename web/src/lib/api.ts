@@ -412,8 +412,9 @@ export interface RetagJob { id?: string; status: 'idle' | 'running' | 'done' | '
 export interface TagColumn { id: string; name?: string; tag_ids?: string[]; mode?: 'any' | 'all' | 'none'; order?: number; include_untagged?: boolean }
 export interface ChatHistoryMsg {
   role: string; content: string; ts?: string; cls?: string
-  // tool/permission messages carry meta {tool_call_id, input, purpose, output?, done?}
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string }
+  // tool/permission messages carry meta {tool_call_id, input, purpose, output?, done?};
+  // an assistant message that used episodic recall carries memory_citations (§5.4).
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[] }
 }
 
 // ── workspace / build entity types ──
@@ -1315,8 +1316,23 @@ export interface SearchCapabilitiesInfo {
 }
 export interface SearchProviderInfo { name: string; display_name: string; capabilities: SearchCapabilitiesInfo; available: boolean }
 
+// Per-model capability flags (mirrors local_models/provider.py CapabilityMatrix) — a
+// binding UI renders these as chips instead of guessing (LMMV §2.1).
+export interface CapabilityMatrix {
+  word_timestamps?: boolean; segment_timestamps?: boolean; speaker_labels?: boolean
+  acoustic_events?: boolean; hotword_biasing?: boolean; hotword_budget?: number
+  languages?: string[]; reasoning_budget_control?: boolean
+}
 // A model discovered from a configured backend (the unit you bind to a use-case).
-export interface AvailableModel { id: string; name: string; capabilities: string[]; provider: string; provider_type: string; size?: number; downloaded?: boolean; gated?: boolean; description?: string; size_mb?: number; source?: string }
+// The catalog-contract fields (matrix/license/…, LMMV §2) are optional — only local
+// models loaded from a catalog.json carry them; hosted/remote models omit them.
+export interface AvailableModel {
+  id: string; name: string; capabilities: string[]; provider: string; provider_type: string
+  size?: number; downloaded?: boolean; gated?: boolean; description?: string; size_mb?: number; source?: string
+  matrix?: CapabilityMatrix | null; license?: string; non_commercial?: boolean
+  runtime?: string; runtime_contract?: string; context_tokens?: number; output_tokens?: number
+  io_mime?: Record<string, unknown>; status?: string; integrity?: string; config_only?: boolean
+}
 export interface ProviderModels { name: string; displayName?: string; type: string; models: AvailableModel[]; error?: string; searchable?: boolean; local?: boolean }
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
@@ -1654,6 +1670,43 @@ export interface Artifact {
   collection?: string
 }
 
+// One usage-ledger aggregate (COST-AND-TOKEN-OBSERVABILITY). `priced` is false when
+// the group/window mixes a model with no price row → the cost is a partial, render
+// "unpriced"/a partial marker, never a confidently-complete figure.
+export interface UsageAgg {
+  input_tokens: number; output_tokens: number
+  cache_read_tokens: number; cache_creation_tokens: number
+  cost_usd: number; turns: number; priced: boolean
+}
+
+/** One per-model efficiency row for a (use_case, query_class) bucket
+ *  (MODEL-ROUTING-TELEMETRY, MRT-1d/1e). Observation only — the fold supplies
+ *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
+ *  `on_frontier` = this ref is not dominated by another on (success↑, p50_ms↓,
+ *  avg_cost_usd↓). `feedback`/latency are 0 when no signal has landed yet. */
+export interface TelemetryRow {
+  ref: string
+  n: number
+  success: number
+  feedback: number
+  avg_cost_usd: number
+  p50_ms: number
+  p95_ms: number
+  on_frontier: boolean
+}
+
+/** Build the ?since=&until=&session=&group_by= query for the usage endpoints
+ *  (empty/absent params omitted). */
+function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
+  const p = new URLSearchParams()
+  if (opts?.group_by) p.set('group_by', opts.group_by)
+  if (opts?.since) p.set('since', opts.since)
+  if (opts?.until) p.set('until', opts.until)
+  if (opts?.session) p.set('session', opts.session)
+  const q = p.toString()
+  return q ? `?${q}` : ''
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -1670,6 +1723,21 @@ export const api = {
   routingDismiss: (agent: string) => post<{ ok: boolean; count: number; muted: boolean }>('/api/agents/routing/dismiss', { agent }),
   routingUnmute: (agent: string) => post<{ ok: boolean }>('/api/agents/routing/unmute', { agent }),
   routingStatus: () => get<{ enabled: boolean; muted: string[]; dismissals: Record<string, { count: number; last_dismissed_at: number }> }>('/api/agents/routing/status'),
+  // Cost/token usage (COST-AND-TOKEN-OBSERVABILITY). `session` scopes to one chat
+  // (the header chip); `since`/`until` bound a period (the Usage panel's Today/7d/30d).
+  // `priced=false` ⇒ the window mixes a model with no price row, so the total is a
+  // partial (render "unpriced" / a partial marker — never a confidently-complete $).
+  usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
+  usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
+  // Per-model routing efficiency for one (use_case, query_class) bucket
+  // (MODEL-ROUTING-TELEMETRY, MRT-1d). BOTH params are required (a missing either
+  // is a 400); `rows` may be empty for a bucket with no telemetry yet. Read-only —
+  // this only visualizes; nothing here changes routing. The Routing & Efficiency
+  // settings panel (MRT-1e) renders it.
+  modelsTelemetry: (opts: { use_case: string; query_class: string }) =>
+    get<{ use_case: string; query_class: string; rows: TelemetryRow[] }>(
+      `/api/models/telemetry?use_case=${encodeURIComponent(opts.use_case)}&query_class=${encodeURIComponent(opts.query_class)}`,
+    ),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),

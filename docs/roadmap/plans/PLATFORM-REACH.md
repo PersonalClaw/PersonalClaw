@@ -114,3 +114,29 @@ def require_fts5() -> None: ...                # raises RuntimeError with the re
 
 - **Stdlib-SQLite FTS5 variance** on niche distros is the real ARM risk — A1.2 converts silent breakage into actionable errors, which is the honest floor; shipping an arm64 pysqlite3 build is the later nicety (DISCOVERY-file it if variance shows up in the wild).
 - **Open:** whether `loop/store.py` (plain `import sqlite3`, no fallback) should join `sqlite_compat` — yes in A1.1's refactor sweep; flagged here so the executor doesn't treat it as out-of-scope.
+
+## Execution log
+
+- **PR-1 DONE — one SQLite binding + capability probe.** Added `src/personalclaw/sqlite_compat.py`:
+  the driver choice (`pysqlite3` when the wheel is present, else stdlib `sqlite3`) is now made ONCE,
+  and `probe()` (memoized) reports `{driver, version, fts5, json1}` against an in-memory connection.
+  The five `try/except pysqlite3` blocks (snapshot.py, knowledge/retrieval.py, memory.py,
+  portability.py, vector_memory.py) AND `loop/store.py`'s bare `import sqlite3` (the "Open" item the
+  plan flagged — folded in, as directed) now all `from personalclaw.sqlite_compat import sqlite3`, so
+  a test patching SQLite has one bind point instead of seven (clean break — the dual import paths are
+  deleted, not shimmed). `cli_doctor.py` renders `SQLite: <driver> <version>, FTS5 <✅|❌>, JSON1
+  <✅|❌>` with a `pip install pysqlite3-binary` fix hint when FTS5 is absent. **Gates:** `make lint`
+  clean (698 source files — new module picked up); `tests/test_sqlite_compat.py` (8: all-six-consumers
+  share one binding, real-driver version/FTS5/JSON1 probe agreeing with a direct check, memoization,
+  faked full + stripped drivers, connect-blows-up→all-absent) + the touched-module suites
+  (durability_shards / memory_smoke / vector_memory) = 88 passed. CHANGELOG `### Added` (the doctor
+  line is user-visible). Scope: PR-1 only — the arm64 build matrix (PR-4) + Windows guides (PR-6/7)
+  are later atoms.
+- **PR-1 follow-up (amended):** the full-suite `test` job surfaced two consequences of the
+  consolidation the file-scoped run missed. (1) `knowledge/store.py` also carried the `try/except
+  pysqlite3` and was folded into `sqlite_compat` too (clean break — no straggler). (2)
+  `test_knowledge.py::TestPysqlite3Fallback` evicts `pysqlite3` + reimports a consumer to prove the
+  stdlib fallback; the driver choice now lives in `sqlite_compat`, so the helper must ALSO evict
+  `personalclaw.sqlite_compat` (else the cached pysqlite3 binding defeats the fallback). Verified
+  under a simulated pysqlite3-present environment (the CI condition): all three modules fall back to
+  stdlib and `sqlite_compat` is restored afterward.

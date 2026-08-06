@@ -1,9 +1,9 @@
 """The non-registry provider types are honest enable/disable seams.
 
 The extension ``ProviderRegistry`` has real type handlers for the types that own
-a consumed domain registry (model/task/workflow/memory/tool/hook/prompt/channel)
-and ``EntitySeamHandler`` for the types whose real entity lives in a separate
-subsystem: agent, inbox, skills, knowledge, notification.
+a consumed domain registry (model/task/workflow/memory/tool/hook/prompt/channel/
+knowledge) and ``EntitySeamHandler`` for the types whose real entity lives in a
+separate subsystem: agent, inbox, skills, notification.
 
 These tests pin the seam invariant: the seam must NAME where each entity actually
 lives (so no future feature wires the Nth consumer of a no-op path), a genuine
@@ -27,8 +27,21 @@ from personalclaw.providers.registry import (
 # owned through this seam). Real-registry types are asserted separately.
 # ``channel`` graduated to a real handler (ChannelTypeHandler registers a
 # transport in channel_transports), so it is no longer a seam.
-SEAM_TYPES = {"agent", "inbox", "skills", "knowledge", "notification"}
-REAL_REGISTRY_TYPES = {"model", "task", "workflow", "memory", "tool", "action", "prompt", "channel"}
+SEAM_TYPES = {"agent", "inbox", "skills", "notification"}
+# ``knowledge`` graduated to a real handler (KnowledgeTypeHandler registers a
+# provider in knowledge_providers.registry, consumed by list_provider_info +
+# search_all — WATCHED-SOURCES §1.3), so it is no longer a seam.
+REAL_REGISTRY_TYPES = {
+    "model",
+    "task",
+    "workflow",
+    "memory",
+    "tool",
+    "action",
+    "prompt",
+    "channel",
+    "knowledge",
+}
 # Types with a genuine factory↔registry contract mismatch flagged for an owner.
 MISMATCH_TYPES = {"skills"}
 
@@ -122,3 +135,99 @@ def test_seam_handler_create_runs_factory_for_non_none_instances():
     # crash (lifecycle parity with the real handlers).
     assert reg.enable("does-not-exist") is False
     assert none_handler.source_of_truth == "factory returns None"
+
+
+# ── WATCHED-SOURCES §1.3: knowledge is a REAL registry handler now ──
+
+
+def test_knowledge_uses_real_handler_not_seam():
+    """knowledge graduated from EntitySeamHandler → KnowledgeTypeHandler: enabling an
+    external knowledge provider must register it into knowledge_providers.registry so
+    list_provider_info surfaces it. A seam no-op would silently drop it."""
+    from personalclaw.providers.registry import KnowledgeTypeHandler
+
+    handlers = _handlers()
+    assert isinstance(handlers["knowledge"], KnowledgeTypeHandler)
+
+
+def test_knowledge_type_handler_registers_external_provider():
+    """The handler's register/deregister round-trips a KnowledgeProvider through the
+    domain registry — the fixture appears in list_provider_info as kind:external and
+    is gone after deregister (single source of truth, real consumer)."""
+    from personalclaw.knowledge_providers import registry as kreg
+    from personalclaw.knowledge_providers.base import (
+        KnowledgeItem,
+        KnowledgeProvider,
+        KnowledgeSource,
+    )
+    from personalclaw.providers.registry import KnowledgeTypeHandler
+
+    class _FixtureProvider(KnowledgeProvider):
+        @property
+        def name(self) -> str:
+            return "watched-fixture"
+
+        @property
+        def display_name(self) -> str:
+            return "Watched Fixture"
+
+        async def list_sources(self) -> list[KnowledgeSource]:
+            return []
+
+        async def search(self, query: str, limit: int = 10) -> list[KnowledgeItem]:
+            return []
+
+        async def get_item(self, item_id: str):
+            return None
+
+    # Clean slate for the module-global registry, then round-trip via the handler.
+    kreg.unregister_provider("watched-fixture")
+    handler = KnowledgeTypeHandler()
+    inst = _FixtureProvider()
+    try:
+        handler.register(None, inst)  # ext unused by register()
+        info = {p["name"]: p for p in kreg.list_provider_info()}
+        assert "watched-fixture" in info
+        assert info["watched-fixture"]["kind"] == "external"
+        assert info["watched-fixture"]["always_on"] is False
+        # The native provider is still the always-on native row.
+        assert info["native"]["kind"] == "native" and info["native"]["always_on"] is True
+
+        handler.deregister(None, inst)
+        assert "watched-fixture" not in {p["name"] for p in kreg.list_provider_info()}
+    finally:
+        kreg.unregister_provider("watched-fixture")
+
+
+def test_native_factory_still_returns_none_no_double_register():
+    """The bundled native factory returns None (store not available at factory time);
+    _enable_one skips register for None, so the real handler does not double-register
+    the native provider that state.knowledge_provider() already owns."""
+    from personalclaw.knowledge_providers.registry import create_native_provider
+
+    assert create_native_provider() is None
+    assert create_native_provider({"anything": 1}) is None
+
+
+def test_source_poll_contract_reexported_via_sdk():
+    """The poll contract (§1.1) is defined and re-exported through sdk/knowledge so an
+    app subclasses KnowledgeSourceProvider and returns SourcePollResult of SourceItem."""
+    from personalclaw.knowledge_providers.base import KnowledgeSourceProvider as CoreSourceProvider
+    from personalclaw.sdk.knowledge import (
+        KnowledgeSourceProvider,
+        SourceItem,
+        SourcePollResult,
+    )
+
+    assert KnowledgeSourceProvider is CoreSourceProvider
+    # A source provider IS a knowledge provider (search/get) PLUS poll.
+    from personalclaw.knowledge_providers.base import KnowledgeProvider
+
+    assert issubclass(KnowledgeSourceProvider, KnowledgeProvider)
+    assert hasattr(KnowledgeSourceProvider, "poll")
+
+    # The result/item dataclasses carry the dedup + cursor + attribution fields the
+    # engine (WS-2) relies on.
+    res = SourcePollResult(items=[SourceItem(guid="g1", title="t", also_seen_in=["rss"])])
+    assert res.cursor == "" and res.error == ""
+    assert res.items[0].guid == "g1" and res.items[0].also_seen_in == ["rss"]

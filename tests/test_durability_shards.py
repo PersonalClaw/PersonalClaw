@@ -339,3 +339,89 @@ def test_absent_store_is_skipped_not_fatal(tmp_path, missing):
     result = shards.export_shards(home, tmp_path / "s")
     assert result.entries > 0
     assert shards.validate(tmp_path / "s").ok
+
+
+# ── import (the read side; DAS-6) ───────────────────────────────────────────
+# The property that carries the read half: an export→import round-trip returns
+# every exported row unchanged, reassembled per inventory entry.
+
+
+class TestImport:
+    def test_round_trip_returns_every_exported_row(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        exported = shards.export_shards(home, out)
+        imported = shards.import_shards(out)
+        # Same total row count as was written (ExportResult.rows is the count), and
+        # one bucket per exported entry.
+        assert imported.total_rows == exported.rows
+        assert imported.entries == exported.entries
+        assert imported.machine_id == shards.machine_id(home)
+
+    def test_entity_dir_rows_survive_by_id(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        shards.export_shards(home, out)
+        imported = shards.import_shards(out)
+        # entity-dir rows are {"id": <filename stem>, "data": <the json>}.
+        tasks = {r["id"]: r["data"] for r in imported.rows["tasks"]}
+        assert set(tasks) == {"t-1", "t-2"}
+        assert tasks["t-1"]["title"] == "first" and tasks["t-2"]["title"] == "second"
+
+    def test_sqlite_table_rows_reassemble_under_entry(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        shards.export_shards(home, out)
+        imported = shards.import_shards(out)
+        # memory_db's semantic_memory table rows come back under the entry id.
+        rows = {r["key"]: r["value_json"] for r in imported.rows["memory_db"]}
+        assert rows == {"pref.a": '"first"', "pref.z": '"last"'}
+
+    def test_jsonl_years_merge_into_one_list(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        shards.export_shards(home, out)
+        imported = shards.import_shards(out)
+        # sessions had rows across 2025/2026 + one undated → all three reassemble.
+        assert len(imported.rows["sessions"]) == 3
+
+    def test_secret_entries_are_absent_from_import(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        shards.export_shards(home, out)
+        imported = shards.import_shards(out)
+        blob = json.dumps(imported.rows)
+        assert "sk-secret" not in blob and "hmac-secret" not in blob
+
+    def test_entries_filter_restricts_the_import(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        shards.export_shards(home, out)
+        imported = shards.import_shards(out, entries=["tasks"])
+        assert set(imported.rows) == {"tasks"}
+
+    def test_invalid_export_refuses_to_import(self, tmp_path):
+        home = _home(tmp_path)
+        out = tmp_path / "s"
+        shards.export_shards(home, out)
+        # Corrupt a shard so validate() fails; import must refuse rather than
+        # hand a merge/restore silently-wrong data.
+        victim = next(out.rglob("*.jsonl"))
+        victim.write_text(victim.read_text() + '{"injected": "row"}\n')
+        with pytest.raises(ValueError, match="refusing to import an invalid shard export"):
+            shards.import_shards(out)
+
+    def test_round_trip_after_part_split(self, tmp_path, monkeypatch):
+        """A shard large enough to split into part-NNNN files reassembles in order."""
+        monkeypatch.setattr(shards, "PART_SPLIT_BYTES", 200)
+        home = tmp_path / "home"
+        (home / "sessions").mkdir(parents=True)
+        rows = [f'{{"ts": "2026-01-01T00:00:0{i}Z", "n": {i}}}' for i in range(20)]
+        (home / "sessions" / "s.jsonl").write_text("\n".join(rows) + "\n")
+        out = tmp_path / "s"
+        exported = shards.export_shards(home, out)
+        # It actually split (more than one shard file for the one entry+year).
+        assert len([s for s in exported.shards if s.path.startswith("sessions/")]) > 1
+        imported = shards.import_shards(out)
+        ns = [r["n"] for r in imported.rows["sessions"]]
+        assert ns == list(range(20))  # every row, in write order

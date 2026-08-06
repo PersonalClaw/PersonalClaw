@@ -69,10 +69,22 @@ export interface ErrorSegment { kind: 'error'; text: string }
 
 export type Segment = TextSegment | ToolSegment | ApprovalSegment | ActivitySegment | ErrorSegment
 
+/** One episodic memory surfaced into an assistant turn's prompt, resolvable from a
+ *  `[Memory N]` citation the reply emits (MEMORY-GRAPH-AND-VAULT §5.4). `id` is the
+ *  episode's stable record id (used to deep-link the memory studio); it may be null
+ *  when the recall layer had no per-record id, in which case the chip degrades to a
+ *  non-navigable label. */
+export interface MemoryCitation { n: number; id: string | null; preview?: string }
+
 export interface ChatTurn {
   role: 'user' | 'assistant'
   segments: Segment[]     // user turns are a single text segment
   ts?: string             // source message timestamp (for edit-resend by ts)
+  // Episodic memory citations surfaced into THIS assistant turn (§5.4). The reply
+  // cites facts inline as `[Memory N]`; the Markdown renderer resolves each token
+  // against this list into a deep-link to the episode. Absent on turns with no
+  // episodic recall (the vast majority) and on user turns.
+  citations?: MemoryCitation[]
   // paste blocks referenced by `[Paste #N]` markers in this turn's text, kept so
   // the bubble can render the markers as inspectable chips after send.
   pastes?: { seq: number; lines: number; content: string }[]
@@ -182,7 +194,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { index, files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; memory_citations?: MemoryCitation[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -250,6 +262,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     } else if (m.role === 'assistant') {
       const at = lastAssistant()
       at.segments.push({ kind: 'text', text: m.content })
+      // Episodic memory citations (§5.4) ride the assistant message's meta; carry them
+      // onto the turn so the Markdown renderer can resolve `[Memory N]` tokens. Tolerant:
+      // absent on turns with no episodic recall (almost all of them).
+      if (Array.isArray(m.meta?.memory_citations) && m.meta!.memory_citations.length) {
+        at.citations = m.meta!.memory_citations
+      }
       // Regenerated answers persist as ONE assistant message carrying every version
       // in `variants` (the active one's content == m.content). Carry the count + index
       // onto the turn so the ‹n/N› switcher rehydrates on reload.

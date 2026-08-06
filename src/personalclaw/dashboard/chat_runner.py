@@ -428,6 +428,62 @@ _MAX_FILE_SNAPSHOT = 200_000
 _APPROVAL_MIRROR_GRACE_SECS = 90.0
 
 
+def _turn_complete_line(
+    *,
+    events: int,
+    tool_calls: int,
+    context_pct: float,
+    input_tokens: int,
+    output_tokens: int,
+    cache_tokens: int,
+    cost_usd: float,
+    priced: bool,
+) -> str:
+    """Compose the live-only "Turn complete" telemetry line (CATO-6).
+
+    Appends a real cost + in/out token fragment to the existing events/tool-calls/
+    context summary. Honest-unpriced: a model with no price row renders ``unpriced``,
+    NEVER ``$0.00`` — so a missing price is never mistaken for a free turn. The cache
+    fragment is present only when cache tokens are non-zero (absent until
+    PROMPT-CACHE-SUBSTRATE lands and a provider actually reports them).
+    """
+    line = f"Turn complete: {events} events, {tool_calls} tool calls, context {round(context_pct)}%"
+    if input_tokens or output_tokens:
+        cost_str = f"${cost_usd:.4f}" if priced else "unpriced"
+        line += f" · {cost_str} · {input_tokens:,} in / {output_tokens:,} out tokens"
+        if cache_tokens:
+            line += f" · {cache_tokens:,} cached"
+    return line
+
+
+def _record_turn_usage(
+    event: object,
+    *,
+    session_key: str,
+    source: str,
+    agent: str,
+    provider: str,
+    model: str,
+) -> None:
+    """Append one row to the per-turn cost/token ledger for a completed chat turn
+    (COST-AND-TOKEN-OBSERVABILITY C2, chat write-site). Thin wrapper over the shared
+    :func:`personalclaw.usage_ledger.record_from_event` seam (which owns the
+    vendor-cost-wins / honest-unpriced / fail-open logic)."""
+    from personalclaw.usage_ledger import record_from_event
+
+    # estimate_if_missing=False: the chat EVENT_COMPLETE handler already resolved
+    # event.cost_usd via estimate_cost, so re-estimating here would double-count it.
+    record_from_event(
+        event,
+        source=source,
+        session_key=session_key,
+        agent=agent,
+        provider=provider,
+        model=model,
+        estimate_if_missing=False,
+    )
+
+
 def _mirror_approval_to_inbox(state: object, session_key: str, event: object, risk: str) -> str:
     """Raise an ``agent_request`` item for an approval that outlived its prompt.
 
@@ -623,6 +679,17 @@ def _flush_segment(
     # the chat_segment event tells it to finalize streaming → assistant.
     session.append("assistant", redacted, "msg msg-a")
     last_msg: dict = session.messages[-1]
+    # Episodic memory citations (§5.4): stamp the turn's `[Memory N]` → record manifest
+    # onto the assistant message's meta so the frontend can resolve each cited token to
+    # a deep-link. The manifest is per-TURN (episodic injects once, on the new-session
+    # turn), so every finalized segment of that turn carries the same small list; the FE
+    # only renders a chip for a `[Memory N]` token that actually appears in the prose.
+    if session._memory_citations:
+        meta = last_msg.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["memory_citations"] = session._memory_citations
+        last_msg["meta"] = meta
     # If a regenerate is pending, attach the stashed variants to this fresh assistant message.
     attached_variants = False
     if session._pending_variants:
@@ -1106,6 +1173,9 @@ async def _run_chat(
     # Reset the per-turn file-change accumulator here — all dispatch paths
     # (handler, orchestrator, queued re-dispatch) funnel through _run_chat.
     session._file_changes = []
+    # Same for the per-turn episodic-citation manifest: populated from the assembled
+    # context below (new session only), attached to each assistant message's meta.
+    session._memory_citations = []
 
     # ── Attachments: inject extracted file content into the prompt ──
     # Uploaded attachments begin content-extraction at upload time (knowledge
@@ -1673,6 +1743,11 @@ async def _run_chat(
                 force_workflow_ids=_force_workflow_ids,
             )
             full_message = _apply_incognito_prefix(session, _assembled.message)
+            # Capture the episodic citation manifest surfaced into this turn's prompt so
+            # _flush_segment can stamp it onto the assistant message's meta (§5.4).
+            _cited = _assembled.metadata.get("memory_citations")
+            if isinstance(_cited, list) and _cited:
+                session._memory_citations = _cited
             if is_new:
                 ctx_len = _assembled.injected_chars
                 state.broadcast_ws(
@@ -1812,6 +1887,14 @@ async def _run_chat(
         # the live-only "Turn complete" stats line after the loop.
         _turn_event_count = 0
         _turn_tool_call_count = 0
+        # Cost/token accounting for the same "Turn complete" line (CATO-6). Captured
+        # at EVENT_COMPLETE; _turn_priced is False only when the model has no price
+        # row AND the provider reported no cost → render "unpriced", never $0.00.
+        _turn_input_tokens = 0
+        _turn_output_tokens = 0
+        _turn_cache_tokens = 0
+        _turn_cost_usd = 0.0
+        _turn_priced = False
         async for event in event_stream:
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
@@ -2728,6 +2811,27 @@ async def _run_chat(
                         )
                     if event.cost_usd:
                         stats.inc_cost_usd(event.cost_usd)
+                    # Durable per-turn ledger (COST-AND-TOKEN-OBSERVABILITY C2, chat
+                    # write-site): one row beside the in-memory Stats bump.
+                    _record_turn_usage(
+                        event,
+                        session_key=session_key,
+                        source=getattr(session, "_app", "") or "chat",
+                        agent=session.agent or "",
+                        provider=provider_kind or "",
+                        model=_record_model or "",
+                    )
+                    # Capture for the "Turn complete" cost line (CATO-6). priced is
+                    # False only with no price row AND no provider cost → "unpriced".
+                    from personalclaw.pricing import has_pricing as _has_pricing
+
+                    _turn_input_tokens = int(event.input_tokens or 0)
+                    _turn_output_tokens = int(event.output_tokens or 0)
+                    _turn_cache_tokens = int(event.cache_read_tokens or 0) + int(
+                        event.cache_creation_tokens or 0
+                    )
+                    _turn_cost_usd = float(event.cost_usd or 0.0)
+                    _turn_priced = bool(_turn_cost_usd) or _has_pricing(_record_model)
                 _stop_reason = event.stop_reason
                 _turn_event_count = event.event_count
                 _turn_tool_call_count = event.tool_call_count
@@ -2909,13 +3013,22 @@ async def _run_chat(
         # complete" line). Reads the provider-neutral counts carried on the
         # terminal complete event — populated identically by the native loop and
         # the ACP client — so both agent paths render the same chip.
-        if _turn_event_count or _turn_tool_call_count:
+        if _turn_event_count or _turn_tool_call_count or _turn_input_tokens or _turn_output_tokens:
             state.broadcast_ws(
                 "activity_event",
                 {
                     "session": session.key,
                     "kind": "stats",
-                    "text": f"Turn complete: {_turn_event_count} events, {_turn_tool_call_count} tool calls, context {round(pct)}%",  # noqa: E501
+                    "text": _turn_complete_line(
+                        events=_turn_event_count,
+                        tool_calls=_turn_tool_call_count,
+                        context_pct=pct,
+                        input_tokens=_turn_input_tokens,
+                        output_tokens=_turn_output_tokens,
+                        cache_tokens=_turn_cache_tokens,
+                        cost_usd=_turn_cost_usd,
+                        priced=_turn_priced,
+                    ),
                 },
             )
         _stop_text = redact_exfiltration_urls(assistant_text[:500])[0]

@@ -181,7 +181,9 @@ Store, add your API key under **Settings → Providers**, and bind a chat model 
 **Settings → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
 
 > **Tech stack:** Python 3.12 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
-> **Platforms:** local process · Docker Compose · systemd/launchd service · desktop shell.
+> **Platforms:** local process · Docker Compose · systemd/launchd service. (A macOS-only
+> Electron desktop shell exists but is experimental — not built, signed, or released by CI,
+> and has no auto-update channel.)
 
 ## <a name="privacy"></a>Privacy
 

@@ -156,6 +156,31 @@ def downloaded_layouts(cache_root: str | Path, model: str) -> list[Path]:
     return [p for p in candidate_paths(cache_root, model) if _has_real_bytes(p)]
 
 
+def on_disk_bytes(cache_root: str | Path, model: str) -> int:
+    """Total bytes *model* actually occupies across every layout that holds it.
+
+    Sums `st_size` over the files in each :func:`downloaded_layouts` path — the number the
+    §2.3 truncation detector compares against the card's expected `size_mb`. Zero when the
+    model isn't present. Best-effort per file (an unreadable file contributes nothing)
+    rather than raising, mirroring the fail-soft posture of the rest of this module.
+    """
+    total = 0
+    for layout in downloaded_layouts(cache_root, model):
+        try:
+            if layout.is_file():
+                total += layout.stat().st_size
+                continue
+            for child in layout.rglob("*"):
+                try:
+                    if child.is_file():
+                        total += child.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            logger.debug("on-disk size probe: could not stat %s", layout, exc_info=True)
+    return total
+
+
 def delete_all_layouts(cache_root: str | Path, model: str) -> list[Path]:
     """Delete every layout of *model*, returning what was removed.
 

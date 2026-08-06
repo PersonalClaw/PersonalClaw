@@ -84,6 +84,7 @@ _SECTIONS = [
     "security",
     "guardrails",
     "resilience",
+    "evals",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,
@@ -213,6 +214,20 @@ def test_every_leaf_field_survives_save_load(cfg_file):
         if got != want:
             diffs.append(f"{name}: saved {want!r} but loaded {got!r}")
     assert not diffs, "load() drops saved fields:\n" + "\n".join(diffs)
+
+
+def test_evals_editable_allowlist_excludes_the_capture_flag():
+    """EVALUATION-SUBSTRATE §10 — the runtime-editable evals subset is in the PATCH
+    allowlist, but the privacy-sensitive input-capture flag is deliberately NOT
+    (mirroring inbound.mcp.allow_remote's exclusion)."""
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert "evals.enabled" in _EDITABLE_CONFIG
+    assert "evals.study_default_k" in _EDITABLE_CONFIG
+    assert "evals.judge_agreement_floor" in _EDITABLE_CONFIG
+    assert "evals.ablation_cadence_days" in _EDITABLE_CONFIG
+    assert "evals.default_budget_usd" in _EDITABLE_CONFIG
+    assert "evals.bakeoff_capture_enabled" not in _EDITABLE_CONFIG
 
 
 def test_load_fallbacks_match_dataclass_defaults(cfg_file):
