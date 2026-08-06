@@ -993,6 +993,22 @@ def _validate_dashboard_path(raw: str) -> str | None:
     # keys, telemetry salt, app secrets) to prevent credential disclosure
     # via /api/file-read. Extensionless names must be listed here explicitly —
     # ``blocked_suffixes`` below cannot reach them.
+    #
+    # Two layers, because the host filesystem is often case-INSENSITIVE
+    # (macOS/APFS, Windows/NTFS) while these comparisons used to be
+    # case-SENSITIVE — so ``<home>/.LOCAL_SECRET`` sailed past the blocklist yet
+    # resolved to the real ``.local_secret`` bytes (issue #690).
+    #   Layer 1 — spelling: ``casefold()`` both sides so EVERY case variant of a
+    #     blocked basename or suffix is refused, on any filesystem.
+    #   Layer 2 — identity: on a case-insensitive (or hard-link-capable) volume
+    #     the robust defence is file identity, not spelling. If the target
+    #     resolves to the same inode as a blocked-name file in the same
+    #     directory, refuse it whatever name reached it — this closes hard-link
+    #     and short-name (8.3) aliases layer 1 cannot see. Bounded to the fixed
+    #     blocked basenames (a handful of ``stat()``s), so it stays cheap even
+    #     when file-list calls this per directory entry, and it is SKIPPED for a
+    #     not-yet-existing target so create/write/move/upload of a fresh file is
+    #     never rejected.
     blocked_basenames = {
         "sel_hmac.key",
         ".local_secret",
@@ -1004,11 +1020,27 @@ def _validate_dashboard_path(raw: str) -> str | None:
         "sessions.json",
     }
     blocked_suffixes = (".key", ".pem", ".secret")
-    base = os.path.basename(canonical)
-    if base in blocked_basenames:
+    base_cf = os.path.basename(canonical).casefold()
+    if base_cf in {name.casefold() for name in blocked_basenames}:
         return None
-    if any(base.endswith(suffix) for suffix in blocked_suffixes):
+    if any(base_cf.endswith(suffix.casefold()) for suffix in blocked_suffixes):
         return None
+
+    # Layer 2 — identity. A missing target (create/write/move/upload validate
+    # paths that need not exist yet) has no inode to compare, so fall through to
+    # the layer-1 result rather than rejecting a legitimate new file.
+    try:
+        target_st = os.stat(canonical)
+    except OSError:
+        return canonical
+    parent = os.path.dirname(canonical)
+    for blocked in blocked_basenames:
+        try:
+            cand_st = os.stat(os.path.join(parent, blocked))
+        except OSError:
+            continue
+        if cand_st.st_ino == target_st.st_ino and cand_st.st_dev == target_st.st_dev:
+            return None
     return canonical
 
 
