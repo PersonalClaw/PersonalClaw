@@ -1,3 +1,12 @@
+# EXTERNAL-ACCESS
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/EA.md`](../atomic/EA.md) as 9 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: External Access — Hardened Inbound Surface + External-Agent Capture Proxy
 
 **Status:** PROPOSED (created 2026-07-13 from research synthesis, promoted from backlog). Not started
@@ -14,10 +23,10 @@ plan 41, and the trust seam precedes this plan per the workspace hard rules.
 
 ## Research Integration (2026-07-13)
 
-- **NEW-10** (hardened external access: OpenAI-compatible inbound HTTP API where `model` targets an agent + `/v1/audio/speech|transcriptions|voices` aliases; gateway-mounted MCP server exposing a curated read-only capability subset with per-client bindings + kill switch; sender-trust substrate — DM pairing codes, per-sender allowlists; birdclaw discipline: disabled unless ≥32-byte bearer, query-only, hard rate/size caps, untrusted-content framing) → §1, §2, §3, §6. Sources: `birdclaw` (fail-closed minimal-surface MCP, §8 of that brief), `openclaw` (agent-as-model mapping + DM pairing, its new-candidates 2 & 4), `hermes-agent` (reverse MCP / agent-as-server, fail-closed remote binding), `omnivoice-studio` (audio aliases).
+- **NEW-10** (hardened external access: OpenAI-compatible inbound HTTP API where `model` targets an agent + `/v1/audio/speech|transcriptions|voices` aliases; gateway-mounted MCP server exposing a curated read-only capability subset with per-client bindings + kill switch; sender-trust substrate — DM pairing codes, per-sender allowlists; hardening discipline: disabled unless ≥32-byte bearer, query-only, hard rate/size caps, untrusted-content framing) → §1, §2, §3, §6. Mechanisms adopted: a fail-closed minimal-surface MCP mount, agent-as-model mapping with DM pairing, a reverse-MCP/agent-as-server binding with fail-closed remote binding, and audio aliases.
 - **NEW-10 amendment 1** (self-describing MCP control bridge over the FE's semantic actions: random-port bearer-token localhost bridge + discovery file, sideEffect labels + requiresConfirmation flags, so external agents drive PersonalClaw without DOM scraping) → §4.
 - **NEW-10 amendment 2** (A2A protocol gateway as a third inbound dialect: expose workflows as A2A-callable agents; let workflow nodes delegate to external A2A agents — same fail-closed bearer/rate-cap/framing discipline) → §5. Source: `agent-zero` (FastA2A both-directions integration).
-- **NEW-20** (external-agent capture proxy: local OpenAI/Anthropic-compatible endpoint other agents on the machine point at as API base URL, recording sessions — turns, tool calls, skill reads, file mutations — into the learning-flywheel capture path with untrusted-content fencing at ingestion; telemetry import for JSON/JSONL/SSE logs; local A/B replay harness as an evidence generator for proposal surfaces) → §7, §8, §9. Sources: `skillclaw` (capture-at-API-boundary, injected≠used attribution, A/B replay-vs-baseline), `metaharness`.
+- **NEW-20** (external-agent capture proxy: local OpenAI/Anthropic-compatible endpoint other agents on the machine point at as API base URL, recording sessions — turns, tool calls, skill reads, file mutations — into the learning-flywheel capture path with untrusted-content fencing at ingestion; telemetry import for JSON/JSONL/SSE logs; local A/B replay harness as an evidence generator for proposal surfaces) → §7, §8, §9. Mechanisms adopted: capture-at-API-boundary recording, injected≠used attribution, and A/B replay-vs-baseline evaluation.
 
 ---
 
@@ -26,7 +35,7 @@ plan 41, and the trust seam precedes this plan per the workspace hard rules.
 PersonalClaw today is **outbound-hardened and inbound-mute**. Verified starting points:
 
 - The gateway is a single aiohttp app (`dashboard/server.py` app factory) on `DASHBOARD_PORT` (config/loader.py:56, default 10000, `PERSONALCLAW_PORT` env). Auth today is `token_auth.py` (LOCAL_TOKEN HMAC middleware + `API_KEY` `Authorization: Bearer` mode) for the dashboard, and `X-Internal-Secret` for internal callers (`mcp_core._post` :419, cron scripts' `ScriptContext.call_tool` → `POST /api/tools/invoke`, server.py:768). **There is no external-client surface at all.**
-- **`mcp_core.py` serves tools only in-process** (recon-verified): `run_mcp_core_server` (:947) runs a *stdio* loop (`mcp_shared.run_mcp_stdio_loop`) aggregating `_aggregated_list_tools`/`_aggregated_call_tool` for the ACP CLI child process. No HTTP MCP mount exists — an MCP-enabled IDE cannot reach PClaw. The MeshClaw portability audit flags the inbound API as a top gap.
+- **`mcp_core.py` serves tools only in-process** (recon-verified): `run_mcp_core_server` (:947) runs a *stdio* loop (`mcp_shared.run_mcp_stdio_loop`) aggregating `_aggregated_list_tools`/`_aggregated_call_tool` for the ACP CLI child process. No HTTP MCP mount exists — an MCP-enabled IDE cannot reach PClaw. A portability audit flags the inbound API as a top gap.
 - STT/TTS already have internal HTTP routes — `POST /api/stt/transcribe` (server.py:474) and `POST /api/voice/synthesize` (server.py:693) — resolved through `resolve_provider_for_use_case` (providers/provider_bridge.py:477) and `active_models.json` bindings. The `/v1/audio/*` aliases are thin adapters over these, not new pipelines.
 - Sender trust exists only as a Slack-app-local mechanism: `apps/slack-channel/slack_runtime/allowlist.py` (owner Allow/Deny DM buttons for unknown users/channels). The generic `ChannelTransportProvider` (channel_transports/base.py:69) has no trust vocabulary — every new transport would re-invent it.
 - The security substrate this plan composes (never re-builds): `fence_untrusted` (security.py:672, re-exported via sdk/security.py), `redact()` (security.py:658), the SEL (`sel.py`), the egress chokepoint (`net/` — note `LOOPBACK_INTERNAL` policy :61 and the pre-flight-`evaluate`-only pattern for streaming surfaces, web/render.py:76), `save_credential` (.env, 0600, loader.py:255), and AUTONOMY-GUARDRAILS' incident flag + `headless` profile + ModelCallGuard.
@@ -42,7 +51,7 @@ Two backlog items, one seam. NEW-10 points capability **outward** (external clie
 
 New module `src/personalclaw/inbound/` mounted by the `dashboard/server.py` app factory. All five dialects (§2-§5, §7) register sub-routes on it and inherit the full discipline below; none of them may add a route outside it.
 
-### 1.1 Fail-closed enablement (birdclaw discipline, wholesale)
+### 1.1 Fail-closed enablement (hardening discipline, wholesale)
 
 - **Disabled unless a ≥32-byte bearer exists.** Each *surface* (`openai`, `mcp`, `a2a`, `capture`, `bridge`) has its own token; a surface with no token, a token <32 bytes, or a token equal to the dashboard token/`X-Internal-Secret` **refuses to mount** at startup with an explicit log line (invalid config is a refusal, not a warning). Tokens are generated by `personalclaw inbound token create <surface>` and stored via `save_credential` (loader.py:255 — `.env`, 0600, mirrored to os.environ) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. Tokens never appear in `config.json`, exports (`portability.py` already excludes `.env`), or API responses.
 - **Loopback by default.** The layer binds inside the existing gateway process (no second listener); non-loopback *peers* are rejected per-surface unless `external_access.<surface>.allow_remote` is explicitly true AND `external_access.public_url` is set — the exact-Host/Origin-match boundary ("the public URL is a security boundary, not a display setting"; forwarded-host headers untrusted). The control bridge (§4) ignores `allow_remote` entirely: loopback-only forever, by construction.
@@ -51,7 +60,7 @@ New module `src/personalclaw/inbound/` mounted by the `dashboard/server.py` app 
 ### 1.2 Per-client identity and bindings
 
 - `~/.personalclaw/inbound_clients.json` (atomic_write, 0600): `{client_id: {label, token_hash (sha256), surfaces: [...], agent: "", tools: [...], scope: {...}, rate_overrides: {}, disabled, created_at, last_seen_at}}`. A request authenticates as a **client**, not just a surface: the bearer is looked up constant-time against token hashes; the matched client's bindings decide what it may reach.
-- **Bindings are pins, not suggestions** (birdclaw's account-scope rule): a client bound to `agent: "researcher"` cannot select another agent via the `model` field; a client bound to `tools: [memory_recall, knowledge_search]` gets exactly those in `tools/list`; **request arguments can never override a binding** — mismatches are 403s, SEL-logged.
+- **Bindings are pins, not suggestions** (the account-scope rule): a client bound to `agent: "researcher"` cannot select another agent via the `model` field; a client bound to `tools: [memory_recall, knowledge_search]` gets exactly those in `tools/list`; **request arguments can never override a binding** — mismatches are 403s, SEL-logged.
 - Clients are created/revoked in Settings → External Access or `personalclaw inbound client create --surface mcp --tools ...` (token shown once at creation). Revocation = delete the record; the token dies with it.
 
 ### 1.3 Hard caps (module constants with config overrides)
@@ -77,7 +86,7 @@ Every OpenAI client becomes a PClaw front-end.
 ### 2.1 `POST /v1/chat/completions` — `model` targets an AGENT
 
 - `model: "personalclaw/<agent-name>"` selects an agent from config.json `agents{}` (agents are an EntitySeamHandler entity, not a provider — resolution goes through the existing agent-binding path, `resolve_agent_bindings` loader.py:2067, then chat dispatch). A client with an `agent` binding (§1.2) has the choice made for it. `GET /v1/models` lists the agents the client may reach (nothing else — no provider models are ever proxied outward on this surface).
-- **Session continuity via the OpenAI `user` field** (the openclaw mapping, verified in its docs): session key = `inbound:<client_id>:<sha8(user)>`, defaulting to `inbound:<client_id>:default`. The `inbound:` prefix joins the session-key conventions; it is added to `_STATELESS_PREFIXES` (session.py:121) — reset after each use, skip resume — EXCEPT when the client record sets `persistent_sessions: true` (continuity is then the client's declared choice, like crons' `persistent_session`).
+- **Session continuity via the OpenAI `user` field** (a known agent-as-model mapping): session key = `inbound:<client_id>:<sha8(user)>`, defaulting to `inbound:<client_id>:default`. The `inbound:` prefix joins the session-key conventions; it is added to `_STATELESS_PREFIXES` (session.py:121) — reset after each use, skip resume — EXCEPT when the client record sets `persistent_sessions: true` (continuity is then the client's declared choice, like crons' `persistent_session`).
 - SSE streaming translated from the internal event stream; non-stream waits and returns one completion. Tool-approval requests arising mid-run are **never** interactively surfaced to the HTTP caller — the run executes under the headless profile (§2.3) and a needs-approval state returns a terminal message telling the user to look at their dashboard.
 
 ### 2.2 `/v1/audio/*` — aliases over the existing voice routes
@@ -106,9 +115,9 @@ Streamable-HTTP MCP endpoint at `/mcp` inside the same aiohttp app. This is a **
 | `search_transcripts(query)` | ConversationLog FTS read | strips tool XML/credentials per the safety-filtered-recall pattern; optional, off by default per client |
 
 - **Per-client bindings** (§1.2) subset this table per client and can pin scope (e.g. `scope: {project: "p-1234"}` filters tasks/knowledge to one project — args cannot widen it). `tools/list` reflects exactly the client's subset.
-- Results framed per §1.4; hard caps per §1.3 (100 results / 2 MiB / broad-query rejection over large stores, birdclaw's >10k-row guard adapted to memory/knowledge row counts).
+- Results framed per §1.4; hard caps per §1.3 (100 results / 2 MiB / broad-query rejection over large stores, a >10k-row guard adapted to memory/knowledge row counts).
 - **Kill switch:** `external_access.mcp.enabled` + the master + incident checks (§1.1). One PATCH flips it off; in-flight requests finish, new ones get 503.
-- **Non-duplication note:** hermes' "reverse MCP" and the MeshClaw-audit inbound gap both land here; nothing in the 15 approved plans owns an MCP mount (recon confirms mcp-tools instances are *outbound* client config, providers/mcp_instances.py). No overlap to honor beyond guardrails.
+- **Non-duplication note:** the reverse-MCP inbound gap lands here; nothing in the 15 approved plans owns an MCP mount (recon confirms mcp-tools instances are *outbound* client config, providers/mcp_instances.py). No overlap to honor beyond guardrails.
 
 ---
 
@@ -137,7 +146,7 @@ Same seam, same discipline, standards-shaped (agent-zero's FastA2A precedent).
 As channel transports multiply (Slack today; the WATCHED-SOURCES / channel roadmap adds more), per-transport trust re-invention is the failure mode. Generalize the verified Slack mechanism (`apps/slack-channel/slack_runtime/allowlist.py` — owner Allow/Deny prompts, app-local persistence) into core:
 
 - **`channel_transports/trust.py`:** one store `~/.personalclaw/sender_trust.json` (atomic_write) — `{transport: {sender_id: {state: allowed|denied|pending, display, paired_at, source: pairing|owner_approve|manual}}}` + `check_sender(transport, sender_id) -> TrustDecision`, consulted by the gateway's channel-ingestion path **before** a message reaches an agent session (one chokepoint, transports don't cooperate — the §1.2-of-AUTONOMY-GUARDRAILS enforcement-placement lesson applied to channels).
-- **DM pairing codes** (openclaw's model): an unknown sender's first DM gets an auto-reply with nothing but a pairing hint; the user issues `personalclaw channel pair <transport>` (or Settings) → an 8-char code, 1 h expiry, max 3 pending; the sender replies with the code → `allowed`. Unknown senders without a code are dropped-and-counted (one SEL line, no agent tokens spent — the storm-safe default).
+- **DM pairing codes** (a known pairing pattern): an unknown sender's first DM gets an auto-reply with nothing but a pairing hint; the user issues `personalclaw channel pair <transport>` (or Settings) → an 8-char code, 1 h expiry, max 3 pending; the sender replies with the code → `allowed`. Unknown senders without a code are dropped-and-counted (one SEL line, no agent tokens spent — the storm-safe default).
 - **Per-sender allowlists** stay editable in Settings (manual allow/deny), and the Slack app's Allow/Deny button flow is refitted as a *UI affordance writing to this store* rather than its own file — one migration, behavior preserved.
 - The `ChannelTransportProvider` ABC is unchanged (no new abstract methods); transports optionally expose sender display names via the existing `info()`. New transports inherit trust with zero code.
 
@@ -151,11 +160,11 @@ A local OpenAI- **and** Anthropic-compatible endpoint other agents on this machi
 
 - The external agent sets `OPENAI_BASE_URL=http://127.0.0.1:10000/capture/v1` (or `ANTHROPIC_BASE_URL=.../capture`) and `OPENAI_API_KEY=<capture-surface bearer>` — auth IS the §1.1 token, so misconfigured agents fail loud, not open. Loopback-only, always (capture never sets `allow_remote`).
 - **Upstream forwarding through provider fidelity:** the client record's `upstream` field names a config.json `ProviderEntry`; the proxy resolves credentials + base_url from the llm registry entry (the same credential_store → options.api_key → env order every factory uses, sdk/provider_helpers.py) and forwards verbatim — the user's real API key never appears in the external agent's config, a strict improvement. A `passthrough` mode (client supplies its own upstream key via a second header) exists for agents PClaw has no entry for. **Streaming:** SSE is piped bidirectionally; because `net.fetch`'s byte-capped buffered read (client.py:98) can't stream, the proxy uses a dedicated streaming client that **pre-flights `guard.evaluate`** on the upstream URL (the web/render.py:76 pattern for exactly this case) with an operator-visible allow-list of upstream hosts — never hand-rolled unguarded egress.
-- **Latency honesty:** recording is *post-hoc* — the response streams to the caller first; the turn record is assembled and persisted off the hot path (skillclaw's known wart — sync storage in the async proxy loop stalling traffic — is the named anti-pattern; all persistence is `asyncio.to_thread`/task-queued).
+- **Latency honesty:** recording is *post-hoc* — the response streams to the caller first; the turn record is assembled and persisted off the hot path (a known anti-pattern — sync storage in the async proxy loop stalling traffic — is avoided; all persistence is `asyncio.to_thread`/task-queued).
 
 ### 7.2 Recording + fencing at ingestion
 
-- Session assembly: requests sharing (client_id, conversation fingerprint) fold into one capture session — `~/.personalclaw/capture/<session_id>.jsonl` (0600), one record per turn: `{ts, dialect, model_requested, prompt_digest, response_digest, tool_calls: [{name, args_clipped, ok}], read_paths, wrote_paths, tokens, latency_ms}` plus a full-content sidecar. `read_skills` attribution uses skillclaw's `skill_path_map` technique: tool-call file paths mapped through an index of every file in `~/.personalclaw/skills/**` (and agent-tier skill dirs) → skill id — so "this Claude Code session read my `deploy-checklist` skill" is a mechanical fact. **Injected/available ≠ used** is preserved by construction: only actual reads/writes count as evidence downstream.
+- Session assembly: requests sharing (client_id, conversation fingerprint) fold into one capture session — `~/.personalclaw/capture/<session_id>.jsonl` (0600), one record per turn: `{ts, dialect, model_requested, prompt_digest, response_digest, tool_calls: [{name, args_clipped, ok}], read_paths, wrote_paths, tokens, latency_ms}` plus a full-content sidecar. `read_skills` attribution uses a `skill_path_map` technique: tool-call file paths mapped through an index of every file in `~/.personalclaw/skills/**` (and agent-tier skill dirs) → skill id — so "this Claude Code session read my `deploy-checklist` skill" is a mechanical fact. **Injected/available ≠ used** is preserved by construction: only actual reads/writes count as evidence downstream.
 - **Fencing + hygiene AT INGESTION, not at mining time:** before any capture content is persisted, (a) `redact()` strips credential-shaped strings and exfil URLs, and (b) the content is stored pre-wrapped via `fence_untrusted(..., source="capture:<client_id>")`. When flywheel passes later read capture sessions, the content is *already* inside fences — LEARNING-FLYWHEEL's `capture_hygiene.py` rule ("content inside fence_untrusted is invisible to direct capture cadences; it may only travel the proposal path") applies with zero new policy. An injection planted in an external agent's transcript can therefore never direct-write a lesson — success criterion 6.
 - **Boundary discipline:** captured sessions are **harness mechanics** — they index into `learning.db`'s staging tier (a new `capture` staging source beside per-turn/session-end/run-end) and their artifacts live under `~/.personalclaw/capture/`. Nothing here writes to `knowledge.db` (external-agent transcripts are not the user's documents) and nothing writes `memory.db` directly — mined findings travel ONLY through the flywheel proposal queue (kinds: `skill`, `lesson_batch`, `retrigger`-style description fixes, `template`), human-installed. Retention: capture files prune at `external_access.capture.retention_days` (default 30) on the curator tick.
 - **Ordering resilience:** if LEARNING-FLYWHEEL steps 1-3 haven't landed, the proxy still records (capture is durable), mining is simply off — the staging-tier hookup is one adapter.
@@ -166,7 +175,7 @@ A local OpenAI- **and** Anthropic-compatible endpoint other agents on this machi
 
 ## 9. Local A/B replay harness (evidence generator)
 
-The skillclaw mechanism at personal scale (N=1..k on your own history, no fleet, no quorum):
+The A/B replay mechanism at personal scale (N=1..k on your own history, no fleet, no quorum):
 
 - **Mining:** a background pass (flywheel curator cadence — no new scheduler) extracts `replay_cases` from capture sessions: self-contained instructions preferring tool-free turns, ≤3 per session, stored with provenance pointers.
 - **Replay:** given a pending skill/template-content proposal, run each mined case twice via `one_shot_completion(use_case="background")` — once with CURRENT entity content in the system context (baseline), once with the CANDIDATE — and score both with `eval/judge.py:LLMJudge` (its `eval_judge` binding; parse-failure→0 reject-by-default is exactly the wanted property). Verdict attached to the proposal's evidence manifest: `{cases, candidate_mean, baseline_mean, verdict: improved|neutral|regressed}`. Acceptance stays with the human — replay is **evidence on the proposal card, never a gate that auto-applies** (it *feeds* LEARN-R2's held-out replay gate as an additional evidence stream; that gate's accept-discipline lives in the flywheel plan and is not re-specified here).
@@ -229,7 +238,7 @@ Snapshot/portability: `inbound_clients.json` and `sender_trust.json` join the ex
 | `eval/runner.py` for replay | **REJECTED** (env-mutation hazard :216) — replay composes `one_shot_completion` + `LLMJudge` |
 | NEW-9 voice profiles | **COVERED by MULTIMODAL-IO plan** — `/v1/audio/voices` ships name-based with a `resolve_voice` seam consumed when that plan lands |
 | A2A workflow exposure | **GATED on WORKFLOWS-V2 Slices 0-3**; the a2a surface mounts empty until then; `a2a-call` outbound is independent |
-| OpenClaw's `security audit --fix` idea | **OUT OF SCOPE** (a distinct doctor-shaped capability, NEW-18 territory); this plan only *emits* the SEL/audit data such a command would read |
+| A `security audit --fix` command | **OUT OF SCOPE** (a distinct doctor-shaped capability, NEW-18 territory); this plan only *emits* the SEL/audit data such a command would read |
 
 ---
 
@@ -256,7 +265,7 @@ Sessions 1-3 are NEW-10's core and ship value alone; 4-5 are NEW-20; 6 completes
 |---|---|
 | Any inbound surface is new attack surface on a personal machine | Fail-closed everything: no token → no mount; loopback default; per-client bindings args can't override; query-only read surfaces with no write path; incident switch honored at one dispatch seam; SEL on every refusal |
 | Prompt injection via captured external-agent content becoming standing instructions | Fence-at-ingestion (§7.2) + flywheel hygiene rule + propose-don't-write: fenced content can only travel the proposal path; success criterion 6 is the adversarial test |
-| Capture proxy in the LLM hot path adds latency / stalls (skillclaw issue #52 class) | Stream-first, record-async off the hot path; recording failure never fails the forwarded request (logged + counted); proxy is opt-in per external agent |
+| Capture proxy in the LLM hot path adds latency / stalls (a known sync-storage-in-async-loop class of bug) | Stream-first, record-async off the hot path; recording failure never fails the forwarded request (logged + counted); proxy is opt-in per external agent |
 | Token sprawl / stale clients | Tokens hashed at rest, shown once, per-client revocation; `last_seen_at` + auto-disable on repeated cap breaches; Settings lists clients with staleness |
 | Inbound agent runs spending unbounded money overnight | Per-client SpendMeter budgets + headless profile by construction + guardrails pause-into-needs-input — inherited, not re-built |
 | A2A spec drift / low real-world demand | A2A is the last slice, gated behind the same seam; the card-empty mount + outbound action provider are cheap; inbound task mapping only lands with v2 engine anyway |
@@ -279,9 +288,9 @@ Sessions 1-3 are NEW-10's core and ship value alone; 4-5 are NEW-20; 6 completes
 9. The control bridge lets a local MCP agent open a cockpit and read a transcript without DOM scraping, but `create_task` returns `needs_confirmation` until the user confirms in the dashboard — enforced server-side.
 10. A workflow with `a2a_published: true` appears on the agent card and an external A2A client can run it headless within its budget; an `a2a-call` hook action to a non-allowlisted host is blocked by the egress guard, and hook creation with the provider succeeds only because it is in `ALLOWED_HOOK_PROVIDERS`.
 
-## Amendment (2026-07-26 — sibling-platform gap analysis, owner greenlight)
+## Amendment (2026-07-26 — platform gap analysis, owner greenlight)
 
-**Standard-API doorway priority + contract sharpening.** Sibling-platform evidence: the OpenAI-compatible `/v1/chat/completions` endpoint (any off-the-shelf client talks to the assistant) is the highest-leverage single slice of this plan — every OpenAI-SDK tool, editor plugin, and phone client becomes a PClaw front-end for free. **This is ALREADY §2 of this plan** (Session 2) — the amendment does not duplicate it; it (a) promotes Sessions 1+2 to an explicitly separable early sub-slice ("the doorway") that may land ahead of the rest of Wave 3 once AUTONOMY-GUARDRAILS ships (Session 2's only hard dependency; §2.3), and (b) sharpens §2.1's acceptance criteria where the sibling ecosystem hit interop bugs.
+**Standard-API doorway priority + contract sharpening.** Gap-analysis evidence: the OpenAI-compatible `/v1/chat/completions` endpoint (any off-the-shelf client talks to the assistant) is the highest-leverage single slice of this plan — every OpenAI-SDK tool, editor plugin, and phone client becomes a PClaw front-end for free. **This is ALREADY §2 of this plan** (Session 2) — the amendment does not duplicate it; it (a) promotes Sessions 1+2 to an explicitly separable early sub-slice ("the doorway") that may land ahead of the rest of Wave 3 once AUTONOMY-GUARDRAILS ships (Session 2's only hard dependency; §2.3), and (b) sharpens §2.1's acceptance criteria where the broader ecosystem hit interop bugs.
 
 ### Contract sharpening (additive to §2.1/§2.3 — no design change)
 

@@ -1,3 +1,12 @@
+# INBOX-NOTIFICATIONS-UNIFICATION
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/INU.md`](../atomic/INU.md) as 7 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Inbox/Notifications Unification — One Attention Store, One Configurable Delivery Layer
 
 **Status:** IN PROGRESS — Sessions 1-5 shipped 2026-07-30 (PRs #111-#115): the typed kind registry

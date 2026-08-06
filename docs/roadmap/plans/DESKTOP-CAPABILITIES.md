@@ -1,3 +1,12 @@
+# DESKTOP-CAPABILITIES
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/DC.md`](../atomic/DC.md) as 6 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Desktop Capabilities — The Electron App as a Capability Surface
 
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner GO: live audio + OS capabilities for the platform *and* apps via the Electron app)

@@ -1,3 +1,12 @@
+# MCP-READONLY-INBOUND
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/MRI.md`](../atomic/MRI.md) as 5 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: MCP Read-Only Inbound — The Curated Query Surface, Extracted and Landed Early
 
 **Status:** IN PROGRESS — Session 1 (transport + auth + caps + audit) shipped 2026-07-28; **Session 2
@@ -294,7 +303,7 @@ Tests: 30 new cases in `tests/test_inbound_mcp.py` (82 total). Full suite 8731 p
 
 ## Amendment (2026-07-29 — owner-approved: protocol-revision currency)
 
-**Provenance.** A competitive/ecosystem research pass (2026-07-28/29) found that MCP revision **`2026-07-28` makes the protocol stateless, deleting `Mcp-Session-Id`** — and that at least one shipping vendor (Manus, via an undocumented `mcp.manus.im` endpoint) negotiates `2025-06-18` **with** session IDs and is therefore on the wrong side of that change.
+**Provenance.** An ecosystem research pass (2026-07-28/29) found that MCP revision **`2026-07-28` makes the protocol stateless, deleting `Mcp-Session-Id`** — and that at least one shipping vendor (via an undocumented endpoint) negotiates `2025-06-18` **with** session IDs and is therefore on the wrong side of that change.
 
 **The good news, verified against code: PersonalClaw is already on the right side by construction.** This surface is stateless today, not by luck but by an explicit design decision recorded in its own module docstring:
 - **No session IDs at all.** `grep -rn "Mcp-Session-Id" src/` returns **zero**. Nothing in this surface issues, reads, or persists a session identifier.

@@ -1,3 +1,12 @@
+# AGENT-ROOMS
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/AR.md`](../atomic/AR.md) as 8 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Agent Rooms — Persistent Multi-Agent Deliberation, Human-Governed
 
 **Status:** PROPOSED — created 2026-07-26 (roadmap rev 13; owner decision: DEFERRED until WORKFLOWS-V2 core slices + ACP-AGENT-PARITY land — a room over parity-broken ACP members is a support nightmare, and pipeline-shaped multi-agent work belongs to Workflows v2)

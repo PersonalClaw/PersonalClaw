@@ -1,3 +1,12 @@
+# ECOSYSTEM-TOOLING
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/ET.md`](../atomic/ET.md) as 8 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Ecosystem Tooling — Scaffold, Registry, Exemplars
 
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner: "yes, please plan for this")
@@ -7,6 +16,8 @@
 **Scope:** collapse app-author time-to-first-run to minutes and give PersonalClaw-native apps a discovery surface. **Soul guardrail:** the registry starts as **data in a git repo** the Store consumes — no registry service, no accounts, no upload pipeline. The scanner-gated install path remains the only install path; the registry adds discovery, never a bypass. Scaffold output must pass the apps-repo CI *as generated* — a template that needs fixing is a defect.
 
 ---
+
+> 📎 **The first-party app suite in [PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md) §7 (#68) ARE this plan's exemplars** — added 2026-08-05. A comparable product suite spans ~11 first-party product apps (Code Review, Research Lab, Design Critique, PPTX/Papyrus, Notes, Issue Radar, Ops, Spec Builder, Companion); #68 §7 designs PersonalClaw equivalents as a phased program, one PR each. This plan's scaffold generates their skeletons and its exemplar list should record them as they ship — they prove the platform far better than the four throwaway exemplars in T3.1. Coordinate: #68 §7 builds the apps; this plan builds the scaffold/registry they're built with.
 
 ## Context (code recon, 2026-07-18)
 

@@ -1,3 +1,12 @@
+# DURABILITY-AND-SYNC
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/DAS.md`](../atomic/DAS.md) as 10 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Durability & Sync — Deterministic Shards, Scheduled Snapshots, User-Owned Transport
 
 **Status:** IN PROGRESS — Session 1 (inventory + audit) and Session 2 (2a shards / 2b service / 2c

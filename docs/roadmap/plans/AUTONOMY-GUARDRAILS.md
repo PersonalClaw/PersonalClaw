@@ -1,3 +1,12 @@
+# AUTONOMY-GUARDRAILS
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/AG.md`](../atomic/AG.md) as 11 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Autonomy Guardrails — Safety Floor + Model-Call Chokepoint
 
 **Status:** IN PROGRESS — Sessions 1-4 landed 2026-07-25 (see `## Execution log`): the §2 model-call
@@ -14,6 +23,14 @@ Settings → Guardrails.
 `SafetyProfile.tool_grants`/`denylist_extra`/`egress_tier` have no reader. Wiring
 `profile_for_session` into the three dispatch seams + spawn belongs to S5.2. A handful of further
 seams are deferred to their consumers (apps repo / AUTOMATION-SUBSTRATE / WORKFLOWS-V2), each logged.
+📐 **Before executing S5.2, read [PLATFORM-HARDENING-FLOORS](PLATFORM-HARDENING-FLOORS.md) §5.**
+It supplies the layering design for that wiring session so a second scheme isn't invented: a
+boot-loaded **`Ceiling` the running agent cannot weaken** + today's `SafetyProfile` as the
+narrow-only inner level, resolved by one rule (**tightest wins**, effective = `ceiling ∩ profile`),
+with the evaluator dispatching on one of four **archetypes** — never on a scope *name*, which is
+what keeps adding a scope data rather than engine code. It also carries the path-matcher rule as a
+required test: normalize only the queried item, **never** `normpath` a pattern (`/a/**/../b` →
+`/a/b` silently drops the `**` and widens an allow) — the wired-but-wrong-controls class.
 (created 2026-07-12 from research synthesis)
 
 ---

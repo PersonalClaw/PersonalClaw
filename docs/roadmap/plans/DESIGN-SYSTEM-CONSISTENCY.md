@@ -1,6 +1,21 @@
+# DESIGN-SYSTEM-CONSISTENCY
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/DSC.md`](../atomic/DSC.md) as 12 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Design-System Consistency — One Coherent Surface, Everywhere
 
 **Status:** DONE — closed by owner 2026-07-24 (created 2026-07-18, roadmap rev 10; owner ask: UI/UX consistencies). S1 audit + S2 token/primitive hardening + S3 interaction/a11y/responsive parity all landed across cy1–cy18 (see `## Execution log`); WCAG AA reached on all 11 schemes in both modes with a permanent per-scheme contrast guard; every byte-identical convergence cluster consolidated onto shared primitives; the primitive-adoption + inline-font-weight ratchets and the strict token-lint are live and block regression. **Owner-closed with a known, honestly-recorded tail** (not silently dropped): the authenticated axe-per-route CI gate (T3.2/T3.4) and the V3 full-app keyboard/reduced-motion/phone walkthrough need a seeded, authenticated, per-route CI harness that was not stood up here; the `ErrorState` primitive (single faithful adopter) and the harness-gated `CodeCockpitPage`-class raw-button *redesign* are deferred as owner/design decisions, not consistency work. Ratchets keep the surface from drifting back; any of the deferred items can be picked up as follow-on plans.
+🟢 **The harness that tail was waiting for now has an owner (2026-08-04):**
+[PLATFORM-HARDENING-FLOORS](PLATFORM-HARDENING-FLOORS.md) §4 builds the offline **fake-model E2E
+harness** — a real gateway booted against a packaged fake model provider with a seeded
+authenticated session, then Playwright shelled at it (no model, no credentials, no network, no
+cost) — and `SH4.3` explicitly mounts this plan's `T3.2`/`T3.4` axe-per-route a11y rail on it. So
+T3.2/T3.4/V3 are **DEFERRED with a named owner**, not open-ended.
 **Created:** 2026-07-18
 **Wave:** 2 — a consistency-hardening pass that every other product-surface plan then inherits; run it early so new work lands on a clean baseline.
 **Depends on:** nothing hard (audits + hardens the shipped design system). Feeds FLUID-MOTION (52 — consistent components are the substrate motion animates), APP-PLATFORM-EVOLUTION (48 — apps consume the exported primitives), and every page-touching plan (43, 49, 50).

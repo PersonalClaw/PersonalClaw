@@ -1,3 +1,12 @@
+# KNOWLEDGE-LIBRARY
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/KL.md`](../atomic/KL.md) as 12 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Knowledge Library — Collections, Curation, and Reading
 
 **Status:** IN PROGRESS — Session 1 (collections + item curation) shipped 2026-07-29; **Session 2
@@ -12,6 +21,8 @@ Status corrected 2026-08-04 by code audit. Created 2026-07-18 (roadmap rev 10; o
 library-management capabilities for knowledge articles)
 
 ---
+
+> 📎 **Artifacts-as-a-knowledge-source lives in [PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md) §6 (#68)** — added 2026-08-05: an aggregate `artifact://` source row + an in-process change-listener that auto-ingests content-bearing artifacts (searchable but **not** listed as knowledge items), following a `knowledge/artifact_ingest.py` design. It plugs into *this* plan's source framework (`knowledge/pipeline/`, `connectors/`, `KnowledgeStore`). If you change the source-type model or the ingestion path here, read #68 §6 so the artifact source type lands compatibly.
 
 ## Context (code recon, 2026-07-18)
 
@@ -164,7 +175,7 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
 
 ## Amendment (2026-07-29 — owner-approved: indexing depth, the layer under the library)
 
-**Provenance.** A competitive gap analysis (Genspark + Manus) plus a code audit found that PersonalClaw's *retrieval machinery* is genuinely strong while the *index underneath it* is thin — and that the owner's question ("should this be fixed by the knowledge tools implementation?") resolves to **no**: it is neither a tools problem nor a library-management problem. It lands here because this plan owns `knowledge/store.py`, but it is a distinct sub-scope from S1-S3's curation work and should be sequenced independently.
+**Provenance.** A capability gap analysis plus a code audit found that PersonalClaw's *retrieval machinery* is genuinely strong while the *index underneath it* is thin — and that the owner's question ("should this be fixed by the knowledge tools implementation?") resolves to **no**: it is neither a tools problem nor a library-management problem. It lands here because this plan owns `knowledge/store.py`, but it is a distinct sub-scope from S1-S3's curation work and should be sequenced independently.
 
 ### The three limits, each verified
 

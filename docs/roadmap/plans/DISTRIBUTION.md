@@ -1,3 +1,12 @@
+# DISTRIBUTION
+
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/DIST.md`](../atomic/DIST.md) as 12 atomic plan(s).
+
+This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
+
+The original design record is kept below — execution logs, measured findings and owner rulings are the reason this document still matters.
+
+---
 # Plan: Distribution & Packaging — One Command to a Talking Agent
 
 **Status:** DONE — S1-S4 complete (2026-07-21 → 2026-07-24); S5 (Homebrew/Nix convenience channels)
@@ -72,6 +81,21 @@ Images from CI (amd64+arm64). Add `PERSONALCLAW_INSTALL_KIND=container` to both 
 **S3 — Containers (≈1).** §D. *Validation:* clean VM, two commands, dashboard reachable, state survives recreation.
 **S4 — Self-update generalization (≈1).** §C behind the gate; per-kind validation: git checkout one-tag-behind updates; pip venv one-version-behind updates; container shows instructions; changelog panel renders the real CHANGELOG. Gate default-on for new installs; flip note in CHANGELOG.
 **S5 — Convenience channels (≈1, post-launch).** Homebrew tap (formula wrapping the wheel via `uv tool` or brew's python@3.12) + Nix flake; each with a per-release smoke checklist; README install matrix updated.
+
+**S5b — Signed release-channel feed (deferred; from a design study 2026-08-05, reconciles with
+[PLATFORM-HARDENING-FLOORS](PLATFORM-HARDENING-FLOORS.md) §7.2's channel deferral).** A channel-feed
+design resolves a **channel feed** (`stable | insider | nightly`), verifies its RSA-SHA256
+signature against an installer-pinned public key, records the channel in the data home, and pins
+each wheel by a published `SHA256SUMS` — **no unsigned fallback**. We already have OIDC
+build-provenance attestation (`release.yml`), which is stronger than a hash file, so the *only*
+missing piece is the **channel concept**: `_installer.py` channel-awareness, a signed feed the
+installer resolves, and a `CHANNEL` env-var-style selection. Value = dogfooding the engine program's
+cadence via a nightly channel without shipping every merge to stable users. **Named gate** (per
+PLATFORM-HARDENING-FLOORS §7.2): pick this up when the merge rate makes a nightly worth the release
+machinery — not before. Desktop auto-update detail worth pinning in DESKTOP-CAPABILITIES: distribute
+a **signed + notarized universal DMG** (a `sign-and-notarize.yml` workflow) so OS permission grants stay
+sticky across electron-updater updates; the recommended shape is one universal artifact + auto-update onto native
+arm64 over a per-arch feed split.
 
 ## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md); gate/migration per plan 31 §4)
 
