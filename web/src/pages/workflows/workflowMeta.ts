@@ -57,6 +57,16 @@ export const TERMINAL_RUN_STATUSES = new Set<string>(['complete', 'failed', 'can
 
 export const isTerminal = (status: string) => TERMINAL_RUN_STATUSES.has(status)
 
+/** Node-INSTANCE states after which a node will not run again without an explicit mutation —
+ *  the exact set the `/inspect` endpoint accepts (mirrors `workflows/models.py:TERMINAL_STATES`).
+ *  A node in any other state has nothing to reconstruct yet, so the endpoint 409s; the run view
+ *  gates the Inspect affordance on this so the click is offered only where it can succeed. */
+export const TERMINAL_NODE_STATES = new Set<string>([
+  'done', 'degraded', 'failed', 'skipped', 'no_change', 'scope_violation', 'discarded', 'escalated', 'blocked', 'cancelled',
+])
+
+export const isNodeTerminal = (state: string) => TERMINAL_NODE_STATES.has(state)
+
 /** Node instances a `foreach` body produces share one node id, so the INSTANCE PATH is the
  *  stable key. Strips the `#i` / `@n` suffix for display without losing which instance a
  *  row is. */
