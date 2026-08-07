@@ -743,6 +743,7 @@ async def dispatch_action(
     *,
     get_provider: Any = None,
     timeout: int = 60,
+    run_id: str = "",
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -781,18 +782,12 @@ async def dispatch_action(
     payload = dict(cfg.get("payload") or {})
     # Run/node provenance in the payload, so a provider can attribute what it wrote without
     # the template having to restate ids it cannot know. `knowledge-persist` auto-fills
-    # `source_ref` from these — without them every persisted item would be unattributed, and
-    # an unattributed knowledge item cannot be traced back to the run that made it.
-    # Node provenance in the payload, so a provider can attribute what it wrote without the
-    # template restating an id it cannot know. `knowledge-persist` auto-fills `source_ref`
-    # from this — an unattributed knowledge item cannot be traced back to what made it.
-    #
-    # NODE id only: `dispatch_action` does not receive the run, and neither does
-    # `BindingContext` carry it. Threading the run id down here would mean changing the
-    # signature of every dispatcher plus the tick loop that calls them, which is a wider
-    # change than this session's scope — so the provider degrades to a node-scoped ref and
-    # says so, rather than the engine growing a parameter nothing else needs yet.
+    # `source_ref` from these, and `artifact_inspect` (WV-11) needs the run id to locate the
+    # run-local `artifacts/` dir a `{{nodes.x.artifact}}` ref points into — without them a
+    # persisted item is unattributed and an offloaded artifact is unreachable.
     payload.setdefault("node_id", getattr(node, "id", "") or "")
+    if run_id:
+        payload.setdefault("run_id", run_id)
     context = ActionContext(
         event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
     )
@@ -1771,7 +1766,9 @@ async def _dispatch_inner(
     if kind == NodeKind.BRANCH:
         return await dispatch_branch(node, ctx)
     if kind == NodeKind.ACTION:
-        return await dispatch_action(node, ctx, get_provider=get_provider, timeout=timeout)
+        return await dispatch_action(
+            node, ctx, get_provider=get_provider, timeout=timeout, run_id=run_id
+        )
     if kind == NodeKind.WAIT:
         return await dispatch_wait(node, ctx, now=clock)
     if kind == NodeKind.GATE:

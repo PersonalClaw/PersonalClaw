@@ -244,6 +244,63 @@ class TestRunDirectory:
         assert st.read_output(run.id, "root.never") is None
 
 
+class TestArtifactOffload:
+    """WV-11: an offloaded body lives under `artifacts/`, read back by node path or by ref
+    (confined to the run's own artifacts dir)."""
+
+    def test_artifact_ref_is_not_an_outputs_ref(self) -> None:
+        run = st.create(_run())
+        ref = st.write_artifact(run.id, "root.children[0]", {"big": [1, 2, 3]})
+        assert ref.startswith("artifacts/") and ref.endswith(".json")
+        assert not ref.startswith("outputs/")
+
+    def test_read_output_falls_back_to_artifacts(self) -> None:
+        """A body written only to artifacts/ is still found by `read_output` — the fallback is
+        what keeps every existing node-path reader working after an offload."""
+        run = st.create(_run())
+        st.write_artifact(run.id, "root.children[0]", {"big": "value"})
+        assert st.read_output(run.id, "root.children[0]") == {"big": "value"}
+
+    def test_read_artifact_round_trips_by_ref(self) -> None:
+        run = st.create(_run())
+        ref = st.write_artifact(run.id, "root.children[0]", {"payload": "x" * 100})
+        assert st.read_artifact(run.id, ref) == {"payload": "x" * 100}
+
+    def test_read_artifact_refuses_a_path_escape(self) -> None:
+        """The ref reaches here from a model-authored template, so a `../` escape is refused
+        rather than trusted — the provider only reads run-local artifacts."""
+        run = st.create(_run())
+        st.write_artifact(run.id, "root.a", {"secret": "in-run"})
+        # Plant a file OUTSIDE the run's artifacts dir that an escape would try to reach.
+        outside = st.run_dir(run.id).parent / "elsewhere.json"
+        outside.write_text('{"output": "leaked"}', encoding="utf-8")
+        assert st.read_artifact(run.id, "../elsewhere.json") is None
+        assert st.read_artifact(run.id, "../../etc/passwd") is None
+
+    def test_read_artifact_refuses_an_outputs_ref(self) -> None:
+        """An `outputs/` ref is a non-offloaded value; `read_artifact` reads ONLY the artifacts
+        root, so it returns None rather than reaching into outputs/."""
+        run = st.create(_run())
+        out_ref = st.write_output(run.id, "root.a", {"v": 1})
+        assert st.read_artifact(run.id, out_ref) is None
+
+    def test_read_artifact_missing_ref_is_none(self) -> None:
+        run = st.create(_run())
+        assert st.read_artifact(run.id, "artifacts/deadbeef.json") is None
+        assert st.read_artifact(run.id, "") is None
+
+    def test_archive_moves_an_offloaded_body(self) -> None:
+        """A rewind archives an offloaded body too, so no stale artifact survives to be resolved
+        through the read_output fallback."""
+        run = st.create(_run())
+        st.write_artifact(run.id, "root.a", {"big": "old"})
+        rel = st.archive_output(run.id, "root.a", 2)
+        assert rel.startswith("outputs/attic/v002/")
+        assert (st.run_dir(run.id) / rel).is_file()
+        # The live artifact is gone — read_output no longer resolves it.
+        assert st.read_output(run.id, "root.a") is None
+
+
 class TestAppendOnlyLogs:
     def test_append_and_read(self) -> None:
         run = st.create(_run())
