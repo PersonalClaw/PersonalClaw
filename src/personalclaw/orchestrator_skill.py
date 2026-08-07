@@ -34,7 +34,7 @@ def generate_orchestrator_skill(skills_loader) -> Path:
     agents = [
         _Agent(name, getattr(ac, "description", "") or "")
         for name, ac in cfg.agents.items()
-        if name not in _EXCLUDE
+        if name.lower() not in _EXCLUDE
     ]
 
     # Auto-seed metadata from agent description if missing.
