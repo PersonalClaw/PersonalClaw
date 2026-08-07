@@ -79,6 +79,7 @@ while not terminal:
 | `template_pipeline.py` | chat-session mining, discover-then-freeze candidates on the scope ladder, the `suggest_template` nudge with its anti-nag rules, entity scrubbing |
 | `eval_specs.py` | per-template eval specs derived from the template artifact — fixtures, structural and parameterization checks, and the named-not-graded judge surface |
 | `containers.py` | the Work board projection (state grouping, claim leases, per-section `/work` isolation), the substrate-checked boot sweep, and the project context block + wayfinder ledger contract |
+| `leases.py` | the flock-backed claim files behind `containers.claim`/`release`: `single_flight`-guarded read-modify-write over a per-target lease file whose `expires_at` outlives the process, so a claim stays truthful across a gateway kill |
 | `publish.py` | the `publish:` declaration, material-change version gating, typed lineage (flattened to scalar event metadata), evidence bundles, the terminal handoff report and the append-only results ledger |
 | `batch_compile.py` | batch `subagent_run` compiled to a `parallel[stage...]` run: the N≥2 threshold, capability classes, the single-writer lint, static depth rejection, typed leaf outputs compiled to `output_contract`, and the safety-filtered recall view |
 | `workspace.py` | the `workspace` provisioning block (mode/preserve/setup/teardown/env), reserved-var rejection, the secret-filtered spawn env with presence-only flags, and tolerant `.folder.yaml` contracts |

@@ -245,6 +245,86 @@ class TestStickyCancel:
         await wd.stop()
 
 
+class TestBootSweep:
+    """The one-time boot sweep (WORK-CONTAINERS §5.2): decide crash-survivor ISOLATED runs
+    honestly by whether their substrate outlived the process, before adoption relaunches
+    them. Inline runs are left to adoption (their journal is the recoverable state)."""
+
+    async def test_an_isolated_run_whose_worktree_survived_is_suspended(self, tmp_path) -> None:
+        wt = tmp_path / "wt-live"
+        wt.mkdir()
+        run = _run()
+        run.extra["worktree_path"] = str(wt)
+        store.save(run)
+        wd = WorkflowWatchdog(None, EngineServices())
+        await wd._poll_once()
+        saved = store.get(run.id)
+        assert saved.status == RunStatus.PAUSED  # SUSPENDED — resumable
+        assert wd.controller(run.id) is None  # swept, not relaunched
+        await wd.stop()
+
+    async def test_an_isolated_run_whose_worktree_is_gone_is_cancelled(self, tmp_path) -> None:
+        run = _run()
+        run.extra["worktree_path"] = str(tmp_path / "wt-gone")  # never created
+        store.save(run)
+        wd = WorkflowWatchdog(None, EngineServices())
+        await wd._poll_once()
+        assert store.get(run.id).status == RunStatus.CANCELLED  # zombie, honestly aborted
+        await wd.stop()
+
+    async def test_an_inline_run_is_left_to_adoption_not_swept(self) -> None:
+        """An inline run's journal is its recoverable state; the sweep must not cancel it —
+        adoption resumes it. (A run with no recorded worktree is inline.)"""
+        run = _run()
+        wd = WorkflowWatchdog(None, EngineServices())
+        await wd._poll_once()
+        # Not cancelled by the sweep; adoption picked it up instead.
+        assert store.get(run.id).status != RunStatus.CANCELLED
+        assert wd.controller(run.id) is not None
+        await wd.stop()
+
+    async def test_the_sweep_runs_only_once(self, tmp_path) -> None:
+        """A controller-less RUNNING isolated run on a LATER poll is a genuinely new run,
+        not a stale one — sweeping again would abort live work."""
+        wt = tmp_path / "wt2"
+        wt.mkdir()
+        run = _run()
+        run.extra["worktree_path"] = str(wt)
+        store.save(run)
+        wd = WorkflowWatchdog(None, EngineServices())
+        await wd._poll_once()
+        assert store.get(run.id).status == RunStatus.PAUSED
+        # A second isolated run appears after boot; the sweep already ran, so it is not
+        # swept — it is adopted/handled as a live run.
+        assert wd._swept is True
+        await wd.stop()
+
+    async def test_a_run_with_a_live_controller_is_never_swept(self, tmp_path) -> None:
+        wt = tmp_path / "wt3"
+        wt.mkdir()
+        run = _run()
+        run.extra["worktree_path"] = str(wt)
+        store.save(run)
+        wd = WorkflowWatchdog(None, EngineServices())
+        mine = RunController(run, SPEC, services=EngineServices())
+        wd.register(mine)
+        await wd._poll_once()
+        # A live controller owns the run — the sweep leaves its status alone.
+        assert store.get(run.id).status == RunStatus.RUNNING
+        await wd.stop()
+
+    async def test_a_terminal_run_is_left_untouched(self, tmp_path) -> None:
+        wt = tmp_path / "wt4"
+        wt.mkdir()
+        run = _run(status=RunStatus.COMPLETE)
+        run.extra["worktree_path"] = str(wt)
+        store.save(run)
+        wd = WorkflowWatchdog(None, EngineServices())
+        await wd._poll_once()
+        assert store.get(run.id).status == RunStatus.COMPLETE
+        await wd.stop()
+
+
 class TestPublisher:
     async def test_events_reach_the_per_run_sse_key(self) -> None:
         published: list[tuple[str, str, dict]] = []

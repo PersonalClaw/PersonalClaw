@@ -428,6 +428,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/projects/{project_id}` — _(no summary)_
 - `POST /api/projects/{project_id}/context-adapters/regenerate` — _(no summary)_
 - `GET /api/projects/{project_id}/linked` — the work units scoped under this
+- `GET /api/projects/{project_id}/work` — the state-grouped Work board.
+- `POST /api/projects/{project_id}/work/claim` — take a TTL'd claim on one board row.
+- `POST /api/projects/{project_id}/work/release` — release a claim you hold.
 - `GET /api/prompt-snippets` — list reusable snippets via the provider.
 - `POST /api/prompt-snippets` — create a snippet.
 - `DELETE /api/prompt-snippets/{name}` — remove a snippet.

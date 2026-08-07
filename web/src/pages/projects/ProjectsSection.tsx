@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, Square, RefreshCw, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -18,8 +18,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
-import { SdlcProgressCard } from '../chat/SdlcProgressCard'
-import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry } from '../../lib/api'
+import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
@@ -395,7 +394,11 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: string; onBack: () => void; navigate: (to: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: project, loading, refresh } = useCachedData(`projects:detail:${id}`, () => api.project(id))
   const { data: lists } = useCachedData(`projects:lists:${id}`, () => api.taskLists(id))
-  const { data: linked } = useCachedData(`projects:linked:${id}`, () => api.projectLinked(id))
+  // The Work board (WORK-CONTAINERS §1/§5.2/§6.1): runs + legacy loops + tasks in one
+  // state-grouped board. Local-first (persist) + stale-while-revalidate, the same seam
+  // the rest of the detail page uses — the board paints from cache, then swaps in the
+  // fresh projection when it lands.
+  const { data: work, loading: workLoading } = useCachedData(`projects:work:${id}`, () => api.projectWork(id), { persist: true })
   // Legibility §7 — whether context adapters are enabled (Settings › Legibility). The
   // "Refresh context files" action only makes sense when this is on AND a workspace is
   // bound, so the button appears only then (server still re-checks + 403s if stale).
@@ -486,20 +489,9 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     { kind: 'research', label: 'Research', hint: 'Deep web research → report', icon: Telescope },
     { kind: 'design', label: 'Design', hint: 'Design system + tokens', icon: Palette },
   ]
-  const loopRefs = [
-    ...((linked?.loops ?? []).map((l) => ({ kind: 'loop' as const, id: l.id, status: l.status }))),
-    ...((linked?.code ?? []).map((c) => ({ kind: 'code' as const, id: c.id, status: c.status }))),
-  ]
-  // Split loops into ongoing vs completed (Gap 4 — item 1 asked for "ongoing AND
-  // completed" widgets, not one flat list). Terminal statuses = done/finished work.
-  const TERMINAL_LOOP = new Set(['complete', 'completed', 'failed', 'stopped', 'ended_early', 'archived'])
-  const ongoingLoops = loopRefs.filter((r) => !TERMINAL_LOOP.has(r.status))
-  const completedLoops = loopRefs.filter((r) => TERMINAL_LOOP.has(r.status))
-  const chats = linked?.chats ?? []
-  // Running chats lead (ongoing); idle ones group under completed-ish.
-  const ongoingChats = chats.filter((c) => c.running)
-  const idleChats = chats.filter((c) => !c.running)
-  const artifacts = linked?.artifacts ?? []
+  // The board's own total (server-grouped, needs-input pinned first) for the column
+  // title. The board itself renders inside `WorkBoardColumn`.
+  const workCount = (work?.board ?? []).reduce((n, g) => n + g.count, 0)
 
   // The hub is a full-height SHELL. The header (Shell) owns identity + the Active/New/
   // Chat controls (no duplicated name in the body). The body is: a slim band (brief +
@@ -604,46 +596,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
             above so the live work widgets get the screen) ── */}
         <div className="min-h-0 flex-1 grid gap-px overflow-hidden bg-outline-variant/20"
           style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(280px, 1fr)' }}>
-          {/* WORK — live loop widgets + sessions, split ONGOING vs COMPLETED (Gap 4) */}
-          <HubColumn title={`Work · ${loopRefs.length + chats.length}`}>
-            {loopRefs.length === 0 && chats.length === 0 && artifacts.length === 0 ? (
-              <p className="text-on-surface-low text-[0.8125rem]">No work here yet — use <span className="text-on-surface-var">New</span> above to launch a loop, or start a chat.</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {/* ONGOING — active loops + running chats */}
-                {(ongoingLoops.length > 0 || ongoingChats.length > 0) && (
-                  <div className="flex flex-col gap-1.5">
-                    <WorkGroupLabel text="Ongoing" count={ongoingLoops.length + ongoingChats.length} tone="ok" />
-                    {ongoingLoops.map((r) => <SdlcProgressCard key={`${r.kind}:${r.id}`} refObj={{ kind: r.kind, id: r.id, created: false }}
-                      controllable onDeleted={() => { invalidateCache(`projects:linked:${id}`); refresh() }} />)}
-                    {ongoingChats.map((c) => <ChatRow key={c.key} c={c} onOpen={() => navigate(`chat/${c.key}`)} onChanged={() => { invalidateCache(`projects:linked:${id}`); refresh() }} />)}
-                  </div>
-                )}
-                {/* COMPLETED — terminal loops + idle chats */}
-                {(completedLoops.length > 0 || idleChats.length > 0) && (
-                  <div className="flex flex-col gap-1.5">
-                    <WorkGroupLabel text="Completed" count={completedLoops.length + idleChats.length} tone="muted" />
-                    {completedLoops.map((r) => <SdlcProgressCard key={`${r.kind}:${r.id}`} refObj={{ kind: r.kind, id: r.id, created: false }}
-                      controllable onDeleted={() => { invalidateCache(`projects:linked:${id}`); refresh() }} />)}
-                    {idleChats.map((c) => <ChatRow key={c.key} c={c} onOpen={() => navigate(`chat/${c.key}`)} onChanged={() => { invalidateCache(`projects:linked:${id}`); refresh() }} />)}
-                  </div>
-                )}
-                {/* ARTIFACTS — the project's saved outputs */}
-                {artifacts.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    <WorkGroupLabel text="Artifacts" count={artifacts.length} tone="muted" />
-                    {artifacts.map((a) => (
-                      <button key={a.slug} type="button" onClick={() => navigate(`artifacts/${a.slug}`)}
-                        className="group flex items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
-                        <FileBox size={13} className="shrink-0 text-primary" />
-                        <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                        <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">{a.kind}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+          {/* WORK — the state-grouped board (WORK-CONTAINERS §1/§5.2/§6.1): runs + legacy
+              loops + tasks in one board, needs-input pinned first (server order). Each
+              source is per-section isolated — a failing source degrades ONE section
+              (inline degraded note) rather than blanking the board. */}
+          <HubColumn title={`Work · ${workCount}`}>
+            <WorkBoardColumn work={work} loading={workLoading}
+              onResume={(runId) => navigate(`loop/${runId}`)} />
           </HubColumn>
 
           {/* TASKS — a plain list of task lists; clicking one opens its tasks in the
@@ -681,7 +640,7 @@ function HubColumn({ title, children }: { title: string; children: React.ReactNo
   )
 }
 
-/** A sub-group label inside the Work column (Ongoing / Completed / Artifacts). */
+/** A sub-group label inside the Work column (one per board state group). */
 function WorkGroupLabel({ text, count, tone }: { text: string; count: number; tone: 'ok' | 'muted' }) {
   return (
     <div className="flex items-center gap-1.5 text-[0.75rem] uppercase tracking-wide">
@@ -692,37 +651,89 @@ function WorkGroupLabel({ text, count, tone }: { text: string; count: number; to
   )
 }
 
-/** A project-bound chat session row in the Work column. Clicking the row opens the
- *  chat; hover reveals controls — Stop (when running) and a two-step Delete. */
-function ChatRow({ c, onOpen, onChanged }: {
-  c: { key: string; title: string; running: boolean }; onOpen: () => void; onChanged: () => void
+/** The board's state groups, in server (BOARD_ORDER) order, as human labels. Needs-input
+ *  is pinned first by the server; these are only display names. */
+const WORK_STATE_LABEL: Record<WorkState, string> = {
+  needs_input: 'Needs input',
+  working: 'Working',
+  queued: 'Queued',
+  suspended: 'Suspended',
+  review: 'Review',
+  done: 'Done',
+}
+
+/** The state-grouped Work board body (WORK-CONTAINERS §1/§5.2/§6.1). Exported so the
+ *  board's contract is unit-tested directly: groups render in server order (needs-input
+ *  pinned first), a failed source shows an inline degraded note WITHOUT blanking the
+ *  board (the FE half of per-section isolation), a suspended row offers Resume, and a
+ *  collapsed row starts collapsed. */
+export function WorkBoardColumn({ work, loading, onResume }: {
+  work: WorkBoard | undefined; loading: boolean; onResume: (runId: string) => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const [confirmDel, setConfirmDel] = useState(false)
-  async function stop(e: React.MouseEvent) {
-    e.stopPropagation(); if (busy) return
-    setBusy(true)
-    try { await api.stopChat(c.key); onChanged() } catch { /* transient */ } finally { setBusy(false) }
-  }
-  async function del(e: React.MouseEvent) {
-    e.stopPropagation()
-    if (!confirmDel) { setConfirmDel(true); window.setTimeout(() => setConfirmDel(false), 4000); return }
-    setConfirmDel(false); setBusy(true)
-    try { await api.deleteChatSession(c.key); onChanged() } catch { /* transient */ } finally { setBusy(false) }
+  if (loading && !work) return <ListSkeleton rows={4} />
+  const board = work?.board ?? []
+  const sections = work?.sections ?? []
+  const degraded = sections.filter((s) => s.status !== 'ok')
+  const allOk = sections.every((s) => s.status === 'ok')
+  return (
+    <div className="flex flex-col gap-3">
+      {/* per-section status: loading → skeleton, error → inline degraded note. One broken
+          source shows here without taking the rest of the board down. */}
+      {degraded.map((s) => (
+        s.status === 'loading'
+          ? <ListSkeleton key={s.name} rows={2} />
+          : <div key={s.name} data-testid={`work-section-error-${s.name}`}
+              className="flex items-start gap-2 rounded-md bg-surface-high/60 px-2.5 py-2 text-[0.8125rem] text-on-surface-low">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warn)' }} />
+              <span className="min-w-0">Couldn't load <span className="text-on-surface-var">{s.name}</span> — the rest of the board is still shown.</span>
+            </div>
+      ))}
+      {board.length === 0 && allOk ? (
+        <p className="text-on-surface-low text-[0.8125rem]">No work here yet — use <span className="text-on-surface-var">New</span> above to launch a loop, or start a chat.</p>
+      ) : (
+        board.map((group) => (
+          <div key={group.state} data-testid={`work-group-${group.state}`} className="flex flex-col gap-1.5">
+            <WorkGroupLabel text={WORK_STATE_LABEL[group.state]} count={group.count}
+              tone={group.state === 'needs_input' ? 'ok' : 'muted'} />
+            {group.rows.map((row) => (
+              <WorkRowCard key={`${row.origin}:${row.run_id}`} row={row}
+                onResume={() => onResume(row.run_id)} />
+            ))}
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
+/** One row on the Work board — a run, a legacy loop, or a task, rendered uniformly.
+ *  Collapsed rows (subagent-tool noise) start collapsed behind a disclosure; a claimed
+ *  row shows who holds it; a suspended row offers Resume (row.resumable). */
+function WorkRowCard({ row, onResume }: { row: WorkRow; onResume: () => void }) {
+  const [open, setOpen] = useState(!row.collapsed)
+  if (row.collapsed && !open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-[0.75rem] text-on-surface-low hover:bg-surface-high">
+        <ChevronRight size={12} className="shrink-0" />
+        <span className="min-w-0 truncate">{row.title}</span>
+      </button>
+    )
   }
   return (
-    <div role="button" tabIndex={0} onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
-      className="group flex cursor-pointer items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
-      <MessageSquare size={13} className="shrink-0 text-primary" />
-      <span className="min-w-0 flex-1 truncate">{c.title}</span>
-      {c.running && <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-ok) 18%, transparent)', color: 'var(--color-ok)' }}>running</span>}
-      <span className="shrink-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100" style={confirmDel ? { opacity: 1 } : undefined}>
-        {busy && <Loader2 size={11} className="animate-spin text-on-surface-low" />}
-        {c.running && <IconButton icon={Square} label="Stop" size={28} onClick={stop} />}
-        <IconButton icon={Trash2} size={28} label={confirmDel ? 'Click again to delete' : 'Delete chat'}
-          onClick={del} className={confirmDel ? 'text-danger' : undefined} />
-      </span>
+    <div className="group flex items-center gap-2 rounded-md bg-surface-high/60 px-2.5 py-1.5 text-left text-[0.8125rem] text-on-surface-var">
+      <CircleDot size={13} className="shrink-0 text-primary" />
+      <span className="min-w-0 flex-1 truncate" title={row.title}>{row.title}</span>
+      {row.claim && (
+        <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low" title={`Claimed by ${row.claim.holder}`}>
+          {row.claim.holder}
+        </span>
+      )}
+      {row.resumable && (
+        <Button variant="ghost" size="xs" onClick={onResume} title="Resume this suspended work">
+          <RefreshCw size={12} /> Resume
+        </Button>
+      )}
     </div>
   )
 }
