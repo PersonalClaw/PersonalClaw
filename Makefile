@@ -28,7 +28,7 @@ WEB_DIR         := web
 DESKTOP_DIR     := desktop
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
-.PHONY: help format lint test build clean harness-validate \
+.PHONY: help format lint test build clean harness-validate gates \
         serve serve-fresh serve-web \
         web-build backend-build pyinstaller \
         desktop desktop-dist \
@@ -60,6 +60,12 @@ test:
 ## harness-validate: shape-validate + reference-resolve the self-dev harness specs
 harness-validate:
 	$(PYTHON) -m harness validate
+
+## gates: run the platform-hardening drift/inert gates (config-baseline, inert-surface,
+## docs-lint) and print ONE aggregate table — every failure in a single run (never
+## short-circuits). Exit 0 iff all gates pass. Each gate also has its own pytest ratchet.
+gates:
+	$(PYTHON) scripts/gate_report.py
 
 ## build: build a distributable wheel + sdist
 build:
