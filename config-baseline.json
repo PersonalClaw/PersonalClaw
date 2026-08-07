@@ -1,0 +1,1117 @@
+[
+  {
+    "default": false,
+    "path": "agent.acp_concurrent_sessions",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "auto",
+    "path": "agent.approval_mode",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "agent.bot_name",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "WARNING",
+    "path": "agent.log_level",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 3,
+    "path": "agent.max_subagents",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "agent.orchestrator_skill",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "native",
+    "path": "agent.provider",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "auto",
+    "path": "agent.sandbox",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 10.0,
+    "path": "agent.soft_stop_budget_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 4.0,
+    "path": "agent.spawn_min_memory_gb",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": [
+      "~/workspace",
+      "~/workplace"
+    ],
+    "path": "agent.subagent_cwd_allowed_roots",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": 100,
+    "path": "agent.subagent_max_turns",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 1800,
+    "path": "agent.subagent_timeout_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "agent.yolo",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": {},
+    "path": "agents",
+    "sensitive": false,
+    "type": "dict[str, AgentProfile]"
+  },
+  {
+    "default": 24.0,
+    "path": "agents_routing.cooldown_hours",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": true,
+    "path": "agents_routing.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.62,
+    "path": "agents_routing.min_confidence",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 5,
+    "path": "auth.lockout_threshold",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "15m",
+    "path": "auth.lockout_window",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": false,
+    "path": "auth.login_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "auth.require_totp",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "30d",
+    "path": "auth.session_ttl",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "auto_update",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "dashboard.auto_open_browser",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "dashboard.auto_tag_sessions",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "dashboard.confirm_close_session",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": {},
+    "path": "dashboard.dashboard_layout",
+    "sensitive": false,
+    "type": "dict"
+  },
+  {
+    "default": true,
+    "path": "dashboard.followup_chips",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 15,
+    "path": "dashboard.mcp_probe_timeout_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "dashboard.merge_queued_messages",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "dashboard.public_url",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": false,
+    "path": "dashboard.restore_sessions",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 30,
+    "path": "dashboard.restore_window_minutes",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "dashboard.send_on_enter",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "dashboard.show_thinking_inline",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "dashboard.show_timestamps",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "dashboard.simplified_tool_names",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "smooth",
+    "path": "dashboard.stream_reveal",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": {
+      "enabled": true
+    },
+    "path": "dashboard.terminal",
+    "sensitive": false,
+    "type": "dict"
+  },
+  {
+    "default": [],
+    "path": "dashboard.trusted_proxies",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": false,
+    "path": "dashboard.update_dev_mode",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "dashboard.url",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "dashboard.user_name",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "dashboard.username",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "more",
+    "path": "dashboard.widget_density",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "default_agent",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "durability.auto_backup",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 14,
+    "path": "durability.keep_daily",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 12,
+    "path": "durability.keep_monthly",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 8,
+    "path": "durability.keep_weekly",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "durability.restore_drills",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "durability.sync_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 900,
+    "path": "durability.sync_stale_after_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "",
+    "path": "durability.sync_transport",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 30,
+    "path": "evals.ablation_cadence_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "evals.bakeoff_capture_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.0,
+    "path": "evals.default_budget_usd",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": false,
+    "path": "evals.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.6,
+    "path": "evals.judge_agreement_floor",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 5,
+    "path": "evals.study_default_k",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "feedback.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 5,
+    "path": "feedback.min_n",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0.4,
+    "path": "feedback.retire_threshold",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 90,
+    "path": "feedback.window_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 5,
+    "path": "guardrails.breaker.failure_threshold",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 30.0,
+    "path": "guardrails.breaker.recovery_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 0.0,
+    "path": "guardrails.budgets.max_dollars_per_day",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 0,
+    "path": "guardrails.budgets.max_tokens_per_day",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0,
+    "path": "guardrails.budgets.max_tokens_per_run",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "redact",
+    "path": "guardrails.scan_mode",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": {},
+    "path": "hooks",
+    "sensitive": false,
+    "type": "dict"
+  },
+  {
+    "default": false,
+    "path": "inbound.mcp.allow_remote",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "inbound.mcp.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "inbound.public_url",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": false,
+    "path": "inbox.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.0,
+    "path": "inbox.engagement_half_life_days",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": false,
+    "path": "inbox.engagement_ranking_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 60,
+    "path": "inbox.poll_interval_seconds",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": [],
+    "path": "inbox.style_rules",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": false,
+    "path": "inbox.test_mode",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "inbox.user_id",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": [],
+    "path": "inbox.watched_channels",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": true,
+    "path": "knowledge.conflict_model_pass",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 5,
+    "path": "knowledge.consolidate_min_cluster",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 6,
+    "path": "knowledge.consolidate_min_hours",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "",
+    "path": "knowledge.default_ttl",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "knowledge.idempotent_persist",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 12,
+    "path": "knowledge.lint_every_n_persists",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 20,
+    "path": "knowledge.max_mentions_per_claim",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 40000,
+    "path": "knowledge.report_budget_chars",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "knowledge.require_citations",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 800,
+    "path": "knowledge.session_brief_max_tokens",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 20,
+    "path": "knowledge.synthesis_window",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 4000,
+    "path": "learning.context_budget_tokens",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "learning.correction_heuristic",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "learning.curator_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "learning.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 3,
+    "path": "learning.min_evidence",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0.0,
+    "path": "learning.min_session_score",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 4,
+    "path": "learning.min_tool_calls",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 5,
+    "path": "learning.propose_quota_per_run",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "learning.self_model_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "learning.skill_ladder",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "learning.staging_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "learning.surface_chip",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "legibility.context_adapters",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "legibility.discover_tips",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 120,
+    "path": "loops.default_idle_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 100,
+    "path": "loops.max_cycles_hard_cap",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 86400,
+    "path": "loops.trust_ttl_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "memory.active_recall",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 1500,
+    "path": "memory.active_recall_timeout_ms",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "memory.auto_promote_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 10,
+    "path": "memory.auto_promote_every_n",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 5,
+    "path": "memory.auto_promote_max_per_run",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0.88,
+    "path": "memory.episodic_dedup_threshold",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 10000,
+    "path": "memory.episodic_max_count",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 8,
+    "path": "memory.episodic_max_results",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "memory.graph_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 3.0,
+    "path": "memory.history_idle_hours",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 365,
+    "path": "memory.history_max_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "memory.l1_manifest",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "memory.migrated",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "memory.proactive_commitments",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 3,
+    "path": "memory.proactive_commitments_max_per_day",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "memory.push_context",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.7,
+    "path": "memory.push_min_confidence",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 0.8,
+    "path": "memory.semantic_confidence_threshold",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": [],
+    "path": "memory.semantic_keys",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": false,
+    "path": "memory.vault_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "memory-vault",
+    "path": "memory.vault_path",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": {},
+    "path": "memory_stores",
+    "sensitive": false,
+    "type": "dict[str, MemoryStoreConfig]"
+  },
+  {
+    "default": 200,
+    "path": "observe_max_messages",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 168.0,
+    "path": "observe_ttl_hours",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 2.0,
+    "path": "resilience.cancel_replace_min_interval_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": true,
+    "path": "resilience.degraded_indicator",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "resilience.doctor_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "queue",
+    "path": "resilience.mid_turn_policy",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "resilience.remediation.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 60,
+    "path": "resilience.remediation.idle_minutes_healthy",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 1.0,
+    "path": "resilience.remediation.max_cost_usd",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 90,
+    "path": "resilience.remediation.target_score",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 5,
+    "path": "resilience.remediation.tick_minutes_degraded",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": [],
+    "path": "security.autonomy_denylist",
+    "sensitive": false,
+    "type": "list[dict]"
+  },
+  {
+    "default": [],
+    "path": "security.denied_commands",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": [],
+    "path": "security.egress.allow_hosts",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": false,
+    "path": "security.egress.allow_private",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [],
+    "path": "security.egress.deny_hosts",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": 30,
+    "path": "session.auto_archive_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 90.0,
+    "path": "session.autocompact_pct",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": "",
+    "path": "session.pool_agent",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 0,
+    "path": "session.pool_size",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 1800,
+    "path": "session.pool_ttl_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3600,
+    "path": "session.timeout_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "skills.auto_create_from_sessions",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 5,
+    "path": "skills.auto_min_tool_calls",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "skills.auto_refine_on_deviation",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.85,
+    "path": "skills.auto_similarity_threshold",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 3,
+    "path": "skills.max_triggered",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 8,
+    "path": "skills.progressive_disclosure_threshold",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "",
+    "path": "snapshot_dir",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "timezone",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "tools.bg_compress_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 7.0,
+    "path": "tools.bg_compress_idle_days",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": {},
+    "path": "tools.group_defaults",
+    "sensitive": false,
+    "type": "dict[str, list[str]]"
+  },
+  {
+    "default": false,
+    "path": "tools.groups_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [],
+    "path": "tools.projection_rules",
+    "sensitive": false,
+    "type": "list[ProjectionRuleConfig]"
+  },
+  {
+    "default": 604800,
+    "path": "workflows.confirmation_ttl_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 300,
+    "path": "workflows.default_node_timeout_stall_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 900,
+    "path": "workflows.default_node_timeout_total_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "",
+    "path": "workflows.default_quiet_windows",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "",
+    "path": "workflows.duty_gate_default",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "workflows.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 900,
+    "path": "workflows.lease_ttl_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 10,
+    "path": "workflows.max_active_runs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 2,
+    "path": "workflows.max_concurrent_io_nodes",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 4,
+    "path": "workflows.max_concurrent_llm_nodes",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 6,
+    "path": "workflows.max_concurrent_nodes",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 20,
+    "path": "workflows.max_materialized_per_foreach",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "background",
+    "path": "workflows.model_tier_fast",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "reasoning",
+    "path": "workflows.model_tier_reasoning",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "orchestration",
+    "path": "workflows.model_tier_standard",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 100,
+    "path": "workflows.retention_per_def",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "off",
+    "path": "workflows.surface_mode_default",
+    "sensitive": false,
+    "type": "str"
+  }
+]
