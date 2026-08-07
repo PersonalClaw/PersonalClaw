@@ -480,6 +480,14 @@ FAIL_OPEN_GATES: frozenset[str] = frozenset(
         # a slow run; a stuck-closed slot gate costs the automation. It inherits
         # `read_claim`'s own unreadable-reads-as-idle contract.
         "slot",
+        # `active` (§3.5 / WF2AUT-9) is the `skip_if_active` liveness guard, and it belongs with the
+        # storm guards for the same reason `slot` does: a broken `git status` or an unreadable path
+        # means "I cannot tell if the target is busy", and deferring every guarded fire over that
+        # would silence a real automation forever — a stuck-closed liveness gate looks exactly
+        # like a dead trigger, while a stuck-open one costs at most one run against a target that
+        # turned out to be busy, which the resource-slot and claim gates still bound. The probe in
+        # `triggers.liveness.is_target_active` is written fail-open to match.
+        "active",
         # `incident` is the kill switch (S117). It inherits `incident_active()`'s own deliberate
         # fail-open contract: an unreadable flag file must not halt every automation on a filesystem
         # hiccup. The asymmetry against the fences below is the point — a stuck-closed kill switch
@@ -580,6 +588,23 @@ class Trigger:
     failure_policy: dict[str, Any] = field(default_factory=dict)
     yield_to_user: bool = False
     resource_slots: list[str] = field(default_factory=list)
+    #: A fire-time LIVENESS guard (§3.5 / WF2AUT-9). Declarative, and empty by default so a trigger
+    #: that does not opt in is NEVER deferred — non-breaking for every trigger authored before this
+    #: field existed. Where `resource_slots` serializes against a NAMED slot another running trigger
+    #: holds, this defers when the working STATE the fire would act on looks busy, using cheap
+    #: heuristics the service evaluates up front (`triggers.liveness.is_target_active`):
+    #:
+    #:   * ``paths: [glob, …]``   — defer if any matching path was modified within ``recent_secs``
+    #:                              (default 300s) → "the target was just modified".
+    #:   * ``recent_secs: <int>`` — the freshness window `paths` compares against.
+    #:   * ``lockfiles: [path, …]`` — defer if any exists → "a lock file is present".
+    #:   * ``dirty_git: <dir>``   — defer if that worktree has uncommitted changes → "dirty".
+    #:
+    #: A busy target yields a `deferred` ledger row, never a drop and never a hard error — the fire
+    #: is postponed and re-evaluates next tick, exactly like the resource-slot and yield gates. The
+    #: probe is fail-OPEN (a broken `git status` or an unreadable path reads as NOT busy) so a check
+    #: that can never pass cannot strand a trigger forever.
+    skip_if_active: dict[str, Any] = field(default_factory=dict)
     catch_up: bool = False
     expires_at: str = ""
     # ── runtime rollups, written by the service and never by a form ──
@@ -660,6 +685,7 @@ class Trigger:
             "failure_policy": dict(self.failure_policy),
             "yield_to_user": self.yield_to_user,
             "resource_slots": list(self.resource_slots),
+            "skip_if_active": dict(self.skip_if_active),
             "catch_up": self.catch_up,
             "expires_at": self.expires_at,
             "next_fire_at": self.next_fire_at,
@@ -876,6 +902,9 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         ),
         yield_to_user=data.get("yield_to_user") is True,
         resource_slots=[str(s) for s in (data.get("resource_slots") or [])],
+        skip_if_active=(
+            dict(data["skip_if_active"]) if isinstance(data.get("skip_if_active"), dict) else {}
+        ),
         catch_up=data.get("catch_up") is True,
         expires_at=str(data.get("expires_at", "") or ""),
         next_fire_at=str(data.get("next_fire_at", "") or ""),
