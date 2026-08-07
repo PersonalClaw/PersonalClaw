@@ -35,6 +35,28 @@ from personalclaw.channel_transports.base import (  # noqa: F401
     OutboundMessage,
 )
 
+# ── Sender trust (CE-1) — the core seam every channel binds to ──
+# Provider-agnostic: `provider` is an opaque key the transport picks; no vendor lives
+# in core. A channel app consumes the whole trust API through here so its allow/deny,
+# pairing, fencing and unknown-sender flow can never drift per channel.
+from personalclaw.channel_trust import (  # noqa: F401
+    CANNED_PAIRING_REPLY,
+    TrustVerdict,
+    allow_sender,
+    apply_trust_action,
+    create_pairing_code,
+    deny_sender,
+    fence_channel_content,
+    guard_inbound,
+    is_allowed_sender,
+    is_tracked_channel,
+    note_unknown_sender,
+    redeem_pairing_code,
+    track,
+    trust_policies,
+    untrack,
+)
+
 # ── Config + credentials ──
 # (Channel activation modes are the channel APP's own concept now —
 # slack_runtime.settings owns ACTIVATION_* for the Slack app.)

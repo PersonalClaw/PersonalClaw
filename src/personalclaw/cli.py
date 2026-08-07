@@ -648,6 +648,16 @@ Examples:
     )
     token_parser.add_argument("--ttl", default="20h", help="Token TTL, e.g. 1h, 30m (default: 20h)")
 
+    # pair — mint an 8-digit pairing code so a new sender on a channel (Telegram,
+    # Discord, …) can start talking to the agent. Printed ONCE; single-use; TTL 10 min.
+    pair_parser = sub.add_parser(
+        "pair",
+        help="Create a one-time pairing code for a channel sender (8 digits, 10-min TTL)",
+    )
+    pair_parser.add_argument(
+        "provider", help="Channel provider key (e.g. telegram, discord, email)"
+    )
+
     # status
     status_parser = sub.add_parser("status", help="Show runtime stats")
     status_parser.add_argument(
@@ -924,6 +934,8 @@ Examples:
         _logs_cmd(args)
     elif args.command == "token":
         _token(args)
+    elif args.command == "pair":
+        _pair(args)
     elif args.command == "logout":
         _logout(resolve_client_port(args.port))
     elif args.command == "status":
@@ -976,6 +988,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _handle_agent,
     _learn,
     _memory_cmd,
+    _pair,
     _run_eval,
     _security,
     _spawn,
