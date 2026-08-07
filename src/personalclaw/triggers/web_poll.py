@@ -301,18 +301,36 @@ def _escalate_enabled(trigger: Any) -> bool:
     return bool(spec.get("escalate_headless", False))
 
 
-def _render_headless(url: str, renderer: Any) -> Any:
-    """Drive the headless tier and return its `RenderResult`. NEVER raises.
+def _await_maybe(result: Any) -> Any:
+    """Resolve `result` to a value whether it is a coroutine or already concrete.
 
-    `renderer` defaults to `web.render.render_url` (async). The poll loop calls `poll_one` via
-    `asyncio.to_thread`, so there is no running loop on this thread and `asyncio.run` is the right
-    bridge; the `ThreadPoolExecutor` fallback covers a caller that DOES hold a running loop, so a
-    future async caller cannot deadlock. This mirrors `triggers/tools.py::_default_cadence_to_cron`
-    rather than inventing a second bridge. An injected sync fake (the tests) returns a
-    `RenderResult` directly and skips the loop machinery entirely.
+    `poll_one` runs on a worker thread (the poll loop calls it via `asyncio.to_thread`), so there is
+    no running loop and `asyncio.run` is the right bridge; the `ThreadPoolExecutor` fallback covers
+    a future caller that DOES hold a running loop so it can never deadlock. This mirrors
+    `triggers/tools.py::_default_cadence_to_cron` rather than inventing a third bridge — and it is
+    shared by BOTH async seams here (the default `net.fetch` and the headless `render_url`), each a
+    coroutine in production and a plain value when a test injects a sync fake.
     """
     import asyncio
 
+    if not asyncio.iscoroutine(result):
+        return result
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(result)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, result).result(timeout=120)
+
+
+def _render_headless(url: str, renderer: Any) -> Any:
+    """Drive the headless tier and return its `RenderResult`. NEVER raises.
+
+    `renderer` defaults to `web.render.render_url` (async); an injected sync fake (the tests)
+    returns a `RenderResult` directly. Coroutine bridge: `_await_maybe` (shared with `_fetch`).
+    """
     from personalclaw.net.policy import STRICT
     from personalclaw.web.render import RenderResult
 
@@ -321,17 +339,7 @@ def _render_headless(url: str, renderer: Any) -> Any:
             from personalclaw.web.render import render_url
 
             renderer = render_url
-        result = renderer(url, policy=STRICT)
-        if not asyncio.iscoroutine(result):
-            return result
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(result)
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            return pool.submit(asyncio.run, result).result(timeout=120)
+        return _await_maybe(renderer(url, policy=STRICT))
     except Exception as exc:  # noqa: BLE001 - a render crash is a reason, not a dead poll loop
         return RenderResult(
             ok=False, url=url, error=f"headless render raised ({type(exc).__name__}: {exc})"
@@ -570,9 +578,14 @@ def _fetch(url: str, fetcher: Any) -> tuple[str, int, str]:
         if fetcher is None:
             from personalclaw.net import fetch as net_fetch
 
-            response = net_fetch(url)
+            # `net.fetch` is a COROUTINE — `poll_one` runs on a worker thread with no loop, so it
+            # must be driven through the shared `_await_maybe` bridge. Without it the default path
+            # returned an un-awaited coroutine → `status`/`body` read as 0/empty and EVERY
+            # default-fetcher web_watch silently no-oped (pre-existing bug; the suite was blind
+            # because tests inject a sync `fetcher`). A sync fake passes through `_await_maybe`.
+            response = _await_maybe(net_fetch(url))
         else:
-            response = fetcher(url)
+            response = _await_maybe(fetcher(url))
     except Exception as exc:  # noqa: BLE001 - an unreachable page must not kill the poll loop
         name = type(exc).__name__
         return "", 0, f"fetch failed ({name}: {exc})"
