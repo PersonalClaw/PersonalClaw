@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, Pause, RotateCcw, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, Pause, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -7,7 +7,7 @@ import { QuietButton } from '../../ui/QuietButton'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
-import { fmtElapsed, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { fmtElapsed, isNodeTerminal, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import { useWorkflowStream } from './useWorkflowStream'
@@ -15,6 +15,7 @@ import { DagView } from '../tasks/DagView'
 import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
 import { WorkflowAsk } from './WorkflowAsk'
+import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -30,6 +31,9 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   const [conts, setConts] = useState<WorkflowContinuation[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  // The node whose inspector drawer is open (WV-10). Null = closed. Holds the node_id — the
+  // drawer fetches on open, so nothing is loaded until a row's Inspect is actually clicked.
+  const [inspectNodeId, setInspectNodeId] = useState<string | null>(null)
   // Coalesce refetches: a fan-out completing fires many node_done events at once, and one
   // request per event would hammer the gateway for the same answer.
   const pending = useRef<number | null>(null)
@@ -216,6 +220,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
         ) : undefined}
       />
 
+      <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading && !run ? <Loading /> : !run ? (
           <p className="text-on-surface-low text-[0.8125rem]">This run could not be loaded.</p>
@@ -330,14 +335,27 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                       )}
                     </div>
                     <span className={`shrink-0 text-[0.75rem] ${nl.tone}`}>{nl.label}</span>
-                    {canReenter && (
+                    {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
                       <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100">
-                        <QuietButton onClick={() => rewind(n.node_id)} title="Re-run this node and everything reading its output">
-                          <RotateCcw size={12} />
-                        </QuietButton>
-                        <QuietButton onClick={() => runFrom(n.node_id)} title="Re-run only what comes after, keeping this output">
-                          <SkipForward size={12} />
-                        </QuietButton>
+                        {/* Inspect: the §5 reconstructability drawer (WV-10). Offered ONLY for a
+                            terminal node — the endpoint 409s otherwise, so a button on a running
+                            node would teach the user the UI lies. Available on a terminal run too,
+                            which is exactly when a user wants to reconstruct what a node did. */}
+                        {isNodeTerminal(n.state) && !!n.node_id && (
+                          <QuietButton onClick={() => setInspectNodeId(n.node_id)} title="Inspect this node — resolved prompt, inputs, output, attempts and ledger">
+                            <ScanSearch size={12} />
+                          </QuietButton>
+                        )}
+                        {canReenter && (
+                          <>
+                            <QuietButton onClick={() => rewind(n.node_id)} title="Re-run this node and everything reading its output">
+                              <RotateCcw size={12} />
+                            </QuietButton>
+                            <QuietButton onClick={() => runFrom(n.node_id)} title="Re-run only what comes after, keeping this output">
+                              <SkipForward size={12} />
+                            </QuietButton>
+                          </>
+                        )}
                       </span>
                     )}
                   </div>
@@ -346,6 +364,14 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             </div>
           </div>
         )}
+      </div>
+
+      {/* The node-inspector drawer (WV-10), docked to the right and pushing the run body narrower.
+          Keyed on the node id so switching nodes remounts and refetches rather than showing the
+          previous node's data. Only a terminal node's row exposes the Inspect trigger. */}
+      {inspectNodeId && (
+        <NodeInspectorDrawer runId={runId} nodeId={inspectNodeId} onClose={() => setInspectNodeId(null)} />
+      )}
       </div>
     </div>
   )
