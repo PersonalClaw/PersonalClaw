@@ -366,6 +366,7 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
     ``/api/mcp/toggle-tool`` (which writes mcp.json) — the page routes by provider.
     """
     from personalclaw.tool_providers import tool_prefs
+    from personalclaw.tool_providers.registry import list_all_tools
 
     try:
         body = await request.json()
@@ -375,9 +376,17 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "body must be a JSON object"}, status=400)
     provider = str(body.get("provider", "")).strip()
     name = str(body.get("name", "")).strip()
-    enabled = bool(body.get("enabled", True))
+    enabled = body.get("enabled", True)
+    if not isinstance(enabled, bool):
+        # A non-bool ``enabled`` (e.g. the JSON string "false", which is truthy)
+        # would silently INVERT the toggle under bool() coercion — reject it.
+        return web.json_response({"ok": False, "error": "enabled must be a boolean"}, status=400)
     if not name:
         return web.json_response({"ok": False, "error": "name is required"}, status=400)
+    # Refuse to persist junk: the name must be a tool some registered provider
+    # actually exposes, else the toggle writes a dead key to tool_prefs.json.
+    if name not in {t.name for t in await list_all_tools()}:
+        return web.json_response({"ok": False, "error": f"unknown tool {name!r}"}, status=404)
     result = tool_prefs.set_enabled(provider, name, enabled)
     _audit_toggle(
         request,
@@ -409,7 +418,11 @@ async def api_providers_toggle(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"ok": False, "error": "body must be a JSON object"}, status=400)
     provider = str(body.get("provider", "")).strip()
-    enabled = bool(body.get("enabled", True))
+    enabled = body.get("enabled", True)
+    if not isinstance(enabled, bool):
+        # Same coercion trap as the per-tool toggle: reject a non-bool rather
+        # than let bool("false") silently enable the provider.
+        return web.json_response({"ok": False, "error": "enabled must be a boolean"}, status=400)
     if not provider:
         return web.json_response({"ok": False, "error": "provider is required"}, status=400)
     result = tool_prefs.set_provider_enabled(provider, enabled)
