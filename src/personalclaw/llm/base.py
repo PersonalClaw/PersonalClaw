@@ -36,6 +36,7 @@ from personalclaw.llm.events import (  # noqa: F401
     EVENT_TOOL_RESULT,
 )
 from personalclaw.llm.events import AgentEvent as LLMEvent  # noqa: F401
+from personalclaw.llm.prompt_cache import PromptCache
 
 CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
 
@@ -46,6 +47,12 @@ class ModelProvider(ABC):
     # Whether this provider can accept + emit tool calls. openai/anthropic set
     # True; ollama is False (degrade to tool-less single-shot in the loop).
     supports_tools: bool = False
+
+    # Graded prompt-cache support the native loop reads (via getattr, mirroring
+    # supports_tools) to decide how to mark a cacheable prefix. Defaults NONE so an
+    # undeclared provider gets the byte-identical no-marker path; a caching provider
+    # sets AUTOMATIC (stable-prefix, no marker) or EXPLICIT (per-request marker).
+    prompt_cache: PromptCache = PromptCache.NONE
 
     @abstractmethod
     async def start(self) -> None:
