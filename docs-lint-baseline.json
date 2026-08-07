@@ -1,0 +1,51 @@
+{
+  "generated_from": "scripts/generate_docs_lint_baseline.py",
+  "per_file": {
+    "docs/roadmap/plans/ACP-AGENT-PARITY.md": {
+      "findings": [
+        "stale_citation:apps/claude-code-agent/provider.py"
+      ],
+      "total": 1
+    },
+    "docs/roadmap/plans/LOCAL-MODEL-MANAGER-V2.md": {
+      "findings": [
+        "stale_citation:apps/diarization-pyannote/provider.py",
+        "stale_citation:apps/faster-whisper/provider.py"
+      ],
+      "total": 2
+    },
+    "docs/roadmap/plans/PLATFORM-LEGIBILITY.md": {
+      "findings": [
+        "stale_citation:apps/growth/backend/server.py"
+      ],
+      "total": 1
+    },
+    "docs/roadmap/plans/WORKFLOWS-V2.md": {
+      "findings": [
+        "stale_citation:workflows/composition.py"
+      ],
+      "total": 1
+    },
+    "docs/roadmap/research/acp-agent-parity-audit.md": {
+      "findings": [
+        "stale_citation:apps/claude-code-agent/provider.py"
+      ],
+      "total": 1
+    },
+    "docs/roadmap/research/multi-tenancy-entity-audit.md": {
+      "findings": [
+        "stale_citation:apps/slack-channel/slack_runtime/events.py",
+        "stale_citation:handler.py"
+      ],
+      "total": 2
+    }
+  },
+  "totals": {
+    "by_kind": {
+      "dead_link": 0,
+      "stale_citation": 8,
+      "stale_header": 0
+    },
+    "total": 8
+  }
+}
