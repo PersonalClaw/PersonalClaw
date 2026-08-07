@@ -146,9 +146,19 @@ class BackendSupervisor:
             else:
                 # Storage not declared → don't hand the backend a data dir.
                 env.pop("PERSONALCLAW_APP_DATA_DIR", None)
+            # Resource ceiling (PHF-1): an app backend is agent-influenced (third-party
+            # code, scanned at install). Wrap its argv with the post-exec ceiling shim for
+            # the ``tool`` profile. This runs synchronously off the watchdog daemon thread,
+            # so it uses argv-prepend (spawn_shim_argv) rather than preexec_fn — a
+            # preexec_fn here would fork the whole gateway from a non-loop thread while the
+            # loop holds locks (see backend_runtime hazard audit / §1.1). The shim sets the
+            # limit AFTER exec in the single-threaded child, so no fork-time lock hazard.
+            from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+
+            launch_cmd = spawn_shim_argv(list(cmd), PROFILE_TOOL)
             try:
                 proc = subprocess.Popen(  # noqa: S603 — vetted app backend, scanned at install
-                    cmd,
+                    launch_cmd,
                     cwd=str(root),
                     env=env,
                     stdout=subprocess.DEVNULL,

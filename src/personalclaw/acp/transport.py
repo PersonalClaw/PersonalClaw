@@ -225,10 +225,17 @@ class AcpProcess:
         extra_env: dict[str, str] | None = None,
         session_key: str | None = None,
         channel_id: str | None = None,
+        ceiling_profile: str = "session_host",
     ) -> None:
         self._command = list(command) if command else []
         self._work_dir = Path(work_dir)
         self._sandbox_mode = sandbox_mode
+        # Resource-ceiling profile (PHF-1). An ACP backend is a session HOST: it forks
+        # many MCP stdio servers, so it needs NOFILE raised to the inherited hard limit
+        # (a low cap causes EMFILE and breaks multi-MCP-server sessions) and NO OOM bias
+        # (a trusted host must not be the preferred kill target). Hence session_host is
+        # the default; NPROC/RSS still apply.
+        self._ceiling_profile = ceiling_profile
         self._extra_env = dict(extra_env) if extra_env else None
         self._session_key = session_key
         self._channel_id = channel_id
@@ -344,7 +351,14 @@ class AcpProcess:
             "env": env,
         }
 
-        self._process = await asyncio.create_subprocess_exec(*argv, **kwargs)
+        # Ceiling delivery (PHF-1): prepend the post-exec shim for the session_host
+        # profile. No preexec_fn — the limit is applied in the exec'd child, so this
+        # spawn stays on posix_spawn and the event loop is never blocked on a fork.
+        from personalclaw.sandbox import create_subprocess_limited
+
+        self._process = await create_subprocess_limited(
+            *argv, profile=self._ceiling_profile, **kwargs
+        )
         self._pid = self._process.pid
         self._start_time = _get_start_time(self._pid)
         # Log the binary basename without leaking the full argv (may carry creds).

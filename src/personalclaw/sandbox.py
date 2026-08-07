@@ -667,3 +667,156 @@ def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | Non
             logger.warning("No OS-level sandbox available — app-level checks only")
             wrap_argv._warned = True  # type: ignore[attr-defined]
     return argv, None
+
+
+# ── Resource ceilings: post-exec delivery via the stdlib shim (PHF-1) ──
+#
+# Ceilings are delivered by prepending ``python -m personalclaw._spawn_exec_shim
+# <policy> -- <argv>`` to a child's command. The shim (a pure-stdlib leaf, no core
+# imports) runs setrlimit in the already-exec'd, single-threaded child and then
+# ``os.execv``s the real target. This is deliberately NOT ``subprocess``'s
+# ``preexec_fn``: that forces CPython off ``posix_spawn``/``vfork`` onto a full
+# ``fork()`` of the many-threaded gateway and runs Python before ``exec``, so a child
+# can wedge on a lock another thread held at fork time while still holding every
+# inherited fd (the gateway lock, the listening socket) and blocking the event loop in
+# an un-awaitable ``os.read(errpipe)``. Moving delivery past ``exec`` removes that whole
+# class of hazard; coverage is identical because rlimits inherit through ``exec``.
+
+_SHIM_MODULE = "personalclaw._spawn_exec_shim"
+
+# The four spawn profiles. A profile names WHICH ceilings apply and whether the child
+# carries an OOM-killer bias, per PLATFORM-HARDENING-FLOORS §1:
+#   * ``tool``         — every ordinary agent-influenced spawn: the full NOFILE/NPROC/RSS
+#                        ceiling + oom_score_adj=1000 (prefer killing agent work over the
+#                        gateway).
+#   * ``session_host`` — ACP session hosts. A host multiplexes many MCP stdio pipe pairs;
+#                        a low NOFILE cap causes EMFILE crashes. So NOFILE is RAISED to the
+#                        inherited hard limit, and there is NO OOM bias (a trusted host must
+#                        not be the preferred kill target). NPROC/RSS still apply.
+#   * ``build``        — frontend/npm builds: thousands of descriptors, so NOFILE follows
+#                        the same raise-to-hard as session_host, but the OOM bias is KEPT.
+#   * ``none``         — the user's own interactive terminal: no limits, no bias, no shim
+#                        (the shim would have nothing to deliver and costs an interpreter
+#                        startup per terminal open).
+PROFILE_TOOL = "tool"
+PROFILE_SESSION_HOST = "session_host"
+PROFILE_BUILD = "build"
+PROFILE_NONE = "none"
+
+_PROFILES = frozenset({PROFILE_TOOL, PROFILE_SESSION_HOST, PROFILE_BUILD, PROFILE_NONE})
+
+
+class ResourceCeilings:
+    """Translates the numeric ``sandbox.*`` config into a per-profile shim policy.
+
+    A ceiling is a set of ``RLIMIT_*`` bounds plus an optional OOM bias. The same
+    ``ResourceCeilings`` instance produces a different policy per profile (see the class
+    docstring in this module): ``tool`` applies every configured cap with an OOM bias;
+    ``session_host`` raises NOFILE to the inherited hard limit (the EMFILE fix) with no
+    bias; ``build`` raises NOFILE and keeps the bias; ``none`` produces an empty policy so
+    ``spawn_shim_argv`` returns the argv unwrapped.
+    """
+
+    #: The OOM-killer adjustment for biased profiles. +1000 is the max — it makes an
+    #: agent child the first thing the kernel kills under memory pressure, protecting the
+    #: gateway.
+    OOM_BIAS = 1000
+
+    def __init__(self, nofile: int = 4096, max_pids: int = 0, max_rss_mb: int = 0) -> None:
+        # Defaults mirror SandboxConfig: NOFILE is the enforced floor; max_pids defaults to
+        # 0 (OFF) because RLIMIT_NPROC is a PER-USER cap counting every process the user
+        # already runs — an absolute default would break a busy host with 'cannot fork'.
+        self.nofile = int(nofile)
+        self.max_pids = int(max_pids)
+        self.max_rss_mb = int(max_rss_mb)
+
+    @classmethod
+    def from_config(cls) -> "ResourceCeilings":
+        """Build ceilings from the live ``sandbox.*`` config (0 = a disabled limit).
+
+        Fail-open to the class defaults if the config cannot be loaded: a ceiling is a
+        best-effort bound, and a broken/absent config must never BLOCK a spawn (that would
+        turn a config typo into a total spawn outage). The defaults are already the safe
+        floor (NOFILE only, no per-user NPROC cap)."""
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            sb = AppConfig.load().sandbox
+            return cls(nofile=sb.nofile, max_pids=sb.max_pids, max_rss_mb=sb.max_rss_mb)
+        except Exception:
+            logger.debug("ResourceCeilings.from_config fell back to defaults", exc_info=True)
+            return cls()
+
+    def policy(self, profile: str) -> dict:
+        """The shim policy dict for *profile*: ``{"limits": {...}, "oom_score_adj": int|None}``.
+
+        An empty ``{}`` means "no ceiling" (the ``none`` profile, or an unknown profile
+        treated as ``none`` fail-open — a spawn must never be BLOCKED by a ceiling typo).
+        """
+        if profile == PROFILE_NONE or profile not in _PROFILES:
+            return {}
+        limits: dict[str, list] = {}
+        # NOFILE: tool clamps to the configured soft cap; session_host/build raise it to
+        # the inherited hard limit (the "hard" sentinel the shim resolves in-child).
+        if profile in (PROFILE_SESSION_HOST, PROFILE_BUILD):
+            limits["RLIMIT_NOFILE"] = ["hard", "hard"]
+        elif self.nofile > 0:
+            limits["RLIMIT_NOFILE"] = [self.nofile, "hard"]
+        # NPROC (fork-bomb bound) and RSS apply to every non-none profile when configured.
+        if self.max_pids > 0:
+            limits["RLIMIT_NPROC"] = [self.max_pids, self.max_pids]
+        if self.max_rss_mb > 0:
+            as_bytes = self.max_rss_mb * 1024 * 1024
+            limits["RLIMIT_AS"] = [as_bytes, as_bytes]
+        oom = self.OOM_BIAS if profile in (PROFILE_TOOL, PROFILE_BUILD) else None
+        if not limits and oom is None:
+            return {}
+        return {"limits": limits, "oom_score_adj": oom}
+
+
+def spawn_shim_argv(
+    argv: list[str],
+    profile: str = PROFILE_TOOL,
+    ceilings: "ResourceCeilings | None" = None,
+) -> list[str]:
+    """Return *argv* prefixed with the ceiling-shim invocation for *profile*.
+
+    ``none`` (or an empty policy) returns *argv* unchanged — no shim, no interpreter
+    startup cost. Otherwise the result is
+    ``[sys.executable, "-m", _SHIM_MODULE, <policy-json>, "--", *argv]``; the shim applies
+    the limits in the exec'd child and ``execv``s ``argv``.
+    """
+    if not argv:
+        return argv
+    cel = ceilings if ceilings is not None else ResourceCeilings.from_config()
+    policy = cel.policy(profile)
+    if not policy:
+        return list(argv)
+    return [
+        sys.executable,
+        "-m",
+        _SHIM_MODULE,
+        json.dumps(policy, separators=(",", ":")),
+        "--",
+        *argv,
+    ]
+
+
+async def create_subprocess_limited(
+    *argv: str,
+    profile: str = PROFILE_TOOL,
+    ceilings: "ResourceCeilings | None" = None,
+    **kwargs: object,
+):
+    """``asyncio.create_subprocess_exec`` with the ceiling shim prepended.
+
+    This is the async seam every agent-influenced spawn goes through instead of a raw
+    ``create_subprocess_exec``. It NEVER passes ``preexec_fn`` (the whole point of PHF-1):
+    the ceiling is delivered by the shim after ``exec``, so the parent stays on
+    ``posix_spawn`` and the event loop never blocks on a forked child. Extra kwargs
+    (``stdout``, ``env``, ``cwd``, ``start_new_session`` …) pass straight through.
+    """
+    import asyncio
+
+    wrapped = spawn_shim_argv(list(argv), profile, ceilings)
+    return await asyncio.create_subprocess_exec(*wrapped, **kwargs)  # type: ignore[arg-type]

@@ -869,6 +869,24 @@
     "type": "int"
   },
   {
+    "default": 0,
+    "path": "sandbox.max_pids",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0,
+    "path": "sandbox.max_rss_mb",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 4096,
+    "path": "sandbox.nofile",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": [],
     "path": "security.autonomy_denylist",
     "sensitive": false,
