@@ -136,6 +136,8 @@ def score_by_dimension(results: list[ScenarioResult]) -> dict[str, dict[str, Any
 
 def _seed_profile(ws: Path, seed: SeedProfile) -> None:
     """Write seed profile data into the workspace memory directory."""
+    from personalclaw.vector_memory import VectorMemoryStore
+
     memory = MemoryStore(workspace=ws)
     memory.init()
     if seed.preferences:
@@ -143,11 +145,16 @@ def _seed_profile(ws: Path, seed: SeedProfile) -> None:
     if seed.projects:
         memory.write_projects(seed.projects)
     if seed.lessons:
-        lessons_file = ws / "lessons.jsonl"
-        with lessons_file.open("a", encoding="utf-8") as f:
+        # Lessons are memory.db ``lesson.*`` records (the sole lesson store). Seed
+        # them into the same record DB the runner opens (``ws/vector_memory.db``),
+        # with no embedder — a lesson persists without a vector.
+        vs = VectorMemoryStore(db_path=ws / "vector_memory.db")
+        vs.init()
+        try:
             for rule in seed.lessons:
-                entry = {"ts": "seed", "rule": rule, "category": "knowledge"}
-                f.write(json.dumps(entry) + "\n")
+                vs.write_lesson(rule, "knowledge", source="seed")
+        finally:
+            vs.close()
 
 
 # ── Runner ──
@@ -232,7 +239,6 @@ class EvalRunner:
         from personalclaw.config.loader import AppConfig
         from personalclaw.context import ContextBuilder
         from personalclaw.history import ConversationLog, HistoryConsolidator
-        from personalclaw.learn import LessonStore
         from personalclaw.session import SessionManager
         from personalclaw.vector_memory import VectorMemoryStore
 
@@ -254,9 +260,11 @@ class EvalRunner:
             # Memory-loop components
             conv_log = ConversationLog(base_dir=ws)
             conv_log.init()
-            lesson_store = LessonStore(base_dir=ws)
             vector_store = VectorMemoryStore(db_path=ws / "vector_memory.db")
             vector_store.init()
+            # Attach the record store so lessons (memory.db lesson.*, the sole
+            # lesson store) inject + round-trip through service_for(memory).
+            memory.vector_store = vector_store
 
             # Wrap provider factory so all sessions share the same workspace root
             # (default factory creates per-session subdirs, which isolates memory)
@@ -284,13 +292,11 @@ class EvalRunner:
                 log=conv_log,
                 memory=memory,
                 sessions=session_mgr,
-                lesson_store=lesson_store,
                 vector_store=vector_store,
             )
 
             ctx_builder = ContextBuilder(
                 memory=memory,
-                lessons=lesson_store,
                 conversation_log=conv_log,
             )
 

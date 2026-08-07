@@ -67,7 +67,6 @@ from personalclaw.frontend import build_frontend_async
 from personalclaw.heartbeat import HeartbeatService, is_keep_response, strip_keep_sentinel
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.hooks import HookManager, HooksConfig
-from personalclaw.learn import LessonStore
 from personalclaw.llm.base import LLMEvent
 from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
@@ -646,7 +645,6 @@ class GatewayOrchestrator:
 
         skills = SkillsLoader()
         hooks = HookManager(HooksConfig.from_dict(self._cfg.hooks))
-        lessons = LessonStore()
         # bot_name deliberately NOT pinned here — ContextBuilder resolves it
         # live from config per turn, so a Settings → Account rename takes
         # effect on the next message without a gateway restart.
@@ -654,7 +652,6 @@ class GatewayOrchestrator:
             memory=memory,
             skills=skills,
             hooks=hooks,
-            lessons=lessons,
         )
 
         # Conversation history
@@ -672,7 +669,6 @@ class GatewayOrchestrator:
             log=self.conv_log,
             memory=memory,
             sessions=self.sessions,
-            lesson_store=lessons,
             history_idle_secs=self._cfg.memory.history_idle_hours * 3600,
             vector_store=self.vector_memory,
             migrated=self._cfg.memory.migrated,
@@ -3086,7 +3082,6 @@ class GatewayOrchestrator:
         self._local_only = is_local_bind(resolve_bind_host())
         self._dashboard_runner, self.dashboard_state = await start_dashboard(
             sessions=self.sessions,
-            lessons=LessonStore(),
             port=dashboard_port,
             subagents=self.subagent_mgr,
             context_builder=self.ctx_builder,
@@ -3135,7 +3130,6 @@ class GatewayOrchestrator:
         self._local_only = is_local_bind(resolve_bind_host())
         self._dashboard_runner, self.dashboard_state = await start_api_server(
             sessions=self.sessions,
-            lessons=LessonStore(),
             port=dashboard_port,
             subagents=self.subagent_mgr,
             owner_id=self._owner_id,

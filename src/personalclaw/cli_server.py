@@ -21,7 +21,6 @@ from personalclaw.dashboard.token_auth import parse_duration
 from personalclaw.frontend import build_frontend_sync, ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
-from personalclaw.learn import LessonStore
 from personalclaw.memory import MemoryStore
 from personalclaw.sel import sel
 from personalclaw.service import controller as service_controller
@@ -618,7 +617,6 @@ def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, Conver
         log=conv_log,
         memory=memory,
         sessions=sessions,
-        lesson_store=LessonStore(),
         history_idle_secs=cfg.memory.history_idle_hours * 3600,
         vector_store=vector_memory,
         migrated=cfg.memory.migrated,

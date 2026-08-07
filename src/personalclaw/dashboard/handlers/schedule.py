@@ -1,13 +1,17 @@
 """Lessons CRUD API handlers.
 
 Schedule CRUD moved to the unified Trigger surface (dashboard/handlers/triggers.py);
-this module now owns only the ``/api/lessons*`` endpoints, which are unrelated to
-triggers and stay as-is.
+this module now owns only the ``/api/lessons*`` endpoints. Every lesson read/write
+goes through the memory service onto memory.db ``lesson.*`` records — there is no
+JSONL fallback (the legacy JSONL lesson store was retired in WF2LEA-3).
+``_get_memory`` always returns a store with an attached record layer (the gateway
+attaches one; the API-only path attaches one in ``_get_memory``), so
+``service_for(...).has_vector`` is always true here and lessons persist even with
+no embedder configured.
 """
 
 import json
 import logging
-from datetime import datetime, timezone
 
 from aiohttp import web
 
@@ -15,8 +19,6 @@ from personalclaw.dashboard.state import DashboardState
 
 from ._shared import (
     _blocks_reads_session,
-    _get_active_workspace,
-    _get_lessons,
     _get_memory,
     _is_restricted_session,
     _session_has_persisted_history,
@@ -33,9 +35,7 @@ def _sel():
 
 
 async def api_lessons_create(request: web.Request) -> web.Response:
-    """POST /api/lessons — add a lesson (vector store or JSONL fallback)."""
-    from personalclaw.learn import Lesson  # noqa: F811
-
+    """POST /api/lessons — add a lesson to memory.db ``lesson.*``."""
     state: DashboardState = request.app["state"]
     try:
         body = await request.json()
@@ -174,20 +174,14 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("memory-write injection scan failed (allowing)", exc_info=True)
     category = body.get("category", "knowledge")
-    scope = body.get("scope", "global")
-    # Write through the memory service (record store) if available, else JSONL
+    # Write through the memory service onto memory.db ``lesson.*``. The store is
+    # always present (see module docstring), so no JSONL fallback is needed; a
+    # store with no embedder still persists the lesson (vector optional).
     from personalclaw.memory_service import service_for
 
+    negative = body.get("negative") or None
     svc = service_for(_get_memory(state))
-    if svc.has_vector:
-        svc.write_lesson(rule, category)
-    else:
-        lesson = Lesson(rule=rule, category=category, ts=datetime.now(timezone.utc).isoformat())
-        if scope == "workspace":
-            ws = body.get("workspace")
-            _get_lessons(state, ws).save(lesson)
-        else:
-            state.lessons.save(lesson)
+    svc.write_lesson(rule, category, negative)
     state.push_refresh("lessons")
     return web.json_response({"ok": True})
 
@@ -218,20 +212,11 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     rule_sub = body.get("rule", "").strip()
     if not rule_sub:
         return web.json_response({"error": "rule substring required"}, status=400)
-    scope = body.get("scope", "global")
-    # Delete through the memory service (record store) if active, else JSONL
+    # Delete through the memory service onto memory.db ``lesson.*``.
     from personalclaw.memory_service import service_for
 
     svc = service_for(_get_memory(state))
-    vs_lessons = svc.get_lessons() if svc.has_vector else None
-    if vs_lessons:
-        ok = svc.delete_lesson(rule_sub)
-    else:
-        if scope == "workspace":
-            ws = body.get("workspace")
-            ok = _get_lessons(state, ws).remove(rule_sub)
-        else:
-            ok = state.lessons.remove(rule_sub)
+    ok = svc.delete_lesson(rule_sub)
     if ok:
         state.push_refresh("lessons")
     return web.json_response({"ok": ok})
@@ -251,31 +236,15 @@ async def api_lessons(request: web.Request) -> web.Response:
             resources=sk,
         )
         return web.json_response({"lessons": []})
-    workspace = request.query.get("workspace")
-    # Read through the memory service (record store) if it has lessons, else JSONL
+    # Read through the memory service onto memory.db ``lesson.*``.
     from personalclaw.memory_service import service_for
 
     svc = service_for(_get_memory(state))
-    vs_lessons = svc.get_lessons() if svc.has_vector else None
-    if vs_lessons:
-        data = []
-        for e in vs_lessons[-50:]:
-            try:
-                rule = json.loads(e["value_json"])
-            except (json.JSONDecodeError, TypeError):
-                continue
-            data.append({"rule": rule, "category": "knowledge", "ts": e.get("updated_at", "")})
-    else:
-        # Merge global + workspace-scoped lessons
-        global_lessons = state.lessons.load_all()
-        ws = workspace or _get_active_workspace(state)
-        if ws != "default":
-            ws_lessons = _get_lessons(state, ws).load_all()
-            seen = {le.rule.lower().strip() for le in global_lessons}
-            for le in ws_lessons:
-                if le.rule.lower().strip() not in seen:
-                    global_lessons.append(le)
-        data = [
-            {"rule": le.rule, "category": le.category, "ts": le.ts} for le in global_lessons[-50:]
-        ]
+    data = []
+    for e in svc.get_lessons()[-50:]:
+        try:
+            rule = json.loads(e["value_json"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        data.append({"rule": rule, "category": "knowledge", "ts": e.get("updated_at", "")})
     return web.json_response({"lessons": data})

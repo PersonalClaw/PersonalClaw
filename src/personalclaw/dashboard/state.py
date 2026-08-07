@@ -33,7 +33,6 @@ if TYPE_CHECKING:
         ContextBuilder,
         ConversationLog,
         HistoryConsolidator,
-        LessonStore,
         SessionManager,
         SubagentManager,
     )
@@ -733,7 +732,6 @@ class DashboardState:
     def __init__(
         self,
         sessions: "SessionManager",
-        lessons: "LessonStore",
         start_time: float,
         subagents: "SubagentManager | None" = None,
         context_builder: "ContextBuilder | None" = None,
@@ -742,7 +740,6 @@ class DashboardState:
         owner_id: str = "",
     ):
         self.sessions = sessions
-        self.lessons = lessons
         self.start_time = start_time
         self.subagents = subagents
         self._inbox_state: Any = None
@@ -917,6 +914,26 @@ class DashboardState:
             logger.debug("trigger counts unavailable", exc_info=True)
             return {"total": 0, "enabled": 0, "broken": 0}
 
+    def _lessons_count(self) -> int:
+        """Count of lessons in memory.db ``lesson.*`` (the sole lesson store).
+
+        Reads through the memory service over the context builder's store; returns
+        0 when no store is wired (e.g. a bare test state)."""
+        cb = self.context_builder
+        if cb is None:
+            return 0
+        try:
+            from typing import cast
+
+            from personalclaw.memory_providers.base import MemoryProvider
+            from personalclaw.memory_service import service_for
+
+            # A markdown MemoryStore is accepted at runtime (service_for duck-types
+            # its markdown/FTS surface); the cast satisfies the strict annotation.
+            return len(service_for(cast("MemoryProvider", cb.memory)).get_lessons())
+        except Exception:
+            return 0
+
     def status_snapshot(self, *, update_available: bool = False) -> dict[str, Any]:
         """Core status fields served by GET /api/status."""
         uptime = int(time.time() - self.start_time)
@@ -928,7 +945,7 @@ class DashboardState:
             # The STORE's count (S107). This fed the SPA's "triggers" metric from the legacy
             # service, which the cutover left holding nothing.
             "cron_jobs": self.trigger_counts()["total"],
-            "lessons": len(self.lessons.load_all()),
+            "lessons": self._lessons_count(),
             "subagents": self.subagents.count if self.subagents else 0,
             "update_available": update_available,
             "no_crons": self.no_crons,

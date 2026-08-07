@@ -31,7 +31,6 @@ def state(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
     return DashboardState(
         sessions=MagicMock(count=0),
-        lessons=MagicMock(),
         start_time=0.0,
     )
 
