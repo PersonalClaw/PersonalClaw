@@ -79,6 +79,24 @@ from personalclaw.model_windows import model_context_window as _model_window  # 
 # loop's OpenAI-shaped messages unchanged.
 
 
+def _read_cache_usage(usage: object) -> tuple[int, int]:
+    """`(cache_creation_tokens, cache_read_tokens)` from an Anthropic ``usage`` object.
+
+    The producer for `LLMEvent.cache_creation_tokens` / `.cache_read_tokens`, which the event
+    declared but nothing populated (PCS-6). Defensive by design: a `usage` missing the fields
+    (a non-cached response, or an older SDK), a non-int value, or `None` all yield ``0`` and NEVER
+    raise — a cache-usage read must never break a completed turn's terminal event.
+    """
+    if usage is None:
+        return 0, 0
+
+    def _int(name: str) -> int:
+        v = getattr(usage, name, None)
+        return v if isinstance(v, int) else 0
+
+    return _int("cache_creation_input_tokens"), _int("cache_read_input_tokens")
+
+
 def _translate_tools(tools: list[dict]) -> list[dict]:
     """Map OpenAI ``tools`` entries to Anthropic ``[{name, description, input_schema}]``.
 
@@ -325,6 +343,8 @@ class AnthropicProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
 
         async with self._client.messages.stream(**request_kwargs) as stream:
             async for event in stream:
@@ -340,6 +360,10 @@ class AnthropicProvider(ModelProvider):
                         ot = getattr(usage, "output_tokens", None)
                         if ot is not None:
                             output_tokens = ot
+                        # Prompt-cache usage (PCS-6): the event fields exist but had no
+                        # producer. `_read_cache_usage` reads them defensively — a response
+                        # without cache use (or an older SDK) leaves these 0 and never raises.
+                        cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
 
                 elif event_type == "content_block_start":
                     index = getattr(event, "index", 0) or 0
@@ -418,6 +442,8 @@ class AnthropicProvider(ModelProvider):
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             context_usage_pct=self._last_context_pct,
         )
 
@@ -480,6 +506,8 @@ class AnthropicProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
 
         async with self._client.messages.stream(**request_kwargs) as stream:
             async for event in stream:
@@ -495,6 +523,10 @@ class AnthropicProvider(ModelProvider):
                         ot = getattr(usage, "output_tokens", None)
                         if ot is not None:
                             output_tokens = ot
+                        # Prompt-cache usage (PCS-6): the event fields exist but had no
+                        # producer. `_read_cache_usage` reads them defensively — a response
+                        # without cache use (or an older SDK) leaves these 0 and never raises.
+                        cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
 
                 elif event_type == "content_block_start":
                     index = getattr(event, "index", 0) or 0
@@ -565,6 +597,8 @@ class AnthropicProvider(ModelProvider):
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             context_usage_pct=context_pct,
             cost_usd=0.0,
         )
