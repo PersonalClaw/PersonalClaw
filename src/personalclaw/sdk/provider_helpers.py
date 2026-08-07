@@ -35,6 +35,7 @@ from personalclaw.sdk.model import (
     ModelInfo,
     ModelProvider,
     OpenAIProvider,
+    PromptCache,
     ProviderCapability,
     ProviderEntry,
     ProviderResolutionError,
@@ -58,6 +59,10 @@ class BrandedProviderSpec:
     capabilities: frozenset[Capability] = field(default_factory=frozenset)
     fallback_models: tuple[dict[str, Any], ...] = ()  # catalog rows when discovery is unavailable
     notes: str = ""
+    # Graded prompt-cache support this provider declares. Defaults NONE (no caching
+    # hint). An app whose family caches a stable prefix on its own sets AUTOMATIC; one
+    # needing a per-request marker sets EXPLICIT. Threaded into ProviderCapability below.
+    prompt_cache: PromptCache = PromptCache.NONE
 
 
 def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:
@@ -326,6 +331,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         supports_vision=Capability.VISION in spec.capabilities,
         max_context_tokens=0,
         notes=spec.notes or f"{spec.type}: {spec.protocol}-compatible endpoint.",
+        prompt_cache=spec.prompt_cache,
     )
     try:
         get_default_registry().register_type(cap, _factory)
