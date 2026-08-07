@@ -87,6 +87,56 @@ boundary lives:
   injected, so the backend has an identity bounded to its own declared
   permissions.
 
+### Inbound authentication — the proxy signature (what loopback does NOT buy)
+
+The token model above is the **outbound** boundary (what the backend may do
+back at the gateway). The **inbound** boundary is separate and, until this was
+added, missing: a backend binds `127.0.0.1:<ephemeral port>` — a *network*
+boundary, not an *authorization* one. Loopback keeps off-box hosts out; it does
+**not** keep out other local processes. Before the fix, any local process that
+found the port could talk to the backend **directly**, bypassing the proxy and
+therefore session auth and `app_permission_middleware` entirely. The app
+platform's whole permission story assumes requests arrive through the proxy —
+so that assumption is now enforced, not merely documented.
+
+Every request the proxy forwards carries an HMAC signature the backend verifies
+**fail-closed**:
+
+- **Header:** `X-PersonalClaw-Proxy: <ts>:<hmac_hex>`.
+- **Signed message:** `<ts>:<METHOD>:<raw_path?query>:<sha256_hex(body)>` —
+  binding the method, the exact wire path (aiohttp's `request.raw_path`), and a
+  hash of the body, so none can be altered in transit.
+- **Window:** `ts` is an integer unix second; a signature more than **±60s**
+  from now is refused (replay protection). The compare is constant-time
+  (`hmac.compare_digest`).
+- **Secret:** a per-app 256-bit key at `apps_dir()/<app>/.app_secret`, minted
+  0600 on first backend start and injected into the child via
+  `PERSONALCLAW_APP_SECRET`. It is never logged.
+- **Verifier:** `personalclaw.sdk.security.require_proxy_signature()`, an
+  aiohttp middleware every first-party backend installs (and every third-party
+  backend should). It reads the body once and stashes it on
+  `request["body_bytes"]` so a route reads it without consuming the single-read
+  stream twice.
+- **`/health` is exempt.** The 30-second watchdog probes the backend by process
+  liveness today, but the health *path* is reserved for direct probing, so it
+  must not require a signature — otherwise a direct health probe could never
+  succeed.
+
+**Fail-closed, both ends.** The mint is fail-closed: a backend that cannot
+write/read its secret does **not** start (better missing than unprotected). The
+verify is fail-closed: no secret in the environment, or an absent / malformed /
+stale / mismatched signature, returns `401` and the route body never runs.
+
+**What this does and does not buy.** It proves a request *came from the gateway
+proxy* (which itself enforced session auth + permissions), so it closes the
+direct-to-port bypass. It does **not** encrypt the loopback traffic, and it does
+**not** defend against a local process that can read the 0600 secret file — on a
+single-user machine an attacker with the owner's file access has already lost
+the game. It raises the bar from "any local process" to "a process that can read
+a root-only-readable file," which is the boundary a single-user posture supports.
+Denials are logged (a structured stderr warning in the app process, since a
+backend has no access to the gateway's SecurityEventLog).
+
 ## The App SDK
 
 - **Python**: `sdk/` (26 modules) is THE stable app-facing import surface —

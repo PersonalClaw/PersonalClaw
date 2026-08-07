@@ -2602,10 +2602,59 @@ class ToolsConfig:
 
 
 @dataclass
+class SandboxConfig:
+    """Resource ceilings applied to agent-influenced child processes (PHF-1).
+
+    These are the numeric inputs to the post-exec ceiling shim
+    (``personalclaw._spawn_exec_shim``): a soft NOFILE cap, a max-child-process count
+    (RLIMIT_NPROC), and a max resident-set size in MB (RLIMIT_AS). The ``ResourceCeilings``
+    profiles in ``sandbox.py`` translate these into the per-spawn policy — the ``tool``
+    profile applies them fully with an OOM bias, ``session_host`` deliberately raises NOFILE
+    to the inherited hard limit (an ACP host multiplexes many MCP pipes; a low cap causes
+    EMFILE), and ``none`` applies nothing. ``0`` disables an individual limit."""
+
+    nofile: int = field(
+        default=4096,
+        metadata=_meta(
+            "Sandbox Max Open Files",
+            "Soft RLIMIT_NOFILE ceiling for agent-influenced child processes (bash tools, "
+            "app backends, MCP servers). 0 disables the NOFILE cap. ACP session hosts are "
+            "exempt — they raise NOFILE to the inherited hard limit to multiplex many MCP "
+            "pipes without hitting EMFILE.",
+        ),
+    )
+    max_pids: int = field(
+        default=0,
+        metadata=_meta(
+            "Sandbox Max Processes",
+            "RLIMIT_NPROC ceiling for agent child processes. 0 disables it (the default). "
+            "NOTE: RLIMIT_NPROC is a PER-USER limit that counts ALL of the user's existing "
+            "processes, not just this child's subtree — so an absolute cap can break a busy "
+            "host (git worktree, npm) with 'cannot fork'. Real per-subtree fork-bomb "
+            "containment is the opt-in cgroup tier, not this rlimit; leave 0 unless you know "
+            "the host's process budget.",
+        ),
+    )
+    max_rss_mb: int = field(
+        default=0,
+        metadata=_meta(
+            "Sandbox Max Memory (MB)",
+            "RLIMIT_AS ceiling in megabytes for an agent child's address space. 0 disables "
+            "the memory cap (the default — RLIMIT_AS is coarse and can break memory-mapped "
+            "toolchains, so it is opt-in).",
+        ),
+    )
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = field(
         default_factory=AgentConfig,
         metadata=_meta("Agent", "Agent runtime configuration."),
+    )
+    sandbox: SandboxConfig = field(
+        default_factory=SandboxConfig,
+        metadata=_meta("Sandbox", "Resource ceilings for agent-influenced child processes."),
     )
     session: SessionConfig = field(
         default_factory=SessionConfig,
@@ -2781,6 +2830,9 @@ class AppConfig:
         dashboard_data = data.get("dashboard", {})
         if not isinstance(dashboard_data, dict):
             dashboard_data = {}
+        sandbox_data = data.get("sandbox", {})
+        if not isinstance(sandbox_data, dict):
+            sandbox_data = {}
         legibility_data = data.get("legibility", {})
         if not isinstance(legibility_data, dict):
             legibility_data = {}
@@ -3262,6 +3314,11 @@ class AppConfig:
                     ),
                 ),
             ),
+            sandbox=SandboxConfig(
+                nofile=max(0, _safe_int(sandbox_data.get("nofile", 4096), 4096)),
+                max_pids=max(0, _safe_int(sandbox_data.get("max_pids", 0), 0)),
+                max_rss_mb=max(0, _safe_int(sandbox_data.get("max_rss_mb", 0), 0)),
+            ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
         )
@@ -3397,6 +3454,7 @@ class AppConfig:
 
         d: dict = {
             "agent": asdict(self.agent),
+            "sandbox": asdict(self.sandbox),
             "session": asdict(self.session),
             "memory": asdict(self.memory),
             "dashboard": asdict(self.dashboard),

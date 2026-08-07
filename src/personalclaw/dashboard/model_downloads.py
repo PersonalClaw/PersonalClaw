@@ -6,8 +6,9 @@ request open for the whole fetch and give the UI no progress. This module turns
 each download into a background **job** that streams progress over the SSE
 substrate (``dashboard/sse.py``):
 
-- :class:`ModelDownloadJob` — one in-flight or finished download (``kind``,
-  ``model``, ``status``, ``phase``, bytes-on-disk vs expected size).
+- :class:`ModelDownloadJob` — one in-flight or finished download in the ONE
+  canonical wire shape (LMMV §4.1): ``kind`` / ``state`` / ``progress`` /
+  ``downloaded_bytes`` vs ``total_bytes`` / ``speed_bps`` / ``eta_s`` / ``reason``.
 - :class:`ModelDownloadRegistry` — owns the jobs, dedupes by ``(kind, model)``,
   runs the blocking fetch off the event loop, and polls bytes-on-disk to publish
   ``progress`` frames on a per-job hub keyed ``download:<id>``.
@@ -18,7 +19,9 @@ as it grows. No coupling to ``hf_hub`` internals; the trade-off is that two
 concurrent downloads of the *same kind* would share a baseline (rare — jobs
 dedupe per model, and the UI downloads one at a time). The expected total
 (``size_mb`` from each provider's catalog) lets the client render a determinate
-bar; without it the client falls back to indeterminate.
+``progress`` bar; without it ``progress`` is ``0.0`` (indeterminate). ``speed_bps``
+and ``eta_s`` are derived coarsely from the per-tick on-disk delta — honest zeros
+when the delta or total is unknown, never fabricated.
 
 Cancellation detaches the job (stops the stream, drops it from the registry).
 A HuggingFace fetch already in a worker thread cannot be interrupted cleanly, so
@@ -31,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -50,44 +54,73 @@ def registry_key(job_id: str) -> str:
 
 @dataclass
 class ModelDownloadJob:
-    """One bundled-model download — its identity, lifecycle state, and progress.
+    """One bundled-model download — the ONE canonical wire shape (LMMV §4.1).
 
-    ``status`` is the coarse lifecycle (``running`` → ``done`` / ``error`` /
-    ``cancelled``); ``phase`` is the human-facing step shown in the UI. ``bytes``
-    is the best-effort on-disk delta since the job started; ``size_bytes`` is the
-    expected total from the provider catalog (0 if unknown → indeterminate bar).
+    ``kind`` names WHAT is being fetched (``weights`` for a model's weights,
+    ``sidecar-install`` for a runtime/tooling install). ``state`` is the coarse
+    lifecycle (``queued`` → ``running`` → ``done`` / ``error`` / ``cancelled``).
+    ``downloaded_bytes`` is the best-effort on-disk delta since the job started;
+    ``total_bytes`` is the expected total from the provider catalog (0 if unknown).
+    ``progress`` is ``downloaded_bytes/total_bytes`` clamped to 0.0–1.0 when the
+    total is known, else ``0.0`` (indeterminate). ``speed_bps`` / ``eta_s`` are
+    coarse derivations from the on-disk poller (0 when not cheaply knowable — an
+    honest indeterminate, never a fabricated number). ``reason`` carries a typed,
+    machine-readable string on error/cancel (``"cancelled"``, ``"network"``,
+    ``"disk_full"``, …), ``""`` when there is none.
     """
 
     id: str
     provider: str
     model: str
-    status: Literal["running", "done", "error", "cancelled"] = "running"
-    phase: str = "queued"
-    bytes: int = 0
-    size_bytes: int = 0
+    kind: Literal["weights", "sidecar-install"] = "weights"
+    state: Literal["queued", "running", "done", "error", "cancelled"] = "queued"
+    progress: float = 0.0
+    speed_bps: int = 0
+    eta_s: int = 0
+    total_bytes: int = 0
+    downloaded_bytes: int = 0
     error: str = ""
+    reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "provider": self.provider,
             "model": self.model,
-            "status": self.status,
-            "phase": self.phase,
-            "bytes": self.bytes,
-            "size_bytes": self.size_bytes,
+            "kind": self.kind,
+            "state": self.state,
+            "progress": self.progress,
+            "speed_bps": self.speed_bps,
+            "eta_s": self.eta_s,
+            "total_bytes": self.total_bytes,
+            "downloaded_bytes": self.downloaded_bytes,
             "error": self.error,
+            "reason": self.reason,
         }
 
 
 @dataclass
 class _Running:
     """The live bits backing a job that the wire shape (:class:`ModelDownloadJob`)
-    doesn't carry: its baseline disk size and background tasks."""
+    doesn't carry: its baseline disk size, background tasks, and the last poll
+    sample (bytes + monotonic timestamp) used to derive a coarse ``speed_bps``."""
 
     job: ModelDownloadJob
     baseline: int = 0
     tasks: set[asyncio.Task] = field(default_factory=set)  # type: ignore[type-arg]
+    last_bytes: int = 0
+    last_ts: float = 0.0
+
+
+def _apply_progress(job: ModelDownloadJob) -> None:
+    """Recompute ``progress`` from ``downloaded_bytes``/``total_bytes`` on *job*.
+
+    ``progress`` is the fraction 0.0–1.0 when the total is known, else ``0.0``
+    (indeterminate — the client renders an indeterminate bar). Kept in one place so
+    every writer of ``downloaded_bytes`` yields the same derived fraction.
+    """
+    total = job.total_bytes
+    job.progress = max(0.0, min(1.0, job.downloaded_bytes / total)) if total > 0 else 0.0
 
 
 def _dir_size(path: Path) -> int:
@@ -282,7 +315,7 @@ class ModelDownloadRegistry:
         if (
             existing_id
             and (existing := self._jobs.get(existing_id))
-            and existing.status == "running"
+            and existing.state in ("queued", "running")
         ):
             return existing, None
 
@@ -290,15 +323,15 @@ class ModelDownloadRegistry:
             id=self._next_id(),
             provider=provider,
             model=model,
-            size_bytes=_expected_size_bytes(provider, model),
+            total_bytes=_expected_size_bytes(provider, model),
         )
         self._jobs[job.id] = job
         self._by_model[(provider, model)] = job.id
 
         if _is_downloaded(provider, model):
-            job.status = "done"
-            job.phase = "done"
-            job.bytes = job.size_bytes
+            job.state = "done"
+            job.downloaded_bytes = job.total_bytes
+            _apply_progress(job)
             return job, None
 
         run = _Running(job=job, baseline=_dir_size(_cache_root(provider)))
@@ -320,9 +353,9 @@ class ModelDownloadRegistry:
         if run is not None:
             for t in run.tasks:
                 t.cancel()
-        if job.status == "running":
-            job.status = "cancelled"
-            job.phase = "cancelled"
+        if job.state in ("queued", "running"):
+            job.state = "cancelled"
+            job.reason = "cancelled"
             self._publish(job, "cancelled")
         self._jobs.pop(job_id, None)
         self._by_model.pop((job.provider, job.model), None)
@@ -335,24 +368,29 @@ class ModelDownloadRegistry:
     async def _drive(self, run: _Running) -> None:
         """Run one download: poll on-disk progress while the fetch proceeds."""
         job = run.job
-        job.phase = "downloading"
+        job.state = "running"
+        run.last_ts = time.monotonic()
         self._publish(job, "progress")
 
         poller = asyncio.ensure_future(self._poll(run))
         run.tasks.add(poller)
         try:
             await _run_fetch(job.provider, job.model)
-            job.status = "done"
-            job.phase = "done"
-            job.bytes = job.size_bytes or _measure(run)
+            job.state = "done"
+            job.downloaded_bytes = job.total_bytes or _measure(run)
+            job.speed_bps = 0
+            job.eta_s = 0
+            _apply_progress(job)
             event = "done"
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — surface any provider failure to the UI
             logger.warning("Model download failed (%s/%s): %s", job.provider, job.model, exc)
-            job.status = "error"
-            job.phase = "error"
+            job.state = "error"
             job.error = str(exc)
+            job.reason = _classify_error(exc)
+            job.speed_bps = 0
+            job.eta_s = 0
             event = "error"
         finally:
             poller.cancel()
@@ -361,14 +399,37 @@ class ModelDownloadRegistry:
         self._publish(job, event)
 
     async def _poll(self, run: _Running) -> None:
-        """Sample on-disk growth and publish a ``progress`` frame each tick."""
+        """Sample on-disk growth and publish a ``progress`` frame each tick.
+
+        Each tick recomputes ``downloaded_bytes`` from cache-root growth, derives a
+        coarse ``speed_bps`` from the delta since the previous sample, and — when the
+        total is known — an ``eta_s`` from that speed. Both are honest zeros when the
+        delta is non-positive or the total is unknown (indeterminate), never guessed.
+        """
         job = run.job
         try:
             while True:
                 await asyncio.sleep(_POLL_SECS)
+                now = time.monotonic()
                 grew = _measure(run)
-                if grew != job.bytes:
-                    job.bytes = grew
+                if grew != job.downloaded_bytes:
+                    elapsed = now - run.last_ts
+                    delta = grew - run.last_bytes
+                    if elapsed > 0 and delta > 0:
+                        job.speed_bps = int(delta / elapsed)
+                        remaining = job.total_bytes - grew
+                        job.eta_s = (
+                            int(remaining / job.speed_bps)
+                            if job.total_bytes > 0 and remaining > 0 and job.speed_bps > 0
+                            else 0
+                        )
+                    else:
+                        job.speed_bps = 0
+                        job.eta_s = 0
+                    run.last_bytes = grew
+                    run.last_ts = now
+                    job.downloaded_bytes = grew
+                    _apply_progress(job)
                     self._publish(job, "progress")
         except asyncio.CancelledError:
             pass
@@ -378,3 +439,27 @@ def _measure(run: _Running) -> int:
     """Bytes written for this job: current cache-root size minus the baseline."""
     current = _dir_size(_cache_root(run.job.provider))
     return max(0, current - run.baseline)
+
+
+def _classify_error(exc: Exception) -> str:
+    """A typed, machine-readable ``reason`` for a failed fetch (``""`` if unknown).
+
+    Coarse and honest: matches the exception's text against a few well-understood
+    failure classes the FE can key on (``disk_full``, ``network``, ``gated``,
+    ``not_found``). Anything unrecognized yields ``""`` — the ``error`` string still
+    carries the human detail; ``reason`` only promises a machine label when sure.
+    """
+    text = str(exc).lower()
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 28:  # ENOSPC
+        return "disk_full"
+    if "no space" in text or "disk full" in text:
+        return "disk_full"
+    if any(
+        w in text for w in ("connection", "timed out", "timeout", "network", "dns", "unreachable")
+    ):
+        return "network"
+    if any(w in text for w in ("token", "gated", "401", "403", "unauthorized", "forbidden")):
+        return "gated"
+    if "not found" in text or "404" in text:
+        return "not_found"
+    return ""

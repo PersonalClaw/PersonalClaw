@@ -209,7 +209,6 @@ def real_state(monkeypatch, tmp_path):
 
     return DashboardState(
         sessions=MagicMock(count=0),
-        lessons=MagicMock(load_all=lambda: []),
         start_time=time.time(),
         conversation_log=ConversationLog(tmp_path / "sessions"),
     )

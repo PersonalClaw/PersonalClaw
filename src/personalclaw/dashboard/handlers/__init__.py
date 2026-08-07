@@ -42,8 +42,6 @@ logger = logging.getLogger(__name__)
 # ── Shared helpers (handlers/_shared.py) ──
 from personalclaw.dashboard.handlers._shared import (  # noqa: E402, F401
     _blocks_reads_session,
-    _get_active_workspace,
-    _get_lessons,
     _get_memory,
     _get_skills,
     _is_restricted_session,

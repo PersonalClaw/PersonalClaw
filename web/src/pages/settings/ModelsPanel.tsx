@@ -1,12 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
   Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
-  type LucideIcon,
+  Trash2, type LucideIcon,
 } from 'lucide-react'
 import { api, type AvailableModel, type ProviderHealth } from '../../lib/api'
+import { humanBytes } from '../../lib/chunkedUpload'
 import { IconButton } from '../../ui/IconButton'
+import { Button } from '../../ui/Button'
 import { SearchField } from '../../ui/SearchField'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
@@ -141,6 +143,47 @@ function ModelChips({ model, onRepair, repairing }: {
   )
 }
 
+/** "Reclaim N GB" — surfaces the partial-download leftovers (cancelled/crashed fetches)
+ *  that otherwise sit invisible across every local provider's cache root, and unlinks
+ *  them on confirm. Renders nothing when there's nothing to reclaim, so a clean install
+ *  shows no affordance. `onReclaimed` lets the caller revalidate the model list after a
+ *  sweep (a repaired/removed partial changes a row's downloaded state). */
+function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
+  const [totalBytes, setTotalBytes] = useState(0)
+  const [busy, setBusy] = useState(false)
+
+  const refreshCandidates = () =>
+    api.modelDownloadCleanupCandidates()
+      .then((r) => setTotalBytes(r.total_bytes))
+      .catch(() => setTotalBytes(0))
+
+  useEffect(() => { refreshCandidates() }, [])
+
+  if (totalBytes <= 0) return null
+
+  const reclaim = async () => {
+    const ok = await confirm({
+      title: `Reclaim ${humanBytes(totalBytes)}?`,
+      body: 'Deletes partial-download leftovers (.part / .tmp / .incomplete files) from cancelled or interrupted fetches. Fully downloaded models are untouched.',
+      confirmLabel: 'Reclaim',
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      await api.modelDownloadCleanup()
+      await refreshCandidates()
+      onReclaimed()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Button variant="tonal" size="xs" loading={busy} onClick={reclaim}
+      title="Delete partial-download leftovers from cancelled or interrupted fetches.">
+      <Trash2 size={13} /> Reclaim {humanBytes(totalBytes)}
+    </Button>
+  )
+}
+
 /** Models → assign discovered models to use-cases. Reads /api/models/available
  *  (all backends' models) + /api/models/active (current bindings); writes via
  *  PUT /api/models/active/{use_case}. Chat + Image·Modality are multi-select;
@@ -172,7 +215,10 @@ export function ModelsPanel() {
 
   return (
     <div>
-      <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and its routing sub-categories store an ordered fallback chain — the first model is the default; later ones take over when an earlier provider is down. Modality means understanding that media as input; Generation means producing it." />
+      <div className="flex items-start justify-between gap-3">
+        <PanelHeader title="Models" hint="Assign discovered models to each use case. Chat and its routing sub-categories store an ordered fallback chain — the first model is the default; later ones take over when an earlier provider is down. Modality means understanding that media as input; Generation means producing it." />
+        <div className="shrink-0 pt-1"><ReclaimButton onReclaimed={reloadActive} /></div>
+      </div>
       <Section>
         {allModels.length === 0 && (
           <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">

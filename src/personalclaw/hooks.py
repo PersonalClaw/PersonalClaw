@@ -600,7 +600,15 @@ async def run_script_hook(
     # blocked action returns a blocked result rather than executing.
     from personalclaw.guardrails.denylist import enforce_action
 
-    _deny = enforce_action(hook.provider, hook.provider_config, ctx)
+    # `parent_session_key` rides the event payload when a subagent fired the hook
+    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs. A
+    # top-level fire omits it → "" → the profile-glob union is skipped.
+    _deny = enforce_action(
+        hook.provider,
+        hook.provider_config,
+        ctx,
+        session_key=str(hook_event.get("parent_session_key", "")),
+    )
     if _deny.blocked:
         hook.last_run = time.time()
         hook.last_status = "blocked"

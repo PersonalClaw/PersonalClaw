@@ -189,6 +189,24 @@ async def test_default_project_undeletable(tmp_path):
         assert (await client.delete(f"/api/projects/{personal['id']}")).status == 400
 
 
+@pytest.mark.asyncio
+async def test_default_project_rename_refused_no_duplicate(tmp_path):
+    # Renaming a default must 400 and must NOT spawn a re-seeded duplicate (ensure_defaults
+    # would otherwise re-create the missing name), while a non-name update still succeeds.
+    async with _client(tmp_path) as client:
+        projects = (await (await client.get("/api/projects")).json())["projects"]
+        personal = next(p for p in projects if p["name"] == "Personal")
+        r = await client.put(f"/api/projects/{personal['id']}", json={"name": "Renamed"})
+        assert r.status == 400
+        assert "cannot be renamed" in (await r.json())["error"]
+        # A non-name update to the same default still writes.
+        r = await client.put(f"/api/projects/{personal['id']}", json={"brief": "Catch-all"})
+        assert r.status == 200 and (await r.json())["brief"] == "Catch-all"
+        # Exactly one Personal — no duplicate default was seeded.
+        after = (await (await client.get("/api/projects")).json())["projects"]
+        assert len([p for p in after if p["name"] == "Personal"]) == 1
+
+
 # ── Update: the allowlist + the workspace path gate ──
 
 
@@ -344,6 +362,25 @@ async def test_create_with_project_id_attaches_general_list(tmp_path):
             )
         ).json()
         assert t3["task_list_id"] == named["id"]
+
+
+# ── Create: non-string title guard (#774) ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", [12345, True, 1.5, [1], {"nested": "obj"}, None])
+async def test_non_string_title_is_400_not_500(tmp_path, shape):
+    """`body.get("title", "").strip()` raised AttributeError on every non-string
+    title — a 500 for what is plainly a client bug (same class as the comment-body
+    guard). A coerced-but-truthy value (e.g. str(12345)) must NOT be accepted as a
+    title either: it falls through to the emptiness guard and 400s without creating
+    a task."""
+    async with _client(tmp_path) as client:
+        r = await client.post("/api/tasks", json={"title": shape})
+        assert r.status == 400
+        assert (await r.json())["error"] == "title required"
+        # Refused means nothing was written — not a task titled "12345"/"None".
+        assert (await (await client.get("/api/tasks")).json())["total"] == 0
 
 
 # ── Ready / search ──

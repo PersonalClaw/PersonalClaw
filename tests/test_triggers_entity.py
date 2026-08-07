@@ -452,12 +452,24 @@ def test_a_trigger_round_trips_through_to_dict():
             capabilities={"allowed_actions": ["bash"], "network": False},
             workflow={"ref": "nightly-backup"},
             resource_slots=["local-llm"],
+            skip_if_active={"dirty_git": ".", "lockfiles": ["run.lock"], "recent_secs": 120},
             catch_up=True,
         )
     )
     reparsed, issues = parse_trigger(trigger.to_dict())
     assert issues == []
     assert reparsed == trigger
+
+
+def test_skip_if_active_defaults_to_off_and_round_trips():
+    """The default is an empty dict — a trigger that does not opt in is never deferred — and any
+    declared guard survives `to_dict`→`parse_trigger` so its reader (the `active` gate) sees it."""
+    default, _ = parse_trigger(_raw())
+    assert default.skip_if_active == {}
+    guarded, issues = parse_trigger(_raw(skip_if_active={"paths": ["notes/*"], "recent_secs": 300}))
+    assert issues == []
+    assert guarded.skip_if_active == {"paths": ["notes/*"], "recent_secs": 300}
+    assert parse_trigger(guarded.to_dict())[0] == guarded
 
 
 def test_failure_delivery_defaults_to_the_INBOX_even_when_delivery_is_none():

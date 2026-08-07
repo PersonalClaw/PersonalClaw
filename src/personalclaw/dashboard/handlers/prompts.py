@@ -882,6 +882,8 @@ async def api_skill_detail(request: web.Request) -> web.Response:
         if not isinstance(body, dict):
             return web.json_response({"error": "JSON body must be an object"}, status=400)
         content = body.get("content", "")
+        if not isinstance(content, str):
+            return web.json_response({"error": "content must be a string"}, status=400)
         if not content:
             return web.json_response({"error": "content is required"}, status=400)
         ok = skills.update_skill(name, content)

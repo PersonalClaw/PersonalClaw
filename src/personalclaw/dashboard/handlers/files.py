@@ -957,6 +957,22 @@ def _dashboard_roots() -> list[tuple[str, str]]:
     return roots
 
 
+def _is_dashboard_root(path: str) -> bool:
+    """True if ``path`` IS one of the dashboard's browsable root directories.
+
+    A root (workspace, home, outbox, uploads, PERSONALCLAW_HOME, a bound
+    loop/project workspace) is a boundary the explorer surfaces — never a valid
+    delete or move TARGET. ``_validate_dashboard_path`` treats a root as inside
+    the allowlist (a root is inside itself: ``canonical == root``), so without
+    this guard ``POST /api/file-delete`` on a root would ``shutil.rmtree`` the
+    whole root and ``/api/file-move`` would relocate it (issue #780). Both
+    ``path`` (via ``_validate_dashboard_path`` → ``validate_file_path``) and the
+    roots are ``os.path.realpath``-canonicalized, so a plain equality holds.
+    """
+
+    return any(path == rp for _label, rp in _dashboard_roots())
+
+
 def _validate_dashboard_path(raw: str) -> str | None:
     """Validate a file path for dashboard file I/O.
 
@@ -2068,6 +2084,17 @@ async def api_file_move(request: web.Request) -> web.Response:
             resources=f"{body.get('src', '')}→{body.get('dest', '')}",
         )
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
+    # A dashboard ROOT passes _validate_dashboard_path (a root is inside itself),
+    # but a root is never a valid move endpoint: moving `src` relocates the whole
+    # root, and a `dest` that IS a root would target the root itself (issue #780).
+    if _is_dashboard_root(src) or _is_dashboard_root(dest):
+        _sel().log_tool_invocation(
+            session_key="dashboard",
+            tool_name="file_move",
+            outcome="denied",
+            resources=f"{src}→{dest}",
+        )
+        return web.json_response({"error": "refusing to move a root directory"}, status=400)
     if not os.path.exists(src):
         return web.json_response({"error": "source not found"}, status=404)
     if os.path.exists(dest):
@@ -2118,6 +2145,15 @@ async def api_file_delete(request: web.Request) -> web.Response:
             resources=str(body.get("path", "")),
         )
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
+    # A dashboard ROOT is inside the allowlist (a root is inside itself), so it
+    # passes _validate_dashboard_path — but it is never a valid delete target.
+    # Without this guard, deleting a root shutil.rmtree()s the whole root, e.g.
+    # the workspace or the real ~/.personalclaw home (issue #780).
+    if _is_dashboard_root(path):
+        _sel().log_tool_invocation(
+            session_key="dashboard", tool_name="file_delete", outcome="denied", resources=path
+        )
+        return web.json_response({"error": "refusing to delete a root directory"}, status=400)
     if not os.path.exists(path):
         return web.json_response({"error": "not found"}, status=404)
     try:

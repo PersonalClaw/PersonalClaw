@@ -22,7 +22,7 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
 
   const attach = useCallback((job: DownloadJob) => {
     setJobs((prev) => ({ ...prev, [job.model]: job }))
-    if (job.status !== 'running' || streams.current.has(job.id)) return
+    if (job.state !== 'running' || streams.current.has(job.id)) return
     let es: EventSource
     try { es = new EventSource(api.downloadStreamUrl(job.id)) } catch { return }
     streams.current.set(job.id, es)
@@ -31,7 +31,7 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
       try { data = JSON.parse((e as MessageEvent).data) as DownloadJob } catch { return }
       if (!data) return
       setJobs((prev) => ({ ...prev, [data!.model]: data! }))
-      if (data.status !== 'running') { closeStream(data.id); settled.current() }
+      if (data.state !== 'running') { closeStream(data.id); settled.current() }
     }
     for (const ev of ['snapshot', 'progress', 'done', 'error', 'cancelled']) es.addEventListener(ev, onFrame)
     es.onerror = () => { /* transient — EventSource retries */ }
@@ -51,7 +51,7 @@ export function useModelDownloads(provider: string, onSettled: () => void) {
   const start = useCallback(async (model: string) => {
     const job = await api.startModelDownload(provider, model)
     attach(job)
-    if (job.status !== 'running') settled.current()  // already-downloaded short-circuit
+    if (job.state !== 'running') settled.current()  // already-downloaded short-circuit
   }, [provider, attach])
 
   const cancel = useCallback(async (model: string) => {

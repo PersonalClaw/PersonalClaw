@@ -810,7 +810,27 @@ def diagnose(
         raw_workflow = entry.get("workflow")
         workflow: dict[str, Any] = dict(raw_workflow) if isinstance(raw_workflow, dict) else {}
 
-        ref = str(workflow.get("def") or workflow.get("name") or "")
+        # A `run-workflow` trigger stores its ref NESTED under `inline`, not at the top level —
+        # the entry is built as `workflow={"inline": action}` and the action's config puts the ref
+        # at `workflow["inline"]["config"]["workflow"]` (dashboard/handlers/triggers.py). Reading
+        # only the legacy top-level `def`/`name` keys let every real run-workflow orphan through as
+        # healthy. Same inline-unwrap precedent as the unfenced-write check below (~883); gated on
+        # the inline provider being `run-workflow` so an unrelated inline action carrying a
+        # `workflow` config key is not misread as a ref.
+        raw_inline_action = workflow.get("inline")
+        inline_action: dict[str, Any] = (
+            dict(raw_inline_action) if isinstance(raw_inline_action, dict) else {}
+        )
+        raw_inline_cfg = inline_action.get("config")
+        inline_cfg: dict[str, Any] = (
+            dict(raw_inline_cfg) if isinstance(raw_inline_cfg, dict) else {}
+        )
+        inline_ref = (
+            str(inline_cfg.get("workflow") or "")
+            if str(inline_action.get("provider") or "").strip() == "run-workflow"
+            else ""
+        )
+        ref = str(workflow.get("def") or workflow.get("name") or "") or inline_ref
         if ref and known_workflows is not None and ref not in workflows:
             report.findings.append(
                 Finding(

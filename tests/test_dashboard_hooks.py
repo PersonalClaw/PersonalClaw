@@ -20,7 +20,6 @@ def _make_state(tmp_path):
     sessions.get_pid = MagicMock(return_value=None)
     state = DashboardState(
         sessions=sessions,
-        lessons=MagicMock(load_all=MagicMock(return_value=[])),
         start_time=0.0,
         conversation_log=ConversationLog(base_dir=tmp_path),
     )

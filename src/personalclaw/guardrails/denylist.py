@@ -123,18 +123,33 @@ def _load_config_rules() -> tuple[list[DenyRule], list[str]]:
         return [], []
 
 
-def check_action(provider_name: str, action_config: dict, ctx: object = None) -> DenyDecision:
+def check_action(
+    provider_name: str, action_config: dict, ctx: object = None, session_key: str = ""
+) -> DenyDecision:
     """Check one action-provider execution against the composed denylist.
 
     Order (first match wins): built-in sensitive-path check on any path-carrying
-    config value → operator ``autonomy_denylist`` path globs → built-in +
-    operator denied-command patterns against any command string. Returns an
-    ``allowed`` decision when nothing matches.
+    config value → operator ``autonomy_denylist`` path globs (unioned with the
+    session's SafetyProfile ``denylist_extra``) → built-in + operator denied-command
+    patterns against any command string. Returns an ``allowed`` decision when
+    nothing matches.
+
+    ``session_key`` identifies the run so its SafetyProfile can layer extra path
+    globs onto the operator denylist. Every named profile ships
+    ``denylist_extra=()``, so this is a no-op until a profile/operator sets globs.
     """
     from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS, is_sensitive_path
 
     config_rules, denied_cmd_patterns = _load_config_rules()
     paths = _config_paths(action_config)
+
+    # The session's SafetyProfile can layer extra path globs (§3 ``denylist_extra``)
+    # onto the operator denylist. Read lazily + only when a session identity is known.
+    profile_globs: tuple[str, ...] = ()
+    if session_key:
+        from personalclaw.guardrails.policy import profile_for_session
+
+        profile_globs = profile_for_session(session_key).denylist_extra
 
     # 1. Built-in sensitive-path denylist (always on) — a credential dir/file.
     for p in paths:
@@ -146,7 +161,8 @@ def check_action(provider_name: str, action_config: dict, ctx: object = None) ->
                 matched="builtin:sensitive_path",
             )
 
-    # 2. Operator path-glob rules (verdict block | needs_human).
+    # 2. Operator path-glob rules (verdict block | needs_human), unioned with the
+    # session profile's extra globs (which block with no needs_human escalation).
     for rule in config_rules:
         for pattern in rule.paths:
             for p in paths:
@@ -159,6 +175,15 @@ def check_action(provider_name: str, action_config: dict, ctx: object = None) ->
                         reason=f"action path {p!r} matches deny rule {pattern!r}",
                         matched=f"config:{pattern}",
                     )
+    for pattern in profile_globs:
+        for p in paths:
+            if _glob_match(p, pattern):
+                return DenyDecision(
+                    blocked=True,
+                    verdict="block",
+                    reason=f"action path {p!r} matches profile deny glob {pattern!r}",
+                    matched=f"profile:{pattern}",
+                )
 
     # 3. Command patterns (built-in self-tamper/destructive + operator regexes).
     commands = _config_commands(action_config)
@@ -181,7 +206,9 @@ def check_action(provider_name: str, action_config: dict, ctx: object = None) ->
     return DenyDecision()
 
 
-def enforce_action(provider_name: str, action_config: dict, ctx: object = None) -> DenyDecision:
+def enforce_action(
+    provider_name: str, action_config: dict, ctx: object = None, session_key: str = ""
+) -> DenyDecision:
     """``check_action`` + SEL audit + (for needs_human) a needs-input notification.
 
     The seam wrapper the three dispatch points call. On a block/needs_human it
@@ -189,8 +216,11 @@ def enforce_action(provider_name: str, action_config: dict, ctx: object = None) 
     fires a needs-input notification with the matched rule so the action isn't
     silently dropped. Returns the decision; the caller short-circuits to a blocked
     ActionResult when ``blocked`` is True.
+
+    ``session_key`` is threaded to ``check_action`` so the run's SafetyProfile can
+    layer extra deny globs (§3 ``denylist_extra``).
     """
-    decision = check_action(provider_name, action_config, ctx)
+    decision = check_action(provider_name, action_config, ctx, session_key)
     if not decision.blocked:
         return decision
     try:

@@ -745,6 +745,66 @@ def test_a_known_workflow_ref_is_not_reported():
     assert report.healthy
 
 
+def test_an_orphaned_run_workflow_ref_is_reported():
+    """A `run-workflow` trigger nests its ref under `inline.config.workflow`, not at the top level.
+
+    Reading only the legacy `def`/`name` keys let every real run-workflow orphan through as
+    healthy — the check could never fire for the shape the dashboard actually creates (#397).
+    """
+    report = diagnose(
+        [
+            {
+                "id": "t1",
+                "workflow": {
+                    "inline": {
+                        "provider": "run-workflow",
+                        "config": {"workflow": "nightly-backup"},
+                    }
+                },
+            }
+        ],
+        known_workflows={"digest"},
+    )
+    codes = [f.code for f in report.findings]
+    assert "orphaned_workflow_ref" in codes
+
+
+def test_a_known_run_workflow_ref_is_not_reported():
+    """A ref present in the registry raises no orphan finding.
+
+    Scoped to `orphaned_workflow_ref`: an inline run-workflow action with no capability grant
+    trips the separate `unfenced_write_action` check, which is not what this test is about.
+    """
+    report = diagnose(
+        [
+            {
+                "id": "t1",
+                "workflow": {
+                    "inline": {"provider": "run-workflow", "config": {"workflow": "digest"}}
+                },
+            }
+        ],
+        known_workflows={"digest"},
+    )
+    assert "orphaned_workflow_ref" not in [f.code for f in report.findings]
+
+
+def test_a_non_run_workflow_inline_action_is_not_read_as_a_workflow_ref():
+    """An unrelated inline action that happens to carry a `workflow` config key is not a ref."""
+    report = diagnose(
+        [
+            {
+                "id": "t1",
+                "workflow": {
+                    "inline": {"provider": "run-script", "config": {"workflow": "not-a-ref"}}
+                },
+            }
+        ],
+        known_workflows={"digest"},
+    )
+    assert "orphaned_workflow_ref" not in [f.code for f in report.findings]
+
+
 def test_the_orphan_check_is_skipped_when_the_registry_cannot_be_read():
     """`known_workflows=None` means "cannot verify".
 

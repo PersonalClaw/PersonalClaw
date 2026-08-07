@@ -1865,6 +1865,9 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     )
 
 
+VALID_APPROVAL_MODES = ("normal", "trust", "trust_reads", "yolo")
+
+
 async def api_chat_mode(request: web.Request) -> web.Response:
     """POST /api/chat/mode — set the tool APPROVAL mode (whether tools auto-approve).
 
@@ -1887,6 +1890,11 @@ async def api_chat_mode(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     mode = body.get("mode", "normal")
+    if mode not in VALID_APPROVAL_MODES:
+        return web.json_response(
+            {"ok": False, "error": f"invalid mode (expected one of {VALID_APPROVAL_MODES})"},
+            status=400,
+        )
     session_name = body.get("session") or None
 
     if mode == "yolo":
@@ -1902,7 +1910,9 @@ async def api_chat_mode(request: web.Request) -> web.Response:
             logger.warning("SEL audit failed for YOLO mode activation", exc_info=True)
     elif mode == "trust_reads":
         state.disable_yolo()
-        if session_name and session_name in state._sessions:
+        if session_name is not None:
+            if session_name not in state._sessions:
+                return web.json_response({"ok": False, "error": "unknown session"}, status=400)
             state._sessions[session_name]._trust = False
             state._sessions[session_name]._trust_reads = True
         else:

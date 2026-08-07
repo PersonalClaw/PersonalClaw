@@ -19,7 +19,12 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.cli_commands import _memory_cmd
-from personalclaw.dashboard.handlers.memory import api_memory_import
+from personalclaw.dashboard.handlers.memory import (
+    api_memory_import,
+    api_memory_migrate,
+    api_memory_promote,
+    api_memory_vault_sync,
+)
 
 # The five shapes measured against a live gateway — all of them used to 500.
 NON_OBJECT_BODIES = [[], "a string", 42, None, True]
@@ -153,3 +158,154 @@ def test_cli_import_still_accepts_an_object_file(_home, capsys):
     out = capsys.readouterr()
     assert "Import complete" in out.out
     assert "Semantic: 1" in out.out
+
+
+# ── #801: restricted-session guard on the three write handlers that skipped it ──
+#
+# ``vault_sync``/``migrate``/``promote`` never ran the ``_is_restricted_session``
+# gate that ``api_memory_import``/``api_memory_consolidate`` enforce — and the
+# first two read no request body at all, so ANY POST (even a garbage body) from an
+# incognito/temporary/guest session ran the full side effect: mirror the whole
+# store to disk, migrate legacy memory, promote episodics. A restricted session is
+# explicitly promised memory writes are OFF. The fix copies ``api_memory_import``'s
+# guard verbatim (403 + ``sel.log_api_access(..., outcome="denied")``).
+
+RESTRICTED_KEY = "dashboard:e1"
+
+
+class _WriteStore:
+    """Minimal provider for the NORMAL-session path — records the write it ran so
+    the guard-fired case can assert the same write never started."""
+
+    def __init__(self):
+        self.embed_fn = object()  # truthy → migrate skips the embed-fn wiring branch
+        self.calls: list[str] = []
+
+    def migrate_from_markdown(self) -> dict[str, int]:
+        self.calls.append("migrate")
+        return {"semantic": 0, "episodic": 0}
+
+    def promote_episodic_patterns(self, min_count: int, min_sim: float) -> int:
+        self.calls.append("promote")
+        return 3
+
+
+def _restricted_request(path, monkeypatch):
+    """A POST from a restricted session, with the provider/service and ``_sel``
+    stubbed so a fired guard touches NOTHING (never a real home).
+
+    ``_is_restricted_session`` returns True on the first check (``sk in
+    state._restricted_keys``), so a real set on the mock state is enough to arm the
+    gate while keeping the file's ``MagicMock`` state + ``make_mocked_request``
+    harness.
+    """
+    provider = MagicMock()
+    service = MagicMock()
+    monkeypatch.setattr("personalclaw.dashboard.handlers.memory._get_provider", provider)
+    monkeypatch.setattr("personalclaw.dashboard.handlers.memory._get_service", service)
+    audit = MagicMock()
+    monkeypatch.setattr("personalclaw.dashboard.handlers.memory._sel", lambda: audit)
+
+    app = web.Application()
+    state = MagicMock()
+    state._restricted_keys = {RESTRICTED_KEY}
+    app["state"] = state
+    request = make_mocked_request("POST", path, headers={"X-Session-Key": RESTRICTED_KEY}, app=app)
+    return request, provider, service, audit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler,path,operation",
+    [
+        (api_memory_vault_sync, "/api/memory/vault/sync", "memory.vault_sync"),
+        (api_memory_migrate, "/api/memory/migrate", "memory.migrate"),
+        (api_memory_promote, "/api/memory/promote", "memory.promote"),
+    ],
+)
+async def test_restricted_session_is_denied_with_no_side_effect(
+    monkeypatch, handler, path, operation
+):
+    request, provider, service, audit = _restricted_request(path, monkeypatch)
+
+    resp = await handler(request)
+
+    assert resp.status == 403
+    assert json.loads(resp.body)["error"] == "Memory writes are not allowed in this session mode."
+    # The side effect never started: neither the vector provider nor the memory
+    # service was even resolved.
+    assert provider.call_count == 0
+    assert service.call_count == 0
+    audit.log_api_access.assert_called_once_with(
+        caller=RESTRICTED_KEY,
+        operation=operation,
+        outcome="denied",
+        source="dashboard",
+        resources="restricted_session_block",
+    )
+
+
+@pytest.mark.asyncio
+async def test_migrate_normal_session_is_not_blocked(monkeypatch):
+    store = _WriteStore()
+    monkeypatch.setattr(
+        "personalclaw.dashboard.handlers.memory._get_provider", lambda _state: store
+    )
+    app = web.Application()
+    app["state"] = MagicMock()  # empty headers → not a restricted session
+    request = make_mocked_request("POST", "/api/memory/migrate", app=app)
+
+    resp = await api_memory_migrate(request)
+
+    assert resp.status != 403
+    assert store.calls == ["migrate"]
+
+
+@pytest.mark.asyncio
+async def test_promote_normal_session_is_not_blocked(monkeypatch):
+    store = _WriteStore()
+    monkeypatch.setattr(
+        "personalclaw.dashboard.handlers.memory._get_provider", lambda _state: store
+    )
+    app = web.Application()
+    app["state"] = MagicMock()
+    request = make_mocked_request("POST", "/api/memory/promote", app=app)
+
+    async def _json():
+        return {}
+
+    request.json = _json  # type: ignore[method-assign]
+
+    resp = await api_memory_promote(request)
+
+    assert resp.status != 403
+    assert store.calls == ["promote"]
+    assert json.loads(resp.body) == {"ok": True, "promoted": 3}
+
+
+@pytest.mark.asyncio
+async def test_vault_sync_normal_session_is_not_blocked(monkeypatch, tmp_path):
+    """The vault write stays in tmp_path — a fake MemoryVault whose sync() is a
+    no-op — so this proves the guard does not over-block without touching a home."""
+
+    class _FakeVault:
+        def __init__(self, service, vdir):
+            self.vdir = vdir
+
+        def sync(self) -> dict:
+            return {"created": 0, "updated": 0, "deleted": 0}
+
+    monkeypatch.setattr(
+        "personalclaw.dashboard.handlers.memory._get_service", lambda _state: MagicMock()
+    )
+    monkeypatch.setattr("personalclaw.memory_vault.MemoryVault", _FakeVault)
+    monkeypatch.setattr("personalclaw.memory_vault.vault_dir_from_config", lambda: tmp_path)
+
+    app = web.Application()
+    app["state"] = MagicMock()
+    request = make_mocked_request("POST", "/api/memory/vault/sync", app=app)
+
+    resp = await api_memory_vault_sync(request)
+
+    assert resp.status != 403
+    assert json.loads(resp.body)["path"] == str(tmp_path)

@@ -401,6 +401,32 @@ async def test_rest_slug_collision_409(patched_native) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rest_create_malformed_slug_400_not_500(patched_native) -> None:
+    """#820: a malformed slug on create returns a clean 400 (not a 500 from the
+    unguarded existence probe) and creates nothing; a valid slug still creates."""
+    client = await _client(patched_native)
+    try:
+        resp = await client.post(
+            "/api/artifacts",
+            json={"name": "probe", "slug": "UPPER Bad Slug!!", "kind": "markdown", "content": "x"},
+        )
+        assert resp.status == 400
+        assert (await resp.json())["error"] == "invalid slug"
+        # nothing persisted
+        listing = await (await client.get("/api/artifacts")).json()
+        assert listing["artifacts"] == []
+        # a valid slug still works
+        ok = await client.post(
+            "/api/artifacts",
+            json={"name": "probe", "slug": "good-slug", "kind": "markdown", "content": "x"},
+        )
+        assert ok.status == 201
+        assert (await ok.json())["slug"] == "good-slug"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_rest_events_drops_dashboard_ui(patched_native) -> None:
     client = await _client(patched_native)
     try:

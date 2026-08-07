@@ -280,7 +280,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
 - `GET /api/lessons` — _(no summary)_
-- `POST /api/lessons` — add a lesson (vector store or JSONL fallback).
+- `POST /api/lessons` — add a lesson to memory.db ``lesson.*``.
 - `GET /api/lexicon/corrections` — list learned corrections (most-corrected first).
 - `POST /api/lexicon/corrections` — {heard, meant, always?} — record a learned fix
 - `PATCH /api/lexicon/corrections/{id}` — {auto_apply} — toggle 'always fix this'.
@@ -390,6 +390,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/chat` — chat models for dropdowns (the one model list).
 - `GET /api/models/downloads` — live + recently-finished download jobs.
 - `POST /api/models/downloads` — start a download. Body: {provider, model}.
+- `POST /api/models/downloads/cleanup` — delete the partial-download leftovers.
+- `GET /api/models/downloads/cleanup-candidates` — partial-download leftovers.
 - `DELETE /api/models/downloads/{id}` — cancel and detach a download job.
 - `GET /api/models/downloads/{id}/stream` — per-job progress SSE.
 - `GET /api/models/embedding/reindex` — live + recently-finished jobs.
@@ -426,6 +428,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/projects/{project_id}` — _(no summary)_
 - `POST /api/projects/{project_id}/context-adapters/regenerate` — _(no summary)_
 - `GET /api/projects/{project_id}/linked` — the work units scoped under this
+- `GET /api/projects/{project_id}/work` — the state-grouped Work board.
+- `POST /api/projects/{project_id}/work/claim` — take a TTL'd claim on one board row.
+- `POST /api/projects/{project_id}/work/release` — release a claim you hold.
 - `GET /api/prompt-snippets` — list reusable snippets via the provider.
 - `POST /api/prompt-snippets` — create a snippet.
 - `DELETE /api/prompt-snippets/{name}` — remove a snippet.
@@ -556,6 +561,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/triggers/doctor` — structural problems across every trigger (§7 criterion 12).
 - `GET /api/triggers/history` — the run feed across ALL THREE kinds (AUTO crit 4).
 - `GET /api/triggers/variables` — the ``$variables`` each trigger kind exposes.
+- `POST /api/triggers/view/render` — the `view` kind's production render caller (WF2AUT-6).
 - `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
 - `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
@@ -595,6 +601,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/edit` — _(no summary)_
 - `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
 - `POST /api/workflows/runs/{run_id}/fork` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.

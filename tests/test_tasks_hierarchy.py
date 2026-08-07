@@ -34,6 +34,46 @@ class TestDefaults:
         with pytest.raises(ValueError, match="cannot be deleted"):
             store.delete_project(personal.id)
 
+    def test_default_project_rename_refused_and_no_duplicate(self, store):
+        # Renaming a default is refused (its identity is its name), and the refusal must
+        # NOT leave a re-seeded duplicate behind: the original stays, one Personal only.
+        store.ensure_defaults()
+        personal = store.get_project_by_name("Personal")
+        with pytest.raises(ValueError, match="cannot be renamed"):
+            store.update_project(personal.id, name="Renamed")
+        personals = [p for p in store.list_projects() if p.name == "Personal"]
+        assert len(personals) == 1
+        assert personals[0].id == personal.id
+        assert store.get_project_by_name("Renamed") is None
+
+    def test_default_project_non_name_update_still_works(self, store):
+        # Only the name is frozen on a default — brief/workspace_dir/status still update.
+        store.ensure_defaults()
+        personal = store.get_project_by_name("Personal")
+        u = store.update_project(
+            personal.id, brief="Catch-all", workspace_dir="/tmp/x", status="archived"
+        )
+        assert u.name == "Personal"
+        assert u.brief == "Catch-all" and u.workspace_dir == "/tmp/x" and u.status == "archived"
+        # A no-op name (same value) must not trip the rename guard either.
+        assert store.update_project(personal.id, name="Personal").name == "Personal"
+
+    def test_stray_default_flagged_project_is_deletable(self, store):
+        # A project carrying a sticky stored is_default:true but NOT holding a protected
+        # name (e.g. a renamed/duplicated leftover from an older home) must be cleanable —
+        # the delete guard keys on the live protected names, not the stored flag.
+        store.ensure_defaults()
+        p = store.create_project("Leftover")
+        p.is_default = True
+        store._write_project(p)
+        assert store.get_project(p.id).is_default_project() is True
+        assert store.delete_project(p.id) is True
+        assert store.get_project(p.id) is None
+        # A project literally named Personal stays undeletable even so.
+        personal = store.get_project_by_name("Personal")
+        with pytest.raises(ValueError, match="cannot be deleted"):
+            store.delete_project(personal.id)
+
 
 class TestProjectCrud:
     def test_create_and_get(self, store):

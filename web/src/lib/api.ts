@@ -478,6 +478,23 @@ export interface ActionPlanItem { content?: string; description?: string; sequen
 export interface TaskNote { content: string; timestamp?: string; created_at?: string; phase?: 'research' | 'execution' | 'general' }
 export interface ProjectItem { id: string; name: string; is_default?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string }
 export interface ProjectLinkedItem { id: string; name: string; status: string; error_message?: string | null }
+// Work board. `WorkRow` mirrors `containers.BoardRow.to_dict()`;
+// `WorkSection` is one heterogeneous source's own status (per-section isolation — a failed
+// source degrades ONE section, never the board); `board` is the state-grouped view with
+// needs-input pinned first.
+export type WorkState = 'needs_input' | 'working' | 'queued' | 'suspended' | 'review' | 'done'
+export interface WorkClaim { holder: string; expires_at: number; taken_at: number; renewals: number }
+export interface WorkRow {
+  run_id: string; title: string; state: WorkState; origin: string; project_id: string
+  claim: WorkClaim | null; collapsed: boolean; attention: boolean; resumable: boolean
+}
+export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
+export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
+export interface WorkBoard {
+  board: WorkGroup[]; sections: WorkSection[]
+  completeness: 'complete' | 'inferred' | 'partial' | 'error'
+  attention: number; loadedAt: number
+}
 export interface TaskListItem { id: string; name: string; project_id: string; agent_instructions_template?: string; created_at?: string; updated_at?: string }
 export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[]; blocking_task_titles?: string[]; message?: string }
 export interface TaskItem {
@@ -620,6 +637,20 @@ export interface WorkflowContinuation {
 }
 export interface WorkflowCascadePreview {
   rerun: string[]; stale: string[]; skipped: string[]; committed_effects: string[]; needs_confirmation: boolean
+}
+// The reconstructability set for one terminal node (WF2-A2) — what the inspector
+// drawer renders. `resolved_prompt` is the fully-resolved post-binding prompt inline, or a
+// `{ ref }` when it was too large to inline; `output` is the node's value, or an
+// `{ artifact_ref }` when the value was offloaded. Every text field arrives redacted — the
+// backend strips credentials before this leaves the process.
+export interface NodeInspect {
+  run_id: string; node_id: string; instance_path: string; state: string
+  resolved_prompt: string | { ref: string }
+  resolved_inputs: Record<string, unknown>
+  output: unknown | { artifact_ref: string }
+  attempts: Array<Record<string, unknown>>
+  ledger_events: Array<Record<string, unknown>>
+  cached: boolean
 }
 export interface WorkflowManifest {
   spec_semver: string
@@ -1337,11 +1368,19 @@ export interface ProviderModels { name: string; displayName?: string; type: stri
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
-// A background local-model download job (matches dashboard/model_downloads.py).
+// A background local-model download job — the ONE canonical wire shape
+// (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py, LMMV §4.1).
+// `progress` is 0.0–1.0 when `total_bytes` is known, else 0.0 (indeterminate);
+// `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
+// `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
+// 'disk_full'|'gated'|'not_found'), '' otherwise.
 export interface DownloadJob {
   id: string; provider: string; model: string
-  status: 'running' | 'done' | 'error' | 'cancelled'
-  phase: string; bytes: number; size_bytes: number; error: string
+  kind: 'weights' | 'sidecar-install'
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  progress: number; speed_bps: number; eta_s: number
+  total_bytes: number; downloaded_bytes: number
+  error: string; reason: string
 }
 export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
@@ -1995,6 +2034,12 @@ export const api = {
   modelDownloads: () => get<{ downloads: DownloadJob[] }>('/api/models/downloads').then((d) => d.downloads ?? []),
   cancelModelDownload: (id: string) => del(`/api/models/downloads/${encodeURIComponent(id)}`),
   downloadStreamUrl: (id: string) => `/api/models/downloads/${encodeURIComponent(id)}/stream`,
+  // Partial-download leftovers across every local provider's cache root — the files a
+  // cancelled/crashed fetch leaves behind. Powers the "Reclaim N GB" affordance.
+  modelDownloadCleanupCandidates: () =>
+    get<{ candidates: { path: string; bytes: number }[]; total_bytes: number }>('/api/models/downloads/cleanup-candidates'),
+  modelDownloadCleanup: () =>
+    post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
   // Search a searchable provider's remote installable catalog (ollama's library).
@@ -2322,6 +2367,13 @@ export const api = {
   projects: () => get<{ projects: ProjectItem[] }>('/api/projects').then((d) => d.projects),
   project: (id: string) => get<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`),
   projectLinked: (id: string) => get<{ loops: ProjectLinkedItem[]; code: ProjectLinkedItem[]; artifacts: { slug: string; name: string; kind: string }[]; chats: { key: string; title: string; running: boolean }[] }>(`/api/projects/${encodeURIComponent(id)}/linked`),
+  // The state-grouped Work board: runs + legacy loops + tasks in one board, per-section
+  // isolated (a failed source degrades one section, the board still renders).
+  projectWork: (id: string) => get<WorkBoard>(`/api/projects/${encodeURIComponent(id)}/work`),
+  claimWork: (id: string, target_id: string, holder: string) =>
+    post<{ granted: boolean; claim: WorkClaim | null; reason: string }>(`/api/projects/${encodeURIComponent(id)}/work/claim`, { target_id, holder }),
+  releaseWork: (id: string, target_id: string, holder: string) =>
+    post<{ released: boolean; claim: WorkClaim | null; reason: string }>(`/api/projects/${encodeURIComponent(id)}/work/release`, { target_id, holder }),
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
@@ -2510,6 +2562,14 @@ export const api = {
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   runStoreTrigger: (rawId: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
+  // The `view` kind's render caller. A render surface pings this as it mounts/refreshes;
+  // any `view` trigger bound to `surface` and past its TTL refreshes (fire-and-forget on the
+  // gateway), the rest serve cache. Deliberately NOT a poll — R10: a view trigger costs nothing
+  // when nobody looks, so a render calls it rather than a background loop. Callers fire-and-forget
+  // (`.catch(() => {})`) — a background refresh must never block or error a render.
+  viewRender: (surface: string) =>
+    post<{ refreshed: string[]; served_cache: { trigger_id: string; reason: string }[] }>(
+      '/api/triggers/view/render', { surface }),
 
   // knowledge — typed item library + entities/graph + sources (see knowledge-entity-vision.md)
   knowledgeStats: () => get<KnowledgeStats>('/api/knowledge/stats'),
@@ -2939,6 +2999,12 @@ export const api = {
   workflowRunOutput: (id: string, nodeId: string) =>
     get<{ run_id: string; node_id: string; instance_path: string; state: string; output: unknown }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(nodeId)}`),
+  /** The reconstructability set for one TERMINAL node (WF2-A2) — resolved prompt, inputs,
+   *  output, attempts, this node's ledger slice, and whether it was served from cache. Every
+   *  text field arrives redacted. The inspector drawer consumes this. */
+  workflowRunNodeInspect: (runId: string, nodeId: string) =>
+    get<NodeInspect>(
+      `/api/workflows/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/inspect`),
   workflowContinuations: (id: string) =>
     get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
   // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees

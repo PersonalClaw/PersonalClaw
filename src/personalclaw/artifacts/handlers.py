@@ -130,8 +130,13 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             )
 
     requested_slug = str(body.get("slug", "")).strip() or None
-    if requested_slug and prov.get(requested_slug) is not None:
-        return web.json_response({"error": "slug already exists"}, status=409)
+    if requested_slug:
+        try:
+            existing = prov.get(requested_slug)
+        except ValueError:
+            return web.json_response({"error": "invalid slug"}, status=400)
+        if existing is not None:
+            return web.json_response({"error": "slug already exists"}, status=409)
     # Server-backed dedup hint (ARTIFACTS S1): a fresh save (no slug, no source_path)
     # whose name matches an existing artifact 409s with the existing slug so the UI can
     # offer "open it / save anyway". `?force=1` bypasses (mint a new artifact anyway).

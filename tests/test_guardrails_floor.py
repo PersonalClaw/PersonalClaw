@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from personalclaw.guardrails import incident as _incident
-from personalclaw.guardrails.denylist import DenyRule, check_action
+from personalclaw.guardrails.denylist import DenyRule, check_action, enforce_action
 from personalclaw.guardrails.writes import LiveWriteDisabled, live_writes_disabled
 
 # ── §1.2 denylist ────────────────────────────────────────────────────────────
@@ -49,6 +49,40 @@ def test_denylist_allows_benign_action():
 def test_denyrule_dataclass_defaults():
     r = DenyRule()
     assert r.paths == () and r.actions == () and r.verdict == "block"
+
+
+def test_profile_denylist_extra_blocks_when_set(monkeypatch):
+    # AG-5 edit 4: a session's SafetyProfile can layer extra deny globs. Prove the
+    # reader is LIVE — a profile with denylist_extra set blocks a matching path...
+    # `check_action` lazy-imports `profile_for_session` from the policy module, so
+    # patch it there (not on denylist, which never holds the name).
+    import personalclaw.guardrails.policy as policy
+    from personalclaw.guardrails.policy import SafetyProfile
+
+    monkeypatch.setattr(
+        policy,
+        "profile_for_session",
+        lambda _k: SafetyProfile(name="p", denylist_extra=("**/secret.txt",)),
+    )
+    d = enforce_action("webhook", {"path": "/app/data/secret.txt"}, session_key="cron:x")
+    assert d.blocked and d.matched == "profile:**/secret.txt"
+
+
+def test_profile_denylist_extra_default_empty_is_noop(monkeypatch):
+    # ...while the default profile (denylist_extra=()) does NOT block — non-breaking.
+    import personalclaw.guardrails.policy as policy
+    from personalclaw.guardrails.policy import SafetyProfile
+
+    monkeypatch.setattr(policy, "profile_for_session", lambda _k: SafetyProfile(name="p"))
+    d = enforce_action("webhook", {"path": "/app/data/secret.txt"}, session_key="cron:x")
+    assert not d.blocked and d.allowed
+
+
+def test_profile_denylist_extra_skipped_without_session_key():
+    # No session identity → the profile-glob layer is never consulted (session_key="").
+    # A benign path with no operator rules is allowed regardless of any profile.
+    d = check_action("webhook", {"path": "/app/data/secret.txt"})
+    assert not d.blocked
 
 
 # ── §1.3 incident kill switch ────────────────────────────────────────────────

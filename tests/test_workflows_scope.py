@@ -292,7 +292,11 @@ class TestControllerScopeEnforcement:
         c = RunController(
             run,
             spec,
-            services=EngineServices(get_provider=_writer_provider(str(inside)), cwd=str(tmp_path)),
+            # `cwd` is the workspace itself, not its parent: `watch_roots` climbs one level
+            # above cwd, and under xdist the shared `popen-gwN` tmp root holds sibling tests'
+            # files (a neighbour's still-open WAL SQLite flushes there mid-run). Watching `ws`
+            # keeps the snapshot inside this test's private tree, as the warn/reject cases do.
+            services=EngineServices(get_provider=_writer_provider(str(inside)), cwd=str(ws)),
         )
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         from personalclaw.workflows.journal import STEP_SCOPE, ledger

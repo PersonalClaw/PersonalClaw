@@ -19,12 +19,21 @@ def _get_memory(state: DashboardState):
     if state.context_builder:
         mem = state.context_builder.memory
     else:
-        # Fallback: create standalone MemoryStore
+        # Fallback: create standalone MemoryStore with an attached record store.
+        # The vector store is attached UNCONDITIONALLY (even with no embedder) so
+        # lessons + semantic memory persist to memory.db in API-only mode — a store
+        # with no embed_fn still does key/value CRUD. Without this, the record store
+        # (the sole lesson backing after the JSONL store's retirement) would be
+        # absent here and lesson writes on this path would be silently dropped.
         if not hasattr(state, "_standalone_memory"):
             from personalclaw.memory import MemoryStore
+            from personalclaw.vector_memory import VectorMemoryStore
 
             mem = MemoryStore()
             mem.init()
+            vs = VectorMemoryStore()
+            vs.init()
+            mem.vector_store = vs
             state._standalone_memory = mem  # type: ignore[attr-defined]
         mem = state._standalone_memory  # type: ignore[attr-defined]
     # Deferred embed_fn wiring: if the vector store exists but has no embed_fn,
@@ -39,25 +48,6 @@ def _get_memory(state: DashboardState):
         except Exception:
             pass
     return mem
-
-
-def _get_active_workspace(state: DashboardState) -> str:
-    """Return the working directory of the most recently active chat session."""
-    sessions = getattr(state, "_sessions", {})
-    if sessions:
-        # Pick the session with the most messages (most active)
-        best = max(sessions.values(), key=lambda s: s.total_messages, default=None)
-        if best and best.workspace_dir:
-            return best.workspace_dir
-    return ""
-
-
-def _get_lessons(state: DashboardState, cwd: str | None = None):
-    """Get LessonStore for a working directory. Falls back to global."""
-    ws = cwd or _get_active_workspace(state)
-    if ws and state.context_builder:
-        return state.context_builder.get_lessons_for(ws)
-    return state.lessons
 
 
 def _get_skills(state: DashboardState):

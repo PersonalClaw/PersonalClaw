@@ -230,27 +230,26 @@ class TestInitServices:
                 mock_vm.return_value = mock_vm_inst
                 with patch("personalclaw.gateway.SkillsLoader"):
                     with patch("personalclaw.gateway.HookManager"):
-                        with patch("personalclaw.gateway.LessonStore"):
-                            with patch("personalclaw.gateway.ContextBuilder"):
-                                with patch("personalclaw.gateway.ConversationLog") as mock_cl:
-                                    mock_cl_inst = MagicMock()
-                                    mock_cl_inst.init = MagicMock()
-                                    mock_cl.return_value = mock_cl_inst
-                                    with patch("personalclaw.gateway.SessionManager"):
-                                        with patch("personalclaw.gateway.HistoryConsolidator"):
-                                            with patch("personalclaw.gateway.ChannelHistory"):
+                        with patch("personalclaw.gateway.ContextBuilder"):
+                            with patch("personalclaw.gateway.ConversationLog") as mock_cl:
+                                mock_cl_inst = MagicMock()
+                                mock_cl_inst.init = MagicMock()
+                                mock_cl.return_value = mock_cl_inst
+                                with patch("personalclaw.gateway.SessionManager"):
+                                    with patch("personalclaw.gateway.HistoryConsolidator"):
+                                        with patch("personalclaw.gateway.ChannelHistory"):
+                                            with patch(
+                                                "personalclaw.agent.rebuild_agent_config",
+                                                return_value=Path("/tmp/a"),
+                                            ):
                                                 with patch(
-                                                    "personalclaw.agent.rebuild_agent_config",
-                                                    return_value=Path("/tmp/a"),
+                                                    "subprocess.run",
+                                                    return_value=MagicMock(
+                                                        returncode=0,
+                                                        stdout="personalclaw 1.30.0",
+                                                    ),
                                                 ):
-                                                    with patch(
-                                                        "subprocess.run",
-                                                        return_value=MagicMock(
-                                                            returncode=0,
-                                                            stdout="personalclaw 1.30.0",
-                                                        ),
-                                                    ):
-                                                        orch._init_services()
+                                                    orch._init_services()
 
         assert orch.sessions is not None
         assert orch.ctx_builder is not None
@@ -271,27 +270,26 @@ class TestInitServices:
                 mock_vm.return_value = mock_vm_inst
                 with patch("personalclaw.gateway.SkillsLoader"):
                     with patch("personalclaw.gateway.HookManager"):
-                        with patch("personalclaw.gateway.LessonStore"):
-                            with patch("personalclaw.gateway.ContextBuilder"):
-                                with patch("personalclaw.gateway.ConversationLog") as mock_cl:
-                                    mock_cl_inst = MagicMock()
-                                    mock_cl_inst.init = MagicMock()
-                                    mock_cl.return_value = mock_cl_inst
-                                    with patch("personalclaw.gateway.SessionManager"):
-                                        with patch("personalclaw.gateway.HistoryConsolidator"):
-                                            with patch("personalclaw.gateway.ChannelHistory"):
+                        with patch("personalclaw.gateway.ContextBuilder"):
+                            with patch("personalclaw.gateway.ConversationLog") as mock_cl:
+                                mock_cl_inst = MagicMock()
+                                mock_cl_inst.init = MagicMock()
+                                mock_cl.return_value = mock_cl_inst
+                                with patch("personalclaw.gateway.SessionManager"):
+                                    with patch("personalclaw.gateway.HistoryConsolidator"):
+                                        with patch("personalclaw.gateway.ChannelHistory"):
+                                            with patch(
+                                                "personalclaw.agent.rebuild_agent_config",
+                                                return_value=Path("/tmp/a"),
+                                            ):
                                                 with patch(
-                                                    "personalclaw.agent.rebuild_agent_config",
-                                                    return_value=Path("/tmp/a"),
+                                                    "subprocess.run",
+                                                    return_value=MagicMock(
+                                                        returncode=0,
+                                                        stdout="personalclaw 1.30.0",
+                                                    ),
                                                 ):
-                                                    with patch(
-                                                        "subprocess.run",
-                                                        return_value=MagicMock(
-                                                            returncode=0,
-                                                            stdout="personalclaw 1.30.0",
-                                                        ),
-                                                    ):
-                                                        orch._init_services()
+                                                    orch._init_services()
 
         assert orch._channel_delivery is None
         assert orch.sessions is not None

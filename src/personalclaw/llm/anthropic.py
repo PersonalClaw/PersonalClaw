@@ -79,6 +79,24 @@ from personalclaw.model_windows import model_context_window as _model_window  # 
 # loop's OpenAI-shaped messages unchanged.
 
 
+def _read_cache_usage(usage: object) -> tuple[int, int]:
+    """`(cache_creation_tokens, cache_read_tokens)` from an Anthropic ``usage`` object.
+
+    The producer for `LLMEvent.cache_creation_tokens` / `.cache_read_tokens`, which the event
+    declared but nothing populated (PCS-6). Defensive by design: a `usage` missing the fields
+    (a non-cached response, or an older SDK), a non-int value, or `None` all yield ``0`` and NEVER
+    raise — a cache-usage read must never break a completed turn's terminal event.
+    """
+    if usage is None:
+        return 0, 0
+
+    def _int(name: str) -> int:
+        v = getattr(usage, name, None)
+        return v if isinstance(v, int) else 0
+
+    return _int("cache_creation_input_tokens"), _int("cache_read_input_tokens")
+
+
 def _translate_tools(tools: list[dict]) -> list[dict]:
     """Map OpenAI ``tools`` entries to Anthropic ``[{name, description, input_schema}]``.
 
@@ -105,11 +123,28 @@ def _translate_tools(tools: list[dict]) -> list[dict]:
     return out
 
 
+# Neutral message-dict marker (PCS-1 / F1): a ``role: "system"`` message carrying
+# ``{_VOLATILE_MESSAGE_KEY: True}`` holds per-turn VOLATILE content (the native loop's
+# turn_note — tool catalog + group stubs — changes every turn). The writer is the native
+# runtime; this is its sole reader. The word ``cache_control`` deliberately does not appear
+# here — this change only relocates the volatile note; cache-point tagging is PCS-2.
+_VOLATILE_MESSAGE_KEY = "_volatile"
+
+
 def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
 
     * ``role: "system"`` messages are concatenated into the returned system
-      string (Anthropic carries the system prompt out-of-band).
+      string (Anthropic carries the system prompt out-of-band, so it leads the
+      served prompt) — UNLESS the message is tagged VOLATILE (see below).
+    * A ``role: "system"`` message tagged ``{_VOLATILE_MESSAGE_KEY: True}`` is NOT
+      hoisted into ``system=``. Anthropic serves ``system=`` ahead of ``messages[0]``,
+      so a per-turn-changing note there would break the cacheable EXACT prefix
+      (F1). Instead the note is relocated to the TAIL of the message list, carried
+      as a trailing ``{"role": "user", "content": <note>}`` (Anthropic has no
+      trailing-system concept). The stable assembled context — ``messages[0]``, a
+      user message — then leads. The note moves position, never existence: it still
+      reaches the model, just late. Multiple volatile notes ship once each, in order.
     * ``role: "assistant"`` with ``tool_calls`` becomes a content-block list
       mixing an optional leading ``text`` block and one ``tool_use`` block per
       call (``arguments`` JSON string parsed into the ``input`` dict).
@@ -118,16 +153,27 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
       tool results in one user message).
     * Plain ``user``/``assistant`` string messages pass through as
       ``{role, content}``.
+
+    Byte-identical invariant: a ``messages`` list with NO volatile-tagged message
+    produces exactly the ``(system, out)`` this returned before PCS-1.
     """
     system_parts: list[str] = []
     out: list[dict] = []
+    # Volatile system notes, relocated to the tail after the loop (empty ⇒ the
+    # return is byte-for-byte the pre-PCS-1 behavior).
+    volatile_tail: list[dict] = []
 
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content")
 
         if role == "system":
-            if content:
+            if msg.get(_VOLATILE_MESSAGE_KEY):
+                # Volatile per-turn note → tail user message, not out-of-band system=.
+                if content:
+                    volatile_tail.append({"role": "user", "content": str(content)})
+            elif content:
+                # Stable system content → out-of-band system=, leads the prompt.
                 system_parts.append(str(content))
             continue
 
@@ -179,6 +225,11 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
 
         # Plain user / assistant text message — pass through unchanged.
         out.append({"role": role, "content": content})
+
+    # Deliver any volatile notes at the TAIL, in order — after the stable context
+    # so the served prompt's prefix stays stable across turns (F1). Empty when no
+    # message was tagged, keeping the untagged path byte-identical.
+    out.extend(volatile_tail)
 
     return "\n\n".join(system_parts), out
 
@@ -292,6 +343,8 @@ class AnthropicProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
 
         async with self._client.messages.stream(**request_kwargs) as stream:
             async for event in stream:
@@ -307,6 +360,10 @@ class AnthropicProvider(ModelProvider):
                         ot = getattr(usage, "output_tokens", None)
                         if ot is not None:
                             output_tokens = ot
+                        # Prompt-cache usage: the event fields exist but had no
+                        # producer. `_read_cache_usage` reads them defensively — a response
+                        # without cache use (or an older SDK) leaves these 0 and never raises.
+                        cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
 
                 elif event_type == "content_block_start":
                     index = getattr(event, "index", 0) or 0
@@ -385,6 +442,8 @@ class AnthropicProvider(ModelProvider):
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             context_usage_pct=self._last_context_pct,
         )
 
@@ -447,6 +506,8 @@ class AnthropicProvider(ModelProvider):
 
         input_tokens = 0
         output_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
 
         async with self._client.messages.stream(**request_kwargs) as stream:
             async for event in stream:
@@ -462,6 +523,10 @@ class AnthropicProvider(ModelProvider):
                         ot = getattr(usage, "output_tokens", None)
                         if ot is not None:
                             output_tokens = ot
+                        # Prompt-cache usage: the event fields exist but had no
+                        # producer. `_read_cache_usage` reads them defensively — a response
+                        # without cache use (or an older SDK) leaves these 0 and never raises.
+                        cache_creation_tokens, cache_read_tokens = _read_cache_usage(usage)
 
                 elif event_type == "content_block_start":
                     index = getattr(event, "index", 0) or 0
@@ -532,6 +597,8 @@ class AnthropicProvider(ModelProvider):
             kind=EVENT_COMPLETE,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
             context_usage_pct=context_pct,
             cost_usd=0.0,
         )

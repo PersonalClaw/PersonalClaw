@@ -13,13 +13,20 @@ def state(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
     crons = MagicMock()
     crons.list_jobs.return_value = [{"id": "j1"}, {"id": "j2"}]
-    lessons = MagicMock()
-    lessons.load_all.return_value = [{"rule": "r1"}]
+    # Lessons live in memory.db lesson.* now; status_snapshot counts them through
+    # service_for(context_builder.memory).get_lessons(). Wire a record store with
+    # one lesson so the count is 1.
+    vs = MagicMock()
+    vs.get_lessons.return_value = [{"key": "lesson.a", "value_json": '"r1"'}]
+    mem = MagicMock()
+    mem.vector_store = vs
+    cb = MagicMock()
+    cb.memory = mem
     return DashboardState(
         sessions=MagicMock(count=3),
-        lessons=lessons,
         start_time=time.time() - 120,
         subagents=MagicMock(count=1),
+        context_builder=cb,
     )
 
 

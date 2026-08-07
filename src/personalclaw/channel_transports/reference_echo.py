@@ -16,6 +16,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from personalclaw.channel_transports.base import (
@@ -37,6 +38,7 @@ class ReferenceEchoTransport(ChannelTransportProvider):
         self._connected = False
         self._inbound: asyncio.Queue[ChannelMessage] = asyncio.Queue()
         self.sent: list[OutboundMessage] = []  # exposed for tests/inspection
+        self._services: Any = None  # bound at start_inbound; drives the trust seam
 
     # ── identity ──
     @property
@@ -96,8 +98,75 @@ class ReferenceEchoTransport(ChannelTransportProvider):
                 continue
             yield msg
 
+    # ── inbound lifecycle (drives the trust seam) ──
+    async def start_inbound(self, services: Any) -> None:
+        """Bind the gateway services handle so the trust gate can raise owner
+        notifications on the dashboard. A real transport would also start its receiver
+        loop here; the echo transport is driven by tests/demo via ``handle_inbound``."""
+        self._services = services
+
+    async def stop_inbound(self) -> None:
+        self._services = None
+
+    async def handle_inbound(self, msg: ChannelMessage, *, is_dm: bool = True) -> "TrustDecision":
+        """Run one inbound :class:`ChannelMessage` through the core trust seam (CE-1 V1).
+
+        This is the reference wiring every channel app copies: BEFORE a message enters a
+        session, call ``channel_trust.guard_inbound``. An unknown DM sender gets the canned
+        pairing reply echoed back (and the owner is notified once); a paired sender's text —
+        or a raw pairing code they send — flows on. A tracked-group message is fenced. The
+        return value reports what happened so a demo/test can inspect the full round-trip
+        without a live external system."""
+        from personalclaw import channel_trust
+
+        state = getattr(self._services, "dashboard_state", None)
+        # A DM whose text IS an active pairing code redeems it and starts the conversation.
+        if is_dm and not channel_trust.is_allowed_sender(self.name, msg.sender):
+            candidate = (msg.text or "").strip()
+            if candidate.isdigit() and channel_trust.redeem_pairing_code(
+                self.name, msg.sender, candidate
+            ):
+                await self.send(
+                    OutboundMessage(channel_id=msg.channel_id, text="Paired — you can talk now.")
+                )
+                return TrustDecision(allowed=True, paired=True)
+
+        verdict = channel_trust.guard_inbound(
+            state,
+            self.name,
+            msg.sender,
+            channel_id=msg.channel_id,
+            is_dm=is_dm,
+            text=msg.text,
+        )
+        if not verdict.allowed:
+            if verdict.canned_reply:
+                await self.send(
+                    OutboundMessage(channel_id=msg.channel_id, text=verdict.canned_reply)
+                )
+            return TrustDecision(
+                allowed=False, reason=verdict.reason, notified=verdict.fired_notification
+            )
+        # Allowed: a tracked-group message is delivered as FENCED data, a DM as-is.
+        text = verdict.fenced_text or msg.text
+        return TrustDecision(allowed=True, delivered_text=text)
+
     # Test/demo helper — inject an inbound message as if it arrived externally.
     async def _simulate_inbound(self, text: str, channel_id: str = "ref") -> None:
         await self._inbound.put(
             ChannelMessage(channel_id=channel_id, text=text, sender="user", ts=time.time())
         )
+
+
+@dataclass
+class TrustDecision:
+    """What :meth:`ReferenceEchoTransport.handle_inbound` did with one message.
+
+    A plain record so a demo/test can assert the full trust round-trip (allowed? paired via
+    a code? owner notified? what text would enter the session) with no external system."""
+
+    allowed: bool
+    reason: str = ""
+    paired: bool = False
+    notified: bool = False
+    delivered_text: str = ""

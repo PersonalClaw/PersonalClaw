@@ -895,6 +895,18 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     Works even while the vault flag is off (an explicit one-shot export to the
     configured path), so a user can generate the vault on demand before turning on
     the always-mirror. Returns the change summary."""
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.vault_sync",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     from personalclaw.config.loader import AppConfig, config_dir  # noqa: F811
     from personalclaw.memory_vault import MemoryVault, vault_dir_from_config
 
@@ -913,6 +925,18 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
 
 async def api_memory_migrate(request: web.Request) -> web.Response:
     """POST /api/memory/migrate — migrate legacy markdown memory to vector store."""
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.migrate",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     store = _get_provider(request.app["state"])
 
     global _migrate_lock
@@ -1037,6 +1061,18 @@ async def api_memory_observability(request: web.Request) -> web.Response:
 
 async def api_memory_promote(request: web.Request) -> web.Response:
     """POST /api/memory/promote — promote repeated episodic patterns to semantic facts."""
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory.promote",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
     store = _get_provider(request.app["state"])
     try:
         body = await request.json()
@@ -1055,7 +1091,7 @@ async def api_memory_promote(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "promoted": promoted})
 
 
-def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]]:
+def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
     """Synchronous helper — safe to run in a thread."""
     import hashlib
     import re
@@ -1140,25 +1176,17 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
         except Exception:
             pass
 
-    # --- Lessons ---
+    # --- Lessons (memory.db lesson.* — the sole lesson store) ---
     try:
-        lessons_data = None
-        try:
-            lessons_data = svc.get_lessons() if svc.has_vector else None
-        except Exception:
-            pass
-        if lessons_data:
-            for entry in lessons_data:
-                rule = entry.get("value_json", "")
-                if isinstance(rule, str):
-                    try:
-                        rule = json.loads(rule)
-                    except Exception:
-                        pass
-                _add("lesson", str(rule)[:80], "lesson", str(rule))
-        else:
-            for le in lessons:
-                _add("lesson", le.rule[:80], "lesson", le.rule)
+        lessons_data = svc.get_lessons() if svc.has_vector else []
+        for entry in lessons_data:
+            rule = entry.get("value_json", "")
+            if isinstance(rule, str):
+                try:
+                    rule = json.loads(rule)
+                except Exception:
+                    pass
+            _add("lesson", str(rule)[:80], "lesson", str(rule))
     except Exception:
         pass
 
@@ -1203,9 +1231,7 @@ async def api_memory_graph(request: web.Request) -> web.Response:
 
     try:
         loop = asyncio.get_running_loop()
-        nodes, edges = await loop.run_in_executor(
-            None, _build_memory_graph, mem, state.lessons.load_all()
-        )
+        nodes, edges = await loop.run_in_executor(None, _build_memory_graph, mem)
 
         for n in nodes:
             n["label"] = _redact_memory_field(n["label"])

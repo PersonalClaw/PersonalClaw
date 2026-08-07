@@ -361,7 +361,11 @@ async def execute_event_action(
     # provider fired by a memory event inherits it.
     from personalclaw.guardrails.denylist import enforce_action
 
-    decision = enforce_action(t.action_provider, t.action_config, ctx)
+    # No session identity is in scope here: an event trigger fires from a memory
+    # write, not a run — `key` is the memory key, not a session key. So the
+    # SafetyProfile deny-glob layer is skipped (session_key=""); the operator
+    # `autonomy_denylist` and built-in checks inside `check_action` still apply.
+    decision = enforce_action(t.action_provider, t.action_config, ctx, session_key="")
     if decision.blocked:
         matched = getattr(decision, "matched", "") or ""
         reason = getattr(decision, "reason", "") or "blocked by a guardrail rule"

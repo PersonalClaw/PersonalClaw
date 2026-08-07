@@ -770,6 +770,93 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
+    """remote — can this dashboard be reached from a phone, and safely? (MOBILE-COMPANION S1)
+
+    Three outcomes, all read-only (no token minted, no network dialed beyond a
+    stdlib address enumeration):
+
+    * **tailnet detected** → ok. The machine holds a 100.64.0.0/10 address, so a
+      phone on the same tailnet reaches ``http://<tailnet-ip>:<port>`` over the
+      tailnet's own encryption. Evidence carries that phone-usable BASE url; the
+      detail points at ``personalclaw token`` for the signed-in link. This probe
+      NEVER mints or prints a live token — a read-only health check must not
+      generate a secret, and evidence strings are redacted anyway.
+    * **exposed without auth** → not ok. The bind host is non-loopback AND auth is
+      off (``AuthMode.NONE`` / ``PERSONALCLAW_DEV_NO_AUTH``). That is the one
+      genuine misconfiguration: anything that reaches the interface walks in.
+      (``effective_bind`` forces NONE to loopback, so this only arises when
+      ``PERSONALCLAW_BIND_HOST`` overrode the bind.)
+    * **local-only** → ok. Normal local install, no tailnet — informational: see
+      remote-access.md to reach it from a phone.
+
+    CAPABILITY tier: a missing tailnet is not a failure and must never gate the
+    core ladder.
+    """
+    from personalclaw.dashboard.origin import (
+        auth_is_off,
+        is_local_bind,
+        resolve_bind_host,
+        tailnet_ip,
+        tailscale_cli_present,
+    )
+
+    def _probe() -> dict[str, Any]:
+        bind_host = resolve_bind_host()
+        return {
+            "bind_host": bind_host,
+            "local_bind": is_local_bind(bind_host),
+            "auth_off": auth_is_off(),
+            "tailnet_ip": tailnet_ip(),
+            "tailscale_cli": tailscale_cli_present(),
+        }
+
+    facts = await asyncio.to_thread(_probe)
+    port = ctx.port or 0
+    tnet = facts["tailnet_ip"]
+
+    # The misconfiguration the contract names: reachable off-box with no auth.
+    if not facts["local_bind"] and facts["auth_off"]:
+        return ProbeResult(
+            ok=False,
+            detail=(
+                f"bind {facts['bind_host']} exposes the dashboard beyond loopback with "
+                "auth OFF — set a password (see docs/guides/remote-access.md) or bind loopback"
+            ),
+            evidence={
+                "bind_host": facts["bind_host"],
+                "auth_off": True,
+                "guide": "docs/guides/remote-access.md",
+            },
+        )
+
+    if tnet:
+        base_url = f"http://{tnet}:{port}" if port else f"http://{tnet}"
+        return ProbeResult(
+            ok=True,
+            detail=(
+                f"tailnet {tnet} — open {base_url} on your phone "
+                "(run `personalclaw token` for the signed-in link)"
+            ),
+            evidence={
+                "tailnet_ip": tnet,
+                "phone_url": base_url,
+                "tailscale_cli": facts["tailscale_cli"],
+                "token_hint": "personalclaw token",
+            },
+        )
+
+    return ProbeResult(
+        ok=True,
+        detail="local-only; see docs/guides/remote-access.md to reach it from a phone",
+        evidence={
+            "bind_host": facts["bind_host"],
+            "tailscale_cli": facts["tailscale_cli"],
+            "guide": "docs/guides/remote-access.md",
+        },
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -869,6 +956,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_crashes,
             "Recent crash artifacts",
+        )
+    )
+    register_probe(
+        Probe(
+            "remote.reachability",
+            "remote",
+            Tier.CAPABILITY,
+            _probe_remote_reachability,
+            "Remote reachability (tailnet / exposure)",
         )
     )
 

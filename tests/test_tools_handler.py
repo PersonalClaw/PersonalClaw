@@ -273,3 +273,76 @@ async def test_invoke_rejects_non_string_provider(bad_provider):
     payload = json.loads(resp.body.decode())
     assert payload["ok"] is False
     assert payload["error"] == "provider must be a string"
+
+
+# ── #444 gaps #2/#3: tools toggle validation ────────────────────────────────
+async def _one_tool():
+    from personalclaw.tool_providers.base import ToolDefinition
+
+    return [ToolDefinition(name="artifact_list", description="d", provider="personalclaw-core")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_enabled", ["false", "true", 0, 1, "0"])
+async def test_toggle_rejects_non_bool_enabled(bad_enabled, monkeypatch):
+    """#444 gap #3: a non-bool ``enabled`` (e.g. the JSON string "false", which is
+    truthy under bool()) must be a 400, not a silent inversion of the toggle."""
+    import json
+
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _one_tool)
+    resp = await tools_mod.api_tools_toggle(
+        _InvokeRequest(
+            {"provider": "personalclaw-core", "name": "artifact_list", "enabled": bad_enabled}
+        )
+    )
+    assert resp.status == 400
+    payload = json.loads(resp.body.decode())
+    assert payload["ok"] is False
+    assert payload["error"] == "enabled must be a boolean"
+
+
+@pytest.mark.asyncio
+async def test_toggle_rejects_unknown_tool_name(monkeypatch):
+    """#444 gap #2: toggling a tool no registered provider exposes is a 404, so a
+    dead key is never persisted to tool_prefs.json."""
+    import json
+
+    calls = []
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _one_tool)
+    monkeypatch.setattr(
+        "personalclaw.tool_providers.tool_prefs.set_enabled",
+        lambda *a, **k: calls.append((a, k)) or {"ok": True},
+    )
+    resp = await tools_mod.api_tools_toggle(
+        _InvokeRequest(
+            {"provider": "personalclaw-core", "name": "zz-not-a-real-tool", "enabled": False}
+        )
+    )
+    assert resp.status == 404
+    payload = json.loads(resp.body.decode())
+    assert payload["ok"] is False
+    assert "unknown tool" in payload["error"]
+    assert calls == []  # set_enabled never reached → nothing persisted
+
+
+@pytest.mark.asyncio
+async def test_toggle_accepts_a_real_bool_and_known_tool(monkeypatch):
+    """The guards don't over-block: a real bool + a known tool still toggles."""
+    import json
+
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _one_tool)
+    monkeypatch.setattr(
+        "personalclaw.tool_providers.tool_prefs.set_enabled",
+        lambda provider, name, enabled: {
+            "ok": True,
+            "provider": provider,
+            "tool": name,
+            "enabled": enabled,
+        },
+    )
+    resp = await tools_mod.api_tools_toggle(
+        _InvokeRequest({"provider": "personalclaw-core", "name": "artifact_list", "enabled": False})
+    )
+    assert resp.status == 200
+    payload = json.loads(resp.body.decode())
+    assert payload["ok"] is True

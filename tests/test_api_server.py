@@ -24,7 +24,6 @@ def _make_state(tmp_path, **kwargs):
     try:
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             **kwargs,
         )
@@ -197,7 +196,6 @@ class TestStartApiServerWiring:
 
         runner, state = await start_api_server(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             port=0,
         )
         try:

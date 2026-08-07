@@ -243,6 +243,7 @@ def list_runs(
     workflow_name: str = "",
     status: str | RunStatus = "",
     root_run_id: str = "",
+    project_id: str = "",
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[WorkflowRun], int]:
@@ -252,6 +253,9 @@ def list_runs(
     if workflow_name:
         where.append("workflow_name = ?")
         params.append(workflow_name)
+    if project_id:
+        where.append("project_id = ?")
+        params.append(project_id)
     if status:
         where.append("status = ?")
         params.append(status.value if isinstance(status, RunStatus) else str(status))

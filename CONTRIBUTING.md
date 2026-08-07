@@ -89,16 +89,45 @@ automatic migration** of existing `~/.personalclaw` data. Release notes advise
 `personalclaw snapshot`, and the README carries the standing pre-1.0 warning.
 This is a decision, not an oversight: carrying compatibility shims through a
 half-built architecture is how projects calcify around designs they meant to
-replace. The migration-backed regime — gate → dual-path → migrate → cleanup —
-arrives with the [lifecycle doctrine](docs/roadmap/plans/LIFECYCLE-DOCTRINE.md),
-which is **deliberately scheduled near the end of the roadmap**, once the
-architecture is stable. Until it lands, assume no plan file's gate/migration
-machinery exists yet.
+replace. The migration-backed regime — the **lifecycle mental model** below —
+is **deliberately deferred until the architecture stops moving**, on the way to
+1.0. Until then, assume no gate/migration machinery exists yet: there is no
+`lifecycle/` package, and a plan file that asks for one is describing the
+contributor methodology, not a maintainer dependency.
+
+### The lifecycle mental model
+
+This is how to *think* about a change that touches persisted state or a stable
+surface — the posture a contribution should adopt even while the maintainer is
+still clean-breaking. It is a mental model, not shipped machinery.
+
+- **Name the change class.** **R** (refactor) — nothing observable outside the
+  module changes; clean break, replace + delete in one commit. **B** (behavior/
+  state) — changes runtime behavior or anything persisted under
+  `~/.personalclaw`. **S** (stable surface) — touches a surface other code
+  depends on (the `personalclaw.sdk.*` exports, the app manifest schema, inbound
+  wire contracts, on-disk formats, the `personalclaw-client` package). R needs
+  nothing special; B and S are the governed cases.
+- **Govern a B/S change as gate → dual-path → migrate → cleanup.** Introduce a
+  boolean **gate** defaulting off; build the new path behind it so the old path
+  stays byte-identical when the gate is off (**dual-path**); ship an idempotent,
+  snapshot-backed **migration** that moves old state to the new shape and
+  verifies a concrete post-condition; then **cleanup** — flip the default on,
+  delete the old path, and retire the gate. One user per install means a gate is
+  just a boolean with a lifecycle, never a flag service or percentage rollout.
+- **A stable-surface (S) change adds a deprecation window** — the old surface
+  keeps working for two minor releases (or 90 days, whichever is longer) with a
+  runtime warning, plus a CHANGELOG entry.
+
+Until this regime lands, contributors get the *shape* of it for free by staying
+additive (below); the maintainer gets it by clean-breaking under the pre-1.0
+banner. Nobody hand-rolls the gate/migration runner early — it would only have
+to be removed when the real one arrives.
 
 **You are not expected to make breaking changes.** Nothing about the above asks
 a contributor to break compatibility, and a PR that does will usually be asked
-to change course. Write your contribution as though the lifecycle doctrine were
-already in force:
+to change course. Write your contribution as though the lifecycle mental model
+above were already in force:
 
 - **Additive by default.** New config fields get defaults; new endpoints sit
   beside existing ones; a missing persisted field reads as today's behavior.
@@ -158,7 +187,7 @@ make web-build
 # run an isolated dev gateway (state under ./.dev-home, never ~/.personalclaw)
 make serve
 
-# one-time: repository-owned git hooks (pre-push render-smoke gate) + browser
+# one-time: repository-owned git hooks (pre-commit lint + pre-push render-smoke) + browser
 npm run hooks:install
 npx playwright install chromium
 ```
@@ -174,6 +203,17 @@ Useful Makefile targets (see `make help` for the full list):
 | `make serve-web` | Vite dev server with HMR on `:3000`, proxying to a running gateway. |
 
 Frontend tests run from the repo root: `npm run test:web` (vitest).
+
+**The pre-commit lint hook.** Once `npm run hooks:install` has run, a
+repository-owned `pre-commit` hook formats the staged Python files with black
+and isort — writing the fixes back into the commit — and then runs flake8,
+blocking the commit only on issues that can't be auto-fixed (an unused import,
+an undefined name). It mirrors CI's `lint` job so the mechanical reformatting
+that otherwise fails a PR after the fact is handled before the commit is made.
+It runs only when a commit stages a `.py` file, so frontend-only and docs
+commits are unaffected. mypy is not run here (a per-file type check without the
+full module graph is noisy and slow) — run `make lint` for the complete gate,
+and `git commit --no-verify` to bypass the hook for a deliberate WIP commit.
 
 **The render-smoke gate.** Static checks are not enough for the frontend:
 typecheck, vitest (jsdom), and `vite build` all passed while the v0.1.0

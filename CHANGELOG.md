@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Security
+
+- **App backends now authenticate inbound requests, closing a direct-to-port bypass.**
+
 ### Changed
 
 - **Security docs now describe what the sandbox actually does — credential-hiding, not confinement.**
@@ -27,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Deleting a knowledge item mid-enrichment crashed its background pipeline with a noisy error.**
+- **Renaming the built-in Personal or Repeatable project quietly broke your projects.**
 - **"Run now" did nothing for almost every automation, while reporting success.**
 - **A manual "Run now" left no trace and the "Running…" pill never cleared.**
 - **Knowledge ingest reported steps as finished that never ran.**

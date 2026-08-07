@@ -122,17 +122,43 @@ class BackendSupervisor:
             storage_ok = checker is not None and checker.can_use_storage()
             data_dir = app_data_dir(name) if storage_ok else None
 
+            # Mint (or read) the per-app proxy secret and hand it to the backend via env.
+            # Fail-closed: a backend that cannot obtain a verifiable secret does NOT start
+            # — an unprotected backend (no inbound signature check) is worse than a missing
+            # one. The value is 0600 on disk and never logged (see apps/app_secret.py).
+            from personalclaw.apps.app_secret import ensure_app_secret
+            from personalclaw.sdk.security import APP_SECRET_ENV
+
+            proxy_secret = ensure_app_secret(name)
+            if not proxy_secret:
+                logger.warning(
+                    "app %s backend: proxy secret unavailable; refusing to start unprotected",
+                    name,
+                )
+                return None
+
             env = dict(os.environ)
             env["PORT"] = str(port)
             env["PERSONALCLAW_APP_NAME"] = name
+            env[APP_SECRET_ENV] = proxy_secret
             if data_dir is not None:
                 env["PERSONALCLAW_APP_DATA_DIR"] = str(data_dir)
             else:
                 # Storage not declared → don't hand the backend a data dir.
                 env.pop("PERSONALCLAW_APP_DATA_DIR", None)
+            # Resource ceiling: an app backend is agent-influenced (third-party
+            # code, scanned at install). Wrap its argv with the post-exec ceiling shim for
+            # the ``tool`` profile. This runs synchronously off the watchdog daemon thread,
+            # so it uses argv-prepend (spawn_shim_argv) rather than preexec_fn — a
+            # preexec_fn here would fork the whole gateway from a non-loop thread while the
+            # loop holds locks (see backend_runtime hazard audit / §1.1). The shim sets the
+            # limit AFTER exec in the single-threaded child, so no fork-time lock hazard.
+            from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+
+            launch_cmd = spawn_shim_argv(list(cmd), PROFILE_TOOL)
             try:
                 proc = subprocess.Popen(  # noqa: S603 — vetted app backend, scanned at install
-                    cmd,
+                    launch_cmd,
                     cwd=str(root),
                     env=env,
                     stdout=subprocess.DEVNULL,

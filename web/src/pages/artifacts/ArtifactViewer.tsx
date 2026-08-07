@@ -72,6 +72,12 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   }
   useEffect(() => { setComparing(false); reload({ keepVersion: initialVersion != null }) }, [slug])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Pull-on-view (WF2AUT-6 / R10): opening an artifact is the render that drives any `view` trigger
+  // bound to it. The surface id is `artifact.<slug>` — stable per artifact, and what an author binds
+  // a `view` trigger to. Fire-and-forget: a background refresh must never block the open or surface
+  // an error toast, and within its TTL the backend just serves cache and costs nothing.
+  useEffect(() => { api.viewRender(`artifact.${slug}`).catch(() => {}) }, [slug])
+
   // Load a historical version's immutable content when one is picked.
   useEffect(() => {
     if (selVersion === null) { setViewContent(art?.content ?? ''); return }
