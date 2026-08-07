@@ -158,7 +158,7 @@ make web-build
 # run an isolated dev gateway (state under ./.dev-home, never ~/.personalclaw)
 make serve
 
-# one-time: repository-owned git hooks (pre-push render-smoke gate) + browser
+# one-time: repository-owned git hooks (pre-commit lint + pre-push render-smoke) + browser
 npm run hooks:install
 npx playwright install chromium
 ```
@@ -174,6 +174,17 @@ Useful Makefile targets (see `make help` for the full list):
 | `make serve-web` | Vite dev server with HMR on `:3000`, proxying to a running gateway. |
 
 Frontend tests run from the repo root: `npm run test:web` (vitest).
+
+**The pre-commit lint hook.** Once `npm run hooks:install` has run, a
+repository-owned `pre-commit` hook formats the staged Python files with black
+and isort — writing the fixes back into the commit — and then runs flake8,
+blocking the commit only on issues that can't be auto-fixed (an unused import,
+an undefined name). It mirrors CI's `lint` job so the mechanical reformatting
+that otherwise fails a PR after the fact is handled before the commit is made.
+It runs only when a commit stages a `.py` file, so frontend-only and docs
+commits are unaffected. mypy is not run here (a per-file type check without the
+full module graph is noisy and slow) — run `make lint` for the complete gate,
+and `git commit --no-verify` to bypass the hook for a deliberate WIP commit.
 
 **The render-smoke gate.** Static checks are not enough for the frontend:
 typecheck, vitest (jsdom), and `vite build` all passed while the v0.1.0
