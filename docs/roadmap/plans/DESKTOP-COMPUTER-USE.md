@@ -107,7 +107,7 @@ element.
 
 ---
 
-## 4. Sessions (executor-ready — run under EXECUTION-PROTOCOL)
+## 4. Sessions (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — macOS driver + the safety floor (the whole gate before any capability)
 

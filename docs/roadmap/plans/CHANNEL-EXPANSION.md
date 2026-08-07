@@ -52,7 +52,7 @@ The original design record is kept below — execution logs, measured findings a
 - **Conformance kit:** `tests/channel_conformance.py` in core (exported for app use): given a provider instance + fake backend, asserts the contract — connect/send/receive echo shapes, capabilities dict completeness, health/test shapes, trust-seam integration (unknown-sender flow fires the canned reply + notification), fencing applied to non-owner content, streaming throttle honored. Slack/Telegram/Discord/email all pass it.
 - **Guide:** `docs/guides/build-a-channel-app.md` extracted from the Telegram implementation (the cleanest reference): transport lifecycle, delivery-contract table with "must/should/may" per method, trust integration, linking, conformance-kit usage, packaging/manifest. Feeds ECOSYSTEM-TOOLING's `channel` scaffold template + bounty board (WhatsApp/Signal/Matrix as labeled community bounties with the risk-policy note).
 
-## Contracts & Interfaces (this plan OWNS the trust seam; delivery/transport seams are existing, [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md) §3.5)
+## Contracts & Interfaces (this plan OWNS the trust seam; delivery/transport seams are existing, [AGENTS.md](../../../AGENTS.md) §3.5)
 
 ### C1 — `src/personalclaw/channel_trust.py` (new; exported via `sdk/channel.py`, §2.8 → Tier-S)
 
@@ -108,7 +108,7 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 - **Storage owned:** `channel_trust.json`; apps own their `data/config.json` (ProviderSettings, §2.6) + offset/UID state in `data/`.
 - **SDK exports added:** the C1 API block + `fence_channel_content` in `sdk/channel.py`.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Trust seam (core)
 

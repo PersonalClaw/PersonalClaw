@@ -429,7 +429,7 @@ class ElementRef:
 
 - **(e) Egress still applies.** Every navigation the extension performs on our instruction passes the existing guard (§6.1 `net/guard.py::evaluate`) before it is issued. Note the honest limit already documented in code: a real browser does its own DNS and connections, so it **bypasses `net.fetch`'s IP pinning** (`web/render.py:8` says exactly this) — pre-flight validation only, therefore rebind-vulnerable. That limitation is inherent to driving any real browser and must be stated in the security docs rather than implied away.
 
-### Amendment task table (extends the plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+### Amendment task table (extends the plan; run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 | ID | Task | Files | Done when |
 |---|---|---|---|

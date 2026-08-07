@@ -49,7 +49,7 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 - **Comparison data (`src/data/comparisons.json`):** `{product, claims:[{feature, personalclaw, them, source_url, retrieved:"<ISO>"}]}` — **every compared-product claim carries a source URL + retrieval date** (anti-staleness + honesty rail).
 - **Integration points:** consumes DISTRIBUTION's `/install` script (T2.2), SECURITY-LEGIBILITY's threat-model, LEARNING-VISIBILITY's benchmark results, the research-learnings corpus (owner #15). Org/domain owner tasks gate S1.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Claim + org migration (executes with PUBLICATION S1)
 

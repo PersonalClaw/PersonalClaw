@@ -19,7 +19,7 @@ matrix; `deploy/website/install.sh`. **S3** container install-kind env in both D
 `docs/guides/containers.md` + the compose snippet. **S4** install-kind-aware self-update
 (`dashboard/handlers/updates_kind.py`, consumed by `updates.py`, with per-kind apply and the Updates
 panel). **DEVIATION:** S4 shipped as a plain clean break with NO `update_kind_aware` gate —
-LIFECYCLE-DOCTRINE is deferred and no `lifecycle/` package exists; the CHANGELOG advises
+the migration-backed lifecycle regime is deferred and no `lifecycle/` package exists; the CHANGELOG advises
 `personalclaw snapshot`. **Two latent packaging defects caught:** a `[project.urls]` TOML nesting bug
 that had zeroed the wheel's `Requires-Dist`, and a missing `MANIFEST.in` that made the release job
 ship an SPA-less wheel (now guarded by `tests/test_sdist_bundles_spa.py`). Published live: PyPI
@@ -77,7 +77,7 @@ Images from CI (amd64+arm64). Add `PERSONALCLAW_INSTALL_KIND=container` to both 
 ## Sessions
 
 **S1 — Packaging correctness (≈1).** §B items; build a wheel locally after web-build; install into a clean venv; `personalclaw gateway` serves the SPA with **no Node present**; document the artifact contract in CONTRIBUTING. *Validation:* clean-VM (or empty-container) wheel install → onboarding → first chat, Node absent throughout.
-**S2 — PyPI + bootstrap + client (≈1).** First real PyPI publish via the pipeline (after TestPyPI rehearsal, plan 33 S3); `uv tool`/pipx paths verified; bootstrap script written + smoke-tested (ships via website repo, plan 36); publish `personalclaw-client` (Tier-S per plan 31). Docs restructure lands.
+**S2 — PyPI + bootstrap + client (≈1).** First real PyPI publish via the pipeline (after TestPyPI rehearsal, plan 33 S3); `uv tool`/pipx paths verified; bootstrap script written + smoke-tested (ships via website repo, plan 36); publish `personalclaw-client` (a stable surface). Docs restructure lands.
 **S3 — Containers (≈1).** §D. *Validation:* clean VM, two commands, dashboard reachable, state survives recreation.
 **S4 — Self-update generalization (≈1).** §C behind the gate; per-kind validation: git checkout one-tag-behind updates; pip venv one-version-behind updates; container shows instructions; changelog panel renders the real CHANGELOG. Gate default-on for new installs; flip note in CHANGELOG.
 **S5 — Convenience channels (≈1, post-launch).** Homebrew tap (formula wrapping the wheel via `uv tool` or brew's python@3.12) + Nix flake; each with a per-release smoke checklist; README install matrix updated.
@@ -97,7 +97,7 @@ a **signed + notarized universal DMG** (a `sign-and-notarize.yml` workflow) so O
 sticky across electron-updater updates; the recommended shape is one universal artifact + auto-update onto native
 arm64 over a per-arch feed split.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md); gate/migration per plan 31 §4)
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Install-kind detection (`dashboard/handlers/updates.py` or new `updates_kind.py`)
 
@@ -131,8 +131,8 @@ def detect_install_kind() -> InstallKind: ...
 ### C4 — Wheel contract (`scripts/verify_wheel.py`)
 Asserts the built wheel contains `personalclaw/static/dist/index.html`, installs into a scratch venv with NO Node, boots `personalclaw gateway --test-mode`, GETs `/` (200, HTML) and `/api/healthz` (200). Exit 0 = contract met. Run in `release.yml` (plan 33 T3.1).
 
-### C5 — Gate + config
-Gate `update_kind_aware` (class **B**, plan 31 §4.1; default OFF, → ON for fresh installs at S4, removal one release later). Config additions (5-point wiring, §2.1): `dashboard.update_dev_mode: bool` (git installs: update per-commit vs per-tag) via `_EDITABLE_CONFIG`. No migration (state = none).
+### C5 — Config (shipped as a clean break; NO gate — see the DEVIATION in the Execution log)
+The class-**B** per-kind self-update behavior replaced the old git-only path directly (no `update_kind_aware` gate — the migration-backed lifecycle regime is deferred). Config additions (config round-trip wiring): `dashboard.update_dev_mode: bool` (git installs: update per-commit vs per-tag) via `_EDITABLE_CONFIG`. No migration (state = none).
 
 ### Integration points
 - **Calls:** `_resolve_project_dir`/`_commits_behind_upstream` (existing updates.py), `importlib.metadata`, GitHub releases API (unauth, ETag), `pip` in `sys.prefix`, the existing graceful-re-exec machinery, `gate_enabled("update_kind_aware")`.
@@ -140,7 +140,7 @@ Gate `update_kind_aware` (class **B**, plan 31 §4.1; default OFF, → ON for fr
 - **Owned by pipeline:** `release.yml` (plan 33) builds the artifacts this plan's paths install; `setup.py::BuildWithWeb` (existing) already stages `web/dist` into the wheel — verify, don't rebuild.
 - **Coordination:** DESKTOP (45) sets `PERSONALCLAW_INSTALL_KIND=desktop` + consumes the `desktop_delegate` branch; DISCOVERABILITY (36) hosts the `/install` bootstrap script.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Packaging correctness
 
@@ -208,7 +208,7 @@ Gate `update_kind_aware` (class **B**, plan 31 §4.1; default OFF, → ON for fr
 
 ## Execution log
 
-Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKED` — under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md).
+Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKED` — under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md).
 
 ### Session 1 — Packaging correctness
 
@@ -262,7 +262,7 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
 
 ### Session 4 — Cycle 8 (self-update generalization — CLEAN BREAK)
 
-- **DEVIATION (C5 / T4.5 gate — recorded per brief):** the plan wires S4 behind a `lifecycle.gates` gate `update_kind_aware` (class B, plan 31 §4). Per the owner decision (2026-07-20) S4 is taken as a **plain clean break**: there is NO `lifecycle/gates.py` machinery in the tree (verified — only `loop/gates.py`, an unrelated auto-nudge gate), and LIFECYCLE-DOCTRINE (plan 31) is deferred to the Stage 2→3 boundary. So the per-kind self-update behavior is implemented **directly, without gate/registration machinery**; the old git-only path is replaced, not gated. A CHANGELOG entry lands with T4.5 and release notes will advise `personalclaw snapshot`. No `lifecycle/gates.py` registration is created (the module is absent).
+- **DEVIATION (C5 / T4.5 gate — recorded per brief):** the plan wired S4 behind a `lifecycle.gates` gate `update_kind_aware` (class B). Per the owner decision (2026-07-20) S4 is taken as a **plain clean break**: there is NO `lifecycle/gates.py` machinery in the tree (verified — only `loop/gates.py`, an unrelated auto-nudge gate), and the migration-backed lifecycle regime is deferred. So the per-kind self-update behavior is implemented **directly, without gate/registration machinery**; the old git-only path is replaced, not gated. A CHANGELOG entry lands with T4.5 and release notes will advise `personalclaw snapshot`. No `lifecycle/gates.py` registration is created (the module is absent).
 - **DONE T4.1 (`detect_install_kind`)** — New module `src/personalclaw/dashboard/handlers/updates_kind.py`: `detect_install_kind() -> InstallKind` (`git|pip|container|desktop`) per C1 resolution order — env `PERSONALCLAW_INSTALL_KIND` in {container,desktop} wins first (case-insensitive, junk ignored), else a resolvable `PERSONALCLAW_PROJECT_DIR` whose dir (or monorepo parent) contains a `.git` entry (dir OR worktree/submodule file) → `git`, else `pip`. Pure/no-side-effect. Added `tests/test_updates_kind.py` — 10 tests covering all four kinds + case-insensitivity, junk-env fall-through, `.git` file (worktree), monorepo-parent `.git`, and no-git→pip.
   - Evidence: 10/10 tests pass; `make lint` green (black/isort/flake8/mypy — 453 source files). Reuses the existing `PERSONALCLAW_PROJECT_DIR` signal (set by `cli._detect_project_dir`) so git-vs-pip matches how the gateway already locates its source tree.
   - Remaining S4: T4.2 (tag-driven latest-release check w/ ETag cache, offline-tolerant, git adds commits-behind), T4.3 (per-kind apply), T4.4 (frontend Updates panel), T4.5 (CHANGELOG + `dashboard.update_dev_mode` config round-trip). V4 = owner per-kind walkthroughs.
@@ -276,7 +276,7 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
 - **DONE T4.4 (frontend Updates panel per-kind) + dev-mode endpoint** — Backend: added `POST /api/update/dev-mode` (`api_update_dev_mode`) persisting `dashboard.update_dev_mode` (nested; preserves other dashboard keys; boolean-validated), exported it, and registered the route beside `/api/update/auto`. Frontend (`web/src/pages/settings/UpdatesPanel.tsx` + `lib/api.ts`): extended the `UpdateCheck` type with the C2 fields (`kind, current, update_available, commits_behind, apply_method, instructions, update_dev_mode, release_notes`); the panel now renders per-kind — shows the **install type** label; git surfaces **commits-behind** as secondary text + a **Developer update mode** toggle (track commits vs release tags); container hides the in-app Update button and shows the exact `docker compose … pull && up -d` commands (from the apply response's `instructions`); desktop shows a "updates itself on next launch" note; pip/git keep the in-app Update button + the unchanged progress-overlay stream. Added `setUpdateDevMode` to the api client.
     - Evidence: web `npm run typecheck:web` clean, `npm run build` succeeds, `npm run test:web` 70/70 pass. Backend: 3 new dev-mode endpoint tests (persists nested, rejects non-bool, preserves other dashboard keys + real load round-trip) — 6/6 in `test_update_apply_kind`. `make lint` green (mypy 453). `web/dist` not committed (gitignored).
     - Remaining S4: T4.5 CHANGELOG entry for the class-B/S self-update behavior change (the `update_dev_mode` config field + per-kind apply are done; the CHANGELOG note + release-note `snapshot` advice remain). V4 = owner per-kind walkthroughs (git one-tag-behind updates; pip venv one-version-behind updates; container shows instructions; desktop stub; changelog panel renders real CHANGELOG.md).
-- **DONE T4.5 (CHANGELOG entry) — S4 code+docs complete** — Added a CHANGELOG `### Changed` entry for the install-kind-aware self-update: tag-driven availability signal (ETag-cached, offline-tolerant), per-kind apply (git pipeline + `dashboard.update_dev_mode` toggle / pip `-U` + re-exec, no web build / container pull+recreate instructions / desktop delegate), and the per-kind Updates panel. Explicitly notes the **clean-break / no-gate DEVIATION** (no `update_kind_aware` gate — LIFECYCLE-DOCTRINE deferred, owner decision 2026-07-20), the behavior change (git now rides release tags by default; dev-mode restores per-commit), and **advises `personalclaw snapshot` before updating** — all per the brief.
+- **DONE T4.5 (CHANGELOG entry) — S4 code+docs complete** — Added a CHANGELOG `### Changed` entry for the install-kind-aware self-update: tag-driven availability signal (ETag-cached, offline-tolerant), per-kind apply (git pipeline + `dashboard.update_dev_mode` toggle / pip `-U` + re-exec, no web build / container pull+recreate instructions / desktop delegate), and the per-kind Updates panel. Explicitly notes the **clean-break / no-gate DEVIATION** (no `update_kind_aware` gate — the migration-backed lifecycle regime is deferred, owner decision 2026-07-20), the behavior change (git now rides release tags by default; dev-mode restores per-commit), and **advises `personalclaw snapshot` before updating** — all per the brief.
     - **FULL-SUITE REGRESSION VALIDATION (verify/test gate):** with the loop's env overrides cleared to mirror the CI runner's no-global-home contract (`env -u PERSONALCLAW_HOME -u PERSONALCLAW_BIND_HOST -u PERSONALCLAW_BYPASS_LOCAL_NETWORKS … PERSONALCLAW_SKIP_APP_BACKENDS=1 pytest`), the **full suite is green: 7696 passed, 28 skipped, 13 xfailed, 0 failed.** (A naive run inside the loop shows 34 failures that are entirely the loop's `PERSONALCLAW_HOME=.dev-home` + `PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1` overrides — config-dir/token-auth/home-path tests — NOT the changes; CI does not set these, per ci.yml's documented contract.) `make lint` green (mypy 453). Web gate green (typecheck + build + 70 vitest, cycle 11). Version-consistency test green (CHANGELOG edit is under [Unreleased], not a dated heading).
     - S4 tasks T4.1–T4.5 are implemented + validated. **V4** (owner per-kind real-world walkthroughs) is the remaining owner step. S5 (Homebrew/Nix) is OUT of scope per the brief — STOPPING at S4.
 
@@ -309,7 +309,7 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
 
 **Validation at closeout:** `make lint` green (black/isort/flake8/mypy — 453 source files); full pytest suite green under the CI no-global-home contract (**7696 passed, 0 failed** — the only in-loop "failures" are the loop's `PERSONALCLAW_HOME`/`BYPASS_LOCAL_NETWORKS` env overrides, which CI does not set); web gate green (`typecheck:web` + `build` + 70 vitest); built wheel proven Node-free-servable by `scripts/verify_wheel.py`.
 
-**DEVIATIONS (recorded above, restated):** (1) S4 self-update is a **clean break** — no `update_kind_aware` gate (C5/T4.5) because `lifecycle/gates.py` does not exist (LIFECYCLE-DOCTRINE deferred; owner decision 2026-07-20); the old git-only updater is replaced directly, CHANGELOG advises `personalclaw snapshot`. (2) Work committed on the loop's base branch (engine manages branching) rather than a self-created `feature-distribution` branch.
+**DEVIATIONS (recorded above, restated):** (1) S4 self-update is a **clean break** — no `update_kind_aware` gate (C5/T4.5) because `lifecycle/gates.py` does not exist (the migration-backed lifecycle regime is deferred; owner decision 2026-07-20); the old git-only updater is replaced directly, CHANGELOG advises `personalclaw snapshot`. (2) Work committed on the loop's base branch (engine manages branching) rather than a self-created `feature-distribution` branch.
 
 **OWNER real-world steps remaining (no core-repo code):** T2.1 (first PyPI publish via `release.yml` env `release` + verify `uv tool`/`pipx` on a clean machine); V1 (clean-VM/empty-container wheel install → onboarding → first chat, Node absent); V2 (follow the new getting-started on a clean machine); V3 (container clean-VM: two commands → TLS dashboard → session+memory → `compose down && up` → state intact); V4 (per-kind self-update walkthroughs). Cross-repo hand-apply (staged in `deploy/website/README.md`): `install.sh` → website `/install` (plan 36); openai/anthropic `pythonDependencies` → apps-repo provider manifests.
 

@@ -34,7 +34,7 @@ The original design record is kept below — execution logs, measured findings a
 - **Bounty board:** labeled issues (`bounty`) per wanted app (channels from plan 40 T7.3, providers, sources) with the scaffold + guide + conformance links; showcase channel in the community surface.
 - **Registry surface (S4):** static generation on personalclaw.dev from `registry.json` — cards show name, types, **declared permissions and last scan verdict pre-install** (publishing the consent surface).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Scaffold (`src/personalclaw/cli_app_new.py`, wired via §3.10 subparser)
 `personalclaw app new <name> [--type <t>] [--from-template]`. The type table is **derived from the provider registry** (enumerate capability types + their ABC module at runtime — not hardcoded, self-description tenet). Each type emits: `app.json` (valid, incl. plan-32 `cli.*`/`loggerRoots` when relevant), a provider stub implementing that type's ABC minimally, a passing stub-based `test_provider.py` (the `sys.modules` stub pattern, §CI), `README.md`, `LICENSE`. **Generated output must pass apps-repo CI as generated** (test `test_app_scaffold.py`).
@@ -57,7 +57,7 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
 - **Consumed by:** 40 (a `channel` scaffold template + bounties), 47 (registry records signer identity per listing), 36 (registry surface on the site).
 - **Depends on:** 32 (manifest `cli.*`/`loggerRoots` fields the scaffold emits), 37 (front-door policy), PLATFORM-LEGIBILITY (manifest self-description).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Scaffold + template
 

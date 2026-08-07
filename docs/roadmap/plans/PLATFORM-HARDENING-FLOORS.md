@@ -339,7 +339,7 @@ production.
 
 ### 6.2 A docs-lint gate (NEW)
 
-CLAUDE.md and EXECUTION-PROTOCOL §3 both require docs to move with the change. There is **no
+CLAUDE.md and the AGENTS.md definition-of-done both require docs to move with the change. There is **no
 mechanical enforcement** — no docs job in `ci.yml`, no docs linter in `scripts/`. Given that
 25 of 66 plan `**Status:**` lines were once found wrong (plan headers drift from their execution
 logs), and that docs routinely drift from code (a governance doc can document matchers the code

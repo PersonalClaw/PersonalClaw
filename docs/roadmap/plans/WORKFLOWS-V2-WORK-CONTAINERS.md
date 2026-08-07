@@ -386,11 +386,11 @@ The code audit found the ceiling is **not** the resource limit — the **result-
 6. **The session failure-breaker cannot trip for sub-agents.** `record_success` is called on completion (`subagent.py:1709`) but **`record_failure` is never called** for a sub-agent session, so `_CIRCUIT_BREAKER_THRESHOLD = 5` is unreachable there; the only real guards are the 100-turn limit and the 1800s reaper. Note also the **provider breaker is process-global**, so one rate-limited provider opens a breaker for all children at once — a stampede becomes a fleet-wide outage in ~5 failures, with no jitter or per-child backoff.
 7. **Concurrency is global, not per-run.** `_running_count` is a single instance-level integer (`subagent.py:344`) with no per-parent scoping. `WORKFLOWS-V2-LOOPS-EVOLUTION:799` already records this exact concern from the other direction ("judge spawns should count against run-level, not global, concurrency") — the code confirms the premise. A run-scoped lane is needed before width increases, or one wide run starves every other.
 
-### Cross-plan note for INTEGRATION-ARCHITECTURE (owner task)
+### Cross-plan note: `SubagentManager.spawn` is a shared-seam this plan should own
 
-`SubagentManager.spawn` is mutated by roughly six plans (`AUTONOMY-GUARDRAILS` `capability_class`, `EXECUTION-ISOLATION` `sandbox`, `MODEL-USE-CASES-V2` the `orchestration` axis, `HARNESS-CRAFT` worktree hydration, `WORKFLOWS-V2` `__wf_depth`, `TASKS-SOPS` foreach children) but appears **nowhere** in INTEGRATION-ARCHITECTURE's shared-seam table (§1.2), its verified-primitives list (§3), or its per-plan contract index (§5, which covers plans 31-54 and defers 1-30). That makes it an **unregistered fourth landmine** alongside the three §1.3 names. Recommend registering it with this plan as the owning contract, since §3 already declares it "the only spawn substrate."
+`SubagentManager.spawn` is mutated by roughly six plans (`AUTONOMY-GUARDRAILS` `capability_class`, `EXECUTION-ISOLATION` `sandbox`, `MODEL-USE-CASES-V2` the `orchestration` axis, `HARNESS-CRAFT` worktree hydration, `WORKFLOWS-V2` `__wf_depth`, `TASKS-SOPS` foreach children) — it is the single spawn substrate, and yet no plan currently declares it as an owned contract. That makes it an **unregistered convergence point**: six plans reshape one signature with no single owner. Recommend this plan own it as its authoritative contract (its `Contracts & Interfaces` section names the `spawn` signature every other plan extends).
 
-### Amendment task table (extends §Task breakdown; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+### Amendment task table (extends §Task breakdown; run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 Sessions C1-C2 are **prerequisites for any width increase** and are independently valuable — they fix present defects at today's cap of 3-8.
 

@@ -860,10 +860,10 @@ navigates code by symbol instead of grepping blind, backups run and verify thems
   contributor.** During 0.x the maintainer keeps making backward-incompatible
   clean-break architectural changes with no migrations — that stays true, and the
   README now says plainly that this is expected to last a while, because
-  migration-backed discipline (the lifecycle doctrine) is scheduled deliberately late,
-  once the architecture stops moving. What's new is the other half: **contributors are
+  migration-backed discipline arrives deliberately late, once the architecture stops
+  moving. What's new is the other half: **contributors are
   not expected to make breaking changes.** Contributor guidance stays
-  lifecycle-doctrine-shaped — additive by default, no hand-rolled gate or migration
+  lifecycle-shaped — additive by default, no hand-rolled gate or migration
   machinery, and surface a needed break in an issue or PR description instead of
   shipping it, so the maintainer decides whether to take it, reshape it, or schedule
   it. See [CONTRIBUTING.md](CONTRIBUTING.md#breaking-changes); the PR template's change
@@ -1212,7 +1212,7 @@ agent reference), and a render-smoke gate that closes the v0.1.0 blank-dashboard
   commits-behind as secondary info.
 
   This is a **clean break** (pre-1.0): the old git-only updater is replaced directly,
-  not gated — LIFECYCLE-DOCTRINE's gate machinery is deferred, so there is no
+  not gated — the migration-backed gate machinery is deferred, so there is no
   `update_kind_aware` gate to flip (owner decision 2026-07-20). Behavior change: a git
   checkout now updates on new *release tags* by default instead of every commit — flip
   *Developer update mode* on to restore per-commit updates. **Run `personalclaw

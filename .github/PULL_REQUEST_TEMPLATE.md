@@ -13,13 +13,13 @@ Every commit must be signed off (DCO): `git commit -s`. CI enforces it.
 ## Change class
 
 <!--
-R / B / S per the lifecycle doctrine:
+R / B / S per the lifecycle mental model (see CONTRIBUTING.md#breaking-changes):
 - R (reversible): no persisted-state or stable-surface change.
 - B (behavioral): changes a stable surface (API/CLI/config) or persisted state.
-- S (structural/schema): changes a stored schema or a Tier-S contract.
+- S (structural/schema): changes a stored schema or a stable contract.
 
-LIFECYCLE-DOCTRINE (plan 31) is deliberately deferred to late in the roadmap, so
-there is no gate/migration machinery to use yet.
+The migration-backed gate/migration regime is deliberately deferred until the
+architecture stops moving, so there is no gate/migration machinery to use yet.
 - Maintainer, on a roadmap task: class-B/S ships as a clean break under the
   pre-1.0 banner — say so here, add a CHANGELOG entry, advise `personalclaw
   snapshot` in release notes.

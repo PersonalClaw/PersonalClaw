@@ -51,7 +51,7 @@ owner-approved extraction from EXTERNAL-ACCESS)
 | `sessions_search(query, limit≤10)` | session archive search via `history.py` redacted readers | redaction mandatory; returns titles/snippets/ids, never raw transcripts |
 | `status()` | the `/api/status` handler's data fn | uptime, version, counters — no config values |
 
-## Contracts & Interfaces (this plan OWNS the inbound substrate; plan 24 INHERITS it — [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md) §1.3 landmine #3)
+## Contracts & Interfaces (this plan OWNS the inbound substrate; plan 24 INHERITS it — [AGENTS.md](../../../AGENTS.md) §1.3 landmine #3)
 
 ### C1 — `src/personalclaw/inbound/` package API
 
@@ -107,7 +107,7 @@ Mount only if: `load_surface_token("mcp")` ≥32 bytes AND `inbound.mcp.enabled`
 - **Storage owned:** `inbound_audit.jsonl`; credential `PERSONALCLAW_INBOUND_MCP_TOKEN`.
 - **Route added:** `POST /mcp` (middleware-exempt, own bearer gate — the `/api/hooks/agent` precedent).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Substrate + mount
 
@@ -311,7 +311,7 @@ Tests: 30 new cases in `tests/test_inbound_mcp.py` (82 total). Full suite 8731 p
 
 So the stateless-spec transition costs this plan **nothing structural**. What it does expose is a currency problem:
 
-**`PROTOCOL_VERSION = "2024-11-05"`** (`inbound/mcp_http.py:34`), returned in the `initialize` result at `:191`. That revision is now several behind. A client negotiating a modern revision may either refuse or silently degrade, and the value is a **wire contract** — per INTEGRATION-ARCHITECTURE §4.3 the inbound dialect wire contracts are **Tier S**, so this is a deliberate, tested bump rather than an edit.
+**`PROTOCOL_VERSION = "2024-11-05"`** (`inbound/mcp_http.py:34`), returned in the `initialize` result at `:191`. That revision is now several behind. A client negotiating a modern revision may either refuse or silently degrade, and the value is a **wire contract** — inbound dialect wire contracts are a **stable surface**, so this is a deliberate, tested bump rather than an edit.
 
 **Why bump now:** the surface is deliberately minimal (six read-only tools, no SSE, no sessions), which is the cheapest this will ever be to verify. Conformance work grows with surface area, and EXTERNAL-ACCESS (24) is specified to *widen* this same `inbound/` package — bumping before it widens means one conformance pass instead of two.
 
@@ -322,7 +322,7 @@ So the stateless-spec transition costs this plan **nothing structural**. What it
 - Keep the POST-only posture and its typed 405. The spec permits it and `mcp_http.py:6` documents the choice.
 - Version negotiation must **fail legibly**: a client requesting an unsupported revision gets a typed error naming what this surface speaks, not a silent partial handshake.
 
-### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+### Amendment task table (extends this plan; run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
@@ -333,7 +333,7 @@ So the stateless-spec transition costs this plan **nothing structural**. What it
 | VG | Validation as a user: with the surface enabled on an isolated dev home, connect a real modern MCP client end-to-end, list the six tools, invoke each, and confirm results arrive fenced; confirm a client requesting an unsupported revision gets the typed error; confirm remote access is still refused without `allow_remote` + `public_url` | — | holds |
 
 ### Note for EXTERNAL-ACCESS (24)
-Plan 24 widens this `inbound/` package rather than re-designing it (INTEGRATION-ARCHITECTURE §1.3 landmine 3). It should **inherit the revision chosen here** rather than negotiating its own, so every dialect on the shared substrate speaks one protocol revision.
+Plan 24 (EXTERNAL-ACCESS) widens this `inbound/` package rather than re-designing it — the shared-inbound-surface convergence point. It should **inherit the revision chosen here** rather than negotiating its own, so every dialect on the shared substrate speaks one protocol revision.
 
 - 2026-07-30 — **DONE (amendment G1.1–G1.4): protocol revision bumped `2024-11-05` → `2025-06-18`,
   with real negotiation.**

@@ -52,8 +52,8 @@ editing (see §7) or server-side page rasterization (see §6).
    (`documents/registry.py:16-18`). A style-carrying model flows through the existing seam
    without changing its shape.
 
-Class **B** (persisted artifact bytes + a new model shape read back from disk) — pre-
-LIFECYCLE-DOCTRINE, so this lands as a **plain clean break under the pre-1.0 banner** (tolerant
+Class **B** (persisted artifact bytes + a new model shape read back from disk), so this
+lands as a **plain clean break under the pre-1.0 banner** (tolerant
 reads, no gate/migration; CHANGELOG entry; advise `personalclaw snapshot` in release notes).
 
 ---
@@ -180,7 +180,7 @@ reads, no gate/migration; CHANGELOG entry; advise `personalclaw snapshot` in rel
 
 ---
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Style-carrying model (`documents/model.py`, additive)
 
@@ -388,7 +388,7 @@ allowlist; and a Settings control. Off by default while fidelity is proving itse
 
 ---
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 0 — Make the surface reachable (independent, small, ships alone)
 

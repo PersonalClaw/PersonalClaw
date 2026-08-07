@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `OO-1` | ✅ | Core repo: stated model + hygiene set + DCO check + AGENTS.md | `EXT:CI-RELEASE:both ci.yml workflow files exist so the dco job can be added into them` | CONTRIBUTING has model+intake+DCO sections (no contradiction with change-lifecycle.md); bug/feature.yml + PR template render; setup_labels.sh idempotent; CODEOWNERS + CoC 2.1 present; unsigned scratch-PR commit fails the dco job, signed passes; an agent reading only AGENTS.md can run lint/test/build and knows the rejection list |
+| `OO-1` | ✅ | Core repo: stated model + hygiene set + DCO check + AGENTS.md | `EXT:CI-RELEASE:both ci.yml workflow files exist so the dco job can be added into them` | CONTRIBUTING has model+intake+DCO sections (no contradiction with the CONTRIBUTING breaking-changes section); bug/feature.yml + PR template render; setup_labels.sh idempotent; CODEOWNERS + CoC 2.1 present; unsigned scratch-PR commit fails the dco job, signed passes; an agent reading only AGENTS.md can run lint/test/build and knows the rejection list |
 | `OO-2` | ✅ | Apps repo: hygiene mirror + front-door CONTRIBUTING | `OO-1` | apps repo has bug/feature/app-request.yml + PR template rendering; CONTRIBUTING front-door bar documented; CODEOWNERS+CoC+AGENTS.md present; dco job on apps ci.yml; manifest-validate green (38 manifests) |
 | `OO-3` | ✅ | SKILL.md compatibility doc + parser consolidation (T2.1) | — | docs/reference/skill-format.md matches probed parser behavior; vanilla name+description SKILL.md imports cleanly and triggers is genuinely optional; test_skill_format_compat.py (20 cases) green; all callers delegate to the single parser; make lint + make test green with zero pre-existing skill-test assertion edits |
 | `OO-4` | ✅ | Seed good-first-issues + run setup_labels.sh on both repos (T2.2) | `OO-1`, `OO-3` | >=8 good-first-issues live with the good-first-issue label; setup_labels.sh run on both repos (16 labels each); stale/already-fixed seeds verified and closed-with-evidence rather than filed (croniter DST, video kind, xfail list, --slack-only) |
@@ -26,7 +26,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 Session 1 — Stated model + hygiene set (T1.1 CONTRIBUTING 'The model'+intake+DCO explainer; T1.2 issue/PR templates + setup_labels.sh; T1.4 CODEOWNERS+CoC (FUNDING deliberately omitted); T1.5 pure-git dco CI job; T1.6 AGENTS.md + one-line CLAUDE.md pointer) — core repo
 
-**Done when:** CONTRIBUTING has model+intake+DCO sections (no contradiction with change-lifecycle.md); bug/feature.yml + PR template render; setup_labels.sh idempotent; CODEOWNERS + CoC 2.1 present; unsigned scratch-PR commit fails the dco job, signed passes; an agent reading only AGENTS.md can run lint/test/build and knows the rejection list
+**Done when:** CONTRIBUTING has model+intake+DCO sections (no contradiction with the CONTRIBUTING breaking-changes section); bug/feature.yml + PR template render; setup_labels.sh idempotent; CODEOWNERS + CoC 2.1 present; unsigned scratch-PR commit fails the dco job, signed passes; an agent reading only AGENTS.md can run lint/test/build and knows the rejection list
 
 ### `OO-2` — Apps repo: hygiene mirror + front-door CONTRIBUTING
 
