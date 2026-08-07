@@ -21,6 +21,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
 import { useRunStream } from '../loops/useRunStream'
+import { belongsToLoop } from '../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
 import { SearchField } from '../../ui/SearchField'
 import { DiffView } from './DiffView'
@@ -414,8 +415,12 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   const workerKey = `loop-${id}`
   const onWs = useCallback((m: WsMessage) => {
     const sess = String(m.data?.session ?? '')
-    // accept the main worker AND any of this project's task-workers
-    if (sess !== workerKey && !sess.startsWith(`${workerKey}-`)) return
+    // Accept the main worker, this project's task-workers, AND a coexistence run-scoped
+    // key (`run:<id>` / `workflow:run:<id>`) once a code loop runs as a template — the
+    // R10c fix. `belongsToLoop` matches all three; a raw `===`/prefix test dropped the
+    // colon keys silently (stream connects, panel stays dead), which is the regression it
+    // closes. Kept `sess` for the per-worker activity buckets below.
+    if (!belongsToLoop(sess, id)) return
     const push = (item: ActivityItem) => setActivityBySession((m0) => ({ ...m0, [sess]: [...(m0[sess] ?? []), item].slice(-50) }))
     // A repeated status line (the worker pings "Thinking…" many times a cycle) carries
     // no new info — appending each one fills the 50-item buffer with identical noise and
