@@ -4,6 +4,7 @@ merged-variable + kind fields on prompt list/detail."""
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,6 +16,7 @@ from personalclaw.dashboard.handlers import (
     api_prompt_render,
     api_prompt_syntax,
     api_prompts,
+    api_skill_detail,
     api_snippet_create,
     api_snippet_delete,
     api_snippet_detail,
@@ -413,3 +415,40 @@ class TestCampaignTemplateLaunch:
             and d["loop_id"] == "cafe1234"
             and "workspace" in d["error"].lower()
         )
+
+
+# ── PUT /api/skills/{name} input validation (#787 C1) ────────────────────────
+
+
+class TestSkillDetailPut:
+    """PUT /api/skills/{name} must reject a non-string ``content`` with a clean
+    400 rather than letting ``write_text`` raise deep in the loader → 500. The
+    create path already guards this at prompts.py:444/:926; the PUT branch was
+    the lone site missing the type check (#787 C1)."""
+
+    def _put_req(self, tmp_path, name, body):
+        from personalclaw.skills import SkillsLoader
+
+        loader = SkillsLoader(skills_path=tmp_path, install_builtins=False)
+        state = SimpleNamespace(context_builder=SimpleNamespace(skills=loader))
+        r = _req(name=name, body=body)
+        r.method = "PUT"
+        r.app = {"state": state}
+        return r, loader
+
+    def test_put_non_string_content_returns_400(self, tmp_path):
+        r, loader = self._put_req(tmp_path, "editable", {"content": 12345})
+        loader.create_skill("editable", "# Original\nUntouched.")
+        resp = _run(api_skill_detail(r))
+        assert resp.status == 400
+        assert "string" in _body(resp)["error"].lower()
+        # The bogus PUT must not have overwritten the skill on disk.
+        assert loader.load_skill("editable") == "# Original\nUntouched."
+
+    def test_put_valid_string_content_succeeds(self, tmp_path):
+        r, loader = self._put_req(tmp_path, "editable", {"content": "# Updated\nNew body."})
+        loader.create_skill("editable", "# Original\nUntouched.")
+        resp = _run(api_skill_detail(r))
+        assert resp.status == 200
+        assert _body(resp)["ok"] is True
+        assert loader.load_skill("editable") == "# Updated\nNew body."
