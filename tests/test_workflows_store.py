@@ -142,6 +142,16 @@ class TestQueries:
         assert st.list_runs(status=RunStatus.COMPLETE)[1] == 2
         assert st.list_runs(workflow_name="a", status="failed")[1] == 1
 
+    def test_filter_by_project_scopes_the_work_board(self) -> None:
+        """The Work board reads a project's runs via this filter (WORK-CONTAINERS §1)."""
+        st.create(_run(project_id="proj-a"))
+        st.create(_run(project_id="proj-a"))
+        st.create(_run(project_id="proj-b"))
+        st.create(_run())  # no project
+        assert st.list_runs(project_id="proj-a")[1] == 2
+        assert st.list_runs(project_id="proj-b")[1] == 1
+        assert st.list_runs()[1] == 4  # unfiltered still sees every run
+
     def test_pagination_reports_the_unpaged_total(self) -> None:
         for _ in range(5):
             st.create(_run())

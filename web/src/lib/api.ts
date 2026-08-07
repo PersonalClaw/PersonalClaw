@@ -478,6 +478,23 @@ export interface ActionPlanItem { content?: string; description?: string; sequen
 export interface TaskNote { content: string; timestamp?: string; created_at?: string; phase?: 'research' | 'execution' | 'general' }
 export interface ProjectItem { id: string; name: string; is_default?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string }
 export interface ProjectLinkedItem { id: string; name: string; status: string; error_message?: string | null }
+// Work board (WORK-CONTAINERS §1/§5.2/§6.1). `WorkRow` mirrors `containers.BoardRow.to_dict()`;
+// `WorkSection` is one heterogeneous source's own status (per-section isolation — a failed
+// source degrades ONE section, never the board); `board` is the state-grouped view with
+// needs-input pinned first.
+export type WorkState = 'needs_input' | 'working' | 'queued' | 'suspended' | 'review' | 'done'
+export interface WorkClaim { holder: string; expires_at: number; taken_at: number; renewals: number }
+export interface WorkRow {
+  run_id: string; title: string; state: WorkState; origin: string; project_id: string
+  claim: WorkClaim | null; collapsed: boolean; attention: boolean; resumable: boolean
+}
+export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
+export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
+export interface WorkBoard {
+  board: WorkGroup[]; sections: WorkSection[]
+  completeness: 'complete' | 'inferred' | 'partial' | 'error'
+  attention: number; loadedAt: number
+}
 export interface TaskListItem { id: string; name: string; project_id: string; agent_instructions_template?: string; created_at?: string; updated_at?: string }
 export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[]; blocking_task_titles?: string[]; message?: string }
 export interface TaskItem {
@@ -2336,6 +2353,13 @@ export const api = {
   projects: () => get<{ projects: ProjectItem[] }>('/api/projects').then((d) => d.projects),
   project: (id: string) => get<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`),
   projectLinked: (id: string) => get<{ loops: ProjectLinkedItem[]; code: ProjectLinkedItem[]; artifacts: { slug: string; name: string; kind: string }[]; chats: { key: string; title: string; running: boolean }[] }>(`/api/projects/${encodeURIComponent(id)}/linked`),
+  // The state-grouped Work board: runs + legacy loops + tasks in one board, per-section
+  // isolated (a failed source degrades one section, the board still renders).
+  projectWork: (id: string) => get<WorkBoard>(`/api/projects/${encodeURIComponent(id)}/work`),
+  claimWork: (id: string, target_id: string, holder: string) =>
+    post<{ granted: boolean; claim: WorkClaim | null; reason: string }>(`/api/projects/${encodeURIComponent(id)}/work/claim`, { target_id, holder }),
+  releaseWork: (id: string, target_id: string, holder: string) =>
+    post<{ released: boolean; claim: WorkClaim | null; reason: string }>(`/api/projects/${encodeURIComponent(id)}/work/release`, { target_id, holder }),
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),

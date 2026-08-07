@@ -1170,3 +1170,85 @@ class TestResilienceIntegration:
         )
         assert await c.run_to_completion(timeout=30) == RunStatus.PAUSED
         assert len(warnings) == 1, "the warning must fire exactly once per run"
+
+
+class TestProjectOverviewOnComplete:
+    """The completion hook (WORK-CONTAINERS §6.1): a COMPLETE run auto-revises its
+    project's living overview and appends a decisions-ledger line — DETERMINISTICALLY (an
+    appended line, not an LLM summary; DEVIATION recorded in the plan log). The hook is
+    best-effort: `_finish` is the single terminal writer and must never raise.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _project_home(self, _isolated_home, monkeypatch):
+        # The project store binds `config_dir` BY VALUE at import (from config.loader), so
+        # patching the loader module alone leaves it pointed at the real home. Patch both
+        # the loader and the hierarchy module's own binding — project_context resolves the
+        # context dir through HierarchyStore, so that one is the load-bearing patch.
+        import personalclaw.config.loader as cfg
+        import personalclaw.tasks.hierarchy as hierarchy
+
+        monkeypatch.setattr(cfg, "config_dir", lambda: _isolated_home)
+        monkeypatch.setattr(hierarchy, "config_dir", lambda: _isolated_home)
+        return _isolated_home
+
+    def _project(self):
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        return HierarchyStore().create_project("Board Test", brief="ship the board")
+
+    async def test_a_completed_run_appends_to_the_overview_and_ledger(self) -> None:
+        from personalclaw import project_context
+
+        project = self._project()
+        run = _make_run(SEQ_SPEC, project_id=project.id)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        overview = project_context.read_overview(project.id)
+        assert "seq" in overview and "complete" in overview
+        decisions = project_context.read_ledger(project.id, "decisions")
+        assert any("seq" in line and "complete" in line for line in decisions)
+
+    async def test_a_run_with_no_project_writes_nothing(self) -> None:
+        # project_id is empty → the hook is a no-op (the guard), and the run still completes.
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+
+    async def test_a_raising_overview_writer_does_not_break_finish(self, monkeypatch) -> None:
+        from personalclaw import project_context
+
+        project = self._project()
+
+        def boom(*a, **k):
+            raise RuntimeError("overview store is down")
+
+        monkeypatch.setattr(project_context, "write_overview", boom)
+        run = _make_run(SEQ_SPEC, project_id=project.id)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        # `_finish` must not raise despite the broken writer — the run still completes.
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+
+    async def test_a_failed_run_does_not_revise_the_overview(self) -> None:
+        from personalclaw import project_context
+
+        project = self._project()
+
+        async def denied(prompt, *, use_case="background", output_type=None):
+            from personalclaw.workflows.models import Failure, FailureClass
+
+            raise Failure(FailureClass.PERMISSION_DENIED, "nope")
+
+        spec = {
+            "name": "failing",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [{"kind": "infer", "id": "n", "config": {"prompt": "p"}}],
+            },
+        }
+        run = _make_run(spec, project_id=project.id)
+        c = RunController(run, spec, services=EngineServices(completion=denied))
+        assert await c.run_to_completion(timeout=25) == RunStatus.FAILED
+        # Only COMPLETE revises the overview; a FAILED run leaves it empty.
+        assert project_context.read_overview(project.id) == ""

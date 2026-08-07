@@ -30,10 +30,11 @@ import asyncio
 import contextlib
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from personalclaw import shutdown_event
-from personalclaw.workflows import store
+from personalclaw.workflows import containers, store
 from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
 from personalclaw.workflows.models import (
@@ -72,6 +73,11 @@ class WorkflowWatchdog:
         self._services = services or EngineServices()
         self._task: asyncio.Task | None = None
         self._controllers: dict[str, RunController] = {}
+        #: The boot sweep runs ONCE, on the first poll after start — a run without a live
+        #: controller then is one this process never adopted, i.e. a crash survivor. On
+        #: later polls a controller-less RUNNING run is a genuinely new run, not a stale
+        #: one, so sweeping again would abort live work.
+        self._swept = False
         #: Consecutive poll failures. A persistently broken poll should be loud in the
         #: log rather than silently retrying forever.
         self._consec_errors = 0
@@ -239,7 +245,19 @@ class WorkflowWatchdog:
             if controller.run.is_terminal:
                 self._controllers.pop(run_id, None)
 
+        # The boot sweep runs ONCE, before the first adoption, so a run this process never
+        # drove is decided honestly (§5.2) rather than blindly re-adopted as "still
+        # working". A run it SUSPENDED awaits an explicit Resume, so it is skipped by the
+        # adoption loop on this same poll — otherwise adoption would relaunch what the
+        # sweep just paused.
+        swept: set[str] = set()
+        if not self._swept:
+            swept = self._boot_sweep()
+            self._swept = True
+
         for run in store.active_runs():
+            if run.id in swept:
+                continue
             if store.cancel_requested(run.id):
                 await self._honor_cancel(run)
                 continue
@@ -249,6 +267,70 @@ class WorkflowWatchdog:
                 continue
             if live.run.is_terminal:
                 self._controllers.pop(run.id, None)
+
+    def _boot_sweep(self) -> set[str]:
+        """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.
+
+        A RUNNING run with no live controller on the first poll is one this process never
+        drove — a gateway killed mid-run. §5.2's rule turns on the SUBSTRATE: an isolated
+        run (worktree/container) whose substrate survived on disk has recoverable work →
+        SUSPENDED (PAUSED) with a Resume affordance; one whose substrate is gone is honestly
+        aborted → CANCELLED. Marking every stale isolated run aborted is the obvious
+        implementation and it is wrong — it destroys recoverable work while reporting
+        success.
+
+        INLINE runs are deliberately NOT swept here. An inline run's substrate is the
+        process that died, but its journal is on disk, and the existing adoption path
+        resumes it from cache hits (or reaps it if every node is already terminal) — which
+        IS the truthful-across-a-kill behaviour for the inline case. Cancelling them here
+        would discard journal-backed recoverable work and pre-empt that path. This is a
+        DEVIATION from the plan's literal Step 4 (which swept inline → CANCELLED); the §5.2
+        intent — never abort a run whose substrate survived — is preserved, and the inline
+        path stays owned by adoption. Runs with a live controller are never swept (this
+        runs before the first `_adopt`, so it only sees controller-less runs). The status
+        write happens BEFORE adoption so a swept run is not relaunched. Returns the ids it
+        decided, so the adoption loop on this same poll skips them.
+        """
+        swept: set[str] = set()
+        for run in store.active_runs():
+            if run.status != RunStatus.RUNNING:
+                continue
+            if self._controllers.get(run.id) is not None:
+                continue  # a live controller owns this run — never sweep it
+            substrate = self._substrate_for(run)
+            if not substrate.isolated:
+                continue  # inline → left to adoption (resumed from the journal)
+            decision = containers.sweep_decision(run, substrate)
+            if decision.status is None or decision.status == run.status:
+                continue
+            run.status = decision.status
+            run.completed_at = run.completed_at or _now()
+            store.save(run)
+            swept.add(run.id)
+            logger.info(
+                "workflow boot sweep: run %s → %s (%s)",
+                run.id,
+                decision.status.value,
+                decision.reason,
+            )
+        return swept
+
+    def _substrate_for(self, run: WorkflowRun) -> containers.Substrate:
+        """The execution substrate for a stale run, for the sweep's substrate check.
+
+        A run is treated as isolated only when it recorded a worktree dir; that dir's
+        on-disk existence is its `alive`. An isolated-but-gone worktree is honestly aborted
+        (a Resume that points at a gone worktree is worse than an abort); an inline run
+        (no recorded worktree) is reported not-isolated so the sweep leaves it to adoption.
+
+        WF2WOR-4 tightens this to consult `worktrees.inspect_worktree` for the full
+        alive/dirty/branch state; here we take the cheap on-disk existence check the
+        recorded path already supports.
+        """
+        wt = str((run.extra or {}).get("worktree_path", "") or "")
+        if wt:
+            return containers.Substrate(kind="worktree", alive=Path(wt).is_dir(), detail=wt)
+        return containers.Substrate(kind="inline", alive=False)
 
     async def _adopt(self, run: WorkflowRun) -> None:
         """Resume a run with no live controller.

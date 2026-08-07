@@ -2,13 +2,21 @@
 levels of the task hierarchy)."""
 
 import logging
+import time
 
 from aiohttp import web
 
 from personalclaw.security import is_sensitive_path, is_system_path
 from personalclaw.tasks.hierarchy import HierarchyStore
+from personalclaw.workflows import containers, leases
+from personalclaw.workflows import store as run_store
 
 logger = logging.getLogger(__name__)
+
+#: TTL for a Work-board claim taken through the claim route. A claim is advisory-but-
+#: recorded and short by design: long enough for a single co-tenant to pick up a leaf,
+#: short enough that a crashed holder frees it without an admin step.
+_CLAIM_TTL_SECS = 300
 
 # The body keys a caller may write through the PUT routes. An ALLOWLIST, not a denylist:
 # these handlers used to splat the raw body into the store as ``**body``, so every field
@@ -200,6 +208,252 @@ async def api_projects_linked(request: web.Request) -> web.Response:
         pass
 
     return web.json_response({"loops": loops, "code": code, "artifacts": artifacts, "chats": chats})
+
+
+# ── Work board (WORK-CONTAINERS §1/§5.2/§6.1) ──
+
+
+#: loop.status → the board's own vocabulary. A run and a legacy loop answer the same
+#: question on one board, so both project onto `BoardState` here rather than each surface
+#: inventing a mapping. An unmapped status degrades to WORKING (visible, not hidden) —
+#: never DONE, which would drop live work off the board.
+_LOOP_STATE = {
+    "running": containers.BoardState.WORKING,
+    "intake": containers.BoardState.WORKING,
+    "planning": containers.BoardState.WORKING,
+    "review": containers.BoardState.REVIEW,
+    "ready": containers.BoardState.QUEUED,
+    "paused": containers.BoardState.SUSPENDED,
+    "blocked": containers.BoardState.NEEDS_INPUT,
+    "stagnant": containers.BoardState.NEEDS_INPUT,
+    "needs_input": containers.BoardState.NEEDS_INPUT,
+    "complete": containers.BoardState.DONE,
+    "stopped": containers.BoardState.DONE,
+    "failed": containers.BoardState.DONE,
+}
+
+#: task.status → the board's vocabulary. Same contract as `_LOOP_STATE`.
+_TASK_STATE = {
+    "in_progress": containers.BoardState.WORKING,
+    "blocked": containers.BoardState.NEEDS_INPUT,
+    "done": containers.BoardState.DONE,
+    "cancelled": containers.BoardState.DONE,
+    "skipped": containers.BoardState.DONE,
+    "open": containers.BoardState.QUEUED,
+}
+
+
+def _as_board_row(d: dict) -> containers.BoardRow:
+    """Rebuild a `BoardRow` from its dict form, for the flatten→group pass.
+
+    `collect_sections` hands back plain dicts (one source, one section, isolated), so the
+    board grouping re-lifts the OK rows into `BoardRow` to reuse `group_board`'s ordering
+    and attention arithmetic rather than duplicating it per surface.
+    """
+    claim_raw = d.get("claim")
+    claim = None
+    if isinstance(claim_raw, dict):
+        claim = containers.Claim(
+            holder=str(claim_raw.get("holder", "") or ""),
+            expires_at=float(claim_raw.get("expires_at", 0.0) or 0.0),
+            taken_at=float(claim_raw.get("taken_at", 0.0) or 0.0),
+            renewals=int(claim_raw.get("renewals", 0) or 0),
+        )
+    try:
+        state = containers.BoardState(str(d.get("state", "") or ""))
+    except ValueError:
+        state = containers.BoardState.WORKING
+    return containers.BoardRow(
+        run_id=str(d.get("run_id", "") or ""),
+        title=str(d.get("title", "") or ""),
+        state=state,
+        origin=str(d.get("origin", "") or ""),
+        project_id=str(d.get("project_id", "") or ""),
+        claim=claim,
+        collapsed=bool(d.get("collapsed", False)),
+        attention=bool(d.get("attention", False)),
+        resumable=bool(d.get("resumable", False)),
+    )
+
+
+def _run_rows(pid: str, now: float) -> list[dict]:
+    """WF2 runs bound to this project, as board-row dicts with their live claim."""
+    runs, _ = run_store.list_runs(project_id=pid, limit=500)
+    return [
+        containers.board_row(r, claim_record=leases.read_claim(r.id), now=now).to_dict()
+        for r in runs
+    ]
+
+
+def _loop_rows(pid: str) -> list[dict]:
+    """Legacy Goal/Code loops under this project, adapted to the board-row shape.
+
+    Loops predate the run engine and have their own store; they are still work the user
+    is running, so they share the board. Origin `manual` (a user launched them) so they
+    are never collapsed as machine noise.
+    """
+    from personalclaw.loop import store as loop_store
+
+    rows: list[dict] = []
+    for lp in loop_store.list_for_project(pid):
+        state = _LOOP_STATE.get(str(lp.status), containers.BoardState.WORKING)
+        rows.append(
+            containers.BoardRow(
+                run_id=lp.id,
+                title=lp.name or (lp.task or "")[:60] or "(unnamed loop)",
+                state=state,
+                origin="manual",
+                project_id=pid,
+                resumable=state is containers.BoardState.SUSPENDED,
+                attention=state is containers.BoardState.NEEDS_INPUT,
+            ).to_dict()
+        )
+    return rows
+
+
+def _task_rows(tasks: list, pid: str) -> list[dict]:
+    """Standalone tasks under this project, adapted to the board-row shape.
+
+    A task bound to a run (`workflow_binding`) is already surfaced by the run source, so it
+    is skipped here — two rows for one unit of work is a board that double-counts.
+    """
+    rows: list[dict] = []
+    for t in tasks:
+        if getattr(t, "workflow_binding", None) is not None:
+            continue
+        status = getattr(getattr(t, "status", None), "value", "") or ""
+        state = _TASK_STATE.get(status, containers.BoardState.QUEUED)
+        rows.append(
+            containers.BoardRow(
+                run_id=getattr(t, "id", "") or "",
+                title=getattr(t, "title", "") or "(untitled task)",
+                state=state,
+                origin="task",
+                project_id=pid,
+                attention=state is containers.BoardState.NEEDS_INPUT,
+            ).to_dict()
+        )
+    return rows
+
+
+async def api_projects_work(request: web.Request) -> web.Response:
+    """GET /api/projects/{project_id}/work — the state-grouped Work board.
+
+    One board over three heterogeneous sources — WF2 runs, legacy loops, standalone
+    tasks — each collected under its own try/except so a slow or broken source degrades
+    ONE section rather than the whole first paint (`containers.collect_sections`). OK
+    sections' rows are flattened and grouped by `containers.group_board`, which pins
+    needs-input first and drops expired claims, so the board is truthful across a gateway
+    kill. `completeness` tells the client a partially-failed board apart from a complete
+    one; `sections` carries the per-source status the FE renders as a skeleton/degraded
+    note.
+    """
+    store = _store()
+    pid = request.match_info["project_id"]
+    project = store.get_project(pid)
+    if project is None:
+        return web.json_response({"error": "not found"}, status=404)
+    now = time.time()
+
+    # Tasks are keyed by project NAME and read through an ASYNC provider, so they are
+    # fetched HERE (in its own guard) and handed to `collect_sections` as a pre-fetched
+    # list — a prefetch failure re-raises inside the source callable so that section still
+    # records `status: "error"` rather than silently emptying.
+    task_error: Exception | None = None
+    tasks: list = []
+    try:
+        from personalclaw.tasks import registry as task_registry
+
+        tasks, _ = await task_registry.list_all_tasks(project=project.name, limit=10_000)
+    except Exception as exc:  # noqa: BLE001 — recorded as the tasks section's failure
+        task_error = exc
+
+    def _tasks_source() -> list[dict]:
+        if task_error is not None:
+            raise task_error
+        return _task_rows(tasks, pid)
+
+    sources = {
+        "runs": lambda: _run_rows(pid, now),
+        "loops": lambda: _loop_rows(pid),
+        "tasks": _tasks_source,
+    }
+    sections, completeness = containers.collect_sections(sources, now=now)
+
+    ok_rows: list[containers.BoardRow] = []
+    for section in sections:
+        if section.get("status") == "ok":
+            ok_rows.extend(_as_board_row(d) for d in section.get("items") or [])
+    board = containers.group_board(ok_rows)
+
+    return web.json_response(
+        {
+            "board": board,
+            "sections": sections,
+            "completeness": completeness.value,
+            "attention": containers.attention_count(ok_rows),
+            "loadedAt": now,
+        }
+    )
+
+
+async def _claim_body(request: web.Request) -> tuple[str, str] | web.Response:
+    """Parse `{target_id, holder}` from a claim/release POST, or return a 400 response."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    target_id = str(body.get("target_id", "") or "").strip()
+    holder = str(body.get("holder", "") or "").strip()
+    if not target_id or not holder:
+        return web.json_response({"error": "target_id and holder are required"}, status=400)
+    return target_id, holder
+
+
+async def api_projects_work_claim(request: web.Request) -> web.Response:
+    """POST /api/projects/{project_id}/work/claim — take a TTL'd claim on one board row.
+
+    Delegates to the flock-guarded `leases.acquire_claim`. A refusal (someone else holds
+    it, or the flock is contended) is a normal 200 outcome the board renders, not an error
+    — `granted:false` with the reason, so the caller can show why.
+    """
+    if _store().get_project(request.match_info["project_id"]) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    parsed = await _claim_body(request)
+    if isinstance(parsed, web.Response):
+        return parsed
+    target_id, holder = parsed
+    granted, reason = leases.acquire_claim(target_id, holder, ttl=_CLAIM_TTL_SECS)
+    return web.json_response(
+        {
+            "granted": granted is not None,
+            "claim": granted.to_dict() if granted else None,
+            "reason": reason,
+        }
+    )
+
+
+async def api_projects_work_release(request: web.Request) -> web.Response:
+    """POST /api/projects/{project_id}/work/release — release a claim you hold.
+
+    Only the holder may release; a foreign claim is returned unchanged with the reason.
+    """
+    if _store().get_project(request.match_info["project_id"]) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    parsed = await _claim_body(request)
+    if isinstance(parsed, web.Response):
+        return parsed
+    target_id, holder = parsed
+    remaining, reason = leases.release_claim(target_id, holder)
+    return web.json_response(
+        {
+            "released": remaining is None and not reason,
+            "claim": remaining.to_dict() if remaining else None,
+            "reason": reason,
+        }
+    )
 
 
 async def api_projects_update(request: web.Request) -> web.Response:
@@ -446,6 +700,9 @@ def register_hierarchy_routes(app: web.Application) -> None:
     app.router.add_post("/api/projects", api_projects_create)
     app.router.add_get("/api/projects/{project_id}", api_projects_get)
     app.router.add_get("/api/projects/{project_id}/linked", api_projects_linked)
+    app.router.add_get("/api/projects/{project_id}/work", api_projects_work)
+    app.router.add_post("/api/projects/{project_id}/work/claim", api_projects_work_claim)
+    app.router.add_post("/api/projects/{project_id}/work/release", api_projects_work_release)
     app.router.add_put("/api/projects/{project_id}", api_projects_update)
     app.router.add_delete("/api/projects/{project_id}", api_projects_delete)
 
