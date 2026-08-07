@@ -111,28 +111,30 @@ def test_judge_exception_keeps_both(vs):
     assert len(_live_values(vs)) == 2  # fail-safe on judge error
 
 
-# ── injection unification: context.py reads ONLY the vector store ──
+# ── injection unification: context.py reads ONLY the memory.db record store ──
 
 
 def test_context_injection_is_vector_store_only(tmp_path, monkeypatch):
-    """build_session_context must not read the JSONL LessonStore for injection."""
+    """build_session_context reads lessons ONLY from memory.db lesson.* records.
+
+    WF2LEA-3 retired the JSONL lesson store, so memory.db is the sole source:
+    a lesson written to the attached record store injects; with no store
+    attached, no lesson can appear (there is no parallel file to leak from)."""
     from personalclaw.context import ContextBuilder
-    from personalclaw.learn import LessonStore
     from personalclaw.memory import MemoryStore
     from personalclaw.skills import SkillsLoader
+    from personalclaw.vector_memory import VectorMemoryStore
 
     ms = MemoryStore(workspace=tmp_path / "ws")
     ms.init()
-    jsonl = LessonStore(base_dir=tmp_path / "ws")
+    vs = VectorMemoryStore(db_path=tmp_path / "mem.db")
+    vs.init()
+    ms.vector_store = vs
     builder = ContextBuilder(
         memory=ms,
         skills=SkillsLoader(skills_path=tmp_path / "sk", install_builtins=False),
-        lessons=jsonl,
     )
-    # Plant a lesson ONLY in the JSONL store; with no vector store attached, it
-    # must NOT appear in the injected context (no dual-source read).
-    from personalclaw.learn import Lesson
-
-    jsonl.save(Lesson(rule="JSONL-ONLY-LESSON", category="tool", ts="2026-01-01T00:00:00"))
+    # A lesson written to the record store (no embedder → text-only) injects.
+    vs.write_lesson("RECORD-STORE-LESSON", "tool")
     ctx = builder.build_session_context()
-    assert "JSONL-ONLY-LESSON" not in ctx
+    assert "RECORD-STORE-LESSON" in ctx

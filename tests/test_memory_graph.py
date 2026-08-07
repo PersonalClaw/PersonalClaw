@@ -30,7 +30,6 @@ class TestMemoryGraphNodeExtraction:
 
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -130,15 +129,17 @@ class TestMemoryGraphNodeExtraction:
 
     @pytest.mark.asyncio
     async def test_lessons_become_nodes(self, tmp_path, monkeypatch):
-        from personalclaw.learn import Lesson
-
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        lessons = [
-            Lesson(rule="Always check for existing CRs", category="tool", ts="2026-03-25"),
-            Lesson(rule="Use make build release for tests", category="knowledge", ts="2026-03-25"),
-        ]
+        # Lessons are memory.db lesson.* rows (the sole store): plant them on the
+        # record store the graph reads through service_for(memory).get_lessons().
         state = self._make_state(tmp_path)
-        state.lessons.load_all.return_value = lessons
+        vs = MagicMock()
+        vs.get_all_semantic.return_value = []
+        vs.get_lessons.return_value = [
+            {"key": "lesson.a", "value_json": '"Always check for existing CRs"'},
+            {"key": "lesson.b", "value_json": '"Use make build release for tests"'},
+        ]
+        state.context_builder.memory.vector_store = vs
         request = MagicMock()
         request.app = {"state": state}
 
@@ -440,7 +441,6 @@ class TestMemoryGraphEdgeDetection:
 
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -501,7 +501,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -536,7 +535,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -561,7 +559,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -587,7 +584,6 @@ class TestMemoryGraphResponseFormat:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -619,7 +615,6 @@ class TestMemoryGraphErrorHandling:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -634,9 +629,10 @@ class TestMemoryGraphErrorHandling:
         assert "edges" in data
 
     @pytest.mark.asyncio
-    async def test_vector_store_error_falls_back_to_file_lessons(self, tmp_path, monkeypatch):
-        from personalclaw.learn import Lesson
-
+    async def test_vector_store_error_degrades_gracefully(self, tmp_path, monkeypatch):
+        # memory.db lesson.* is the sole lesson store (no JSONL fallback): when the
+        # record store errors, the graph still returns a valid response and simply
+        # carries no lesson nodes rather than crashing.
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         mem = MagicMock()
         mem.read_preferences.return_value = ""
@@ -650,13 +646,6 @@ class TestMemoryGraphErrorHandling:
         cb.memory = mem
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(
-                load_all=MagicMock(
-                    return_value=[
-                        Lesson(rule="Fallback lesson rule here", category="tool", ts="2026-01-01"),
-                    ]
-                )
-            ),
             start_time=0.0,
             context_builder=cb,
         )
@@ -666,10 +655,9 @@ class TestMemoryGraphErrorHandling:
         resp = await api_memory_graph(request)
         data = json.loads(resp.body)
 
+        assert "nodes" in data and "edges" in data
         lesson_nodes = [n for n in data["nodes"] if n["group"] == "lesson"]
-        assert (
-            len(lesson_nodes) == 1
-        ), "File-based lessons should still load when vector store errors"
+        assert lesson_nodes == [], "no lesson nodes when the record store errors"
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +678,6 @@ class TestMemoryGraphHTTPIntegration:
         cb.memory = mem
         return DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(load_all=MagicMock(return_value=[])),
             start_time=0.0,
             context_builder=cb,
         )
@@ -734,8 +721,6 @@ class TestMemoryGraphHTTPIntegration:
     async def test_endpoint_with_all_memory_types(self, tmp_path, monkeypatch):
         from aiohttp.test_utils import TestClient, TestServer
 
-        from personalclaw.learn import Lesson
-
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = self._make_state(
             tmp_path,
@@ -743,9 +728,13 @@ class TestMemoryGraphHTTPIntegration:
             projects="## PersonalClaw\n- Local path: /home/user/mc",
             history="# 2026-03-25\n[2026-03-25 10:00] Did some work",
         )
-        state.lessons.load_all.return_value = [
-            Lesson(rule="Always check CRs first", category="tool", ts="2026-03-25"),
+        # Lessons come from memory.db lesson.* (the sole store) via get_lessons().
+        vs = MagicMock()
+        vs.get_all_semantic.return_value = []
+        vs.get_lessons.return_value = [
+            {"key": "lesson.a", "value_json": '"Always check CRs first"'},
         ]
+        state.context_builder.memory.vector_store = vs
         async with TestClient(TestServer(self._make_app(state))) as client:
             resp = await client.get("/api/memory/graph")
             assert resp.status == 200

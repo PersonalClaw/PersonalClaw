@@ -28,7 +28,6 @@ class TestDashboard:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=3),
-            lessons=MagicMock(),
             start_time=0.0,
         )
         assert state.sessions.count == 3
@@ -38,7 +37,6 @@ class TestDashboard:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
             owner_id="U123",
         )
@@ -107,7 +105,6 @@ class TestNotificationPersistence:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
         )
         state.notify("cron", "Test Job", "Result text")
@@ -127,7 +124,6 @@ class TestNotificationPersistence:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
         )
         state.notify("success", "Goal loop complete", "done", meta={"loop_id": "aaaa1111"})
@@ -153,7 +149,6 @@ class TestNotificationPersistence:
 
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
         )
         # Should have loaded existing notifications
@@ -179,7 +174,6 @@ class TestUnreadDerived:
         monkeypatch.setattr("personalclaw.inbox.config_dir", lambda: tmp_path)
         return DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
         )
 
@@ -259,7 +253,6 @@ class TestUnreadDerived:
         self._add_item(tmp_path, "handled")
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
         )
         assert state.unread_count() == 1
@@ -295,7 +288,6 @@ class TestNotificationRemovalBroadcast:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = DashboardState(
             sessions=MagicMock(count=0),
-            lessons=MagicMock(),
             start_time=0.0,
         )
         ws = MagicMock(closed=False)

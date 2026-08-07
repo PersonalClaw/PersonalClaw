@@ -24,7 +24,6 @@ from personalclaw.session import BACKGROUND_KEY
 from personalclaw.skills import AutoSkillProvenance
 
 if TYPE_CHECKING:
-    from personalclaw.learn import LessonStore
     from personalclaw.memory import MemoryStore
     from personalclaw.memory_service import MemoryService
     from personalclaw.session import SessionManager
@@ -912,7 +911,6 @@ class HistoryConsolidator:
         log: ConversationLog,
         memory: "MemoryStore",
         sessions: "SessionManager | None" = None,
-        lesson_store: "LessonStore | None" = None,
         history_idle_secs: float = 3 * 3600,
         vector_store: "VectorMemoryStore | None" = None,
         migrated: bool = False,
@@ -927,7 +925,6 @@ class HistoryConsolidator:
         self._log = log
         self._memory = memory
         self._sessions = sessions
-        self._lesson_store = lesson_store
         self._history_idle_secs = history_idle_secs
         self._vector_store = vector_store
         self._memory_service: "MemoryService | None" = None  # lazily built over the store
@@ -1316,9 +1313,7 @@ class HistoryConsolidator:
                     if projects.strip() != current_projects.strip():
                         memory.write_projects(projects)
 
-            if (self._lesson_store or self._svc.has_vector) and (
-                raw_lessons := result.get("lessons")
-            ):
+            if self._svc.has_vector and (raw_lessons := result.get("lessons")):
                 self._save_lessons(raw_lessons)
 
             # Agent self-persona + commitments (M5e) — agent-scoped. The agent
@@ -1506,47 +1501,25 @@ class HistoryConsolidator:
                 logger.debug("SEL audit failed for auto-promotion", exc_info=True)
 
     def _save_lessons(self, raw: object) -> None:
-        """Save extracted lessons from consolidation result."""
-        if not isinstance(raw, list):
+        """Save extracted lessons from consolidation into memory.db ``lesson.*``.
+
+        The record store is the sole lesson store (dedup-aware; a store with no
+        embedder still persists). Nothing to do when no store is wired."""
+        if not isinstance(raw, list) or not self._svc.has_vector:
             return
-
-        # Prefer the record store (dedup-aware) over JSONL
-        if self._svc.has_vector:
-            count = 0
-            for item in raw:
-                if isinstance(item, dict) and item.get("rule"):
-                    ok = self._svc.write_lesson(
-                        rule=item["rule"],
-                        category=item.get("category", "knowledge"),
-                        negative=item.get("negative"),
-                        source="consolidation",
-                    )
-                    if ok:
-                        count += 1
-            if count:
-                logger.info("Extracted %d lesson(s) from chat (record store)", count)
-            return
-
-        if not self._lesson_store:
-            return
-        from datetime import timezone as _tz
-
-        from personalclaw.learn import Lesson
-
         count = 0
         for item in raw:
             if isinstance(item, dict) and item.get("rule"):
-                self._lesson_store.save(
-                    Lesson(
-                        ts=datetime.now(tz=_tz.utc).isoformat(),
-                        rule=item["rule"],
-                        category=item.get("category", "knowledge"),
-                        negative=item.get("negative"),
-                    )
+                ok = self._svc.write_lesson(
+                    rule=item["rule"],
+                    category=item.get("category", "knowledge"),
+                    negative=item.get("negative"),
+                    source="consolidation",
                 )
-                count += 1
+                if ok:
+                    count += 1
         if count:
-            logger.info("Extracted %d lesson(s) from chat", count)
+            logger.info("Extracted %d lesson(s) from chat (record store)", count)
 
     def _write_structured_memory(self, result: dict, key: str) -> None:
         """Write semantic + episodic entries from consolidation result."""

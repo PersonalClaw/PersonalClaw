@@ -8,7 +8,6 @@ from hypothesis import strategies as st
 
 from personalclaw.context import ContextBuilder
 from personalclaw.hooks import ContextRule, HookManager, HooksConfig
-from personalclaw.learn import LessonStore
 from personalclaw.memory import MemoryStore
 from personalclaw.skills import SkillsLoader
 
@@ -153,7 +152,6 @@ class TestContextBuilder:
         builder = ContextBuilder(
             memory=MemoryStore(workspace=tmp_path / "ws"),
             skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
-            lessons=LessonStore(base_dir=tmp_path),
         )
         ctx = builder.build_session_context()
         assert "[CRITICAL RULES" in ctx
@@ -785,7 +783,6 @@ class TestCurrentDateTimezone:
         return ContextBuilder(
             memory=MemoryStore(workspace=tmp_path / "ws"),
             skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
-            lessons=LessonStore(base_dir=tmp_path),
             hooks=HookManager(HooksConfig()),
         )
 

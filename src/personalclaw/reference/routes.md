@@ -280,7 +280,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/legibility/discover/dismiss` — hide a Discover tip forever.
 - `DELETE /api/lessons` — remove lessons by substring.
 - `GET /api/lessons` — _(no summary)_
-- `POST /api/lessons` — add a lesson (vector store or JSONL fallback).
+- `POST /api/lessons` — add a lesson to memory.db ``lesson.*``.
 - `GET /api/lexicon/corrections` — list learned corrections (most-corrected first).
 - `POST /api/lexicon/corrections` — {heard, meant, always?} — record a learned fix
 - `PATCH /api/lexicon/corrections/{id}` — {auto_apply} — toggle 'always fix this'.
