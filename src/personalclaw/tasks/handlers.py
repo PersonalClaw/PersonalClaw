@@ -231,7 +231,8 @@ async def api_tasks_create(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    title = body.get("title", "").strip()
+    raw_title = body.get("title")
+    title = raw_title.strip() if isinstance(raw_title, str) else ""
     if not title:
         return web.json_response({"error": "title required"}, status=400)
     provider_name = body.pop("provider", "native")
