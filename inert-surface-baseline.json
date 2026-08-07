@@ -28,6 +28,12 @@
         "enum:StructuredOutput.JSON_SCHEMA"
       ]
     },
+    "src/personalclaw/llm/prompt_cache.py": {
+      "inert": 1,
+      "surfaces": [
+        "enum:PromptCache.AUTOMATIC"
+      ]
+    },
     "src/personalclaw/loop/loop.py": {
       "inert": 3,
       "surfaces": [
@@ -158,7 +164,7 @@
       ]
     },
     "src/personalclaw/sdk/model.py": {
-      "inert": 29,
+      "inert": 28,
       "surfaces": [
         "sdk_export:AnthropicProvider",
         "sdk_export:CancelOutcome",
@@ -178,11 +184,10 @@
         "sdk_export:ModelManager",
         "sdk_export:ModelProvider",
         "sdk_export:OpenAIProvider",
+        "sdk_export:PromptCache",
         "sdk_export:ProviderCapability",
         "sdk_export:ProviderEntry",
-        "sdk_export:ProviderResolutionError",
         "sdk_export:PullProgress",
-        "sdk_export:get_default_registry",
         "sdk_export:infer_capabilities",
         "sdk_export:make_think_splitter",
         "sdk_export:model_context_window",
@@ -228,8 +233,9 @@
       ]
     },
     "src/personalclaw/sdk/security.py": {
-      "inert": 1,
+      "inert": 2,
       "surfaces": [
+        "sdk_export:PROXY_SIGNATURE_WINDOW_SECS",
         "sdk_export:fence_untrusted"
       ]
     },
@@ -374,10 +380,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 29,
+      "enum": 30,
       "sdk_export": 124,
       "trigger_kind": 0
     },
-    "inert": 153
+    "inert": 154
   }
 }

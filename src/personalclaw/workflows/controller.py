@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import project_context
 from personalclaw.knowledge import session_brief
 from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
@@ -2679,7 +2680,58 @@ class RunController:
             # gate in the inbox — cancel a run mid-gate and the question survives the run.
             # NEEDS_INPUT is deliberately not terminal here: that run is waiting, not finished.
             attention.resolve_run_items(self.services.attention_state, self.run.id)
+            if status == RunStatus.COMPLETE:
+                self._revise_project_overview()
         self._publish("workflow_run_update", {"status": status.value, "error": error})
+
+    def _revise_project_overview(self) -> None:
+        """Auto-revise the run's project overview on a successful completion (WORK-CONTAINERS §6.1).
+
+        DETERMINISTIC by design: this appends a terse line (run name + terminal status +
+        a one-line summary drawn from the run's handoff/summary, else its workflow name) to
+        the living overview and records the outcome in the decisions ledger. It does NOT
+        call an LLM — the `completion` service is inert in prod, and an LLM-summarized
+        overview is an explicit follow-on. This is a DEVIATION from a literal "revise"
+        (append, not summarize), recorded in the plan's Execution log.
+
+        Best-effort and fully guarded: `_finish` is the single terminal writer and MUST
+        NOT raise, so a failure here costs the overview line, never the terminal status.
+        """
+        pid = self.run.project_id
+        if not pid:
+            return
+        try:
+            name = self.run.workflow_name or "run"
+            summary = self._completion_summary()
+            line = f"- {name} → {self.run.status.value}"
+            if summary:
+                line += f": {summary}"
+            current = project_context.read_overview(pid)
+            new_text = f"{current}\n{line}" if current else line
+            project_context.write_overview(pid, new_text)
+            project_context.append_ledger(
+                pid,
+                "decisions",
+                f"{name} → {self.run.status.value}",
+                link=self.run.id,
+            )
+        except Exception:
+            logger.debug("project overview revision skipped for %s", self.run.id, exc_info=True)
+
+    def _completion_summary(self) -> str:
+        """A one-line summary for the overview append: the run's own handoff, else "".
+
+        Pulled from the last recorded handoff's summary — what the run itself said it
+        produced — rather than fabricated. A run that said nothing hands over nothing, so
+        the line falls back to just name + status, which is honest.
+        """
+        try:
+            handoff = getattr(self.run, "extra", {}).get("summary") if self.run.extra else ""
+            if isinstance(handoff, str) and handoff.strip():
+                return handoff.strip().splitlines()[0][:200]
+        except Exception:
+            return ""
+        return ""
 
     def _item_context(self, item: ReadyNode) -> dict[str, Any]:
         """The per-item fields a foreach row renders (WF2-R5): `[i/total] label`.
