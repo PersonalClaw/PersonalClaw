@@ -230,6 +230,11 @@ class HierarchyStore:
             new_name = str(fields["name"]).strip()
             if not new_name:
                 raise ValueError("project name cannot be empty")
+            if project.is_default_project() and new_name != project.name:
+                # A default's identity IS its name (task routing keys on the literal
+                # "Personal"/"Repeatable", and ensure_defaults re-seeds any missing name).
+                # Renaming it away would strand its task lists and spawn a duplicate default.
+                raise ValueError(f"the default project '{project.name}' cannot be renamed")
             other = self.get_project_by_name(new_name)
             if other and other.id != project_id:
                 raise ValueError(f"a project named '{new_name}' already exists")
@@ -257,7 +262,12 @@ class HierarchyStore:
         project = self.get_project(project_id)
         if not project:
             return False
-        if project.is_default_project():
+        # Guard on the LIVE protected names, not project.is_default_project() — the stored
+        # is_default bit is sticky (from_dict keeps it, and it never clears on rename), which
+        # would leave a stray duplicate carrying it permanently undeletable. Keying on the
+        # current name still fully protects a genuine "Personal"/"Repeatable" while letting a
+        # duplicate that no longer holds a protected name be cleaned up.
+        if project.name in DEFAULT_PROJECTS:
             raise ValueError(f"the default project '{project.name}' cannot be deleted")
         # Cascade: drop the project's task lists (tasks are re-homed by the caller
         # / left orphaned-by-list — the task provider owns task deletion).

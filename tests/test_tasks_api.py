@@ -189,6 +189,24 @@ async def test_default_project_undeletable(tmp_path):
         assert (await client.delete(f"/api/projects/{personal['id']}")).status == 400
 
 
+@pytest.mark.asyncio
+async def test_default_project_rename_refused_no_duplicate(tmp_path):
+    # Renaming a default must 400 and must NOT spawn a re-seeded duplicate (ensure_defaults
+    # would otherwise re-create the missing name), while a non-name update still succeeds.
+    async with _client(tmp_path) as client:
+        projects = (await (await client.get("/api/projects")).json())["projects"]
+        personal = next(p for p in projects if p["name"] == "Personal")
+        r = await client.put(f"/api/projects/{personal['id']}", json={"name": "Renamed"})
+        assert r.status == 400
+        assert "cannot be renamed" in (await r.json())["error"]
+        # A non-name update to the same default still writes.
+        r = await client.put(f"/api/projects/{personal['id']}", json={"brief": "Catch-all"})
+        assert r.status == 200 and (await r.json())["brief"] == "Catch-all"
+        # Exactly one Personal — no duplicate default was seeded.
+        after = (await (await client.get("/api/projects")).json())["projects"]
+        assert len([p for p in after if p["name"] == "Personal"]) == 1
+
+
 # ── Update: the allowlist + the workspace path gate ──
 
 
