@@ -163,6 +163,28 @@ def _handle_agent(args: argparse.Namespace) -> None:
         print("Usage: personalclaw agent {list|create|update|delete}")
 
 
+def _pair(args: argparse.Namespace) -> None:
+    """Mint a one-time channel pairing code and print it ONCE (CE-1 T1.5).
+
+    A new sender on a channel (Telegram, Discord, …) redeems this code to start talking to
+    the agent: within the 10-minute TTL it allow-lists them once, then the code is spent.
+    The code is printed to the owner's terminal only — never persisted in plaintext, never
+    logged. Direct store call (no running gateway required): pairing is owner-side setup."""
+    from personalclaw.channel_trust import PAIRING_CODE_TTL_SECS, create_pairing_code
+
+    provider = (getattr(args, "provider", "") or "").strip().lower()
+    if not provider:
+        print("❌ Usage: personalclaw pair <provider>   (e.g. telegram, discord, email)")
+        sys.exit(1)
+    code = create_pairing_code(provider)
+    minutes = PAIRING_CODE_TTL_SECS // 60
+    print(f"Pairing code for {provider}: {code}")
+    print(
+        f"Have the new sender send this code to the {provider} bot within {minutes} minutes. "
+        "It works once, then expires."
+    )
+
+
 def _automation(args: argparse.Namespace) -> None:
     """Dispatch `automation` subcommands (AUTOMATION-SUBSTRATE §7 step 2).
 
