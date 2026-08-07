@@ -709,7 +709,15 @@ class NativeAgentRuntime(AgentProvider):
         tools_kwarg, turn_note = self._prepare_turn_tools(message)
         if turn_note:
             # SYSTEM role: this is runtime metadata, not something the user said.
-            self._messages.append({"role": "system", "content": turn_note})
+            # Tagged VOLATILE (PCS-1 / F1): the turn_note carries the per-turn tool
+            # catalog + group stubs, so its content CHANGES every turn. Prompt caches
+            # match on an EXACT prefix, so a provider that hoists system content to the
+            # head of the served prompt (Anthropic's out-of-band ``system=``) would put
+            # this volatile string AHEAD of the stable assembled context and break the
+            # cacheable prefix. The neutral ``_volatile`` marker tells such a provider to
+            # deliver this note at the TAIL of the message list instead, so the stable
+            # context leads. Providers that don't cache simply ignore the extra key.
+            self._messages.append({"role": "system", "content": turn_note, "_volatile": True})
         agg_in = agg_out = 0
         agg_cost = 0.0
         turns = 0
