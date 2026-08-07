@@ -8,6 +8,8 @@ and MUST NOT import any provider SDKs (``anthropic``, ``openai``,
 from dataclasses import dataclass
 from enum import Enum
 
+from personalclaw.llm.prompt_cache import PromptCache
+
 
 class Capability(str, Enum):
     """Static capability flags advertised by a provider type."""
@@ -61,3 +63,9 @@ class ProviderCapability:
     # enforcement. Branded/ollama apps that support it declare it via
     # ``BrandedProviderSpec.structured_output`` (a coordinated apps-repo change).
     structured_output: StructuredOutput = StructuredOutput.NONE
+    # Graded prompt-cache support. Defaults NONE so a provider that doesn't declare it
+    # gets the safe no-marker path — the message list reaches the wire untouched, which
+    # is correct for every provider until it opts into caching. Branded apps that support
+    # it declare it via ``BrandedProviderSpec.prompt_cache`` (a coordinated apps-repo
+    # change); the native loop reads the same grade off the provider instance.
+    prompt_cache: PromptCache = PromptCache.NONE

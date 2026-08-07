@@ -44,6 +44,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     AgentEvent,
 )
+from personalclaw.llm.prompt_cache import PromptCache, mark_cacheable_prefix
 from personalclaw.tool_providers.base import RiskLevel
 
 if TYPE_CHECKING:
@@ -354,6 +355,13 @@ class NativeAgentRuntime(AgentProvider):
         # for mid-turn user messages. None = no steering (the default until wired).
         self._pull_steer: "Callable[[], list[str]] | None" = None
         self._steers_injected = 0
+        # Prompt-cache prefix generation (PROMPT-CACHE-SUBSTRATE). Bumped whenever the
+        # cached prefix is invalidated — i.e. compaction rewrites history. The agent
+        # DEFINITION is immutable per loop (``self._definition`` is set once in __init__
+        # and never reassigned), so the construction-time 0 is the definition baseline;
+        # only compaction advances it. An EXPLICIT-cache provider's adapter reads it off
+        # the cache hint to distinguish a fresh prefix from an invalidated one.
+        self._cache_generation: int = 0
 
     # ── identity ──
     @property
@@ -751,8 +759,17 @@ class NativeAgentRuntime(AgentProvider):
             usage: AgentEvent | None = None
 
             # 1) INFERENCE — stream a stateless completion over full history.
+            # Prompt-cache middleware (PROMPT-CACHE-SUBSTRATE): resolve the provider's
+            # graded cache mode off the instance (mirrors the supports_tools getattr) and
+            # mark a cacheable prefix. NONE → the same object is handed back (byte-identical
+            # for an undeclared provider); AUTOMATIC → also unchanged (no marker needed);
+            # EXPLICIT → a NEW list with one neutrally-hinted message, its own adapter
+            # translating the hint (a later atom). self._messages itself is never mutated.
+            mode = getattr(self._model, "prompt_cache", PromptCache.NONE)
+            logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
+            msgs = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
             async for ev in self._model.complete(
-                self._messages,
+                msgs,
                 tools=tools_kwarg,
                 model=self._definition.model or None,
                 reasoning_effort=self._reasoning_effort,
@@ -1298,6 +1315,10 @@ class NativeAgentRuntime(AgentProvider):
         saved = (before - after) / before if before else 0.0
         if after < before:
             self._messages = compacted
+            # Compaction rewrote history → any cached prompt prefix is now stale. Bump
+            # the generation so an EXPLICIT-cache provider's next marker reads fresh.
+            self._cache_generation += 1
+            logger.debug("native: cache prefix invalidated → generation %d", self._cache_generation)
             # A compaction shrank context; the next provider turn re-measures, so
             # reset our gauge optimistically to avoid re-triggering immediately.
             self._last_context_pct = self._last_context_pct * (after / before)
