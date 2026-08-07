@@ -312,9 +312,17 @@ class McpServerConn:
         # bridge with cwd=app_dir) resolve relative command/args; ignored when
         # absent (the historical behavior — spawn in the gateway's cwd).
         cwd = self.spec.get("cwd") or None
+        # Resource ceiling (PHF-1): an MCP server command is agent-influenced. The MCP
+        # SDK spawns the process itself (we cannot pass through create_subprocess_limited
+        # here), so we wrap command+args with the ceiling shim IN the argv — the SDK then
+        # spawns ``python -m shim <policy> -- <command> <args>`` which applies the ``tool``
+        # ceiling after exec and execv's the real server. No preexec_fn is involved.
+        from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+
+        wrapped = spawn_shim_argv([command, *(self.spec.get("args") or [])], PROFILE_TOOL)
         params = StdioServerParameters(
-            command=command,
-            args=list(self.spec.get("args") or []),
+            command=wrapped[0],
+            args=list(wrapped[1:]),
             env=env,
             cwd=cwd,
         )

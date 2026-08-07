@@ -68,9 +68,15 @@ def git_available() -> bool:
 
 def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]:
     """Run a git command in ``workspace``; return (returncode, combined output)."""
+    # Resource ceiling (PHF-1): loop worktree git steps are agent-influenced (a loop
+    # run drives them). Deliver the ``build`` ceiling (raised NOFILE for many file
+    # handles + OOM bias) via the post-exec shim, prepended to argv. Synchronous run
+    # off no event loop, so no fork-wedge hazard; the shim applies the limit after exec.
+    from personalclaw.sandbox import PROFILE_BUILD, spawn_shim_argv
+
     try:
         p = subprocess.run(
-            ["git", *args],
+            spawn_shim_argv(["git", *args], PROFILE_BUILD),
             cwd=workspace,
             capture_output=True,
             timeout=timeout,

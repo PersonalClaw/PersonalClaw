@@ -197,7 +197,7 @@ class BashActionProvider(ActionProvider):
             configured = 0
         timeout = configured or timeout
 
-        from personalclaw.sandbox import wrap_argv
+        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited, wrap_argv
 
         start = time.monotonic()
         env = _scrub_env(
@@ -213,8 +213,11 @@ class BashActionProvider(ActionProvider):
 
         proc = None
         try:
-            proc = await asyncio.create_subprocess_exec(
+            # Resource ceiling (PHF-1): a hook/cron bash command is agent-influenced —
+            # deliver the ``tool`` ceiling (full caps + OOM bias) via the post-exec shim.
+            proc = await create_subprocess_limited(
                 *wrapped_argv,
+                profile=PROFILE_TOOL,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

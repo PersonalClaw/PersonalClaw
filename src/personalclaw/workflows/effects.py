@@ -203,15 +203,31 @@ async def run_teardown(
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"[:500]
     import os
+    import shutil
 
     argv = shlex.split(command)
     if not argv:
         return False, "empty teardown command"
+    # Resolve the binary up front so a missing command stays a TYPED "not found" failure.
+    # The ceiling shim (below) execs the target only in the child, so a bad command would
+    # otherwise surface as a generic non-zero exit ("cannot exec") rather than the typed
+    # error the BYOI contract promises. A path-form command must exist on disk; a bare
+    # name must resolve on PATH.
+    _cmd = argv[0]
+    _found = os.path.exists(_cmd) if os.path.sep in _cmd else bool(shutil.which(_cmd))
+    if not _found:
+        return False, f"teardown command not found: {_cmd}"
     argv.append(output_id)
     env = {**os.environ, "EFFECT_OUTPUT_ID": output_id}
+    # Resource ceiling (PHF-1): a BYOI teardown command is agent-influenced (a workflow
+    # effect ran it). Deliver the ``tool`` ceiling via the post-exec shim — no preexec_fn,
+    # so this spawn never wedges the event loop.
+    from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+
     try:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await create_subprocess_limited(
             *argv,
+            profile=PROFILE_TOOL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,

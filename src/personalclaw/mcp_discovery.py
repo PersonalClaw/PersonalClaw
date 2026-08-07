@@ -574,9 +574,15 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
             )
             return server
 
-        proc = await asyncio.create_subprocess_exec(
+        # Resource ceiling (PHF-1): an MCP server is agent-influenced (its command comes
+        # from a discovered/installed server spec). Deliver the ``tool`` ceiling via the
+        # post-exec shim — no preexec_fn, so this probe spawn never wedges the loop.
+        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+
+        proc = await create_subprocess_limited(
             resolved,
             *(server.args or []),
+            profile=PROFILE_TOOL,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
