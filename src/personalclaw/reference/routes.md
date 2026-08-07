@@ -558,6 +558,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/triggers/doctor` — structural problems across every trigger (§7 criterion 12).
 - `GET /api/triggers/history` — the run feed across ALL THREE kinds (AUTO crit 4).
 - `GET /api/triggers/variables` — the ``$variables`` each trigger kind exposes.
+- `POST /api/triggers/view/render` — the `view` kind's production render caller (WF2AUT-6).
 - `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
 - `DELETE /api/triggers/{id}` — DELETE /api/triggers/{id}.
 - `PUT /api/triggers/{id}` — DELETE /api/triggers/{id}.
