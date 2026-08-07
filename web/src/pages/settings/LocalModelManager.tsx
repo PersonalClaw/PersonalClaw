@@ -70,9 +70,10 @@ export function LocalModelManager({
 
   const renderRow = (m: AvailableModel) => {
     const job = jobs[m.name]
-    const downloading = job?.status === 'running'
-    const err = errors[m.name] || (job?.status === 'error' ? job.error : '')
-    const frac = job && job.size_bytes > 0 ? job.bytes / job.size_bytes : undefined
+    const downloading = job?.state === 'running'
+    const err = errors[m.name] || (job?.state === 'error' ? job.error : '')
+    // Determinate when the total is known (progress 0..1); else indeterminate.
+    const frac = job && job.total_bytes > 0 ? job.progress : undefined
     const sizeMb = m.size_mb ?? (m.size ? Math.round(m.size / 1024 / 1024) : 0)
     const gatedUndownloaded = m.gated && !m.downloaded
     return (
@@ -89,7 +90,7 @@ export function LocalModelManager({
             </div>
             <div className="truncate text-on-surface-low text-[0.75rem]">
               {downloading
-                ? `${job.phase}${job.bytes ? ` · ${MB(job.bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
+                ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
                 : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{sizeMb ? ` · ${sizeMb} MB` : ''}</>}
             </div>
             {downloading && <div className="mt-1"><WavyProgress width={200} value={frac} /></div>}
