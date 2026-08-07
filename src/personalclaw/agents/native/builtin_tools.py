@@ -1485,8 +1485,15 @@ class NativeBuiltinToolProvider(ToolProvider):
         argv = ["bash", "-lc", command]
         wrapped, cleanup = wrap_argv(argv, mode=self._sandbox_mode)
         try:
-            proc = await asyncio.create_subprocess_exec(
+            # Resource ceiling (PHF-1): the native bash tool is the most direct
+            # agent-influenced spawn — deliver the ``tool`` ceiling via the post-exec
+            # shim (full caps + OOM bias so a runaway command is killed before the
+            # gateway). No preexec_fn: delivery is after exec, off the event-loop fork.
+            from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+
+            proc = await create_subprocess_limited(
                 *wrapped,
+                profile=PROFILE_TOOL,
                 cwd=str(self._cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,

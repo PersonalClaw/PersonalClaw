@@ -318,8 +318,16 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 argv = ["tmux", "-L", _TMUX_SOCKET, "new-session", "-A", "-s", tname, shell, "-l"]
             else:
                 argv = [shell, "-l"]
-            proc = await asyncio.create_subprocess_exec(
+            # Resource ceiling (PHF-1): the interactive terminal gets the ``none`` profile
+            # explicitly — it is the user's own shell, not agent-executed code, so it must
+            # carry no limits and no OOM bias. The ``none`` profile makes the helper a
+            # no-op (argv unwrapped, no interpreter-startup cost per terminal open), while
+            # keeping this site legible and covered by the spawn-ceiling audit.
+            from personalclaw.sandbox import PROFILE_NONE, create_subprocess_limited
+
+            proc = await create_subprocess_limited(
                 *argv,
+                profile=PROFILE_NONE,
                 stdin=worker_fd,
                 stdout=worker_fd,
                 stderr=worker_fd,

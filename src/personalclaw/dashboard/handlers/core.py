@@ -443,6 +443,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.subagent_timeout_secs": {"type": "int", "min": 60, "max": 7200},
     "agent.spawn_min_memory_gb": {"type": "float", "min": 0.0, "max": 64.0},
     "agent.subagent_cwd_allowed_roots": {"type": "str_list", "max_items": 20},
+    # PLATFORM-HARDENING-FLOORS §1 — resource ceilings for agent-influenced child
+    # processes, delivered post-exec by the ceiling shim. 0 disables an individual
+    # limit. session_host (ACP) is exempt from the NOFILE cap by profile, not config.
+    "sandbox.nofile": {"type": "int", "min": 0, "max": 1_048_576},
+    "sandbox.max_pids": {"type": "int", "min": 0, "max": 100_000},
+    "sandbox.max_rss_mb": {"type": "int", "min": 0, "max": 1_048_576},
     "security.denied_commands": {"type": "str_list", "max_items": 100, "each_regex": True},
     "security.egress": {"type": "egress"},
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is

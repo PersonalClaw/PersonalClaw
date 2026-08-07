@@ -45,8 +45,18 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
         logger.warning("loop gate: refusing to run %s command — %s", label, danger)
         return None
     try:
-        proc = await asyncio.create_subprocess_shell(
+        # Resource ceiling (PHF-1): a loop verify command is agent-influenced (the loop
+        # persisted it), so deliver the ``tool`` ceiling. Route through the post-exec
+        # shim via an explicit ``/bin/sh -c`` — equivalent to create_subprocess_shell's
+        # own shell, but the shim (prepended to argv) needs a real argv to wrap. No
+        # preexec_fn: the limit is applied after exec, off the event loop's fork.
+        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
+
+        proc = await create_subprocess_limited(
+            "/bin/sh",
+            "-c",
             cmd,
+            profile=PROFILE_TOOL,
             cwd=cwd or None,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
