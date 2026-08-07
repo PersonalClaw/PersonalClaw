@@ -14,10 +14,12 @@ from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import config_dir
 from personalclaw.dashboard.origin import (
+    auth_is_off,
     is_local_bind,
     machine_hostname,
     parse_dashboard_url,
     resolve_bind_host,
+    tailnet_ip,
 )
 from personalclaw.transcribe import ensure_ffmpeg_in_path
 
@@ -236,7 +238,8 @@ def _doctor() -> None:
     # Dashboard auth mode
     creds = cfg.load_credentials()
     _has_slack = bool(creds.get("SLACK_APP_TOKEN") and creds.get("SLACK_BOT_TOKEN"))
-    _local = is_local_bind(resolve_bind_host())
+    _bind_host = resolve_bind_host()
+    _local = is_local_bind(_bind_host)
     if _local:
         print("  bind:        127.0.0.1 (local-only, SSH tunnel for remote)")
         print("  auth:        loopback trusted (no token required)")
@@ -246,6 +249,25 @@ def _doctor() -> None:
         if not _has_slack:
             print("  auth:        ⚠️  no channel configured — token generation unavailable")
             issues.append("dashboard auth: remote bind without a channel")
+
+    # ── Remote access (MOBILE-COMPANION S1) ──
+    # Reuse the shared tailnet-detection helper so this line and the doctor
+    # `remote.reachability` probe agree. No token is minted here — we print the
+    # base URL and point at `personalclaw token` for the signed-in link.
+    _tnet = tailnet_ip()
+    _remote_port = _port or 0
+    if not _local and auth_is_off():
+        print(
+            "  remote:      ❌ bound beyond loopback with auth OFF — set a password"
+            " (see docs/guides/remote-access.md) or bind loopback"
+        )
+        issues.append("remote access: exposed beyond loopback without auth")
+    elif _tnet:
+        _phone_url = f"http://{_tnet}:{_remote_port}" if _remote_port else f"http://{_tnet}"
+        print(f"  remote:      ✅ tailnet {_tnet} — open {_phone_url} on your phone")
+        print("               (run: personalclaw token, for the signed-in link)")
+    else:
+        print("  remote:      local-only — see docs/guides/remote-access.md")
 
     # ── MCP Tools ──
     print("\nMCP Tools")
