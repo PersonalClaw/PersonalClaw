@@ -63,6 +63,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_RUN_NO_SPEC": (500, "spec_unreadable"),
     "WF_RUN_BAD_SPEC": (500, "spec_unreadable"),
     "WF_NODE_NOT_RUN": (409, "not_produced"),
+    # A node the inspect endpoint was asked about that exists in the spec but has not reached a
+    # terminal state. 409, not 404 (the node IS known) and not 400 (the request is well-formed):
+    # the state is the problem, and it resolves itself as the run advances — a client can retry.
+    "WF_NODE_NOT_TERMINAL": (409, "not_terminal"),
     "WF_MUT_NO_OPS": (400, "invalid_request"),
     "WF_MUT_VERSION_MISMATCH": (409, "version_mismatch"),
     "WF_MUT_CONFIRM_REQUIRED": (409, "confirmation_required"),
@@ -328,6 +332,45 @@ async def api_run_output(request: web.Request) -> web.Response:
     return _reply(
         service.output(request.match_info.get("run_id", ""), request.match_info.get("node_id", ""))
     )
+
+
+async def api_run_node_inspect(request: web.Request) -> web.Response:
+    """The §5 reconstructability set for one terminal node (WF2-A2).
+
+    A read-only forensics view over data the controller already persisted: the resolved
+    prompt (or a ref), the resolved inputs, the output (or an `artifact_ref` when it was
+    offloaded), the attempt records, the ledger slice for this node, and whether the output
+    was served from the resume cache. WV-10 renders this as an inspector drawer; this route
+    is the sole caller today.
+
+    SECRETS ABSENT is the contract. The service read returns persisted values verbatim, and
+    the resolved prompt in particular is stored UN-redacted (`_store_prompt` writes through
+    `store.write_output`, not the redacting journal path). So every reconstructability field
+    is routed through `journal.redact` — the SAME recursive redactor the journal writer uses,
+    reused rather than re-derived so the two cannot drift — before it leaves the process. A
+    credential that reached this endpoint would be a credential shipped to a browser, a bug
+    report, and (via the drawer) a screenshot.
+    """
+    from personalclaw.workflows import journal
+
+    result = service.inspect_node(
+        request.match_info.get("run_id", ""), request.match_info.get("node_id", "")
+    )
+    if not result.get("ok"):
+        return _fail(result)
+    # Redact only the reconstructability payload — not the run_id/node_id/state routing
+    # fields, which are engine-controlled identifiers a redactor might otherwise mangle.
+    redacted_keys = (
+        "resolved_prompt",
+        "resolved_inputs",
+        "output",
+        "attempts",
+        "ledger_events",
+    )
+    safe = {
+        k: (journal.redact(v) if k in redacted_keys else v) for k, v in result.items() if k != "ok"
+    }
+    return web.json_response(safe)
 
 
 async def api_run_edit(request: web.Request) -> web.Response:
@@ -632,6 +675,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)
     app.router.add_get("/api/workflows/runs/{run_id}/continuations", api_run_continuations)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
+    app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)

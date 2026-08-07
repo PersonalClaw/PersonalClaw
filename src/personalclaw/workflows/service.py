@@ -46,6 +46,7 @@ from personalclaw.workflows import (
 )
 from personalclaw.workflows.models import (
     TERMINAL_RUN_STATUSES,
+    TERMINAL_STATES,
     InstanceState,
     Node,
     OriginKind,
@@ -571,6 +572,165 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
         state=instances[target].state.value,
         output=store.read_output(run_id, target),
     )
+
+
+def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
+    """The §5 reconstructability set for one terminal node (WF2-A2).
+
+    Read-only forensics over data the controller already persisted: from this payload alone
+    a reader can see what a node *saw* (`resolved_prompt` + `resolved_inputs`), what it
+    *produced* (`output`, or an `artifact_ref` when the value was offloaded), how many tries
+    it took (`attempts`), the ledger slice that records the trajectory (`ledger_events`),
+    and whether the output was served from the resume cache rather than a fresh run
+    (`cached`). The acceptance bar §5 states is that prompt → tools → output is
+    reconstructable from these events alone; this is the surface that exposes it.
+
+    Never raises across the boundary — like every function here it returns
+    `{"ok": bool, ...}`. Three distinct failures, because a caller renders them differently:
+    an unknown run/node is a 404 (nothing to show), a node that exists but has not reached a
+    terminal state is a 409 (`WF_NODE_NOT_TERMINAL` — retry as the run advances), and neither
+    is a server fault.
+
+    SECRETS: this returns the persisted values VERBATIM — the resolved prompt is stored raw
+    by the controller (`_store_prompt` writes through `store.write_output`, which does NOT
+    redact), so this dict is NOT safe to emit as-is. Redaction is the HTTP surface's job
+    (WF2-A2 secrets contract); keeping the read un-redacted mirrors `output()`/`status()`,
+    which also hand back stored state verbatim to their one in-process caller.
+    """
+    from personalclaw.workflows.bindings import node_deps
+
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    spec = store.read_spec(run_id)
+    if spec is None:
+        return _err("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    try:
+        root = Node.from_dict(spec.get("root") or {})
+    except ValueError as exc:
+        return _err("WF_RUN_BAD_SPEC", f"unreadable spec: {exc}")
+
+    node_by_path = dict(walk(root))
+    id_paths = [p for p, node in node_by_path.items() if node.id == node_id]
+    if not id_paths:
+        return _err("WF_NODE_NOT_FOUND", f"no node {node_id!r} in this run's spec")
+
+    instances = store.read_state(run_id)
+    matched = [
+        p
+        for p in instances
+        if any(p == b or p.startswith(f"{b}#") or p.startswith(f"{b}@") for b in id_paths)
+    ]
+    if not matched:
+        return _err("WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet")
+    # The LAST instance for the id — a `foreach` body produces many, and inspecting item 0
+    # for the whole fan-out is the same footgun `output()` documents.
+    target = sorted(matched)[-1]
+    inst = instances[target]
+    if inst.state not in TERMINAL_STATES:
+        return _err(
+            "WF_NODE_NOT_TERMINAL",
+            f"node {node_id!r} is {inst.state.value}, not terminal — nothing to reconstruct yet",
+        )
+
+    base = target.split("#")[0].split("@")[0]
+    node = node_by_path.get(base)
+
+    # The ledger slice for THIS instance. `journal.ledger` reads events.jsonl (the LEDGER_KINDS
+    # subset the flywheel reads); filtering to the exact instance_path keeps a sibling foreach
+    # item's events out of this node's forensics.
+    node_events = [e for e in journal_mod.ledger(run_id) if e.get("instance_path") == target]
+
+    # resolved_prompt — the fully-resolved post-binding prompt the controller stored raw at
+    # `<path>::prompt`. Inline when small; a ref past the inline boundary, so a megabyte prompt
+    # does not ride in every inspect response. The ref is the one step_completed already recorded.
+    prompt_ref = ""
+    for e in node_events:
+        if e.get("kind") == journal_mod.STEP_COMPLETED and e.get("resolved_prompt_ref"):
+            prompt_ref = str(e["resolved_prompt_ref"])
+            break
+    stored_prompt = store.read_output(run_id, f"{target}::prompt")
+    resolved_prompt: Any
+    if isinstance(stored_prompt, str) and stored_prompt:
+        if len(stored_prompt.encode("utf-8")) > journal_mod.MAX_INLINE_OUTPUT_BYTES:
+            resolved_prompt = {"ref": prompt_ref or f"{target}::prompt"}
+        else:
+            resolved_prompt = stored_prompt
+    elif prompt_ref:
+        resolved_prompt = {"ref": prompt_ref}
+    else:
+        # A transform/action node has no LLM prompt — an empty string, not a fabricated ref.
+        resolved_prompt = ""
+
+    # resolved_inputs — what actually reached the node: each declared dependency mapped to the
+    # output it produced. Reconstructed from persisted state the way `_resolved_inputs` builds
+    # it live (node_deps → the dep's stored output), so a read after a restart sees the same
+    # closure the run did. Only declared deps, not the whole output map.
+    id_to_base: dict[str, str] = {}
+    for p, n in node_by_path.items():
+        if n.id:
+            id_to_base.setdefault(n.id, p)
+    resolved_inputs: dict[str, Any] = {}
+    for dep in sorted(node_deps(node.config or {}) if node else set()):
+        dep_base = id_to_base.get(dep)
+        dep_matches = (
+            [
+                ip
+                for ip in instances
+                if ip == dep_base or ip.startswith(f"{dep_base}#") or ip.startswith(f"{dep_base}@")
+            ]
+            if dep_base
+            else []
+        )
+        resolved_inputs[dep] = (
+            store.read_output(run_id, sorted(dep_matches)[-1]) if dep_matches else None
+        )
+
+    # output — the node's terminal value, unless it was offloaded. An artifact pointer (a
+    # future WV-11 ref that is not an `outputs/` path) or a spilled oversize/binary payload is
+    # returned as `{"artifact_ref": ...}` rather than inlined: the whole point of the spill is
+    # that the blob does not ride in the response, and a 5MB output (or a base64 screenshot)
+    # inline would flood whatever renders this.
+    output_ref = inst.output_ref or ""
+    raw_output = store.read_output(run_id, target)
+    if output_ref and not output_ref.startswith("outputs/"):
+        output_field: Any = {"artifact_ref": output_ref}
+    elif journal_mod.is_binary_payload(raw_output) or _serialized_bytes(raw_output) > (
+        journal_mod.MAX_INLINE_OUTPUT_BYTES
+    ):
+        output_field = {"artifact_ref": output_ref or target}
+    else:
+        output_field = raw_output
+
+    return _ok(
+        run_id=run_id,
+        node_id=node_id,
+        instance_path=target,
+        state=inst.state.value,
+        resolved_prompt=resolved_prompt,
+        resolved_inputs=resolved_inputs,
+        output=output_field,
+        # The retry records for this node — empty for a node that succeeded first try, since
+        # `step_attempt` is only journaled on a retry. A list, so a reader can show each try's
+        # typed failure and fix instruction rather than a bare count.
+        attempts=[e for e in node_events if e.get("kind") == journal_mod.STEP_ATTEMPT],
+        ledger_events=node_events,
+        # cached — served from the resume/rewind cache (WF2-A1) rather than a fresh run. The
+        # `step_cached` event is the record; "did my edit actually re-run this?" is answerable
+        # from here, which is the question the event exists to answer.
+        cached=any(e.get("kind") == journal_mod.STEP_CACHED for e in node_events),
+    )
+
+
+def _serialized_bytes(value: Any) -> int:
+    """Byte size of a value's canonical JSON — the same boundary the journal spills at, so
+    the inspect view offloads exactly what the journal would have."""
+    import json
+
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
 
 
 async def observe(run_id: str, duration_ms: int = DEFAULT_OBSERVE_MS) -> dict[str, Any]:
