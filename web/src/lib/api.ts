@@ -638,6 +638,20 @@ export interface WorkflowContinuation {
 export interface WorkflowCascadePreview {
   rerun: string[]; stale: string[]; skipped: string[]; committed_effects: string[]; needs_confirmation: boolean
 }
+// The §5 reconstructability set for one terminal node (WF2-A2) — what the WV-10 inspector
+// drawer renders. `resolved_prompt` is the fully-resolved post-binding prompt inline, or a
+// `{ ref }` when it was too large to inline; `output` is the node's value, or an
+// `{ artifact_ref }` when the value was offloaded. Every text field arrives redacted — the
+// backend strips credentials before this leaves the process.
+export interface NodeInspect {
+  run_id: string; node_id: string; instance_path: string; state: string
+  resolved_prompt: string | { ref: string }
+  resolved_inputs: Record<string, unknown>
+  output: unknown | { artifact_ref: string }
+  attempts: Array<Record<string, unknown>>
+  ledger_events: Array<Record<string, unknown>>
+  cached: boolean
+}
 export interface WorkflowManifest {
   spec_semver: string
   node_kinds: Array<{ kind: string; container: boolean; lane: string }>
@@ -2985,6 +2999,12 @@ export const api = {
   workflowRunOutput: (id: string, nodeId: string) =>
     get<{ run_id: string; node_id: string; instance_path: string; state: string; output: unknown }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(nodeId)}`),
+  /** The §5 reconstructability set for one TERMINAL node (WF2-A2) — resolved prompt, inputs,
+   *  output, attempts, this node's ledger slice, and whether it was served from cache. Every
+   *  text field arrives redacted. WV-10's inspector drawer consumes this. */
+  workflowRunNodeInspect: (runId: string, nodeId: string) =>
+    get<NodeInspect>(
+      `/api/workflows/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/inspect`),
   workflowContinuations: (id: string) =>
     get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
   // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees

@@ -601,6 +601,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/edit` — _(no summary)_
 - `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
 - `POST /api/workflows/runs/{run_id}/fork` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.
