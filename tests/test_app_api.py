@@ -398,6 +398,41 @@ async def test_ui_asset_served_and_traversal_guarded(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ui_asset_sibling_prefix_dir_is_rejected(tmp_path):
+    """Regression for #791: a sibling dir sharing the ``ui`` prefix (``ui.bak``)
+    must NOT pass containment. The old ``str(target).startswith(str(ui_root))``
+    check omitted the trailing separator, so ``.../ui.bak/secret.js`` slipped
+    through; ``is_relative_to`` rejects it while a real ``ui/`` asset still serves.
+
+    The handler is called directly because the HTTP client (yarl) normalizes the
+    ``..`` segment client-side before it reaches the route, so the containment
+    guard can only be exercised with an un-normalized ``tail``.
+    """
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers.apps import api_app_ui_asset
+
+    async def _get(name: str, tail: str) -> web.StreamResponse:
+        req = make_mocked_request("GET", f"/apps/{name}/ui/{tail}")
+        req._match_info = {"name": name, "tail": tail}
+        return await api_app_ui_asset(req)
+
+    async with _client(tmp_path) as client:
+        src = _app_src(
+            tmp_path, "widget", files={"ui/index.js": "export function mount(){return null}\n"}
+        )
+        assert (await client.post("/api/apps", json={"source": src})).status == 201
+        # Drop a SIBLING dir that shares the ``ui`` prefix into the installed app dir.
+        installed_ui_bak = manager.app_dir("widget") / "ui.bak"
+        installed_ui_bak.mkdir()
+        (installed_ui_bak / "secret.js").write_text("SECRET_SIBLING\n", encoding="utf-8")
+        # A legitimate asset inside ui/ still serves.
+        assert (await _get("widget", "index.js")).status == 200
+        # The sibling escaping ui/ is rejected by real path containment.
+        assert (await _get("widget", "../ui.bak/secret.js")).status == 404
+
+
+@pytest.mark.asyncio
 async def test_backend_proxy_round_trip(tmp_path):
     # A real Python backend: an http.server that echoes the path on /health and /ping.
     backend_py = textwrap.dedent("""

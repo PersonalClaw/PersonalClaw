@@ -1002,7 +1002,7 @@ async def api_app_ui_asset(request: web.Request) -> web.StreamResponse:
 
     ui_root = (app_dir(name) / "ui").resolve()
     target = (ui_root / tail).resolve()
-    if not str(target).startswith(str(ui_root)) or not target.is_file():
+    if not target.is_relative_to(ui_root) or not target.is_file():
         return web.json_response({"error": "not found"}, status=404)
 
     ctype = _UI_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
