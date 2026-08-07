@@ -18,7 +18,7 @@ The original design record is kept below — execution logs, measured findings a
 
 **Soul guardrails:** (1) **provider-agnostic marker, vendor translation at the edge** — core emits a neutral hint on message dicts; the word `cache_control` appears ONLY inside a vendor adapter, never in `agents/`, `context.py`, or any core caller (the provider boundary is lint-enforced); (2) **byte-identical when off** — with caching unavailable or disabled, the request that reaches the wire must be byte-for-byte what ships today (a test asserts this), so a non-caching provider is never penalised; (3) **never trade correctness for a cache hit** — no content is reordered, dropped, or deferred to improve hit rate beyond the two deliberate, enumerated relocations in §C2/§C3; if a stability change would alter *what the model is told*, it is out of scope; (4) **measure before claiming** — no session may be marked complete on an asserted win; a provider-reported cache read is the only acceptable evidence (§S3).
 
-Class **A** for the marker/middleware and the wire-order repair (no persisted state), class **B** for the one new config section + the cache-stats persistence that COST-AND-TOKEN-OBSERVABILITY owns — pre-LIFECYCLE-DOCTRINE, so those land as **plain clean breaks under the pre-1.0 banner** (tolerant reads, no gate/migration; CHANGELOG entry).
+Class **A** for the marker/middleware and the wire-order repair (no persisted state), class **B** for the one new config section + the cache-stats persistence that COST-AND-TOKEN-OBSERVABILITY owns — so those land as **plain clean breaks under the pre-1.0 banner** (tolerant reads, no gate/migration; CHANGELOG entry).
 
 ---
 
@@ -71,7 +71,7 @@ So a **volatile, per-turn string is the first thing the model sees**, ahead of t
 - **S3 — the proof.** Read the two cache fields off the Anthropic response into `LLMEvent` (**the missing producer, F3**), aggregate a hit-rate + saved-USD off provider-reported numbers only, and hand them to the surface COST-AND-TOKEN-OBSERVABILITY renders. **S3 is not optional polish — it is what makes S1/S2 falsifiable.** Ordering note: S3's producer is what V2 measures against, so if S2 and S3 land in one session, do T3.1 first.
 - **What this is NOT:** not a response cache (identical-prompt→stored-answer changes semantics; explicitly out of scope); not a semantic/embedding cache; not context compaction (CONTEXT-ECONOMY owns it, this plan only reacts); not tool-schema stabilisation or failure retention (CONTEXT-ENGINEERING-PRINCIPLES owns both); not a new capability-negotiation protocol (it extends the one that exists).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — The neutral cache hint + middleware (`llm/prompt_cache.py`, new)
 
@@ -224,7 +224,7 @@ Wire through: (1) dataclass + `_meta`; (2) `load()`'s explicit mapping; (3) `to_
 - **Storage owned:** none in S1/S2 (class A). The cache-hit aggregate persists through whatever store COST-AND-TOKEN-OBSERVABILITY defines — **this plan must not invent a second stats file**; `stats.py:42-84` already has the counters.
 - **Deliberately NOT touched:** compaction internals (CONTEXT-ECONOMY), tool retrieval/`_prepare_turn_tools` (CONTEXT-ENGINEERING-PRINCIPLES), ACP runtimes (an external CLI owns its own request shape — out of scope by construction), `stream()`'s stateful history path (only the stateless `complete()` path is in scope; `stream()` is the legacy simple-prompt adapter).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Wire-order repair + prefix stability (no marker; pays off on its own)
 

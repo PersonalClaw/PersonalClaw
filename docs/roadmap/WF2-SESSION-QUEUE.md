@@ -2007,7 +2007,7 @@ kinds; `file`/`webhook`/`idle`/`view`/`web_watch`/`run_completed` have **no pers
 62-70 built the entity, disposition table, dispatch, cron migration and event parity — the store itself
 was never a row. Building it + the eight-tool `automation_*` namespace + the `schedule_*` alias
 retirement is a multi-session program, and writing the chat tool against a store a later session defines
-is what EXECUTION-PROTOCOL forbids. S83 ships the runtime that program would otherwise invent under
+is what the roadmap session discipline forbids. S83 ships the runtime that program would otherwise invent under
 pressure; the store is the next owner's first task.
 
 ### 🔴 The stacked-merge incident (2026-08-03) — resolved by #239

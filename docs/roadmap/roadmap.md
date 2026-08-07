@@ -2,13 +2,12 @@
 
 Active and planned feature work. Each entry links to a detailed plan document in `plans/`.
 
-**Last updated:** 2026-08-05 · **rev 16** — 69 plans / 6 pillars / ~360 sessions.
+**Last updated:** 2026-08-05 · **rev 16** — 68 plans / 6 pillars / ~360 sessions.
 
 ## Proposing roadmap changes
 
 This roadmap is **maintainer-owned** — which is a statement about process, not about
-openness. Plans encode sequencing decisions and cross-plan contracts (see
-[INTEGRATION-ARCHITECTURE](plans/INTEGRATION-ARCHITECTURE.md)), so a plan edited in
+openness. Plans encode sequencing decisions and cross-plan contracts, so a plan edited in
 isolation tends to break a seam another plan depends on. One person holding the
 dependency graph is what keeps that coherent.
 
@@ -19,9 +18,9 @@ and you are credited in it. **Pull requests against `docs/roadmap/` are declined
 principle** — not because the idea is unwelcome, but because the plan is the wrong
 artifact for a newcomer to write cold.
 
-What *is* directly contributable: implementing an existing plan task (read
-[EXECUTION-PROTOCOL](plans/EXECUTION-PROTOCOL.md) first — it is mandatory for roadmap
-work), fixing a
+What *is* directly contributable: implementing an existing plan task (read the
+roadmap session discipline in [AGENTS.md](../../AGENTS.md) first — it is mandatory for
+roadmap work), fixing a
 [good-first-issue](https://github.com/PersonalClaw/PersonalClaw/issues?q=is%3Aopen+label%3Agood-first-issue),
 or reporting that a plan's stated premise no longer matches the code (that is an E1
 escalation and genuinely valuable — several plans have been re-scoped because of one).
@@ -33,7 +32,7 @@ escalation and genuinely valuable — several plans have been re-scoped because 
 - **rev 12** — platform gap analysis (~75 apps surveyed 2026-07-26), owner-greenlit batch. Three new plans: **55 Chat-Craft** (Pillar F — seven proven chat-surface mechanics: true rewind, queue interrupt-now, find-in-conversation, quote-reply, follow-up chips, screen-snip, smooth streaming), **56 Agent-Routing** (Pillar D — suggest-first specialist routing chip; deterministic+embedding classification, LLM never in the hot path; silent auto-routing deferred to a future earned-autonomy mechanism), **57 Personality-Themes** (Pillar F — themes that carry behavior: name/logo/sound/flourishes, strictly additive, a11y never weakened). Thirteen dated amendments (each plan carries an `## Amendment (2026-07-26 …)` block): WORKFLOWS-V2 (cached-rerun legibility + per-node inspection, 31→32), PLATFORM-RESILIENCE (`steer` mid-turn policy, 5→6), EXECUTION-ISOLATION (ceiling-everything + spawn-audit test, 7→8), AUTOMATION-SUBSTRATE (calendar-aware scheduling: quiet windows + duty gate + week grid, 9→10), INBOX-NOTIFICATIONS-UNIFICATION (second-opinion verify gate, 5→6), SECURITY-HARDENING (tamper-resistant baseline denylist), LEARNING-VISIBILITY (periodic identity report), MODEL-ROUTING-TELEMETRY (the usage story over the guardrails audit), EXTERNAL-ACCESS (OpenAI-compatible doorway promoted to an early sub-slice), AMBIENT-SURFACES (in-chat widget round-trip formalized — bridge already exists), APP-PLATFORM-EVOLUTION (app update badges, consented cross-app reads, Fix-with-AI), MOBILE-COMPANION (approve-from-phone reordered to milestone one), DURABILITY-AND-SYNC (merge-restore gaps closed — merge mode already exists).
 - **rev 11** — two cross-cutting infrastructure plans added from the owner's remote-access ask: **53 Remote-User-Auth** (Pillar B — human login that mints the existing session token for internet-exposed self-hosting, on a durable-session foundation; the prerequisite for remote companion clients) and **54 Companion-Apps** (Pillar D — the connectivity contract native clients use to reach a local-or-remote gateway: discovery, unified pairing, endpoint switching, auth; MOBILE-COMPANION + DESKTOP-CAPABILITIES consume it). Note verified in the same pass: the desktop shell is **already Electron** — there is no Tauri anywhere, so no migration plan was created; the mic/audio gap is DESKTOP-CAPABILITIES S3 (unbuilt), not a re-platform. v0.1.2 shipped Design-System-Consistency, Platform-Legibility, Autonomy-Guardrails, and Platform-Resilience.
 - **rev 10** — Pillar F "Product Depth & Craft" added (48 App-Platform-Evolution, 49 Knowledge-Library, 50 Session-Management, 51 Design-System-Consistency, 52 Fluid-Motion), from the owner's product-depth ask.
-- **rev 9** — pre-launch alignment: 17 plans (31-47) added from the pre-launch investigation & owner review under new Pillar E (Launch, Reach & Ecosystem) + additions to B/C/D; PUBLICATION amended (repos under the `PersonalClaw` GitHub org, personalclaw.dev primary domain, force-push/SOURCE_REV retired → feature-branches-to-`main`); EXTERNAL-ACCESS §3 read-only MCP extracted to plan 41. Deepened plans carry Contracts & Interfaces + executor task tables; see the three companion docs below.
+- **rev 9** — pre-launch alignment: 17 plans (31-47) added from the pre-launch investigation & owner review under new Pillar E (Launch, Reach & Ecosystem) + additions to B/C/D; PUBLICATION amended (repos under the `PersonalClaw` GitHub org, personalclaw.dev primary domain, force-push/SOURCE_REV retired → feature-branches-to-`main`); EXTERNAL-ACCESS §3 read-only MCP extracted to plan 41. Deepened plans carry Contracts & Interfaces + executor task tables; the standing session discipline and shared conventions live in AGENTS.md.
 - **rev 4-8** (earlier) — ACP Agent Parity (4), TEAM-SHARED-ENTITIES (5), Multi-Tenant rescope (6), grok-build learnings folded into CONTEXT-ECONOMY/EXTERNAL-ACCESS/PLATFORM-RESILIENCE (7), HARNESS-CRAFT (8).
 
 ---
@@ -42,18 +41,15 @@ escalation and genuinely valuable — several plans have been re-scoped because 
 
 62 plans across 6 conceptual pillars. Plans interleave via execution waves; the engine carries embedded acceptance criteria from downstream plans. The research corpus lives at `docs/research/learnings/` (14 source-agnostic topic files, ~320 mechanisms) — feed a topic file to any implementation session for mechanism-level grounding.
 
-**Every implementation session executes under [plans/EXECUTION-PROTOCOL.md](plans/EXECUTION-PROTOCOL.md)** — the standing ground rules (scope discipline, definition of done, validation-as-a-user, deviation ledger, escalation triggers) that let plan tasks be delegated to any session, including smaller models, without eroding standards. Deepened plans carry executor-ready task tables (ID / task / files / done-when); a session that can't tell what "done" means for a task treats that as a defect in the task, not license to improvise.
+**Every implementation session executes under the roadmap session discipline in [AGENTS.md](../../AGENTS.md)** — the standing ground rules (scope discipline, definition of done, validation-as-a-user, deviation ledger, escalation triggers) that let plan tasks be delegated to any session, including smaller models, without eroding standards. Deepened plans carry executor-ready task tables (ID / task / files / done-when); a session that can't tell what "done" means for a task treats that as a defect in the task, not license to improvise.
 
-**Three cross-cutting companion docs:**
-- [plans/EXECUTION-PROTOCOL.md](plans/EXECUTION-PROTOCOL.md) — the standing ground rules every session runs under (above).
-- [plans/INTEGRATION-ARCHITECTURE.md](plans/INTEGRATION-ARCHITECTURE.md) — **how the rev-9 plans fit together**: the build-order/data-flow map, the shared-seam inventory (each contract defined once, referenced everywhere), the mechanical conventions (config wiring, error envelopes, SEL events, storage, fail-open-vs-closed, sdk exports), the verified existing primitives, and the three "landmine" convergence points. Read this before any single plan. Each deepened plan carries a `Contracts & Interfaces` section (exact dataclasses, signatures, JSON schemas, wire contracts) + an `Integration points` list (calls / called-by / storage / gates) so a session — including a smaller model — never invents a shape another plan also touches.
-- [plans/REV9-ALIGNMENT-AND-OWNER-TASKS.md](plans/REV9-ALIGNMENT-AND-OWNER-TASKS.md) — binds the original plans 1-30 to the protocol, annotates their rev-9 alignment deltas, and holds the single consolidated **owner-tasks index across all 47 plans** (accounts, spend decisions, credentials, hardware, validations you must drive, copy sign-offs).
+The mechanical conventions a plan builds on — the config round-trip contract, error envelopes, SEL event logging, storage layout, the fail-open-vs-closed rule, and the SDK export boundary — live in [AGENTS.md](../../AGENTS.md) and [docs/architecture/overview.md](../architecture/overview.md); each deepened plan additionally carries a `Contracts & Interfaces` section (exact dataclasses, signatures, JSON schemas, wire contracts) + an `Integration points` list (calls / called-by / storage / gates) so a session — including a smaller model — never invents a shape another plan also touches.
 
 **Alignment principles (rev 9, owner-set):**
 
-1. **Clean architecture and implementation state outrank early feature availability.** Applied as: never pull a feature forward onto an unclean seam — the seam work lands first (e.g. sender trust before channels, the kind registry before digest, the lifecycle doctrine before any migration-bearing plan).
+1. **Clean architecture and implementation state outrank early feature availability.** Applied as: never pull a feature forward onto an unclean seam — the seam work lands first (e.g. sender trust before channels, the kind registry before digest).
 2. **The engine program keeps its position.** WORKFLOWS-V2 remains the Wave-1 architecture investment; the launch/reach plans (Pillar E) run in Waves 0-2 alongside it rather than displacing it.
-3. **The clean-break doctrine graduates.** Post-publication, migration-bearing changes follow the LIFECYCLE-DOCTRINE lifecycle (gate → dual-path → migrate → cleanup); plan 31 lands first in Wave 0 because it shapes how every other plan's changes land.
+3. **The clean-break doctrine graduates — later.** During 0.x, migration-bearing (class-B/S) changes ship as plain clean breaks under the pre-1.0 banner (advise `personalclaw snapshot` in release notes). The migration-backed regime — gate → dual-path → migrate → cleanup — is deferred until the architecture stops moving, on the way to 1.0; the mental model lives in [CONTRIBUTING.md](../../CONTRIBUTING.md#breaking-changes).
 4. **Zero telemetry is a feature.** No adoption instrumentation is added anywhere in this program; public signals only (stars, PyPI downloads, GitHub traffic).
 
 ---
@@ -89,7 +85,6 @@ Cross-cutting floors everything else depends on.
 | 12 | Context Economy — Compression + Tool-Groups + Codebase Graph | [CONTEXT-ECONOMY](plans/CONTEXT-ECONOMY.md) | ~6 | 0/1 |
 | 13 | Execution Isolation — Sandbox + BYO Runners + Secrets Vault | [EXECUTION-ISOLATION](plans/EXECUTION-ISOLATION.md) | ~8 | 2 |
 | 28 | ACP Agent Parity — One Provider, the Whole Platform | [ACP-AGENT-PARITY](plans/ACP-AGENT-PARITY.md) | ~9 | 0 |
-| 31 | Lifecycle Doctrine & API Stability — Post-PoC Change Discipline | [LIFECYCLE-DOCTRINE](plans/LIFECYCLE-DOCTRINE.md) | ~3 | 0 (first) |
 | 32 | Provider-Boundary Completion — Retire the Slack Residue | [PROVIDER-BOUNDARY-COMPLETION](plans/PROVIDER-BOUNDARY-COMPLETION.md) | ~2 | 0 |
 | 47 | Security Hardening — Keychain, Signed Manifests, Gate Fuzzing, SEL Surface | [SECURITY-HARDENING](plans/SECURITY-HARDENING.md) | ~4 | 4 |
 | 53 | Remote User Authentication — Log In From the Internet Without Being Home | [REMOTE-USER-AUTH](plans/REMOTE-USER-AUTH.md) | ~4 | 1 |
@@ -171,14 +166,13 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 | 61 | Artifacts Evolution — First-Class Creative Library | [ARTIFACTS-EVOLUTION](plans/ARTIFACTS-EVOLUTION.md) | ~3 | 2+3 |
 | 68 | Product Experience Parity — UX Simplification, Artifacts-as-Apps, Onboarding Import & the App Suite | [PRODUCT-EXPERIENCE-PARITY](plans/PRODUCT-EXPERIENCE-PARITY.md) | ~12 | 1+2+3 |
 
-**Total estimated effort:** ~339 sessions across 66 plans.
+**Total estimated effort:** ~336 sessions across 65 plans.
 
 ---
 
 ## Execution Waves
 
 **Wave 0 — Front-runners (no v2 dependency; launch-gating set added in rev 9):**
-- **Lifecycle Doctrine (plan 31 — lands FIRST: its doctrine + stability tiers shape how every other plan's changes land)**
 - **Publication (plan 27, amended — release under the `PersonalClaw` org; all engineering prerequisites complete):**
   create org + migrate repos, push, tag v0.1.0, post-publication verification against the live remote
 - **CI & Release Engineering (plan 33: red-test triage → green main, PR/merge workflows, release pipeline, supply chain)**
@@ -205,7 +199,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - WORKFLOWS-V2 Slices 0-5 (data model + frontier scheduler, engine-owned completion, effect ledger, mutations + checkpoints/fork, chat tools + HTTP/FE + live widget; Self-Verification replay gates the journal format)
 - Channel Expansion (Sessions 1-3: sender-trust core seam, then Telegram)
 - **Remote User Authentication (plan 53: durable session foundation → owner credential + CLI/deploy bootstrap → login front door → public-exposure hardening — the prerequisite for remote companion clients)**
-- Inbox/Notifications Unification (Sessions 1-3: kind registry + rules engine, inbox as the attention store, settings unification) — executed as a maintainer clean break under the pre-1.0 banner (the earlier "first full LIFECYCLE-DOCTRINE exercise" framing described a methodology, not a dependency; corrected 2026-07-30)
+- Inbox/Notifications Unification (Sessions 1-3: kind registry + rules engine, inbox as the attention store, settings unification) — executed as a maintainer clean break under the pre-1.0 banner (the earlier "first full lifecycle exercise" framing described a methodology, not a dependency; corrected 2026-07-30)
 - Learning Visibility (Sessions 1-2: end-to-end visible slice, "What I learned" surfaces)
 - Onboarding UX (Sessions 1-2: guided first run, progressive disclosure)
 - Platform Reach Track A (ARM: arm64 CI + SQLite-fallback verification, multi-arch release-blocking)
@@ -269,7 +263,7 @@ The product getting richer and more polished: platform/app evolution, knowledge-
 - Agent Rooms (plan 62 — PROPOSED; un-defer only after WORKFLOWS-V2 core slices + ACP-AGENT-PARITY land; council workflow template front-runs it as a LOOPS-EVOLUTION library candidate)
 
 ```
-Wave 0: DOCTRINE→ PUBLICATION  CI/RELEASE  DISTRIBUTION  SEC-LEGIBILITY  DISCOVER(1-3)  OSS-OPS  BOUNDARY-DONE  MCP-RO(1)
+Wave 0: PUBLICATION  CI/RELEASE  DISTRIBUTION  SEC-LEGIBILITY  DISCOVER(1-3)  OSS-OPS  BOUNDARY-DONE  MCP-RO(1)
         GUARDRAILS  LMM-V2  LEGIBILITY(1-3)  RESILIENCE(1-3)  CONTEXT-ECON  MEM-GRAPH(1-3)  DURABILITY(1-3)  SELF-VERIF(1-2)  LEARNING(1-4)  ACP-PARITY  MT-READY(1-3)
                     │
 Wave 1: ════ WORKFLOWS-V2 Slices 0-5 ════  ∥  CHANNELS(1-3)  REMOTE-AUTH  INBOX-UNIFY(1-3)  LEARN-VIS(1-2)  ONBOARD(1-2)  ARM  DISCOVER(4-5)  MCP-RO(2)

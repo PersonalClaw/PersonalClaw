@@ -31,7 +31,7 @@ rev 12; owner-decided **suggest-first**)
 - **The calibrated precedent** (`src/personalclaw/workflows/surfacing.py`): SOP surfacing is exactly the deterministic-first/embedding-second shape this plan needs — `_keyword_score` (per-phrase word-overlap over comma-separated `match_text`, mirroring `SkillsLoader._MIN_TRIGGER_OVERLAP = 0.7` in `skills/loader.py:18`), `_cosine`, `DEFAULT_MATCH_THRESHOLD = 0.62` (config-tunable `workflows.match_threshold`, `loader.py:1343`), cached `match_embedding` + `embedding_model` staleness check (`workflows/models.py:58-60`), and the never-break-a-turn `surface_for_turn_sync` wrapper. This plan reuses the *pattern and thresholds*, not the module.
 - **Background-compute precedent** (`src/personalclaw/suggestions.py`): `SuggestionsCache` + fire-and-forget `asyncio.create_task` registered on `state._background_tasks`, `GET /api/suggestions` (`dashboard/server.py:485`). Routing classification is far cheaper (no LLM) so it runs inline per-send, but the cache-on-state pattern (`get_suggestions_cache`) is the model for caching candidate embeddings.
 - **Chip render sites** (`web/src/pages/ChatPage.tsx`, 3368 lines): `SessionSkillsReview` (`web/src/pages/chat/SessionSkillsReview.tsx`) is the exemplar — a subtle pill above the composer, mounted at `ChatPage.tsx:1814` next to the composer, re-checked on `refreshKey` (turn-settled epoch), renders `null` when empty. `SuggestionChips` (`ChatPage.tsx:129`) shows the pill styling vocabulary. Composer selection state: `selection: ComposerValue` (`ChatPage.tsx:519`; type in `web/src/ui/composer/types.ts:18`); agent switch goes through `api.setSessionAgent` (`web/src/lib/api.ts:1469`). WS events arrive via `useChatSocket` (`web/src/lib/useChatSocket.ts`), dispatched by `m.type` in ChatPage (e.g. `activity_event` at line 732).
-- **Per-entity persistence precedent**: `entity_settings/<name>.json` via `_load_entity_settings`/`_save_entity_settings` (`providers/entity_routes.py:31/42`, atomic-write, tolerant reads) — used by legibility dismissals (`legibility/discover.py:296`). This is where dismissal counters belong per INTEGRATION-ARCHITECTURE §2.1 (per-entity user preference, not operator config).
+- **Per-entity persistence precedent**: `entity_settings/<name>.json` via `_load_entity_settings`/`_save_entity_settings` (`providers/entity_routes.py:31/42`, atomic-write, tolerant reads) — used by legibility dismissals (`legibility/discover.py:296`). This is where dismissal counters belong per the config-round-trip convention in AGENTS.md (per-entity user preference in `entity_settings/*.json`, not operator config).
 - **Gap:** no routing metadata on agents, no classifier, no suggestion surface, no suppression memory. The orchestrator skill (`agent.orchestrator_skill`, `loader.py`) delegates *within* a turn via subagents — a different mechanism (LLM-driven, in-turn); this plan is pre-turn, deterministic, and user-consented. They coexist; neither replaces the other.
 
 ## Design
@@ -42,7 +42,7 @@ rev 12; owner-decided **suggest-first**)
 - **Config:** `agents_routing` section — `enabled: bool = True` (kill-switch), `min_confidence: float = 0.62`, `cooldown_hours: float = 24.0` — 5-point wired (`_EDITABLE_CONFIG` entries `agents_routing.enabled` etc.), surfaced as a small block in Settings → Chat (`web/src/pages/settings/ChatPanel.tsx`).
 - **Audit:** every emitted suggestion + user response logs SEL (`sel().log_api_access(operation="agents.routing_suggest", outcome="suggested|accepted|dismissed", ...)`) — the precision record a future earned-autonomy graduation (forward hook, NOT in scope) would consume.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Routing metadata (additive fields, both agent layers)
 ```python
@@ -113,7 +113,7 @@ class AgentsRoutingConfig:
 - **Storage owned:** `entity_settings/agent_routing.json`; the two metadata fields inside existing `config.json` agents + `agent.json` files (additive; tolerant `from_dict` reads mean old files load unchanged).
 - **Zero telemetry:** scores/dismissals never leave the instance; SEL is the only record.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Metadata + classifier + emission (backend)
 

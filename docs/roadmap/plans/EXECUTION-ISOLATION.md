@@ -380,7 +380,7 @@ The website's "Bounded capabilities / untrusted zone" boundary diagram implies c
 - **"Autonomous work bounded by deterministic guardrails"** is true only for *unattended* work — `guardrails/model_call.py` guards `reasoning|background|loops|orchestration`, and interactive chat is explicitly out of scope by design. Notably the in-product Settings copy is *more* precise than the website here ("Interactive chat is never affected by these"), so the correct wording already exists in the product.
 - **"Desktop shell" as a platform** overstates distribution: the Electron app and PyInstaller spec are real, but nothing in `.github/` builds, tests, signs, notarizes, or attaches a DMG (verified: one dependabot comment is the only match). macOS-arm64 only, no auto-update channel.
 
-### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+### Amendment task table (extends this plan; run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 | ID | Task | Files | Done when |
 |---|---|---|---|

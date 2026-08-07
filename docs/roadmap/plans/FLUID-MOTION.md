@@ -28,7 +28,7 @@ The original design record is kept below — execution logs, measured findings a
 - **S2 — Liquid morphing primitives:** (a) **shared-element morph** — a `<Morph layoutId>` wrapper (framer `layout`/`layoutId`) so a list card morphs into its detail/expanded view and back (knowledge cards→reading view, session rows→open chat, loop cards→cockpit); (b) **fluid-shape morph** — a reusable liquid/blob primitive (SVG path or canvas metaball morphing between shapes, coral-tinted, `expr()`-scaled) for state transitions, loading→loaded, and ambient surfaces; (c) integrate with the existing `Disintegrate`/`Bud` so the morph vocabulary is coherent, not parallel.
 - **S3 — Route transitions + orchestration + budget proof:** wire `viewTransition()` into the hash router so navigation crossfades/morphs (respecting reduced-motion + the URL-state doctrine — the transition is cosmetic, never state); orchestrated entrance sequences for key surfaces (a page's regions stagger in via `stagger()`); and a **budget proof** — a motion-performance pass (60fps target, no jank on the big pages; `expressiveness=0` and `prefers-reduced-motion` both produce instant/crossfade with zero springs) verified and CI-guarded where feasible.
 
-## Contracts & Interfaces (extends `motion.ts` + `ui/motion/`; conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (extends `motion.ts` + `ui/motion/`; conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Physics presets (`web/src/design/motion.ts` additions; all bounciness/expressiveness-scaled)
 ```typescript
@@ -61,7 +61,7 @@ Both honor reduced-motion (→ instant swap/crossfade) and `expr()`. Registered 
 - **Depends on:** 51 (consistent components to morph between).
 - **Gates (existing, reused):** `runtime.bounciness`, `runtime.expressiveness`, `prefers-reduced-motion` — no new gate; motion is never on a lifecycle gate (it's cosmetic).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Physics system
 

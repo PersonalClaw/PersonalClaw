@@ -43,7 +43,7 @@ sibling-platform gap analysis greenlight — "personality themes as a brand play
 - **A11y invariants (enforced, not promised):** every personality's base scheme goes through `schemeContrast.test.ts` automatically (it iterates `SCHEMES`); a new `personalityA11y.test.ts` structurally asserts each `Personality`: base scheme exists, error treatment preserves `role="alert"` semantics, sound cues declare no autoplay, shell element ids resolve in the closed map. Reduced-motion: shell elements and cues check `useReducedMotion`/the media query themselves *in addition to* the global CSS kill at `tokens.css:398`.
 - **Forward hook (mention only, not in scope):** APP-PLATFORM-EVOLUTION may later let apps contribute personality entries through a provider seam (manifest-declared, allowlist-validated server-side like `_THEME_CSS_VARS`); the closed component/cue registries here are designed so that seam can extend them without opening arbitrary-code paths.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Personality registry (`web/src/design/personalities.ts`, new)
 ```ts
@@ -106,7 +106,7 @@ def _maybe_inject_persona(message: str, color_theme: str, is_new: bool) -> str: 
 - **Storage owned:** the `personality` key inside the existing `appearance` localStorage payload; two bundled `persona-<id>.md` snippets in `src/personalclaw/config/prompt_snippets/`. No new server files; `/api/themes` custom themes remain colors-only in this plan (personality entries are first-party code — the app-provider seam is the forward hook).
 - **Zero telemetry:** activation/cue events are never logged anywhere (not even SEL — this is pure presentation, not security-relevant).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Registry + identity layer + persona generalization
 

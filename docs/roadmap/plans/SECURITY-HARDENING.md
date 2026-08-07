@@ -12,7 +12,7 @@ The original design record is kept below — execution logs, measured findings a
 **Status:** DESIGNED — deepened 2026-07-18 with code recon (initial PROPOSED 2026-07-18; owner: "let's do this but towards the end of the roadmap")
 **Created:** 2026-07-18
 **Wave:** 4 — deliberately late; SECURITY-LEGIBILITY (Wave 0) carries the launch-time trust story.
-**Depends on:** SECURITY-LEGIBILITY (the threat model that prioritizes this — its DISCOVERY entries seed candidate scope), CI-RELEASE-ENGINEERING (fuzz jobs, signing infra), ECOSYSTEM-TOOLING S2 (the registry signed manifests protect), LIFECYCLE-DOCTRINE (the keychain migration is class B).
+**Depends on:** SECURITY-LEGIBILITY (the threat model that prioritizes this — its DISCOVERY entries seed candidate scope), CI-RELEASE-ENGINEERING (fuzz jobs, signing infra), ECOSYSTEM-TOOLING S2 (the registry signed manifests protect). The keychain slice (S1) is class B and reversible-migration-bearing, which is why this plan is ordered late (see the T1.2 note).
 **Scope:** the security *features* deepening an already-strong architecture — credential storage, artifact signing, adversarial gate testing, the user-facing audit surface, external review. **Soul guardrail:** enforcement-over-request stands — every addition is a chokepoint control, never a prompt-side plea; and no addition may weaken a fail-closed default for convenience. This plan does not re-architect; it deepens existing chokepoints.
 
 ---
@@ -26,12 +26,12 @@ The original design record is kept below — execution logs, measured findings a
 
 ## Design
 
-- **S1 — OS keychain (class B, gate `credential_keychain`):** a keyring backend behind the existing `save_credential`/read API (macOS Keychain, Linux Secret Service via `keyring` lib as an *optional* extra — headless/container installs without a secret service **fail closed to `.env` 0600**, never fail open to plaintext-elsewhere). Lifecycle: opt-in → default-new-installs → migrate-on-consent (a migration moves `.env` secrets into the keychain, leaving `.env` keys absent; export exclusions unchanged; rollback = the pre-migration snapshot). `doctor` reports the active credential backend.
+- **S1 — OS keychain (class B, consent-triggered reversible migration):** a keyring backend behind the existing `save_credential`/read API (macOS Keychain, Linux Secret Service via `keyring` lib as an *optional* extra — headless/container installs without a secret service **fail closed to `.env` 0600**, never fail open to plaintext-elsewhere). Lifecycle: opt-in → default-new-installs → migrate-on-consent (a migration moves `.env` secrets into the keychain, leaving `.env` keys absent; export exclusions unchanged; rollback = the pre-migration snapshot). `doctor` reports the active credential backend.
 - **S2 — signed manifests + registry trust:** maintainer signing of first-party + registry-listed bundles (minisign or Sigstore keyless — decide against CI capabilities in the task; minisign is simpler, no OIDC dance, one public key shipped in-tree). The Store verifies signatures and renders state on the consent surface (`signed by <known key>` / `unsigned — community tier`); **unsigned stays installable at community tier** (graduated trust, never a hard wall — the supply-chain-tier doctrine). Registry (`ECOSYSTEM-TOOLING`) records signer identity per listing.
 - **S3 — adversarial gate testing:** a hypothesis-driven corpus against `SkillScanner`/`install_guarded`: archive attacks (symlink escape, path traversal, case-collision, zip-slip), the scanned-bytes==installed-bytes integrity invariant under concurrent install races, verdict-evasion (obfuscated/split dangerous patterns, invisible-char tricks the existing `_scan_invisible` should catch — prove it), degenerate/oversized manifests. Corpus committed; nightly CI job; **publish the corpus + methodology** (`docs/security/scanner-testing.md`).
 - **S4 — SEL as a user surface + external review:** a "What did my agent do" audit page (filter by caller/operation/outcome/downstream-service, chain-verify indicator from `verify_integrity`, export) extending the security panel; and an external review (commissioned or a structured public self-audit) of the highest-risk paths — webhook auth (`_verify_hook_token`), app reverse-proxy token model, scanner bypasses, egress guard layering, inbound surfaces (plans 41/24) — findings published with fixes per SECURITY.md.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Credential backend selector (behind existing `save_credential`/read API, §2.5 — callers unchanged)
 ```python
@@ -40,7 +40,7 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 # save_credential(key, value) routes to the active backend; reads are backend-transparent.
 # Absent secret service (headless/container) → dotenv fallback + doctor warn. NEVER plaintext-elsewhere (fail-closed to the MORE protected store).
 ```
-`keyring` as an optional extra. Gate `credential_keychain` (class B). Migration `m_*_credentials_to_keychain` (moves `.env` secrets → keychain, removes keys from `.env`; snapshot-backed; rollback restores `.env`). **Shares this backend with plan 13's secret vault** (§1.3 landmine #2 — build once).
+`keyring` as an optional extra. Class B. Consent-triggered migration `credentials_to_keychain` (moves `.env` secrets → keychain, removes keys from `.env`; snapshot-backed; rollback restores `.env`). **Shares this backend with EXECUTION-ISOLATION's secret vault** (build once — the two must not fork two credential backends).
 
 ### C2 — Manifest signature (minisign recommended; decide in T2.1)
 `ScanReport`/consent payload gains `signature: {state: "signed"|"unsigned"|"invalid", signer: str}`. Store verifies if present; **unsigned → community tier, still installable** (graduated trust). Public key shipped in-tree; `scripts/sign_app.py` for maintainers. Registry (plan 38) records signer per listing.
@@ -52,27 +52,28 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 `GET /api/security/audit` (paginated, filters: caller/operation/outcome/downstream_service/time) + `GET /api/security/audit/verify` → `{checked, ok}` (wraps `verify_integrity`). Export = credential-safe JSONL (reuse `redact`). Frontend page under Settings → Security.
 
 ### Integration points
-- **Calls:** `save_credential`/credential store (§2.5), `SkillScanner`/`install_guarded`, `sel().verify_integrity`, plan-31 gate+migration, `redact` (§3.7).
+- **Calls:** `save_credential`/credential store, `SkillScanner`/`install_guarded`, `sel().verify_integrity`, the consent-triggered credential migration, `redact`.
 - **Consumed by:** plan 38 (registry signer records), plan 13 (shared credential backend).
 - **Owner-critical:** the signing private key (owner task 2). Its recovery note lives with this plan's owner task 2 — plan 37's continuity doc was descoped 2026-07-31, so this plan owns the safeguarding record.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — OS keychain credential storage
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T1.1 | Keyring backend behind the credential API: `save_credential`/read gain a backend selector (`keychain` | `dotenv`), `keyring` as an optional extra; **absent secret service → fall back to `.env` 0600 with a doctor warning (never plaintext-elsewhere)** | `src/personalclaw/config/loader.py`, `pyproject.toml` extra, `cli_doctor.py` | reads are backend-transparent; headless fixture (no keyring) uses `.env`; backend reported by doctor; unit tests both backends |
-| T1.2 | Register gate `credential_keychain` (class B) + migration `m_*_credentials_to_keychain` (moves `.env` secrets → keychain, removes the keys from `.env`; idempotent; snapshot-backed; rollback restores `.env`) | `lifecycle/gates.py`, `lifecycle/migrations/m_*.py` | migration fixture (with a fake keyring) moves + verifies; rollback restores; `portability` export still excludes secrets |
+| T1.2 | Credential migration `credentials_to_keychain` (moves `.env` secrets → keychain, removes the keys from `.env`; idempotent; snapshot-backed; rollback restores `.env`), triggered on explicit user consent | `src/personalclaw/config/loader.py` (+ a small migration helper) | migration fixture (with a fake keyring) moves + verifies; rollback restores; `portability` export still excludes secrets |
 
-> **These `lifecycle/` references are deliberate, not stale.** This plan is ordered
-> **after** LIFECYCLE-DOCTRINE by owner decision (workspace `CLAUDE.md` §7 capstones: "its
-> keychain slice is class-B and lands post-Lifecycle-Doctrine, as ordered"), so the gate and
-> migration runner will exist when T1.2 executes. Unlike the plans re-scoped on 2026-07-30,
-> do **not** rewrite this row into a clean break: **silently losing a user's stored
-> credentials is not an acceptable clean break**, and the rollback path is the point of the
-> task. If this slice is ever pulled forward ahead of LIFECYCLE-DOCTRINE, that is a genuine
-> escalation, not a re-scope.
+> **This is the one class-B slice that is NOT a plain clean break.** Everywhere
+> else during 0.x, a class-B change ships as a clean break under the pre-1.0
+> banner. Here it must not: **silently losing a user's stored credentials is not
+> an acceptable clean break**, so the keychain move is an idempotent,
+> snapshot-backed, reversible migration built directly against the credential API
+> — the rollback path is the point of the task. There is no `lifecycle/` gate
+> registry to lean on (the migration-backed regime is deferred), so the migration
+> is consent-triggered and its own reversibility is the safeguard. This is the
+> reason SECURITY-HARDENING is ordered late.
 | T1.3 | Settings → Security note: which backend is active + a "move to keychain" action (triggers the migration with the snapshot confirm) | security settings component | action runs the migration with a visible snapshot step; state reflects post-migration |
 | V1 | Validation: on macOS — migrate a test credential into Keychain, confirm chat still authenticates, rollback restores `.env`; on a headless fixture — confirm `.env` fallback + warning | — | both paths recorded |
 

@@ -28,7 +28,7 @@ The original design record is kept below — execution logs, measured findings a
 - **Track A (ARM):** CI proves it (ubuntu-arm + macos-14 arm64 runners); a **SQLite capability probe** becomes first-class: one helper (`sqlite_features()` → {driver, version, fts5, json1}) used by `doctor` (reported line) and by the six FTS5 consumers' init paths (fail with an actionable message when FTS5 is absent, instead of mid-query errors); multi-arch images become release-blocking; wheel audit documents `[models]`-extra degradations per arch; support matrix lands in README + docs, CI-backed.
 - **Track B (Windows):** rung 1 = Docker Desktop (published images + a per-release checklist); rung 2 = WSL2 (docs + two small fixes: browser auto-open fallback, systemd note); rung 3 = a costed **audit only** against the verified mechanism list, producing a go/no-go with per-mechanism options (Job Objects vs PPID reaping; icacls vs chmod; junction/copy vs symlink; ConPTY via pywinpty vs disabling the terminal page; Windows Service vs Task Scheduler; sandbox degradation policy = the hard one, likely "no native sandbox on Windows, documented loudly").
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — `src/personalclaw/sqlite_compat.py` (new — absorbs the repeated try/except import)
 
@@ -50,7 +50,7 @@ def require_fts5() -> None: ...                # raises RuntimeError with the re
 
 - **Remedy text (fixed string, reused):** `"This feature needs SQLite with FTS5. Your runtime's SQLite (<driver> <version>) lacks it. See docs/guides/platforms.md#sqlite."` — used by `require_fts5()` and the doctor line.
 - **Doctor line format:** `SQLite: <driver> <version>, FTS5 <✅|❌>, JSON1 <✅|❌>`.
-- **The 6 FTS5 consumers** call `require_fts5()` at their store-init (fail-actionable at init, never mid-query — INTEGRATION-ARCHITECTURE §2.7 fail-closed-for-capability); where a LIKE fallback genuinely exists, document it per-module and degrade with a warn instead of raising (record the per-module choice in the Execution log — no silent skips).
+- **The 6 FTS5 consumers** call `require_fts5()` at their store-init (fail-actionable at init, never mid-query — the fail-closed-for-capability rule in AGENTS.md → Shared conventions); where a LIKE fallback genuinely exists, document it per-module and degrade with a warn instead of raising (record the per-module choice in the Execution log — no silent skips).
 
 ### C2 — Support matrix (README + `docs/guides/platforms.md`), every row names its proof
 `| OS/arch | status | proof |` where proof ∈ {`CI:<job>`, `checklist:<runbook-section>`, `community`}. No row may say "supported" without a proof token.
@@ -62,7 +62,7 @@ def require_fts5() -> None: ...                # raises RuntimeError with the re
 - **Owned docs:** `docs/guides/platforms.md`, `docs/roadmap/research/windows-native-audit.md`.
 - **Consumed by:** DESKTOP (45) non-mac targets gate on this plan's rungs.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Track A, Session A1 — ARM correctness
 

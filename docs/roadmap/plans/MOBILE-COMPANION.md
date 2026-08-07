@@ -30,7 +30,7 @@ The original design record is kept below — execution logs, measured findings a
 - **S2-3 — PWA tier:** manifest + installability + service worker (app-shell caching only — API responses are never cached: stale approval data is dangerous); a **Companion route** (`#/companion`): approvals front and center (decision-brief cards from plan 43 T3), running loops with pause/nudge/stop, tasks/inbox lists (read + resolve), recent notifications; **web push** where supported (VAPID keys generated locally, subscription stored per device; push payloads content-free: `{kind, item_id}` → the app fetches details over the VPN link on tap) + **ntfy/UnifiedPush** documented as the fully-self-hosted push backbone; `push` becomes a real target in plan 42's rules engine.
 - **S4-6 — wrapper tier:** Capacitor shell around the Companion route (store presence + reliable platform push); pairing = QR from the dashboard (URL + scoped device token; revocation via existing token machinery + a Devices list in Settings); push routed via ntfy apps (first-class) or an opt-in relay (content-free pings; relay code open-source in the org, deployable by anyone — the hosted instance is a convenience, not a dependency); iOS/Android store packaging.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Device token — **SUPERSEDED by COMPANION-APPS §C1/C2 (plan 54) + REMOTE-USER-AUTH §C1 (plan 53)**
 > **Rev-11 reconciliation (2026-07-26):** device sessions and pairing are now **owned once** by
@@ -79,7 +79,7 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 - **Depends on:** plan 42 (push target must exist), EXTERNAL-ACCESS/VPN for off-LAN reach (docs), CHANNEL (channels are the chat-on-phone answer — this is control-surface only).
 - **Storage:** `devices.json`; VAPID keys in credential store; push subscriptions per device.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Remote access story
 

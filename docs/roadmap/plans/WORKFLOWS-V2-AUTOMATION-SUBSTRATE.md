@@ -1409,7 +1409,7 @@ Other decisions:
 
 - **NOT DONE (by scope, and this is the honest boundary):** the loop, the store, and the executor. Those
   need `triggers.json` — S83's recorded blocker — plus the WakeupDispatcher, and building them against a
-  store that does not exist is what EXECUTION-PROTOCOL forbids. What this session removes from a future
+  store that does not exist is what the roadmap session discipline forbids. What this session removes from a future
   service session is the hardest part to get right blind: it will call a tested ordering instead of
   re-deriving a 13-step sequence from prose and putting the fail-closed budget check on the wrong side of
   the claim lock.

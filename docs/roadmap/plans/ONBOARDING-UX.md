@@ -31,7 +31,7 @@ Onboarding exists as `web/src/app/Onboarding.tsx` + `onboarding/StepStack.tsx` (
 - **Approval brief (ApprovalCard):** decision-ready layout — what (tool + args summary), why (one line of plan/goal context when the runner provides it), blast radius chips (writes files / network / shell / reads-only — derived from tool metadata + command screening classification), and scoped remember-this-choice (this session / always for this tool / no). Same content model flows to channel `request_approval` renderers (plan 40 apps consume the structured brief). **Copy-sensitive surface:** wording changes reviewed against the security-docs voice; the brief must never *advocate* approval.
 - **Stranger validation:** 3 sessions, think-aloud, fresh install → first success; facilitator script + consent note; findings triaged fix-now (in-session budget) vs issue-filed.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Onboarding state (extends existing `GET /api/onboarding`, handler `api_onboarding`, registered `server.py:371`)
 
@@ -65,7 +65,7 @@ Pin state persisted in the existing appearance/prefs store (locate — same stor
 - **Consumed by:** DISCOVERABILITY (36) reuses the tour click-path for the demo capture; 40/44 approval renderers consume the same brief model (C2) over `ChannelDelivery.request_approval`.
 - **Storage:** `entity_settings/onboarding.json`; frontend prefs store (nav/pins).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Guided first run
 

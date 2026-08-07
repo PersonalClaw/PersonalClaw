@@ -122,7 +122,7 @@ no longer logs you out); each later session is opt-in.
   Docs: `docs/guides/remote-access.md` gains the login path beside MOBILE-COMPANION's
   Tailscale/Cloudflare walkthrough.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Persistent signing key + durable session store (`auth/session_store.py`, new)
 Replaces the ephemeral `_SECRET` and in-memory `TokenStateManager` state with durable
@@ -188,7 +188,7 @@ Account panel. Password hash / TOTP secret live in C2, never in `config.json`.
 - **SEL (§2.3):** `login_success`, `login_failed`, `login_locked_out`, `password_set`,
   `session_revoked`, `enroll_code_issued`, `enroll_completed`, `signing_key_generated`.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 **Change class B** (new durable auth state) touching a **security control** (E4-adjacent).
 Under the pre-1.0 banner this executes as a clean break (no lifecycle gate/migration) — advise
@@ -256,7 +256,7 @@ Under the pre-1.0 banner this executes as a clean break (no lifecycle gate/migra
 | Persisting the signing key / sessions weakens an auth invariant | C1 keeps `generate_token`/`validate_token` signatures identical + preserves IP-binding semantics; any needed weakening is **E4** — stop and record, don't improvise |
 | A login layer bricks a local box if its config corrupts | Success Criterion 3 is a hard test: the loopback `?token=`/CLI path is always available and never gated by login |
 | Cleartext cookie leaks on a misconfigured public bind | `Secure` cookie + `wss` CSP activate off `public_url`; docs make TLS termination a precondition; no auto-bind to a public interface without the operator setting `PERSONALCLAW_BIND_HOST` |
-| Overlap with EXTERNAL-ACCESS / MOBILE-COMPANION auth | This plan owns the **human dashboard** login + the durable session store; EXTERNAL-ACCESS owns **inbound API/agent** bearers; MOBILE-COMPANION/COMPANION-APPS **consume** the session store — coordinated, not duplicated (contract index updated in INTEGRATION-ARCHITECTURE §5) |
+| Overlap with EXTERNAL-ACCESS / MOBILE-COMPANION auth | This plan owns the **human dashboard** login + the durable session store; EXTERNAL-ACCESS owns **inbound API/agent** bearers; MOBILE-COMPANION/COMPANION-APPS **consume** the session store — coordinated, not duplicated (each plan's `Contracts & Interfaces` section records who owns what) |
 | **Open:** passkey/WebAuthn | Noted as a future extension on the same login surface; not built here (password + optional TOTP is the v1) |
 | **Open:** multi-user | Deliberately out of scope — one owner credential. When TEAM-SHARED-ENTITIES tailors to a team, the username graduates to an SSO-provisioned subject (its stated future), reusing this login surface |
 

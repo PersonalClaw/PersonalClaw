@@ -32,7 +32,7 @@ The original design record is kept below — execution logs, measured findings a
 - **S3 — App-to-app messaging (gateway-brokered, never direct):** `permissions.appMessaging: ["<target-app>"]` — an app posts a typed message to another declared app through a gateway broker (`/api/apps/message`), the broker enforces both apps' declarations, fences payloads (`fence_untrusted`), SEL-logs. No direct sockets between app subprocesses (the isolation invariant holds).
 - **S4 — Richer UI contribution:** app pages get access to more shell primitives via the UI SDK (the design-system components exported through `@personalclaw/app-sdk` so apps look native — plan 51 dependency), typed generative-UI widget support (coordinates with AMBIENT-SURFACES 20's generative-UI layer), and a declared `uiCapabilities` block.
 
-## Contracts & Interfaces (extends existing manifest + UI SDK; conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (extends existing manifest + UI SDK; conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Manifest additions (`apps/manifest.py`, additive, to_dict/from_dict parity, §3.8)
 ```jsonc
@@ -65,7 +65,7 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
 - **Consumed by:** 51 (design-system components exported to apps), 20 (generative widgets), 38 (registry shows `quality`).
 - **Depends on:** 32 (manifest-field pattern), 19 (self-description), 9 (worker budgets).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Background + event capabilities
 

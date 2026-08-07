@@ -39,7 +39,7 @@ amendment root-caused test isolation at the source rather than shipping reruns.
 
 | File | Trigger | Jobs |
 |---|---|---|
-| `ci.yml` | PR + push to feature branches | **lint** (black/isort/flake8/mypy, uv-cached); **test** (ubuntu, py3.12, full suite via xdist — single job; see budget note); **web** (npm ci, typecheck, vitest, vite build); **rails** (residue sweep from plan 32, gate-lifetime lint + stability drift from plan 31 — cheap, one job). `concurrency: cancel-in-progress` per ref. |
+| `ci.yml` | PR + push to feature branches | **lint** (black/isort/flake8/mypy, uv-cached); **test** (ubuntu, py3.12, full suite via xdist — single job; see budget note); **web** (npm ci, typecheck, vitest, vite build); **rails** (provider-boundary residue sweep from PROVIDER-BOUNDARY-COMPLETION — cheap, one job). `concurrency: cancel-in-progress` per ref. |
 | `full.yml` | push to `main` + nightly cron | full matrix {3.12, 3.13} × {ubuntu, macos}; coverage XML artifact + badge update; `pip-audit` + `npm audit` (report-only); the frontend URL-doctrine and config round-trip tests are implicitly in the suite — named in the job summary for legibility. |
 | `release.yml` | tag `v*` | build sdist+wheel **with prebuilt `web/dist`** (runs `npm ci && npm run build` first; packaging change itself is DISTRIBUTION S1) → `pypa/gh-action-pypi-publish` via **Trusted Publishing** (no stored tokens) → buildx **linux/amd64+arm64** images pushed to GHCR (auth = `GITHUB_TOKEN`) → GitHub Release with notes generated from `CHANGELOG.md` → **artifact attestations** (`actions/attest-build-provenance`) on wheel + images. Publish jobs sit behind a manual `environment: release` approval — the pipeline exists; the owner pulls the trigger. |
 
@@ -65,13 +65,13 @@ Fix-or-annotate, in code: each of the four known groups is root-caused with a ti
 
 **S1 — Red-test triage + core `ci.yml` (≈1 session).** Triage per policy above; author `ci.yml` + concurrency + `PERSONALCLAW_HOME` rail; badges into README. *Validation:* a PR with a deliberate lint error + a deliberate test failure shows red; revert shows green; wall-time recorded against the budget.
 
-**S2 — Apps CI + rails (≈1 session).** Apps `ci.yml` (manifest-validate, tests-with-stubs, boundary); mount plan-31/32 rail tests in core `ci.yml`'s rails job. *Validation:* break an `app.json` on a branch → red; add a core-internal import to an app → boundary red.
+**S2 — Apps CI + rails (≈1 session).** Apps `ci.yml` (manifest-validate, tests-with-stubs, boundary); mount the PROVIDER-BOUNDARY-COMPLETION residue-sweep rail test in core `ci.yml`'s rails job. *Validation:* break an `app.json` on a branch → red; add a core-internal import to an app → boundary red.
 
 **S3 — Release pipeline (≈1 session).** `release.yml` on a `v*` tag: wheel with web assets → **PyPI (main, Trusted Publishing)** → GHCR multi-arch → release notes → attestations. **Amended 2026-07-20 (owner): no TestPyPI** — publish straight to main PyPI; the safety mechanism is the `release` environment's required-reviewer gate (owner approves each run) plus a prerelease tag (`v0.1.1-rc1`) for the first real exercise, not a separate test index. *Validation (no live runner available):* the wheel-build step runs locally and produces a wheel that CONTAINS `web/dist` (`python -m build`); every publish/image/notes/attest job is YAML- and contract-validated against C1; the first real publish is the owner-approved `v0.1.1-rc1` tag push.
 
 **S4 — Supply chain (≈1 session).** `uv.lock` + CI switch to `--locked`; Dependabot configs; pip-audit/npm-audit into `full.yml`; SBOM step into `release.yml`; coverage badge automation; README/docs "supply-chain posture" section (public statement of the above — the marketing half).
 
-## Contracts & Interfaces (workflow contracts — stable names other plans depend on; conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (workflow contracts — stable names other plans depend on; conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Workflow files + job names (other plans reference these by name)
 
@@ -81,7 +81,7 @@ Fix-or-annotate, in code: each of the four known groups is root-caused with a ti
 | `.github/workflows/full.yml` | push `main` + nightly | `matrix` (3.12/3.13 × ubuntu/macos + arm jobs from plan 39), `audit`, `coverage` |
 | `.github/workflows/release.yml` | tag `v*` | `build`, `pypi`, `images`, `notes`, `attest` |
 
-- The `rails` job runs plan-31/32 generic tests (`test_lifecycle_gates`, `test_provider_boundary_residue`, `test_stability_inventory`) — those plans add their test files; this plan mounts them.
+- The `rails` job runs PROVIDER-BOUNDARY-COMPLETION's generic test (`test_provider_boundary_residue`) — that plan adds the test file; this plan mounts it. Any later plan that adds a machine-checked invariant (a generic lint/drift test) mounts it here the same way.
 - `release.yml` env: `environment: release` (manual-approval gate = the owner). Artifacts: wheel+sdist (with `web/dist`, verified by DISTRIBUTION `verify_wheel`), GHCR images `ghcr.io/personalclaw/personalclaw-{gateway,web}:{<tag>,latest}` (amd64+arm64), SBOM (syft SPDX-JSON), build-provenance attestations.
 - **Trusted Publishing** (no stored PyPI token): publisher = org `personalclaw`, repo `personalclaw`, workflow `release.yml`, environment `release`.
 
@@ -92,7 +92,7 @@ Unfixed known-reds become `@pytest.mark.xfail(reason="<root-cause> — #<issue>"
 - **Consumed by:** DISTRIBUTION (release.yml builds its artifacts), PLATFORM-REACH (adds arm jobs to full.yml), DESKTOP (adds a signed-dmg job to release.yml), every plan adding a rail test (mounted in `ci.yml` rails).
 - **Owner-provisioned:** PyPI trusted publisher, GHCR org packages, `release` environment reviewer, Dependabot enablement.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Red-test triage + core CI
 
@@ -111,7 +111,7 @@ Unfixed known-reds become `@pytest.mark.xfail(reason="<root-cause> — #<issue>"
 | T2.1 | Manifest-validate script: iterate `*/app.json`, parse via core `apps/manifest.py` `from_dict`, fail listing offenders | apps repo: `scripts/validate_manifests.py`, workflow job | corrupting a fixture manifest on a branch turns the job red |
 | T2.2 | Apps `ci.yml`: install core (`pip install "personalclaw @ git+https://github.com/PersonalClaw/PersonalClaw@main"` — switch to version pin at DISTRIBUTION S2, leave a dated comment), run `python -m pytest */test_*.py -q`, run manifest-validate; NO vendor SDKs installed | apps repo: `.github/workflows/ci.yml` | suite green with stubs only; a test importing a real vendor SDK fails loudly (fixture-verified) |
 | T2.3 | Boundary job: run the SDK-only import lint from the apps side (reuse/port `tests/test_apps_import_boundary.py` logic to scan app bundles for `personalclaw.` imports outside `personalclaw.sdk.`) | apps repo: `scripts/check_sdk_boundary.py` + job | adding `from personalclaw.config import loader` to an app turns it red |
-| T2.4 | Mount plan-31/32 rail tests as first-class in core `ci.yml` rails job (remove any T1.3 guard) | `.github/workflows/ci.yml` | rails job runs both tests unguarded |
+| T2.4 | Mount PROVIDER-BOUNDARY-COMPLETION's residue-sweep rail test as first-class in core `ci.yml` rails job (no guard) | `.github/workflows/ci.yml` | rails job runs the residue sweep unguarded |
 | V2 | Validation: both repos' Actions tabs green on main; each rail proven red-able per its own plan's fixtures | — | holds |
 
 ### Session 3 — Release pipeline
@@ -149,7 +149,7 @@ Unfixed known-reds become `@pytest.mark.xfail(reason="<root-cause> — #<issue>"
 
 - **Suite wall-time unknown** until first CI run — the budget + escalation ladder handles either outcome; macOS runners are the likely slow/pricey axis (full.yml only, so PRs never wait on them).
 - **Apps CI against `main` core** can break when core moves — acceptable pre-PyPI; switch to version pins at DISTRIBUTION S2 and treat a red apps-CI-on-pin-bump as the compatibility signal it is.
-- **Open:** whether `mypy` runs over `tests/` too (Makefile lints `$(PKG)` only today) — keep parity with local (`src` only) to avoid a new noise source; revisit under plan 31's strictness ratchet.
+- **Open:** whether `mypy` runs over `tests/` too (Makefile lints `$(PKG)` only today) — keep parity with local (`src` only) to avoid a new noise source; revisit if a later strictness ratchet lands.
 
 ## Execution log
 

@@ -4,7 +4,7 @@ The roadmap's plans were too large and too interdependent: parts of a plan would
 
 This catalog is the fix. Every plan is decomposed into **atoms**: one coherent feature, executable start-to-finish in a single go. The cut line is exactly the dependency seam — anything that would force you to pause an atom and go execute other work is instead its own atom with an explicit dependency edge.
 
-**602 atoms** across **73 plans** — 214 done, 388 remaining. 830 dependency edges.
+**598 atoms** across **69 plans** — 214 done, 384 remaining. 826 dependency edges.
 
 ## How to use it
 

@@ -32,7 +32,7 @@ The original design record is kept below — execution logs, measured findings a
 - **S4 benchmark:** EVALUATION-SUBSTRATE template study — fixed task set (owner-curated, ~10 repeatable research/ops tasks), paired runs skills-on vs skills-off (fresh fixture homes, same model+config), metrics: completion, tool-call count, wall time; publish methodology + results (site, plan 36) *including modest results honestly*.
 - **User model:** deliberately deferred to LEARNING-FLYWHEEL's self-model step; this plan reserves a "Your model" digest card slot only (one owner, one mechanism).
 
-## Contracts & Interfaces (builds ON existing synthesis machinery — [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md) §3.6)
+## Contracts & Interfaces (builds ON existing synthesis machinery — [AGENTS.md](../../../AGENTS.md) §3.6)
 
 ### C1 — Skill-draft synthesis (REUSES `after_turn_review.run_skill_ladder_review` + `skills/proposals.enqueue`, §3.6)
 No new synthesis engine. The run-end hook builds an `enqueue()` call:
@@ -58,7 +58,7 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
 - **Coordination:** LEARNING-FLYWHEEL owns the self-model (user "About you" doc) — this plan reserves a digest card slot only, builds no parallel mechanism (one owner per §1.3).
 - **Inviolable:** propose-don't-write — every artifact passes the approval surface; zero auto-write paths.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — The end-to-end visible slice
 

@@ -42,7 +42,7 @@ Session 1 T1.2 + V1; new web/src/pages/settings/DevicesPanel.tsx; QR renders {pa
 
 **Status:** todo
 
-Session 1 T1.3; edits docs/roadmap/plans/MOBILE-COMPANION.md + INTEGRATION-ARCHITECTURE.md §5 (this plan owns device session + pairing)
+Session 1 T1.3; edits docs/roadmap/plans/MOBILE-COMPANION.md (this plan owns device session + pairing)
 
 **Done when:** the two plans reference one pairing mechanism; grep shows no second/parallel device-token design surviving (Success Criterion 1)
 

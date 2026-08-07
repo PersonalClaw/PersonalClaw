@@ -29,7 +29,7 @@ rev 13; owner ask: sibling-platform gap analysis round 2)
 - **Deep-link conventions exist per surface:** hash routes (`#/inbox`, `#/tasks/...`, `#/loops/<id>`, `#/files/<slug>`, settings `?tab=` deep-links); legibility tips already carry `try_it` deep links (`api.ts:488`); artifact events carry `session_id` for their chat deep-link (`artifacts/models.py`). The envelope's `back_link` reuses these — no new routing machinery.
 - **No investigate concept exists anywhere:** grep `investigate|Investigate` in `web/src` → only unrelated prose hits (`TaskForm.tsx`, `LoopPlanReview.tsx`); nothing in `src/personalclaw`. No surface has a "chat about this" button today (inbox/notifications/tasks pages have zero `launchChat` callers — the only callers are ChatPage itself, App.tsx, ProjectsSection, and the SDK).
 - **The adoption-sweep surfaces (real components):** inbox — `web/src/pages/inbox/InboxPage.tsx` + `InboxDetail.tsx` (items from `inbox.py::InboxItem`, id `{channel}_{ts}`); notifications — `pages/notifications/NotificationsPage.tsx` (+ `notificationMeta.ts`; emitter `DashboardState.notify`, `dashboard/state.py:1027`, persisted `notifications.jsonl`); tasks — `pages/tasks/TaskBoard.tsx`, `TasksListPage.tsx`, `DagView.tsx`, `TaskDetail.tsx`; schedule run history — `pages/schedule/ScheduleDetail.tsx`; trigger runs — `pages/triggers/LifecycleDetail.tsx`, `TriggersListPage.tsx`; loop cockpit findings/cycles — `pages/loops/LoopCockpitPage.tsx` (`LoopFinding`/`LoopVerdict` rows, ~line 373); knowledge — `pages/knowledge/KnowledgeListPage.tsx` + `KnowledgeDetail.tsx`; memory records + lessons — `pages/settings/MemoryPanel.tsx` (Studio: semantic facts, episodes, `Lesson` rows); Doctor findings — `pages/settings/DoctorPanel.tsx` (`DoctorReport` probes; backend `resilience/doctor.py`); crash reports — `resilience/crashes.py` (surfaced via Doctor/Diagnostics); security/audit events — `pages/settings/AuditPanel.tsx` (SEL entries, `sel.py`).
-- **SDK export surface:** `installAppSdk()` (appSdk.tsx:445+) already exports `launchChat`/`useChatLauncher`/`ChatEmbed` to app bundles under `@personalclaw/app-sdk` — `useInvestigate` joins that block (an sdk export is Tier-S per INTEGRATION-ARCHITECTURE §2.8).
+- **SDK export surface:** `installAppSdk()` (appSdk.tsx:445+) already exports `launchChat`/`useChatLauncher`/`ChatEmbed` to app bundles under `@personalclaw/app-sdk` — `useInvestigate` joins that block (an sdk export is a stable surface — see AGENTS.md → Shared conventions).
 
 ## Design
 
@@ -37,7 +37,7 @@ rev 13; owner ask: sibling-platform gap analysis round 2)
 - **S2 — the adoption sweep.** One shared frontend affordance — an `InvestigateButton` (icon button, `MessageCircleQuestion`, tooltip "Investigate in chat") in `web/src/ui/` — dropped onto each owner-confirmed surface's row/detail component, each passing only `{kind, id}`. Per-kind resolvers land backend-side in the same sweep (one small function per store). Failure rows get the richest envelopes: a cron/loop/subagent failure notification resolves to the notification body + the linked run/loop state; a Doctor finding resolves to the probe result + remediation snapshot; an audit event resolves to the SEL entry (+ neighbors from the same request_id). Memory lessons get the "why do you believe this?" framing: the lesson + its provenance/episode links, opening prompt pre-filled accordingly. The sweep also **deletes any bespoke variant it finds** (clean break — one primitive; recon found none in core today, so this is a guard, not a migration).
 - **What this is NOT:** not an automation (nothing runs unattended — the user sends the first message); not a mutation path (ask mode + pure-read resolvers); not a new attention kind (plan 42 owns those); not a second chat-launch mechanism (it rides `ne:launch-chat`).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — The envelope + resolver registry (`investigate.py`, new)
 ```python
@@ -94,7 +94,7 @@ ChatPage: a `ContextChip` in the session header when `session detail` reports an
 - **Storage owned:** none persisted (envelope is transient session state) — hence class A.
 - **Deliberately NOT touched:** attention-path contracts (plan 42's kinds/rules/registry), the composer send path, task-mode semantics, any entity store's write path.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — The primitive
 

@@ -34,7 +34,7 @@ Status corrected 2026-08-04 by code audit. Created 2026-07-26 (roadmap rev 13)
 - **Proposal contents** (`src/personalclaw/skills/proposals.py`): `enqueue/list_pending/accept/reject` — accept/reject is already a verdict on the *synthesizer*; producer `("skill_synthesis", "ladder")`. Plan 42 S4 folds proposals into the inbox as `kind="proposal"` items; this plan's thumbs on proposal cards must not fork that — accept/reject remain the actions; thumbs appear only on *content within* judgment cards elsewhere.
 
 ### The seams this plan builds on (verified)
-- **Storage conventions** (INTEGRATION-ARCHITECTURE §2.4): `config_dir()`, `atomic_write` (`atomic_write.py:29`), append-only JSONL trimmed at 2× cap (the `notifications.jsonl` / SEL pattern — `sel.py:12`). New JSONL must be added to `portability.py`'s export tree (:125 — the LEARN plan's recon caught this same gotcha).
+- **Storage conventions** (see AGENTS.md → Shared conventions): `config_dir()`, `atomic_write` (`atomic_write.py:29`), append-only JSONL trimmed at 2× cap (the `notifications.jsonl` / SEL pattern — `sel.py:12`). New JSONL must be added to `portability.py`'s export tree (:125 — the LEARN plan's recon caught this same gotcha).
 - **Entity settings**: `providers/entity_routes.py::_load_entity_settings/_save_entity_settings` (:31/:42) — where threshold-policy user preferences live, per §2.1 (not config.json).
 - **SEL** (§2.3): `sel().log_api_access(caller, operation, outcome, …)` (`sel.py:254`) — feedback actions are security-relevant (they change what surfaces).
 - **App boundary**: apps import core only via `personalclaw.sdk.*` (`sdk/__init__.py`); app-scoped tokens set `request["app"]` (`apps/permissions.py`) and the permission middleware 403s undeclared paths — so the app path to `record_feedback` is one declared API route, with `source_app` stamped server-side from `request["app"]` (never client-claimed).
@@ -51,7 +51,7 @@ Three layers, strictly separated so each stays cheap and auditable:
 - **Layer 3 — interpretive arm: NOT THIS PLAN.** The periodic background model call that reads 👎 reasons and drafts lesson/prompt-amendment proposals into the proposals queue is LEARNING-FLYWHEEL work (its §2.2 proposal queue + decision memory is exactly the landing zone). This plan's store is designed to feed it — `reason` is stored verbatim + fenced-on-render, records carry the producer pointer — and this plan contributes **one task suggestion to that plan**: *"Flywheel step: a `feedback_digestor` detector that batches ≥N 👎-with-reason records per producer and enqueues a prompt-amendment proposal (fenced excerpts, standard queue, standard decision memory)."* A coordination note is added to WORKFLOWS-V2-LEARNING-FLYWHEEL §3.2's detector list; nothing interpretive ships here.
 - **The FE affordance (S2).** A small, quiet thumbs pair (👍/👎) on qualifying cards — non-modal, hover/focus-revealed on desktop, always-visible compact on touch: inbox item verdict block (classification), the draft-reply block (draft), digest items, loop finding rows, and (when plan 56 ships) the routing chip's dismiss double-writes. 👎 opens a one-line optional "why?" popover (skippable — Enter or click-away records without a reason). State is reflected (a filled thumb) and reversible. **Quality/analytics surfaces belong elsewhere**: LEARNING-VISIBILITY owns the "is it learning?" panels; EVALUATION-SUBSTRATE owns field-metric studies. This plan ships only the capture affordance + a minimal per-producer accuracy table under Settings → AI (honest counts, min-N gated).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — FeedbackRecord + store (`src/personalclaw/feedback.py`, new)
 ```python
@@ -135,7 +135,7 @@ class FeedbackConfig:
 - **Storage owned:** `feedback.jsonl`, `entity_settings/feedback.json` (+ `portability.py` export entry). Class B: plain clean break under the pre-1.0 banner.
 - **Zero telemetry:** records never leave the instance; SEL is the only audit trail.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Store + SDK + SEL (Layer 1 + attribution math)
 
