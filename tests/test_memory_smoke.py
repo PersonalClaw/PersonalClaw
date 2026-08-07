@@ -13,7 +13,6 @@ from pathlib import Path
 
 from personalclaw.context import ContextBuilder
 from personalclaw.hooks import ContextRule, HookManager, HooksConfig, TransformHook
-from personalclaw.learn import LessonStore
 from personalclaw.memory import MemoryStore
 from personalclaw.skills import SkillsLoader
 from personalclaw.vector_memory import VectorMemoryStore
@@ -27,7 +26,6 @@ def _builder(tmp_path: Path, **kw: object) -> ContextBuilder:
         memory=store,  # type: ignore[arg-type]
         skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
         hooks=kw.get("hooks") or HookManager(),  # type: ignore[arg-type]
-        lessons=kw.get("lessons") or LessonStore(base_dir=tmp_path),  # type: ignore[arg-type]
     )
 
 

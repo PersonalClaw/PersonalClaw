@@ -16,7 +16,6 @@ from personalclaw.eval.judge import LLMJudge
 from personalclaw.eval.runner import EvalRunner, format_results, score_by_dimension
 from personalclaw.eval.scenario import AssertionType, load_scenario, load_scenarios
 from personalclaw.hooks import safe_read_file
-from personalclaw.learn import Lesson, LessonStore
 from personalclaw.security import (
     BUILTIN_DENY_PATTERNS,
     redact_credentials,
@@ -613,11 +612,13 @@ async def _run_eval(args: argparse.Namespace) -> None:
 
 
 def _learn(args: argparse.Namespace) -> None:
-    """Save, list, or remove learned corrections."""
+    """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
 
     from personalclaw.memory_service import MemoryService
 
-    jsonl_store = LessonStore()
+    # memory.db is the sole lesson store; a store with no embedder still persists
+    # lessons (vector optional). ``write_lesson`` returning False means the lesson
+    # was a dedup/supersession no-op, not that the store was unavailable.
     vs = VectorMemoryStore(embedding_dim=get_active_embedding_dim() or 384)
     vs.init()
     svc = MemoryService.over_vector_store(vs)
@@ -628,39 +629,21 @@ def _learn(args: argparse.Namespace) -> None:
             rule = args.rule
             category = args.category
             negative = getattr(args, "negative", None)
-            if svc.write_lesson(rule, category, negative):
-                neg = f" ({negative})" if negative else ""
-                print(f"Saved: {rule}{neg} [{category}]")
-            else:
-                lesson = Lesson(
-                    ts=datetime.now(timezone.utc).isoformat(),
-                    rule=rule,
-                    category=category,
-                    negative=negative,
-                )
-                jsonl_store.save(lesson)
-                neg = f" ({lesson.negative})" if lesson.negative else ""
-                print(f"Saved: {lesson.rule}{neg} [{lesson.category}]")
+            svc.write_lesson(rule, category, negative)
+            neg = f" ({negative})" if negative else ""
+            print(f"Saved: {rule}{neg} [{category}]")
 
         elif action == "list":
             vs_lessons = svc.get_lessons()
-            if vs_lessons:
-                for e in vs_lessons:
-                    val = json.loads(e["value_json"])
-                    print(f"  [knowledge] {val}")
-            else:
-                lessons = jsonl_store.load_all()
-                if not lessons:
-                    print("No lessons.")
-                    return
-                for le in lessons:
-                    neg = f" — {le.negative}" if le.negative else ""
-                    print(f"  [{le.category}] {le.rule}{neg}")
+            if not vs_lessons:
+                print("No lessons.")
+                return
+            for e in vs_lessons:
+                val = json.loads(e["value_json"])
+                print(f"  [knowledge] {val}")
 
         elif action == "remove":
-            if svc.get_lessons() and svc.delete_lesson(args.query):
-                print(f"Removed lessons matching: {args.query}")
-            elif jsonl_store.remove(args.query):
+            if svc.delete_lesson(args.query):
                 print(f"Removed lessons matching: {args.query}")
             else:
                 print(f"No lessons match: {args.query}")

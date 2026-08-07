@@ -15,7 +15,6 @@ from personalclaw.hooks import (
     HookResult,
     safe_read_file,
 )
-from personalclaw.learn import LessonStore
 from personalclaw.memory import MemoryStore
 from personalclaw.schedule import get_local_tz
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -43,8 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Lazy cache of MemoryStore instances keyed by cwd-partition path.
 _memory_stores: dict[str, MemoryStore] = {}
-# Lazy cache of LessonStore instances keyed by cwd-partition path.
-_lesson_stores: dict[str, LessonStore] = {}
 
 
 def _attach_vector_store(store: MemoryStore, ws_path) -> None:
@@ -668,21 +665,11 @@ class ContextBuilder:
             _memory_stores[key] = store
         return _memory_stores[key]
 
-    @staticmethod
-    def get_lessons_for(cwd: str | None = None) -> LessonStore:
-        """Return a LessonStore scoped to a working dir, creating lazily."""
-        ws_path = memory_dir_for_cwd(cwd)
-        key = str(ws_path)
-        if key not in _lesson_stores:
-            _lesson_stores[key] = LessonStore(base_dir=ws_path)
-        return _lesson_stores[key]
-
     def __init__(
         self,
         memory: MemoryStore | None = None,
         skills: SkillsLoader | None = None,
         hooks: HookManager | None = None,
-        lessons: LessonStore | None = None,
         conversation_log: "ConversationLog | None" = None,
         channel_history: "ChannelHistory | None" = None,
         bot_name: str = "",
@@ -692,7 +679,6 @@ class ContextBuilder:
         self.memory = memory or MemoryStore(workspace=memory_dir_for_cwd(None))
         self.skills = skills or SkillsLoader()
         self.hooks = hooks or HookManager()
-        self.lessons = lessons or LessonStore(base_dir=memory_dir_for_cwd(None))
         self.conversation_log = conversation_log
         self.channel_history = channel_history
         # Explicit override (tests / embedders). Empty = resolve from config
@@ -1012,11 +998,10 @@ class ContextBuilder:
                 logger.debug("ephemeral skills context failed", exc_info=True)
 
         # Lessons — inject for ALL agents (skipped for temporary sessions). The
-        # vector store is the ONE injection source of truth: cwd-scoped lessons
-        # live in it as namespaced keys, not a parallel JSONL file. (The JSONL
-        # LessonStore remains only the no-embedder WRITE fallback + dashboard
-        # backing — it no longer feeds the prompt, which removes the dual-source
-        # read that let a global + a workspace lesson disagree.)
+        # memory.db record store is the ONE lesson source of truth: lessons live
+        # in it as ``lesson.*`` namespaced keys, read/written through the memory
+        # service. There is no parallel JSONL store (WF2LEA-3 retired it), so the
+        # dual-source read that let a global + a workspace lesson disagree is gone.
         lessons_ctx = ""
         if not blocks_reads:
             from personalclaw.memory_service import service_for

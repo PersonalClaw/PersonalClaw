@@ -24,7 +24,6 @@ def _make_state(tmp_path):
     sessions.remove = AsyncMock()
     return DashboardState(
         sessions=sessions,
-        lessons=MagicMock(load_all=MagicMock(return_value=[])),
         start_time=0.0,
         conversation_log=ConversationLog(base_dir=tmp_path),
     )

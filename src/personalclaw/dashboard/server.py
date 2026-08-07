@@ -29,7 +29,6 @@ if TYPE_CHECKING:
         ContextBuilder,
         ConversationLog,
         HistoryConsolidator,
-        LessonStore,
         SessionManager,
         SubagentManager,
     )
@@ -263,7 +262,6 @@ def _ws_csp_sources() -> str:
 
 async def start_dashboard(
     sessions: "SessionManager",
-    lessons: "LessonStore",
     port: int = _DEFAULT_PORT,
     subagents: "SubagentManager | None" = None,
     context_builder: "ContextBuilder | None" = None,
@@ -288,7 +286,6 @@ async def start_dashboard(
                 log=conversation_log,
                 memory=memory,
                 sessions=sessions,
-                lesson_store=lessons,
             )
             logger.info("Auto-created HistoryConsolidator for dashboard")
         except Exception:
@@ -311,7 +308,6 @@ async def start_dashboard(
 
     state = DashboardState(
         sessions=sessions,
-        lessons=lessons,
         start_time=time.time(),
         subagents=subagents,
         context_builder=context_builder,
@@ -1717,7 +1713,6 @@ async def start_dashboard(
 
 async def start_api_server(
     sessions: "SessionManager",
-    lessons: "LessonStore",
     port: int = _DEFAULT_PORT,
     subagents: "SubagentManager | None" = None,
     owner_id: str = "",
@@ -1725,7 +1720,6 @@ async def start_api_server(
     """Start a minimal API-only server for MCP tool transport (no UI)."""
     state = DashboardState(
         sessions=sessions,
-        lessons=lessons,
         start_time=time.time(),
         subagents=subagents,
         owner_id=owner_id,

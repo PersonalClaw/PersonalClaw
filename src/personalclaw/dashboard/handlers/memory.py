@@ -1091,7 +1091,7 @@ async def api_memory_promote(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "promoted": promoted})
 
 
-def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]]:
+def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
     """Synchronous helper — safe to run in a thread."""
     import hashlib
     import re
@@ -1176,25 +1176,17 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
         except Exception:
             pass
 
-    # --- Lessons ---
+    # --- Lessons (memory.db lesson.* — the sole lesson store) ---
     try:
-        lessons_data = None
-        try:
-            lessons_data = svc.get_lessons() if svc.has_vector else None
-        except Exception:
-            pass
-        if lessons_data:
-            for entry in lessons_data:
-                rule = entry.get("value_json", "")
-                if isinstance(rule, str):
-                    try:
-                        rule = json.loads(rule)
-                    except Exception:
-                        pass
-                _add("lesson", str(rule)[:80], "lesson", str(rule))
-        else:
-            for le in lessons:
-                _add("lesson", le.rule[:80], "lesson", le.rule)
+        lessons_data = svc.get_lessons() if svc.has_vector else []
+        for entry in lessons_data:
+            rule = entry.get("value_json", "")
+            if isinstance(rule, str):
+                try:
+                    rule = json.loads(rule)
+                except Exception:
+                    pass
+            _add("lesson", str(rule)[:80], "lesson", str(rule))
     except Exception:
         pass
 
@@ -1239,9 +1231,7 @@ async def api_memory_graph(request: web.Request) -> web.Response:
 
     try:
         loop = asyncio.get_running_loop()
-        nodes, edges = await loop.run_in_executor(
-            None, _build_memory_graph, mem, state.lessons.load_all()
-        )
+        nodes, edges = await loop.run_in_executor(None, _build_memory_graph, mem)
 
         for n in nodes:
             n["label"] = _redact_memory_field(n["label"])

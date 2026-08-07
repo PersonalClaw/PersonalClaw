@@ -253,13 +253,18 @@ class TestSeedProfile:
         assert "Starfish" in projects
 
     def test_seed_lessons(self, tmp_path):
+        # Lessons seed into memory.db lesson.* (the sole store), not a JSONL file.
+        from personalclaw.vector_memory import VectorMemoryStore
+
         seed = SeedProfile(lessons=["use 2-space indent", "prefer pytest"])
         _seed_profile(tmp_path, seed)
-        lessons_file = tmp_path / "lessons.jsonl"
-        assert lessons_file.exists()
-        lines = lessons_file.read_text().strip().splitlines()
-        assert len(lines) == 2
-        assert json.loads(lines[0])["rule"] == "use 2-space indent"
+        vs = VectorMemoryStore(db_path=tmp_path / "vector_memory.db")
+        vs.init()
+        try:
+            rules = {json.loads(e["value_json"]) for e in vs.get_lessons()}
+        finally:
+            vs.close()
+        assert rules == {"use 2-space indent", "prefer pytest"}
 
     def test_seed_empty(self, tmp_path):
         seed = SeedProfile()
