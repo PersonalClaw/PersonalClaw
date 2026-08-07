@@ -266,6 +266,95 @@ class TestTrustReadsModeAllSessions:
             assert s2._trust_reads is False
 
 
+# ── Mode endpoint: unknown-session and unknown-mode validation ──
+
+
+class TestModeValidation:
+    """#769 (trust_reads unknown-session guard) + #767 (unknown-mode rejection)."""
+
+    @pytest.mark.asyncio
+    async def test_trust_reads_unknown_session_rejected(self, tmp_path, monkeypatch):
+        """#769: a truthy-but-absent session must 400, not relax the whole fleet."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        s1 = state.get_or_create_session("s1")
+        s2 = state.get_or_create_session("s2")
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/mode", json={"mode": "trust_reads", "session": "ghost"}
+            )
+            assert resp.status == 400
+            data = await resp.json()
+            assert data["ok"] is False
+            assert data["error"] == "unknown session"
+            # No existing session flipped — the fleet-wide relax is the bug.
+            assert s1._trust_reads is False
+            assert s2._trust_reads is False
+
+    @pytest.mark.asyncio
+    async def test_trust_reads_none_session_applies_all(self, tmp_path, monkeypatch):
+        """session=None still applies to every session."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        s1 = state.get_or_create_session("s1")
+        s2 = state.get_or_create_session("s2")
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/mode", json={"mode": "trust_reads"})
+            assert resp.status == 200
+            assert s1._trust_reads is True
+            assert s2._trust_reads is True
+
+    @pytest.mark.asyncio
+    async def test_trust_reads_known_session_only(self, tmp_path, monkeypatch):
+        """A known session name flips only that session."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        s1 = state.get_or_create_session("s1")
+        s2 = state.get_or_create_session("s2")
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat/mode", json={"mode": "trust_reads", "session": "s1"}
+            )
+            assert resp.status == 200
+            assert s1._trust_reads is True
+            assert s2._trust_reads is False
+
+    @pytest.mark.asyncio
+    async def test_unknown_mode_rejected(self, tmp_path, monkeypatch):
+        """#767: an unrecognized mode must 400 instead of falling through to normal."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = state.get_or_create_session("s1")
+        session._trust = True
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/mode", json={"mode": "bogus"})
+            assert resp.status == 400
+            data = await resp.json()
+            assert data["ok"] is False
+            assert "invalid mode" in data["error"]
+            # Rejected before any apply — existing state untouched.
+            assert session._trust is True
+
+    @pytest.mark.asyncio
+    async def test_known_mode_still_works(self, tmp_path, monkeypatch):
+        """A valid mode is unaffected by the new guard."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = state.get_or_create_session("s1")
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/mode", json={"mode": "trust", "session": "s1"})
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["mode"] == "trust"
+            assert session._trust is True
+
+
 # ── Permission metadata: is_read_only flag ──
 
 
