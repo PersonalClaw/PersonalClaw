@@ -99,10 +99,7 @@ jobs:
 
   rails:
     # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.
-    # Today: plan-32 provider-boundary residue sweep (present on main). The plan-31
-    # gate-lifetime + stability-drift rails mount here when LIFECYCLE-DOCTRINE lands
-    # (it is deferred — see the workspace execution order); guarded so this job is
-    # green until then instead of erroring on a missing file.
+    # Today: provider-boundary residue sweep (present on main).
     runs-on: ubuntu-latest
     # No PERSONALCLAW_HOME (see the test job) — the residue sweep is a static
     # import-boundary check and the suite runs under the no-global-home contract.
@@ -119,11 +116,6 @@ jobs:
       # -n/--dist, which pytest then can't parse with the xdist plugin disabled.
       - name: provider-boundary residue sweep (plan 32)
         run: uv run pytest tests/test_provider_boundary_residue.py -n0
-      - name: lifecycle + stability rails (plan 31 — deferred; run when present)
-        run: |
-          for t in tests/test_lifecycle_gates.py tests/test_stability_inventory.py; do
-            if [ -f "$t" ]; then uv run pytest "$t" -n0; fi
-          done
 
   harness:
     # Self-verification gate (SELF-VERIFICATION SV-7): the repo-inner harness/ package

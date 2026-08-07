@@ -366,4 +366,5 @@ failure would turn an uninstalled linter into a broken deliverable.
   an `output_ref`, but the artifact-pointer binding form and `artifact_inspect`
   action are unbuilt;
 - **no lifecycle gates** — per the owner's deferral, class-B changes are clean
-  breaks under the pre-1.0 banner until LIFECYCLE-DOCTRINE lands.
+  breaks under the pre-1.0 banner until the migration-backed lifecycle regime
+  lands.

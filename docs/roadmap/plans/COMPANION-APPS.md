@@ -38,8 +38,8 @@ Verified against code + the two consuming plans — re-verify before editing; a 
   start|complete` (single-use code, TTL 300s). **This plan unifies that pairing with
   REMOTE-USER-AUTH's enrollment code so there is ONE pairing path** (a device session is a
   `sessions.json` row, C1 of REMOTE-USER-AUTH, with `device` set), and MOBILE-COMPANION's C1/C4
-  reference this plan rather than defining a parallel mechanism. Recorded as a supersession in
-  INTEGRATION-ARCHITECTURE §5 (this plan owns "device session + pairing"; MOBILE-COMPANION owns
+  reference this plan rather than defining a parallel mechanism. Recorded as a supersession
+  (this plan owns "device session + pairing"; MOBILE-COMPANION owns
   the phone UI + push).
 - **REMOTE-USER-AUTH provides the auth foundation** — its C1 durable `sessions.json` (device
   rows survive restart — the reason companion sessions can be long-lived), C3 `/api/auth/
@@ -96,7 +96,7 @@ this contract).
   contract," gated on PLATFORM-REACH for that OS. This session is coordination + the desktop
   connect-mode; the mobile wrapper stays in MOBILE-COMPANION.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Endpoint + device-session model (owned here; consumed by all wrappers)
 ```jsonc
@@ -143,7 +143,7 @@ Devices panel. No secrets here (device sessions live in REMOTE-USER-AUTH's store
   store); discovery holds no state.
 - **SEL (§2.3):** `device_pair_started`, `device_paired`, `device_revoked`, `discovery_enabled`.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 **Change class B** (new durable pairing state, reusing REMOTE-USER-AUTH's store) — clean break
 under the pre-1.0 banner. Sequenced strictly after REMOTE-USER-AUTH S1.
@@ -154,7 +154,7 @@ under the pre-1.0 banner. Sequenced strictly after REMOTE-USER-AUTH S1.
 |---|---|---|---|
 | T1.1 | Unified pairing routes (C2): `pair/start`, `pair/complete`, `GET /api/devices`, `revoke` — device sessions are REMOTE-USER-AUTH C1 rows with `device`/`issuer` set (no new token type); SEL on each | `dashboard/handlers/devices.py` (new), `server.py` wiring | pair start→complete yields a durable device session surviving a restart; reuse rejected; revoke kills it next request |
 | T1.2 | Settings → Devices panel: list device sessions (name, kind, last-seen, issuer) + revoke; "Pair a device" shows a QR of `{pair_url, code}` | `web/src/pages/settings/DevicesPanel.tsx` | a device pairs from the QR end-to-end; revoke observed live |
-| T1.3 | Reconcile MOBILE-COMPANION C1/C4: mark them consuming this contract; update INTEGRATION-ARCHITECTURE §5 (this plan owns "device session + pairing") | `docs/roadmap/plans/MOBILE-COMPANION.md`, `INTEGRATION-ARCHITECTURE.md` | the two plans reference one pairing mechanism; no duplicate device-token design remains |
+| T1.3 | Reconcile MOBILE-COMPANION C1/C4: mark them consuming this contract (this plan owns "device session + pairing") | `docs/roadmap/plans/MOBILE-COMPANION.md` | the two plans reference one pairing mechanism; no duplicate device-token design remains |
 | V1 | Validation: pair a second browser as a "device" over the LAN, see it in Devices, revoke it, confirm lockout | — | recorded |
 
 ### Session 2 — Local-network discovery

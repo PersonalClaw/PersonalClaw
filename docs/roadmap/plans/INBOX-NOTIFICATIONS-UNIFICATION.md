@@ -76,7 +76,7 @@ A contributor picking this plan up instead should read the
 [breaking-changes section](../../../CONTRIBUTING.md#breaking-changes) and surface the state
 change rather than executing it.
 
-## Contracts & Interfaces (this plan OWNS the attention-path contracts every consumer references — [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md) §1.3 landmine #1)
+## Contracts & Interfaces (this plan OWNS the attention-path contracts every consumer references — [AGENTS.md](../../../AGENTS.md) §1.3 landmine #1)
 
 ### C1 — Kind registry (`src/personalclaw/notification_kinds.py`, new)
 
@@ -159,7 +159,7 @@ def emit_attention_item(*, source: str, kind: str, title: str, body: str,
 - **Storage owned:** `notification_rules.json`, `digest_queue.jsonl`; **migrates** `inbox.json` alert fields (migration `m_*_inbox_alert_fields_to_rules`) and seeds proposal items (`m_*_pending_skill_proposals_to_inbox`).
 - **Gate:** `inbox_unification` (class B).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Kind registry + rules engine (the rules path replaces the ad-hoc one)
 
@@ -312,8 +312,8 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   proven is now a regression test on DEFAULT behavior
   (`test_no_rules_file_delivers_exactly_like_before`). The plan header, the
   Lifecycle-artifacts section (now *Change discipline*), C3, and five task rows were
-  rewritten to match; the correction was also traced to its source in LIFECYCLE-DOCTRINE and
-  fixed across ROADMAP/CLAUDE/INTEGRATION-ARCHITECTURE/EXECUTION-PROTOCOL.
+  rewritten to match; the correction was traced to its source and fixed across the
+  roadmap + workspace guidance docs.
 
   **T1.1 inventory (26 call sites, 11 flat kinds).** Built by AST walk, not grep — **two
   sites pass a DYNAMIC kind** a grep inventory misses (`loop/watchdog.py:159` via

@@ -37,7 +37,7 @@ The original design record is kept below — execution logs, measured findings a
 - **S3 — live audio:** push-to-talk global hotkey → mic capture in the renderer (getUserMedia, TCC-prompted via the bridge) → existing `/api/stt/transcribe` (bound STT provider — faster-whisper local by default) → composer insertion or voice-chat surface; system-audio capture only where the OS allows it natively (macOS: screen-capture-audio path; documented honestly, likely deferred) — mic is the S3 deliverable.
 - **S4 — presence + platforms:** tray/menu-bar companion (pending-approvals count, running loops, quick capture — AMBIENT-SURFACES' menu-bar item lands here against its tile registry when available); native notifications as a plan-42 rules target (`native` on desktop replaces `dashboard` toasts when focused-away); login-item toggle; **then** Windows/Linux electron-builder targets *only after* PLATFORM-REACH proves the backend there (desktop follows platform support, never leads it).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Capability bridge (`desktop/preload.js` contextBridge — EXTENDS the existing `electronAPI` pattern, verified `preload.js`)
 
@@ -71,7 +71,7 @@ Shell sets `PERSONALCLAW_INSTALL_KIND=desktop` in the spawn env (consumed by DIS
 - **Depends on:** plan 33 (signing in CI), plan 34 (`detect_install_kind` desktop branch), plan 39 (non-mac targets gate on its rungs), plan 42 (`native` target).
 - **Storage:** capability grants surfaced in Settings → Security; SEL events on grant/use.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Rebuild + signing + updater
 

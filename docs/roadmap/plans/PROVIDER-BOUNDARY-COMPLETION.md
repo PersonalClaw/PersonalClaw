@@ -44,7 +44,7 @@ Manifest recon: `apps/manifest.py` today models CronEntry / UIPage / UISidebar /
 
 - Remove `slack-sdk` from core `dependencies`. Resolution order for how the app gets it: (i) if the app-platform pip-deps step supports first-party bundles, the slack app declares it there (verify the manifest field + `app_manager.py` behavior — the pyproject comment and app-platform doc currently disagree); (ii) otherwise the existing `personalclaw[slack]` extra remains the documented install path for slack users and the doc inconsistency is fixed to say so. Either way the core wheel sheds the dep.
 - `doctor` dep probe drops `slack_sdk` from the required set (aiohttp + websockets remain).
-- `--slack-only`: emit a one-release deprecation warning mapping to `--headless`, then delete (change class R/B-lite per LIFECYCLE-DOCTRINE; registered as a gate-less deprecation with a CHANGELOG entry — no state migration involved).
+- `--slack-only`: emit a one-release deprecation warning mapping to `--headless`, then delete (change class R/B-lite; a gate-less deprecation with a CHANGELOG entry — no state migration involved).
 
 ### B. App-contributed CLI setup (residue #4 — the seam the in-code comment promises)
 
@@ -78,7 +78,7 @@ Manifest recon: `apps/manifest.py` today models CronEntry / UIPage / UISidebar /
 
 ---
 
-## Contracts & Interfaces (this plan OWNS the three new manifest seams; conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (this plan OWNS the three new manifest seams; conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — Manifest fields (added to `apps/manifest.py`, to_dict/from_dict parity, unknown-field-preserving per §3.8)
 
@@ -126,7 +126,7 @@ class DoctorLine:
 - **Deletes:** `constants.APP_LOGGER_ROOTS`, core `_setup_slack_tokens`/`_setup_slash_command`, `cli_doctor.py` hardcoded Slack section.
 - **Coordination:** DISTRIBUTION T1.4 (LLM-SDK demotion) depends on T2.1's pip-step finding — read this plan's Execution log first.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Seams + slack migration
 

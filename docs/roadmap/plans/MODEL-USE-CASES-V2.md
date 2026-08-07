@@ -43,7 +43,7 @@ Created 2026-07-26 (roadmap rev 13; owner ask: model sovereignty with sophistica
 - **S3 — Settings UI + composer explainer + validation.** The Models panel gains a **Chat routing** group: one chain row per chat sub-category (label, description, "inherits your Chat chain" empty-state via the existing `fallback` meta affordance), plus the `chat` row itself upgraded to an ordered chain editor — drag reorder, add/remove entries, per-entry **health dot** from `/api/models/health` (breaker_state → green/amber/red), unavailable-model synthetic rows kept. The composer model pill gains a one-line **precedence explainer** ("This model overrides the session's use-case chain; if it fails, the chain takes over"). Validation drives every axis from the UI: bind chains, kill a provider, watch the skip; run a title/suggestion/loop/orchestration turn and confirm each resolves its own axis in the SEL/audit.
 - **What this plan does NOT do:** no auto-reordering, no scoring, no learned local-vs-cloud policy (plan 17 consumes this vocabulary later and lands changes as proposals); no per-app or per-agent chains (agents keep their existing `model` override field); no new telemetry stores.
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md); clean break under the pre-1.0 banner)
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md); clean break under the pre-1.0 banner)
 
 ### C1 — Vocabulary (`providers/use_cases.py`; additive)
 ```python
@@ -101,7 +101,7 @@ No new endpoints. The composer override path (`POST /api/chat/sessions/{s}/model
 - **Class B:** value-shape semantics change + sub-category vocabulary growth — plain clean break (pre-1.0 banner); tolerant read of bare-string/single-ref values; release notes advise `personalclaw snapshot`.
 - **MODEL-ROUTING-TELEMETRY (17) coordination:** plan 17's learned router later scores WITHIN this vocabulary and its multi-binding pool IS this chain store; its learned reorderings land as user-accepted proposals — this plan's resolver never reorders, and that invariant is a stated contract plan 17 must honor.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Vocabulary + chain resolver + storage shape
 

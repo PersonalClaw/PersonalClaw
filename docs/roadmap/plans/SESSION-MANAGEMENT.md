@@ -33,7 +33,7 @@ no chat sidebar; see the Execution log. Created 2026-07-18
 - **S2 — Smart organization + bulk:** **suggested organization** — a deterministic-first, LLM-last pass (per the corpus doctrine) that proposes a folder/tags for an untagged session (cheap heuristics: title keywords, workspace dir, channel origin → then an LLM suggestion only if ambiguous), surfaced as a *proposal* (propose-don't-write — an inbox `proposal` item per plan 42, or an inline accept chip). **Bulk operations**: multi-select → archive/tag/folder/delete/export. **Auto-archive rule**: sessions untouched for N days (configurable) move to an Archived view (not deleted — distinct from history JSONL rotation), decluttering the sidebar while staying searchable.
 - **S3 — Lifecycle + templates + export:** an explicit **session lifecycle** (active / archived / pinned-never-archive) with a retention policy surface (what auto-archives, what never does, when archived sessions are purgeable — the user's call, defaults conservative); **session templates/starters** (save a session's setup — agent binding, model, system context, first prompt — as a reusable starter; "New from template"); **export** (a conversation → Markdown/JSON, credential-redacted via the existing `history.py` redaction) and **share** (a redacted read-only artifact via the artifacts system, never auto-published — owner action).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md); class B per plan 31)
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md); class B — clean break under the pre-1.0 banner)
 
 ### C1 — Session search (`session_search.py`, new; FTS5 via `sqlite_compat` per plan 39)
 ```python
@@ -64,12 +64,12 @@ GET /api/chat/sessions/{session}/export?format=md|json   # credential-redacted (
 ```
 
 ### Integration points
-- **Calls:** `history.py` (index source + redacted export), `session_restrictions` (index gating), `sqlite_compat`/`require_fts5` (plan 39), the heartbeat reindex hook, `emit_attention_item(kind="proposal")` (plan 42, org suggestions), the artifacts system (share), plan-31 migration.
+- **Calls:** `history.py` (index source + redacted export), `session_restrictions` (index gating), `sqlite_compat`/`require_fts5` (plan 39), the heartbeat reindex hook, `emit_attention_item(kind="proposal")` (plan 42, org suggestions), the artifacts system (share), an idempotent index backfill keyed on data inspection (no separate migration framework — it does not exist).
 - **Called by:** the chat sidebar (search, bulk, archived view), "New from template".
 - **Storage owned:** `session_search.db`, `session_templates.json`, the four session-meta fields.
 - **Gate/migration:** `session_management` (class B); migration backfills `last_activity_at` from history mtimes + reindexes.
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Cross-session search + scalable sidebar
 

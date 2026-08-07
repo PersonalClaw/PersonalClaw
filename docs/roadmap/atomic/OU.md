@@ -92,7 +92,7 @@ Session 3 T3.2 + V3 (Wave 2); Design 'Approval brief'; copy-sensitive surface re
 
 **Status:** todo
 
-Session 3 T3.3 (Wave 2); Contracts C2; INTEGRATION-ARCHITECTURE §3.5 (existing ChannelDelivery); apps-repo slack renderer (minimal)
+Session 3 T3.3 (Wave 2); Contracts C2; existing ChannelDelivery seam; apps-repo slack renderer (minimal)
 
 **Done when:** the same brief fields (tool + blast-radius line) flow through ChannelDelivery.request_approval payloads as additive meta; apps-repo slack renderer minimally updated to show what it can today; dashboard remains the rich surface
 

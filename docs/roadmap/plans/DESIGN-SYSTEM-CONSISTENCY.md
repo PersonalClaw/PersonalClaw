@@ -35,7 +35,7 @@ Strong foundation: `web/src/design/` — `tokens.css` (brand/surface/content/sem
 - **S2 — Token + primitive hardening:** fix the ranked drift — replace hardcoded values with tokens (shrinking the allowlist as you go), migrate bespoke chrome to shell primitives, consolidate near-duplicate components (e.g. multiple ad-hoc button/menu variants → the canonical primitive). Each fix shrinks the lint allowlist; the end state = allowlist near-empty, lint strict.
 - **S3 — Interaction + a11y + responsive parity:** standardize interaction patterns (list selection, empty states via the shared `EmptyState`, loading skeletons, error states, confirm dialogs — one pattern each, documented in a `docs/design/patterns.md` gallery); WCAG AA parity pass (every route: contrast, focus-visible ring, keyboard nav, reduced-motion alternative); dark/light parity pass (every token used in both, no theme-only hardcodes); responsive pass (no horizontal body scroll; the phone-viewport paths for plan 44's companion). Ratchet: the lint + an a11y CI check now *block* regressions (feeds plan 33 rails).
 
-## Contracts & Interfaces (mostly frontend hardening; the enforceable rails pinned — conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md))
+## Contracts & Interfaces (mostly frontend hardening; the enforceable rails pinned — conventions per [AGENTS.md](../../../AGENTS.md))
 
 ### C1 — The consistency rails (CI-enforced, mount in plan 33 `ci.yml` web/rails)
 - **Token lint (strict):** `web/src/design/tokenLint.test.ts` extended — every hardcoded design value in `web/src` must be a token or an explicit, justified allowlist entry (`tokenLint.allowlist.json` with a `reason` field per entry). Ratchets down each session; end state near-empty.
@@ -51,7 +51,7 @@ Canonical usage of each shared primitive + each interaction pattern (selection, 
 - **Rails into:** plan 33 CI (`web`/`rails` jobs gain the token-lint-strict + axe checks).
 - **Authority:** `web/DESIGN.md` + `web/PRODUCT.md` (unchanged — this plan conforms TO them).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — The audit (map only)
 

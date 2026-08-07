@@ -4,7 +4,7 @@
 **Code:** `DIST`  
 **Source status:** done
 
-DISTRIBUTION is DONE for all code deliverables (S1–S4). 12 atoms: 9 done (packaging correctness, SDK demotion core+apps halves, sdist SPA fix, client packaging, docs restructure, bootstrap install.sh, containers, self-update generalization) plus the first PyPI publish (PyPI carries core+client through 0.1.3). Remaining todo: owner clean-VM walkthroughs V1–V4 and the out-of-scope S5 Homebrew/Nix channels. The one intra-plan gate that mattered — the class-B update_kind_aware gate — was re-scoped to a clean break because LIFECYCLE-DOCTRINE is deferred (no lifecycle/ package). Key cross-plan edges: CI-RELEASE owns the build pipeline that produces every artifact these paths install; T1.4's SDK demotion was contingent on PROVIDER-BOUNDARY-COMPLETION S2's app pip-step (confirmed supported); DISCOVERABILITY hosts /install.
+DISTRIBUTION is DONE for all code deliverables (S1–S4). 12 atoms: 9 done (packaging correctness, SDK demotion core+apps halves, sdist SPA fix, client packaging, docs restructure, bootstrap install.sh, containers, self-update generalization) plus the first PyPI publish (PyPI carries core+client through 0.1.3). Remaining todo: owner clean-VM walkthroughs V1–V4 and the out-of-scope S5 Homebrew/Nix channels. The one intra-plan gate that mattered — the class-B update_kind_aware gate — was re-scoped to a plain clean break under the pre-1.0 banner (the migration-backed gate regime is deferred; no lifecycle/ package). Key cross-plan edges: CI-RELEASE owns the build pipeline that produces every artifact these paths install; T1.4's SDK demotion was contingent on PROVIDER-BOUNDARY-COMPLETION S2's app pip-step (confirmed supported); DISCOVERABILITY hosts /install.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -53,7 +53,7 @@ Contract C4 wheel contract; Execution log 'Release dry-run — RELEASE-BLOCKING 
 
 **Status:** done (PR #13e46fd)
 
-Session 2 T2.3; Tier-S per plan 31
+Session 2 T2.3; a stable published surface
 
 **Done when:** client wheel METADATA correct (name/urls/classifiers/markdown README); `pip install personalclaw-client` works; the new client CI job builds the wheel and runs its 18-test suite green in a fresh venv
 

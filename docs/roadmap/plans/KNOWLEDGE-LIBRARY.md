@@ -36,7 +36,7 @@ The store is already rich (`knowledge/store.py`): `items` table with `title, con
 - **S2 — Curation lifecycle + taxonomy + bulk:** add `read_state: unread|reading|read` and `favorited` (distinct from pinned, which is a surfacing weight) to `items`; promote tags to a **taxonomy** (a `tags` table with optional parent for hierarchy + usage counts; the row's JSON tags become references — migration reconciles); **saved views** (named filter+sort combos, = smart collections' UI); **bulk operations** (multi-select → add-to-collection / tag / archive / mark-read / delete) via a batch endpoint.
 - **S3 — Reading experience + intelligence surfacing:** a proper **reading view** (tuned reading type scale — reuse the editorial-document skill's house style; progress indicator; in-reader highlight/annotation that becomes a `mention`/note linked to the item); **related-items** rail (existing P12 prefilter + entity-graph neighbors); **library home** (recently added, continue-reading, favorites, per-collection counts) — a composable surface coordinating with AMBIENT-SURFACES (20). Dedup/merge UI: surface near-duplicate candidates (URL + title + embedding similarity) with a merge action (keeps one, redirects mentions/collections).
 
-## Contracts & Interfaces (conventions per [INTEGRATION-ARCHITECTURE](INTEGRATION-ARCHITECTURE.md); class B per plan 31)
+## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md); class B — clean break under the pre-1.0 banner)
 
 ### C1 — Schema additions (`knowledge/store.py`, additive; migration `m_*_knowledge_library`)
 ```sql
@@ -65,12 +65,12 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
 `GET/POST /api/knowledge/collections`, `PATCH/DELETE /api/knowledge/collections/{id}`, `POST /api/knowledge/collections/{id}/items`, `POST /api/knowledge/bulk`, `POST /api/knowledge/items/{id}/read-state`, `POST /api/knowledge/items/{id}/merge`. All Tier-I (dashboard API).
 
 ### Integration points
-- **Calls:** existing `knowledge/store.py` + `retrieval.py::search` (smart collections + dedup similarity), the embedding path (dedup), plan-31 migration framework.
+- **Calls:** existing `knowledge/store.py` + `retrieval.py::search` (smart collections + dedup similarity), the embedding path (dedup), knowledge.db's own additive column ladder (no separate migration framework — it does not exist).
 - **Called by:** the Knowledge frontend (collections rail, reading view, bulk bar); WATCHED-SOURCES (15) lands items into a declared collection; KNOWLEDGE-SYNTHESIS (5) synthesis outputs become library items.
 - **Storage owned:** the three new tables + two new item columns (all in knowledge.db).
 - **Gate/migration:** `knowledge_library` (class B) + `m_*_knowledge_library` (creates tables + reconciles JSON tags → tags table; idempotent).
 
-## Task breakdown (executor-ready — run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+## Task breakdown (executor-ready — run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 ### Session 1 — Collections
 
@@ -104,7 +104,7 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
 2. Decide default collections seeded for new users (proposal: none — an empty, self-explaining library beats prescriptive shelves), and whether watched-sources auto-create a per-source collection.
 
 ## Risks & open questions
-- **Tag-migration reconciliation** (JSON → table) is the one delicate step — dual-path (both readable) until the migration verifies, per plan 31; a fixture with messy tags is the test.
+- **Tag-migration reconciliation** (JSON → table) is the one delicate step — a single-pass idempotent backfill keyed on inspecting the data (clean break under the pre-1.0 banner); a fixture with messy tags is the test.
 - **Open:** annotations as `mentions` vs a dedicated `annotations` table — default: reuse `mentions` (already links entities↔items); promote to its own table only if reading-notes need richer structure (revisit in S3).
 - **Open:** whether smart collections should be materializable (cached) for large libraries — defer until a real library shows the query cost (bottleneck-gated).
 
@@ -117,8 +117,8 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
     (`_NEW_ITEM_COLUMNS` + `_migrate`) and its `CREATE TABLE IF NOT EXISTS` schema.
   - **DEVIATION (E1, premise mismatch) — the plan's `lifecycle/` tasks are STALE.** T1.1
     names `lifecycle/migrations/m_*_knowledge_library.py` and a `knowledge_library`
-    gate, but **`src/personalclaw/lifecycle/` does not exist** (Lifecycle-Doctrine is
-    owner-deferred). knowledge.db has a store-native additive ladder, so this went
+    gate, but **`src/personalclaw/lifecycle/` does not exist** (the migration-backed
+    lifecycle regime is owner-deferred). knowledge.db has a store-native additive ladder, so this went
     store-native — the same ruling the owner already made for Memory-Graph S1's v7. No
     gate, no migration file. Verified with a hand-built PRE-collections DB: opening the
     store adds both columns + both tables, the existing item survives, its NULL
@@ -212,7 +212,7 @@ def merge_items(keep_id, drop_id) -> None: ...    # redirects mentions + collect
 Reuse PLATFORM-REACH's `sqlite_features()` contract for the probe if it has landed; if not, the probe lands here and that plan consumes it (record which happened in the execution log).
 - **(c) Re-embed as a migration concern.** Existing items have whole-item vectors and no chunks. Chunking is a **class-B** change: it lands as a plain clean break under the pre-1.0 banner (no gate/migration machinery, per the workspace doctrine), but it needs a **backfill** that is resumable, batched, and progress-reporting — the store already has a batch re-embed path (`reembed_all`) and an ingest queue with `recover_pending()` restart recovery to model it on. A library with a half-built chunk table must degrade to whole-item vectors, not to zero results.
 
-### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+### Amendment task table (extends this plan; run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 Sequence these **independently of S1-S3** — they touch the store's indexing layer, not the library UI.
 
@@ -296,7 +296,7 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   retrieval weighting.** Its only effect is `ORDER BY` in the *unsearched* list branch
   (`handlers/knowledge.py:201`); nothing in `knowledge/retrieval.py` reads `is_pinned`.
   **T2.2 (tags taxonomy) is NOT startable as written:** its done-when requires a
-  "dual-path" JSON→table migration, which the pre-Lifecycle-Doctrine doctrine forbids
+  "dual-path" JSON→table migration, which the pre-1.0 clean-break doctrine forbids
   (class-B changes are plain clean breaks), and knowledge.db has **no schema version** to
   gate a one-shot backfill on. It also has a wider blast radius than the plan implies:
   tags reach the FTS index as the raw JSON string via **4 manual sync sites**, the agent's
@@ -310,7 +310,7 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
     idempotent **by data inspection** rather than by a schema version — which is the house
     pattern, so the "no schema version to gate on" objection dissolved. The general lesson,
     now standing doctrine: a plan clause conflicting with the clean-break doctrine is a
-    **re-scope, never a blocker** — see [EXECUTION-PROTOCOL §2](EXECUTION-PROTOCOL.md) and
+    **re-scope, never a blocker** — see [AGENTS.md doctrine](../../../AGENTS.md) and
     the workspace `AGENTS.md` section "You are working as the OWNER".
 - 2026-07-29 — **DONE (S2: T2.1 remainder).** S1 shipped the store API, routes and
   context-menu verbs for read state and favorites; **neither state rendered anywhere**,
@@ -363,7 +363,7 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   ruling (option B) over my recommendation of a derived registry.
 
   **The clean-break shape.** The plan's done-when asked for "old JSON still readable
-  during dual-path", which pre-Lifecycle-Doctrine doctrine forbids — but that was ONE
+  during dual-path", which the pre-1.0 clean-break doctrine forbids — but that was ONE
   CLAUSE, not a blocker, and treating it as one was my error (the owner corrected it).
   Executed as a single-pass migration with no dual path.
 

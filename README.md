@@ -48,10 +48,10 @@ along behind compatibility shims. The upshot for you as an early user:
   archive first (restore with `personalclaw restore`), and keep the archive somewhere safe.
 - **Don't make this your only system of record yet.** Treat anything you put in
   PersonalClaw as reproducible or backed up elsewhere until backward compatibility becomes
-  the default posture — which is exactly what the
-  [lifecycle doctrine](docs/roadmap/plans/LIFECYCLE-DOCTRINE.md) introduces (gated,
-  migration-backed changes). Until then, run it as a power-user's second machine, not your
-  primary driver.
+  the default posture — the point at which gated, migration-backed changes replace
+  clean breaks (the lifecycle mental model in
+  [CONTRIBUTING.md](CONTRIBUTING.md#breaking-changes)). Until then, run it as a power-user's
+  second machine, not your primary driver.
 - **This is expected to last a while.** Migration-backed change discipline is scheduled
   deliberately *late* — it lands once the architecture has stopped moving, near the end of
   the current [roadmap](docs/roadmap/roadmap.md), because freezing compatibility around a

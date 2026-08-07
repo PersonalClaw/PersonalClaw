@@ -425,7 +425,7 @@ Frontmatter gains an optional declaration so resources are addressable without a
 
 **Contract:** a `project_context_review` capability that (1) reads a conversation or run, (2) emits proposals of kind `project_instruction` / `project_file` / `project_skill` into the existing §2.2 queue with a rationale per item, (3) **writes nothing** until accepted, and (4) records the decision in decision memory (§2.2) so the same rejected suggestion doesn't re-surface. Prompt-triggered by default; if a cadence is added later it must remain propose-only.
 
-### Amendment task table (extends this plan; run under [EXECUTION-PROTOCOL](EXECUTION-PROTOCOL.md))
+### Amendment task table (extends this plan; run under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md))
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
