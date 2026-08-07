@@ -390,6 +390,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/chat` — chat models for dropdowns (the one model list).
 - `GET /api/models/downloads` — live + recently-finished download jobs.
 - `POST /api/models/downloads` — start a download. Body: {provider, model}.
+- `POST /api/models/downloads/cleanup` — delete the partial-download leftovers.
+- `GET /api/models/downloads/cleanup-candidates` — partial-download leftovers.
 - `DELETE /api/models/downloads/{id}` — cancel and detach a download job.
 - `GET /api/models/downloads/{id}/stream` — per-job progress SSE.
 - `GET /api/models/embedding/reindex` — live + recently-finished jobs.

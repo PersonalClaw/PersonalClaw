@@ -1337,11 +1337,19 @@ export interface ProviderModels { name: string; displayName?: string; type: stri
 export interface ProviderTestResult { ok: boolean; status?: string; message: string }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
-// A background local-model download job (matches dashboard/model_downloads.py).
+// A background local-model download job — the ONE canonical wire shape
+// (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py, LMMV §4.1).
+// `progress` is 0.0–1.0 when `total_bytes` is known, else 0.0 (indeterminate);
+// `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
+// `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
+// 'disk_full'|'gated'|'not_found'), '' otherwise.
 export interface DownloadJob {
   id: string; provider: string; model: string
-  status: 'running' | 'done' | 'error' | 'cancelled'
-  phase: string; bytes: number; size_bytes: number; error: string
+  kind: 'weights' | 'sidecar-install'
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  progress: number; speed_bps: number; eta_s: number
+  total_bytes: number; downloaded_bytes: number
+  error: string; reason: string
 }
 export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
@@ -1995,6 +2003,12 @@ export const api = {
   modelDownloads: () => get<{ downloads: DownloadJob[] }>('/api/models/downloads').then((d) => d.downloads ?? []),
   cancelModelDownload: (id: string) => del(`/api/models/downloads/${encodeURIComponent(id)}`),
   downloadStreamUrl: (id: string) => `/api/models/downloads/${encodeURIComponent(id)}/stream`,
+  // Partial-download leftovers across every local provider's cache root — the files a
+  // cancelled/crashed fetch leaves behind. Powers the "Reclaim N GB" affordance.
+  modelDownloadCleanupCandidates: () =>
+    get<{ candidates: { path: string; bytes: number }[]; total_bytes: number }>('/api/models/downloads/cleanup-candidates'),
+  modelDownloadCleanup: () =>
+    post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
   // Search a searchable provider's remote installable catalog (ollama's library).
