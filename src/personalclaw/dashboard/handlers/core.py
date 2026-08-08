@@ -498,6 +498,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "evals.judge_agreement_floor": {"type": "float", "min": 0.0, "max": 1.0},
     "evals.ablation_cadence_days": {"type": "int", "min": 1, "max": 365},
     "evals.default_budget_usd": {"type": "float", "min": 0.0, "max": 1000.0},
+    # LOCAL-MODEL-MANAGER-V2 §9 — the local-model manager knobs (runtime-editable via
+    # Settings → Models). The whoami cache trades HF-call frequency against how fast a
+    # rotated token is noticed; the selftest timeout bounds a click-triggered real
+    # inference (a selftest can page a large model into RAM).
+    "local_models.whoami_ttl_s": {"type": "int", "min": 0, "max": 86400},
+    "local_models.selftest_timeout_s": {"type": "int", "min": 1, "max": 600},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},

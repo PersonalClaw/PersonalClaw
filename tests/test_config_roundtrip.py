@@ -86,6 +86,7 @@ _SECTIONS = [
     "resilience",
     "evals",
     "packs",
+    "local_models",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,

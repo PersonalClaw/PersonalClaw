@@ -2861,6 +2861,37 @@ class SandboxConfig:
 
 
 @dataclass
+class LocalModelsConfig:
+    """Local-model manager knobs (LOCAL-MODEL-MANAGER-V2 §9).
+
+    ``whoami_ttl_s`` caps how long a HuggingFace ``whoami`` verdict is cached before the
+    token cascade re-validates it (a list render must not hammer HF). ``selftest_timeout_s``
+    bounds each per-capability real-inference selftest (a selftest can page a model into
+    RAM, so it is user-click-only AND time-bounded). Both are plain scalars, runtime-editable
+    via Settings → Models.
+    """
+
+    whoami_ttl_s: int = field(
+        default=600,
+        metadata=_meta(
+            "HF whoami cache (seconds)",
+            "How long a HuggingFace token's whoami validity is cached before the token "
+            "cascade re-checks it. Higher = fewer HF calls on model-list renders; lower = a "
+            "rotated/revoked token is noticed sooner.",
+        ),
+    )
+    selftest_timeout_s: int = field(
+        default=90,
+        metadata=_meta(
+            "Model selftest timeout (seconds)",
+            "Per-capability ceiling for a model's real-inference selftest (transcribe a "
+            "fixture, embed a sentence, …). A selftest can page a large model into memory, "
+            "so it is run only on an explicit Test click and bounded by this timeout.",
+        ),
+    )
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = field(
         default_factory=AgentConfig,
@@ -3019,6 +3050,13 @@ class AppConfig:
             "The offline eval substrate — studies, ablation, retrieval/judge benchmarks.",
         ),
     )
+    local_models: "LocalModelsConfig" = field(
+        default_factory=lambda: LocalModelsConfig(),
+        metadata=_meta(
+            "Local Models",
+            "Local-model manager knobs — HF token whoami cache + selftest timeout.",
+        ),
+    )
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -3081,6 +3119,9 @@ class AppConfig:
         inbound_data = data.get("inbound", {}) or {}
         durability_data = data.get("durability", {}) or {}
         evals_data = data.get("evals", {}) or {}
+        local_models_data = data.get("local_models", {}) or {}
+        if not isinstance(local_models_data, dict):
+            local_models_data = {}
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -3365,6 +3406,12 @@ class AppConfig:
                 ablation_cadence_days=_safe_int(evals_data.get("ablation_cadence_days"), 30),
                 bakeoff_capture_enabled=bool(evals_data.get("bakeoff_capture_enabled", False)),
                 default_budget_usd=float(evals_data.get("default_budget_usd", 0.0) or 0.0),
+            ),
+            local_models=LocalModelsConfig(
+                whoami_ttl_s=max(0, _safe_int(local_models_data.get("whoami_ttl_s"), 600)),
+                selftest_timeout_s=max(
+                    1, _safe_int(local_models_data.get("selftest_timeout_s"), 90)
+                ),
             ),
             inbox=InboxConfig(
                 enabled=bool(inbox_data.get("enabled", False)),
@@ -3761,6 +3808,7 @@ class AppConfig:
             "snapshot_dir": self.snapshot_dir,
             "durability": asdict(self.durability),
             "evals": asdict(self.evals),
+            "local_models": asdict(self.local_models),
             # Channel-agnostic observe-buffer sizing — top-level keys (Slack config
             # lives in the slack-channel app's own store, not here).
             "observe_max_messages": self.observe_max_messages,

@@ -689,6 +689,18 @@
     "type": "bool"
   },
   {
+    "default": 90,
+    "path": "local_models.selftest_timeout_s",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 600,
+    "path": "local_models.whoami_ttl_s",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 120,
     "path": "loops.default_idle_secs",
     "sensitive": false,
