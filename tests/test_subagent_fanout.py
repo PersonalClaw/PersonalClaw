@@ -198,6 +198,13 @@ class TestAgentValidation:
         cfg = MagicMock()
         cfg.agents = {"personalclaw": MagicMock(), "code-reviewer": MagicMock()}
         cfg.agent.approval_mode = "auto"
+        # `spawn` runs the memory gate BEFORE agent validation and reads
+        # `spawn_min_memory_gb` into `check_memory_available(min_gb=...)`. A bare MagicMock there
+        # raised `TypeError: '>=' not supported between float and MagicMock` on any host where
+        # /proc/meminfo is readable (Linux CI) while passing on macOS, where the missing file
+        # short-circuits before the comparison — a platform split that hid the failure locally.
+        # Give it a real number so the memory gate is a no-op and validation is reached.
+        cfg.agent.spawn_min_memory_gb = 0.0
         mgr = SubagentManager(
             sessions=_completing_sessions(),
             ctx_builder=_mock_ctx_builder(),
