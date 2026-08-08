@@ -145,6 +145,53 @@ class TestHappyPath:
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
 
 
+class TestArtifactOffload:
+    """WV-11 end to end: a node whose output offloads populates `node_artifacts`, so a
+    downstream `{{nodes.x.artifact}}` resolves to a live pointer."""
+
+    #: A big output goes to the model node; the transform below binds its ARTIFACT ref.
+    _BIG_SPEC = {
+        "name": "offload",
+        "root": {
+            "kind": "sequence",
+            "id": "s",
+            "children": [
+                {"kind": "infer", "id": "big", "config": {"prompt": "make it"}},
+                {
+                    "kind": "transform",
+                    "id": "pointer",
+                    "config": {"expr": "ref={{nodes.big.artifact}}"},
+                },
+            ],
+        },
+    }
+
+    async def test_node_artifacts_populates_and_the_binding_resolves(self) -> None:
+        async def big(prompt, *, use_case="background", output_type=None):
+            return "B" * (J.MAX_INLINE_OUTPUT_BYTES + 1000)
+
+        run = _make_run(self._BIG_SPEC)
+        c = RunController(run, self._BIG_SPEC, services=EngineServices(completion=big))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+
+        # The writer: the offloaded node's id maps to an artifacts/ ref (not outputs/).
+        arts = c._node_artifacts()
+        assert arts is not None and "big" in arts
+        assert arts["big"].startswith("artifacts/")
+
+        # The reader: the downstream transform resolved `{{nodes.big.artifact}}` to that ref.
+        assert c._outputs["pointer"] == f"ref={arts['big']}"
+
+    async def test_a_small_output_populates_no_artifact(self) -> None:
+        """An inline output does NOT get an artifact pointer — `node_artifacts` is only the
+        offloaded set, and a phantom entry would resolve `{{nodes.x.artifact}}` to an
+        outputs/ path the inspect/provider machinery does not treat as an artifact."""
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        assert c._node_artifacts() is None
+
+
 class TestResumeCache:
     """WF2-A1: the acceptance bar is that this is answerable from the LEDGER."""
 

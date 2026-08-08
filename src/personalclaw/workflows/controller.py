@@ -2138,6 +2138,7 @@ class RunController:
         ctx = BindingContext(
             inputs=self.run.inputs,
             node_outputs=self._outputs,
+            node_artifacts=self._node_artifacts(),
             iter_index=iteration,
             last_output=output,
             has_last=True,
@@ -2414,6 +2415,7 @@ class RunController:
         return BindingContext(
             inputs=dict(self.run.inputs),
             node_outputs=dict(self._outputs),
+            node_artifacts=self._node_artifacts(),
             item=item.item,
             has_item=item.has_item,
             iter_index=item.iter_index,
@@ -2424,6 +2426,31 @@ class RunController:
             brief=self._session_brief(),
             secret_resolver=_secret_resolver,
         )
+
+    def _node_artifacts(self) -> dict[str, str] | None:
+        """node id → artifact ref, for outputs the journal OFFLOADED (WV-11).
+
+        This is the writer that closes the `node_artifacts` seam: `{{nodes.x.artifact}}`
+        resolves to a live pointer only for nodes whose output spilled past
+        `MAX_INLINE_OUTPUT_BYTES` (or was binary). An offloaded output's `output_ref` does not
+        start with `outputs/` — that is exactly the distinction `store.store_output` records
+        when it writes to `artifacts/` instead. Derived from instance refs (the durable record),
+        not the in-memory preview map, so it survives a restart and a rewind the same way
+        `node_outputs` does. Only SUCCESS states contribute — a failed node's leftover ref must
+        not resolve as if it were a real artifact.
+        """
+        by_path = {path: node for path, node in _walk(self.root)}
+        artifacts: dict[str, str] = {}
+        for path, inst in self.instances.items():
+            if inst.state not in SUCCESS_STATES or not inst.output_ref:
+                continue
+            if inst.output_ref.startswith("outputs/"):
+                continue
+            node = by_path.get(_base_path(path))
+            if node is None or not node.id:
+                continue
+            artifacts[node.id] = inst.output_ref
+        return artifacts or None
 
     def _sibling_outputs(self, path: str) -> dict[str, list[Any]] | None:
         """Accumulated outputs of the node's siblings inside its enclosing `parallel`.

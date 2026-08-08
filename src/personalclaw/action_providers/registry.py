@@ -111,6 +111,16 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeRetrieveActionProvider())
+    if "artifact_inspect" not in _providers:
+        # WORKFLOWS-V2 WV-11: the read half of output-offloading — pulls a `{{nodes.x.artifact}}`
+        # body on demand, confined to the run's own `artifacts/`. Added to
+        # ALLOWED_HOOK_PROVIDERS in the SAME commit — a provider in one set but not the other is
+        # the mismatch that makes a spec validate, save, and then fail to run.
+        from personalclaw.action_providers.artifact_inspect_provider import (
+            ArtifactInspectActionProvider,
+        )
+
+        register_action_provider(ArtifactInspectActionProvider())
     if "knowledge-health" not in _providers:
         # KNOWLEDGE-SYNTHESIS §3.4: the maintenance tier, split by COST. `knowledge-health` is
         # zero-token and safe to run on every write; `knowledge-consolidate` is expensive, gated,
