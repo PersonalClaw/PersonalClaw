@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload, Coins, Route, LayoutDashboard,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -33,6 +33,7 @@ import { RoutingPanel } from './RoutingPanel'
 import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
 import { AmbientPanel } from './AmbientPanel'
+import { SourcesPanel } from './SourcesPanel'
 import { GuardrailsPanel } from './GuardrailsPanel'
 import { DoctorPanel } from './DoctorPanel'
 import { AppsPanel } from './AppsPanel'
@@ -81,6 +82,7 @@ const SUBPAGES: SubPage[] = [
   { id: 'routing', label: 'Routing & Efficiency', icon: Route, render: (c) => <RoutingPanel query={c.query} setQuery={c.setQuery} /> },
   { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },
   { id: 'ambient', label: 'Ambient surfaces', icon: LayoutDashboard, render: () => <AmbientPanel /> },
+  { id: 'sources', label: 'Watched sources', icon: Rss, render: () => <SourcesPanel /> },
   { id: 'archive', label: 'Archive', icon: Archive, render: () => <ArchivePanel /> },
   { id: 'portability', label: 'Import / Export', icon: FolderSync, render: () => <PortabilityPanel /> },
   { id: 'durability', label: 'Backups', icon: HardDriveDownload, render: () => <DurabilityPanel /> },

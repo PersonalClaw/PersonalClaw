@@ -521,7 +521,14 @@ class KnowledgeStore:
         # extra chunk rows + their mentions/relations are removed. Legacy tables are
         # dropped first so deleting chunk-item rows can't trip a stale FK. FK
         # enforcement is suspended for the structural rewrite (toggle outside any txn).
-        if "chunk_index" in cols or "source_id" in cols:
+        #
+        # Keyed on `chunk_index` ALONE — not `source_id` — because WATCHED-SOURCES §3.3
+        # reclaims `items.source_id` (and the `sources` table name) with new meaning: a
+        # WatchedSource item's origin identity. The legacy chunk model ALWAYS carried
+        # `chunk_index`, so it is the reliable marker; keying on `source_id` too would
+        # make this block drop the WS-2 column (added below in `_migrate_sources`) on
+        # every reopen. The WS-2 schema is created AFTER this block for the same reason.
+        if "chunk_index" in cols:
             self.db.execute("PRAGMA foreign_keys=OFF")
             self.db.execute("BEGIN")
             try:
@@ -552,6 +559,13 @@ class KnowledgeStore:
                 self.db.execute("PRAGMA foreign_keys=ON")
         if "tags" in cols:
             self._migrate_tags_to_rows()
+        # WATCHED-SOURCES §1.2/§3.3 — add the source store LAST, after the legacy chunk
+        # block above has dropped the old `sources` table + `source_id` column. Ordering
+        # is load-bearing: the legacy DROP keys on `chunk_index` (not `source_id`) so it
+        # can't clobber these, and creating the WS-2 schema here (not in `_init_schema`)
+        # means a `DROP TABLE sources` on an upgrading DB is always followed by the fresh
+        # CREATE rather than racing it.
+        self._migrate_sources()
         # Prune orphan entities (no mentions/relations) + stale relations.
         self.db.execute("BEGIN")
         try:
@@ -715,6 +729,221 @@ class KnowledgeStore:
         # every enrichment — order-insensitive, because row order is not JSON order.
         return "ai" if topics and sorted(set(topics)) == sorted(set(names)) else "user"
 
+    # WATCHED-SOURCES §3.3 — how many seen-guids one source remembers before FIFO prune.
+    # The seen-set is the storm guard, so it MUST persist, but an unbounded set grows
+    # without limit on a busy feed. Mirrors web_poll.MAX_SEEN_KEYS's reasoning (newest
+    # kept); larger here because a feed legitimately carries more distinct items than a
+    # single scraped page. A re-appearing very-old guid may re-fire once — the correct
+    # trade against a table that grows forever.
+    _MAX_SEEN_PER_SOURCE = 5000
+
+    def _migrate_sources(self) -> None:
+        """WATCHED-SOURCES §1.2/§3 — the WatchedSource store, added idempotently.
+
+        Three tables + two item columns, all ``IF NOT EXISTS`` / column-presence guarded
+        (knowledge.db has no schema-version counter — this matches `_init_schema`'s and
+        `_migrate_tags_to_rows`'s idempotence discipline). ``source_seen`` carries the
+        ``UNIQUE(source_id, guid)`` novelty gate; the twin index on ``items(source_id,
+        guid)`` makes the same key queryable on the item itself (cross-feed dedupe reads
+        it in later atoms) and rejects a second item for one sighting even if a caller
+        bypasses the seen-set."""
+        item_cols = {r[1] for r in self.db.execute("PRAGMA table_info(items)").fetchall()}
+        # A source item's origin identity (§3.3). Nullable so every native/imported row
+        # (source_id/guid both NULL) stays valid — the partial UNIQUE index below only
+        # binds rows that actually carry both.
+        if "source_id" not in item_cols:
+            self.db.execute("ALTER TABLE items ADD COLUMN source_id TEXT")
+        if "guid" not in item_cols:
+            self.db.execute("ALTER TABLE items ADD COLUMN guid TEXT")
+        self.db.executescript("""
+            -- A WatchedSource: user-library configuration (§1.2), not harness state, so it
+            -- lives here in knowledge.db beside the items it produces. `spec`/`budget` are
+            -- per-kind JSON; the runtime rollups (last_poll_at/health_status/…) are
+            -- engine-written so the UI can show a source's health without re-polling it.
+            CREATE TABLE IF NOT EXISTS sources (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                spec TEXT NOT NULL DEFAULT '{}',
+                enrichment TEXT NOT NULL DEFAULT 'full',
+                poll_interval_secs INTEGER NOT NULL DEFAULT 3600,
+                budget TEXT NOT NULL DEFAULT '{}',
+                item_type TEXT NOT NULL DEFAULT 'bookmark',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_by TEXT NOT NULL DEFAULT 'user',
+                last_poll_at TEXT,
+                next_poll_at TEXT,
+                last_new_count INTEGER DEFAULT 0,
+                health_status TEXT DEFAULT 'ok',
+                last_error_summary TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled);
+
+            -- One opaque provider-defined cursor per source (§3.2): {etag,last_modified},
+            -- {since_ts}, {mtime_signatures}, … The engine never interprets it — it hands
+            -- the stored blob back to poll() and persists whatever comes out, atomically
+            -- with the seen-set delta. One row per source, so id is the PK.
+            CREATE TABLE IF NOT EXISTS source_cursors (
+                source_id TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+                cursor TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            );
+
+            -- The seen-set / novelty gate (§3.3): the storm guard. The composite PK is the
+            -- UNIQUE(source_id, guid) constraint — an INSERT OR IGNORE that changes no row
+            -- is a repeat sighting. ON DELETE CASCADE so deleting a source reclaims its set.
+            CREATE TABLE IF NOT EXISTS source_seen (
+                source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                guid TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                PRIMARY KEY (source_id, guid)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_source_seen_source ON source_seen(source_id);
+
+            -- The same (source_id, guid) key on the item itself. Partial (both non-NULL) so
+            -- native items — which leave both NULL — are exempt: SQLite treats NULLs as
+            -- distinct, so a plain UNIQUE would still admit unlimited native rows, but the
+            -- partial index makes the intent explicit and keeps the index small.
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_guid
+                ON items(source_id, guid)
+                WHERE source_id IS NOT NULL AND guid IS NOT NULL;
+        """)
+        self.db.commit()
+
+    # ── WatchedSource store (WATCHED-SOURCES §1.2) ──────────────────────────────────
+
+    def create_source(
+        self,
+        *,
+        name: str,
+        provider: str,
+        kind: str,
+        spec: dict | None = None,
+        enrichment: str = "full",
+        poll_interval_secs: int = 3600,
+        budget: dict | None = None,
+        item_type: str = "bookmark",
+        enabled: bool = True,
+        created_by: str = "user",
+    ) -> str:
+        """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2)."""
+        sid = f"src-{uuid4().hex[:8]}"
+        now = datetime.now().isoformat()
+        self.db.execute(
+            "INSERT INTO sources (id, name, provider, kind, spec, enrichment, "
+            "poll_interval_secs, budget, item_type, enabled, created_by, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                sid,
+                name,
+                provider,
+                kind,
+                json.dumps(spec or {}),
+                enrichment,
+                int(poll_interval_secs),
+                json.dumps(budget or {}),
+                item_type,
+                1 if enabled else 0,
+                created_by,
+                now,
+                now,
+            ),
+        )
+        self.db.commit()
+        return sid
+
+    def _serialize_source(self, row) -> dict:
+        d = dict(row)
+        for key in ("spec", "budget"):
+            val = d.get(key)
+            try:
+                d[key] = json.loads(val) if val else {}
+            except (TypeError, ValueError):
+                d[key] = {}
+        d["enabled"] = bool(d.get("enabled"))
+        return d
+
+    def get_source(self, source_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
+        return self._serialize_source(row) if row else None
+
+    def list_sources(self, *, enabled_only: bool = False) -> list[dict]:
+        sql = "SELECT * FROM sources"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY created_at"
+        return [self._serialize_source(r) for r in self.db.execute(sql).fetchall()]
+
+    def get_source_cursor(self, source_id: str) -> str:
+        """The opaque cursor last persisted for a source (empty string if never polled)."""
+        row = self.db.execute(
+            "SELECT cursor FROM source_cursors WHERE source_id = ?", (source_id,)
+        ).fetchone()
+        return row["cursor"] if row else ""
+
+    def record_poll(
+        self,
+        source_id: str,
+        *,
+        cursor: str,
+        new_count: int,
+        health_status: str = "ok",
+        error_summary: str = "",
+        next_poll_at: str = "",
+    ) -> None:
+        """Persist the poll's outcome: the new cursor + the source's runtime rollups.
+
+        Called AFTER the poll's new items (each written by :meth:`create_typed_item` with
+        its seen-row, in that item's own committed txn). The seen-set is already durable,
+        so a crash the instant before this call re-yields the same items next poll and the
+        UNIQUE gate drops them — exactly-once persist on top of at-least-once poll (§3.2).
+        The cursor upsert + rollup update share one txn so the engine's view of a source
+        never shows a fresh cursor against stale rollups."""
+        now = datetime.now().isoformat()
+        self.db.execute("BEGIN")
+        try:
+            self.db.execute(
+                "INSERT INTO source_cursors (source_id, cursor, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(source_id) DO UPDATE SET cursor = excluded.cursor, "
+                "updated_at = excluded.updated_at",
+                (source_id, cursor, now),
+            )
+            self.db.execute(
+                "UPDATE sources SET last_poll_at = ?, next_poll_at = ?, last_new_count = ?, "
+                "health_status = ?, last_error_summary = ?, updated_at = ? WHERE id = ?",
+                (
+                    now,
+                    next_poll_at or None,
+                    int(new_count),
+                    health_status,
+                    error_summary,
+                    now,
+                    source_id,
+                ),
+            )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        self._prune_seen(source_id)
+
+    def _prune_seen(self, source_id: str) -> None:
+        """FIFO-cap the seen-set at ``_MAX_SEEN_PER_SOURCE`` (§3.3). Keeps the newest by
+        first_seen_at; a re-appearing very-old guid may re-fire once, which is the correct
+        trade against an unbounded table on a busy feed."""
+        self.db.execute(
+            "DELETE FROM source_seen WHERE source_id = ? AND guid NOT IN ("
+            "SELECT guid FROM source_seen WHERE source_id = ? "
+            "ORDER BY first_seen_at DESC LIMIT ?)",
+            (source_id, source_id, self._MAX_SEEN_PER_SOURCE),
+        )
+        self.db.commit()
+
     def _load_graph(self):
         self.graph.clear()
         for row in self.db.execute("SELECT id, name, entity_type FROM entities"):
@@ -740,14 +969,26 @@ class KnowledgeStore:
         url: str = "",
         provider: str = "native",
         summary: str = "",
+        source_id: str = "",
+        guid: str = "",
         extra: dict | None = None,
-    ) -> str:
+    ) -> str | None:
         """Create one logical-document typed item (note/gist/bookmark/…) directly.
 
         This is the one logical document the typed UI + agents work with: it carries
         the first-class fields (type, url, word_count) and is NOT chunked (chunking is
         an embedding-pipeline detail). ``extra`` may set any other first-class column
-        (mime_type, file_path, …)."""
+        (mime_type, file_path, …).
+
+        WATCHED-SOURCES §3.3 — when ``source_id`` AND ``guid`` are both supplied (a
+        :class:`~personalclaw.knowledge.source_engine.SourceEngine` writing a polled
+        feed item), the ``source_seen`` novelty gate is folded into the SAME
+        transaction as the item insert: a first sighting inserts the seen row + the
+        item atomically and returns the id; a repeat sighting (the ``UNIQUE`` index /
+        composite PK rejects it) rolls back and returns ``None`` — the exactly-once
+        persist that makes an at-least-once poll (a crash between item-persist and
+        cursor-persist re-yields items) harmless. Native callers omit both and always
+        get an id (contract unchanged)."""
         item_id = str(uuid4())
         now = datetime.now().isoformat()
         # Tags are rows now. Normalized here so the caller's shape (list[str], possibly
@@ -760,25 +1001,50 @@ class KnowledgeStore:
         # trailing-slash variants of the same page collapse to one item.
         if item_type == "bookmark" and url:
             url = normalize_url(url)
+        is_source_item = bool(source_id and guid)
         self.db.execute("BEGIN")
         try:
-            self.db.execute(
-                "INSERT INTO items (id, title, content, item_type, "
-                "summary, status, url, word_count, provider, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
-                (
-                    item_id,
-                    title,
-                    content,
-                    item_type,
-                    summary,
-                    url,
-                    word_count,
-                    provider,
-                    now,
-                    now,
-                ),
-            )
+            if is_source_item:
+                # The novelty gate IS the storm guard (§3.3): the INSERT-or-ignore into the
+                # UNIQUE seen-set is what makes a page that changes every render fire at most
+                # once. Do it FIRST, inside the item's txn — if the guid was already seen,
+                # bail before writing a duplicate item (no dup) and before touching the FTS.
+                cur = self.db.execute(
+                    "INSERT OR IGNORE INTO source_seen (source_id, guid, first_seen_at) "
+                    "VALUES (?, ?, ?)",
+                    (source_id, guid, now),
+                )
+                if cur.rowcount == 0:
+                    self.db.execute("ROLLBACK")
+                    return None
+            try:
+                self.db.execute(
+                    "INSERT INTO items (id, title, content, item_type, summary, status, url, "
+                    "word_count, provider, source_id, guid, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        item_id,
+                        title,
+                        content,
+                        item_type,
+                        summary,
+                        url,
+                        word_count,
+                        provider,
+                        source_id or None,
+                        guid or None,
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                # The never-pruned item-level UNIQUE(source_id, guid) backstop fired: this
+                # source+guid already has an item even though the FIFO-capped seen-set had
+                # forgotten it (a very-old guid re-appearing after the ~5000-entry prune).
+                # Roll back and dedup rather than crash the poll — the item index is the
+                # authoritative persist gate, the seen-set is the storm guard on top.
+                self.db.execute("ROLLBACK")
+                return None
             self._write_item_tags(item_id, tag_names, source="user", now=now)
             rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[
                 0

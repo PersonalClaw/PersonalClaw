@@ -646,6 +646,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "ambient.genui_enabled": {"type": "bool"},
     "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
     "ambient.tray_enabled": {"type": "bool"},
+    # Watched sources (WATCHED-SOURCES SC#12) — the poll engine's runtime knobs. The
+    # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
+    # the engine poll a third party abusively.
+    "sources.enabled": {"type": "bool"},
+    "sources.poll_interval_default_secs": {"type": "int", "min": 300, "max": 604800},
+    "sources.network_floor_secs": {"type": "int", "min": 300, "max": 604800},
+    "sources.max_sources": {"type": "int", "min": 1, "max": 1000},
+    "sources.max_items_per_poll": {"type": "int", "min": 1, "max": 1000},
+    "sources.daily_request_budget": {"type": "int", "min": 1, "max": 100000},
 }
 
 
