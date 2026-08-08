@@ -625,6 +625,10 @@ export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
   error?: string; attention?: Record<string, unknown> | null
   tokens?: number; elapsed_secs?: number
+  // The containing project (empty when unscoped) — the run view scopes its per-project
+  // judge-guidance control on this, since that guidance writes through the project and is
+  // what reaches this run's worker and judge sessions (LOOPS-EVOLUTION R14).
+  project_id?: string
   nodes: WorkflowNodeState[]
 }
 // One pending human-input gate. `ask` is the typed payload ONE renderer covers

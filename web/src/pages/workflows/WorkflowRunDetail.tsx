@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, Pause, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, MessageSquarePlus, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
+import { SidePanel } from '../../ui/SidePanel'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { confirm } from '../../ui/dialog'
+import { confirm, promptForm } from '../../ui/dialog'
 import { fmtElapsed, isNodeTerminal, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
@@ -14,8 +15,10 @@ import { useWorkflowStream } from './useWorkflowStream'
 import { DagView } from '../tasks/DagView'
 import { layoutRunDag } from './runDag'
 import { tokenForNode } from './surfacingMeta'
+import { revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
+import { SteeringPanel } from './SteeringPanel'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -34,6 +37,9 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // The node whose inspector drawer is open (WV-10). Null = closed. Holds the node_id — the
   // drawer fetches on open, so nothing is loaded until a row's Inspect is actually clicked.
   const [inspectNodeId, setInspectNodeId] = useState<string | null>(null)
+  // The mid-run steering + judge-triage panel (R14 / criterion 8). Docked to the right like
+  // the inspector; toggled from the header, live runs only.
+  const [steerOpen, setSteerOpen] = useState(false)
   // Coalesce refetches: a fan-out completing fires many node_done events at once, and one
   // request per event would hammer the gateway for the same answer.
   const pending = useRef<number | null>(null)
@@ -97,6 +103,41 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
 
   const runFrom = useCallback(async (nodeId: string) => {
     await act('Run from', () => api.workflowRunFrom(runId, { node_id: nodeId }))
+  }, [act, runId])
+
+  // Mid-flight edit of a node's prompt (WF2-R10 / criterion 9). The user pauses a running
+  // workflow, edits a stage's instruction, and resumes. The edit is a real spec mutation
+  // (`update_node`), but the calibration point is the WARNING: a bundled template carries a
+  // typed doc block whose judge calibration is tuned to the prompt it shipped with, so editing
+  // that prompt can silently invalidate it (R10b). We surface that BEFORE applying — the user
+  // confirms the trade rather than discovering later that the judge is grading against a
+  // rubric the run no longer matches.
+  const editNodePrompt = useCallback(async (nodeId: string) => {
+    const answers = await promptForm({
+      title: `Edit "${nodeId}"`,
+      body: revalidateNotice,
+      fields: [{
+        name: 'prompt',
+        label: 'Instruction',
+        type: 'textarea',
+        placeholder: 'The new instruction for this stage.',
+        required: true,
+      }],
+      confirmLabel: 'Apply edit',
+    })
+    if (answers === null) return  // cancelled — the warning did its job
+    await act('Edit', async () => {
+      const res = await api.editWorkflowRun(runId, {
+        ops: [{ kind: 'update_node', node_id: nodeId, fields: { prompt: answers.prompt } }],
+      })
+      // A rejected batch reports typed issues; surface the first rather than a silent no-op so
+      // the user knows the edit did not land (and why).
+      if (res.ok === false || (res.issues?.length ?? 0) > 0) {
+        notify(res.issues?.[0]?.message ?? 'The edit was rejected.')
+        return
+      }
+      notify(revalidateSummary(res.preview))
+    })
   }, [act, runId])
 
   const cancel = useCallback(async () => {
@@ -208,6 +249,9 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
         </div>}
         right={run && !isTerminal(run.status) ? (
           <div className="flex items-center gap-xs">
+            <QuietButton onClick={() => setSteerOpen((v) => !v)} title="Steer this run — queue an instruction or accept a judge comment">
+              <MessageSquarePlus size={13} /> Steer
+            </QuietButton>
             <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — in-flight steps finish">
               <Pause size={13} /> Pause
             </QuietButton>
@@ -348,6 +392,12 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                         )}
                         {canReenter && (
                           <>
+                            {/* Mid-flight edit (criterion 9): change this stage's instruction on a
+                                live run. Surfaces the re-validate warning before applying, since a
+                                bundled template's judge calibration is tuned to the shipped prompt. */}
+                            <QuietButton onClick={() => editNodePrompt(n.node_id)} title="Edit this stage's instruction — re-validates the template's judge calibration">
+                              <Pencil size={12} />
+                            </QuietButton>
                             <QuietButton onClick={() => rewind(n.node_id)} title="Re-run this node and everything reading its output">
                               <RotateCcw size={12} />
                             </QuietButton>
@@ -371,6 +421,15 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           previous node's data. Only a terminal node's row exposes the Inspect trigger. */}
       {inspectNodeId && (
         <NodeInspectorDrawer runId={runId} nodeId={inspectNodeId} onClose={() => setInspectNodeId(null)} />
+      )}
+
+      {/* The steering + judge-triage drawer (R14 / criterion 8), docked right. Mounted only for
+          a live run — a terminal run cannot act on a steer, and the backend refuses one anyway.
+          Auto-closes if the run reaches a terminal state while open. */}
+      {run && steerOpen && !isTerminal(run.status) && (
+        <SidePanel title="Steer run" icon={<MessageSquarePlus size={18} />} onClose={() => setSteerOpen(false)} fillHeight>
+          <SteeringPanel runId={runId} projectId={run.project_id} nodes={run.nodes} onSteered={refetch} />
+        </SidePanel>
       )}
       </div>
     </div>
