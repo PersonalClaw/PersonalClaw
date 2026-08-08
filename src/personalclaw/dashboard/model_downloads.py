@@ -238,6 +238,30 @@ def _is_downloaded(name: str, model: str) -> bool:
     return False
 
 
+def _hf_token_present() -> bool:
+    """Whether any HF token cascade source holds a token (network-free; §4.3 pre-warn).
+
+    Fail-soft: if the cascade module can't be imported/read, assume a token MAY be
+    present rather than blocking a download the user could otherwise complete."""
+    try:
+        from personalclaw.local_models.hf_token import hf_token_present
+
+        return hf_token_present()
+    except Exception:
+        return True
+
+
+def _is_gated(name: str, model: str) -> bool:
+    """Whether ``model`` is a gated-repo model (needs an HF token + license accept).
+
+    Reads the provider catalog's ``gated`` flag (LMMV §2.3). A searchable/dynamic
+    provider (ollama) has no gated concept, so it is never gated here."""
+    for m in _list_models_for_provider(name):
+        if getattr(m, "name", None) == model:
+            return bool(getattr(m, "gated", False))
+    return False
+
+
 def _model_exists(name: str, model: str) -> bool:
     """Whether ``model`` is downloadable from the provider.
 
@@ -332,6 +356,20 @@ class ModelDownloadRegistry:
             job.state = "done"
             job.downloaded_bytes = job.total_bytes
             _apply_progress(job)
+            return job, None
+
+        # Gated pre-warn (LMMV §4.3): a gated model with NO token in any cascade source
+        # is a guaranteed 401 — fail the job fast with the typed reason instead of
+        # attempting the doomed fetch (a failed-gated job is never auto-retried). The
+        # cheap presence check (network-free); validity is the whoami path elsewhere.
+        if _is_gated(provider, model) and not _hf_token_present():
+            job.state = "error"
+            job.reason = "gated_repo:no_token"
+            job.error = (
+                "This model is gated: accept its license on HuggingFace and add an HF "
+                "token in Settings → Models, then retry."
+            )
+            self._publish(job, "error")
             return job, None
 
         run = _Running(job=job, baseline=_dir_size(_cache_root(provider)))

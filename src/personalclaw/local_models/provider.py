@@ -174,6 +174,22 @@ class LocalModelProvider(ABC):
         """Whether this provider can run here (its runtime deps are importable)."""
         ...
 
+    async def availability_detail(self) -> tuple[bool, str]:
+        """Whether the provider is usable here, PLUS a one-line human ``why`` (LMMV §6).
+
+        The health endpoint (``GET /api/models/local/{provider}/health``) reads this
+        so it can surface a reason ("ready", "runtime deps missing — install the app",
+        "gated: add an HF token") instead of a bare bool. Additive with a default that
+        wraps the existing :meth:`is_available` bool contract — an unmigrated provider
+        keeps working unchanged, and the duck-typed ``is_local_model_provider`` check
+        (which never looks for this method) is unaffected. A provider overrides it to
+        carry the ``why``; the ``(True, "ready — <advice>")`` convention surfaces
+        upgrade hints. Never raises — a provider whose ``is_available`` blows up is
+        reported ``(False, <reason>)`` by the health handler, not propagated.
+        """
+        ok = await self.is_available()
+        return ok, "ready" if ok else "unavailable"
+
     @abstractmethod
     async def list_models(self) -> list[LocalModel]:
         """The models to show in downloads — downloaded AND downloadable.

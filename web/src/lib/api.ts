@@ -1392,6 +1392,26 @@ export interface DownloadJob {
   total_bytes: number; downloaded_bytes: number
   error: string; reason: string
 }
+// One source in the HuggingFace token cascade (LMMV §5). `masked` is a render-safe
+// preview (`hf_…3jw`) — the token VALUE never leaves the server. `valid` is the live
+// whoami result; the first valid source wins (`active_source` on the status).
+export interface HfTokenSource {
+  source: 'credential_store' | 'environment' | 'hf_cli_file'
+  present: boolean; valid: boolean; username?: string | null; masked: string
+}
+export interface HfTokenStatus {
+  sources: HfTokenSource[]; active_source: string | null; username: string | null
+}
+// A local provider's cheap health probe (LMMV §6) — never 500s server-side.
+export interface LocalModelHealth { provider: string; ok: boolean; message: string; latency_ms: number }
+// One capability's real-inference selftest result (LMMV §6). `reason` is a typed label
+// on failure: 'no_model'|'unavailable'|'timeout'|'runtime_contract'|'error'|'busy'.
+export interface SelftestCapability { ok: boolean; duration_ms: number; detail: string; reason: string }
+export interface SelftestResult {
+  provider: string; ok: boolean
+  capabilities: Record<string, SelftestCapability>
+  detail?: string; reason?: string
+}
 export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
   phase: string; done: number; total: number; knowledge: number; memory: number; error: string
@@ -2092,6 +2112,17 @@ export const api = {
     post<{ removed: number; freed_bytes: number }>('/api/models/downloads/cleanup', { confirm: true }),
   deleteLocalModel: (provider: string, model: string) =>
     del(`/api/models/local/${encodeURIComponent(provider)}/${encodeURIComponent(model)}`),
+  // HuggingFace token cascade (LMMV §5): per-source status (masked previews only) +
+  // set/clear (an empty token clears the credential-store source). The set response
+  // re-reads status, so the UI never echoes the value it just wrote.
+  hfTokenStatus: () => get<HfTokenStatus>('/api/models/hf-token/status'),
+  setHfToken: (token: string) => put<HfTokenStatus>('/api/models/hf-token', { token }),
+  // Per-provider health (never 500s) + a real-inference selftest (LMMV §6). The
+  // selftest is user-click only (it can page a model into RAM).
+  localModelHealth: (provider: string) =>
+    get<LocalModelHealth>(`/api/models/local/${encodeURIComponent(provider)}/health`),
+  localModelSelftest: (provider: string, model?: string) =>
+    post<SelftestResult>(`/api/models/local/${encodeURIComponent(provider)}/selftest`, model ? { model } : {}),
   // Search a searchable provider's remote installable catalog (ollama's library).
   searchLocalModels: (provider: string, q: string) =>
     get<{ models: LocalModel[] }>(`/api/models/local/${encodeURIComponent(provider)}/search?q=${encodeURIComponent(q)}`).then((d) => d.models ?? []),

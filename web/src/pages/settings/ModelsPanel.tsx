@@ -3,13 +3,14 @@ import {
   ChevronRight, Check, MessageSquare, Boxes, Mic, Volume2, Eye, ImagePlus,
   Ear, Music, ScanEye, Clapperboard, Users, Download, Code2, BrainCircuit,
   Moon, Network, RefreshCcw, ArrowUp, ArrowDown, X, AlertTriangle, Wrench,
-  Trash2, type LucideIcon,
+  Trash2, FlaskConical, KeyRound, type LucideIcon,
 } from 'lucide-react'
-import { api, type AvailableModel, type ProviderHealth } from '../../lib/api'
+import { api, type AvailableModel, type ProviderHealth, type SelftestResult, type HfTokenStatus } from '../../lib/api'
 import { humanBytes } from '../../lib/chunkedUpload'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { SearchField } from '../../ui/SearchField'
+import { TextInput } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section } from './settingsUI'
@@ -184,6 +185,129 @@ function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
   )
 }
 
+/** "Test" — runs a REAL per-capability inference for a local model (LMMV §6) and
+ *  renders the result inline. Only for LOCAL models (a `downloaded` flag present):
+ *  a hosted/remote model has no local runtime to selftest. The result is transient
+ *  (kept in local state), user-click only. A typed failure `reason` (runtime_contract
+ *  / timeout / no_model / busy) reads as a short human label so a pyannote-4-style
+ *  break is legible at a glance (Success Criterion 5). */
+function TestButton({ provider, model }: { provider: string; model: string }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<SelftestResult | null>(null)
+  const run = async () => {
+    setBusy(true)
+    try { setResult(await api.localModelSelftest(provider, model)) }
+    catch (e) { setResult({ provider, ok: false, capabilities: {}, detail: e instanceof Error ? e.message : String(e) }) }
+    finally { setBusy(false) }
+  }
+  const caps = result ? Object.entries(result.capabilities) : []
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      <Button variant="secondary" size="xs" loading={busy} onClick={run}
+        title="Run a real inference to confirm this model actually works — not just that its files are present.">
+        <FlaskConical size={11} /> Test
+      </Button>
+      {result && (
+        caps.length === 0 ? (
+          <span className="text-on-surface-low text-[0.6875rem]" title={result.detail}>
+            {result.detail || 'nothing testable'}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            {caps.map(([cap, r]) => (
+              <span key={cap} className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
+                style={{
+                  background: r.ok ? 'color-mix(in srgb, var(--color-ok) 16%, transparent)' : 'color-mix(in srgb, var(--color-danger) 16%, transparent)',
+                  color: r.ok ? 'var(--color-ok)' : 'var(--color-danger)',
+                }}
+                title={`${cap}: ${r.ok ? r.detail : `${r.reason || 'failed'} — ${r.detail}`} (${r.duration_ms}ms)`}>
+                {cap} {r.ok ? '✓' : (r.reason || '✗')}
+              </span>
+            ))}
+          </span>
+        )
+      )}
+    </span>
+  )
+}
+
+/** HuggingFace token — the three-source cascade status (LMMV §5) + a set/clear field
+ *  writing source 1 (the credential store). Token VALUES never leave the server: each
+ *  source shows a masked preview + its live whoami verdict; the winning source carries
+ *  an "Active" badge with the account name (Success Criterion 4). Renders nothing until
+ *  loaded; a set/clear re-reads the masked status. */
+function HfTokenSection() {
+  const [status, setStatus] = useState<HfTokenStatus | null>(null)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState(false)
+  const refresh = () => api.hfTokenStatus().then(setStatus).catch(() => setStatus(null))
+  useEffect(() => { refresh() }, [])
+  if (!status) return null
+  const SOURCE_LABEL: Record<string, string> = {
+    credential_store: 'Saved here', environment: 'Environment', hf_cli_file: 'HuggingFace CLI',
+  }
+  const save = async () => {
+    setBusy(true)
+    try { await api.setHfToken(value.trim()); setValue(''); await refresh() }
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg bg-surface-container">
+      <Button variant="ghost" shape="squircle" onClick={() => setOpen((o) => !o)} ariaExpanded={open}
+        className="w-full !justify-start gap-3 rounded-none px-4 py-3 text-left">
+        <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
+        <span className="grid size-7 shrink-0 place-items-center rounded-md"
+          style={status.active_source
+            ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }
+            : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+          <KeyRound size={14} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-on-surface text-[0.8125rem]" style={fvs(500)}>HuggingFace token</span>
+          <span className="mt-0.5 block font-normal text-on-surface-low text-[0.75rem]">
+            {status.active_source
+              ? <>Active{status.username ? ` — ${status.username}` : ''} ({SOURCE_LABEL[status.active_source] ?? status.active_source})</>
+              : <span className="italic">no valid token — gated models (e.g. pyannote) can't download</span>}
+          </span>
+        </span>
+      </Button>
+      {open && (
+        <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
+          <p className="text-on-surface-low text-[0.8125rem]">
+            A token unlocks gated models like pyannote diarization. It's resolved from three sources — the first valid one wins. Setting a token here saves it privately on this machine; it never leaves the server.
+          </p>
+          <div className="flex flex-col gap-1 rounded-lg bg-surface p-2">
+            {status.sources.map((s) => (
+              <div key={s.source} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
+                <span className="size-2 shrink-0 rounded-pill" title={s.valid ? 'valid' : s.present ? 'present but invalid' : 'not set'}
+                  style={{ background: s.valid ? 'var(--color-ok)' : s.present ? 'var(--color-warning)' : 'var(--color-outline-variant)' }} />
+                <span className="w-28 shrink-0 text-on-surface-low text-[0.75rem]">{SOURCE_LABEL[s.source] ?? s.source}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{s.present ? s.masked : '—'}</span>
+                {s.valid && s.username && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{s.username}</span>}
+                {status.active_source === s.source && (
+                  <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
+                    style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>Active</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <TextInput value={value} onChange={setValue} placeholder="hf_…" type="password" mono size="sm"
+                surface="base" ariaLabel="HuggingFace token" />
+            </div>
+            <Button variant="tonal" size="sm" loading={busy} disabled={!value.trim()} onClick={save}>Save</Button>
+            {status.sources.some((s) => s.source === 'credential_store' && s.present) && (
+              <Button variant="ghost" size="sm" loading={busy} onClick={() => { setValue(''); setBusy(true); api.setHfToken('').then(refresh).finally(() => setBusy(false)) }}>Clear</Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Models → assign discovered models to use-cases. Reads /api/models/available
  *  (all backends' models) + /api/models/active (current bindings); writes via
  *  PUT /api/models/active/{use_case}. Chat + Image·Modality are multi-select;
@@ -220,6 +344,7 @@ export function ModelsPanel() {
         <div className="shrink-0 pt-1"><ReclaimButton onReclaimed={reloadActive} /></div>
       </div>
       <Section>
+        <HfTokenSection />
         {allModels.length === 0 && (
           <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
             No models discovered. Add a backend in <span className="text-on-surface">Providers</span> and test its connection.
@@ -479,6 +604,10 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
                       <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem] font-mono">{m.name}</span>
                     </button>
                     <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
+                    {/* Test: real-inference selftest for a downloaded LOCAL model only —
+                        a hosted/remote model (no `downloaded` field) has no local runtime,
+                        and a not-yet-downloaded one has nothing to run. */}
+                    {m.downloaded === true && <TestButton provider={m.provider} model={m.id} />}
                     {on && notDownloaded && (
                       <span className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.75rem]"
                         style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
