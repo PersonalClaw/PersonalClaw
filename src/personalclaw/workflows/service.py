@@ -533,6 +533,11 @@ def status(run_id: str) -> dict[str, Any]:
         attention=run.attention,
         tokens=run.total_tokens,
         elapsed_secs=run.elapsed_seconds,
+        # The containing project, so the run view can offer per-project controls (the R14
+        # judge-guidance override writes through the project, which is what reaches this
+        # run's worker and judge sessions). Empty for an unscoped run — the view hides the
+        # control rather than writing to a project that does not exist.
+        project_id=run.project_id,
         nodes=_nodes_of(run_id),
     )
 
