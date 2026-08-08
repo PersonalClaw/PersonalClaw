@@ -230,6 +230,38 @@ async def api_spawn_clear(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "cleared": len(done_ids)})
 
 
+async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
+    """POST /api/spawn/cancel-fanout — kill EVERY child of one parent/run in one
+    click (WF2WOR-8 C1.4). Body: ``{parent_session?: str, parent_run?: str}`` — one
+    of them keys the fan-out. Unlike DELETE /api/spawn (clears COMPLETED entries
+    without killing running ones), this stops the whole in-flight fan-out.
+    """
+    state: DashboardState = request.app["state"]
+    if not state.subagents:
+        return web.json_response({"error": "subagents not available"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    # A workflow fan-out keys on its run; a chat fan-out keys on the parent session
+    # (prefixed to match the spawn's parent_session_key).
+    fanout_key = (body.get("parent_run") or "").strip()
+    if not fanout_key:
+        parent_session = (body.get("parent_session") or "").strip()
+        if parent_session:
+            fanout_key = (
+                parent_session
+                if parent_session.startswith("dashboard:")
+                else f"dashboard:{parent_session}"
+            )
+    if not fanout_key:
+        return web.json_response({"error": "parent_session or parent_run is required"}, status=400)
+    cancelled = await state.subagents.cancel_fanout(fanout_key, reason="cancelled by user")
+    return web.json_response({"ok": True, "cancelled": cancelled})
+
+
 # ── Sessions / Notifications ──
 
 

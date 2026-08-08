@@ -1685,6 +1685,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             provider="native",
             extra=extra,
         )
+        # create_typed_item returns None only on the source-poll dedup path (source_id +
+        # guid supplied); a native create never dedups, so the id is always present.
+        assert item_id is not None
         # Enrich in the background (node-graph: extraction → insights → entities →
         # embed) so the tool returns the id immediately — create-fast/enrich-async,
         # not a 30-60s block on the agent's turn.

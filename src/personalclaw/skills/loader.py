@@ -208,6 +208,22 @@ def skills_dir() -> Path:
     return config_dir() / SKILLS_DIR_NAME
 
 
+def _suppressed_producers() -> set[tuple[str, str]]:
+    """Feedback-Signal's withholding set (FS-6), fetched fail-open.
+
+    ``feedback.suppressed_producers`` already fail-opens internally (config off →
+    empty, any error → empty); this wrapper adds a second belt so an import/attr
+    fault here degrades to *suppress nothing* rather than empty the turn's skills.
+    A feedback fault must never silence the assistant's capabilities."""
+    try:
+        from personalclaw import feedback
+
+        return feedback.suppressed_producers()
+    except Exception:
+        logger.debug("suppressed_producers fetch failed — suppressing nothing", exc_info=True)
+        return set()
+
+
 def _agent_slug(agent: str) -> str:
     """Filesystem-safe slug for an agent's per-agent dir name.
 
@@ -706,7 +722,12 @@ class SkillsLoader:
 
             cfg = AppConfig.load()
             skills = self.list_skills(with_usage=True)
-            surfaced = surface_skills(text, skills, max_skills=cfg.skills.max_triggered)
+            surfaced = surface_skills(
+                text,
+                skills,
+                max_skills=cfg.skills.max_triggered,
+                suppressed=_suppressed_producers(),
+            )
             if surfaced:
                 # Audit the injection decision (replaces per-candidate skill_trigger
                 # telemetry from the keyword-only path with the actual outcome).

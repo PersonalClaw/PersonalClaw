@@ -7,13 +7,14 @@
  *  Babel, Mermaid, AntV all dynamic-import already). */
 import { lazy } from 'react'
 import {
-  Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, Film, Presentation, type LucideIcon,
+  Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, Film, Presentation, LayoutDashboard, type LucideIcon,
 } from 'lucide-react'
 import { registerContentType, type PreviewProps } from './contentTypes'
 import type { ComponentType } from 'react'
 // Chat embeds are EAGER (chat hot-path — see chatEmbeds.tsx); only the
 // file/artifact PREVIEW adapters are lazy-chunked.
 import { HtmlWidgetEmbed, ReactWidgetEmbed } from './chatEmbeds'
+import { GenUiWidget } from '../genui/GenUiWidget'
 import { exportDocumentHtml, copyDocumentHtml, exportInfographicSvg } from './exporters'
 
 // Lazy wrappers so each renderer chunk loads on first use of its type.
@@ -54,6 +55,19 @@ export function registerBuiltinContentTypes(): void {
     preview: { render: IframeHtml, sandboxed: true, streaming: true },
     embed: { render: HtmlWidgetEmbed, streaming: true },
     security: { sandbox: true },
+    commentable: false,
+  })
+
+  // ── genui: agent-generated UI from the typed component registry (AMBIENT-
+  //    SURFACES §5). Rendered in the HOST React tree (NOT an iframe) — safe
+  //    precisely because only registered, schema-validated components can appear;
+  //    unknown/invalid lines are dropped with a typed error (no null holes). It is
+  //    inline-embed ONLY (a `<widget kind="genui">` block), never a saved artifact
+  //    kind — so no `kinds`, no preview/edit; the embed carries the whole surface.
+  //    Streaming: the renderer re-parses per chunk so structure paints early. ──
+  registerContentType({
+    id: 'genui', label: 'Generated UI', icon: LayoutDashboard, tone: PRIMARY,
+    embed: { render: GenUiWidget, streaming: true },
     commentable: false,
   })
 

@@ -144,6 +144,7 @@ def _register_upload_routes(app: web.Application) -> None:
 def _register_mcp_routes(app: web.Application) -> None:
     """Register API routes used by MCP tools (spawn, lessons, crons, etc.)."""
     app.router.add_post("/api/spawn", handlers.api_spawn)
+    app.router.add_post("/api/spawn/cancel-fanout", handlers.api_spawn_cancel_fanout)
     app.router.add_get("/api/spawn", handlers.api_spawn_list)
     app.router.add_get("/api/spawn/{agent_id}", handlers.api_spawn_status)
     app.router.add_delete("/api/spawn/{agent_id}", handlers.api_spawn_delete)
@@ -436,6 +437,11 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
     register_feedback_routes(app)
+    # The installed-pack ledger reader + the re-runnable
+    # "Finish setup" chip backend. Export/import UI + store cards land.
+    from personalclaw.dashboard.handlers.packs import register_pack_routes
+
+    register_pack_routes(app)
     # Cost & token observability — read-only rollup/totals over the usage ledger.
     from personalclaw.dashboard.handlers.usage import register_usage_routes
 
@@ -687,6 +693,29 @@ async def start_dashboard(
     app.router.add_get("/api/models/health", handlers.api_models_health)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
+    # Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1). Literal /views first,
+    # then the {view_id} routes + tile sub-routes; tiles/resolve is registered before
+    # the bare {view_id} tiles POST so the more-specific literal wins. Presets are
+    # read-only (PUT/DELETE on a preset → 403).
+    from personalclaw.dashboard.handlers.views import (
+        api_dashboard_view_detail,
+        api_dashboard_view_tile_resolve,
+        api_dashboard_view_tiles,
+        api_dashboard_views,
+        api_genui_library,
+    )
+
+    # Generative-UI component catalog — read-only.
+    app.router.add_get("/api/genui/library", api_genui_library)
+    app.router.add_get("/api/dashboard/views", api_dashboard_views)
+    app.router.add_post("/api/dashboard/views", api_dashboard_views)
+    app.router.add_post(
+        "/api/dashboard/views/{view_id}/tiles/resolve", api_dashboard_view_tile_resolve
+    )
+    app.router.add_post("/api/dashboard/views/{view_id}/tiles", api_dashboard_view_tiles)
+    app.router.add_get("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
+    app.router.add_put("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
+    app.router.add_delete("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
 
     # MCP servers
     app.router.add_get("/api/mcp", handlers.api_mcp_servers)
@@ -1689,6 +1718,21 @@ async def start_dashboard(
         await state._durability_svc.start()
     except Exception:
         logger.warning("Durability service failed to start", exc_info=True)
+
+    # Watched-source poll engine: the single re-armed loop that
+    # polls enrolled poll-capable knowledge providers on schedule and writes new items
+    # through the one ingest path. Started here so it recovers pending ingestion on boot;
+    # fully best-effort — a source-engine fault never blocks or crashes startup.
+    try:
+        from personalclaw.knowledge.source_engine import SourceEngine
+
+        state._source_engine = SourceEngine(  # prevent GC
+            state.knowledge_store,
+            state.knowledge_ingest_queue(),
+        )
+        state._source_engine.start()
+    except Exception:
+        logger.warning("Source engine failed to start", exc_info=True)
 
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()

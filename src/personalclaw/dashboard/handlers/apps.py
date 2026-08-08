@@ -90,6 +90,10 @@ def register_app_routes(app: web.Application) -> None:
     app.router.add_post("/api/apps/{name}/agent-run", api_app_agent_run)
     app.router.add_get("/api/apps/{name}/agent-run/{run_id}", api_app_agent_run_status)
     app.router.add_post("/api/apps/{name}/token", api_app_token)
+    # App-to-app messaging broker — the ONLY app-to-app path. Registered
+    # BEFORE the catch-all /api/apps/{name} so "message" isn't parsed as an app name.
+    app.router.add_post("/api/apps/message", api_app_message_send)
+    app.router.add_get("/api/apps/message", api_app_message_poll)
     app.router.add_get("/api/apps/{name}", api_app_get)
     app.router.add_delete("/api/apps/{name}", api_app_uninstall)
     app.router.add_get("/apps/{name}/ui/{tail:.*}", api_app_ui_asset)
@@ -159,9 +163,25 @@ def _app_status(name: str) -> dict[str, Any]:
 
 
 async def api_apps_list(request: web.Request) -> web.Response:
-    """GET /api/apps — installed apps with manifest summary + runtime state."""
-    from personalclaw.apps.catalog import resolve_hero_url
+    """GET /api/apps — installed apps with manifest summary + runtime state.
+
+    APE-7: on this existing read path (no polling loop) we also compute which installed
+    apps have a newer version available from their local source, tag each such app
+    ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
+    notification per newly-available version (deduped by ``name + latest_version`` in
+    ``surface_app_updates`` so re-viewing never re-nags)."""
+    from personalclaw.apps.catalog import resolve_hero_url, surface_app_updates
     from personalclaw.apps.manager import app_dir, list_apps
+
+    # Compute available updates + emit the (deduped) notifications, on this read path.
+    # Best-effort: an update-check failure must never break the apps list.
+    updates_by_name: dict[str, dict[str, Any]] = {}
+    try:
+        state = request.app.get("state")
+        updates = await asyncio.to_thread(surface_app_updates, state)
+        updates_by_name = {u["name"]: u for u in updates}
+    except Exception:
+        logger.debug("apps list: update surfacing skipped", exc_info=True)
 
     out: list[dict[str, Any]] = []
     for app in list_apps():
@@ -221,6 +241,10 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
                 "installedAt": app.get("installedAt", ""),
                 "updatedAt": app.get("updatedAt", ""),
+                # A newer version is available from this app's source. The card
+                # renders an "update available" badge and the Store nav counts these.
+                "updateAvailable": name in updates_by_name,
+                "latestVersion": updates_by_name.get(name, {}).get("latestVersion", ""),
                 **_app_status(name),
             }
         )
@@ -895,6 +919,70 @@ async def api_app_token(request: web.Request) -> web.Response:
     user_id = request.get("user", "dashboard")
     token = generate_token(user_id, ttl_seconds=_APP_TOKEN_TTL_SECS, app=name)
     return web.json_response({"token": token, "expires_in": _APP_TOKEN_TTL_SECS})
+
+
+# ---------------------------------------------------------------------------
+# App-to-app messaging broker
+# ---------------------------------------------------------------------------
+# The ONE gateway-mediated path for one app to message another. The sender's
+# identity is the verified app-scoped token (request["app"]), never a body field,
+# so it can't be spoofed; the broker permission-checks the pair, caps + fences the
+# payload, and delivers to the target's broker-owned queue. See apps/messaging.py.
+
+
+async def api_app_message_send(request: web.Request) -> web.Response:
+    """POST /api/apps/message — send a typed message ``{to, type, payload}`` to
+    another app.
+
+    The SENDER is ``request["app"]`` (the verified app-scoped token identity), NOT a
+    body field — so an app cannot claim to be a different sender. Requires the
+    sender's ``appMessaging`` grant for the target: an undeclared pair is refused
+    403 AND written to the SEL audit chain (fail closed). The payload is size-capped
+    and fenced as untrusted before it reaches the target."""
+    from personalclaw.apps.messaging import AppMessageError, send_message
+
+    sender = request.get("app", "")
+    if not sender:
+        # No verified app identity ⇒ not an app-originated request. The broker is an
+        # app-to-app seam; refuse rather than let an unauthenticated/owner call forge
+        # a "from" out of the body.
+        return web.json_response(
+            {"error": "app-scoped identity required to send an app message"}, status=403
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be a JSON object"}, status=400)
+    target = str(body.get("to", "")).strip()
+    msg_type = str(body.get("type", "")).strip()
+    payload = body.get("payload", "")
+    if not target:
+        return web.json_response({"error": "'to' (target app) is required"}, status=400)
+    if not msg_type:
+        return web.json_response({"error": "'type' is required"}, status=400)
+    try:
+        msg = send_message(sender=sender, target=target, msg_type=msg_type, payload=payload)
+    except AppMessageError as exc:
+        return web.json_response({"error": str(exc)}, status=exc.status)
+    return web.json_response({"ok": True, "id": msg.id, "to": target}, status=202)
+
+
+async def api_app_message_poll(request: web.Request) -> web.Response:
+    """GET /api/apps/message — drain THIS app's inbox (read-once).
+
+    Scoped to ``request["app"]`` — an app reads only its OWN queue, never another
+    app's. Each message carries the (verified) sender, the typed discriminator, and
+    the fenced payload."""
+    from personalclaw.apps.messaging import drain_queue
+
+    reader = request.get("app", "")
+    if not reader:
+        return web.json_response(
+            {"error": "app-scoped identity required to read app messages"}, status=403
+        )
+    return web.json_response({"messages": drain_queue(reader)})
 
 
 # ---------------------------------------------------------------------------

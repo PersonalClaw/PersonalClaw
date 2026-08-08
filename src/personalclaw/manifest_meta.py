@@ -134,6 +134,34 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "project_context_review": {
+        "response_type": "project.context.review.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose a project instruction from what this chat established",
+                "args": {
+                    "items": [
+                        {
+                            "kind": "project_instruction",
+                            "body": "Always run `make lint` before committing.",
+                            "rationale": "We agreed lint must pass pre-commit",
+                        }
+                    ]
+                },
+            },
+        ],
+    },
+    "dashboard_tile_propose": {
+        "response_type": "dashboard.tile.propose.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose a saved dashboard artifact as a tile on the home",
+                "args": {"slug": "sales-live-board", "size": "l"},
+            },
+        ],
+    },
     "wait": {
         "response_type": "wait.result",
         "error_codes": [],
@@ -301,6 +329,19 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "response_type": "text",
         "error_codes": [],
         "examples": [{"summary": "Check which formats are available", "args": {}}],
+    },
+    "visualize": {
+        "response_type": "genui.widget",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Render monthly totals as a bar chart",
+                "args": {
+                    "data": {"Jan": 120, "Feb": 150, "Mar": 180},
+                    "hint": "show as a bar chart of monthly totals",
+                },
+            },
+        ],
     },
     # ── personalclaw-prompts ─────────────────────────────────────────────────
     "prompt_render": {

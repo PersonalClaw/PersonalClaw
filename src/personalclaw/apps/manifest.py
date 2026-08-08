@@ -26,6 +26,28 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-]|$)")
 ROUTE_OP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
+def version_tuple(v: str) -> tuple[int, ...]:
+    """Parse an app semver string to a numeric tuple for comparison (best-effort).
+
+    Manifests are validated against ``SEMVER_RE`` (``MAJOR.MINOR.PATCH`` with an optional
+    ``+build``/``-pre`` suffix), so the core is the dotted release. The pre-release/build
+    suffix is dropped (SemVer pre-release ordering is out of scope for "is a newer release
+    available"), and a leading ``v`` is tolerated. A value that can't be parsed sorts as
+    ``(0,)`` so a malformed version never falsely reads as an available update.
+
+    This is the ONE app-version comparator (``apps.catalog`` reuses it) — the version
+    field and ``SEMVER_RE`` both live here, so the comparator does too, rather than
+    inverting the apps→dashboard layering to borrow the self-updater's tag comparator.
+    """
+    core = (v or "").strip()
+    core = core[1:] if core[:1] == "v" else core
+    core = core.split("+", 1)[0].split("-", 1)[0]
+    try:
+        return tuple(int(x) for x in core.split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 @dataclass
 class CronEntry:
     """A scheduled agent job declared by an app."""
@@ -283,6 +305,13 @@ class Permissions:
     memory: str = ""  # "", "app-scoped", or "shared"
     cron: bool = False
     agent: bool = False  # may run background agent tasks (headless subagent runs)
+    # Target app names this app may send a brokered message to (via
+    # POST /api/apps/message). Same list-of-names shape as ``events``/``mcpTools``
+    # — an exact name or a trailing-``*`` prefix. Empty → may message NO app (deny
+    # by default): the gateway broker is the ONLY app-to-app path and refuses an
+    # undeclared pair with 403 + a SEL audit row. This is the install-consent
+    # surface for who an app can talk to, shown in the Store via ``to_dict``.
+    appMessaging: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -302,6 +331,8 @@ class Permissions:
             d["cron"] = True
         if self.agent:
             d["agent"] = True
+        if self.appMessaging:
+            d["appMessaging"] = self.appMessaging
         return d
 
     @classmethod
@@ -315,6 +346,7 @@ class Permissions:
             memory=str(data.get("memory", "")),
             cron=bool(data.get("cron", False)),
             agent=bool(data.get("agent", False)),
+            appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
         )
 
 

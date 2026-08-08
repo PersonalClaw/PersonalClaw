@@ -263,6 +263,10 @@ export interface AppSummary {
   // false = a first-party or third-party app the user installs/uninstalls. Whether
   // a native app has a settings surface is `hasConfig` (not a separate flag).
   native?: boolean
+  // This app's source offers a newer version than the installed copy. Computed
+  // on the /api/apps read path (no polling); `latestVersion` is that newer version.
+  updateAvailable?: boolean
+  latestVersion?: string
 }
 export interface AppDetail {
   name: string
@@ -307,6 +311,12 @@ export interface AppInstallResult {
   // The install pulled a new python dependency (or registered pieces that only
   // load at boot) — the gateway must restart before the app fully takes effect.
   restart_required?: boolean
+  // APE-8 "Fix with AI": on a failed install with captured subprocess output,
+  // `fix_prompt` is a ready-to-send chat seed that embeds `log_excerpt` wrapped in
+  // the backend's untrusted-content fence. The FE hands it straight to launchChat;
+  // it is empty on success or when there was no log to show.
+  log_excerpt?: string
+  fix_prompt?: string
 }
 export interface SkillInstallResult {
   ok?: boolean; path?: string; error?: string
@@ -1652,7 +1662,16 @@ export interface UnifiedLoopClassification {
 // another, memory-checked so the agent doesn't re-ask what it already knows about
 // you. Returned by POST /api/loops/{id}/grill-tree; the FE walks the phases + folds
 // the answers into the task at launch (persisted in kind_config.grill_phases).
-export interface GrillPhaseStep { title: string; prompt: string }
+// A phase step is `{title, prompt}` from the grill `tree` normalizer today; the OPTIONAL typed
+// fields mirror `workflows/grill_protocol.Question` (kind | choices | recommended | required) so
+// the QuestionSlider stepper renders the richer deep-rigor Round with no shim when a planner emits
+// it. Absent fields default to a required freeform text question (the tree shape's behavior).
+export interface GrillPhaseStep {
+  title: string; prompt: string
+  kind?: 'text' | 'choice' | 'slider' | 'boundary'
+  choices?: string[]; recommended?: string; required?: boolean
+  min?: number; max?: number; step?: number
+}
 export interface GrillPhase { title: string; description: string; steps: GrillPhaseStep[] }
 export interface GrillTreeResult { phases: GrillPhase[]; memory_hits: number }
 
@@ -1698,6 +1717,15 @@ export interface ContentSearchResp { results: ContentMatch[]; engine: 'rg' | 'py
 // every generated .docx/.xlsx/.pptx/.pdf/.csv/video displayed as a "Widget".
 export type ArtifactKind = 'widget' | 'html' | 'react' | 'markdown' | 'svg' | 'json' | 'text' | 'infographic' | 'document' | 'image' | 'csv' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'video'
 export type ArtifactSource = 'chat' | 'cron' | 'subagent' | 'manual' | 'import'
+// ── Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1) ──
+// A view is ordered tile REFS + size hints — NEVER coordinates (the retired grid's
+// lesson). A tile ref is `core:<widget>` (a hard-imported first-party widget) or
+// `artifact:<slug>` (a pinned artifact tile). `added_by:agent` rows are PROPOSALS
+// that render with an accept/dismiss chip.
+export type TileSize = 's' | 'm' | 'l' | 'full'
+export interface DashboardTile { ref: string; size: TileSize; order: number; added_by: 'user' | 'agent' }
+export interface DashboardView { id: string; name: string; icon?: string | null; nav_pinned: boolean; preset: boolean; tiles: DashboardTile[] }
+
 export type ArtifactEventType = 'created' | 'edited' | 'iterated' | 'referenced' | 'reverted'
 export interface ArtifactEvent {
   ts: string; type: ArtifactEventType; by: string; session_id: string
@@ -1750,6 +1778,20 @@ function _usageQuery(opts?: { since?: string; until?: string; session?: string; 
   return q ? `?${q}` : ''
 }
 
+// One installed pack's ledger record. `connector_markers` holds the
+// `connector_missing:<name>` codes for skipped connectors; `setup_pending` gates the
+// re-runnable "Finish setup" chip.
+export interface InstalledPackRec {
+  name: string
+  version: string
+  components: string[]
+  connectors: Array<{ name: string; mode: string; server_name: string; marker: string; credentials_saved: string[]; error: string }>
+  connector_markers: string[]
+  setup_skill: string
+  setup_pending: boolean
+  installed_at: string
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -1785,6 +1827,14 @@ export const api = {
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
+
+  // ── Packs ──
+  // The installed-pack ledger (each pack's components, connector resolutions +
+  // `connector_missing:<name>` markers, and whether a re-runnable setup interview is
+  // pending) and the "Finish setup" chip backend (returns the setup skill's slash-command;
+  // the interview runs in chat under normal tool approval — never server-side).
+  packsInstalled: () => get<{ packs: InstalledPackRec[] }>('/api/packs/installed').then((d) => d.packs),
+  packFinishSetup: (name: string) => post<{ pack: string; setup_skill: string; command: string; pending: boolean }>(`/api/packs/${encodeURIComponent(name)}/finish-setup`, {}),
 
   // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
   // The credential itself is never READ back — `authSession` reports only whether one is
@@ -1880,6 +1930,9 @@ export const api = {
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
   cancelSpawnedAgent: (id: string) => del(`/api/spawn/${encodeURIComponent(id)}`),
   clearSpawnedAgents: () => del('/api/spawn'),
+  // Kill EVERY child of one parent/run in one click.
+  cancelFanout: (parentSession: string) =>
+    post<{ ok: boolean; cancelled: number }>('/api/spawn/cancel-fanout', { parent_session: parentSession }),
 
   // ── Knowledge context search (token-budgeted cards for the composer picker) ──
   knowledgeSearchForContext: (q: string, maxTokens = 4000) =>
@@ -3072,6 +3125,20 @@ export const api = {
   artifactVersions: (slug: string) => get<{ slug: string; versions: number[] }>(`/api/artifacts/${encodeURIComponent(slug)}/versions`),
   artifactVersion: (slug: string, n: number) => get<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}/versions/${n}`),
   artifactEvents: (slug: string) => get<{ slug: string; events: ArtifactEvent[] }>(`/api/artifacts/${encodeURIComponent(slug)}/events`),
+
+  // ── dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1) ──
+  // Presets are read-only: updateView/deleteView on a preset return 403. Pinning
+  // (pinTile) POSTs an artifact:<slug> tile; resolveTile accepts (keep) or removes
+  // (dismiss/unpin) an overlay tile.
+  dashboardViews: () => get<{ views: DashboardView[] }>('/api/dashboard/views').then((d) => d.views),
+  createView: (body: { name: string; icon?: string }) => post<{ view: DashboardView }>('/api/dashboard/views', body).then((d) => d.view),
+  updateView: (id: string, body: Partial<Pick<DashboardView, 'name' | 'icon' | 'nav_pinned'>>) =>
+    put<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(id)}`, body).then((d) => d.view),
+  deleteView: (id: string) => del(`/api/dashboard/views/${encodeURIComponent(id)}`),
+  pinTile: (viewId: string, body: { slug: string; size?: TileSize }) =>
+    post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles`, body).then((d) => d.view),
+  resolveTile: (viewId: string, body: { ref: string; keep: boolean }) =>
+    post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/resolve`, body).then((d) => d.view),
 
   // App Platform (A7) — install/manage apps that extend PClaw.
   // Normalize the app-category flag at the boundary: `native` is the single source

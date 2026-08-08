@@ -536,6 +536,208 @@ class SessionConfig:
 
 
 @dataclass
+class AmbientConfig:
+    """Ambient-surfaces settings (AMBIENT-SURFACES — the composable home).
+
+    The knobs the dashboard-as-views registry, the generative-UI layer, the
+    layered-surface overlay, and the menu-bar companion read. All default to the
+    conservative shipped behavior so an untouched install is exactly today's
+    dashboard: ``tiles_enabled`` gates the composable home, ``max_tiles`` caps a
+    view's pinned tiles, ``default_refresh_ttl_secs`` is the pre-substrate tile
+    refresh cadence, ``genui_enabled`` gates the generative-UI renderer,
+    ``surfaces_max_layer`` is the safe-mode ceiling (0 = pure-L0), and
+    ``tray_enabled`` gates the macOS tray companion.
+    """
+
+    tiles_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Composable home",
+            "Enable the composable home — pin saved artifacts as self-refreshing "
+            "dashboard tiles. Off leaves the dashboard as its fixed default layout.",
+        ),
+    )
+    max_tiles: int = field(
+        default=12,
+        metadata=_meta(
+            "Max tiles per view",
+            "Cap on how many artifact tiles a single view can hold — an unbounded "
+            "home is an unreadable one.",
+        ),
+    )
+    default_refresh_ttl_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Default tile refresh (seconds)",
+            "How often a TTL-mode tile re-runs its bound data workflow (the "
+            "pre-substrate refresh cadence). A view-trigger binding overrides this.",
+        ),
+    )
+    genui_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Generative UI",
+            "Enable the generative-UI layer — agent-authored widgets render through "
+            "the typed component registry alongside markdown.",
+        ),
+    )
+    surfaces_max_layer: int = field(
+        default=2,
+        metadata=_meta(
+            "Surface layers",
+            "The layered-surface ceiling (0 = pure launcher, 1 = + tiles, 2 = full). "
+            "The safe-mode knob — force 0 to disable the ambient surface overlay.",
+        ),
+    )
+    tray_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Menu-bar companion",
+            "Enable the macOS menu-bar tray companion (a thin client app over the "
+            "existing gateway APIs). Off by default; macOS only.",
+        ),
+    )
+
+
+@dataclass
+class SourcesConfig:
+    """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
+
+    The knobs the :class:`~personalclaw.knowledge.source_engine.SourceEngine` reads each
+    tick. Defaults keep an untouched install conservative: polling on, a one-hour default
+    interval, a 15-minute network floor (the R1-class rate discipline — a source polls
+    someone else's server, so a too-frequent poll is abusive and scraper-like), and modest
+    per-poll caps. ``enabled`` is the master switch — off parks the loop so no source is
+    ever fetched.
+    """
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Watched sources",
+            "Enable the watched-source poll engine — feeds, pages and directories you "
+            "add are polled on their schedule. Off parks the loop; nothing is fetched.",
+        ),
+    )
+    poll_interval_default_secs: int = field(
+        default=3600,
+        metadata=_meta(
+            "Default poll interval (seconds)",
+            "How often a source is polled when it does not set its own interval. Clamped "
+            "up to the network floor below.",
+        ),
+    )
+    network_floor_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Network poll floor (seconds)",
+            "The fastest any network source is polled, regardless of its own setting. A "
+            "too-frequent poll is abusive to the target server and looks like a scraper — "
+            "this is the rate floor that prevents it.",
+        ),
+    )
+    max_sources: int = field(
+        default=100,
+        metadata=_meta(
+            "Max active sources",
+            "Cap on how many enabled sources the engine arms per tick. A runaway config "
+            "cannot schedule unbounded polling.",
+        ),
+    )
+    max_items_per_poll: int = field(
+        default=50,
+        metadata=_meta(
+            "Max items per poll",
+            "How many new items one poll may ingest before the rest wait for the next "
+            "cycle — a burst of back-fill cannot flood the ingestion queue in one tick.",
+        ),
+    )
+    daily_request_budget: int = field(
+        default=288,
+        metadata=_meta(
+            "Daily request budget per source",
+            "Upper bound on network requests one source may make in a rolling day. Without "
+            "it, a handful of short-interval watches is thousands of daily requests at a "
+            "third party from a machine left running (enforced by the fetching providers).",
+        ),
+    )
+
+
+@dataclass
+class SkillCatalogConfig:
+    """One external skill-catalog source (AGENT-PACKS §6, the ``packs.skill_catalogs`` list).
+
+    A catalog is a named index of installable skills (a GitHub "tap" repo, a
+    ``/.well-known/skills/index.json`` site). AP-6 registers each as a
+    :class:`CatalogMarketplace` on the shared skills registry at COMMUNITY tier and installs
+    through the same ``install_guarded`` chokepoint. AP-3 only wires the config surface; the
+    ``list[dataclass]`` precedent is :class:`ProjectionRuleConfig`, so each element field
+    carries ``_meta`` for the schema-reachability tests.
+    """
+
+    name: str = field(
+        default="",
+        metadata=_meta("Catalog name", "A short label for this skill catalog."),
+    )
+    url: str = field(
+        default="",
+        metadata=_meta(
+            "Catalog URL",
+            "The catalog's index endpoint or repo URL. Fetched under the CONNECTOR egress "
+            "profile when the catalog is browsed (AP-6); never spawned or executed.",
+        ),
+    )
+    kind: str = field(
+        default="index",
+        metadata=_meta(
+            "Catalog kind",
+            "How the URL is read: 'index' (a JSON skill index) or 'tap' (a git repo of "
+            "skills/<slug>/SKILL.md).",
+        ),
+    )
+
+
+@dataclass
+class PacksConfig:
+    """Portable-pack + skill-catalog + connector-catalog settings (AGENT-PACKS §8).
+
+    The knobs the pack importer and the (later) catalog importer + fingerprint scanner read.
+    ``skill_catalogs`` is the AP-6 list of external skill-catalog sources (each a
+    :class:`SkillCatalogConfig`); ``fingerprint_enabled`` is the AP-7 project-fingerprint
+    master switch (guard-flag-safe: a missing/garbage value stays ON so the propose-only
+    surface is never silently disabled); ``connector_catalog_url`` is the optional published
+    URL the seeded ``connector_catalog.json`` refreshes from. Defaults keep an untouched
+    install conservative — no catalogs configured, fingerprinting on (it only ever
+    *proposes*), no remote catalog refresh.
+    """
+
+    skill_catalogs: list[SkillCatalogConfig] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Skill catalogs",
+            "External skill-catalog sources browsed + installed through the guarded skills "
+            "chokepoint (AP-6). Empty by default.",
+        ),
+    )
+    fingerprint_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Project fingerprinting",
+            "Let the zero-LLM fingerprint scanner PROPOSE matching packs for a project "
+            "(AP-7). It only ever proposes — never auto-installs. Off stops scanning.",
+        ),
+    )
+    connector_catalog_url: str = field(
+        default="",
+        metadata=_meta(
+            "Connector catalog URL",
+            "Optional published URL the local connector catalog refreshes from (fetched "
+            "under the CONNECTOR egress profile). Empty keeps the seeded bundled set only.",
+        ),
+    )
+
+
+@dataclass
 class LegibilityConfig:
     """Platform-legibility features (Platform-Legibility §5-§7).
 
@@ -1730,11 +1932,15 @@ class WorkflowsConfig:
     """Workflow engine config (WORKFLOWS-V2).
 
     The old shape held surfacing knobs (`match_threshold` for the embedding matcher);
-    that feature is deleted, and the namespace is reused rather than renamed — the
-    plan's clean-break/namespace-reuse call. `enabled` keeps its meaning as the
-    feature kill-switch; the engine's own keys (max_active_runs, per-lane
-    max_concurrent_nodes, model_tiers, retention.*) arrive with Slice 0, each wired
-    through all four config points."""
+    that feature was deleted, and the namespace is reused rather than renamed — the
+    plan's clean-break/namespace-reuse call. `match_threshold` RETURNS here with a new
+    owner (WF2UNI-11): the UNIVERSAL-PLANNING tiered matcher's T4 embedding tie-breaker
+    now reads it as the cosine floor below which an embedding is too weak to unseat a
+    keyword tie. It is a real reader this time — not the inert knob it was under the old
+    SOP feature — so the field is live and wired through all four config points.
+    `enabled` keeps its meaning as the feature kill-switch; the engine's own keys
+    (max_active_runs, per-lane max_concurrent_nodes, model_tiers, retention.*) arrive
+    with Slice 0, each wired through all four config points."""
 
     enabled: bool = field(
         default=True,
@@ -1820,13 +2026,21 @@ class WorkflowsConfig:
         default="background",
         metadata=_meta("Model Tier — Fast", "Use case for the `fast` tier."),
     )
+    # The tiered matcher's T4 embedding tie-break floor. A cosine below this is too weak
+    # to unseat a deterministic keyword tie — the demotion is that a cosine number no longer decides
+    # everything, so a weak one does not either. Live-editable: it is the dial a user turns when the
+    # matcher is composing too readily (raise it) or ignoring a genuine semantic near-match (lower
+    # it), which is exactly the kind of tuning done while watching, not after a restart.
+    match_threshold: float = field(
+        default=0.62,
+        metadata=_meta(
+            "Template Match Threshold",
+            "How confident the embedding tie-breaker must be to override a keyword tie when two "
+            "templates score alike (0-1). Higher composes more readily; lower lets a semantic "
+            "near-match win. Only consulted on a tie — keyword matches always decide first.",
+        ),
+    )
     # The four fields the plan names, each wired through all four points.
-    #
-    # `match_threshold` is deliberately NOT re-added. The plan's recon says it exists at
-    # `workflows.match_threshold`; measured — it does not, and this class's own docstring records
-    # why: it was DELETED with the old SOP feature under the namespace-reuse clean break. The new
-    # semantic channel is session-59 scope and its threshold is not user-tunable yet; adding a knob
-    # nothing reads would be exactly the present-and-inert control this program keeps finding.
     surface_mode_default: str = field(
         default="off",
         metadata=_meta(
@@ -2731,6 +2945,18 @@ class AppConfig:
             "Legibility", "Platform-legibility features — Discover tips + context adapters."
         ),
     )
+    ambient: AmbientConfig = field(
+        default_factory=AmbientConfig,
+        metadata=_meta("Ambient", "Composable home + generative UI + tray companion settings."),
+    )
+    sources: SourcesConfig = field(
+        default_factory=SourcesConfig,
+        metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
+    )
+    packs: PacksConfig = field(
+        default_factory=PacksConfig,
+        metadata=_meta("Packs", "Pack import + skill-catalog + connector-catalog settings."),
+    )
     hooks: dict = field(
         default_factory=dict,
         metadata=_meta("Hooks", "Script hook definitions keyed by hook ID."),
@@ -2836,6 +3062,15 @@ class AppConfig:
         legibility_data = data.get("legibility", {})
         if not isinstance(legibility_data, dict):
             legibility_data = {}
+        ambient_data = data.get("ambient", {})
+        if not isinstance(ambient_data, dict):
+            ambient_data = {}
+        sources_data = data.get("sources", {})
+        if not isinstance(sources_data, dict):
+            sources_data = {}
+        packs_data = data.get("packs", {})
+        if not isinstance(packs_data, dict):
+            packs_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -3063,6 +3298,44 @@ class AppConfig:
                 discover_tips=bool(legibility_data.get("discover_tips", True)),
                 context_adapters=bool(legibility_data.get("context_adapters", False)),
             ),
+            ambient=AmbientConfig(
+                tiles_enabled=bool(ambient_data.get("tiles_enabled", True)),
+                max_tiles=_safe_int(ambient_data.get("max_tiles"), 12),
+                default_refresh_ttl_secs=_safe_int(
+                    ambient_data.get("default_refresh_ttl_secs"), 900
+                ),
+                genui_enabled=bool(ambient_data.get("genui_enabled", True)),
+                surfaces_max_layer=_safe_int(ambient_data.get("surfaces_max_layer"), 2),
+                # Opt-in, macOS-only: a plain read defaulting False — a tray that
+                # turned itself on when config is unreadable would spawn a native
+                # process unexpectedly.
+                tray_enabled=bool(ambient_data.get("tray_enabled", False)),
+            ),
+            sources=SourcesConfig(
+                enabled=bool(sources_data.get("enabled", True)),
+                poll_interval_default_secs=_safe_int(
+                    sources_data.get("poll_interval_default_secs"), 3600
+                ),
+                network_floor_secs=_safe_int(sources_data.get("network_floor_secs"), 900),
+                max_sources=_safe_int(sources_data.get("max_sources"), 100),
+                max_items_per_poll=_safe_int(sources_data.get("max_items_per_poll"), 50),
+                daily_request_budget=_safe_int(sources_data.get("daily_request_budget"), 288),
+            ),
+            packs=PacksConfig(
+                skill_catalogs=[
+                    SkillCatalogConfig(
+                        name=str(c.get("name", "")),
+                        url=str(c.get("url", "")),
+                        kind=str(c.get("kind", "index") or "index"),
+                    )
+                    for c in packs_data.get("skill_catalogs", [])
+                    if isinstance(c, dict) and str(c.get("url", "")).strip()
+                ],
+                # Guard polarity: the fingerprint surface only ever PROPOSES, so an
+                # unreadable value must not silently disable it — missing/garbage ⇒ ON.
+                fingerprint_enabled=_guard_flag(packs_data.get("fingerprint_enabled")),
+                connector_catalog_url=str(packs_data.get("connector_catalog_url", "") or ""),
+            ),
             hooks=data.get("hooks", {}),
             agents=agents,
             default_agent=default_agent_val,
@@ -3190,6 +3463,9 @@ class AppConfig:
                 ),
                 model_tier_fast=str(
                     workflows_data.get("model_tier_fast", "background") or "background"
+                ),
+                match_threshold=max(
+                    0.0, min(1.0, float(workflows_data.get("match_threshold", 0.62) or 0.62))
                 ),
                 surface_mode_default=_surface_mode_default(
                     workflows_data.get("surface_mode_default")
@@ -3459,6 +3735,9 @@ class AppConfig:
             "memory": asdict(self.memory),
             "dashboard": asdict(self.dashboard),
             "legibility": asdict(self.legibility),
+            "ambient": asdict(self.ambient),
+            "sources": asdict(self.sources),
+            "packs": asdict(self.packs),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,

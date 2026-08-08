@@ -469,6 +469,7 @@ def test_frontend_display_map_kinds_all_resolve():
         "stalled",  # loop/stalled    → emits `loop`
         "retire",  # learning/retire → emits `feedback_retire`
         "route_drift",  # system/route_drift → emits `app.route.drift`
+        "update",  # apps/update     → emits `app_update`
     }
     unresolvable = sorted(k for k in keys - _wire_vocabulary() if k not in tolerated)
     assert not unresolvable, f"frontend shows kinds the registry can't resolve: {unresolvable}"

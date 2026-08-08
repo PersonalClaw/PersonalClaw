@@ -41,6 +41,74 @@
         "event_fanout_ratio_max": 3.0
       },
       "rationale": "Flood scenario deliberately replays duplicate item_ids and 2 channels to exercise inbox dedup + multi-channel fanout; dup-rate/fanout above the single-stream default is the point of the fixture."
+    },
+    "workflow-journal-projection": {
+      "metrics": {
+        "event_count": 8,
+        "distinct_keys": 1,
+        "duplicate_event_rate": 0.0,
+        "event_fanout_ratio": 8.0,
+        "order_violation_count": 0,
+        "reconnect_loss_count": 0,
+        "latency_p50": {
+          "sse": 0.1
+        },
+        "latency_p95": {
+          "sse": 0.1
+        },
+        "fold": {
+          "status": "complete",
+          "nodes": {
+            "root.children[0]": "done",
+            "root.children[1]": "done",
+            "root.children[2]": "done"
+          },
+          "done": 3,
+          "total": 3,
+          "progress": 1.0,
+          "epoch": 0,
+          "dropped": 0,
+          "live": false
+        }
+      },
+      "thresholds": {
+        "event_fanout_ratio_max": 12.0
+      },
+      "rationale": "A single workflow run's journal folded into its per-run SSE projection (key workflow:<id>): one key, many sequential lifecycle events, so events/keys is high by construction — not over-broadcast. The 'fold' block pins the event-fold law's terminal state (WF2-R11): a journal/projection format change that breaks the fold changes this dict and fails the compare (Success Criterion #4). This is the pre-migration gate on the journal format."
+    },
+    "rewind-during-stream": {
+      "metrics": {
+        "event_count": 11,
+        "distinct_keys": 1,
+        "duplicate_event_rate": 0.0,
+        "event_fanout_ratio": 11.0,
+        "order_violation_count": 0,
+        "reconnect_loss_count": 0,
+        "latency_p50": {
+          "sse": 0.1
+        },
+        "latency_p95": {
+          "sse": 0.1
+        },
+        "fold": {
+          "status": "complete",
+          "nodes": {
+            "root.children[0]": "done",
+            "root.children[1]": "done",
+            "root.children[2]": "done"
+          },
+          "done": 3,
+          "total": 3,
+          "progress": 1.0,
+          "epoch": 1,
+          "dropped": 1,
+          "live": false
+        }
+      },
+      "thresholds": {
+        "event_fanout_ratio_max": 12.0
+      },
+      "rationale": "A rewind lands mid-stream (epoch 0 -> 1) and a stale epoch-0 node_done arrives AFTER the epoch bump. The fold's epoch supersede-drop guard must drop it: 'dropped':1 and terminal 'epoch':1 are the proof the guard fired (WF2-R11). Single-key fanout is high by construction (one run, many ordered events), same rationale as the journal-projection scenario."
     }
   }
 }

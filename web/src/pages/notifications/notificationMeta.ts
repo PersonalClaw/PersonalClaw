@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -37,6 +37,10 @@ const KINDS: Record<string, KindMeta> = {
   progress: { label: 'Loop progress', icon: Activity, tone: 'var(--color-info)' },
   proposal: { label: 'Skill proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
   digest: { label: 'Daily digest', icon: Newspaper, tone: 'var(--color-on-surface-low)' },
+  // apps/update — bare kind `update` (persisted history) + the `app_update` wire string
+  // emit_attention_item actually hands state.notify(). Both map to the registry's label.
+  update: { label: 'App update available', icon: RefreshCw, tone: 'var(--color-primary)' },
+  app_update: { label: 'App update available', icon: RefreshCw, tone: 'var(--color-primary)' },
   session: { label: 'Session notice', icon: MessageCircle, tone: 'var(--color-on-surface-low)' },
   retire: { label: 'Retired a learned signal', icon: Archive, tone: 'var(--color-primary)' },
   feedback_retire: { label: 'Retired a learned signal', icon: Archive, tone: 'var(--color-primary)' },

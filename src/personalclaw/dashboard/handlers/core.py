@@ -567,6 +567,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
     "workflows.model_tier_standard": {"type": "str", "max_len": 32},
     "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    # The T4 embedding tie-break floor. Live-editable — the dial an owner turns when the
+    # matcher composes too readily or ignores a genuine semantic near-match, tuned while watching.
+    "workflows.match_threshold": {"type": "float", "min": 0.0, "max": 1.0},
     # All four are live-editable: each changes how much the system does on
     # its own, which is exactly the class of setting an owner reaches for mid-session rather than
     # after a restart.
@@ -635,6 +638,30 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # context_adapters gates writing adapter files into opted-in project workspaces.
     "legibility.discover_tips": {"type": "bool"},
     "legibility.context_adapters": {"type": "bool"},
+    # Ambient surfaces — the composable home + generative-UI +
+    # surface-layer + tray knobs. surfaces_max_layer is the safe-mode ceiling.
+    "ambient.tiles_enabled": {"type": "bool"},
+    "ambient.max_tiles": {"type": "int", "min": 1, "max": 48},
+    "ambient.default_refresh_ttl_secs": {"type": "int", "min": 30, "max": 86400},
+    "ambient.genui_enabled": {"type": "bool"},
+    "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
+    "ambient.tray_enabled": {"type": "bool"},
+    # Watched sources — the poll engine's runtime knobs. The
+    # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
+    # the engine poll a third party abusively.
+    "sources.enabled": {"type": "bool"},
+    "sources.poll_interval_default_secs": {"type": "int", "min": 300, "max": 604800},
+    "sources.network_floor_secs": {"type": "int", "min": 300, "max": 604800},
+    "sources.max_sources": {"type": "int", "min": 1, "max": 1000},
+    "sources.max_items_per_poll": {"type": "int", "min": 1, "max": 1000},
+    "sources.daily_request_budget": {"type": "int", "min": 1, "max": 100000},
+    # Packs — the runtime-editable subset. The fingerprint toggle and the
+    # skill-catalog list are the knobs a user reaches for from Settings; the catalog-refresh
+    # URL is a plain string. No credential rides any of these (a connector credential goes to
+    # the credential store, never a config field).
+    "packs.fingerprint_enabled": {"type": "bool"},
+    "packs.connector_catalog_url": {"type": "str", "max_len": 512},
+    "packs.skill_catalogs": {"type": "skill_catalogs"},
 }
 
 
@@ -830,6 +857,33 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
                 clean_rule[k] = op_rx
             clean_rules.append(clean_rule)
         value = clean_rules
+    elif spec["type"] == "skill_catalogs":
+        # A list of external skill-catalog sources: [{name, url, kind}].
+        # Normalise to exactly those keys; a url is required and must be http(s); kind is a
+        # closed set. Pure data — nothing here is fetched or executed (AP-6 registers the
+        # marketplace + fetches under the CONNECTOR egress profile). A credential is never a
+        # catalog field: it would ride a request log, so it goes through the credential store.
+        if not isinstance(value, list):
+            return _deny("must be a list", f"{path_key}={value}")
+        if len(value) > 50:
+            return _deny("must have at most 50 catalogs", f"{path_key}")
+        clean_catalogs: list[dict[str, object]] = []
+        for i, c in enumerate(value):
+            if not isinstance(c, dict):
+                return _deny("each catalog must be an object", f"{path_key}[{i}]")
+            name = str(c.get("name", "")).strip()[:80]
+            url = str(c.get("url", "")).strip()
+            kind = str(c.get("kind", "index")).strip().lower() or "index"
+            if not url:
+                return _deny("each catalog needs a url", f"{path_key}[{i}]")
+            if len(url) > 512:
+                return _deny("url too long (max 512)", f"{path_key}[{i}]")
+            if not (url.startswith("https://") or url.startswith("http://")):
+                return _deny("url must be http(s)", f"{path_key}[{i}]")
+            if kind not in ("index", "tap"):
+                return _deny("kind must be 'index' or 'tap'", f"{path_key}[{i}]")
+            clean_catalogs.append({"name": name, "url": url, "kind": kind})
+        value = clean_catalogs
     else:
         return _deny("unsupported config type", f"{path_key}={value}", 500)
 

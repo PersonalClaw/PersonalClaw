@@ -56,7 +56,17 @@ _APP_DATA_DIRNAME = "data"  # app-scoped state preserved across updates
 
 
 class AppLifecycleError(Exception):
-    """A lifecycle operation failed (validation, scan refusal, hook error)."""
+    """A lifecycle operation failed (validation, scan refusal, hook error).
+
+    ``log_excerpt`` carries the bounded tail of the underlying subprocess output
+    (a failed ``pip`` dependency install or a ``setup`` hook) when there is one, so
+    the install result can surface it to the UI's "Fix with AI" affordance (APE-8).
+    It is UNTRUSTED: a malicious app's build can emit attacker-controlled text.
+    """
+
+    def __init__(self, message: str, *, log_excerpt: str = "") -> None:
+        super().__init__(message)
+        self.log_excerpt = log_excerpt
 
 
 @dataclass
@@ -76,6 +86,37 @@ class InstallResult:
     # copy-paste client-install one-liner instead. `client_install` = {shell, postInstall}.
     needs_client_install: bool = False
     client_install: dict[str, Any] | None = None
+    # APE-8 "Fix with AI": the bounded tail of the failing subprocess output (a pip
+    # dependency install or a setup hook) when the install failed with one available.
+    # UNTRUSTED — a malicious app's build can emit attacker-controlled text — so it is
+    # never dropped raw into a prompt; `fix_prompt` fences it (see the property).
+    log_excerpt: str = ""
+
+    @property
+    def fix_prompt(self) -> str:
+        """A ready-to-send chat seed for debugging a failed install, or ``""``.
+
+        Built HERE (backend), not the FE, because the fence is the security control:
+        the install log is untrusted text and must be wrapped in the
+        ``<untrusted_content>`` fence — which only the Python :func:`fence_untrusted`
+        can produce — before it ever reaches a chat prompt (APE-8). The FE button just
+        passes this string to ``launchChat({prompt})``. Empty on success or when there
+        is no captured log, so the FE shows the button only when it can act.
+        """
+        if self.ok or not self.log_excerpt.strip():
+            return ""
+        from personalclaw.security import fence_untrusted
+
+        fenced = fence_untrusted(
+            self.log_excerpt,
+            source=f"app_install_log:{self.name}",
+            source_type="app_install_log",
+            source_id=self.name,
+        )
+        return (
+            f"Installing the app '{self.name}' failed. Here is the install log — "
+            f"help me figure out why and how to fix it:\n\n{fenced}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +128,8 @@ class InstallResult:
             "needs_client_install": self.needs_client_install,
             "client_install": self.client_install,
             "scan": self.scan.to_dict() if self.scan else None,
+            "log_excerpt": self.log_excerpt,
+            "fix_prompt": self.fix_prompt,
         }
 
 
@@ -144,7 +187,9 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip()[-300:]
-        raise AppLifecycleError(f"{env_name} hook exited {proc.returncode}: {tail}")
+        raise AppLifecycleError(
+            f"{env_name} hook exited {proc.returncode}: {tail}", log_excerpt=tail
+        )
 
 
 _PIP_TIMEOUT = 600  # seconds — a heavy wheel (torch) can take minutes
@@ -215,7 +260,9 @@ def _install_python_deps(manifest: AppManifest) -> bool:
         ) from exc
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip()[-400:]
-        raise AppLifecycleError(f"dependency install failed for {missing}: {tail}")
+        raise AppLifecycleError(
+            f"dependency install failed for {missing}: {tail}", log_excerpt=tail
+        )
     return True
 
 
@@ -455,7 +502,9 @@ def install(
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
             _audit("install", "error", name, caller=caller, error=str(exc))
-            return InstallResult(ok=False, name=name, scan=report, error=str(exc))
+            return InstallResult(
+                ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
+            )
 
         # 5b. Run onInstall (bounded) — only after the gate passed.
         try:
@@ -468,7 +517,9 @@ def install(
         except AppLifecycleError as exc:
             shutil.rmtree(dest, ignore_errors=True)  # roll back the commit
             _audit("install", "error", name, caller=caller, error=str(exc))
-            return InstallResult(ok=False, name=name, scan=report, error=str(exc))
+            return InstallResult(
+                ok=False, name=name, scan=report, error=str(exc), log_excerpt=exc.log_excerpt
+            )
 
         # 6. Persist installed.json + register providers.
         meta = InstalledApp(
@@ -643,7 +694,13 @@ def update(
                 _seed_app_skills(old_manifest, name)  # restore old app's skills
             _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
-                ok=False, name=name, scan=report, error=f"update failed, rolled back: {exc}"
+                ok=False,
+                name=name,
+                scan=report,
+                error=f"update failed, rolled back: {exc}",
+                # onUpdate-hook / dep-install failures carry the subprocess tail; a
+                # swap OSError does not (getattr → ""). Surfaces the same Fix-with-AI seed.
+                log_excerpt=getattr(exc, "log_excerpt", ""),
             )
 
         # Success: drop the rollback, re-register new, bump installed.json.

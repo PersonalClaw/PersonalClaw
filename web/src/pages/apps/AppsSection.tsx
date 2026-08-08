@@ -4,8 +4,9 @@ import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, AlertTriangle, RefreshCw, Plug, ChevronDown,
-  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database,
+  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database, Sparkles,
 } from 'lucide-react'
+import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { Popover, MenuRow } from '../../ui/Popover'
@@ -51,6 +52,10 @@ interface StoreItem extends AppCatalogEntry {
   /** Provenance for the source divider: builtin/registry origin → "Built-in";
    *  a git URL or a local path → that source. */
   origin?: string
+  /** The app's source offers a newer version — card shows an "Update" badge. */
+  updateAvailable?: boolean
+  /** That newer version (for the badge tooltip). */
+  latestVersion?: string
 }
 
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
@@ -63,6 +68,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     isProvider: a.isProvider, providerType: a.providerType, tags: a.tags ?? [],
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
     native: !!a.native, hasConfig: a.hasConfig, origin: a.origin,
+    updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion,
   }
 }
 
@@ -636,7 +642,12 @@ function StoreView({ catalog, result, totalKnown, installedCount, onInstalled, r
 
   return (
     <div className="flex flex-col gap-2xl">
-      {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+      {guarded.error && (
+        <div className="flex items-center justify-between gap-3">
+          <div data-type="body-s" className="text-negative">{guarded.error}</div>
+          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+        </div>
+      )}
       {pending && guarded.blocked && (
         <ConsentModal
           label={pending.label}
@@ -735,7 +746,12 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   return (
     <div className="flex flex-col gap-xl">
       {err && <div data-type="body-s" className="text-negative">{err}</div>}
-      {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+      {guarded.error && (
+        <div className="flex items-center justify-between gap-3">
+          <div data-type="body-s" className="text-negative">{guarded.error}</div>
+          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+        </div>
+      )}
       {pending && guarded.blocked && (
         <ConsentModal
           label={pending.label}
@@ -898,6 +914,13 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
             <div className="flex items-center gap-1.5">
               <span data-type="body-l" className="truncate text-on-surface transition-colors group-hover:text-primary" style={fvs(550)}>{item.displayName}</span>
               {item.version && <span data-type="label-s" className="shrink-0 text-on-surface-low">v{item.version}</span>}
+              {item.installed && item.updateAvailable && (
+                <span data-type="label-s" title={item.latestVersion ? `Update to v${item.latestVersion} available` : 'Update available'}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary"
+                  style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+                  <RefreshCw size={11} /> Update
+                </span>
+              )}
             </div>
             {providerLabel && (
               <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary" data-type="label-s"
@@ -977,7 +1000,12 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
 
         {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+        {guarded.error && (
+          <div className="flex items-center justify-between gap-3">
+            <div data-type="body-s" className="text-negative">{guarded.error}</div>
+            <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -1018,7 +1046,12 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
         <TextInput value={source} onChange={(v) => { setSource(v); guarded.reset() }} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
         {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+        {guarded.error && (
+          <div className="flex items-center justify-between gap-3">
+            <div data-type="body-s" className="text-negative">{guarded.error}</div>
+            <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
@@ -1109,6 +1142,20 @@ function ConsentModal({ label, result, busy, onConfirm, onClose }: {
   )
 }
 
+/** APE-8 "Fix with AI": shown when a failed install carried a build/hook log. Opens
+ *  a chat pre-filled with the install log — already wrapped in the backend's
+ *  untrusted-content fence (`fix_prompt` is built server-side; the FE only passes it
+ *  through) — so the user/agent can debug the failure. Seeds the composer, never
+ *  auto-sends. Renders nothing when there is no fix prompt. */
+export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
+  if (!fixPrompt) return null
+  return (
+    <Button variant="secondary" size="sm" onClick={() => launchChat({ prompt: fixPrompt })}>
+      <Sparkles size={15} /> Fix with AI
+    </Button>
+  )
+}
+
 /** A monospace command row with a copy button — for the P21 client-install one-liner. */
 function ClientInstallCommand({ label, cmd }: { label: string; cmd: string }) {
   const [copied, setCopied] = useState(false)
@@ -1150,6 +1197,19 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
           <div data-type="body-s" className="text-on-surface-low">{app.description || app.name}</div>
           <div data-type="label-s" className="mt-1 text-on-surface-low">v{app.version} · {app.origin || 'local'}</div>
         </div>
+
+        {app.updateAvailable && (
+          <div className="flex items-center justify-between gap-3 rounded-m border border-primary/40 bg-surface-high p-m"
+            style={{ background: 'color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-high))' }}>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-primary" data-type="body-s"><RefreshCw size={14} /> Update available</div>
+              <div className="mt-0.5 text-on-surface-low" data-type="label-s">
+                {app.latestVersion ? `Version ${app.latestVersion} is available (you have ${app.version}).` : 'A newer version is available.'}
+              </div>
+            </div>
+            <Button variant="primary" size="sm" className="shrink-0" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
+          </div>
+        )}
 
         <PermissionList perms={app.permissions} />
 
@@ -1308,7 +1368,12 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         </div>
       </div>
 
-      {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+      {guarded.error && (
+        <div className="flex items-center justify-between gap-3">
+          <div data-type="body-s" className="text-negative">{guarded.error}</div>
+          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+        </div>
+      )}
       <div>
         <Button variant="primary" size="sm" disabled={guarded.busy} onClick={() => install(false)}>
           {guarded.busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Install

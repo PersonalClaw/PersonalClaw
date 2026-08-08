@@ -305,6 +305,32 @@ Generate a video from a text prompt, using the model bound to the 'video_gen' us
 }
 ```
 
+### `visualize`
+
+Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, callouts) rendered inline — the agency-free two-step pattern: you produce the data, this separate no-tools step renders it. Pass `data` (a JSON object/array or text) and an optional `hint` describing how to present it (e.g. 'show the monthly totals as a bar chart'). Returns a `<widget kind="genui">` block to embed directly in your reply. Use this instead of hand-writing a widget when you have data to show; it emits ONLY registered components, so invalid output is dropped, never rendered.
+
+**Response type:** `genui.widget`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `data` (any, required) — The data to visualize (JSON object/array, or text)
+- `hint` (string, optional) — How to present it (chart type, framing, emphasis)
+- `title` (string, optional) — Widget title (default 'Visualization')
+
+**Example — Render monthly totals as a bar chart:**
+
+```json
+{
+  "data": {
+    "Feb": 150,
+    "Jan": 120,
+    "Mar": 180
+  },
+  "hint": "show as a bar chart of monthly totals"
+}
+```
+
 ## personalclaw-automation
 
 ### `automation_create`
@@ -522,6 +548,28 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
 
 ## personalclaw-core
 
+### `dashboard_tile_propose`
+
+PROPOSE a saved artifact as a dashboard tile on the user's composable home. The artifact must already be saved (a slug); this pins a PROPOSAL that renders with an accept/dismiss chip — the user decides. You never silently rearrange their home. Use when you've built a view/artifact the user would want to keep visible (a live dashboard, a status board). Args: slug (the artifact slug), size (s|m|l|full, default m), view_id (target view; omit for the Overview home).
+
+**Response type:** `dashboard.tile.propose.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `size` (string, optional) — Flow-layout size hint (default m). No coordinates.
+- `slug` (string, required) — The saved artifact's slug to pin as a tile.
+- `view_id` (string, optional) — Target view id. Omit to propose onto the Overview home.
+
+**Example — Propose a saved dashboard artifact as a tile on the home:**
+
+```json
+{
+  "size": "l",
+  "slug": "sales-live-board"
+}
+```
+
 ### `get_context`
 
 Call at the START of every task to load this project's routed context. Returns, in lost-in-the-middle order: hard RULES & directives (the project brief + operating procedure) at the top; then scored mid-tier content — how this user works (memory-derived lessons/preferences), the skills available here, and titled pointers to reference material (knowledge items — retrieve a body on demand, never inlined); and at the bottom an L0 CATALOG of what was NOT loaded, each with the tool/route that pulls it (memory_recall, skill_invoke, GET /api/knowledge/items). Optionally pass a `query` to score the mid tier against the task at hand, and a `project_id` to target a specific project (defaults to this session's project). Read-only: never writes to memory or knowledge.
@@ -648,6 +696,32 @@ Send a file to the user. Copies the file to the outbox and notifies the dashboar
 {
   "description": "Weekly report",
   "path": "artifacts/report.pdf"
+}
+```
+
+### `project_context_review`
+
+Review THIS conversation and propose updates to the current project's context — its instructions, an inlined context file, or a skill. Call ONLY when the user asks you to review/capture what was established here (e.g. 'review this chat and update the project'); it does not run automatically. You identify the changes from the conversation and pass them as `items`, each with a one-line `rationale` the user reads before deciding. Nothing is written: each item becomes a PROPOSAL in the review queue, and the project changes only when the user accepts it there. A change the user already declined is not re-proposed.
+
+**Response type:** `project.context.review.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `items` (array, required) — The proposed changes.
+- `project_id` (string, optional) — Target project id. Omit to use this session's bound project.
+
+**Example — Propose a project instruction from what this chat established:**
+
+```json
+{
+  "items": [
+    {
+      "body": "Always run `make lint` before committing.",
+      "kind": "project_instruction",
+      "rationale": "We agreed lint must pass pre-commit"
+    }
+  ]
 }
 ```
 
@@ -1662,6 +1736,7 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 **Parameters:**
 - `goal` (string, required) — What the workflow should accomplish, in plain language.
+- `project_id` (string, optional) — Optional: a project this plan targets. When it binds an existing codebase, the plan is grounded in that project's real layout, README and stack so generated stages assume the right conventions.
 - `rigor` (string, optional) — How much structure to propose (default standard).
 - `template` (string, optional) — Optional: a template name to base the plan on.
 

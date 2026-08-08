@@ -84,6 +84,16 @@ _register(
 )
 _register(
     Profile(
+        name="exemplars",
+        description="Per-slice WF2 milestone exemplars (§4.1): run every exemplar's ≤30s "
+        "smoke script through the real engine with a fake model. Regression anchors.",
+        # `python -m harness.exemplars` discovers every exemplars/slice_* bundle and runs its
+        # smoke script; a non-zero exit from any one fails the profile.
+        commands=(f"{VENV_PY} -m harness.exemplars",),
+    )
+)
+_register(
+    Profile(
         name="scan",
         description="Static architectural-boundary scanner (runs in-process, not a shell "
         "command — the CLI invokes harness.scanner when this profile is selected).",

@@ -87,7 +87,13 @@ _COOLDOWN_DAYS = (7, 30, 90, 365)
 
 
 class Kind(str, Enum):
-    """The six proposal kinds. Closed, so a typo cannot invent a seventh."""
+    """The proposal kinds. Closed, so a typo cannot invent an unlisted one.
+
+    The three ``project_*`` kinds (LEA-12) are the review's typed output: a self-updating
+    project context that PROPOSES rather than writes, so a run's learnings reach the
+    project's overview/ledger/inlined-file/skill only through the same human gate every
+    other kind clears.
+    """
 
     SKILL = "skill"
     LESSON_BATCH = "lesson_batch"
@@ -95,6 +101,9 @@ class Kind(str, Enum):
     TEMPLATE_DIFF = "template_diff"
     RETIREMENT = "retirement"
     TIER_MIGRATION = "tier_migration"
+    PROJECT_INSTRUCTION = "project_instruction"
+    PROJECT_FILE = "project_file"
+    PROJECT_SKILL = "project_skill"
 
 
 class Status(str, Enum):
@@ -737,6 +746,9 @@ _KIND_LABELS = {
     Kind.TEMPLATE_DIFF.value: "Template change proposed",
     Kind.RETIREMENT.value: "Retire something unused",
     Kind.TIER_MIGRATION.value: "Move to a different tier",
+    Kind.PROJECT_INSTRUCTION.value: "Project instruction proposed",
+    Kind.PROJECT_FILE.value: "Project context update proposed",
+    Kind.PROJECT_SKILL.value: "Project skill proposed",
 }
 
 

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from personalclaw.config.loader import AppConfig, ProjectionRuleConfig
+from personalclaw.config.loader import AppConfig, ProjectionRuleConfig, SkillCatalogConfig
 
 
 @pytest.fixture()
@@ -85,6 +85,7 @@ _SECTIONS = [
     "guardrails",
     "resilience",
     "evals",
+    "packs",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,
@@ -114,8 +115,17 @@ _SPECIAL = {
     # Declaring a real member proves the field ROUND-TRIPS without asserting that the coercion is a
     # bug.
     ("workflows", "surface_mode_default"): "suggest",
+    # workflows.match_threshold is a cosine floor clamped to [0,1] by load() — the generic rule's
+    # 0.62 + 1.5 = 2.12 would (correctly) come back clamped, so supply an in-range non-default.
+    ("workflows", "match_threshold"): 0.75,
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
+    ],
+    # packs.skill_catalogs is a list[SkillCatalogConfig]. load() keeps only
+    # entries with a non-empty url, so supply a real one — the generic list rule would append
+    # a bare string that load() filters out.
+    ("packs", "skill_catalogs"): [
+        SkillCatalogConfig(name="taps", url="https://example.com/index.json", kind="index")
     ],
     # tools.group_defaults is a dict[str, list[str]] (surface → active tool groups);
     # load() keeps only str→list[str] entries, so supply that shape.

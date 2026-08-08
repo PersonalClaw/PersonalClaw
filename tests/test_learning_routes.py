@@ -27,7 +27,11 @@ from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import learning as L
 
-SIX_KINDS = ("skill", "lesson_batch", "template", "template_diff", "retirement", "tier_migration")
+# Every kind the queue serves, derived from the enum so a new kind (the project_* trio, LEA-12) is
+# covered automatically rather than dropped by a stale literal.
+from personalclaw.learning.proposals import Kind as _Kind  # noqa: E402
+
+ALL_KINDS = tuple(k.value for k in _Kind)
 
 
 @pytest.fixture
@@ -76,15 +80,15 @@ def _filed(store, pid="p1", **kw):
     return prop
 
 
-# ── criterion 1, first half: the inbox SHOWS all six kinds ──
+# ── criterion 1, first half: the inbox SHOWS every kind ──
 
 
-def test_the_inbox_serves_all_six_kinds(store):
-    for index, kind in enumerate(SIX_KINDS):
+def test_the_inbox_serves_every_kind(store):
+    for index, kind in enumerate(ALL_KINDS):
         _filed(store, f"p{index}", kind=kind)
     body = _body(_run(L.api_learning_proposals(_req("GET", "/api/learning/proposals", user="me"))))
-    assert body["total"] == 6
-    assert set(body["by_kind"]) == set(SIX_KINDS)
+    assert body["total"] == len(ALL_KINDS)
+    assert set(body["by_kind"]) == set(ALL_KINDS)
 
 
 def test_a_row_carries_provenance_and_evidence(store):

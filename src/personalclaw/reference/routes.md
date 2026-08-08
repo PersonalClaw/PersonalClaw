@@ -43,6 +43,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/apps/local-sources` — remove a local app-source dir.
 - `GET /api/apps/local-sources` — the configured local app-source directories.
 - `POST /api/apps/local-sources` — add a local app-source dir ``{path}`` (a
+- `GET /api/apps/message` — drain THIS app's inbox (read-once).
+- `POST /api/apps/message` — send a typed message ``{to, type, payload}`` to
 - `DELETE /api/apps/sources` — remove a user git source URL.
 - `GET /api/apps/sources` — the configured git source URLs (defaults + user).
 - `POST /api/apps/sources` — add a user git source URL ``{url}``.
@@ -164,6 +166,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/create-dir` — create a new directory.
 - `GET /api/dashboard/config` — read or write dashboard settings.
 - `PUT /api/dashboard/config` — read or write dashboard settings.
+- `GET /api/dashboard/views` — every view (locked presets first, then user views).
+- `POST /api/dashboard/views` — every view (locked presets first, then user views).
+- `DELETE /api/dashboard/views/{view_id}` — read, edit, or delete a view.
+- `GET /api/dashboard/views/{view_id}` — read, edit, or delete a view.
+- `PUT /api/dashboard/views/{view_id}` — read, edit, or delete a view.
+- `POST /api/dashboard/views/{view_id}/tiles` — {slug, size?} — pin an artifact tile.
+- `POST /api/dashboard/views/{view_id}/tiles/resolve` — {ref, keep} — accept/dismiss/unpin.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
@@ -198,6 +207,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/file-upload` — upload file(s) into an allowed directory.
 - `GET /api/file-watch` — SSE stream of file content changes.
 - `POST /api/file-write` — write file content from the markdown panel.
+- `GET /api/genui/library` — the generative-UI component catalog + the mechanically
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
@@ -418,6 +428,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/outbox` — list files in the outbox.
 - `POST /api/outbox/notify` — agent sent a file, notify the user.
 - `GET /api/outbox/{filename}` — download a file from the outbox.
+- `GET /api/packs/installed` — List installed packs with connector-resolution + setup state.
+- `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `GET /api/portability/export` — download PersonalClaw state as zip.
 - `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
 - `POST /api/portability/preview` — validate and preview a zip without applying.
@@ -515,6 +527,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/spawn` — clear all completed subagents.
 - `GET /api/spawn` — list all subagents.
 - `POST /api/spawn` — spawn a subagent.
+- `POST /api/spawn/cancel-fanout` — kill EVERY child of one parent/run in one
 - `DELETE /api/spawn/{agent_id}` — cancel a running subagent or remove a finished one.
 - `GET /api/spawn/{agent_id}` — poll subagent status.
 - `GET /api/status` — _(no summary)_

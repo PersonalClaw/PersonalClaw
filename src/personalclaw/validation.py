@@ -470,11 +470,48 @@ IMAGE_GENERATE_SCHEMA = ToolSchema(
     ],
 )
 
+# ── visualize (the agency-free data→genui primitive) ──
+# `data` is any JSON shape (object/array/scalar/text), so the type tuple is
+# deliberately wide; the visualize primitive coerces it to text for the prompt.
+VISUALIZE_SCHEMA = ToolSchema(
+    tool_name="visualize",
+    fields=[
+        FieldSpec("data", (dict, list, str, int, float, bool), required=True),
+        FieldSpec("hint", str, max_len=MAX_MEDIUM_STRING),
+        FieldSpec("title", str, max_len=200),
+    ],
+)
+
 PROMPT_RENDER_SCHEMA = ToolSchema(
     tool_name="prompt_render",
     fields=[
         FieldSpec("prompt_id", str, required=True, max_len=128),
         FieldSpec("vars", dict, default={}),  # variable name → value
+    ],
+)
+
+# ── Project-context review (LEARN E1.4 / WF2LEA-12) ──
+# `items` is checked as a list of objects here; each item's kind/body/rationale shape is validated
+# in `project_context_review` where the typed sink lives (the same container-here, meaning-there
+# split the workflow schemas use). Bounded so one review cannot flood the proposal queue.
+PROJECT_CONTEXT_REVIEW_SCHEMA = ToolSchema(
+    tool_name="project_context_review",
+    fields=[
+        FieldSpec("items", list, required=True, item_type=dict, max_items=20),
+        FieldSpec("project_id", str, max_len=128),
+    ],
+)
+
+# The agent-propose tile tool. `size` is the flow-layout hint
+# (no coordinates); `view_id` targets a view (omit → the Overview home). Arg shapes
+# only; the store enforces the tile cap + artifact-ref rule.
+_TILE_SIZES = frozenset({"s", "m", "l", "full"})
+DASHBOARD_TILE_PROPOSE_SCHEMA = ToolSchema(
+    tool_name="dashboard_tile_propose",
+    fields=[
+        FieldSpec("slug", str, required=True, max_len=200),
+        FieldSpec("size", str, max_len=8, allowed=_TILE_SIZES),
+        FieldSpec("view_id", str, max_len=64),
     ],
 )
 
@@ -869,8 +906,11 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "artifact_versions": ARTIFACT_VERSIONS_SCHEMA,
     "artifact_delete": ARTIFACT_DELETE_SCHEMA,
     "image_generate": IMAGE_GENERATE_SCHEMA,
+    "visualize": VISUALIZE_SCHEMA,
     "prompt_render": PROMPT_RENDER_SCHEMA,
     "skill_invoke": SKILL_INVOKE_SCHEMA,
+    "project_context_review": PROJECT_CONTEXT_REVIEW_SCHEMA,
+    "dashboard_tile_propose": DASHBOARD_TILE_PROPOSE_SCHEMA,
 }
 
 # Keyed by the live MCP tool names (schedule_*). The schema objects already
