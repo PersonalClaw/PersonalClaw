@@ -11,7 +11,9 @@ const SK = { 'X-Session-Key': 'dashboard:ui' }
 async function errText(r: Response): Promise<string> {
   const text = await r.text().catch(() => '')
   try { const parsed = JSON.parse(text); if (parsed && typeof parsed.error === 'string') return parsed.error } catch { /* not JSON */ }
-  return text || `HTTP ${r.status}`
+  // Unshaped 5xx bodies are often framework error pages (e.g. aiohttp's
+  // "Server got itself in trouble") — not copy for form validation lines.
+  return r.status >= 500 ? `Server error (HTTP ${r.status})` : (text || `HTTP ${r.status}`)
 }
 
 /** An Error that carries the HTTP status, so callers can distinguish a genuine 404
