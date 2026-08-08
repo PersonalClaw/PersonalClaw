@@ -1031,6 +1031,42 @@
     "type": "str"
   },
   {
+    "default": 288,
+    "path": "sources.daily_request_budget",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "sources.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 50,
+    "path": "sources.max_items_per_poll",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 100,
+    "path": "sources.max_sources",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 900,
+    "path": "sources.network_floor_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3600,
+    "path": "sources.poll_interval_default_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": "",
     "path": "timezone",
     "sensitive": false,

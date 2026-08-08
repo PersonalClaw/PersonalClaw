@@ -600,6 +600,70 @@ class AmbientConfig:
 
 
 @dataclass
+class SourcesConfig:
+    """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
+
+    The knobs the :class:`~personalclaw.knowledge.source_engine.SourceEngine` reads each
+    tick. Defaults keep an untouched install conservative: polling on, a one-hour default
+    interval, a 15-minute network floor (the R1-class rate discipline — a source polls
+    someone else's server, so a too-frequent poll is abusive and scraper-like), and modest
+    per-poll caps. ``enabled`` is the master switch — off parks the loop so no source is
+    ever fetched.
+    """
+
+    enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Watched sources",
+            "Enable the watched-source poll engine — feeds, pages and directories you "
+            "add are polled on their schedule. Off parks the loop; nothing is fetched.",
+        ),
+    )
+    poll_interval_default_secs: int = field(
+        default=3600,
+        metadata=_meta(
+            "Default poll interval (seconds)",
+            "How often a source is polled when it does not set its own interval. Clamped "
+            "up to the network floor below.",
+        ),
+    )
+    network_floor_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Network poll floor (seconds)",
+            "The fastest any network source is polled, regardless of its own setting. A "
+            "too-frequent poll is abusive to the target server and looks like a scraper — "
+            "this is the rate floor that prevents it.",
+        ),
+    )
+    max_sources: int = field(
+        default=100,
+        metadata=_meta(
+            "Max active sources",
+            "Cap on how many enabled sources the engine arms per tick. A runaway config "
+            "cannot schedule unbounded polling.",
+        ),
+    )
+    max_items_per_poll: int = field(
+        default=50,
+        metadata=_meta(
+            "Max items per poll",
+            "How many new items one poll may ingest before the rest wait for the next "
+            "cycle — a burst of back-fill cannot flood the ingestion queue in one tick.",
+        ),
+    )
+    daily_request_budget: int = field(
+        default=288,
+        metadata=_meta(
+            "Daily request budget per source",
+            "Upper bound on network requests one source may make in a rolling day. Without "
+            "it, a handful of short-interval watches is thousands of daily requests at a "
+            "third party from a machine left running (enforced by the fetching providers).",
+        ),
+    )
+
+
+@dataclass
 class LegibilityConfig:
     """Platform-legibility features (Platform-Legibility §5-§7).
 
@@ -2811,6 +2875,10 @@ class AppConfig:
         default_factory=AmbientConfig,
         metadata=_meta("Ambient", "Composable home + generative UI + tray companion settings."),
     )
+    sources: SourcesConfig = field(
+        default_factory=SourcesConfig,
+        metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
+    )
     hooks: dict = field(
         default_factory=dict,
         metadata=_meta("Hooks", "Script hook definitions keyed by hook ID."),
@@ -2919,6 +2987,9 @@ class AppConfig:
         ambient_data = data.get("ambient", {})
         if not isinstance(ambient_data, dict):
             ambient_data = {}
+        sources_data = data.get("sources", {})
+        if not isinstance(sources_data, dict):
+            sources_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -3158,6 +3229,16 @@ class AppConfig:
                 # turned itself on when config is unreadable would spawn a native
                 # process unexpectedly.
                 tray_enabled=bool(ambient_data.get("tray_enabled", False)),
+            ),
+            sources=SourcesConfig(
+                enabled=bool(sources_data.get("enabled", True)),
+                poll_interval_default_secs=_safe_int(
+                    sources_data.get("poll_interval_default_secs"), 3600
+                ),
+                network_floor_secs=_safe_int(sources_data.get("network_floor_secs"), 900),
+                max_sources=_safe_int(sources_data.get("max_sources"), 100),
+                max_items_per_poll=_safe_int(sources_data.get("max_items_per_poll"), 50),
+                daily_request_budget=_safe_int(sources_data.get("daily_request_budget"), 288),
             ),
             hooks=data.get("hooks", {}),
             agents=agents,
@@ -3559,6 +3640,7 @@ class AppConfig:
             "dashboard": asdict(self.dashboard),
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
+            "sources": asdict(self.sources),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,

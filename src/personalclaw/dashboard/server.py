@@ -1710,6 +1710,21 @@ async def start_dashboard(
     except Exception:
         logger.warning("Durability service failed to start", exc_info=True)
 
+    # Watched-source poll engine (WATCHED-SOURCES §1.2): the single re-armed loop that
+    # polls enrolled poll-capable knowledge providers on schedule and writes new items
+    # through the one ingest path. Started here so it recovers pending ingestion on boot;
+    # fully best-effort — a source-engine fault never blocks or crashes startup.
+    try:
+        from personalclaw.knowledge.source_engine import SourceEngine
+
+        state._source_engine = SourceEngine(  # prevent GC
+            state.knowledge_store,
+            state.knowledge_ingest_queue(),
+        )
+        state._source_engine.start()
+    except Exception:
+        logger.warning("Source engine failed to start", exc_info=True)
+
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()
 

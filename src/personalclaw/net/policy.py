@@ -54,6 +54,13 @@ STRICT = EgressPolicy(name="strict")
 # Knowledge web-url / bookmark scrape: STRICT posture, connector-tuned caps.
 CONNECTOR = EgressPolicy(name="connector", max_bytes=10_000_000, timeout_s=20.0)
 
+# WatchedSource poll fetch (WATCHED-SOURCES §11): a scheduled, unattended pull of a feed
+# or web listing page. Same STRICT public-only posture and CONNECTOR caps (10MB/20s) — a
+# source poll is a knowledge scrape on a timer — as a distinct profile so its egress
+# audits are attributable to the source engine and its caps can diverge from an
+# interactive bookmark scrape later without disturbing CONNECTOR's callers.
+SOURCE = EgressPolicy(name="source", max_bytes=10_000_000, timeout_s=20.0)
+
 # User-configured outbound POST: STRICT, but the operator may allow-list internal
 # hosts (a homelab user POSTing to a LAN service — opt-in via allow_hosts).
 WEBHOOK = EgressPolicy(name="webhook", timeout_s=30.0)
@@ -105,7 +112,7 @@ REGISTRY = EgressPolicy(
 )
 
 _PROFILES: dict[str, EgressPolicy] = {
-    p.name: p for p in (STRICT, CONNECTOR, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY)
+    p.name: p for p in (STRICT, CONNECTOR, SOURCE, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY)
 }
 
 
