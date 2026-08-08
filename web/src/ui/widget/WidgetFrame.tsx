@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Maximize2, Minimize2, ExternalLink, Download, Bookmark } from 'lucide-react'
+import { Maximize2, Minimize2, ExternalLink, Download, Bookmark, Pin } from 'lucide-react'
 import { useMode } from '../../app/theme'
 import { api } from '../../lib/api'
+import { notify } from '../../app/appSdk'
 import { buildSrcdoc, readThemeVars } from './widgetSrcdoc'
 import { effectiveWidgetSlug } from './widgetSlug'
 import { BlueprintSkeleton } from './BlueprintSkeleton'
@@ -142,6 +143,31 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
     } finally { setSavePending(false) }
   }, [saved, savePending, effSlug, title, html])
 
+  // ── pin-to-dashboard (AMBIENT-SURFACES §1.3) — save-then-POST a tile ──
+  // Pinning IMPLIES saving: an unpinned-unsaved widget is first saved via the same
+  // createArtifact path (its stable effectiveWidgetSlug), THEN POSTed as an
+  // artifact:<slug> tile onto the Overview home. Optimistic: flip the pin state
+  // immediately, roll back on failure (a swallowed error would look like a success).
+  const [pinned, setPinned] = useState(false)
+  const [pinPending, setPinPending] = useState(false)
+  const pin = useCallback(async () => {
+    if (pinPending || pinned) return
+    setPinPending(true)
+    setPinned(true) // optimistic
+    try {
+      if (!saved) {
+        await api.createArtifact({ name: title, content: html, kind: 'widget', source: 'chat', slug: effSlug })
+        setSaved(true)
+      }
+      await api.pinTile('overview', { slug: effSlug, size: 'm' })
+    } catch (e) {
+      setPinned(false) // roll back — the tile did not persist
+      notify(`Couldn't pin to dashboard: ${String((e as Error)?.message || e)}`, 'error')
+    } finally {
+      setPinPending(false)
+    }
+  }, [pinPending, pinned, saved, effSlug, title, html])
+
   const openInNewTab = useCallback(() => {
     // Build the wrapper via DOM API (browser handles escaping) so agent srcdoc/
     // title can't break out; the inner iframe stays sandboxed. Standalone doc
@@ -171,6 +197,9 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
     <>
       <SquareIconButton label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} disabled={savePending} on={saved}>
         <Bookmark size={13} fill={saved ? 'currentColor' : 'none'} />
+      </SquareIconButton>
+      <SquareIconButton label={pinned ? 'Pinned to dashboard' : 'Pin to dashboard'} onClick={pin} disabled={pinPending || pinned} on={pinned}>
+        <Pin size={13} fill={pinned ? 'currentColor' : 'none'} />
       </SquareIconButton>
       <SquareIconButton label="Download as HTML" onClick={download}><Download size={13} /></SquareIconButton>
       <SquareIconButton label="Open in new tab" onClick={openInNewTab}><ExternalLink size={13} /></SquareIconButton>

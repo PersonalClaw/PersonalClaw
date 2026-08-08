@@ -75,8 +75,12 @@ class TestTypedStore:
         s2 = KnowledgeStore(path)  # re-open → _migrate runs idempotently
         cols = {r[1] for r in s2.db.execute("PRAGMA table_info(items)").fetchall()}
         assert {"url", "is_pinned", "provider", "insights"} <= cols
-        # One item = one logical doc; legacy source/chunk columns are gone.
-        assert "source_id" not in cols and "chunk_index" not in cols
+        # The legacy CHUNK column is gone (one item = one logical doc, no chunk_index).
+        assert "chunk_index" not in cols
+        # WATCHED-SOURCES §3.3 reclaims source_id/guid with NEW meaning (a polled item's
+        # origin identity), so both exist again — but a native item leaves them NULL and
+        # the reopen does not drop them (the legacy DROP keys on chunk_index alone).
+        assert "source_id" in cols and "guid" in cols
         assert s2.get_item(iid)["title"] == "keep"
 
 
