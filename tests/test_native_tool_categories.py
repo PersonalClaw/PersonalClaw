@@ -61,6 +61,10 @@ _RESIDUAL_CORE_TOOLS = {
     "notify_attachment",
     "loop_nudge_stop",
     "get_context",
+    # project_context_review (WF2LEA-12) spans a project's instructions + context files +
+    # skills — three entity categories, not one — so like get_context it stays in residual
+    # core rather than any single category module.
+    "project_context_review",
 }
 
 

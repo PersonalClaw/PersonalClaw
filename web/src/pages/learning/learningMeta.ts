@@ -1,11 +1,12 @@
-import { Sparkles, BookOpen, Workflow, GitPullRequest, Trash2, ArrowUpDown, HelpCircle } from 'lucide-react'
+import { Sparkles, BookOpen, Workflow, GitPullRequest, Trash2, ArrowUpDown, FileText, HelpCircle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { LearningRow, StagingDay } from '../../lib/api'
 
 // ── Proposal kinds ──
-// The six the backend serves. Labelled here because "lesson_batch" and "tier_migration" are internal
-// names a reviewer should never have to decode, and an unknown kind falls back to its raw id rather
-// than an empty chip — a row whose kind cannot be named is still a row that needs deciding.
+// Every kind the backend serves. Labelled here because names like "lesson_batch", "tier_migration"
+// and "project_file" are internal ones a reviewer should never have to decode, and an unknown kind
+// falls back to its raw id rather than an empty chip — a row whose kind cannot be named is still a
+// row that needs deciding. The three project_* kinds are the project-context review's output.
 const KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
   skill: { label: 'Skill', icon: Sparkles },
   lesson_batch: { label: 'Lessons', icon: BookOpen },
@@ -13,6 +14,9 @@ const KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
   template_diff: { label: 'Template edit', icon: GitPullRequest },
   retirement: { label: 'Retirement', icon: Trash2 },
   tier_migration: { label: 'Tier change', icon: ArrowUpDown },
+  project_instruction: { label: 'Project instruction', icon: BookOpen },
+  project_file: { label: 'Project file', icon: FileText },
+  project_skill: { label: 'Project skill', icon: Sparkles },
 }
 
 export function kindLabel(kind: string): string {

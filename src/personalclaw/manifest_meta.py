@@ -134,6 +134,24 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "project_context_review": {
+        "response_type": "project.context.review.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose a project instruction from what this chat established",
+                "args": {
+                    "items": [
+                        {
+                            "kind": "project_instruction",
+                            "body": "Always run `make lint` before committing.",
+                            "rationale": "We agreed lint must pass pre-commit",
+                        }
+                    ]
+                },
+            },
+        ],
+    },
     "wait": {
         "response_type": "wait.result",
         "error_codes": [],
