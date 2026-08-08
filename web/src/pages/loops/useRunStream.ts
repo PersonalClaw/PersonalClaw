@@ -29,6 +29,15 @@ export const RUN_LIFECYCLE = [
   // silently DROPS event types it has no listener for, so an unregistered event is not a
   // rendering bug you can see — it is an event that never arrives.
   'breaker_trip', 'steering', 'judge_verdict', 'judge_divergence',
+  // UNIVERSAL-PLANNING (WF2UNI) plan-review lifecycle. Registered here for the SAME reason
+  // as every event above — an unregistered type is silently dropped by EventSource, so the
+  // plan-review surface would never see a plan chunk arrive, a step get relabeled, a
+  // shared-understanding confirmation open, or an unattended run demote to per-stage
+  // approval. The plan-review surface (LoopPlanReview) folds them; a cockpit that doesn't
+  // handle them no-ops, per this hook's contract. Backed by the planner's publish sites once
+  // the engine emit seam lands (WORKFLOWS-V2 §"New SSE events"); listed ahead of that emitter
+  // deliberately, because the drop is invisible and the union is the only place to prevent it.
+  'plan_streaming', 'revision', 'confirmation', 'demotion',
 ] as const
 
 export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]
