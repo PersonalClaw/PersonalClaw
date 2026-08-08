@@ -132,3 +132,58 @@ async def test_default_agent_missing_key_is_400_not_silent_clear(monkeypatch, tm
     assert resp.status == 400
     # default_agent untouched on disk
     assert _json.loads(cfg.read_text())["default_agent"] == "default"
+
+
+def test_is_reserved_agent_case_insensitive():
+    from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME, is_reserved_agent
+
+    reserved = LOOP_WORKER_AGENT_NAME
+    assert is_reserved_agent(reserved)
+    assert is_reserved_agent(reserved.upper())
+    assert is_reserved_agent(reserved.lower())
+    assert not is_reserved_agent("my-custom-agent")
+
+
+@pytest.mark.asyncio
+async def test_api_agents_create_rejects_non_alphanumeric(monkeypatch, tmp_path):
+    _acfg(monkeypatch, tmp_path, {"default": {}})
+    req = make_mocked_request("POST", "/api/agents")
+
+    async def _j():
+        return {"name": "---"}
+
+    req.json = _j
+    resp = await _agents_h.api_personalclaw_agents_create(req)
+    assert resp.status == 400
+    assert "Agent name must match" in _json.loads(resp.body.decode())["error"]
+
+
+@pytest.mark.asyncio
+async def test_api_agents_create_case_insensitive_conflict(monkeypatch, tmp_path):
+    from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME
+
+    _acfg(monkeypatch, tmp_path, {LOOP_WORKER_AGENT_NAME: {}})
+    req = make_mocked_request("POST", "/api/agents")
+
+    async def _j():
+        return {"name": LOOP_WORKER_AGENT_NAME.upper()}
+
+    req.json = _j
+    resp = await _agents_h.api_personalclaw_agents_create(req)
+    assert resp.status == 409
+    assert "already exists" in _json.loads(resp.body.decode())["error"]
+
+
+@pytest.mark.asyncio
+async def test_api_agents_create_lowercases_name(monkeypatch, tmp_path):
+    cfg = _acfg(monkeypatch, tmp_path, {})
+    req = make_mocked_request("POST", "/api/agents")
+
+    async def _j():
+        return {"name": "MyNewAgent"}
+
+    req.json = _j
+    resp = await _agents_h.api_personalclaw_agents_create(req)
+    assert resp.status == 200
+    # ensure it landed lowercase in config
+    assert "mynewagent" in _json.loads(cfg.read_text())["agents"]

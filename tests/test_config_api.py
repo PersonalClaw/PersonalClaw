@@ -273,10 +273,10 @@ class TestAgentCrudProperties:
         # The API validates names against ^[a-zA-Z0-9_-]{1,64}$ (ASCII only),
         # so the strategy must draw from that same alphabet.
         name=st.text(
-            alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
+            alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-",
             min_size=1,
             max_size=30,
-        ),
+        ).filter(lambda s: s[0].isalnum()),
         provider_agent=st.sampled_from(["personalclaw", "oncall", "research", "coding"]),
         default_dir=st.sampled_from(["default", "oncall", "research"]),
         memory_store=st.sampled_from(["default", "oncall-kb", "research-mem"]),
@@ -318,8 +318,9 @@ class TestAgentCrudProperties:
                     assert resp.status == 200
                     data = await resp.json()
                     agents_by_name = {a["name"]: a for a in data["agents"]}
-                    assert name in agents_by_name
-                    created = agents_by_name[name]
+                    name_key = name.lower()
+                    assert name_key in agents_by_name
+                    created = agents_by_name[name_key]
                     assert created["provider_agent"] == provider_agent
                     assert created["default_dir"] == default_dir
                     assert created["memory_store"] == memory_store
@@ -399,10 +400,10 @@ class TestAgentCrudProperties:
     @given(
         # API name contract: ^[a-zA-Z0-9_-]{1,64}$ (ASCII only).
         name=st.text(
-            alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
+            alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-",
             min_size=1,
             max_size=30,
-        ),
+        ).filter(lambda s: s[0].isalnum()),
     )
     @pytest.mark.asyncio
     async def test_crud_delete_round_trip(self, name: str) -> None:
@@ -431,7 +432,7 @@ class TestAgentCrudProperties:
                     resp = await client.get("/api/agents")
                     data_resp = await resp.json()
                     agent_names = [a["name"] for a in data_resp["agents"]]
-                    assert name not in agent_names
+                    assert name.lower() not in agent_names
         finally:
             tmp.unlink(missing_ok=True)
 
