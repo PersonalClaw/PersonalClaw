@@ -52,6 +52,11 @@ EVENTS_FILE = "events.jsonl"
 #: that every subsequent read has to parse.
 MAX_INLINE_OUTPUT_BYTES = 64 * 1024
 
+#: How much of each end of a spilled oversize body the stub keeps as a preview (WV-11). Small
+#: enough that the stub still fits an SSE frame and a journal line, large enough to orient a
+#: reader before they fetch the artifact.
+_PREVIEW_EDGE_CHARS = 140
+
 
 # ── ledger event kinds (the Learning-Flywheel contract) ──────────────────────
 
@@ -646,7 +651,7 @@ class Journal:
     # ── output spilling ──
 
     def store_output(self, path: str, output: Any) -> tuple[str, Any]:
-        """Persist a node output, spilling oversized or binary payloads to a file.
+        """Persist a node output, offloading oversized or binary payloads to an artifact file.
 
         Returns `(output_ref, inline_preview)`. The preview is what bindings and the widget
         read inline; anything past the boundary leaves a typed `result_omitted` stub so a
@@ -663,13 +668,18 @@ class Journal:
           binding, and (if it reached a model) burn context on noise. Path-agnostic because
           a node's output is not a filename.
 
-        The stub always carries `bytes` and `output_ref`, so the full value stays one read
-        away and the stub itself explains why it is a stub.
+        WV-11: an inline output is written to `outputs/`, byte-identical to before. An OFFLOADED
+        one is written to `runs/<id>/artifacts/` instead, so its `output_ref` does NOT start
+        with `outputs/` — the signal every reader uses to treat it as a fetch-on-demand pointer
+        (`{{nodes.x.artifact}}`, the `artifact_inspect` provider). The oversize stub keeps a
+        head+tail `preview` (both ends of the serialized body, not just the head) so a truncated
+        view still shows where the value starts AND ends; a binary stub omits it, because a slice
+        of a PNG is noise. The stub always carries `bytes` and `output_ref`, so the full value
+        stays one read away and the stub itself explains why it is a stub.
         """
         safe = redact(output)
         encoded = _stable_json(safe)
         size = len(encoded.encode("utf-8"))
-        ref = store.write_output(self.run_id, path, safe)
 
         reason = None
         if is_binary_payload(safe):
@@ -677,13 +687,25 @@ class Journal:
         elif size > MAX_INLINE_OUTPUT_BYTES:
             reason = "oversize"
         if reason is None:
+            # Inline path: unchanged. The body stays under `outputs/` and rides in bindings.
+            ref = store.write_output(self.run_id, path, safe)
             return ref, safe
-        return ref, {
+
+        # Offload path: the full body goes to `artifacts/`, leaving a stub the reader can hand
+        # to a binding or a widget without paying for the blob.
+        ref = store.write_artifact(self.run_id, path, safe)
+        stub: dict[str, Any] = {
             "result_omitted": True,
             "reason": reason,
             "bytes": size,
             "output_ref": ref,
         }
+        if reason == "oversize" and len(encoded) > 2 * _PREVIEW_EDGE_CHARS:
+            stub["preview"] = {
+                "head": encoded[:_PREVIEW_EDGE_CHARS],
+                "tail": encoded[-_PREVIEW_EDGE_CHARS:],
+            }
+        return ref, stub
 
     # ── ledger queries ───────────────────────────────────────────────────────────
 

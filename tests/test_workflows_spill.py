@@ -173,3 +173,80 @@ class TestSpill:
         value = "é" * (MAX_INLINE_OUTPUT_BYTES // 2 + 100)  # 2 bytes each
         _ref, preview = journal.store_output("root.a", value)
         assert preview["bytes"] >= len(value.encode("utf-8"))
+
+
+class TestArtifactOffload:
+    """WV-11: the offloaded body lives under `artifacts/`, not `outputs/`, and its ref is the
+    pointer `{{nodes.x.artifact}}` resolves to."""
+
+    def test_an_inline_output_stays_under_outputs(self, journal: Journal) -> None:
+        """The inline path is byte-identical to before: `outputs/` ref, no artifact file."""
+        ref, preview = journal.store_output("root.a", {"answer": 42})
+        assert preview == {"answer": 42}
+        assert ref.startswith("outputs/")
+        assert not (store.run_dir(journal.run_id) / "artifacts").exists()
+
+    def test_a_boundary_output_leaves_no_artifact_dir(self, journal: Journal) -> None:
+        """An output exactly AT the boundary stays inline — no artifacts/ directory appears."""
+        pad = "x" * (MAX_INLINE_OUTPUT_BYTES - len('{"v": ""}'))
+        ref, preview = journal.store_output("root.a", {"v": pad})
+        assert preview.get("result_omitted") is not True
+        assert ref.startswith("outputs/")
+        assert not (store.run_dir(journal.run_id) / "artifacts").exists()
+
+    def test_an_oversize_output_writes_under_artifacts(self, journal: Journal) -> None:
+        big = {"v": "x" * (MAX_INLINE_OUTPUT_BYTES + 1000)}
+        ref, preview = journal.store_output("root.a", big)
+        assert preview["reason"] == "oversize"
+        # The ref is a pointer, NOT an outputs/ value — this is the {{nodes.x.artifact}} signal.
+        assert ref.startswith("artifacts/")
+        assert preview["output_ref"] == ref
+        assert (store.run_dir(journal.run_id) / ref).is_file()
+
+    def test_the_offloaded_body_is_read_back_by_node_path(self, journal: Journal) -> None:
+        """`read_output` falls back to artifacts/, so every existing reader sees the full body
+        transparently even though it moved off outputs/."""
+        big = "x" * (MAX_INLINE_OUTPUT_BYTES + 500)
+        journal.store_output("root.a", big)
+        assert store.read_output(journal.run_id, "root.a") == big
+
+    def test_read_artifact_returns_the_full_body(self, journal: Journal) -> None:
+        big = {"v": "y" * (MAX_INLINE_OUTPUT_BYTES + 200)}
+        ref, _preview = journal.store_output("root.a", big)
+        assert store.read_artifact(journal.run_id, ref) == big
+
+    def test_a_binary_output_offloads_too(self, journal: Journal) -> None:
+        ref, preview = journal.store_output("root.a", "\x89PNG\r\n\x1a\n" + "b" * 400)
+        assert preview["reason"] == "binary"
+        assert ref.startswith("artifacts/")
+
+
+class TestHeadTailPreview:
+    """WV-11: an oversize stub keeps BOTH ends of the body, so a truncated view is honest about
+    where the value starts and stops — not just the head."""
+
+    def test_the_preview_keeps_head_and_tail(self, journal: Journal) -> None:
+        body = "HEAD_MARKER" + "m" * (MAX_INLINE_OUTPUT_BYTES + 500) + "TAIL_MARKER"
+        _ref, preview = journal.store_output("root.a", body)
+        assert preview["reason"] == "oversize"
+        prev = preview["preview"]
+        assert "HEAD_MARKER" in prev["head"]
+        assert "TAIL_MARKER" in prev["tail"]
+        # Distinct ends — not the same slice reported twice.
+        assert prev["head"] != prev["tail"]
+
+    def test_the_preview_is_bounded(self, journal: Journal) -> None:
+        """Each edge is capped, so the stub still fits an SSE frame."""
+        body = "z" * (MAX_INLINE_OUTPUT_BYTES + 5000)
+        _ref, preview = journal.store_output("root.a", body)
+        assert len(preview["preview"]["head"]) <= 200
+        assert len(preview["preview"]["tail"]) <= 200
+        assert len(json.dumps(preview).encode("utf-8")) < 1024
+
+    def test_a_binary_stub_has_no_preview(self, journal: Journal) -> None:
+        """A slice of a PNG is noise — the binary stub names the reason and skips the preview."""
+        _ref, preview = journal.store_output(
+            "root.a", "%PDF-" + "x" * (MAX_INLINE_OUTPUT_BYTES + 10)
+        )
+        assert preview["reason"] == "binary"
+        assert "preview" not in preview
