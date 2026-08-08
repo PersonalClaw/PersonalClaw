@@ -41,7 +41,7 @@ const sizes: Record<Size, string> = {
  *  hardcoded colors/px — all via tokens. */
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
-  loading = false, className, onClick, disabled, type = 'button', title,
+  loading = false, className, onClick, disabled, type = 'button', title, ariaExpanded,
 }: {
   children: ReactNode
   variant?: Variant
@@ -53,6 +53,10 @@ export function Button({
   disabled?: boolean
   type?: 'button' | 'submit'
   title?: string
+  // A disclosure/toggle button announces its state to assistive tech. Optional so the common
+  // action button carries no misleading `aria-expanded`; set it only when the button folds
+  // content (e.g. the runs-inbox "Show N suppressed" archive toggle).
+  ariaExpanded?: boolean
 }) {
   const reduce = useReducedMotion()
   const ref = useRef<HTMLButtonElement>(null)
@@ -84,6 +88,7 @@ export function Button({
       ref={ref}
       type={type}
       title={title}
+      aria-expanded={ariaExpanded}
       onClick={onClick}
       disabled={off}
       onPointerMove={onMove}
