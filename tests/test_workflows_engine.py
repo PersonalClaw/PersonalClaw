@@ -33,6 +33,7 @@ from personalclaw.workflows.engine import (
     dispatch_infer,
     dispatch_stage,
     dispatch_transform,
+    dispatch_visualize,
     dispatch_wait,
     resolve_use_case,
 )
@@ -223,6 +224,54 @@ class TestInfer:
                 _ctx(),
                 completion=cancelled,
             )
+
+
+class TestVisualize:
+    async def test_agency_free_data_to_widget_on_the_reasoning_axis(self) -> None:
+        """The node renders a `data` binding into a genui widget via ONE reasoning-axis
+        call — no tools, no session (agency-free)."""
+        seen = {}
+
+        async def fake(prompt, *, use_case="background", output_type=None):
+            seen["use_case"] = use_case
+            seen["prompt"] = prompt
+            return 'stat = StatTile(label: "Rev", value: "$1M")'
+
+        r = await dispatch_visualize(
+            _n(
+                {
+                    "kind": "visualize",
+                    "id": "v",
+                    "config": {"data": "{{nodes.x.output}}", "hint": "as a tile"},
+                }
+            ),
+            _ctx(node_outputs={"x": {"rev": 1_000_000}}),
+            completion=fake,
+        )
+        assert r.state == InstanceState.DONE
+        assert seen["use_case"] == "reasoning"  # never chat/code_tools (agency-free)
+        assert "as a tile" in seen["prompt"]  # the hint reached the prompt
+        assert r.output["dsl"].startswith("stat = StatTile")
+        assert '<widget kind="genui"' in r.output["widget"]
+
+    async def test_missing_data_binding_is_a_user_failure(self) -> None:
+        r = await dispatch_visualize(
+            _n({"kind": "visualize", "id": "v", "config": {"hint": "chart it"}}), _ctx()
+        )
+        assert r.state == InstanceState.FAILED
+        assert r.failure.failure_class == FailureClass.USER
+
+    async def test_empty_render_is_a_protocol_failure(self) -> None:
+        async def blank(prompt, *, use_case="background", output_type=None):
+            return "   "
+
+        r = await dispatch_visualize(
+            _n({"kind": "visualize", "id": "v", "config": {"data": [1, 2, 3]}}),
+            _ctx(),
+            completion=blank,
+        )
+        assert r.state == InstanceState.FAILED
+        assert r.failure.failure_class == FailureClass.PROTOCOL
 
 
 class TestStage:

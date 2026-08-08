@@ -1,8 +1,8 @@
 """Template macros — one-liner patterns that expand into core nodes (Slice 9a).
 
-The engine has twelve node kinds and no more. A judge panel, adversarial verification, intent
+The engine has thirteen node kinds and no more. A judge panel, adversarial verification, intent
 routing and a multi-modal sweep are all COMPOSITIONS of those kinds — adding `judge_panel` as
-a thirteenth kind would mean a scheduler case, a dispatcher, a resume path, a rewind story and
+a fourteenth kind would mean a scheduler case, a dispatcher, a resume path, a rewind story and
 a widget row for it.
 
 The load-bearing claims:

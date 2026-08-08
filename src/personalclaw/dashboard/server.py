@@ -701,8 +701,11 @@ async def start_dashboard(
         api_dashboard_view_tile_resolve,
         api_dashboard_view_tiles,
         api_dashboard_views,
+        api_genui_library,
     )
 
+    # Generative-UI component catalog (AMBIENT-SURFACES §5.2) — read-only.
+    app.router.add_get("/api/genui/library", api_genui_library)
     app.router.add_get("/api/dashboard/views", api_dashboard_views)
     app.router.add_post("/api/dashboard/views", api_dashboard_views)
     app.router.add_post(

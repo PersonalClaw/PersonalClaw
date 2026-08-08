@@ -305,6 +305,32 @@ Generate a video from a text prompt, using the model bound to the 'video_gen' us
 }
 ```
 
+### `visualize`
+
+Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, callouts) rendered inline — the agency-free two-step pattern: you produce the data, this separate no-tools step renders it. Pass `data` (a JSON object/array or text) and an optional `hint` describing how to present it (e.g. 'show the monthly totals as a bar chart'). Returns a `<widget kind="genui">` block to embed directly in your reply. Use this instead of hand-writing a widget when you have data to show; it emits ONLY registered components, so invalid output is dropped, never rendered.
+
+**Response type:** `genui.widget`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `data` (any, required) — The data to visualize (JSON object/array, or text)
+- `hint` (string, optional) — How to present it (chart type, framing, emphasis)
+- `title` (string, optional) — Widget title (default 'Visualization')
+
+**Example — Render monthly totals as a bar chart:**
+
+```json
+{
+  "data": {
+    "Feb": 150,
+    "Jan": 120,
+    "Mar": 180
+  },
+  "hint": "show as a bar chart of monthly totals"
+}
+```
+
 ## personalclaw-automation
 
 ### `automation_create`
