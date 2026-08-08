@@ -20,6 +20,11 @@ export interface GuardedResult {
    *  effect (a new python dependency was installed, or boot-time registration is
    *  needed). Callers surface this to the user rather than pretending it's live. */
   restartRequired?: boolean
+  /** APE-8: on a FAILED install with captured subprocess output, a ready-to-send
+   *  chat seed embedding the (backend-fenced) install log. The caller offers a
+   *  "Fix with AI" button that passes this to `launchChat({prompt})`. Absent when
+   *  the failure had no log (e.g. bad source, already-installed). */
+  fixPrompt?: string
 }
 
 /** App install/update (`/api/apps`): `needs_consent` + `scan` ride the 409 body;
@@ -27,7 +32,8 @@ export interface GuardedResult {
 export function guardedFromApp(r: AppInstallResult): GuardedResult {
   return { ok: r.ok, needsConsent: !!r.needs_consent, scan: r.scan, error: r.error,
            clientInstall: r.needs_client_install ? (r.client_install ?? {}) : null,
-           restartRequired: !!r.restart_required }
+           restartRequired: !!r.restart_required,
+           fixPrompt: r.fix_prompt || undefined }
 }
 
 /** Skill install (`/api/skills/install`): a 409 warning is `overridable:true`;
@@ -44,6 +50,10 @@ export interface GuardedInstall {
   blocked: GuardedResult | null
   /** A non-scan failure (bad source, already installed, network) — plain text. */
   error: string | null
+  /** APE-8: when the last plain-error failure carried a build/hook log, a
+   *  ready-to-send chat seed (backend-fenced) for a "Fix with AI" button; null
+   *  otherwise. Rides alongside `error` — the same surface that renders it. */
+  fixPrompt: string | null
   /** First attempt, without consent. */
   install: () => Promise<GuardedResult | null>
   /** Re-attempt WITH consent — only meaningful after `blocked.needsConsent`. */
@@ -66,12 +76,14 @@ export function useGuardedInstall(run: (confirm: boolean) => Promise<GuardedResu
   const [busy, setBusy] = useState(false)
   const [blocked, setBlocked] = useState<GuardedResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [fixPrompt, setFixPrompt] = useState<string | null>(null)
   const runRef = useRef(run)
   runRef.current = run
 
   const attempt = useCallback(async (confirm: boolean): Promise<GuardedResult | null> => {
     setBusy(true)
     setError(null)
+    setFixPrompt(null)
     if (!confirm) setBlocked(null)
     try {
       const r = await runRef.current(confirm)
@@ -92,6 +104,8 @@ export function useGuardedInstall(run: (confirm: boolean) => Promise<GuardedResu
       // rather than dead-ending on a bare error string.
       if (r.needsConsent || r.scan?.verdict === 'dangerous' || r.clientInstall) { setBlocked(r); return r }
       setError(r.error || 'install failed')
+      // APE-8: a build/hook failure carries a fenced log → offer "Fix with AI".
+      if (r.fixPrompt) setFixPrompt(r.fixPrompt)
       return r
     } catch (e) {
       setError(String((e as Error)?.message || e))
@@ -103,7 +117,7 @@ export function useGuardedInstall(run: (confirm: boolean) => Promise<GuardedResu
 
   const install = useCallback(() => attempt(false), [attempt])
   const confirmInstall = useCallback(() => attempt(true), [attempt])
-  const reset = useCallback(() => { setBlocked(null); setError(null) }, [])
+  const reset = useCallback(() => { setBlocked(null); setError(null); setFixPrompt(null) }, [])
 
-  return { busy, blocked, error, install, confirmInstall, reset }
+  return { busy, blocked, error, fixPrompt, install, confirmInstall, reset }
 }
