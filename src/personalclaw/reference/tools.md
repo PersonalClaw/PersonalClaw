@@ -1662,6 +1662,7 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 **Parameters:**
 - `goal` (string, required) — What the workflow should accomplish, in plain language.
+- `project_id` (string, optional) — Optional: a project this plan targets. When it binds an existing codebase, the plan is grounded in that project's real layout, README and stack so generated stages assume the right conventions.
 - `rigor` (string, optional) — How much structure to propose (default standard).
 - `template` (string, optional) — Optional: a template name to base the plan on.
 

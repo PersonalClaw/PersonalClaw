@@ -1073,6 +1073,12 @@
     "type": "int"
   },
   {
+    "default": 0.62,
+    "path": "workflows.match_threshold",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
     "default": 10,
     "path": "workflows.max_active_runs",
     "sensitive": false,
