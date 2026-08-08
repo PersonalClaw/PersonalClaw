@@ -345,6 +345,13 @@ class SkillsRegistry:
     def register(self, name: str, marketplace: SkillsMarketplace) -> None:
         self._marketplaces[name] = marketplace
 
+    def unregister(self, name: str) -> None:
+        """Remove a registered marketplace. Idempotent — a name that was never registered
+        is a no-op. Used by transient, single-operation sources (a pack import registers a
+        ``PackMarketplace`` for one commit, then unregisters it — it is not a public
+        marketplace and must not outlive the import)."""
+        self._marketplaces.pop(name, None)
+
     def get(self, name: str) -> SkillsMarketplace:
         mp = self._marketplaces.get(name)
         if mp is None:
