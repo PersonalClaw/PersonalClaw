@@ -217,6 +217,69 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "project_context_review",
+            "description": (
+                "Review THIS conversation and propose updates to the current project's context — "
+                "its instructions, an inlined context file, or a skill. Call ONLY when the user "
+                "asks you to review/capture what was established here (e.g. 'review this chat and "
+                "update the project'); it does not run automatically. You identify the changes "
+                "from the conversation and pass them as `items`, each with a one-line `rationale` "
+                "the user reads before deciding. Nothing is written: each item becomes a PROPOSAL "
+                "in the review queue, and the project changes only when the user accepts it there. "
+                "A change the user already declined is not re-proposed."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "description": "The proposed changes.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                        "project_instruction",
+                                        "project_file",
+                                        "project_skill",
+                                    ],
+                                    "description": (
+                                        "instruction = append to the project's operating "
+                                        "procedure; file = an inlined context file; skill = a new "
+                                        "reusable skill."
+                                    ),
+                                },
+                                "body": {
+                                    "type": "string",
+                                    "description": "The exact content to write once accepted.",
+                                },
+                                "rationale": {
+                                    "type": "string",
+                                    "description": "Why this change — shown in the review queue.",
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": (
+                                        "Filename (project_file) or skill name (project_skill). "
+                                        "Omit for an instruction."
+                                    ),
+                                },
+                            },
+                            "required": ["kind", "body", "rationale"],
+                        },
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": (
+                            "Target project id. Omit to use this session's bound project."
+                        ),
+                    },
+                },
+                "required": ["items"],
+            },
+        },
+        {
             "name": "wait",
             "description": (
                 "Pause execution for a specified duration while preserving full session "
@@ -642,6 +705,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # the agent reads the same block an adapter file would carry.
         return resp.get("text") or "No context available for this project."
 
+    if name == "project_context_review":
+        return _project_context_review(args)
+
     if name == "wait":
         import time as _time
 
@@ -976,6 +1042,85 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         )
 
     return f"Unknown tool: {name}"
+
+
+def _resolve_review_project_id(explicit: str) -> str:
+    """The project a review targets: an explicit id, else this turn's bound project.
+
+    The in-process native loop binds `current_project_id()` for the turn (the same var
+    `artifact_save` stamps work with), so a review invoked from a project's chat scopes to that
+    project without the agent naming it. Returns "" when neither resolves — the review then files
+    nothing rather than guessing a project to write into.
+    """
+    pid = (explicit or "").strip()
+    if pid:
+        return pid
+    try:
+        from personalclaw.agents.native.builtin_tools import current_project_id
+
+        return current_project_id() or ""
+    except Exception:
+        return ""
+
+
+def _review_transcript(session_key: str) -> list[dict]:
+    """This session's user/assistant turns, for grounding the review's proposals. Best-effort."""
+    if not session_key:
+        return []
+    try:
+        from personalclaw.history import ConversationLog
+
+        return ConversationLog().recent(session_key, max_messages=100)
+    except Exception:
+        logger.debug("project_context_review: transcript read skipped", exc_info=True)
+        return []
+
+
+def _project_context_review(args: dict[str, Any]) -> str:
+    """Route reviewer-identified items into typed proposals. Writes NOTHING (LEA-12).
+
+    Delegates to `learning.project_context_review`, which files each item through the shared
+    human-gated queue — deduping and suppressing anything a prior decision settled. Reports how
+    many reached the queue so the agent can tell the user what to review, never what was applied.
+    """
+    from personalclaw.learning.project_context_review import ReviewCandidate, project_context_review
+
+    raw_items = args.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        return "Error: at least one item is required."
+    project_id = _resolve_review_project_id(str(args.get("project_id") or ""))
+    if not project_id:
+        return (
+            "Error: no project to review. This session is not bound to a project — "
+            "pass project_id explicitly."
+        )
+    candidates = [
+        ReviewCandidate(
+            kind=str((it or {}).get("kind") or ""),
+            body=str((it or {}).get("body") or ""),
+            rationale=str((it or {}).get("rationale") or ""),
+            name=str((it or {}).get("name") or ""),
+        )
+        for it in raw_items
+        if isinstance(it, dict)
+    ]
+    session_key = _resolve_session_key()
+    filed = project_context_review(
+        candidates,
+        project_id=project_id,
+        transcript=_review_transcript(session_key),
+        session_key=session_key,
+    )
+    if not filed:
+        return (
+            "No proposals filed. Each item was empty, missing its rationale, or already decided "
+            "in a prior review (a declined change is not re-proposed)."
+        )
+    lines = [f"- [{p.kind}] {p.title}" for p in filed]
+    return (
+        f"Filed {len(filed)} project-context proposal(s) for review — nothing is written until "
+        "you accept them in the review queue:\n" + "\n".join(lines)
+    )
 
 
 # Category modules whose tools the ``mcp-core`` MCP server aggregates. The native

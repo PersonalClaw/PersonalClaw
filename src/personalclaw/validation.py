@@ -478,6 +478,18 @@ PROMPT_RENDER_SCHEMA = ToolSchema(
     ],
 )
 
+# ── Project-context review (LEARN E1.4 / WF2LEA-12) ──
+# `items` is checked as a list of objects here; each item's kind/body/rationale shape is validated
+# in `project_context_review` where the typed sink lives (the same container-here, meaning-there
+# split the workflow schemas use). Bounded so one review cannot flood the proposal queue.
+PROJECT_CONTEXT_REVIEW_SCHEMA = ToolSchema(
+    tool_name="project_context_review",
+    fields=[
+        FieldSpec("items", list, required=True, item_type=dict, max_items=20),
+        FieldSpec("project_id", str, max_len=128),
+    ],
+)
+
 # ── Workflows (WORKFLOWS-V2 Slice 6a — the 19-tool chat surface) ──────────
 #
 # Argument-shape validation only. The SPEC's own validity (acyclicity, resolvable
@@ -871,6 +883,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "image_generate": IMAGE_GENERATE_SCHEMA,
     "prompt_render": PROMPT_RENDER_SCHEMA,
     "skill_invoke": SKILL_INVOKE_SCHEMA,
+    "project_context_review": PROJECT_CONTEXT_REVIEW_SCHEMA,
 }
 
 # Keyed by the live MCP tool names (schedule_*). The schema objects already
