@@ -490,6 +490,19 @@ PROJECT_CONTEXT_REVIEW_SCHEMA = ToolSchema(
     ],
 )
 
+# AMBIENT-SURFACES §1.3 — the agent-propose tile tool. `size` is the flow-layout hint
+# (no coordinates); `view_id` targets a view (omit → the Overview home). Arg shapes
+# only; the store enforces the tile cap + artifact-ref rule.
+_TILE_SIZES = frozenset({"s", "m", "l", "full"})
+DASHBOARD_TILE_PROPOSE_SCHEMA = ToolSchema(
+    tool_name="dashboard_tile_propose",
+    fields=[
+        FieldSpec("slug", str, required=True, max_len=200),
+        FieldSpec("size", str, max_len=8, allowed=_TILE_SIZES),
+        FieldSpec("view_id", str, max_len=64),
+    ],
+)
+
 # ── Workflows (WORKFLOWS-V2 Slice 6a — the 19-tool chat surface) ──────────
 #
 # Argument-shape validation only. The SPEC's own validity (acyclicity, resolvable
@@ -884,6 +897,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "prompt_render": PROMPT_RENDER_SCHEMA,
     "skill_invoke": SKILL_INVOKE_SCHEMA,
     "project_context_review": PROJECT_CONTEXT_REVIEW_SCHEMA,
+    "dashboard_tile_propose": DASHBOARD_TILE_PROPOSE_SCHEMA,
 }
 
 # Keyed by the live MCP tool names (schedule_*). The schema objects already

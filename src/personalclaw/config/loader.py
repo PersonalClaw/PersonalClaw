@@ -536,6 +536,70 @@ class SessionConfig:
 
 
 @dataclass
+class AmbientConfig:
+    """Ambient-surfaces settings (AMBIENT-SURFACES — the composable home).
+
+    The knobs the dashboard-as-views registry, the generative-UI layer, the
+    layered-surface overlay, and the menu-bar companion read. All default to the
+    conservative shipped behavior so an untouched install is exactly today's
+    dashboard: ``tiles_enabled`` gates the composable home, ``max_tiles`` caps a
+    view's pinned tiles, ``default_refresh_ttl_secs`` is the pre-substrate tile
+    refresh cadence, ``genui_enabled`` gates the generative-UI renderer,
+    ``surfaces_max_layer`` is the safe-mode ceiling (0 = pure-L0), and
+    ``tray_enabled`` gates the macOS tray companion.
+    """
+
+    tiles_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Composable home",
+            "Enable the composable home — pin saved artifacts as self-refreshing "
+            "dashboard tiles. Off leaves the dashboard as its fixed default layout.",
+        ),
+    )
+    max_tiles: int = field(
+        default=12,
+        metadata=_meta(
+            "Max tiles per view",
+            "Cap on how many artifact tiles a single view can hold — an unbounded "
+            "home is an unreadable one.",
+        ),
+    )
+    default_refresh_ttl_secs: int = field(
+        default=900,
+        metadata=_meta(
+            "Default tile refresh (seconds)",
+            "How often a TTL-mode tile re-runs its bound data workflow (the "
+            "pre-substrate refresh cadence). A view-trigger binding overrides this.",
+        ),
+    )
+    genui_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Generative UI",
+            "Enable the generative-UI layer — agent-authored widgets render through "
+            "the typed component registry alongside markdown.",
+        ),
+    )
+    surfaces_max_layer: int = field(
+        default=2,
+        metadata=_meta(
+            "Surface layers",
+            "The layered-surface ceiling (0 = pure launcher, 1 = + tiles, 2 = full). "
+            "The safe-mode knob — force 0 to disable the ambient surface overlay.",
+        ),
+    )
+    tray_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Menu-bar companion",
+            "Enable the macOS menu-bar tray companion (a thin client app over the "
+            "existing gateway APIs). Off by default; macOS only.",
+        ),
+    )
+
+
+@dataclass
 class LegibilityConfig:
     """Platform-legibility features (Platform-Legibility §5-§7).
 
@@ -2743,6 +2807,10 @@ class AppConfig:
             "Legibility", "Platform-legibility features — Discover tips + context adapters."
         ),
     )
+    ambient: AmbientConfig = field(
+        default_factory=AmbientConfig,
+        metadata=_meta("Ambient", "Composable home + generative UI + tray companion settings."),
+    )
     hooks: dict = field(
         default_factory=dict,
         metadata=_meta("Hooks", "Script hook definitions keyed by hook ID."),
@@ -2848,6 +2916,9 @@ class AppConfig:
         legibility_data = data.get("legibility", {})
         if not isinstance(legibility_data, dict):
             legibility_data = {}
+        ambient_data = data.get("ambient", {})
+        if not isinstance(ambient_data, dict):
+            ambient_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -3074,6 +3145,19 @@ class AppConfig:
             legibility=LegibilityConfig(
                 discover_tips=bool(legibility_data.get("discover_tips", True)),
                 context_adapters=bool(legibility_data.get("context_adapters", False)),
+            ),
+            ambient=AmbientConfig(
+                tiles_enabled=bool(ambient_data.get("tiles_enabled", True)),
+                max_tiles=_safe_int(ambient_data.get("max_tiles"), 12),
+                default_refresh_ttl_secs=_safe_int(
+                    ambient_data.get("default_refresh_ttl_secs"), 900
+                ),
+                genui_enabled=bool(ambient_data.get("genui_enabled", True)),
+                surfaces_max_layer=_safe_int(ambient_data.get("surfaces_max_layer"), 2),
+                # Opt-in, macOS-only: a plain read defaulting False — a tray that
+                # turned itself on when config is unreadable would spawn a native
+                # process unexpectedly.
+                tray_enabled=bool(ambient_data.get("tray_enabled", False)),
             ),
             hooks=data.get("hooks", {}),
             agents=agents,
@@ -3474,6 +3558,7 @@ class AppConfig:
             "memory": asdict(self.memory),
             "dashboard": asdict(self.dashboard),
             "legibility": asdict(self.legibility),
+            "ambient": asdict(self.ambient),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,

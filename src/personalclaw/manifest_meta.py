@@ -152,6 +152,16 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "dashboard_tile_propose": {
+        "response_type": "dashboard.tile.propose.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose a saved dashboard artifact as a tile on the home",
+                "args": {"slug": "sales-live-board", "size": "l"},
+            },
+        ],
+    },
     "wait": {
         "response_type": "wait.result",
         "error_codes": [],

@@ -522,6 +522,28 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
 
 ## personalclaw-core
 
+### `dashboard_tile_propose`
+
+PROPOSE a saved artifact as a dashboard tile on the user's composable home. The artifact must already be saved (a slug); this pins a PROPOSAL that renders with an accept/dismiss chip — the user decides. You never silently rearrange their home. Use when you've built a view/artifact the user would want to keep visible (a live dashboard, a status board). Args: slug (the artifact slug), size (s|m|l|full, default m), view_id (target view; omit for the Overview home).
+
+**Response type:** `dashboard.tile.propose.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `size` (string, optional) — Flow-layout size hint (default m). No coordinates.
+- `slug` (string, required) — The saved artifact's slug to pin as a tile.
+- `view_id` (string, optional) — Target view id. Omit to propose onto the Overview home.
+
+**Example — Propose a saved dashboard artifact as a tile on the home:**
+
+```json
+{
+  "size": "l",
+  "slug": "sales-live-board"
+}
+```
+
 ### `get_context`
 
 Call at the START of every task to load this project's routed context. Returns, in lost-in-the-middle order: hard RULES & directives (the project brief + operating procedure) at the top; then scored mid-tier content — how this user works (memory-derived lessons/preferences), the skills available here, and titled pointers to reference material (knowledge items — retrieve a body on demand, never inlined); and at the bottom an L0 CATALOG of what was NOT loaded, each with the tool/route that pulls it (memory_recall, skill_invoke, GET /api/knowledge/items). Optionally pass a `query` to score the mid tier against the task at hand, and a `project_id` to target a specific project (defaults to this session's project). Read-only: never writes to memory or knowledge.

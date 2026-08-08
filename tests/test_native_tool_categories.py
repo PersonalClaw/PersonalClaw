@@ -65,6 +65,11 @@ _RESIDUAL_CORE_TOOLS = {
     # skills — three entity categories, not one — so like get_context it stays in residual
     # core rather than any single category module.
     "project_context_review",
+    # dashboard_tile_propose (AMBIENT-SURFACES §1.3) proposes a saved artifact onto the
+    # composable home. It spans the artifact store + the dashboard-views registry rather
+    # than owning either, so like get_context it is a cross-cutting core tool, not an
+    # artifacts-category tool.
+    "dashboard_tile_propose",
 }
 
 
