@@ -567,6 +567,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
     "workflows.model_tier_standard": {"type": "str", "max_len": 32},
     "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    # WF2UNI-11: the T4 embedding tie-break floor. Live-editable — the dial an owner turns when the
+    # matcher composes too readily or ignores a genuine semantic near-match, tuned while watching.
+    "workflows.match_threshold": {"type": "float", "min": 0.0, "max": 1.0},
     # TASKS-SOPS §8 (S61k). All four are live-editable: each changes how much the system does on
     # its own, which is exactly the class of setting an owner reaches for mid-session rather than
     # after a restart.

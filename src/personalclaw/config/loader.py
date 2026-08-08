@@ -1730,11 +1730,15 @@ class WorkflowsConfig:
     """Workflow engine config (WORKFLOWS-V2).
 
     The old shape held surfacing knobs (`match_threshold` for the embedding matcher);
-    that feature is deleted, and the namespace is reused rather than renamed — the
-    plan's clean-break/namespace-reuse call. `enabled` keeps its meaning as the
-    feature kill-switch; the engine's own keys (max_active_runs, per-lane
-    max_concurrent_nodes, model_tiers, retention.*) arrive with Slice 0, each wired
-    through all four config points."""
+    that feature was deleted, and the namespace is reused rather than renamed — the
+    plan's clean-break/namespace-reuse call. `match_threshold` RETURNS here with a new
+    owner (WF2UNI-11): the UNIVERSAL-PLANNING tiered matcher's T4 embedding tie-breaker
+    now reads it as the cosine floor below which an embedding is too weak to unseat a
+    keyword tie. It is a real reader this time — not the inert knob it was under the old
+    SOP feature — so the field is live and wired through all four config points.
+    `enabled` keeps its meaning as the feature kill-switch; the engine's own keys
+    (max_active_runs, per-lane max_concurrent_nodes, model_tiers, retention.*) arrive
+    with Slice 0, each wired through all four config points."""
 
     enabled: bool = field(
         default=True,
@@ -1820,13 +1824,21 @@ class WorkflowsConfig:
         default="background",
         metadata=_meta("Model Tier — Fast", "Use case for the `fast` tier."),
     )
+    # WF2UNI-11: the tiered matcher's T4 embedding tie-break floor. A cosine below this is too weak
+    # to unseat a deterministic keyword tie — the demotion is that a cosine number no longer decides
+    # everything, so a weak one does not either. Live-editable: it is the dial a user turns when the
+    # matcher is composing too readily (raise it) or ignoring a genuine semantic near-match (lower
+    # it), which is exactly the kind of tuning done while watching, not after a restart.
+    match_threshold: float = field(
+        default=0.62,
+        metadata=_meta(
+            "Template Match Threshold",
+            "How confident the embedding tie-breaker must be to override a keyword tie when two "
+            "templates score alike (0-1). Higher composes more readily; lower lets a semantic "
+            "near-match win. Only consulted on a tie — keyword matches always decide first.",
+        ),
+    )
     # TASKS-SOPS §8 (S61k): the four fields the plan names, each wired through all four points.
-    #
-    # `match_threshold` is deliberately NOT re-added. The plan's recon says it exists at
-    # `workflows.match_threshold`; measured — it does not, and this class's own docstring records
-    # why: it was DELETED with the old SOP feature under the namespace-reuse clean break. The new
-    # semantic channel is session-59 scope and its threshold is not user-tunable yet; adding a knob
-    # nothing reads would be exactly the present-and-inert control this program keeps finding.
     surface_mode_default: str = field(
         default="off",
         metadata=_meta(
@@ -3190,6 +3202,9 @@ class AppConfig:
                 ),
                 model_tier_fast=str(
                     workflows_data.get("model_tier_fast", "background") or "background"
+                ),
+                match_threshold=max(
+                    0.0, min(1.0, float(workflows_data.get("match_threshold", 0.62) or 0.62))
                 ),
                 surface_mode_default=_surface_mode_default(
                     workflows_data.get("surface_mode_default")

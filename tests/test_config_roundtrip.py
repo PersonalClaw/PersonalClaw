@@ -114,6 +114,9 @@ _SPECIAL = {
     # Declaring a real member proves the field ROUND-TRIPS without asserting that the coercion is a
     # bug.
     ("workflows", "surface_mode_default"): "suggest",
+    # workflows.match_threshold is a cosine floor clamped to [0,1] by load() — the generic rule's
+    # 0.62 + 1.5 = 2.12 would (correctly) come back clamped, so supply an in-range non-default.
+    ("workflows", "match_threshold"): 0.75,
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
     ],
