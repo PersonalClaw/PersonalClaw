@@ -852,6 +852,8 @@ class DashboardState:
         self._upload_sweep_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Scheduled-backup service (DURABILITY-AND-SYNC §3); held to prevent GC.
         self._durability_svc: object | None = None
+        # Watched-source poll engine (WATCHED-SOURCES §1.2); held to prevent GC.
+        self._source_engine: object | None = None
         self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}

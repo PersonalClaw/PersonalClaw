@@ -111,6 +111,42 @@
     "type": "float"
   },
   {
+    "default": 900,
+    "path": "ambient.default_refresh_ttl_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "ambient.genui_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 12,
+    "path": "ambient.max_tiles",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 2,
+    "path": "ambient.surfaces_max_layer",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "ambient.tiles_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "ambient.tray_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 5,
     "path": "auth.lockout_threshold",
     "sensitive": false,
@@ -993,6 +1029,42 @@
     "path": "snapshot_dir",
     "sensitive": false,
     "type": "str"
+  },
+  {
+    "default": 288,
+    "path": "sources.daily_request_budget",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": true,
+    "path": "sources.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 50,
+    "path": "sources.max_items_per_poll",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 100,
+    "path": "sources.max_sources",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 900,
+    "path": "sources.network_floor_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 3600,
+    "path": "sources.poll_interval_default_secs",
+    "sensitive": false,
+    "type": "int"
   },
   {
     "default": "",

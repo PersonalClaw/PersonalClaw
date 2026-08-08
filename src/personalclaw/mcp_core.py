@@ -280,6 +280,36 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "dashboard_tile_propose",
+            "description": (
+                "PROPOSE a saved artifact as a dashboard tile on the user's composable home. "
+                "The artifact must already be saved (a slug); this pins a PROPOSAL that renders "
+                "with an accept/dismiss chip — the user decides. You never silently rearrange "
+                "their home. Use when you've built a view/artifact the user would want to keep "
+                "visible (a live dashboard, a status board). Args: slug (the artifact slug), "
+                "size (s|m|l|full, default m), view_id (target view; omit for the Overview home)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": "The saved artifact's slug to pin as a tile.",
+                    },
+                    "size": {
+                        "type": "string",
+                        "enum": ["s", "m", "l", "full"],
+                        "description": "Flow-layout size hint (default m). No coordinates.",
+                    },
+                    "view_id": {
+                        "type": "string",
+                        "description": "Target view id. Omit to propose onto the Overview home.",
+                    },
+                },
+                "required": ["slug"],
+            },
+        },
+        {
             "name": "wait",
             "description": (
                 "Pause execution for a specified duration while preserving full session "
@@ -708,6 +738,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "project_context_review":
         return _project_context_review(args)
 
+    if name == "dashboard_tile_propose":
+        return _dashboard_tile_propose(args)
+
     if name == "wait":
         import time as _time
 
@@ -1120,6 +1153,39 @@ def _project_context_review(args: dict[str, Any]) -> str:
     return (
         f"Filed {len(filed)} project-context proposal(s) for review — nothing is written until "
         "you accept them in the review queue:\n" + "\n".join(lines)
+    )
+
+
+def _dashboard_tile_propose(args: dict[str, Any]) -> str:
+    """Pin a saved artifact as an ``added_by:agent`` tile — a PROPOSAL, never a write.
+
+    Propose-don't-pin (AMBIENT-SURFACES §1.3): an agent addition writes an
+    ``added_by:"agent"`` overlay row that renders with an accept/dismiss chip. The
+    user decides; the agent never silently rearranges the home. Bounded by the
+    ``ambient.max_tiles`` cap in the store.
+    """
+    from personalclaw.dashboard import views_store
+    from personalclaw.validation import DASHBOARD_TILE_PROPOSE_SCHEMA, validate_tool_args
+
+    args = validate_tool_args(args, DASHBOARD_TILE_PROPOSE_SCHEMA)
+    slug = str(args.get("slug") or "").strip()
+    if not slug:
+        return "Error: slug is required (the saved artifact to pin)."
+    view_id = str(args.get("view_id") or "").strip() or views_store.PRESET_OVERVIEW_ID
+    size = str(args.get("size") or "m")
+    ref = slug if slug.startswith("artifact:") else f"artifact:{slug}"
+    try:
+        views_store.add_tile(view_id, ref, size=size, added_by="agent")
+    except views_store.ViewNotFoundError:
+        return f"Error: no view '{view_id}' to propose onto."
+    except ValueError as exc:
+        return f"Error: {exc}"
+    where = (
+        "the Overview home" if view_id == views_store.PRESET_OVERVIEW_ID else f"view '{view_id}'"
+    )
+    return (
+        f"Proposed tile 'artifact:{slug}' on {where} — it renders with an accept/dismiss chip, "
+        "so nothing changes on the user's home until they accept it."
     )
 
 
