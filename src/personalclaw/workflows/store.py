@@ -395,6 +395,55 @@ def write_output(run_id: str, node_path: str, output: Any) -> str:
     return rel
 
 
+def write_artifact(run_id: str, node_path: str, output: Any) -> str:
+    """Persist an OFFLOADED node output under `runs/<id>/artifacts/` (WV-11).
+
+    Same envelope and same path-hash as :func:`write_output`, so :func:`read_output` finds
+    an offloaded body by node path with no extra bookkeeping. The distinction is the
+    directory: a body the journal spilled (oversize or binary) lives here, and its ref does
+    NOT start with `outputs/` — which is the signal every reader uses to know it is a pointer
+    to fetch on demand (`{{nodes.x.artifact}}`, the `artifact_inspect` provider) rather than a
+    value to inline.
+    """
+    rel = f"artifacts/{_output_filename(node_path)}"
+    path = run_dir(run_id) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(
+        path,
+        json.dumps({"node_path": node_path, "output": output}, indent=2, ensure_ascii=False),
+    )
+    return rel
+
+
+def read_artifact(run_id: str, ref: str) -> Any:
+    """Read an offloaded artifact body by its run-relative ref, confined to `artifacts/`.
+
+    The ref reaches here from a template binding a model may have authored (via
+    `{{nodes.x.artifact}}`), so it is NOT trusted: the resolved path must sit inside this
+    run's `artifacts/` directory or the read is refused. A `../` escape, an absolute path, or
+    a pointer into `outputs/` all resolve outside the artifacts root and return None — the
+    provider only ever reads run-local offloaded outputs.
+    """
+    if not ref:
+        return None
+    root = run_dir(run_id).resolve()
+    art_root = (root / "artifacts").resolve()
+    try:
+        target = (root / ref).resolve()
+        target.relative_to(art_root)
+    except (ValueError, OSError):
+        # relative_to raises when the resolved path escapes the artifacts root — the whole
+        # point of the confinement check.
+        return None
+    if not target.is_file():
+        return None
+    try:
+        return json.loads(target.read_text(encoding="utf-8")).get("output")
+    except (OSError, ValueError):
+        logger.warning("run %s: unreadable artifact %s", run_id, ref, exc_info=True)
+        return None
+
+
 def archive_output(run_id: str, node_path: str, version: int) -> str:
     """Move a node's output into `outputs/attic/v<NNN>/` before a rewind overwrites it.
 
@@ -403,12 +452,19 @@ def archive_output(run_id: str, node_path: str, version: int) -> str:
     by the spec version that superseded it, so the attic reads as a history rather than a
     pile of orphans.
 
+    An OFFLOADED body (WV-11) lives under `artifacts/`, not `outputs/`; it is archived from
+    there too, into the SAME attic, so a rewind leaves no stale artifact a later read could
+    resolve through the `outputs/`→`artifacts/` fallback.
+
     Returns the archive path, or "" when there was nothing to move.
     """
-    src = run_dir(run_id) / "outputs" / _output_filename(node_path)
+    filename = _output_filename(node_path)
+    src = run_dir(run_id) / "outputs" / filename
+    if not src.is_file():
+        src = run_dir(run_id) / "artifacts" / filename
     if not src.is_file():
         return ""
-    rel = f"outputs/attic/v{version:03d}/{_output_filename(node_path)}"
+    rel = f"outputs/attic/v{version:03d}/{filename}"
     dest = run_dir(run_id) / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -420,14 +476,23 @@ def archive_output(run_id: str, node_path: str, version: int) -> str:
 
 
 def read_output(run_id: str, node_path: str) -> Any:
-    path = run_dir(run_id) / "outputs" / _output_filename(node_path)
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8")).get("output")
-    except (OSError, ValueError):
-        logger.warning("run %s: unreadable output for %s", run_id, node_path, exc_info=True)
-        return None
+    """A node's stored output, or None.
+
+    Checks `outputs/` first, then falls back to `artifacts/` — an oversized or binary output
+    the journal spilled (WV-11) lives in the latter. One path-hash, two candidate directories,
+    so every existing caller reads an offloaded body back transparently.
+    """
+    filename = _output_filename(node_path)
+    for sub in ("outputs", "artifacts"):
+        path = run_dir(run_id) / sub / filename
+        if not path.is_file():
+            continue
+        try:
+            return json.loads(path.read_text(encoding="utf-8")).get("output")
+        except (OSError, ValueError):
+            logger.warning("run %s: unreadable output for %s", run_id, node_path, exc_info=True)
+            return None
+    return None
 
 
 def append_jsonl(run_id: str, filename: str, record: dict[str, Any]) -> None:

@@ -422,6 +422,7 @@ READ_ONLY_PROVIDERS: frozenset[str] = frozenset(
         "knowledge-retrieve",  # queries the knowledge store
         "knowledge-health",  # deterministic store health report, zero tokens
         "knowledge-gaps",  # finds referenced-but-unwritten entities, zero tokens
+        "artifact_inspect",  # reads a run's own artifacts, path-escape confined; no side effect
     }
 )
 
