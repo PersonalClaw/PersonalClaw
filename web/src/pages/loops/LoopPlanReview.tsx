@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Play, Plus, X, Sparkles, HelpCircle, AlertTriangle, Check, Download, Sparkle, ChevronUp, ChevronDown, Loader2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Play, Plus, X, Sparkles, AlertTriangle, Check, Download, Sparkle, ChevronUp, ChevronDown, Loader2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -9,9 +9,14 @@ import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { spring } from '../../design/motion'
-import { api, type GoalLoop, type GoalType, type SkillItem, type SkillSearchResult, type GrillPhase, type WorkflowDefStub } from '../../lib/api'
+import { api, type GoalLoop, type GoalType, type SkillItem, type SkillSearchResult, type GrillPhase, type GrillPhaseStep, type WorkflowDefStub } from '../../lib/api'
 import type { LoopDraft } from './loopDraft'
 import { loopToGoalLoop } from './goalAdapter'
+import { useRunStream } from './useRunStream'
+import { planReviewReducer, emptyPlanReview } from './planReviewFold'
+import { QuestionSlider } from './QuestionSlider'
+import { PlanStreamReview } from './PlanStreamReview'
+import type { SliderQuestion } from './sliderState'
 
 const GOAL_TYPES: { id: GoalType; label: string }[] = [
   { id: 'verifiable', label: 'Verifiable' },
@@ -36,17 +41,11 @@ function stopBehavior(loop: GoalLoop, goalType: GoalType): string {
   return `I'll stop when new cycles stop adding value — ${dial[loop.granularity] ?? 'when returns drop'} (${loop.granularity}).`
 }
 
-// One question in the guided walk. Two sources feed the SAME walk model (no dual
-// path): flat classify clarifications → id `g<n>`, no phase; grill's guided-
-// decomposition tree (#16) → id `p<phase>s<step>`, tagged with its phase title +
-// index so the walk chrome can show "Phase N of M · <title>". `phaseKey` groups the
-// launch-time answer store into kind_config.phase_answers.
-interface WalkQuestion {
-  id: string; prompt: string
-  phase?: string          // phase title (guided decomposition only)
-  phaseIndex?: number     // 0-based phase ordinal (guided decomposition only)
-  phaseCount?: number     // total phases (guided decomposition only)
-}
+// The clarifying-question walk is modeled as the QuestionSlider's `SliderQuestion` (typed kinds,
+// phase ribbon, recommendation, required flag) — one model, two sources (no dual path): flat
+// classify clarifications → id `g<n>`, no phase, freeform; grill's guided-decomposition tree
+// (#16) → id `p<phase>s<step>`, phase-tagged so the stepper shows "Phase N of M · <title>". The
+// answers fold into kind_config.phase_answers at launch (grouped by phase for guided runs).
 
 // One phase of the role-phased execution plan (IT-6). Capabilities are per-phase.
 interface PlanPhase {
@@ -67,9 +66,24 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   const [verifyCommand, setVerifyCommand] = useState('')
   const [answers, setAnswers] = useState<Record<string, string>>(() =>
     (((draft.classification.kind_config as Record<string, unknown> | undefined)?.phase_answers as Record<string, string> | undefined)) ?? {})
-  const [step, setStep] = useState(0)   // 0 = overview; 1 = capabilities; 2..N = questions; N+1 = launch
+  const [step, setStep] = useState(0)   // 0 = overview; 1 = capabilities; [plan]; questions; launch
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
+
+  // ── live plan-review stream (WF2UNI-10). The planner's progressive spec + the
+  // shared-understanding confirmation + a mid-plan autonomy demotion arrive on the per-loop SSE
+  // as plan_streaming/revision/confirmation/demotion (all registered in RUN_LIFECYCLE — an
+  // unregistered event is silently dropped by EventSource). Folded through the pure
+  // planReviewReducer so the "what each event does to the review" contract is unit-tested, not
+  // an inline switch. The buffer/confirmation/demotion drive the streaming multi-view render +
+  // its banners below; a run whose backend doesn't emit these yet simply leaves the state empty
+  // (the surface renders the static walk), which is the correct forward-wired no-op.
+  const [review, setReview] = useState(emptyPlanReview)
+  useRunStream(draft.loopId, true, {
+    onSnapshot: () => {},
+    onLifecycle: (event, data) => setReview((r) => planReviewReducer(r, event, data)),
+  })
+  const streamingPlan = review.buffer.trim().length > 0
 
   // ── guided decomposition (#16): grill's memory-checked question-TREE, the richer
   // intake behind intake_rigor='thorough'. When phases load they REPLACE the flat
@@ -147,34 +161,51 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     return () => { alive = false }
   }, [draft.loopId])  // eslint-disable-line
 
-  // The clarifying-question walk — ONE model, two sources (no dual path):
-  //  - guided decomposition (#16): grill's memory-checked phases, each step tagged
-  //    with its phase title/index so the walk shows "Phase N of M". Takes precedence.
-  //  - otherwise the flat clarifications from classify (id `g<n>`, no phase).
-  const questions = useMemo<WalkQuestion[]>(() => {
+  // The clarifying-question walk — ONE model, two sources (no dual path), now typed as the
+  // QuestionSlider's SliderQuestion so the deep-rigor Round renders as a one-at-a-time stepper:
+  //  - guided decomposition (#16): grill's memory-checked phases, each step tagged with its phase
+  //    title/index so the stepper shows "Phase N of M". A phase step may carry the typed grill
+  //    fields (kind/choices/recommended/required) — mapped straight through so a `choice`/`slider`/
+  //    `boundary` question renders its typed control with no shim; absent fields default to a
+  //    required freeform text question (the tree shape's prior behavior).
+  //  - otherwise the flat clarifications from classify (id `g<n>`, no phase) — freeform, skippable.
+  const questions = useMemo<SliderQuestion[]>(() => {
     if (grillPhases && grillPhases.length) {
-      const out: WalkQuestion[] = []
+      const out: SliderQuestion[] = []
       grillPhases.forEach((ph, pi) => {
-        ph.steps.forEach((st, si) => {
-          out.push({ id: `p${pi}s${si}`, prompt: st.prompt, phase: ph.title || `Phase ${pi + 1}`,
-                     phaseIndex: pi, phaseCount: grillPhases.length })
+        ph.steps.forEach((st: GrillPhaseStep, si) => {
+          out.push({
+            id: `p${pi}s${si}`, prompt: st.prompt,
+            kind: st.kind ?? 'text',
+            choices: st.choices,
+            recommended: st.recommended,
+            required: st.required ?? (st.kind !== 'boundary'),
+            min: st.min, max: st.max, step: st.step,
+            phase: ph.title || `Phase ${pi + 1}`, phaseIndex: pi, phaseCount: grillPhases.length,
+          })
         })
       })
       return out
     }
-    return (draft.classification.clarifying_questions ?? []).map((q, i) => ({ id: `g${i}`, prompt: q }))
+    // Flat clarifications carry no typed metadata — freeform + skippable (Skip advances the walk).
+    return (draft.classification.clarifying_questions ?? []).map((q, i) => ({
+      id: `g${i}`, prompt: q, kind: 'text' as const, required: false,
+    }))
   }, [grillPhases, draft.classification.clarifying_questions])
 
-  // Steps: 0 overview · 1 capabilities · [2 plan, if the planner emitted one] ·
-  // questions · launch. The plan step inserts a one-index offset when present.
+  // Steps: 0 overview · 1 capabilities · [plan, if the planner emitted one] · [questions, if any] ·
+  // launch. The clarifying questions collapse into ONE step — the QuestionSlider stepper walks
+  // them one-at-a-time internally (its own gated nav + single Submit), so it is one outer step,
+  // not one per question. The plan/questions steps each insert a one-index offset when present.
   const planOffset = hasPlan ? 1 : 0
-  const qStart = 2 + planOffset                 // first question's step index
-  const totalSteps = questions.length + 3 + planOffset
+  const hasQuestions = questions.length > 0
+  const qStep = 2 + planOffset                  // the single questions step index (when present)
+  const totalSteps = 2 + planOffset + (hasQuestions ? 1 : 0) + 1
   const onOverview = step === 0
   const onCapabilities = step === 1
   const onPlan = hasPlan && step === 2
+  const onQuestions = hasQuestions && step === qStep
   const onLaunch = step === totalSteps - 1
-  const curQuestion = step >= qStart && !onLaunch ? questions[step - qStart] : null
 
   function toggleId(set: Set<string>, setter: (s: Set<string>) => void, id: string) {
     const next = new Set(set)
@@ -199,10 +230,6 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
       if (match) setSkillIds((prev) => new Set(prev).add(match.key))
     } catch { /* leave un-installed; user can retry */ }
     finally { setInstalling((m) => ({ ...m, [s.id]: false })) }
-  }
-
-  function answerValue(q: WalkQuestion): string {
-    return answers[q.id] ?? ''
   }
 
   function next() {
@@ -320,25 +347,54 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
                 <PlanStep phases={phases} setPhases={setPhases}
                   skills={installedSkills} workflows={installedWorkflows}
                   agentNames={agentNames} />
+              ) : onQuestions ? (
+                // The deep-rigor Round as a QuestionSlider stepper: typed kinds, one-at-a-time,
+                // gated forward nav, a per-question custom-answer escape hatch, one Submit that
+                // folds the answers back into the walk and advances to launch.
+                <QuestionSlider
+                  questions={questions}
+                  seed={answers}
+                  onExit={() => setStep((s) => s - 1)}
+                  submitLabel="Save answers"
+                  onSubmit={(record) => { setAnswers((a) => ({ ...a, ...record })); next() }}
+                />
               ) : onLaunch ? (
                 <LaunchStep loop={loop} title={title} goalType={goalType} subGoals={subGoals}
                   verifyCommand={verifyCommand}
                   skillIds={[...skillIds]} workflowIds={[...workflowIds]}
                   installedSkills={installedSkills} installedWorkflows={installedWorkflows}
                   phases={phases}
-                  answered={questions.filter((q) => answerValue(q).trim()).length} totalQ={questions.length} />
-              ) : curQuestion ? (
-                <QuestionStep
-                  q={curQuestion} index={step - qStart + 1} total={questions.length}
-                  value={answerValue(curQuestion)}
-                  onChange={(v) => setAnswers((a) => ({ ...a, [curQuestion.id]: v }))}
-                  onAdvance={next}
-                />
+                  planReview={streamingPlan ? <PlanStreamReview buffer={review.buffer} complete={review.complete} names={review.names} goal={loop.goal} /> : null}
+                  answered={questions.filter((q) => (answers[q.id] ?? '').trim()).length} totalQ={questions.length} />
               ) : null}
             </motion.div>
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Mid-plan autonomy demotion (WF2UNI-10): an unattended run dropped to per-stage approval
+          because a gate/judge confidence fell below threshold — surface it so the user knows the
+          run will now pause for them, rather than silently changing posture. */}
+      {review.demotedReason && (
+        <div role="status" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+          <div className="rounded-lg px-4 py-2.5 text-[0.8125rem] flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)', color: 'var(--color-warning)' }}>
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+            <span>Switched to per-stage approval — {review.demotedReason} You’ll be asked to approve each step as it runs.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Shared-understanding confirmation (WF2UNI-10): the gate that precedes spec emission. A
+          plain acknowledge clears it (the plan then finalizes); it never blocks the walk chrome. */}
+      {review.confirmation && (
+        <div role="alert" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+          <div className="rounded-lg px-4 py-2.5 text-[0.8125rem] flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)' }}>
+            <Check size={15} className="shrink-0 text-info" />
+            <span className="flex-1 text-on-surface">{review.confirmation}</span>
+            <Button size="sm" variant="secondary" onClick={() => setReview((r) => ({ ...r, confirmation: null }))}>Confirm</Button>
+          </div>
+        </div>
+      )}
 
       {/* Launch rejection (e.g. server-side pre-flight validation failed). */}
       {launchError && onLaunch && (
@@ -347,26 +403,26 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         </div>
       )}
 
-      {/* Footer nav — Back/Skip/Next, Launch on the final step. */}
-      <div className="shrink-0 border-t border-outline-variant/30 px-l py-m flex items-center justify-between" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
-        <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}>
-          <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}
-        </Button>
-        {onLaunch ? (
-          <Button onClick={launch} disabled={launching}><Play size={16} /> {launching ? 'Launching…' : 'Launch'}</Button>
-        ) : curQuestion ? (
-          <div className="flex items-center gap-s">
-            <Button variant="ghost" size="sm" onClick={() => setStep((s) => s + 1)}>Skip</Button>
-            <Button size="sm" onClick={next}>Next <ArrowRight size={15} /></Button>
-          </div>
-        ) : (
-          <Button size="sm" onClick={() => setStep((s) => s + 1)}>
-            {onOverview ? 'Capabilities'
-              : onCapabilities && hasPlan ? 'Review plan'
-              : (questions.length ? 'Review questions' : 'Continue')} <ArrowRight size={15} />
+      {/* Footer nav — Back/Next, Launch on the final step. HIDDEN on the questions step: the
+          QuestionSlider owns the whole walk's navigation there (its Back exits to the prior step,
+          its Submit advances), so a competing outer bar would double the controls. */}
+      {!onQuestions && (
+        <div className="shrink-0 border-t border-outline-variant/30 px-l py-m flex items-center justify-between" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+          <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}>
+            <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}
           </Button>
-        )}
-      </div>
+          {onLaunch ? (
+            <Button onClick={launch} disabled={launching}><Play size={16} /> {launching ? 'Launching…' : 'Launch'}</Button>
+          ) : (
+            <Button size="sm" onClick={() => setStep((s) => s + 1)}>
+              {onOverview ? 'Capabilities'
+                : onCapabilities && hasPlan ? 'Review plan'
+                : hasQuestions ? 'Answer questions'
+                : 'Continue'} <ArrowRight size={15} />
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -708,44 +764,13 @@ function PlanStep({ phases, setPhases, skills, workflows, agentNames }: {
   )
 }
 
-function QuestionStep({ q, index, total, value, onChange, onAdvance }: {
-  q: WalkQuestion; index: number; total: number; value: string
-  onChange: (v: string) => void; onAdvance: () => void
-}) {
-  const phased = q.phase != null && q.phaseIndex != null && q.phaseCount != null
-  return (
-    <div className="flex flex-col gap-l max-w-[640px] mx-auto py-l">
-      <div className="flex flex-col gap-1.5">
-        {/* Guided decomposition (#16): a phase ribbon so the user sees where this
-            question sits in the memory-checked question-tree. Flat walks omit it. */}
-        {phased && (
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem]"
-              style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}>
-              <Sparkles size={12} /> Phase {q.phaseIndex! + 1} of {q.phaseCount} · {q.phase}
-            </span>
-          </div>
-        )}
-        <span className="text-on-surface-low text-[0.75rem]">Question {index} of {total}</span>
-      </div>
-      <div className="flex items-start gap-s">
-        <HelpCircle size={20} className="text-info shrink-0 mt-0.5" />
-        <h2 data-type="headline-s" className="text-on-surface">{q.prompt}</h2>
-      </div>
-      <textarea autoFocus rows={5} value={value} onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onAdvance() } }}
-        placeholder="Your answer — or skip it and I'll investigate/assume during the run."
-        className="rounded-lg bg-surface-container px-l py-m text-on-surface text-[0.9375rem] placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      <span className="text-on-surface-low text-[0.75rem]">⌘↵ for the next question</span>
-    </div>
-  )
-}
-
-function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, workflowIds, installedSkills, installedWorkflows, phases, answered, totalQ }: {
+function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, workflowIds, installedSkills, installedWorkflows, phases, answered, totalQ, planReview }: {
   loop: GoalLoop; title: string; goalType: GoalType; subGoals: string[]
   verifyCommand: string; skillIds: string[]; workflowIds: string[]
   installedSkills: SkillItem[]; installedWorkflows: WorkflowDefStub[]
   phases: PlanPhase[]; answered: number; totalQ: number
+  /** The streaming multi-view plan render, when the planner is emitting a live spec (else null). */
+  planReview?: React.ReactNode
 }) {
   const typeLabel = GOAL_TYPES.find((t) => t.id === goalType)?.label ?? goalType
   const granularityLabel = loop.granularity.charAt(0).toUpperCase() + loop.granularity.slice(1)
@@ -758,6 +783,10 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
     <div className="flex flex-col gap-l max-w-[640px] mx-auto py-l">
       <h2 data-type="headline-s" className="text-on-surface">Ready to launch</h2>
       <p className="text-on-surface-var text-[0.9375rem]">{stopBehavior(loop, goalType)}</p>
+
+      {/* The live plan the planner is streaming (proposal cards + read-only graph + JSON,
+          synchronized). Shown above the static summary when a spec is arriving. */}
+      {planReview && <Section label="Planned steps">{planReview}</Section>}
 
       <div className="flex flex-col gap-1.5 text-[0.8125rem] text-on-surface-low">
         <div>Title: <span className="text-on-surface-var">{title || loop.name}</span></div>

@@ -1652,7 +1652,16 @@ export interface UnifiedLoopClassification {
 // another, memory-checked so the agent doesn't re-ask what it already knows about
 // you. Returned by POST /api/loops/{id}/grill-tree; the FE walks the phases + folds
 // the answers into the task at launch (persisted in kind_config.grill_phases).
-export interface GrillPhaseStep { title: string; prompt: string }
+// A phase step is `{title, prompt}` from the grill `tree` normalizer today; the OPTIONAL typed
+// fields mirror `workflows/grill_protocol.Question` (kind | choices | recommended | required) so
+// the QuestionSlider stepper renders the richer deep-rigor Round with no shim when a planner emits
+// it. Absent fields default to a required freeform text question (the tree shape's behavior).
+export interface GrillPhaseStep {
+  title: string; prompt: string
+  kind?: 'text' | 'choice' | 'slider' | 'boundary'
+  choices?: string[]; recommended?: string; required?: boolean
+  min?: number; max?: number; step?: number
+}
 export interface GrillPhase { title: string; description: string; steps: GrillPhaseStep[] }
 export interface GrillTreeResult { phases: GrillPhase[]; memory_hits: number }
 
