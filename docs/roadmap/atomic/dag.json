@@ -1335,10 +1335,11 @@
         {
           "id": "BA-1",
           "title": "Text-only page extraction + compression module (stable ElementRefs, screenshot-as-path, sentinel parser)",
-          "status": "todo",
+          "status": "done",
           "scope": "§1 Text-Only Page Representation (1.1 extraction pipeline, 1.2 Links DSL, 1.3 Forms DSL); §2 Sentinel Action Vocabulary; Session 1; Amendment 2026-07-26 (a) Context compression layer + task A1",
           "done_when": "Standalone browse/extraction.py + browse/compress.py return a structured page representation (text <=4000 chars, Links DSL, Forms DSL) from fixture HTML; a re-snapshot after DOM mutation preserves ElementRefs for unchanged elements; ref-based sentinels (CLICK <ref> / TYPE <ref>(value)) parse correctly; a 100K-token DOM enters context as <1K tokens + a screenshot path with no base64 in any rendered prompt (regression-tested) — SC 1, task A1",
-          "deps": []
+          "deps": [],
+          "pr": 913
         },
         {
           "id": "BA-2",
@@ -1997,10 +1998,11 @@
         {
           "id": "AS-1",
           "title": "Composable home: dashboard-as-views registry + Overview preset + pinning + AmbientConfig",
-          "status": "todo",
+          "status": "done",
           "scope": "§1 The Composable Home — Pinned Tiles Band (§1.1 tile registry, §1.2 placement, §1.3 pinning, §1.4 tile rendering + data seam); Amendment 2026-07-26 round 2 (a) Dashboard-as-views, task A2-1; Provider & Config Plug-in Map (AmbientConfig 5-point wiring). Note: A2-1 supersedes §1.2's single-band placement with named views.",
           "done_when": "dashboard_views.json store + /api/dashboard/views CRUD (presets read-only) exist; locked \"Overview\" preset renders byte-identical to today's dashboard when the registry is empty; artifact tiles are artifact:<slug> refs with size+order only (no x/y coordinates anywhere); pin-to-dashboard control on WidgetFrame saves-then-POSTs a tile; cached SWR paint via useCachedData; dashboard_tile_propose tool writes added_by:agent rows rendering with an accept/dismiss chip; AmbientConfig section wired through all 5 points (dataclass+_meta, load(), to_dict(), _EDITABLE_CONFIG PATCH allowlist, Settings control) and test_config_roundtrip passes.",
-          "deps": []
+          "deps": [],
+          "pr": 910
         },
         {
           "id": "AS-2",
@@ -2186,24 +2188,26 @@
         {
           "id": "WF2UNI-10",
           "title": "Frontend review surface: QuestionSlider/ask() stepper widget + streaming multi-view render + new SSE events into RUN_LIFECYCLE + small-model naming call",
-          "status": "todo",
+          "status": "done",
           "scope": "Plan Review UX (streaming synchronized views); Mid-Planning Interrogation (QuestionSlider widget); Provider & Config Integration (new SSE events); Execution log S43/S45 NOT DONE",
           "done_when": "the deep-rigor Round renders as a QuestionSlider stepper (typed kinds, one-at-a-time, custom-answer escape hatch, single Submit); plan review streams progressively (buffer-append re-parse, shimmer on in-flight steps) across proposal cards + read-only graph + JSON; new plan-streaming/revision/confirmation/demotion SSE events are added to the RUN_LIFECYCLE union in web/src/pages/loops/useRunStream.ts; the {title,description,per-step labels} naming call is wired with deterministic fallbacks.",
           "deps": [
             "WF2UNI-4",
             "WF2UNI-6"
-          ]
+          ],
+          "pr": 909
         },
         {
           "id": "WF2UNI-11",
           "title": "Populate the grounding inputs: brownfield context pass (UP-R17), entity/topic preamble (UP-R14), and wire T4/T5 embedding tie-break to a live embedder/model",
-          "status": "todo",
+          "status": "done",
           "scope": "Architecture: Grounding Preamble (UP-R14); Brownfield Context Pass (UP-R17); Tiered Template Matcher (T4/T5); Execution log S40 & S41 NOT DONE; Success Criteria 2",
           "done_when": "generation.py's codebase_context is populated by a depth-filtered tree + README head + project-metadata synthesis cached per (project_id, tree-hash) with 7d TTL; workflow_plan emits an entity-resolution first node (deterministic lookup + degraded fallback) plus topic extraction feeding the grill; matcher T4 (cached match_embedding, workflows.match_threshold 0.62 tie-breaker) and T5 (summarize-then-rematch re-entering the deterministic scorer) are wired to a live embedder/model in workflow_plan.",
           "deps": [
             "WF2UNI-1",
             "WF2UNI-2"
-          ]
+          ],
+          "pr": 907
         },
         {
           "id": "WF2UNI-12",
@@ -2303,12 +2307,13 @@
         {
           "id": "WF2LOO-8",
           "title": "FE surfaces + as-a-user coexistence validation",
-          "status": "todo",
+          "status": "done",
           "scope": "Migration Path Phase 2 (R10c cockpit), Mid-run human steering channel (R14 comment-triage + judge-prompt override UI); Implementation Effort Session 5; Success Criteria 8, 9, 11",
           "done_when": "Template-picker widget ('Start from template') suggests code-project for coding intents and deep-research for research intents and resolves legacy loop-kind names via aliases (criterion 11); cockpit live-follow switched to keysEquivalent so template-run SSE events are not dropped (R10c); interrupt-queue + judge-comment-triage + per-project judge-prompt-override UI wired; an accepted judge comment reaches the worker session (criterion 8, UI side); mid-flight edit surfaces the re-validate warning (criterion 9); end-to-end as-a-user validation of the bundled templates passes.",
           "deps": [
             "WF2LOO-7"
-          ]
+          ],
+          "pr": 903
         },
         {
           "id": "WF2LOO-9",
@@ -2363,12 +2368,13 @@
         {
           "id": "LMMV-2",
           "title": "Session 1 — Catalog & contract: CapabilityMatrix, runtime-contract/license fields, declarative catalog.json loader + truncation detector, available payload + ModelsPanel chips",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.1 Structured capability matrix on LocalModel; §2.2 Runtime-contract metadata + license surfacing; §2.3 Declarative model-card catalog with truncation detection",
           "done_when": "CapabilityMatrix (optional, default None) plus runtime/runtime_contract/license/non_commercial/context_tokens/output_tokens/io_mime fields added additively to LocalModel; LocalModelProvider._models_from_catalog() reads app-owned catalog.json, filters platforms against host, and computes downloaded via the §4.4 probe; truncation detector flags on-disk <60% of size_mb (with config_only escape hatch) as integrity:truncated + Repair affordance; the fixed-catalog five migrated to catalog.json (dropping a new entry makes a model appear/download/bind/RUN, deprecated shows a chip without breaking bindings); GET /api/models/available serializes the new fields; ModelsPanel renders matrix/license/non-commercial/deprecation/integrity chips (Success Criteria 6 & 7).",
           "deps": [
             "LMMV-1"
-          ]
+          ],
+          "pr": 760
         },
         {
           "id": "LMMV-3",
@@ -2736,24 +2742,26 @@
         {
           "id": "WV-10",
           "title": "WF2-A3 — FE inspector drawer (run detail + widget node rows) + cached-badge rendering",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26) WF2-A3",
           "done_when": "a user can open any node in WorkflowRunDetail + WorkflowProgressCard and read its exact resolved prompt/inputs/output; cached nodes render a visually distinct badge (workflowFold.ts cached? finally read)",
           "deps": [
             "WV-9",
             "WV-7"
-          ]
+          ],
+          "pr": 898
         },
         {
           "id": "WV-11",
           "title": "Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider",
-          "status": "todo",
+          "status": "done",
           "scope": "§2 Context Lifecycle (output offloading) + §1 binding {{nodes.x.artifact}}",
           "done_when": "node outputs over threshold keep head/tail in journal and write body to runs/<id>/artifacts/, populating bindings.node_artifacts so {{nodes.x.artifact}} resolves to a live pointer; artifact_inspect action provider registered (registry + ALLOWED_HOOK_PROVIDERS + validation schema) pulls artifact content on demand",
           "deps": [
             "WV-3",
             "WV-8"
-          ]
+          ],
+          "pr": 901
         },
         {
           "id": "WV-12",
@@ -2777,30 +2785,33 @@
         {
           "id": "AP-1",
           "title": "Pack format + export core (dependency-closure walker + two-layer redaction)",
-          "status": "todo",
+          "status": "done",
           "scope": "§1 The .pclaw Pack Format; §2.1 Dependency-closure walker; §2.2 Deny-list secret redaction. Session 1. Soft: reads WORKFLOWS-V2 template store via per-kind adapter reading whichever shape exists on disk.",
           "done_when": "build_pack(seeds) writes a schema_version=1 .pclaw ZIP: the §2.1 edge table resolves declared references with unresolvable edges demoted to requirements rows; structural layer (shared packs/deny.py, extends portability.EXPORT_EXCLUDE) never opens .env/.local_secret/memory.db/knowledge.db/sessions; content layer (security.redact + guardrails scan wrapper) BLOCKS any credential-bearing component; export preview tree renders before writing; golden-pack fixture round-trip greps clean of planted canary secrets.",
-          "deps": []
+          "deps": [],
+          "pr": 912
         },
         {
           "id": "AP-2",
           "title": "Import core: inspect-without-write, leaves-first commit, rollback, ref-integrity lint, scan",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.1 Pipeline; §3.2 Referential-integrity linter; §3.5 Trust scan-everything-tier-by-origin; §8 skills path (PackMarketplace→install_guarded). Session 2. Success criteria 2, 3.",
           "done_when": "import runs inspect (dry-run, no writes) then quarantine→integrity recompute→packs/lint.py ref-integrity lint→leaves-first commit with per-write journal at packs/.installing/<id>.json; a DANGEROUS-pattern skill is refused regardless of consent and WARNING needs explicit consent; fault-injected mid-import unwinds every journaled write to byte-identical pre-import state; skills commit through PackMarketplace→install_guarded producing .pclaw-lock.json; fresh-id rewriting on parsed objects (never raw bytes); triggers land disabled and config_subset staged; every step SEL-audited.",
           "deps": [
             "AP-1"
-          ]
+          ],
+          "pr": 915
         },
         {
           "id": "AP-3",
           "title": "Requirements resolution + connector catalog (configure/substitute/skip) + setup-skill + PacksConfig",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.3 Connector catalog + configure-or-substitute; §3.4 Post-install setup-skill interview; §8 four config wiring points; §9 stores. Session 3. Soft: re-satisfies against WORK-R19 secrets store when present, save_credential fallback until then.",
           "done_when": "connector_catalog.json store seeded; each connectors.json declaration resolves via configure (credential collected, server written through providers/mcp_instances)/substitute (same-category rewrite)/skip; skipped deps degrade with machine-readable connector_missing:<name>; setup/SKILL.md installs through the guarded path and surfaces as a re-runnable Finish-setup chip; new PacksConfig (skill_catalogs, fingerprint_enabled, connector_catalog_url) wired through dataclass _meta, load(), to_dict(), _EDITABLE_CONFIG+FE with test_config_roundtrip green.",
           "deps": [
             "AP-2"
-          ]
+          ],
+          "pr": 916
         },
         {
           "id": "AP-4",
@@ -2991,12 +3002,13 @@
         {
           "id": "WF2LEA-8",
           "title": "Step 8: self-model observer call site + user.selfmodel.* store + ambient slot producer",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.6 self-model (R21), §7 step 8; S72/S80 'NOT DONE': observer call site + memory read/write of live entries + ambient self_model producer",
           "done_when": "An observer records (route, tools, outcome, reaction) into the staging log after significant turns; live user.selfmodel.* entries read/written via MemoryService within the caps; reinforced habits file lesson_batch proposals (never self-installed); the compact snapshot is produced into the §2.4 allocator's self_model slot",
           "deps": [
             "WF2LEA-2"
-          ]
+          ],
+          "pr": 906
         },
         {
           "id": "WF2LEA-9",
@@ -3033,12 +3045,13 @@
         {
           "id": "WF2LEA-12",
           "title": "Amendment E1.4: project_context_review → typed proposals into the §2.2 queue",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (c) self-updating project context with an approval gate; task row E1.4",
           "done_when": "project_context_review reads a conversation/run and emits project_instruction/project_file/project_skill proposals with per-item rationale into the §2.2 queue; nothing written until accepted; accepting applies exactly the accepted items; the decision is recorded so a second review does not re-propose a rejected item; prompt-triggered only",
           "deps": [
             "WF2LEA-1"
-          ]
+          ],
+          "pr": 908
         }
       ]
     },
@@ -3358,12 +3371,13 @@
         {
           "id": "WF2AUT-10",
           "title": "§5 did/suppressed fold affordance FE consumer",
-          "status": "todo",
+          "status": "done",
           "scope": "Status REMAINING (no FE consumer); §5.2 runs inbox (no-op/suppressed rows auto-archived out of default view); §1.3 archive split (backend shipped S165)",
           "done_when": "the Automations runs-inbox surfaces the did-vs-suppressed fold control so archived/inert rows can be revealed on demand; backend archive split already present, this wires the FE toggle",
           "deps": [
             "WF2AUT-5"
-          ]
+          ],
+          "pr": 904
         },
         {
           "id": "WF2AUT-11",
@@ -4836,12 +4850,13 @@
         {
           "id": "WS-2",
           "title": "WatchedSource store + SourceEngine poll loop + SourcesConfig + SOURCE egress policy",
-          "status": "todo",
+          "status": "done",
           "scope": "§1.2 WatchedSource entity + SourceEngine; §3.2 cursors + §3.3 seen-set/unique-index (tables sources/source_cursors/source_seen + item source_id/guid cols); §Plug-in Map SourcesConfig four-point wiring + SOURCE net/policy.py profile; §11 step 1",
           "done_when": "knowledge.db migration adds sources/source_cursors/source_seen tables + source_id/guid item columns with UNIQUE(source_id,guid); SourceEngine single re-armed asyncio loop enrolls poll-capable providers and polls a fixture source on schedule, writing items via store.create_typed_item(provider,source_id,guid)+ingest_queue.enqueue; SOURCE EgressPolicy profile added via egress_policy_for; SourcesConfig knobs round-trip (SC#12); kill-mid-poll+restart yields no dup/no loss via cursor+seen-set atomicity + recover_pending (SC#4)",
           "deps": [
             "WS-1"
-          ]
+          ],
+          "pr": 911
         },
         {
           "id": "WS-3",
@@ -5086,12 +5101,13 @@
         {
           "id": "PR-2",
           "title": "Fail-actionable FTS5 guards at the 6 FTS5 consumers' store-init (require_fts5 / documented degrade)",
-          "status": "todo",
+          "status": "done",
           "scope": "Contracts C1 (require_fts5, remedy text, §2.7 fail-closed-for-capability); Task A1.2",
           "done_when": "each of the 6 FTS5 modules checks sqlite_features().fts5 once at init and raises/degrades with the fixed remedy text; a monkeypatched no-FTS5 probe fixture produces the actionable error/degradation at init, never a mid-query traceback; per-module degrade-vs-raise choice recorded in the Execution log",
           "deps": [
             "PR-1"
-          ]
+          ],
+          "pr": 831
         },
         {
           "id": "PR-3",
@@ -5243,10 +5259,11 @@
         {
           "id": "APE-9",
           "title": "appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL)",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 3-4 T3.1 + V3-4 (app-to-app demo half); Contract C3 (app-to-app broker)",
           "done_when": "two fixture apps exchange a typed message through the broker (V3-4: one app drives another); an undeclared pair -> 403 + SEL; payload capped and fenced; no direct app-to-app sockets",
-          "deps": []
+          "deps": [],
+          "pr": 914
         },
         {
           "id": "APE-10",
@@ -6765,8 +6782,8 @@
         "plan": "AE"
       },
       {
-        "id": "AG-5",
-        "title": "Wire SafetyProfile / egress-tier into dispatch seams + spawn (close inert control)",
+        "id": "AG-11",
+        "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
         "plan": "AG"
       },
       {
@@ -6780,13 +6797,33 @@
         "plan": "AG"
       },
       {
-        "id": "AP-1",
-        "title": "Pack format + export core (dependency-closure walker + two-layer redaction)",
+        "id": "AP-4",
+        "title": "Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization",
+        "plan": "AP"
+      },
+      {
+        "id": "AP-5",
+        "title": "Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests)",
+        "plan": "AP"
+      },
+      {
+        "id": "AP-6",
+        "title": "Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint)",
         "plan": "AP"
       },
       {
         "id": "APE-1",
         "title": "Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-10",
+        "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-11",
+        "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
         "plan": "APE"
       },
       {
@@ -6810,23 +6847,13 @@
         "plan": "APE"
       },
       {
-        "id": "APE-9",
-        "title": "appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL)",
-        "plan": "APE"
-      },
-      {
         "id": "AR-1",
         "title": "Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts",
         "plan": "AR"
       },
       {
-        "id": "AR2-8",
-        "title": "Muted-state row + Unmute affordance on the agent detail page",
-        "plan": "AR2"
-      },
-      {
-        "id": "AS-1",
-        "title": "Composable home: dashboard-as-views registry + Overview preset + pinning + AmbientConfig",
+        "id": "AS-2",
+        "title": "Chatless refresh: layout/data split render transform + ttl refresh + freshness/error chips",
         "plan": "AS"
       },
       {
@@ -6840,13 +6867,28 @@
         "plan": "AS"
       },
       {
+        "id": "AS-5",
+        "title": "Widget action bridge: extract useWidgetActionBridge, route non-chat hosts, harden",
+        "plan": "AS"
+      },
+      {
         "id": "AS-7",
         "title": "macOS menu-bar tray companion (thin client app)",
         "plan": "AS"
       },
       {
-        "id": "BA-1",
-        "title": "Text-only page extraction + compression module (stable ElementRefs, screenshot-as-path, sentinel parser)",
+        "id": "AS-8",
+        "title": "Mission Control preset: four attention lanes with inline resolution",
+        "plan": "AS"
+      },
+      {
+        "id": "AS-9",
+        "title": "Agent-worlds seam: AgentActivityFeed contract + useAgentActivity hook + first-party world",
+        "plan": "AS"
+      },
+      {
+        "id": "BA-2",
+        "title": "CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval",
         "plan": "BA"
       },
       {
@@ -6870,11 +6912,6 @@
         "plan": "CA"
       },
       {
-        "id": "CATO-1",
-        "title": "Durable usage ledger module + durability/inventory registration",
-        "plan": "CATO"
-      },
-      {
         "id": "CC-4",
         "title": "Screen-snip into chat: getDisplayMedia frame-grab + crop + mac path selection",
         "plan": "CC"
@@ -6895,8 +6932,23 @@
         "plan": "CC"
       },
       {
-        "id": "CE-1",
-        "title": "Sender-trust core seam: channel_trust.py store+API, fence helper, SDK exports, SEL+owner-notification, pair CLI",
+        "id": "CE-2",
+        "title": "Migrate the Slack app onto the core trust seam with a one-time loud migrate_to_core_trust()",
+        "plan": "CE"
+      },
+      {
+        "id": "CE-3",
+        "title": "Telegram channel app (raw Bot API over httpx): api client, MarkdownV2 escaper, transport, delivery, setup/doctor",
+        "plan": "CE"
+      },
+      {
+        "id": "CE-4",
+        "title": "Discord channel app (Gateway WS + REST over httpx): gateway client, delivery+buttons, transport+trust, setup/doctor",
+        "plan": "CE"
+      },
+      {
+        "id": "CE-5",
+        "title": "Email channel app (stdlib IMAP/SMTP in thread executors): poll transport+address-allowlist pairing, SMTP delivery+Message-ID threading, setup/doctor",
         "plan": "CE"
       },
       {
@@ -6905,8 +6957,13 @@
         "plan": "CRE"
       },
       {
-        "id": "DAS-6",
-        "title": "Sync core + git-sync + dir-sync transports (Session 3)",
+        "id": "DAS-7",
+        "title": "Conflict handling — records + review queue + propose-only LLM merge (Session 3)",
+        "plan": "DAS"
+      },
+      {
+        "id": "DAS-8",
+        "title": "rsync-sync + s3-sync transports + end-to-end encryption (Session 4)",
         "plan": "DAS"
       },
       {
@@ -6965,6 +7022,11 @@
         "plan": "DL"
       },
       {
+        "id": "DL-7",
+        "title": "S4 T4.1: comparison data file + peer-product /compare pages",
+        "plan": "DL"
+      },
+      {
         "id": "DL-9",
         "title": "S5 T5.1: research-learnings republication section",
         "plan": "DL"
@@ -6985,13 +7047,13 @@
         "plan": "EA"
       },
       {
-        "id": "EI-1",
-        "title": "SandboxProvider seam + `none` provider + ResourceCeilings foundation",
-        "plan": "EI"
+        "id": "EA-7",
+        "title": "Sender-trust substrate — channels' inbound-identity half + DM pairing",
+        "plan": "EA"
       },
       {
-        "id": "EI-11",
-        "title": "Security docs correction — credential-hiding vs confinement (D0, land first)",
+        "id": "EI-1",
+        "title": "SandboxProvider seam + `none` provider + ResourceCeilings foundation",
         "plan": "EI"
       },
       {
@@ -7005,8 +7067,38 @@
         "plan": "EI"
       },
       {
-        "id": "ES-1",
-        "title": "Shared eval substrate: store, experiment-matrix runner, subprocess isolation fix, config + SEL wiring",
+        "id": "EIAT-1",
+        "title": "Generalize the event-trigger vocabulary to source-agnostic (core, S1)",
+        "plan": "EIAT"
+      },
+      {
+        "id": "ES-11",
+        "title": "Bundled optimize-harness template (budgeted search over PClaw's own artifacts)",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-2",
+        "title": "RunPin + versioned scenario library migration (amendment E1)",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-3",
+        "title": "Retrieval eval harness with per-arm P@k/R@k ablation (both stores, read-only)",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-4",
+        "title": "Judge benchmark harness → tier-recommendation table",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-5",
+        "title": "Pre-registered template A/B studies (the re-opened eval gate)",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-7",
+        "title": "Harness ablation runner + skills bench + model-upgrade watchdog",
         "plan": "ES"
       },
       {
@@ -7025,8 +7117,8 @@
         "plan": "FM"
       },
       {
-        "id": "FS-4",
-        "title": "App-path validation fixture: declared /api/feedback app records via sdk/feedback and route; undeclared app 403s (T2.4)",
+        "id": "FS-6",
+        "title": "Re-add a live gated consumer of suppressed_producers() so suppression is enforced again",
         "plan": "FS"
       },
       {
@@ -7065,18 +7157,13 @@
         "plan": "KL"
       },
       {
-        "id": "LMMV-2",
-        "title": "Session 1 — Catalog & contract: CapabilityMatrix, runtime-contract/license fields, declarative catalog.json loader + truncation detector, available payload + ModelsPanel chips",
-        "plan": "LMMV"
-      },
-      {
-        "id": "LMMV-3",
-        "title": "Session 2 — Download Manager v2: canonical job record, poll-first reattach, .part + cleanup candidates, gated/network/disk error classification, wire delete_all_layouts",
-        "plan": "LMMV"
-      },
-      {
         "id": "LMMV-4",
         "title": "Session 3 — HF token cascade (3-source, whoami-validated) + per-provider real-inference selftest & health endpoints",
+        "plan": "LMMV"
+      },
+      {
+        "id": "LMMV-5",
+        "title": "Session 4 — Sidecar isolation runner + resumable install jobs + loaded-models/memory-pressure widget",
         "plan": "LMMV"
       },
       {
@@ -7085,13 +7172,18 @@
         "plan": "LMMV"
       },
       {
+        "id": "LV-1",
+        "title": "S1 end-to-end visible slice: fire ladder review at loop end-of-run + confirm accept->surface->use loop",
+        "plan": "LV"
+      },
+      {
         "id": "LV-6",
         "title": "S4 benchmark protocol doc",
         "plan": "LV"
       },
       {
-        "id": "MC-1",
-        "title": "S1 remote-access story: Tailscale-first guide + doctor reachability probe",
+        "id": "MC-2",
+        "title": "S2 device-session consumption + Devices list in Settings",
         "plan": "MC"
       },
       {
@@ -7107,11 +7199,6 @@
       {
         "id": "MGAV-6",
         "title": "Two-way readable vault: mode config, wikilink projection, sync pass, vault lints, raw capture, seeding, snapshot",
-        "plan": "MGAV"
-      },
-      {
-        "id": "MGAV-7",
-        "title": "Memory citations in chat + admit-ignorance clause",
         "plan": "MGAV"
       },
       {
@@ -7140,13 +7227,18 @@
         "plan": "MRI"
       },
       {
-        "id": "MRT-1",
-        "title": "Query classifier + telemetry read model + Pareto/Efficiency view",
+        "id": "MRT-2",
+        "title": "Shared pricing rate table (rate_for + model_rates.json + BrandedProviderSpec.pricing)",
         "plan": "MRT"
       },
       {
-        "id": "MRT-2",
-        "title": "Shared pricing rate table (rate_for + model_rates.json + BrandedProviderSpec.pricing)",
+        "id": "MRT-3",
+        "title": "Usage/spend read model — fold, /api/usage, Usage UI, monthly recap",
+        "plan": "MRT"
+      },
+      {
+        "id": "MRT-4",
+        "title": "Heuristic router + policy table + RoutingConfig",
         "plan": "MRT"
       },
       {
@@ -7175,18 +7267,18 @@
         "plan": "PA"
       },
       {
-        "id": "PCS-1",
-        "title": "§C2 wire-order repair: stability-ordered system messages (F1 fix)",
+        "id": "PA-4",
+        "title": "Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4)",
+        "plan": "PA"
+      },
+      {
+        "id": "PCS-4",
+        "title": "Anthropic EXPLICIT translation (cache_control on block-shaped system=) + rails test",
         "plan": "PCS"
       },
       {
-        "id": "PCS-2",
-        "title": "§C3 date-line relocation with truncation-immunity (F2 fix)",
-        "plan": "PCS"
-      },
-      {
-        "id": "PCS-6",
-        "title": "The missing producer: read Anthropic cache-usage fields into LLMEvent (F3)",
+        "id": "PCS-5",
+        "title": "prompt_cache_enabled config through all five wiring points + FE control",
         "plan": "PCS"
       },
       {
@@ -7197,6 +7289,16 @@
       {
         "id": "PEP-10",
         "title": "Always-on conventions viewer + first domain-craft skills",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-11",
+        "title": "First-party product-app suite program",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-3",
+        "title": "App Store persistent category/source rail + card polish",
         "plan": "PEP"
       },
       {
@@ -7215,33 +7317,33 @@
         "plan": "PEP"
       },
       {
-        "id": "PHF-1",
-        "title": "Post-exec resource-ceiling shim + spawn tripwires",
+        "id": "PHF-2",
+        "title": "cgroup v2 second enforcement tier",
         "plan": "PHF"
       },
       {
-        "id": "PHF-10",
-        "title": "Docs-lint + plan-hygiene gate",
+        "id": "PHF-4",
+        "title": "Environment-inheritance allowlist sweep for shell hooks and cron scripts",
         "plan": "PHF"
       },
       {
-        "id": "PHF-11",
-        "title": "Aggregate gates report, they don't short-circuit",
+        "id": "PHF-7",
+        "title": "Offline fake-model E2E harness + a11y rail",
         "plan": "PHF"
       },
       {
-        "id": "PHF-3",
-        "title": "App-backend inbound proxy-signature authentication",
+        "id": "PHF-8",
+        "title": "Ceiling-intersect-profile guardrail wiring",
         "plan": "PHF"
       },
       {
-        "id": "PHF-5",
-        "title": "Committed config-schema baseline + drift gate",
+        "id": "PHF-9",
+        "title": "Suite flake root-cause fixes + xdist scheduler decision",
         "plan": "PHF"
       },
       {
-        "id": "PR-1",
-        "title": "sqlite_compat.py C1 helper: sqlite_features()/require_fts5() + refactor 7 import sites + doctor SQLite line",
+        "id": "PR-3",
+        "title": "CI: add ubuntu-24.04-arm + macos-14 arm64 jobs to full.yml (non-PR path)",
         "plan": "PR"
       },
       {
@@ -7250,19 +7352,24 @@
         "plan": "PR"
       },
       {
-        "id": "PR-6",
-        "title": "Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook",
+        "id": "PR-5",
+        "title": "docs/guides/platforms.md + README support matrix (C2): [models] arm64 wheel/dep audit, Pi-class note, proof-token matrix",
         "plan": "PR"
       },
       {
-        "id": "PR-7",
-        "title": "Windows rung 2 (WSL2): browser auto-open fallback + doctor WSL awareness + WSL2 guide",
+        "id": "PR-6",
+        "title": "Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook",
         "plan": "PR"
       },
       {
         "id": "PR-8",
         "title": "Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code)",
         "plan": "PR"
+      },
+      {
+        "id": "PR2-10",
+        "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
+        "plan": "PR2"
       },
       {
         "id": "PR2-11",
@@ -7298,6 +7405,11 @@
         "id": "PT-4",
         "title": "S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only)",
         "plan": "PT"
+      },
+      {
+        "id": "PUBL-10",
+        "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
+        "plan": "PUBL"
       },
       {
         "id": "PUBL-7",
@@ -7360,11 +7472,6 @@
         "plan": "SV"
       },
       {
-        "id": "SV-7",
-        "title": "Wire python -m harness validate|scan into CI (ci.yml) and fold harness/ into CI lint/test scope",
-        "plan": "SV"
-      },
-      {
         "id": "SV-8",
         "title": "Backfill per-slice runnable exemplars for the landed WF2 slices",
         "plan": "SV"
@@ -7380,28 +7487,18 @@
         "plan": "TSE"
       },
       {
-        "id": "WF2AUT-10",
-        "title": "§5 did/suppressed fold affordance FE consumer",
-        "plan": "WF2AUT"
-      },
-      {
         "id": "WF2AUT-11",
         "title": "idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption)",
         "plan": "WF2AUT"
       },
       {
-        "id": "WF2AUT-6",
-        "title": "Wire the view kind's on_render runtime to a production render surface",
+        "id": "WF2AUT-12",
+        "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
       },
       {
-        "id": "WF2AUT-7",
-        "title": "web_watch headless-Chromium escalation tier + knowledge-store digest routing",
-        "plan": "WF2AUT"
-      },
-      {
-        "id": "WF2AUT-9",
-        "title": "§3.5 skip_if_active liveness guard + acting_on resource claim on mutating triggers",
+        "id": "WF2AUT-8",
+        "title": "trigger_source provider seam (AUTO-A4): PROVIDER_TYPES + handler, manifest declaration, namespaced app:<name>:<event> bus sources",
         "plan": "WF2AUT"
       },
       {
@@ -7420,18 +7517,13 @@
         "plan": "WF2KNO"
       },
       {
+        "id": "WF2KNO-9",
+        "title": "Provider-blocked template slate: market-monitor, trending-repo-digest, dual-sink watcher, paper-ingest",
+        "plan": "WF2KNO"
+      },
+      {
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
-        "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LEA-12",
-        "title": "Amendment E1.4: project_context_review → typed proposals into the §2.2 queue",
-        "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LEA-3",
-        "title": "Step 2: reroute /api/lessons consumers onto memory.db, then delete lessons.jsonl/LessonStore",
         "plan": "WF2LEA"
       },
       {
@@ -7440,8 +7532,8 @@
         "plan": "WF2LEA"
       },
       {
-        "id": "WF2LEA-8",
-        "title": "Step 8: self-model observer call site + user.selfmodel.* store + ambient slot producer",
+        "id": "WF2LEA-7",
+        "title": "Step 7: ad-hoc→template detector call sites + tier-migration detector + template_save_from_session",
         "plan": "WF2LEA"
       },
       {
@@ -7450,23 +7542,13 @@
         "plan": "WF2LOO"
       },
       {
-        "id": "WF2LOO-11",
-        "title": "cross_model judge isolation enforcement",
-        "plan": "WF2LOO"
-      },
-      {
-        "id": "WF2LOO-7",
-        "title": "Wire the decision layers into the RunController tick (steering + calibration emission + R6a)",
-        "plan": "WF2LOO"
-      },
-      {
-        "id": "WF2UNI-10",
-        "title": "Frontend review surface: QuestionSlider/ask() stepper widget + streaming multi-view render + new SSE events into RUN_LIFECYCLE + small-model naming call",
+        "id": "WF2UNI-12",
+        "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
         "plan": "WF2UNI"
       },
       {
-        "id": "WF2UNI-11",
-        "title": "Populate the grounding inputs: brownfield context pass (UP-R17), entity/topic preamble (UP-R14), and wire T4/T5 embedding tie-break to a live embedder/model",
+        "id": "WF2UNI-7",
+        "title": "Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer",
         "plan": "WF2UNI"
       },
       {
@@ -7480,23 +7562,38 @@
         "plan": "WF2UNI"
       },
       {
-        "id": "WS-1",
-        "title": "Source-provider contract + make the dormant knowledge seam real",
+        "id": "WF2WOR-8",
+        "title": "Fan-out subagent-path defect fixes (C1: injection wall, queue, agent-validate, control, budget)",
+        "plan": "WF2WOR"
+      },
+      {
+        "id": "WS-3",
+        "title": "web-source: five-detector stack, selector configs, escalating fetch, preview+create flow",
         "plan": "WS"
       },
       {
-        "id": "WV-11",
-        "title": "Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider",
-        "plan": "WV"
+        "id": "WS-4",
+        "title": "feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph",
+        "plan": "WS"
+      },
+      {
+        "id": "WS-5",
+        "title": "dir-source: signature-diff observer, debounce, archive-on-delete",
+        "plan": "WS"
+      },
+      {
+        "id": "WS-6",
+        "title": "Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)",
+        "plan": "WS"
+      },
+      {
+        "id": "WS-7",
+        "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
+        "plan": "WS"
       },
       {
         "id": "WV-12",
         "title": "Two-layer context-compaction ladder for LLM-backed nodes",
-        "plan": "WV"
-      },
-      {
-        "id": "WV-9",
-        "title": "WF2-A2 — node inspection endpoint returning resolved prompt/inputs/output/attempts/ledger slice",
         "plan": "WV"
       }
     ],
