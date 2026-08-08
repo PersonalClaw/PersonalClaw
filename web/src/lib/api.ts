@@ -307,6 +307,12 @@ export interface AppInstallResult {
   // The install pulled a new python dependency (or registered pieces that only
   // load at boot) — the gateway must restart before the app fully takes effect.
   restart_required?: boolean
+  // APE-8 "Fix with AI": on a failed install with captured subprocess output,
+  // `fix_prompt` is a ready-to-send chat seed that embeds `log_excerpt` wrapped in
+  // the backend's untrusted-content fence. The FE hands it straight to launchChat;
+  // it is empty on success or when there was no log to show.
+  log_excerpt?: string
+  fix_prompt?: string
 }
 export interface SkillInstallResult {
   ok?: boolean; path?: string; error?: string

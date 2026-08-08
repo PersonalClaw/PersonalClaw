@@ -4,8 +4,9 @@ import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, AlertTriangle, RefreshCw, Plug, ChevronDown,
-  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database,
+  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database, Sparkles,
 } from 'lucide-react'
+import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { Popover, MenuRow } from '../../ui/Popover'
@@ -636,7 +637,12 @@ function StoreView({ catalog, result, totalKnown, installedCount, onInstalled, r
 
   return (
     <div className="flex flex-col gap-2xl">
-      {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+      {guarded.error && (
+        <div className="flex items-center justify-between gap-3">
+          <div data-type="body-s" className="text-negative">{guarded.error}</div>
+          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+        </div>
+      )}
       {pending && guarded.blocked && (
         <ConsentModal
           label={pending.label}
@@ -735,7 +741,12 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   return (
     <div className="flex flex-col gap-xl">
       {err && <div data-type="body-s" className="text-negative">{err}</div>}
-      {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+      {guarded.error && (
+        <div className="flex items-center justify-between gap-3">
+          <div data-type="body-s" className="text-negative">{guarded.error}</div>
+          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+        </div>
+      )}
       {pending && guarded.blocked && (
         <ConsentModal
           label={pending.label}
@@ -977,7 +988,12 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
 
         {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+        {guarded.error && (
+          <div className="flex items-center justify-between gap-3">
+            <div data-type="body-s" className="text-negative">{guarded.error}</div>
+            <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -1018,7 +1034,12 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
         <TextInput value={source} onChange={(v) => { setSource(v); guarded.reset() }} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
         {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+        {guarded.error && (
+          <div className="flex items-center justify-between gap-3">
+            <div data-type="body-s" className="text-negative">{guarded.error}</div>
+            <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
@@ -1106,6 +1127,20 @@ function ConsentModal({ label, result, busy, onConfirm, onClose }: {
         </div>
       </div>
     </Modal>
+  )
+}
+
+/** APE-8 "Fix with AI": shown when a failed install carried a build/hook log. Opens
+ *  a chat pre-filled with the install log — already wrapped in the backend's
+ *  untrusted-content fence (`fix_prompt` is built server-side; the FE only passes it
+ *  through) — so the user/agent can debug the failure. Seeds the composer, never
+ *  auto-sends. Renders nothing when there is no fix prompt. */
+export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
+  if (!fixPrompt) return null
+  return (
+    <Button variant="secondary" size="sm" onClick={() => launchChat({ prompt: fixPrompt })}>
+      <Sparkles size={15} /> Fix with AI
+    </Button>
   )
 }
 
@@ -1308,7 +1343,12 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         </div>
       </div>
 
-      {guarded.error && <div data-type="body-s" className="text-negative">{guarded.error}</div>}
+      {guarded.error && (
+        <div className="flex items-center justify-between gap-3">
+          <div data-type="body-s" className="text-negative">{guarded.error}</div>
+          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+        </div>
+      )}
       <div>
         <Button variant="primary" size="sm" disabled={guarded.busy} onClick={() => install(false)}>
           {guarded.busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Install
