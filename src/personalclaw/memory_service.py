@@ -428,6 +428,41 @@ class MemoryService:
         vs = self._graph_store()
         return vs.graph.reject_proposal(name) if vs else False
 
+    def resolve_entities(self, text: str) -> list[dict]:
+        """Entities NAMED in ``text``, resolved deterministically through the alias index (§2.1).
+
+        The planner's grounding preamble (UNIVERSAL-PLANNING UP-R14) calls this to turn "book a
+        table for Ana" into the resolved identity it should carry into every stage, rather than
+        letting each stage re-guess who Ana is. Uses the SAME matcher as write time, so a name
+        resolves exactly the way the records that mention it did. Returns ``[]`` when no graph is
+        wired (the degraded fallback the caller records), and never raises — a preamble is an
+        enhancement to a plan, not a precondition for one.
+        """
+        vs = self._graph_store()
+        if vs is None or not text:
+            return []
+        try:
+            ids = vs.graph.resolve_query(text, index=vs.alias_index)
+            if not ids:
+                return []
+            by_id = {e.id: e for e in vs.graph.entities()}
+            out: list[dict] = []
+            for entity_id in ids:
+                entity = by_id.get(entity_id)
+                if entity is not None:
+                    out.append(
+                        {
+                            "id": entity.id,
+                            "name": entity.name,
+                            "entity_type": entity.entity_type,
+                            "aliases": list(entity.aliases),
+                        }
+                    )
+            return out
+        except Exception:  # noqa: BLE001
+            logger.debug("entity resolution failed for planning preamble", exc_info=True)
+            return []
+
     def graph_recall_evidence(self, query_text: str) -> dict:
         """Which entities connected each graph-surfaced record (§2.2).
 

@@ -115,6 +115,14 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Optional: a template name to base the plan on.",
                     },
+                    "project_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional: a project this plan targets. When it binds an existing "
+                            "codebase, the plan is grounded in that project's real layout, README "
+                            "and stack so generated stages assume the right conventions."
+                        ),
+                    },
                 },
                 "required": ["goal"],
             },
@@ -673,6 +681,8 @@ def _plan(args: dict[str, Any]) -> str:
     if not goal:
         return "Error [WF_PLAN_GOAL_REQUIRED]: 'goal' is required."
 
+    project_id = str(args.get("project_id", "") or "").strip()
+
     template = str(args.get("template", "") or "").strip()
     if template:
         # An explicitly user-named template WINS. The router's job is choosing when nobody has
@@ -766,7 +776,7 @@ def _plan(args: dict[str, Any]) -> str:
             },
         )
 
-    grounded = _grounding_for(goal, classified)
+    grounded = _grounding_for(goal, classified, project_id)
 
     # S45: the rigor axis, applied to the SCAFFOLD path only — a matched template returned above
     # already carries a tested shape, and stapling a refinement gate onto it would refine against a
@@ -776,6 +786,12 @@ def _plan(args: dict[str, Any]) -> str:
     if rigor_mod.is_fast(classified, requested=requested):
         fast_spec = rigor_mod.schedule_refinement(fast_spec)
         proposed = fast_spec["root"]
+
+    # UP-R14: the grounding preamble. A deterministic entity-resolution node goes FIRST so the
+    # resolved identity (or a degraded name-only fallback) is established before any stage runs,
+    # rather than each stage re-guessing who the goal names. Best-effort: a preamble that could not
+    # be built loses grounding, never the plan.
+    proposed = _prepend_grounding_preamble(goal, proposed)
 
     body = {
         "ok": True,
@@ -796,7 +812,7 @@ def _plan(args: dict[str, Any]) -> str:
         # fast path rather than the planner doing badly.
         "rigor_note": rigor_mod.rigor_note(classified, requested=requested),
         **({"grounding": grounded} if grounded else {}),
-        **_grill_surface(goal, classified, {"root": proposed}),
+        **_grill_surface(goal, classified, {"root": proposed}, topics=_plan_topics(goal)),
         "next_step": (
             "Adapt this tree to the goal, then call workflow_author with save=false to "
             "validate it before saving."
@@ -812,7 +828,54 @@ def _plan(args: dict[str, Any]) -> str:
     return _fmt(body, summary=f"Draft plan for: {goal}")
 
 
-def _grill_surface(goal: str, classified: Any, spec: dict | None = None) -> dict:
+def _plan_topics(goal: str) -> list[str]:
+    """The goal's topics (UP-R14), the retrieval queries the grill's lookup channels run.
+
+    Best-effort: a topic-extraction failure loses the lookup queries, never the plan."""
+    try:
+        from personalclaw.workflows import preamble
+
+        return preamble.extract_topics(goal)
+    except Exception:
+        logger.debug("topic extraction unavailable", exc_info=True)
+        return []
+
+
+def _prepend_grounding_preamble(goal: str, root: dict) -> dict:
+    """Prepend the deterministic entity-resolution node to the proposed tree (UP-R14).
+
+    The resolver is the LIVE memory graph when one is wired, so a goal naming a known entity
+    resolves it up front; with no graph the preamble still emits, degraded to name-only context so
+    the guard and prohibition reach the stages. Best-effort by construction: any failure returns the
+    tree unchanged, because a grounding enhancement must never cost the plan.
+    """
+    try:
+        from personalclaw.workflows import preamble
+
+        node = preamble.build_preamble_node(goal, _entity_resolver())
+        if node is None:
+            return root
+        return preamble.prepend_preamble(root, node)
+    except Exception:
+        logger.debug("grounding preamble unavailable", exc_info=True)
+        return root
+
+
+def _entity_resolver() -> Any:
+    """The live entity resolver (`MemoryService.resolve_entities`), or None when no graph is wired.
+
+    None is the degraded path: the preamble still emits a name-only node with the guard, and records
+    `degraded: true` so a reviewer sees the graph was unavailable rather than the goal naming none.
+    """
+    svc = _memory_service()
+    if svc is None or not svc.has_graph:
+        return None
+    return svc.resolve_entities
+
+
+def _grill_surface(
+    goal: str, classified: Any, spec: dict | None = None, *, topics: list[str] | None = None
+) -> dict:
     """The `rigor: deep` protocol's plan-time half: whether to grill, and the stress probes.
 
     The ROUNDS are not built here, and that is deliberate. A round needs the planner's recommended
@@ -825,6 +888,9 @@ def _grill_surface(goal: str, classified: Any, spec: dict | None = None) -> dict
     force `rigor: deep`, and `deep_triggered` implements it — but measured, nothing was feeding it
     hits, so that half of the trigger was present and inert. A destructive plan the classifier
     happened to call `standard` would have gone ungrilled.
+
+    `topics` are the UP-R14 retrieval queries: the goal's nouns the lookup channels should search
+    BEFORE asking, so a discoverable fact is looked up rather than put to the user as a question.
 
     Best-effort: a missing grill block loses advice, never enforcement.
     """
@@ -842,6 +908,9 @@ def _grill_surface(goal: str, classified: Any, spec: dict | None = None) -> dict
             "grill": {
                 "triggered": True,
                 "why": why,
+                # The topics the lookup channels query first — "understand, then check what I
+                # know" — so a fact discoverable in memory/knowledge/codebase is not asked for.
+                "lookup_topics": list(topics or []),
                 "protocol": {
                     "questions_ship_recommendations": True,
                     "batch_at": 3,
@@ -995,18 +1064,23 @@ def _contract_review(definition: dict) -> dict:
         return {}
 
 
-def _grounding_for(goal: str, classified: Any) -> dict | None:
+def _grounding_for(goal: str, classified: Any, project_id: str = "") -> dict | None:
     """The grounding bundle, the picked shape, and the generated prompt.
 
     Returns None when grounding cannot be assembled, and the caller falls back to the bare
     scaffold — the bundle is an enhancement to planning, and a planner with a stub is still better
     off than one handed an exception.
+
+    When `project_id` binds an existing codebase, the brownfield context pass (UP-R17) feeds the
+    prompt's `codebase_context` so generated stages assume the project's real language, test
+    framework and layout instead of generic scaffolding.
     """
     try:
         from personalclaw.workflows import generation, grounding, patterns
 
         bundle = grounding.build_bundle()
         shape, reason = patterns.pick_shape(goal, classifier_shape=getattr(classified, "shape", ""))
+        codebase = _codebase_context_for(project_id)
         return {
             "bundle": bundle.to_dict(),
             "index": bundle.index(),
@@ -1014,8 +1088,13 @@ def _grounding_for(goal: str, classified: Any) -> dict | None:
             "shape_reason": reason,
             "skeleton": dict(shape.skeleton) if shape else None,
             "prompt": generation.planning_prompt(
-                goal, bundle=bundle, shape=shape, shape_reason=reason
+                goal,
+                bundle=bundle,
+                shape=shape,
+                shape_reason=reason,
+                codebase_context=codebase,
             ),
+            **({"codebase_context": codebase} if codebase else {}),
             "emission_schema": (
                 generation.spec_json_schema() if bundle.structured_output else None
             ),
@@ -1028,6 +1107,35 @@ def _grounding_for(goal: str, classified: Any) -> dict | None:
     except Exception:
         logger.debug("grounding unavailable — falling back to the bare scaffold", exc_info=True)
         return None
+
+
+def _codebase_context_for(project_id: str) -> str:
+    """The brownfield `CODEBASE_CONTEXT` block for a project-scoped plan, or "" (UP-R17).
+
+    A project grounds the plan only when it BINDS a codebase on disk (`workspace_dir`): a project
+    whose context dir is its own working area has no source tree to read conventions from. The
+    synthesis is cached per `(project_id, tree-hash)` under the config dir with a 7-day TTL, so
+    replanning against the same unchanged project pays the walk once. Best-effort: any failure
+    returns "" and the prompt simply omits the block.
+    """
+    if not project_id:
+        return ""
+    try:
+        from pathlib import Path
+
+        from personalclaw.config.loader import config_dir
+        from personalclaw.tasks.hierarchy import HierarchyStore
+        from personalclaw.workflows import brownfield
+
+        project = HierarchyStore().get_project(project_id)
+        workspace = str(getattr(project, "workspace_dir", "") or "") if project else ""
+        if not workspace:
+            return ""
+        cache = brownfield.BrownfieldCache(config_dir() / "workflows" / "brownfield_cache.json")
+        return brownfield.codebase_context(project_id, Path(workspace), cache=cache)
+    except Exception:
+        logger.debug("brownfield context unavailable for %s", project_id, exc_info=True)
+        return ""
 
 
 def _def_resolvable(name: str) -> bool:
@@ -1051,21 +1159,130 @@ def _match_library(goal: str, classified: Any) -> Any:
     None rather than an empty result, so the caller can say "matcher unavailable" instead of
     reporting a confident no-match it never actually computed — the two mean different things to
     whoever is deciding whether to add a template.
+
+    T4/T5 are wired here with LIVE injections: the embedder for the tie-breaker, the summarizer for
+    the rephrase-and-rematch. Both degrade to None when their subsystem is unwired, so the matcher
+    falls to the deterministic tiers rather than hard-failing — the whole point of the demotion.
     """
     try:
-        from personalclaw.workflows import bundled_defs
-        from personalclaw.workflows.matcher import TemplateProfile, match_template
+        from personalclaw.workflows.matcher import match_template
 
-        profiles = []
-        for name in bundled_defs.template_names():
-            spec = bundled_defs.read_template(name)
-            if spec is not None:
-                profiles.append(TemplateProfile.from_def(spec))
+        profiles = _library_profiles()
         if not profiles:
             return None
-        return match_template(goal, profiles, shape=getattr(classified, "shape", ""))
+        return match_template(
+            goal,
+            profiles,
+            shape=getattr(classified, "shape", ""),
+            embedder=_live_embedder(),
+            summarizer=_live_summarizer(),
+            threshold=_match_threshold(),
+        )
     except Exception:
         logger.debug("template matching unavailable", exc_info=True)
+        return None
+
+
+def _library_profiles() -> list[Any]:
+    """The bundled templates as matchable profiles. Empty on any read failure."""
+    from personalclaw.workflows import bundled_defs
+    from personalclaw.workflows.matcher import TemplateProfile
+
+    profiles: list[Any] = []
+    for name in bundled_defs.template_names():
+        spec = bundled_defs.read_template(name)
+        if spec is not None:
+            profiles.append(TemplateProfile.from_def(spec))
+    return profiles
+
+
+def _match_threshold() -> float:
+    """The `workflows.match_threshold` tie-break floor, read from live config.
+
+    Read here rather than in the matcher so the matcher stays pure and offline-safe. Falls back to
+    the matcher's own default when config is unreadable — a planning path must not fail on a config
+    read.
+    """
+    from personalclaw.workflows.matcher import MATCH_THRESHOLD
+
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return float(AppConfig.load().workflows.match_threshold)
+    except Exception:
+        logger.debug("match_threshold config unreadable — using the matcher default", exc_info=True)
+        return MATCH_THRESHOLD
+
+
+def _live_embedder() -> Any:
+    """An adapter around the wired MemoryService embedder, or None when none is wired.
+
+    `MemoryService.embed(text) -> list[float] | None` is exactly the matcher's embedder protocol, so
+    the adapter is a thin bound method. Resolved through the running gateway's context builder (the
+    same store the Memory UI reads); None when the process has no memory wired — a headless script,
+    or a boot before services are set — in which case T4 simply does not run.
+    """
+    svc = _memory_service()
+    if svc is None or not svc.can_vector_search:
+        return None
+    return svc.embed
+
+
+def _live_summarizer() -> Any:
+    """A synchronous rephrase for T5, or None when no model is reachable.
+
+    T5 re-enters the deterministic scorer with a MODEL's restatement of the intent; it never returns
+    a template id. `one_shot_completion` is async, so this wraps it through the same sync bridge the
+    tool surface already uses (`_run`). Returns None when the process has no model plumbing, so T5
+    degrades to the tier below with a recorded reason rather than faking a summary.
+    """
+    if _memory_service() is None:
+        # A cheap proxy for "is this a booted gateway with services wired?": the summarizer needs
+        # the model bridge, only meaningful in the same process that wires memory. A bare script
+        # or unbooted process gets None, and T5 stays inert as designed.
+        return None
+
+    def summarize(intent_text: str) -> str:
+        from personalclaw.llm_helpers import one_shot_completion
+
+        prompt = (
+            "Rephrase this workflow request as a short, plain description of the desired OUTCOME, "
+            "in one sentence, using concrete nouns. Do not name any template or tool.\n\n"
+            f"Request: {intent_text}"
+        )
+        try:
+            return str(_run(one_shot_completion(prompt, use_case="background")) or "").strip()
+        except Exception:
+            logger.debug("T5 summarizer completion failed", exc_info=True)
+            return ""
+
+    return summarize
+
+
+def _memory_service() -> Any:
+    """The MemoryService over the gateway's context-builder store, or None.
+
+    One resolution point for both the embedder (T4) and the model-availability probe (T5). Fetched
+    per call like `_supervisor`: a cached None taken before services are wired would leave the
+    matcher permanently deterministic in a process that wires memory later.
+    """
+    try:
+        from personalclaw.action_providers.services import get_action_services
+
+        services = get_action_services()
+        state = getattr(services, "state", None) if services else None
+        builder = getattr(state, "context_builder", None) if state else None
+        store = getattr(builder, "memory", None) if builder else None
+        if store is None:
+            return None
+        from typing import cast
+
+        from personalclaw.memory_providers.base import MemoryProvider
+        from personalclaw.memory_service import service_for
+
+        return service_for(cast("MemoryProvider", store))
+    except Exception:
+        logger.debug("memory service unavailable for the matcher", exc_info=True)
         return None
 
 

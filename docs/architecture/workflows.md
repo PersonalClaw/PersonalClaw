@@ -67,7 +67,9 @@ while not terminal:
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
 | `longrun.py` | long-run watcher mechanics: item identity, the persistent seen-set, bounded sibling views, buffer-seal, the adaptive-delay clamp, lineage caps |
 | `intent.py` | the no-LLM intent classifier: the (complexity, uncertainty, stakes, time_pressure) tuple, irreversibility, and rigor routing |
-| `matcher.py` | tiered template matching T1-T5: keyword index, metadata scoring, shape filter, embedding tie-break, LLM summarize-then-rematch |
+| `matcher.py` | tiered template matching T1-T5: keyword index, metadata scoring, shape filter, cached embedding tie-break gated by `workflows.match_threshold`, LLM summarize-then-rematch |
+| `preamble.py` | the grounding preamble (UP-R14): the deterministic entity-resolution first node with its identity guard and degraded fallback, and the topic extraction that feeds the grill's lookup channels |
+| `brownfield.py` | the brownfield context pass (UP-R17): the depth-filtered tree + README head + project-metadata synthesis, tree-hashed and cached per project with a 7-day TTL, rendered as the prompt's `CODEBASE_CONTEXT` |
 | `grounding.py` | the grounding bundle: node taxonomy, provider signatures (three discovery tiers), MCP servers, binding roots, model capability |
 | `patterns.py` | the seven proven graph shapes, their slots, when each is WRONG, and the deterministic shape pick |
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |

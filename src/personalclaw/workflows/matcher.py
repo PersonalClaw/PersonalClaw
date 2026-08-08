@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 #: embedding tie-breaker and, failing that, hybrid composition. The plan's number.
 TIE_BAND = 0.15
 
+#: The embedding tie-breaker only OVERRIDES the deterministic leader when the winning cosine clears
+#: this floor. Below it the embedding is not confident enough to unseat a keyword leader — the whole
+#: T4 demotion is that a cosine number no longer decides everything, so a weak one does not either.
+#: The plan's number (`workflows.match_threshold` default), threaded from the call site so the knob
+#: reaches a matcher that stays pure and does not import config itself.
+MATCH_THRESHOLD = 0.62
+
 #: Confidence ceiling. Never 1.0: the matcher is choosing among templates a human wrote for
 #: purposes it cannot fully know, and a router reporting certainty invites nobody to check it.
 MAX_CONFIDENCE = 0.95
@@ -218,12 +225,16 @@ def match_template(
     shape: str = "",
     embedder: Any = None,
     summarizer: Any = None,
+    threshold: float = MATCH_THRESHOLD,
 ) -> MatchResult:
     """Match an intent to a template through the tier ladder.
 
     `embedder` and `summarizer` are INJECTED and both optional: T4 and T5 are enhancements, and a
     matcher that required either would hard-fail offline — which is the state a personal tool spends
-    a meaningful fraction of its life in.
+    a meaningful fraction of its life in. `embedder(text) -> list[float] | None` returns a vector
+    (None when it cannot embed); `summarizer(text) -> str` rephrases an intent for T5's re-entry.
+    `threshold` is the `workflows.match_threshold` knob, passed in rather than read here so the
+    matcher stays pure.
     """
     tokens = _tokens(intent_text)
     if not tokens or not profiles:
@@ -235,7 +246,9 @@ def match_template(
         # T5's one legitimate job: an intent whose vocabulary simply does not overlap the library.
         # It re-enters THIS function with a rephrasing — it never returns a name of its own.
         if summarizer is not None:
-            return _summarize_and_rematch(intent_text, profiles, shape=shape, embedder=embedder)
+            return _summarize_and_rematch(
+                intent_text, profiles, shape=shape, embedder=embedder, summarizer=summarizer
+            )
         return MatchResult(
             reason="no template shares any vocabulary with this intent — generating from scratch"
         )
@@ -258,7 +271,7 @@ def match_template(
     contenders = [c for c in candidates[1:] if leader.score - c.score <= TIE_BAND]
 
     if contenders and embedder is not None:
-        broken = _break_tie(intent_text, [leader] + contenders, profiles, embedder)
+        broken = _break_tie(intent_text, [leader] + contenders, profiles, embedder, threshold)
         if broken is not None:
             leader = broken
             contenders = [c for c in candidates if c.name != leader.name][:3]
@@ -376,23 +389,51 @@ def _apply_shape(
     return [c for c in out if c.score > 0]
 
 
+def match_embedding(text: str, embedder: Any) -> list[float] | None:
+    """A cached embed of one matcher input.
+
+    The tie-breaker embeds the intent AND every tied candidate's match text, and the same template
+    texts recur across every plan in a session while the model behind `embedder` is deterministic —
+    so a per-text cache turns N re-embeddings of the library into one. Keyed on the text only: the
+    embedder is a stable function of its input for the process's lifetime, and keying on identity
+    too would defeat the cache for the common case of a fresh adapter built per call. Returns None
+    (uncached) when the embedder cannot embed, so a transient miss is retried rather than pinned.
+    """
+    cached = _EMBED_CACHE.get(text)
+    if cached is not None:
+        return cached
+    vector = embedder(text)
+    if vector:
+        _EMBED_CACHE[text] = list(vector)
+        return _EMBED_CACHE[text]
+    return None
+
+
+#: Process-lifetime cache for `match_embedding`. Bounded implicitly by the template library size
+#: plus the distinct intents seen — a personal tool's planning volume, not a service's.
+_EMBED_CACHE: dict[str, list[float]] = {}
+
+
 def _break_tie(
     intent_text: str,
     tied: list[Candidate],
     profiles: list[TemplateProfile],
     embedder: Any,
+    threshold: float,
 ) -> Candidate | None:
     """T4 — embeddings, used ONLY on a tie.
 
     Returns None on any failure, and the caller keeps the deterministic leader. That is the whole
     demotion: the old system let a cosine number decide everything, including cases the keyword
-    tiers had already answered correctly.
+    tiers had already answered correctly. It also returns None when the best cosine is below
+    `threshold` — an embedding too weak to be sure is not evidence enough to unseat a keyword tie,
+    and forcing a winner on a 0.3 cosine is the old failure in miniature.
     """
     by_name = {p.name: p for p in profiles}
     try:
         from personalclaw.knowledge.retrieval import HybridRetriever
 
-        intent_vector = embedder(intent_text)
+        intent_vector = match_embedding(intent_text, embedder)
         if not intent_vector:
             return None
         best, best_score = None, -1.0
@@ -401,13 +442,13 @@ def _break_tie(
             if profile is None:
                 continue
             text = profile.match_text or f"{profile.name} {profile.description}"
-            vector = embedder(text)
+            vector = match_embedding(text, embedder)
             if not vector:
                 continue
             score = HybridRetriever._cosine_similarity(intent_vector, vector)
             if score > best_score:
                 best, best_score = candidate, score
-        if best is None:
+        if best is None or best_score < threshold:
             return None
         best.tier = "T4"
         best.reasons.append(f"embedding tie-break ({best_score:.2f})")
@@ -425,6 +466,7 @@ def _summarize_and_rematch(
     *,
     shape: str,
     embedder: Any,
+    summarizer: Any,
 ) -> MatchResult:
     """T5 — an LLM rephrases the intent, and the DETERMINISTIC scorer decides.
 
@@ -433,7 +475,7 @@ def _summarize_and_rematch(
     strictly worse than "no match", because the user then reviews a plan built on the wrong shape.
     """
     try:
-        summary = str(_summarizer_result(intent_text) or "").strip()
+        summary = str(summarizer(intent_text) or "").strip()
     except Exception:
         logger.debug("T5 summarize failed — degrading to no-match", exc_info=True)
         return MatchResult(
@@ -442,7 +484,7 @@ def _summarize_and_rematch(
     if not summary:
         return MatchResult(reason="rephrasing produced nothing; generating from scratch")
 
-    # No `summarizer` passed through: re-entry is deterministic by construction, so T5 cannot
+    # No `summarizer` passed through on re-entry: it is deterministic by construction, so T5 cannot
     # recurse into itself and spend a second call on the same dead end.
     result = match_template(summary, profiles, shape=shape, embedder=embedder)
     if result.primary:
@@ -452,16 +494,6 @@ def _summarize_and_rematch(
         # words, and a paraphrase can drift.
         result.confidence = min(result.confidence, 0.6)
     return result
-
-
-_summarizer_hook: Any = None
-
-
-def _summarizer_result(intent_text: str) -> str:
-    """Indirection so the summarizer is injectable in tests without a live model."""
-    if _summarizer_hook is None:
-        return ""
-    return str(_summarizer_hook(intent_text) or "")
 
 
 # ── confidence + questions ──

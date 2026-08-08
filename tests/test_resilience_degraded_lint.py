@@ -31,6 +31,11 @@ _CALL_SITE_SURFACES = {
     "knowledge/llm_pool.py": "knowledge_ingest",
     "nl_to_cron.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
+    # UNIVERSAL-PLANNING matcher T5 (WF2UNI-11): summarize-then-rematch. Its no-model
+    # floor is BUILT IN — a missing/failing summarizer degrades to the deterministic
+    # matcher tiers (T1-T3) and the keyword scorer stays authoritative, so the caller
+    # always gets a bounded match result rather than an error.
+    "mcp_workflows.py": "assistant_reasoning",
     "web/fetch.py": "assistant_reasoning",
     "dashboard/chat_retag.py": "assistant_reasoning",
     "dashboard/chat_handlers.py": "assistant_reasoning",

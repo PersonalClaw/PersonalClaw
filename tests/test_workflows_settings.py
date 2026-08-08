@@ -65,11 +65,23 @@ def test_the_field_carries_a_LABEL_and_HELP(name):
     assert field.metadata.get("help")
 
 
-def test_match_threshold_is_deliberately_ABSENT():
-    """The plan's recon claims it exists. Measured: it does not — it was deleted with the old SOP
-    feature (this class's docstring records the namespace-reuse clean break), and re-adding it now
-    would ship a knob no code reads."""
-    assert "match_threshold" not in {f.name for f in dc.fields(WorkflowsConfig)}
+def test_match_threshold_RETURNS_with_a_live_reader():
+    """It was deleted with the old SOP feature (a knob nothing read), and WF2UNI-11 brings it back
+    with a real owner: the UNIVERSAL-PLANNING tiered matcher's T4 embedding tie-break reads it as
+    the cosine floor. A live reader is what makes the field legitimate this time — a knob nothing
+    consumes is the inert control this codebase keeps deleting."""
+    assert "match_threshold" in {f.name for f in dc.fields(WorkflowsConfig)}
+    assert WorkflowsConfig().match_threshold == 0.62
+
+
+def test_match_threshold_is_config_editable_and_clamped():
+    """Wired through all four config points: dataclass default, load() mapping (clamped to [0,1]),
+    to_dict (asdict), and the PATCH allowlist."""
+    assert "workflows.match_threshold" in _EDITABLE_CONFIG
+    assert _load({"match_threshold": 0.4}).workflows.match_threshold == 0.4
+    # Out of range is clamped, not stored raw — a stored value the runtime silently narrows reads
+    # back wrong.
+    assert _load({"match_threshold": 5.0}).workflows.match_threshold == 1.0
 
 
 # ── point (b): load() maps it ──

@@ -432,3 +432,138 @@ def test_the_tie_band_is_the_plans_number():
 def test_a_candidate_carries_its_reasons():
     candidate = Candidate(name="x", score=1.0, tier="T1", reasons=["keywords[a]"])
     assert candidate.to_dict()["reasons"] == ["keywords[a]"]
+
+
+# ── T4: the live embedding tie-break, its cache, and the threshold gate (WF2UNI-11) ──
+
+
+def _tied_profiles():
+    return [
+        TemplateProfile(name="alpha", keywords=["report"], match_text="alpha template"),
+        TemplateProfile(name="beta", keywords=["report"], match_text="beta template"),
+    ]
+
+
+def test_the_embedder_breaks_a_tie_when_the_cosine_clears_the_threshold():
+    """T4 fires on a tie and picks the candidate the intent embeds nearest — the one legitimate
+    case the deterministic tiers cannot decide."""
+    from personalclaw.workflows import matcher
+
+    matcher._EMBED_CACHE.clear()  # the cache is process-global; isolate this case from others
+    vectors = {
+        "make a report": [1.0, 0.0],
+        "alpha template": [1.0, 0.05],  # near-identical → cosine ~1.0, clears the threshold
+        "beta template": [0.0, 1.0],  # orthogonal → cosine 0.0
+    }
+
+    def embedder(text):
+        return vectors.get(text)
+
+    result = match_template("make a report", _tied_profiles(), embedder=embedder, threshold=0.62)
+    assert result.primary == "alpha"
+    assert result.tier == "T4"
+    assert not result.compose, "a broken tie composes nothing"
+
+
+def test_a_below_threshold_cosine_does_not_unseat_the_deterministic_leader():
+    """The demotion in miniature: an embedding too weak to be sure is not evidence enough to
+    override a keyword tie. Below the threshold the deterministic leader stands and the tie
+    composes as if no embedder ran."""
+    from personalclaw.workflows import matcher
+
+    matcher._EMBED_CACHE.clear()  # the cache is process-global; isolate this case from others
+    vectors = {
+        "make a report": [1.0, 0.0],
+        "alpha template": [1.0, 1.0],  # cosine 0.707 — the nearest, but not near ENOUGH
+        "beta template": [0.0, 1.0],  # cosine 0.0
+    }
+
+    def embedder(text):
+        return vectors.get(text)
+
+    # A threshold of 0.9 is above the best cosine (~0.71), so no candidate is confidently nearest.
+    result = match_template("make a report", _tied_profiles(), embedder=embedder, threshold=0.9)
+    assert result.tier != "T4", "a below-threshold cosine did not earn the T4 override"
+    # The deterministic leader (first by score then name) stands, unchanged by the weak embedding.
+    assert result.primary == "alpha"
+
+
+def test_match_embedding_caches_per_text():
+    """The same template texts recur across every plan; a per-text cache turns N re-embeddings of
+    the library into one."""
+    from personalclaw.workflows import matcher
+
+    matcher._EMBED_CACHE.clear()
+    calls: list[str] = []
+
+    def embedder(text):
+        calls.append(text)
+        return [1.0, 0.0]
+
+    first = matcher.match_embedding("cold start latency", embedder)
+    second = matcher.match_embedding("cold start latency", embedder)
+    assert first == second == [1.0, 0.0]
+    assert calls == ["cold start latency"], "a cached text must not re-embed"
+
+
+def test_match_embedding_does_not_cache_a_none_result():
+    """A transient miss must be retried, not pinned — an embedder that comes online later should
+    start working, not stay poisoned by an early None."""
+    from personalclaw.workflows import matcher
+
+    matcher._EMBED_CACHE.clear()
+    state = {"ready": False}
+
+    def embedder(_text):
+        return [1.0, 0.0] if state["ready"] else None
+
+    assert matcher.match_embedding("x", embedder) is None
+    state["ready"] = True
+    assert matcher.match_embedding("x", embedder) == [1.0, 0.0]
+
+
+# ── T5: the injected summarizer re-enters the deterministic scorer (WF2UNI-11) ──
+
+
+def test_t5_rephrases_and_rematches_through_the_deterministic_scorer():
+    """The summarizer fires only when NOTHING matched, and its output re-enters the scorer — it
+    never returns a template id of its own."""
+    calls: list[str] = []
+
+    def summarizer(text):
+        calls.append(text)
+        return "audit the module for security problems"  # rephrased into the library's vocabulary
+
+    result = match_template(
+        "give the codebase a thorough going-over", library(), summarizer=summarizer
+    )
+    assert calls, "T5 must call the summarizer when the deterministic tiers found nothing"
+    assert result.primary == "audit-sweep"
+    assert result.tier == "T5"
+    assert result.confidence <= 0.6, "a paraphrase match is penalised"
+
+
+def test_t5_does_not_run_when_the_deterministic_tiers_already_matched():
+    """A clear keyword winner must not spend a model call on a rephrase."""
+    calls: list[str] = []
+
+    def summarizer(text):
+        calls.append(text)
+        return "x"
+
+    match_template("audit the auth module for issues", library(), summarizer=summarizer)
+    assert calls == []
+
+
+def test_without_a_summarizer_an_unmatched_intent_degrades_to_no_match():
+    """T5 is optional; its absence degrades to the tier below with a recorded reason rather than
+    hard-failing."""
+    result = match_template("plant a vegetable garden in the spring", library())
+    assert not result.matched
+    assert "scratch" in result.reason
+
+
+def test_the_match_threshold_default_is_the_plans_number():
+    from personalclaw.workflows.matcher import MATCH_THRESHOLD
+
+    assert MATCH_THRESHOLD == 0.62
