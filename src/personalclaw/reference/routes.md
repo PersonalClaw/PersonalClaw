@@ -408,7 +408,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/embedding/reindex` — start a re-index of all embeddings.
 - `GET /api/models/embedding/reindex/{id}/stream` — per-job progress SSE.
 - `GET /api/models/health` — derived per-provider health (breaker state, latency
+- `PUT /api/models/hf-token` — set (body ``{token}``) or clear (``{token: ""}``) the
+- `GET /api/models/hf-token/status` — per-source HuggingFace token status (LMMV §5).
+- `GET /api/models/local/{provider}/health` — cheap per-provider health (LMMV §6).
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
+- `POST /api/models/local/{provider}/selftest` — real per-capability inference (§6).
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `GET /api/models/telemetry` — per-model efficiency rows.
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_

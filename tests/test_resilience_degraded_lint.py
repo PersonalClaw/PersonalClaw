@@ -51,6 +51,11 @@ _CALL_SITE_SURFACES = {
     # The Doctor per-provider selftest (§1.4) fires a tiny one-token completion to
     # ground-truth the chat capability — user-click only, covered by the chat contract.
     "dashboard/handlers/doctor.py": "chat",
+    # The local-model per-capability selftest (LMMV §6) routes the CHAT capability
+    # through one_shot_completion pinned to provider:model — user-click only, and a
+    # missing method / no model yields `no_model` (nothing to run), which is exactly
+    # the chat contract's no-model floor.
+    "local_models/selftest.py": "chat",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")

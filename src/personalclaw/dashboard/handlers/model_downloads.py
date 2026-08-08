@@ -208,6 +208,69 @@ async def api_model_download_cleanup(request: web.Request) -> web.Response:
     return web.json_response({"removed": removed, "freed_bytes": freed})
 
 
+async def api_hf_token_status(request: web.Request) -> web.Response:
+    """GET /api/models/hf-token/status — per-source HuggingFace token status (LMMV §5).
+
+    Returns ``{sources: [{source, present, valid, username?, masked}], active_source,
+    username}`` — the three-source cascade (credential store → env → HF CLI file), each
+    whoami-validated. Token VALUES never leave the server: a source carries a masked
+    preview only (Success Criterion 4)."""
+    from personalclaw.local_models import hf_token
+
+    return web.json_response(await hf_token.hf_token_status())
+
+
+async def api_hf_token_set(request: web.Request) -> web.Response:
+    """PUT /api/models/hf-token — set (body ``{token}``) or clear (``{token: ""}``) the
+    credential-store HuggingFace token (source 1). SEL-audited; the value is never
+    echoed back — the response re-reads the (masked) cascade status."""
+    from personalclaw.local_models import hf_token
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict) or "token" not in body:
+        return web.json_response({"error": "body must include a 'token' key"}, status=400)
+    token = str(body.get("token") or "").strip()
+    if token:
+        hf_token.set_hf_token(token)
+    else:
+        hf_token.clear_hf_token()
+    return web.json_response(await hf_token.hf_token_status())
+
+
+async def api_local_model_health(request: web.Request) -> web.Response:
+    """GET /api/models/local/{provider}/health — cheap per-provider health (LMMV §6).
+
+    NEVER 500s: an exception in the provider's availability check becomes
+    ``{ok: false, message}`` (built on the ABC ``availability_detail()``). Returns
+    ``{provider, ok, message, latency_ms}``."""
+    from personalclaw.local_models.selftest import provider_health
+
+    return web.json_response(await provider_health(request.match_info["provider"]))
+
+
+async def api_local_model_selftest(request: web.Request) -> web.Response:
+    """POST /api/models/local/{provider}/selftest — real per-capability inference (§6).
+
+    Body ``{model?}``. Runs a tiny REAL inference for each capability the provider
+    serves (transcribe a bundled fixture, embed a sentence, …), ``single_flight``-
+    serialized and per-capability timeout-bounded, returning typed reasons — so a
+    pyannote-4-style runtime-contract break fails on the API, not on file presence
+    (Success Criterion 5). User-click only."""
+    from personalclaw.local_models.selftest import provider_selftest
+
+    model: str | None = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and body.get("model"):
+            model = str(body["model"])
+    except Exception:
+        model = None
+    return web.json_response(await provider_selftest(request.match_info["provider"], model))
+
+
 async def api_local_model_search(request: web.Request) -> web.Response:
     """GET /api/models/local/{provider}/search?q= — search a searchable provider's
     remote catalog (ollama's library). Empty for fixed-catalog providers."""
@@ -242,6 +305,14 @@ def register_model_download_routes(app: web.Application) -> None:
     app.router.add_post("/api/models/downloads/cleanup", api_model_download_cleanup)
     app.router.add_get("/api/models/downloads/{id}/stream", api_model_download_stream)
     app.router.add_delete("/api/models/downloads/{id}", api_model_download_cancel)
+    # HuggingFace token cascade status + set/clear (LMMV §5). Literal paths, registered
+    # before the {provider} routes so they never fall into a param match.
+    app.router.add_get("/api/models/hf-token/status", api_hf_token_status)
+    app.router.add_put("/api/models/hf-token", api_hf_token_set)
     # Generic per-provider local-model management (replaces the per-kind routes).
+    # Literal-suffix routes (health/selftest/search) precede the {model} catch-all so a
+    # model literally named "health" can't shadow them; method also disambiguates.
+    app.router.add_get("/api/models/local/{provider}/health", api_local_model_health)
+    app.router.add_post("/api/models/local/{provider}/selftest", api_local_model_selftest)
     app.router.add_get("/api/models/local/{provider}/search", api_local_model_search)
     app.router.add_delete("/api/models/local/{provider}/{model}", api_local_model_delete)

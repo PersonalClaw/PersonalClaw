@@ -74,10 +74,13 @@
       ]
     },
     "src/personalclaw/sdk/credentials.py": {
-      "inert": 2,
+      "inert": 5,
       "surfaces": [
         "sdk_export:Credential",
-        "sdk_export:CredentialStore"
+        "sdk_export:CredentialStore",
+        "sdk_export:hf_token_present",
+        "sdk_export:hf_token_status",
+        "sdk_export:resolve_hf_token"
       ]
     },
     "src/personalclaw/sdk/diarization.py": {
@@ -381,9 +384,9 @@
       "config": 0,
       "editable_config": 0,
       "enum": 30,
-      "sdk_export": 124,
+      "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 154
+    "inert": 157
   }
 }

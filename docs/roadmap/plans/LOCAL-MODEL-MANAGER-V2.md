@@ -405,3 +405,52 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
   byte-sum/host-token/license-sniff helpers. This keeps the atom dependency-complete without a
   half-built mechanism; Success Criterion 6's "download/bind/RUN" through the real app UI completes
   when the apps-repo cards land.
+
+- 2026-08-08 — **DONE (LMMV-4 / Session 3 — HF token cascade + per-provider selftest & health).
+  Core half complete; the pyannote-app delegation is a scoped cross-repo follow-on.**
+
+  Landed §5/§6/§4.3/§9 as core mechanism:
+  * **§5 token cascade** — `local_models/hf_token.py` (re-exported via `sdk.credentials` alongside
+    the credential store) resolves three sources in priority order — credential-store `.env`
+    (`HF_TOKEN`) → env (`HF_TOKEN`/legacy `HUGGING_FACE_HUB_TOKEN`) → `~/.cache/huggingface/token`
+    (`$HF_HOME/token` when set). **The first source that has a token AND survives a live `whoami`
+    wins**; an invalid higher-priority source is skipped with a per-source status, never blocking a
+    lower-priority valid one. `whoami` goes through the **`net.fetch` CONNECTOR egress chokepoint**
+    (never hand-rolled), cached ~`whoami_ttl_s` keyed on a DIGEST of the token value (never the
+    value). Source 1 is distinct from source 2 by design: `set_hf_token` writes ONLY the `.env`
+    file (0600) — no `os.environ` mirror — so the resolver reads every source fresh.
+  * **§5 status + set/clear** — `GET /api/models/hf-token/status` returns per-source
+    `{present, valid, username?, masked}`; `PUT /api/models/hf-token` sets (source 1) / clears.
+    Token VALUES never leave the server: only a `hf_…3jw` masked preview (Success Criterion 4).
+    Set/clear are SEL-logged (`hf_token.set`/`hf_token.clear`, never the value).
+  * **§6 health** — `GET /api/models/local/{provider}/health` NEVER 500s: built on a new additive
+    ABC `LocalModelProvider.availability_detail() -> (bool, str)` (default wraps `is_available()`,
+    so unmigrated providers + the duck-typed `is_local_model_provider` check are untouched); any
+    exception → `{ok:false, message}` (redacted).
+  * **§6 selftest** — `POST /api/models/local/{provider}/selftest {model?}` runs a real
+    per-capability inference (STT transcribes a bundled 1s fixture wav, embedding encodes a
+    sentence, TTS synthesizes, diarization runs the fixture, chat one-shot-completes pinned to the
+    provider), `single_flight`-serialized, `selftest_timeout_s`-bounded, returning TYPED reasons
+    (`runtime_contract`/`timeout`/`no_model`/`busy`/`error`). A raising inference → `runtime_contract`
+    so a **pyannote-4-style API break fails on the API, not on file presence** (Success Criterion 5).
+  * **§4.3 gated pre-warn** — the download runner's `start()` fails a gated model with no cascade
+    token FAST (`gated_repo:no_token`, never auto-retried) via a network-free `hf_token_present()`.
+  * **§9 config** — `LocalModelsConfig{whoami_ttl_s, selftest_timeout_s}` round-trips
+    (dataclass+`_meta`, `load()`, `to_dict()`, `_EDITABLE_CONFIG`; `test_config_roundtrip.py`'s
+    generic leaf walk covers it).
+  * **FE** — ModelsPanel renders the HF-token cascade section (masked per-source rows + Active
+    badge + set/clear field) and an inline **Test** button per downloaded local model row.
+
+  **DEVIATION (scoped, core half complete) — pyannote-app delegation is a cross-repo follow-on.**
+  The `diarization-pyannote._hf_token()` delegation to the cascade (and its one-release app-config
+  `hf_token` → credential-store migration) lives in the **PersonalClawApps** repo, not this core
+  repo (`git ls-files apps/` = 0). This core change ships the cascade + its `sdk.credentials`
+  re-export so the app CAN delegate with a one-line change; the app edit + migration is a separate
+  cross-repo PR. Recorded per the clean-break/decide-and-continue rule; core is dependency-complete.
+
+  **Gates:** `make lint` clean (black/isort/flake8/mypy 750 files) under uv-locked deps ·
+  targeted `pytest -k "hf_token or local_model or model_registry or model_download or
+  config_roundtrip or selftest or health"` = 219 passed / 2 skipped (pre-existing) ·
+  `npm run typecheck --workspace web` clean · `modelsPanel.test.ts` 10 passed.
+  New tests: `tests/test_hf_token_cascade.py`, `tests/test_local_model_selftest.py`,
+  `tests/test_model_download_gated_prewarn.py`.
