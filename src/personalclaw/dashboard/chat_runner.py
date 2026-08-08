@@ -204,10 +204,18 @@ def _maybe_after_turn_review(
     # provider is the ModelProvider returned by get_or_create (threaded in by the
     # caller) — the dashboard session has no `.provider` attribute, so reading it
     # off the session silently no-oped this whole class.
+    #
+    # Drained ONCE and shared: `drain_tool_outcomes` clears the accumulator, so a second reader
+    # would see an empty list. Procedural memory and the self-model observer both need this turn's
+    # (tool, failed) tuples, so they read the one drained copy.
     drain = getattr(provider, "drain_tool_outcomes", None)
+    tool_outcomes: list[tuple[str, bool]] = []
     if callable(drain):
         try:
-            atr.record_procedural_outcomes(svc, drain(), scope_ref=session.workspace_dir or None)
+            tool_outcomes = list(drain() or [])
+            atr.record_procedural_outcomes(
+                svc, tool_outcomes, scope_ref=session.workspace_dir or None
+            )
         except Exception:
             logger.debug("procedural outcome capture failed", exc_info=True)
     learned = atr.run_after_turn_review(
@@ -223,6 +231,26 @@ def _maybe_after_turn_review(
             "activity_event",
             {"session": session.key, "kind": "learned", "text": f"Learned: {_label}"},
         )
+    # Self-model observer (§2.6 — WF2LEA-8): the ONLY learning path that learns from what quietly
+    # WORKS. Runs on the SAME `worthwhile` gate as the review above (a "significant turn"), reusing
+    # its already-computed answer — a second heuristic here is how two capture paths in one turn
+    # drift. The turn's route is its agent, its tools are the distinct drained tool names, and the
+    # turn SUCCEEDED when no tool failed; `correction` is this turn read as the reaction to the
+    # PREVIOUS turn's parked work (the reaction is not observable until the user's next move).
+    if getattr(cfg, "self_model_enabled", True):
+        try:
+            from personalclaw.learning import self_model_observer
+
+            self_model_observer.observe_turn(
+                svc,
+                session_key=str(getattr(session, "key", "") or ""),
+                route=_agent_label(session),
+                tools=tuple(sorted({t for t, _failed in tool_outcomes})),
+                succeeded=not any(failed for _t, failed in tool_outcomes),
+                correction=correction,
+            )
+        except Exception:
+            logger.debug("self-model observer failed", exc_info=True)
     _stage_turn_capture(session, user_message, learned or facet_learned, cfg)
 
 
