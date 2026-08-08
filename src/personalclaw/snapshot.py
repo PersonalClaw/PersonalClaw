@@ -933,7 +933,14 @@ def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
     conn = sqlite3.connect(str(dst_db))
     imported = 0
     try:
-        conn.execute("BEGIN")
+        # BEGIN IMMEDIATE, not a deferred BEGIN: acquire the destination's write lock UP FRONT.
+        # A deferred BEGIN takes no lock until the first INSERT, so a locked destination was only
+        # discovered mid-merge — and the per-table `except sqlite3.Error: continue` below then
+        # swallowed the "database is locked" error table-by-table, so whether a row landed
+        # depended on lock timing (Python's sqlite3 defaults to a 5s busy_timeout). Under CI load
+        # that raced: the locked-destination test imported 0 or 1 unpredictably. Taking the lock
+        # at BEGIN makes contention fail once, here, falling to the outer skip deterministically.
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute("ATTACH DATABASE ? AS src", (str(src_db),))
         virtual = [
             r[0]
@@ -971,7 +978,15 @@ def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
                 conn.execute(f'INSERT INTO main."{view}"("{view}") VALUES(\'rebuild\')')
         conn.execute("COMMIT")
     except Exception as exc:  # noqa: BLE001
-        conn.execute("ROLLBACK")
+        # ROLLBACK is itself best-effort: when BEGIN IMMEDIATE was the statement that failed
+        # (locked destination) no transaction is open, and an unconditional ROLLBACK would raise
+        # "no transaction is active" — masking the real skip with a second error.
+        # `conn.in_transaction` tells us whether there is anything to roll back.
+        if conn.in_transaction:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
         print(f"  ⚠️  {label}: merge failed ({exc}) — left unchanged")
         return 0
     finally:
