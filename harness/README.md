@@ -54,6 +54,20 @@ Turns the K42/K44/K45 stream-coalescer bug class into a *replayable* regression:
    loosened threshold requires a rationale line; a missing scenario recording fails the
    gate (silent scenario drops are how baselines rot).
 
+### Workflow journal-format gate (SV-5)
+
+Two WF2 scenarios gate the **journal → SSE projection** format before any engine consumer
+relies on it — `traces/workflow-journal-projection/` (a clean 3-node run) and
+`traces/rewind-during-stream/` (a rewind bumps the epoch mid-stream; a stale in-flight event
+must be dropped). Both are in `baselines.REQUIRED_SCENARIOS`, so **their absence from disk
+fails the run outright** (not merely "one fewer scenario"). Each baseline pins a `fold` block
+— the terminal state the pure Python **event-fold** (`replay.fold_workflow`, the mirror of
+`web/src/pages/workflows/workflowFold.ts`) reconstructs. The fold compare is EXACT, not a
+threshold: a journal/projection format change that breaks the event-fold law (a renamed event
+kind, a dropped guard, a changed terminal state) changes the fold and fails the compare
+(Success Criterion #4). No engine change was needed to record these — the workflow SSE tap at
+`SseRegistry.publish` already covers the `workflow:<run_id>` key.
+
 ## The scanner (Session 2)
 
 Seven pure-static checks, each with a stable check-id a rule spec references via its

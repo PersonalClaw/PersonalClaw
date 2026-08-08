@@ -17,9 +17,14 @@ smoke scripts), **recorded-trace sources** for the replay scenarios in `../trace
 
 ## Status
 
-**Empty until Workflows-v2 lands.** The exemplars exercise engine slices that don't exist
-yet (the WF2 journal/run-ledger/required-artifacts machinery). This directory + its
-contract ship now (Self-Verification Session 4) so that when WF2 Slice 0 lands, its
-exemplar has a home and the obligation is already in force. The two WF2-gated replay
-scenarios (`workflow-journal-projection`, `rewind-during-stream`) are recorded here as
-exemplars when those slices land — see the Self-Verification plan's S4 BLOCKED note.
+**Empty until the per-slice exemplar backfill (SV-8).** The runnable exemplars exercise
+engine slice mechanisms (the WF2 journal/run-ledger/required-artifacts machinery). This
+directory + its contract shipped in Self-Verification Session 4 so that each WF2 slice's
+exemplar has a home and the same-PR obligation is already in force; the backfill of the
+landed slices is tracked as atom `SV-8`.
+
+The two WF2-gated **replay scenarios** (`workflow-journal-projection`, `rewind-during-stream`)
+landed in `SV-5` and live under [`../traces/`](../traces/) — the location the `replay` gate
+reads — each with a checked-in baseline that pins the event-fold law (the pre-migration
+journal-format gate). They are not runnable exemplars, so they are not under this dir; a
+future exemplar that exercises the same slice can reuse them as its recorded-trace source.
