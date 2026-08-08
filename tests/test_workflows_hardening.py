@@ -568,11 +568,13 @@ class TestDocumentationAccuracy:
         assert not undocumented, f"modules with no doc entry: {sorted(undocumented)}"
 
     def test_the_node_kind_count_is_right(self) -> None:
-        """ "Twelve, and no more" is a load-bearing claim — it is the reason macros exist."""
+        """ "Thirteen, and no more" is a load-bearing claim — it is the reason macros exist.
+        (Was twelve until AMBIENT-SURFACES §5.3 added `visualize`, the agency-free
+        data→genui primitive, as a node kind.)"""
         from personalclaw.workflows.models import NodeKind
 
-        assert len(list(NodeKind)) == 12
-        assert "Twelve, and no more" in self._arch()
+        assert len(list(NodeKind)) == 13
+        assert "Thirteen, and no more" in self._arch()
 
     def test_every_macro_the_guide_lists_is_REGISTERED(self) -> None:
         import re

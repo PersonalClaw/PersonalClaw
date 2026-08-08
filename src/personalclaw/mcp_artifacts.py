@@ -365,6 +365,36 @@ def _list_tools() -> list[dict[str, Any]]:
             ),
             "inputSchema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "visualize",
+            "description": (
+                "Turn structured DATA into a generative-UI widget (charts, stat tiles, "
+                "tables, callouts) rendered inline — the agency-free two-step pattern: you "
+                "produce the data, this separate no-tools step renders it. Pass `data` (a "
+                "JSON object/array or text) and an optional `hint` describing how to present "
+                "it (e.g. 'show the monthly totals as a bar chart'). Returns a "
+                '`<widget kind="genui">` block to embed directly in your reply. Use this '
+                "instead of hand-writing a widget when you have data to show; it emits ONLY "
+                "registered components, so invalid output is dropped, never rendered."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "description": "The data to visualize (JSON object/array, or text)",
+                    },
+                    "hint": {
+                        "type": "string",
+                        "description": "How to present it (chart type, framing, emphasis)",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Widget title (default 'Visualization')",
+                    },
+                },
+                "required": ["data"],
+            },
+        },
     ]
 
 
@@ -600,6 +630,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             fmts = available_formats()
             _audit("success")
             return "Available document formats: " + (", ".join(fmts) if fmts else "none")
+
+        if name == "visualize":
+            return _visualize(args, _audit)
 
     except (ValueError, PermissionError) as e:
         _audit("error", args.get("slug", ""), str(e))
@@ -880,6 +913,42 @@ def regenerate_image_at_slug(
     if art is None:
         return False, "could not write the regenerated image"
     return True, art.slug
+
+
+def _visualize(args: dict[str, Any], _audit: Any) -> str:
+    """`visualize` — the agency-free data→genui-widget primitive (AMBIENT-SURFACES §5.3).
+
+    Thin wrapper over ``personalclaw.visualize.visualize`` (the ONE reasoning-axis
+    ``one_shot_completion`` call site — tools disabled by construction). Its degraded
+    floor (assistant_reasoning): no model → no visualization produced, and the caller
+    keeps the raw data — so this returns an honest, actionable message rather than
+    fabricating a widget.
+    """
+    from personalclaw.visualize import visualize as _visualize_primitive
+
+    if "data" not in args:
+        _audit("denied", error="no data")
+        return "Error: provide `data` to visualize."
+    hint = str(args.get("hint", "") or "")
+    title = str(args.get("title", "") or "Visualization")
+    try:
+        result = _run_async(_visualize_primitive(args["data"], hint, title=title))
+    except Exception as e:  # noqa: BLE001 — a model/provider failure is a caller-facing refusal
+        _audit("error", error=str(e))
+        return (
+            f"Error: could not produce a visualization ({e}). No reasoning model may be "
+            "configured — bind one in Settings → Models, or present the data as text."
+        )
+    if not result.dsl.strip():
+        _audit("error", error="empty visualization")
+        return (
+            "Error: the model produced no renderable components. Present the data as text instead."
+        )
+    _audit("success")
+    return (
+        "Show this to the user by embedding the widget block below in your reply:\n\n"
+        f"{result.widget}"
+    )
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
