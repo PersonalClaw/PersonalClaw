@@ -12,6 +12,9 @@ The agent-facing surface of the self-development harness:
 - ``scan [--diff]`` — run the static boundary scanner over the whole tree or the diff.
 - ``replay`` — gate recorded event-trace scenarios against checked-in baselines.
 - ``resume-audit <loop_id>`` — check a loop resumes from persisted state alone (§2.4).
+- ``workflow-resume-audit <run_id>`` — check a workflow run resumes byte-equal from disk
+  alone: the reconstructed frontier matches the pre-kill snapshot and the journal event-fold
+  rebuilds the same node states (§2.4, workflow half).
 
 Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == usage error
 (unknown task id, no spec set). Warnings print but do not change the exit code.
@@ -352,6 +355,30 @@ def cmd_resume_audit(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_workflow_resume_audit(args: argparse.Namespace) -> int:
+    """Fresh-session resumability audit for a workflow run (§2.4, workflow half): killed and
+    resumed from disk alone, does the reconstructed frontier match the pre-kill snapshot
+    byte-for-byte, and does the journal event-fold rebuild the same node states?"""
+    from harness import resume_audit
+
+    report = resume_audit.audit_workflow_run(args.run_id)
+    if not report.exists:
+        print(f"{_FAIL} workflow run {args.run_id!r} not found on disk")
+        return 1
+    checks = [
+        ("byte-equal frontier reconstruction", report.frontier_byte_equal),
+        ("journal event-fold matches state", report.fold_matches_state),
+    ]
+    for label, ok in checks:
+        print(f"  {_OK if ok else _FAIL} {label}")
+    if report.ok:
+        print(f"{_OK} workflow run {args.run_id} resumes byte-equal from disk")
+        return 0
+    for f in report.failures():
+        print(f"{_FAIL} {f}")
+    return 1
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
     """Gate every baselined replay scenario against its recording (§2.3).
 
@@ -415,6 +442,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_resume.add_argument("loop_id", help="Loop id to audit")
     p_resume.set_defaults(func=cmd_resume_audit)
+
+    p_wf_resume = sub.add_parser(
+        "workflow-resume-audit",
+        help="Audit whether a workflow run resumes byte-equal from disk alone (§2.4).",
+    )
+    p_wf_resume.add_argument("run_id", help="Workflow run id to audit")
+    p_wf_resume.set_defaults(func=cmd_workflow_resume_audit)
 
     return parser
 

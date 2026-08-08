@@ -4,7 +4,7 @@
 **Code:** `SV`  
 **Source status:** in_progress
 
-SELF-VERIFICATION: 4 of 11 atoms done (spec harness + scanner + replay substrate + loop resume-audit/MCP). Remaining: WF2 replay scenarios, workflow-run resume-audit, CI gate, exemplars backfill, and the two-session Self-QA Companion. WF2 engine now exists so the prior blocker cleared.
+SELF-VERIFICATION: 6 of 11 atoms done (spec harness + scanner + replay substrate + loop resume-audit/MCP + WF2 replay scenarios + workflow-run resume-audit). Remaining: CI gate, exemplars backfill, and the two-session Self-QA Companion. WF2 engine now exists so the prior blocker cleared.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `SV-3` | ✅ | Event-trace replay substrate: recorder taps, Python metrics fold, vitest fold driver, baselines | `SV-1` | PERSONALCLAW_TRACE_DIR-gated recorder writes redacted NDJSON; replaying happy-path/history-overlap traces through coalesceReducers.ts reproduces terminal state with duplicate_event_rate=0; a re-introduced K44 coalescer bug is caught by replay not a hand-written test (Success Criterion #3) |
 | `SV-4` | ✅ | MCP record/replay-as-fake-server + loop resume-audit + exemplars scaffold | `SV-3` | FakeMcpServer replays a recorded mcp trace deterministically; harness resume-audit <loop_id> reconstructs a loop from loop.store alone and reports done/verified/next answerability (Success Criterion #5, loop half); harness/exemplars/README.md ships the exemplar contract |
 | `SV-5` | ✅ | WF2 replay scenarios (workflow-journal-projection + rewind-during-stream) + baselines, gating the journal format | `SV-3`, `SV-4`, `EXT:WORKFLOWS-V2:journal event format + engine/journal.py (Slices 1-2) to record against` | workflow-journal-projection recorded and green with its checked-in baseline before any WF2 Slice 3+ consumer reads the journal; a format change breaking the event-fold law fails compare; a missing required scenario fails the run (Success Criterion #4) |
-| `SV-6` | ⬜ | Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold | `SV-4`, `EXT:WORKFLOWS-V2:event-fold law + frontier snapshot contract` | resume-audit kills and resumes a persisted workflow run from disk alone and verifies the journal replay reconstructs frontier state byte-equal to the pre-kill snapshot (Success Criterion #5, workflow half) |
+| `SV-6` | ✅ | Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold | `SV-4`, `EXT:WORKFLOWS-V2:event-fold law + frontier snapshot contract` | resume-audit kills and resumes a persisted workflow run from disk alone and verifies the journal replay reconstructs frontier state byte-equal to the pre-kill snapshot (Success Criterion #5, workflow half) |
 | `SV-7` | ⬜ | Wire python -m harness validate\|scan into CI (ci.yml) and fold harness/ into CI lint/test scope | `SV-2` | ci.yml runs harness validate + scanner over changed files as a required check and lints/tests harness/ under the same locked deps as core; a spec/scanner regression fails CI |
 | `SV-8` | ⬜ | Backfill per-slice runnable exemplars for the landed WF2 slices | `SV-4`, `EXT:WORKFLOWS-V2:landed slice mechanisms to exercise` | harness/exemplars/ holds runnable exemplars for the landed WF2 slices (e.g. Slice 2 3-node run with a failing required_artifacts gate), each with a smoke script and rationale note, runnable via harness run profile exemplars; validate flags a slice merged without its exemplar |
 | `SV-9` | ⬜ | Self-QA Companion core: commit-watch cron script, self-qa bundled template, self_qa config four-point wiring | `SV-3`, `EXT:WORKFLOWS-V2:Slices 0-5 (bundled template pack + run ledger + required_artifacts host)`, `EXT:AUTONOMY-GUARDRAILS:headless profile/budgets inherited when present (graceful)` | a real commit to the watched repo fires the companion within one cron interval; a test-only commit yields a ledger-only skip with a one-line rationale; a user-impacting commit generates a scenario that mutates state through the real UI via Chrome DevTools MCP; a failing scenario files one Inbox item + one Task (Success Criterion #6) |
@@ -66,7 +66,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `SV-6` — Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold
 
-**Status:** todo
+**Status:** done
 
 §2.4 (resume-audit workflow-run half; resume_audit.py exports only audit_loop today)
 
