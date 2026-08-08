@@ -2025,10 +2025,11 @@
         {
           "id": "AS-4",
           "title": "Generative-UI core: typed component registry + streaming genui renderer + visualize primitive",
-          "status": "todo",
+          "status": "done",
           "scope": "§5.1 Typed component registry; §5.2 Streaming renderer alongside markdown; §5.3 visualize(data, hint) — one agency-free primitive.",
           "done_when": "ui/genui/registry.ts with defineComponent + bundled core component set (all token-driven; tokenLint ratchet stays at zero); <widget kind=\"genui\"> renders through the existing parseWidgetBlocks seam in the host React tree with drop-invalid validation (unknown-component/missing-required/excess-args surfaced for self-correction, no null holes); library.prompt() derives the authoring section mechanically behind a small endpoint; visualize resolves via one_shot_completion on the reasoning axis (llm_helpers.py:275) with tools disabled by construction, exposed as an MCP tool in mcp_artifacts and as a WF2 node type; an adversarial payload naming an unknown component renders everything else and drops that line with a typed error.",
-          "deps": []
+          "deps": [],
+          "pr": 917
         },
         {
           "id": "AS-5",
@@ -2390,10 +2391,11 @@
         {
           "id": "LMMV-4",
           "title": "Session 3 — HF token cascade (3-source, whoami-validated) + per-provider real-inference selftest & health endpoints",
-          "status": "todo",
+          "status": "done",
           "scope": "§5 HF Token Cascade; §6 Per-Provider Real-Inference Selftest + Health; §4.3 gated pre-warn (token-status-aware); §9 whoami_ttl_s / selftest_timeout_s config fields",
           "done_when": "local_models/hf_token.py (re-exported via sdk.credentials) resolves credential-store(.env) → HF_TOKEN/legacy env → ~/.cache/huggingface/token, first whoami-valid source wins via the net.fetch CONNECTOR egress chokepoint (cached ~whoami_ttl_s); GET /api/models/hf-token/status returns per-source {present,valid,username?,masked} with values never leaving the server unmasked (Success Criterion 4); a set/clear field writes source 1 and diarization-pyannote._hf_token() delegates to the cascade (its app-config field honored one release then migrated); GET /api/models/local/{provider}/health never 500s (uses ABC availability_detail()); POST .../selftest runs a real per-capability inference (bundled fixtures, single_flight-serialized, bounded timeout, user-click only) returning typed reasons so a pyannote-4-style contract break fails on API not file presence (Success Criterion 5); Test buttons render inline in ModelsPanel; SEL logs token set/clear; the gated pre-warn consumes cascade status server-side.",
-          "deps": []
+          "deps": [],
+          "pr": 920
         },
         {
           "id": "LMMV-5",
@@ -4522,14 +4524,15 @@
         {
           "id": "SV-5",
           "title": "WF2 replay scenarios (workflow-journal-projection + rewind-during-stream) + baselines, gating the journal format",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.3 (required scenarios 4-5: workflow-journal-projection, rewind-during-stream), §2.1 (workflow journal→SSE projection tap)",
           "done_when": "workflow-journal-projection recorded and green with its checked-in baseline before any WF2 Slice 3+ consumer reads the journal; a format change breaking the event-fold law fails compare; a missing required scenario fails the run (Success Criterion #4)",
           "deps": [
             "SV-3",
             "SV-4",
             "EXT:WORKFLOWS-V2:journal event format + engine/journal.py (Slices 1-2) to record against"
-          ]
+          ],
+          "pr": 921
         },
         {
           "id": "SV-6",
@@ -5251,10 +5254,11 @@
         {
           "id": "APE-8",
           "title": "Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 T2.5 (Fix with AI; folds into Session 2)",
           "done_when": "a deliberately broken app's failed install offers the button; the opened chat (via ne:launch-chat) contains the log wrapped in fence_untrusted(source=app_install_log:<name>); fence verified",
-          "deps": []
+          "deps": [],
+          "pr": 918
         },
         {
           "id": "APE-9",
@@ -6842,11 +6846,6 @@
         "plan": "APE"
       },
       {
-        "id": "APE-8",
-        "title": "Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat",
-        "plan": "APE"
-      },
-      {
         "id": "AR-1",
         "title": "Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts",
         "plan": "AR"
@@ -6859,11 +6858,6 @@
       {
         "id": "AS-3",
         "title": "Artifact iteration: EDITMODE tweak controls + click-annotation corrections",
-        "plan": "AS"
-      },
-      {
-        "id": "AS-4",
-        "title": "Generative-UI core: typed component registry + streaming genui renderer + visualize primitive",
         "plan": "AS"
       },
       {
@@ -7155,11 +7149,6 @@
         "id": "KL-9",
         "title": "Indexing H1.1+H1.2: chunks table + structural chunker + chunk embedding in ingest (retire 1000-char top-up)",
         "plan": "KL"
-      },
-      {
-        "id": "LMMV-4",
-        "title": "Session 3 — HF token cascade (3-source, whoami-validated) + per-provider real-inference selftest & health endpoints",
-        "plan": "LMMV"
       },
       {
         "id": "LMMV-5",
@@ -7460,11 +7449,6 @@
         "id": "SM-5",
         "title": "T2.1 Suggested organization: deterministic→LLM folder/tag proposals via inbox proposal contract",
         "plan": "SM"
-      },
-      {
-        "id": "SV-5",
-        "title": "WF2 replay scenarios (workflow-journal-projection + rewind-during-stream) + baselines, gating the journal format",
-        "plan": "SV"
       },
       {
         "id": "SV-6",
