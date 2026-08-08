@@ -163,18 +163,22 @@ def test_a_refused_action_produces_an_audit_row():
     assert row["reason"]
 
 
-# ── §6.1: six kinds, one queue ──
+# ── §6.1: every kind, one queue ──
 
 
 def test_the_inbox_covers_every_proposal_kind():
-    """One surface for all six. A second kind list is how a surface silently stops showing one."""
+    """One surface for every kind. A second kind list is how a surface silently stops showing one.
+
+    Derived from `Kind` itself, not a hardcoded count: the three project_* kinds (LEA-12) join the
+    original six, and a surface that enumerated a stale number would drop the newest kind — the
+    exact failure this test exists to catch.
+    """
     from personalclaw.learning.proposals import Kind
 
     kinds = [k.value for k in Kind]
-    assert len(kinds) == 6
     view = build_view([_prop(f"p{i}", kind=k) for i, k in enumerate(kinds)])
     assert set(view.by_kind) == set(kinds)
-    assert view.total == 6
+    assert view.total == len(kinds)
 
 
 def test_a_row_carries_everything_needed_to_decide():
