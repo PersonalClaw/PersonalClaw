@@ -101,6 +101,17 @@ class ImportPlan:
     schema_version_ahead: bool = False
     staged_triggers: list[str] = field(default_factory=list)
     staged_config_keys: list[str] = field(default_factory=list)
+    #: The pack's ``connectors.json`` declarations (§3.3) — resolved on commit via
+    #: configure/substitute/skip. Empty when the pack declares no connectors.
+    connectors: list[dict[str, Any]] = field(default_factory=list)
+    #: The committed id of the pack's ``setup/SKILL.md`` interview skill (§3.4) once a commit
+    #: runs, or "" when the pack ships none. On the inspect plan it is the id a commit WOULD
+    #: assign; the skill itself is scanned like any other skill (a DANGEROUS setup skill
+    #: blocks the whole import).
+    setup_skill: str = ""
+    #: The per-connector resolution outcomes recorded by a commit (each a
+    #: :meth:`ConnectorResolution.to_dict`). Empty on the dry-run plan.
+    connector_resolutions: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def has_dangerous(self) -> bool:
@@ -140,6 +151,9 @@ class ImportPlan:
             "requirements": list(self.requirements),
             "staged_triggers": list(self.staged_triggers),
             "staged_config_keys": list(self.staged_config_keys),
+            "connectors": list(self.connectors),
+            "setup_skill": self.setup_skill,
+            "connector_resolutions": list(self.connector_resolutions),
         }
 
 
@@ -599,6 +613,36 @@ def _build_plan(
         "" if integrity_ok else f"content_hash mismatch: manifest={claimed!r} actual={actual!r}"
     )
 
+    # ── connector declarations (§3.3): a top-level connectors.json member ──
+    connectors = _parse_connectors(members.get("connectors.json"))
+
+    # ── setup skill (§3.4): a pack's setup/SKILL.md installs through the SAME guarded path
+    # as every other skill. It is NOT a manifest component (it lives under setup/), so we
+    # build a skill _Comp for it here and fold it into `parsed` — that way its scan verdict
+    # feeds the plan's DANGEROUS/WARNING gates AND the commit loop installs it through
+    # install_guarded with no special-casing. A DANGEROUS setup interview blocks the whole
+    # import, exactly as §3.5 requires. ──
+    setup_files = _setup_skill_files(quarantine, members)
+    setup_id = ""
+    if setup_files:
+        pack_slug = str(manifest.get("name", "") or "pack")
+        setup_id = _fresh_id(home, "skill", f"{pack_slug}-setup", taken)
+        taken.add(("skill", setup_id))
+        _rewrite_skill_frontmatter_name(setup_files, setup_id)
+        setup_report = scanner.scan(quarantine / "setup", tier)
+        parsed.append(
+            _Comp(
+                kind="skill",
+                id=setup_id,
+                path="setup/SKILL.md",
+                depends_on=[],
+                target_id=setup_id,
+                skill_files=setup_files,
+                verdict=setup_report.verdict.value,
+                findings=[f.to_dict() for f in setup_report.findings],
+            )
+        )
+
     parsed.sort(key=lambda c: (_COMMIT_RANK.get(c.kind, 99), c.target_id))
     plan = ImportPlan(
         name=str(manifest.get("name", "") or ""),
@@ -622,8 +666,49 @@ def _build_plan(
         schema_version_ahead=schema_ahead,
         staged_triggers=[c.target_id for c in parsed if c.kind == "trigger"],
         staged_config_keys=_editable_config_keys(members.get("config_subset.json")),
+        connectors=connectors,
+        setup_skill=setup_id,
     )
     return plan, parsed
+
+
+def _parse_connectors(raw: bytes | None) -> list[dict[str, Any]]:
+    """Parse a pack's top-level ``connectors.json`` into a list of declarations (§3.3).
+
+    Each declaration is ``{name, category, ...}`` and carries NO credential value (§2.2: the
+    schema bans value-bearing auth fields). A missing/unparseable/mis-shaped file yields no
+    declarations (a pack without connectors is the common case)."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [d for d in data if isinstance(d, dict) and str(d.get("name", "")).strip()]
+
+
+def _setup_skill_files(quarantine: Path, members: dict[str, bytes]) -> list[dict[str, Any]] | None:
+    """A pack's ``setup/SKILL.md`` file set (§3.4), rebased to skill-dir-relative entries.
+
+    The pack ships the setup interview as ``setup/…`` members (``setup/SKILL.md`` required).
+    We collect them the same way :func:`_skill_files_from_members` collects a component
+    skill, stripping the ``setup/`` prefix so ``install_guarded`` writes a normal skill dir.
+    Returns ``None`` when the pack ships no ``setup/SKILL.md`` (nothing to install)."""
+    from personalclaw.skills.marketplace import read_skill_file_entry
+
+    if "setup/SKILL.md" not in members:
+        return None
+    files: list[dict[str, Any]] = []
+    for name in sorted(members):
+        if not name.startswith("setup/"):
+            continue
+        rel = name[len("setup/") :]
+        if not rel:
+            continue
+        files.append(read_skill_file_entry(quarantine / PurePosixPath(name), rel))
+    return files or None
 
 
 def _editable_config_keys(raw: bytes | None) -> list[str]:
@@ -877,7 +962,13 @@ def inspect_pack(path: Path | str, *, tier: "Any" = None) -> ImportPlan:
         shutil.rmtree(quarantine, ignore_errors=True)
 
 
-def import_pack(path: Path | str, *, consent: bool = False, tier: "Any" = None) -> ImportPlan:
+def import_pack(
+    path: Path | str,
+    *,
+    consent: bool = False,
+    tier: "Any" = None,
+    connector_choices: dict[str, dict[str, Any]] | None = None,
+) -> ImportPlan:
     """Import ``path`` onto this machine: inspect → refuse-or-commit, atomically.
 
     Runs :func:`inspect_pack`'s pipeline, then REFUSES (raising :class:`PackImportRefused`)
@@ -885,8 +976,14 @@ def import_pack(path: Path | str, *, consent: bool = False, tier: "Any" = None) 
     (``"lint"``), a DANGEROUS component regardless of ``consent`` (``"dangerous"``), or a
     WARNING component without ``consent`` (``"needs_consent"``). Only a fully-clearing plan
     commits, leaves-first, journaled. Any mid-commit fault unwinds every journaled write to
-    byte-identical pre-import state and re-raises as ``reason="fault"``. Returns the
-    :class:`ImportPlan` on success."""
+    byte-identical pre-import state and re-raises as ``reason="fault"``.
+
+    ``connector_choices`` maps a declared connector's name → its resolution input
+    ``{mode, credentials?, substitute?}`` (§3.3); a connector with no choice degrades to
+    ``skip`` with a ``connector_missing:<name>`` marker. Connector resolution runs AFTER the
+    component commit fully succeeds — so a component-commit fault rolls back to byte-identical
+    state without ever having written a credential or a server. Returns the
+    :class:`ImportPlan` on success (with ``connector_resolutions`` + ``setup_skill`` filled)."""
     from personalclaw.skills.marketplace import get_default_skills_registry
     from personalclaw.supply_chain import TrustTier
 
@@ -952,6 +1049,14 @@ def import_pack(path: Path | str, *, consent: bool = False, tier: "Any" = None) 
             registry.unregister(mp_name)
 
         journal.discard()
+
+        # ── requirements resolution (§3.3) + durable ledger (§9), post-commit ──
+        # Runs only after the component commit fully succeeded (the journal is discarded), so
+        # a rolled-back import never writes a credential or a server. Connector resolution is
+        # fail-soft: a configure/substitute that can't complete degrades to a skip marker, so
+        # a bad credential can't undo an already-committed pack.
+        _resolve_and_record(plan, home, connector_choices)
+
         _audit(
             "pack_import",
             "installed",
@@ -960,6 +1065,49 @@ def import_pack(path: Path | str, *, consent: bool = False, tier: "Any" = None) 
         return plan
     finally:
         shutil.rmtree(quarantine, ignore_errors=True)
+
+
+def _resolve_and_record(
+    plan: ImportPlan, home: Path, connector_choices: dict[str, dict[str, Any]] | None
+) -> None:
+    """Resolve the pack's connector requirements and write the installed-pack ledger.
+
+    Connector resolution uses the fail-soft importer path (:func:`connectors.resolve_for_import`)
+    so a failed configure degrades to a ``connector_missing:<name>`` marker rather than
+    aborting an already-committed pack. The ledger (:mod:`packs.installed`) is the durable
+    reader surface: the connector markers a feature checks for availability, and the
+    ``setup_pending`` flag the re-runnable "Finish setup" chip reads.
+    """
+    from datetime import datetime, timezone
+
+    from personalclaw.packs import connectors as pack_connectors
+    from personalclaw.packs.installed import InstalledPack, record_install
+
+    resolutions = pack_connectors.resolve_for_import(plan.connectors, connector_choices, home=home)
+    plan.connector_resolutions = [r.to_dict() for r in resolutions]
+    markers = [r.marker for r in resolutions if r.marker]
+
+    for r in resolutions:
+        _audit(
+            "pack_connector_resolve",
+            r.mode if not r.error else "skipped",
+            resources=f"{plan.name}:{r.name}",
+            error=r.error,
+        )
+
+    record_install(
+        InstalledPack(
+            name=plan.name or "pack",
+            version=plan.version,
+            components=[c.ref for c in plan.components],
+            connectors=plan.connector_resolutions,
+            connector_markers=markers,
+            setup_skill=plan.setup_skill,
+            setup_pending=bool(plan.setup_skill),
+            installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
+        home,
+    )
 
 
 def _read_manifest(members: dict[str, bytes]) -> dict[str, Any]:

@@ -436,6 +436,11 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
     register_feedback_routes(app)
+    # AGENT-PACKS §3.4/§9 (AP-3) — the installed-pack ledger reader + the re-runnable
+    # "Finish setup" chip backend. Export/import UI + store cards land in AP-7.
+    from personalclaw.dashboard.handlers.packs import register_pack_routes
+
+    register_pack_routes(app)
     # Cost & token observability — read-only rollup/totals over the usage ledger.
     from personalclaw.dashboard.handlers.usage import register_usage_routes
 

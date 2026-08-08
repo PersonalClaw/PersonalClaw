@@ -37,7 +37,12 @@ _VALID_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 def _mcp_json_path() -> Path:
-    return Path.home() / ".personalclaw" / "mcp.json"
+    # Resolve through config_dir() (honours PERSONALCLAW_HOME) rather than a hardcoded
+    # Path.home(): a pack import under a dev/test home must write the server into THAT
+    # home's mcp.json, never the real one. Matches agent._user_dir()'s resolution.
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / "mcp.json"
 
 
 def _load() -> dict[str, Any]:
