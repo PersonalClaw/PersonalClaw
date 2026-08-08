@@ -655,6 +655,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "sources.max_sources": {"type": "int", "min": 1, "max": 1000},
     "sources.max_items_per_poll": {"type": "int", "min": 1, "max": 1000},
     "sources.daily_request_budget": {"type": "int", "min": 1, "max": 100000},
+    # Packs (AGENT-PACKS §8) — the runtime-editable subset. The fingerprint toggle and the
+    # skill-catalog list are the knobs a user reaches for from Settings; the catalog-refresh
+    # URL is a plain string. No credential rides any of these (a connector credential goes to
+    # the credential store, never a config field).
+    "packs.fingerprint_enabled": {"type": "bool"},
+    "packs.connector_catalog_url": {"type": "str", "max_len": 512},
+    "packs.skill_catalogs": {"type": "skill_catalogs"},
 }
 
 
@@ -850,6 +857,33 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
                 clean_rule[k] = op_rx
             clean_rules.append(clean_rule)
         value = clean_rules
+    elif spec["type"] == "skill_catalogs":
+        # A list of external skill-catalog sources (AGENT-PACKS §6): [{name, url, kind}].
+        # Normalise to exactly those keys; a url is required and must be http(s); kind is a
+        # closed set. Pure data — nothing here is fetched or executed (AP-6 registers the
+        # marketplace + fetches under the CONNECTOR egress profile). A credential is never a
+        # catalog field: it would ride a request log, so it goes through the credential store.
+        if not isinstance(value, list):
+            return _deny("must be a list", f"{path_key}={value}")
+        if len(value) > 50:
+            return _deny("must have at most 50 catalogs", f"{path_key}")
+        clean_catalogs: list[dict[str, object]] = []
+        for i, c in enumerate(value):
+            if not isinstance(c, dict):
+                return _deny("each catalog must be an object", f"{path_key}[{i}]")
+            name = str(c.get("name", "")).strip()[:80]
+            url = str(c.get("url", "")).strip()
+            kind = str(c.get("kind", "index")).strip().lower() or "index"
+            if not url:
+                return _deny("each catalog needs a url", f"{path_key}[{i}]")
+            if len(url) > 512:
+                return _deny("url too long (max 512)", f"{path_key}[{i}]")
+            if not (url.startswith("https://") or url.startswith("http://")):
+                return _deny("url must be http(s)", f"{path_key}[{i}]")
+            if kind not in ("index", "tap"):
+                return _deny("kind must be 'index' or 'tap'", f"{path_key}[{i}]")
+            clean_catalogs.append({"name": name, "url": url, "kind": kind})
+        value = clean_catalogs
     else:
         return _deny("unsupported config type", f"{path_key}={value}", 500)
 

@@ -1768,6 +1768,20 @@ function _usageQuery(opts?: { since?: string; until?: string; session?: string; 
   return q ? `?${q}` : ''
 }
 
+// One installed pack's ledger record (AGENT-PACKS §9). `connector_markers` holds the
+// `connector_missing:<name>` codes for skipped connectors; `setup_pending` gates the
+// re-runnable "Finish setup" chip.
+export interface InstalledPackRec {
+  name: string
+  version: string
+  components: string[]
+  connectors: Array<{ name: string; mode: string; server_name: string; marker: string; credentials_saved: string[]; error: string }>
+  connector_markers: string[]
+  setup_skill: string
+  setup_pending: boolean
+  installed_at: string
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -1803,6 +1817,14 @@ export const api = {
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
   patchConfig: (path: string, value: unknown) => patch<Record<string, any>>('/api/config/personalclaw', { path, value }),
+
+  // ── Packs (AGENT-PACKS §3.4/§9, AP-3) ──
+  // The installed-pack ledger (each pack's components, connector resolutions +
+  // `connector_missing:<name>` markers, and whether a re-runnable setup interview is
+  // pending) and the "Finish setup" chip backend (returns the setup skill's slash-command;
+  // the interview runs in chat under normal tool approval — never server-side).
+  packsInstalled: () => get<{ packs: InstalledPackRec[] }>('/api/packs/installed').then((d) => d.packs),
+  packFinishSetup: (name: string) => post<{ pack: string; setup_skill: string; command: string; pending: boolean }>(`/api/packs/${encodeURIComponent(name)}/finish-setup`, {}),
 
   // ── Owner login (REMOTE-USER-AUTH C3/C5) ──
   // The credential itself is never READ back — `authSession` reports only whether one is

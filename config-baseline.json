@@ -851,6 +851,24 @@
     "type": "float"
   },
   {
+    "default": "",
+    "path": "packs.connector_catalog_url",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "packs.fingerprint_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [],
+    "path": "packs.skill_catalogs",
+    "sensitive": false,
+    "type": "list[SkillCatalogConfig]"
+  },
+  {
     "default": 2.0,
     "path": "resilience.cancel_replace_min_interval_secs",
     "sensitive": false,

@@ -26,6 +26,20 @@ from personalclaw.packs.build import (
     build_pack,
     preview_pack,
 )
+from personalclaw.packs.connectors import (
+    MISSING_PREFIX,
+    CatalogEntry,
+    ConnectorResolution,
+    ConnectorResolutionError,
+    catalog_by_category,
+    catalog_lookup,
+    load_catalog,
+    missing_marker,
+    resolve_connector,
+    resolve_for_import,
+    resolve_requirements,
+    seed_catalog,
+)
 from personalclaw.packs.import_ import (
     ImportPlan,
     PackImportRefused,
@@ -34,11 +48,17 @@ from personalclaw.packs.import_ import (
     import_pack,
     inspect_pack,
 )
+from personalclaw.packs.installed import InstalledPack, load_installed, record_install
 from personalclaw.packs.lint import LintFinding, LintReport, lint_pack
 
 __all__ = [
+    "MISSING_PREFIX",
     "BlockedComponent",
+    "CatalogEntry",
+    "ConnectorResolution",
+    "ConnectorResolutionError",
     "ImportPlan",
+    "InstalledPack",
     "LintFinding",
     "LintReport",
     "PackComponent",
@@ -48,8 +68,18 @@ __all__ = [
     "PlannedComponent",
     "Requirement",
     "build_pack",
+    "catalog_by_category",
+    "catalog_lookup",
     "import_pack",
     "inspect_pack",
     "lint_pack",
+    "load_catalog",
+    "load_installed",
+    "missing_marker",
     "preview_pack",
+    "record_install",
+    "resolve_connector",
+    "resolve_for_import",
+    "resolve_requirements",
+    "seed_catalog",
 ]

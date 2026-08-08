@@ -427,6 +427,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/outbox` — list files in the outbox.
 - `POST /api/outbox/notify` — agent sent a file, notify the user.
 - `GET /api/outbox/{filename}` — download a file from the outbox.
+- `GET /api/packs/installed` — List installed packs with connector-resolution + setup state.
+- `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `GET /api/portability/export` — download PersonalClaw state as zip.
 - `POST /api/portability/import` — upload and apply a PersonalClaw export zip.
 - `POST /api/portability/preview` — validate and preview a zip without applying.
