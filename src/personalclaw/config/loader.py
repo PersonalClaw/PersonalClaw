@@ -664,6 +664,80 @@ class SourcesConfig:
 
 
 @dataclass
+class SkillCatalogConfig:
+    """One external skill-catalog source (AGENT-PACKS §6, the ``packs.skill_catalogs`` list).
+
+    A catalog is a named index of installable skills (a GitHub "tap" repo, a
+    ``/.well-known/skills/index.json`` site). AP-6 registers each as a
+    :class:`CatalogMarketplace` on the shared skills registry at COMMUNITY tier and installs
+    through the same ``install_guarded`` chokepoint. AP-3 only wires the config surface; the
+    ``list[dataclass]`` precedent is :class:`ProjectionRuleConfig`, so each element field
+    carries ``_meta`` for the schema-reachability tests.
+    """
+
+    name: str = field(
+        default="",
+        metadata=_meta("Catalog name", "A short label for this skill catalog."),
+    )
+    url: str = field(
+        default="",
+        metadata=_meta(
+            "Catalog URL",
+            "The catalog's index endpoint or repo URL. Fetched under the CONNECTOR egress "
+            "profile when the catalog is browsed (AP-6); never spawned or executed.",
+        ),
+    )
+    kind: str = field(
+        default="index",
+        metadata=_meta(
+            "Catalog kind",
+            "How the URL is read: 'index' (a JSON skill index) or 'tap' (a git repo of "
+            "skills/<slug>/SKILL.md).",
+        ),
+    )
+
+
+@dataclass
+class PacksConfig:
+    """Portable-pack + skill-catalog + connector-catalog settings (AGENT-PACKS §8).
+
+    The knobs the pack importer and the (later) catalog importer + fingerprint scanner read.
+    ``skill_catalogs`` is the AP-6 list of external skill-catalog sources (each a
+    :class:`SkillCatalogConfig`); ``fingerprint_enabled`` is the AP-7 project-fingerprint
+    master switch (guard-flag-safe: a missing/garbage value stays ON so the propose-only
+    surface is never silently disabled); ``connector_catalog_url`` is the optional published
+    URL the seeded ``connector_catalog.json`` refreshes from. Defaults keep an untouched
+    install conservative — no catalogs configured, fingerprinting on (it only ever
+    *proposes*), no remote catalog refresh.
+    """
+
+    skill_catalogs: list[SkillCatalogConfig] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Skill catalogs",
+            "External skill-catalog sources browsed + installed through the guarded skills "
+            "chokepoint (AP-6). Empty by default.",
+        ),
+    )
+    fingerprint_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Project fingerprinting",
+            "Let the zero-LLM fingerprint scanner PROPOSE matching packs for a project "
+            "(AP-7). It only ever proposes — never auto-installs. Off stops scanning.",
+        ),
+    )
+    connector_catalog_url: str = field(
+        default="",
+        metadata=_meta(
+            "Connector catalog URL",
+            "Optional published URL the local connector catalog refreshes from (fetched "
+            "under the CONNECTOR egress profile). Empty keeps the seeded bundled set only.",
+        ),
+    )
+
+
+@dataclass
 class LegibilityConfig:
     """Platform-legibility features (Platform-Legibility §5-§7).
 
@@ -2879,6 +2953,10 @@ class AppConfig:
         default_factory=SourcesConfig,
         metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
     )
+    packs: PacksConfig = field(
+        default_factory=PacksConfig,
+        metadata=_meta("Packs", "Pack import + skill-catalog + connector-catalog settings."),
+    )
     hooks: dict = field(
         default_factory=dict,
         metadata=_meta("Hooks", "Script hook definitions keyed by hook ID."),
@@ -2990,6 +3068,9 @@ class AppConfig:
         sources_data = data.get("sources", {})
         if not isinstance(sources_data, dict):
             sources_data = {}
+        packs_data = data.get("packs", {})
+        if not isinstance(packs_data, dict):
+            packs_data = {}
         inbox_data = data.get("inbox", {})
         if not isinstance(inbox_data, dict):
             inbox_data = {}
@@ -3239,6 +3320,21 @@ class AppConfig:
                 max_sources=_safe_int(sources_data.get("max_sources"), 100),
                 max_items_per_poll=_safe_int(sources_data.get("max_items_per_poll"), 50),
                 daily_request_budget=_safe_int(sources_data.get("daily_request_budget"), 288),
+            ),
+            packs=PacksConfig(
+                skill_catalogs=[
+                    SkillCatalogConfig(
+                        name=str(c.get("name", "")),
+                        url=str(c.get("url", "")),
+                        kind=str(c.get("kind", "index") or "index"),
+                    )
+                    for c in packs_data.get("skill_catalogs", [])
+                    if isinstance(c, dict) and str(c.get("url", "")).strip()
+                ],
+                # Guard polarity (§5): the fingerprint surface only ever PROPOSES, so an
+                # unreadable value must not silently disable it — missing/garbage ⇒ ON.
+                fingerprint_enabled=_guard_flag(packs_data.get("fingerprint_enabled")),
+                connector_catalog_url=str(packs_data.get("connector_catalog_url", "") or ""),
             ),
             hooks=data.get("hooks", {}),
             agents=agents,
@@ -3641,6 +3737,7 @@ class AppConfig:
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
             "sources": asdict(self.sources),
+            "packs": asdict(self.packs),
             "hooks": self.hooks,
             "agents": {name: asdict(agent_cfg) for name, agent_cfg in self.agents.items()},
             "default_agent": self.default_agent,
