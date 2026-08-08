@@ -408,6 +408,54 @@ async def dispatch_infer(
     )
 
 
+async def dispatch_visualize(
+    node: Node,
+    ctx: BindingContext,
+    *,
+    completion: Any = None,
+) -> NodeResult:
+    """ONE bounded model call → a genui widget spec, agency-free (AMBIENT-SURFACES §5.3).
+
+    The workflow-node face of the shared `visualize(data, hint)` primitive: it renders a
+    node's `data` binding into a generative-UI widget with no tools, no session, no
+    spawn — the reasoning-axis two-step (a prior node produces the data; this renders it).
+    `completion` is injected so a test can drive it without a provider; production lets
+    the primitive resolve `one_shot_completion` on the reasoning axis itself.
+
+    Output is the genui DSL + the ready-to-embed `<widget>` block, so a downstream node
+    (a tile render, a digest) can bind `{{nodes.<id>.output.widget}}` directly.
+    """
+    cfg, failure = resolve_config(node, ctx)
+    if failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    if "data" not in cfg:
+        return _fail(
+            FailureClass.USER,
+            "visualize node has no `data` binding",
+            "bind `data` to the value to render, e.g. data: {{nodes.compute.output}}",
+        )
+    hint = str(cfg.get("hint", "") or "")
+    title = str(cfg.get("title", "") or "Visualization")
+    from personalclaw.visualize import visualize as _visualize_primitive
+
+    try:
+        result = await _visualize_primitive(cfg["data"], hint, title=title, completion=completion)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # provider/transport failures
+        return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+    if not result.dsl.strip():
+        return _fail(
+            FailureClass.PROTOCOL,
+            "visualize produced no renderable components",
+            "the model returned nothing the registry could render; simplify the data or hint",
+        )
+    return NodeResult(
+        state=InstanceState.DONE,
+        output={"dsl": result.dsl, "widget": result.widget},
+    )
+
+
 async def dispatch_stage(
     node: Node,
     ctx: BindingContext,
@@ -1759,6 +1807,8 @@ async def _dispatch_inner(
         return await dispatch_transform(node, ctx)
     if kind == NodeKind.INFER:
         return await dispatch_infer(node, ctx, tiers=tiers, completion=completion)
+    if kind == NodeKind.VISUALIZE:
+        return await dispatch_visualize(node, ctx, completion=completion)
     if kind == NodeKind.STAGE:
         return await dispatch_stage(
             node, ctx, subagents=subagents, depth=depth, run_id=run_id, cwd=cwd

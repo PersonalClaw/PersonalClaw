@@ -207,6 +207,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/file-upload` — upload file(s) into an allowed directory.
 - `GET /api/file-watch` — SSE stream of file content changes.
 - `POST /api/file-write` — write file content from the markdown panel.
+- `GET /api/genui/library` — the generative-UI component catalog + the mechanically
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).

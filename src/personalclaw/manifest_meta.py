@@ -330,6 +330,19 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [{"summary": "Check which formats are available", "args": {}}],
     },
+    "visualize": {
+        "response_type": "genui.widget",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Render monthly totals as a bar chart",
+                "args": {
+                    "data": {"Jan": 120, "Feb": 150, "Mar": 180},
+                    "hint": "show as a bar chart of monthly totals",
+                },
+            },
+        ],
+    },
     # ── personalclaw-prompts ─────────────────────────────────────────────────
     "prompt_render": {
         "response_type": "prompt.render.result",

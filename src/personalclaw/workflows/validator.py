@@ -320,6 +320,14 @@ def _validate_shape(
         if not cfg.get("expr"):
             _add(res, "WF_MISSING_EXPR", "transform needs an `expr` binding", path)
 
+    elif kind == NodeKind.VISUALIZE:
+        # The agency-free data→genui primitive (AMBIENT-SURFACES §5.3): its input is a
+        # `data` binding, not a `prompt` (it is pinned to the reasoning axis, so no
+        # model_tier either). Missing `data` fails at run time with an unhelpful binding
+        # error, so catch the authoring mistake here.
+        if not cfg.get("data"):
+            _add(res, "WF_MISSING_DATA", "visualize needs a `data` binding", path)
+
     elif kind == NodeKind.ACTION:
         if not cfg.get("provider"):
             _add(res, "WF_MISSING_PROVIDER", "action needs a `provider`", path)

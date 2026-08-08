@@ -23,6 +23,18 @@ async def _json_body(request: web.Request) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+async def api_genui_library(request: web.Request) -> web.Response:
+    """GET /api/genui/library — the generative-UI component catalog + the mechanically
+    derived authoring prompt (AMBIENT-SURFACES §5.2).
+
+    Served so the visual-output skill / workflow node prompts / the FE embed the
+    CURRENT registry rather than a hand-maintained copy that drifts. Read-only.
+    """
+    from personalclaw.genui import library_manifest
+
+    return web.json_response(library_manifest())
+
+
 async def api_dashboard_views(request: web.Request) -> web.Response:
     """GET /api/dashboard/views — every view (locked presets first, then user views).
 

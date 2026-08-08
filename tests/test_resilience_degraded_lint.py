@@ -31,6 +31,10 @@ _CALL_SITE_SURFACES = {
     "knowledge/llm_pool.py": "knowledge_ingest",
     "nl_to_cron.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
+    # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES
+    # §5.3). Reasoning-axis one-shot; no-model floor: no visualization produced and
+    # the caller keeps the raw data (the MCP tool + WF2 node both say so honestly).
+    "visualize.py": "assistant_reasoning",
     # UNIVERSAL-PLANNING matcher T5 (WF2UNI-11): summarize-then-rematch. Its no-model
     # floor is BUILT IN — a missing/failing summarizer degrades to the deterministic
     # matcher tiers (T1-T3) and the keyword scorer stays authoritative, so the caller

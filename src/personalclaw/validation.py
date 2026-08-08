@@ -470,6 +470,18 @@ IMAGE_GENERATE_SCHEMA = ToolSchema(
     ],
 )
 
+# ── visualize (AMBIENT-SURFACES §5.3 — the agency-free data→genui primitive) ──
+# `data` is any JSON shape (object/array/scalar/text), so the type tuple is
+# deliberately wide; the visualize primitive coerces it to text for the prompt.
+VISUALIZE_SCHEMA = ToolSchema(
+    tool_name="visualize",
+    fields=[
+        FieldSpec("data", (dict, list, str, int, float, bool), required=True),
+        FieldSpec("hint", str, max_len=MAX_MEDIUM_STRING),
+        FieldSpec("title", str, max_len=200),
+    ],
+)
+
 PROMPT_RENDER_SCHEMA = ToolSchema(
     tool_name="prompt_render",
     fields=[
@@ -894,6 +906,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "artifact_versions": ARTIFACT_VERSIONS_SCHEMA,
     "artifact_delete": ARTIFACT_DELETE_SCHEMA,
     "image_generate": IMAGE_GENERATE_SCHEMA,
+    "visualize": VISUALIZE_SCHEMA,
     "prompt_render": PROMPT_RENDER_SCHEMA,
     "skill_invoke": SKILL_INVOKE_SCHEMA,
     "project_context_review": PROJECT_CONTEXT_REVIEW_SCHEMA,

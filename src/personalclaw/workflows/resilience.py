@@ -352,13 +352,17 @@ def estimate_calls(root: Node) -> dict[str, int]:
     Its job is to make "this workflow will make roughly 40 model calls" visible BEFORE the
     user starts it, not to be exact.
     """
+    # Kinds that make a model call. `visualize` is one (AMBIENT-SURFACES §5.3) even
+    # though it is not in LLM_KINDS (which is the model_tier-bearing set); a plan review
+    # that ignored it would under-count a data-heavy pipeline's model spend.
+    model_call = (NodeKind.STAGE, NodeKind.INFER, NodeKind.VISUALIZE)
     llm_calls = 0
     actions = 0
     nodes = 0
     for _path, node in walk(root):
         nodes += 1
         multiplier = 1
-        if node.kind in (NodeKind.STAGE, NodeKind.INFER):
+        if node.kind in model_call:
             llm_calls += multiplier
         elif node.kind == NodeKind.ACTION:
             actions += multiplier
@@ -367,15 +371,11 @@ def estimate_calls(root: Node) -> dict[str, int]:
         if node.kind == NodeKind.LOOP and node.body is not None:
             n = (node.config or {}).get("n")
             reps = n if isinstance(n, int) and n > 1 else 1
-            body_llm = sum(
-                1 for _p, b in walk(node.body) if b.kind in (NodeKind.STAGE, NodeKind.INFER)
-            )
+            body_llm = sum(1 for _p, b in walk(node.body) if b.kind in model_call)
             llm_calls += body_llm * (reps - 1)
         elif node.kind == NodeKind.FOREACH and node.body is not None:
             items = (node.config or {}).get("items")
             reps = len(items) if isinstance(items, list) else 1
-            body_llm = sum(
-                1 for _p, b in walk(node.body) if b.kind in (NodeKind.STAGE, NodeKind.INFER)
-            )
+            body_llm = sum(1 for _p, b in walk(node.body) if b.kind in model_call)
             llm_calls += body_llm * (max(reps, 1) - 1)
     return {"nodes": nodes, "llm_calls": llm_calls, "actions": actions}
