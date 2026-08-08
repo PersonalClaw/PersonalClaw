@@ -638,6 +638,14 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # context_adapters gates writing adapter files into opted-in project workspaces.
     "legibility.discover_tips": {"type": "bool"},
     "legibility.context_adapters": {"type": "bool"},
+    # Ambient surfaces (AMBIENT-SURFACES) — the composable home + generative-UI +
+    # surface-layer + tray knobs. surfaces_max_layer is the safe-mode ceiling.
+    "ambient.tiles_enabled": {"type": "bool"},
+    "ambient.max_tiles": {"type": "int", "min": 1, "max": 48},
+    "ambient.default_refresh_ttl_secs": {"type": "int", "min": 30, "max": 86400},
+    "ambient.genui_enabled": {"type": "bool"},
+    "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
+    "ambient.tray_enabled": {"type": "bool"},
 }
 
 

@@ -687,6 +687,26 @@ async def start_dashboard(
     app.router.add_get("/api/models/health", handlers.api_models_health)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
+    # Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1). Literal /views first,
+    # then the {view_id} routes + tile sub-routes; tiles/resolve is registered before
+    # the bare {view_id} tiles POST so the more-specific literal wins. Presets are
+    # read-only (PUT/DELETE on a preset → 403).
+    from personalclaw.dashboard.handlers.views import (
+        api_dashboard_view_detail,
+        api_dashboard_view_tile_resolve,
+        api_dashboard_view_tiles,
+        api_dashboard_views,
+    )
+
+    app.router.add_get("/api/dashboard/views", api_dashboard_views)
+    app.router.add_post("/api/dashboard/views", api_dashboard_views)
+    app.router.add_post(
+        "/api/dashboard/views/{view_id}/tiles/resolve", api_dashboard_view_tile_resolve
+    )
+    app.router.add_post("/api/dashboard/views/{view_id}/tiles", api_dashboard_view_tiles)
+    app.router.add_get("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
+    app.router.add_put("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
+    app.router.add_delete("/api/dashboard/views/{view_id}", api_dashboard_view_detail)
 
     # MCP servers
     app.router.add_get("/api/mcp", handlers.api_mcp_servers)

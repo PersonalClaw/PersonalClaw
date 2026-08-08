@@ -164,6 +164,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/create-dir` — create a new directory.
 - `GET /api/dashboard/config` — read or write dashboard settings.
 - `PUT /api/dashboard/config` — read or write dashboard settings.
+- `GET /api/dashboard/views` — every view (locked presets first, then user views).
+- `POST /api/dashboard/views` — every view (locked presets first, then user views).
+- `DELETE /api/dashboard/views/{view_id}` — read, edit, or delete a view.
+- `GET /api/dashboard/views/{view_id}` — read, edit, or delete a view.
+- `PUT /api/dashboard/views/{view_id}` — read, edit, or delete a view.
+- `POST /api/dashboard/views/{view_id}/tiles` — {slug, size?} — pin an artifact tile.
+- `POST /api/dashboard/views/{view_id}/tiles/resolve` — {ref, keep} — accept/dismiss/unpin.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.

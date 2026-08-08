@@ -5,6 +5,7 @@ import {
   MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
+import { PinnedTiles } from './PinnedTiles'
 import { HeroPulse } from './widgets/HeroPulse'
 import { ActionCenter } from './widgets/ActionCenter'
 import { ActiveWork } from './widgets/ActiveWork'
@@ -65,6 +66,12 @@ export function DashboardPage(route: RouteProps) {
             {/* Live signal strip — the header's Hero Pulse, relocated below the
                 launcher when even the minimized header row won't fit (< lg). */}
             <div className="min-h-9 lg:hidden"><HeroPulse {...route} /></div>
+
+            {/* Pinned tiles band (AMBIENT-SURFACES §1) — the ADDITIVE half of the
+                dashboard-as-views registry. Renders the Overview view's artifact
+                tiles only; an empty registry renders NOTHING, so a fresh install is
+                byte-identical to today's fixed layout below. */}
+            <PinnedTiles />
 
             {/* Prime signal: what needs you + what's running, side by side on wide
                 screens, stacked on narrow. Bare sections, hairline-labelled. */}
