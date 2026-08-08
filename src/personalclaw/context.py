@@ -164,18 +164,42 @@ _EPISODIC_MEMORY_CAP = 12_000  # relevant past conversation fragments (vector me
 _PER_MESSAGE_CAP = 8_000  # truncate individual messages on fallback path
 
 
+def _self_model_snapshot(svc) -> str:
+    """The compact self-model block for the §2.4 allocator's ``self_model`` slot, or "".
+
+    S72/S80 left this slot with a mapped kind but NO live producer — nothing persisted
+    ``user.selfmodel.*`` (WF2LEA-8 built the observer that now does). This is that producer: it
+    reads the live entries the observer/accept-installer wrote and renders them through S72's own
+    ``snapshot`` (retrospections excluded, theories flagged unproven, bounded to
+    ``SNAPSHOT_MAX_CHARS``, whole entries dropped never cut). Reader and writer share
+    ``load_live_entries`` so the injected snapshot and the promotion planner cannot disagree about
+    what the self-model holds. Never raises — a self-model read failing must not cost the turn.
+    """
+    if svc is None or not getattr(svc, "has_vector", False):
+        return ""
+    try:
+        from personalclaw.learning.self_model import snapshot
+        from personalclaw.learning.self_model_observer import load_live_entries
+
+        return snapshot(load_live_entries(svc))
+    except Exception:
+        logger.debug("self-model snapshot failed", exc_info=True)
+        return ""
+
+
 def _render_ambient(
     *,
     lessons: str = "",
     skill_index: str = "",
     voice: str = "",
     persona: str = "",
+    self_model: str = "",
     query: str = "",
 ) -> str:
     """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
 
-    Replaces the per-block character caps that governed these four independently.
-    Those caps summed to ~36,750 tokens against the 4,000 that
+    Replaces the per-block character caps that governed these independently. Those
+    caps summed to ~36,750 tokens against the 4,000 that
     ``learning.context_budget_tokens`` declares, and nothing checked the total — so
     the config knob's promise ("only retrieved context is ever trimmed") was kept by
     no code at all.
@@ -189,7 +213,7 @@ def _render_ambient(
     would be strictly worse than an over-long prompt, so the fallback is the raw
     lesson block — the most authoritative content, ungoverned rather than absent.
     """
-    if not any((lessons, skill_index, voice, persona)):
+    if not any((lessons, skill_index, voice, persona, self_model)):
         return ""
     try:
         from personalclaw.config.loader import AppConfig
@@ -202,6 +226,7 @@ def _render_ambient(
             skill_index=skill_index,
             voice=voice,
             persona=persona,
+            self_model=self_model,
             query=query,
             budget_tokens=budget,
             window=active_chat_model_window(),
@@ -936,6 +961,7 @@ class ContextBuilder:
         _persona = ""
         _voice = ""
         _skill_index = ""
+        _self_model = ""
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
@@ -979,6 +1005,13 @@ class ContextBuilder:
             except Exception:
                 logger.debug("preference profile block render failed", exc_info=True)
 
+            # Self-model snapshot (§2.6 — WF2LEA-8): the compact block of observed working
+            # principles/theories/focus, for the allocator's `self_model` slot that S72/S80 mapped
+            # but left producerless. Gated by the same knob the observer writes under — off means
+            # the subsystem is silent on both the read and the write side.
+            if getattr(AppConfig.load().learning, "self_model_enabled", True):
+                _self_model = _self_model_snapshot(_svc)
+
         # Skills: personalclaw-only (custom agents load their own). Pass the agent
         # so its agent-local skill tier (skill-agent-local-tier) overrides global
         # for this turn when present.
@@ -1020,6 +1053,7 @@ class ContextBuilder:
             skill_index=_skill_index,
             voice=_voice,
             persona=_persona,
+            self_model=_self_model,
         )
         if _ambient:
             parts.append(_ambient)
