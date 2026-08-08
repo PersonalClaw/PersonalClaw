@@ -111,9 +111,13 @@ class Metrics:
     reconnect_loss_count: int = 0
     latency_p50: dict[str, float] = field(default_factory=dict)
     latency_p95: dict[str, float] = field(default_factory=dict)
+    #: The terminal state the workflow event-fold law reconstructs (WF2-R11), present only
+    #: for a scenario carrying a workflow SSE projection. ``None`` for a non-workflow trace,
+    #: so existing (loop/inbox) baselines are untouched. See :func:`fold_workflow`.
+    fold: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "event_count": self.event_count,
             "distinct_keys": self.distinct_keys,
             "duplicate_event_rate": round(self.duplicate_event_rate, 6),
@@ -123,6 +127,9 @@ class Metrics:
             "latency_p50": {k: round(v, 4) for k, v in sorted(self.latency_p50.items())},
             "latency_p95": {k: round(v, 4) for k, v in sorted(self.latency_p95.items())},
         }
+        if self.fold is not None:
+            d["fold"] = self.fold
+        return d
 
 
 def compute_metrics(events: list[TraceEvent]) -> Metrics:
@@ -175,8 +182,181 @@ def compute_metrics(events: list[TraceEvent]) -> Metrics:
 
 
 def metrics_for_scenario(trace_dir: str | Path) -> Metrics:
-    """Convenience: load a scenario dir and compute its metrics."""
-    return compute_metrics(load_scenario(trace_dir))
+    """Convenience: load a scenario dir and compute its metrics.
+
+    When the scenario carries a workflow journal→SSE projection (events on a ``workflow:``
+    key), the terminal state of the event-fold law (:func:`fold_workflow`) is attached as
+    ``Metrics.fold`` so a baseline can pin the invariant — a format change that breaks the
+    fold changes this dict and trips the baseline compare (SV-5, Success Criterion #4).
+    """
+    events = load_scenario(trace_dir)
+    m = compute_metrics(events)
+    wf = [e for e in events if e.stream == "sse" and e.key.startswith("workflow:")]
+    if wf:
+        m.fold = fold_workflow(wf)
+    return m
+
+
+# ── workflow journal → SSE projection fold (§2.1 / §2.3, WF2-R11) ─────────────
+#
+# The Python mirror of ``web/src/pages/workflows/workflowFold.ts``. The FOLD LAW: folding a
+# run's SSE events over its (empty, for a from-start recording) snapshot reconstructs exactly
+# the state the server would report. This is the invariant SV-5 gates: a change to the
+# journal→projection event format that breaks the law changes the terminal fold, so the
+# checked-in baseline (:mod:`harness.baselines`) stops matching and the compare FAILS.
+#
+# Three guards make the law survive rewind + reconnect — the same three the TS fold enforces:
+#   1. dedup by deterministic ``event_id`` (a reconnect re-delivers events);
+#   2. epoch supersede-drop (an in-flight event from a rewound epoch must not resurrect state);
+#   3. node-keyed patches with a per-node ``seq`` floor (out-of-order delivery must not regress
+#      a node from done back to running).
+
+_TERMINAL_NODE = frozenset(
+    {
+        "done",
+        "degraded",
+        "failed",
+        "skipped",
+        "no_change",
+        "scope_violation",
+        "discarded",
+        "escalated",
+        "blocked",
+        "cancelled",
+    }
+)
+_TERMINAL_RUN = frozenset({"complete", "failed", "cancelled", "escalated"})
+_COALESCING_UNWRAP = "workflow_batch"
+
+
+def _batch_members(payload: Any) -> list[tuple[str, Any]]:
+    """Unwrap a ``workflow_batch`` frame into its ordered ``(event, payload)`` members.
+
+    Mirrors the FE ``unwrapBatch``: coalescing is a transport optimization, so a batch must
+    fold to the exact same sequence the members would have produced unbatched. A malformed
+    member is dropped rather than folded as an unknown event.
+    """
+    raw = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return []
+    out: list[tuple[str, Any]] = []
+    for m in raw:
+        if isinstance(m, dict) and isinstance(m.get("event"), str):
+            out.append((m["event"], m.get("payload")))
+    return out
+
+
+@dataclass
+class _WfState:
+    """The folded view-model — the Python analogue of ``WorkflowViewModel``. Only the fields
+    the fold law pins are kept; the terminal state serializes to :meth:`snapshot`."""
+
+    run_id: str = ""
+    status: str = ""
+    nodes: dict[str, str] = field(default_factory=dict)  # instance_path -> state
+    node_ids: dict[str, str] = field(default_factory=dict)  # instance_path -> node_id
+    epoch: int = 0
+    seen: set[str] = field(default_factory=set)
+    node_seq: dict[str, int] = field(default_factory=dict)
+    dropped: int = 0
+
+    def snapshot(self) -> dict[str, Any]:
+        done = sum(1 for st in self.nodes.values() if st in _TERMINAL_NODE)
+        total = len(self.nodes)
+        return {
+            "status": self.status,
+            "nodes": dict(sorted(self.nodes.items())),
+            "done": done,
+            "total": total,
+            "progress": round(done / total, 4) if total else 0.0,
+            "epoch": self.epoch,
+            "dropped": self.dropped,
+            "live": self.status not in _TERMINAL_RUN,
+        }
+
+
+def _apply_wf_event(vm: _WfState, event: str, payload: Any) -> None:
+    """Fold ONE workflow event into ``vm`` in place. Applies the three guards, then patches."""
+    env = payload if isinstance(payload, dict) else {}
+
+    if event == _COALESCING_UNWRAP:
+        for sub_event, sub_payload in _batch_members(env):
+            _apply_wf_event(vm, sub_event, sub_payload)
+        return
+
+    # Guard 1 — an event for a different run is not ours (a shared-hub bug would be silent).
+    run_id = env.get("run_id")
+    if run_id and vm.run_id and run_id != vm.run_id:
+        vm.dropped += 1
+        return
+    if run_id and not vm.run_id:
+        vm.run_id = str(run_id)
+
+    # Guard 2 — dedup by deterministic id (a reconnect replay re-delivers events).
+    event_id = env.get("event_id")
+    if event_id and event_id in vm.seen:
+        vm.dropped += 1
+        return
+
+    # Guard 3 — epoch supersede-drop (an event from a rewound epoch must not resurrect state).
+    epoch = env.get("epoch")
+    epoch_i = epoch if isinstance(epoch, int) else vm.epoch
+    if epoch_i < vm.epoch:
+        vm.dropped += 1
+        return
+
+    if event_id:
+        vm.seen.add(str(event_id))
+    vm.epoch = max(vm.epoch, epoch_i)
+
+    if event in ("workflow_node_started", "workflow_node_done", "workflow_gate_resolved"):
+        default_state = "running" if event == "workflow_node_started" else "done"
+        _patch_node(vm, env, default_state)
+    elif event == "workflow_run_update":
+        status = env.get("status")
+        if isinstance(status, str):
+            vm.status = status
+    elif event == "workflow_progress":
+        incoming = env.get("nodes")
+        if isinstance(incoming, list):
+            for n in incoming:
+                if isinstance(n, dict) and isinstance(n.get("instance_path"), str):
+                    vm.nodes[n["instance_path"]] = str(n.get("state", ""))
+    # needs_input/attention/spec_updated/forked/mutation_rejected + task-projection events do
+    # not move node/run terminal state, so they are no-ops for the fold-law snapshot.
+
+
+def _patch_node(vm: _WfState, env: dict[str, Any], default_state: str) -> None:
+    """Patch ONE node by instance path, enforcing the per-node seq floor (guard 3, node half)."""
+    path = env.get("instance_path")
+    if not isinstance(path, str) or not path:
+        return
+    seq = env.get("seq")
+    if isinstance(seq, int):
+        applied = vm.node_seq.get(path)
+        if applied is not None and seq < applied:
+            vm.dropped += 1
+            return
+        vm.node_seq[path] = seq
+    status = env.get("status")
+    state = status if isinstance(status, str) and status else default_state
+    vm.nodes[path] = state
+    node_id = env.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        vm.node_ids[path] = node_id
+
+
+def fold_workflow(events: list[TraceEvent]) -> dict[str, Any]:
+    """Fold a workflow SSE projection trace into its terminal state (the fold-law subject).
+
+    ``events`` are the trace's ``sse`` events on a ``workflow:<run_id>`` key, in recorded
+    (time) order. Deterministic and pure — no wall-clock, no randomness — so the terminal
+    dict is a stable baseline value. Returns the :meth:`_WfState.snapshot` dict.
+    """
+    vm = _WfState()
+    for e in events:
+        _apply_wf_event(vm, e.type, e.payload)
+    return vm.snapshot()
 
 
 # ── MCP record/replay-as-fake-server (§2.1 rider) ────────────────────────────
