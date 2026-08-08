@@ -32,6 +32,7 @@ import { RunPhaseTrail } from './RunPhaseTrail'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { belongsToLoop } from '../workflows/containerKey'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
@@ -234,7 +235,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // under (loops.manager.session_key) — NO 'dashboard:' prefix. The old value
   // had one, so worker events never matched and the live activity stream was
   // always empty.
-  const workerKey = `loop-${id}`
+  //
+  // Matched via `belongsToLoop` rather than a raw `===`, which is the R10c
+  // coexistence fix: once a loop runs as a workflow template its worker streams
+  // under a run-scoped colon key (`run:<id>` / `workflow:run:<id>`), and a strict
+  // equality against `loop-<id>` matches none of them — the SILENT event-drop this
+  // closes. The helper still matches the legacy `loop-<id>` worker key exactly.
 
   // Initial load + a SLOW fallback poll. Live updates ride the per-loop SSE
   // (useLoopStream below) per the realtime doctrine; the slow poll only
@@ -342,7 +348,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   }, [confirmStop])
 
   const onWs = useCallback((m: WsMessage) => {
-    if (m.data?.session !== workerKey) return
+    if (!belongsToLoop(m.data?.session as string | undefined, id)) return
     if (m.type === 'chat_status') { const s = String(m.data.status ?? ''); setStatusText(s); setActivity((a) => [...a, { kind: 'status', label: s }].slice(-40)) }
     else if (m.type === 'tool_call') setActivity((a) => [...a, { kind: 'tool', label: String(m.data.tool ?? 'tool'), detail: String(m.data.purpose ?? m.data.input_preview ?? '') }].slice(-40))
     // The runner broadcasts turn milestones (session created, context injected,
@@ -356,7 +362,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         setActivity((a) => [...a, { kind: 'status', label: text }].slice(-40))
       }
     }
-  }, [workerKey])
+  }, [id])
   useChatSocket(onWs)
 
   if (!c) {

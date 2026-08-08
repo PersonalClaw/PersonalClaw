@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Play, Trash2, Workflow } from 'lucide-react'
+import { Play, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { EmptyState, ListRow, Loading } from '../../ui/ListScaffold'
 import { SearchField } from '../../ui/SearchField'
@@ -7,10 +7,11 @@ import { Segmented } from '../../ui/Segmented'
 import { QuietButton } from '../../ui/QuietButton'
 import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { confirmDelete, promptForm } from '../../ui/dialog'
+import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
 import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
+import { suggestTemplate } from './templateSuggest'
 import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
 
 const TABS = [
@@ -124,6 +125,33 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     }
   }, [navigate])
 
+  // "Start from template" (LOOPS-EVOLUTION criterion 11): a user who knows what they want to
+  // DO ("fix a bug", "research a topic") should not have to already know that a coding job is
+  // called `code-implementation` and a research one `deep-research`. Ask for the intent in
+  // plain language, resolve it to a shipped template through the same alias table the cockpit
+  // uses, then fall into the ordinary `start` flow for that template's inputs. Falls back to
+  // the browse list — never a wrong workflow — when nothing matches, because starting a run the
+  // user did not choose is worse than starting none.
+  const startFromTemplate = useCallback(async () => {
+    const intent = await promptInput({
+      title: 'Start from template',
+      label: 'What do you want to do?',
+      placeholder: 'e.g. fix the login bug, or research vector databases',
+      required: true,
+    })
+    if (!intent) return
+    const template = suggestTemplate(intent, defs.map((d) => d.name))
+    if (!template) {
+      // No confident match. Filtering the list by the intent is more honest than guessing a
+      // template — it puts the user one glance from choosing, without starting the wrong thing.
+      setTab('defs')
+      setQ(intent)
+      notify('No single template matched — showing the closest ones to pick from.')
+      return
+    }
+    await start(template)
+  }, [defs, setTab, setQ, start])
+
   const remove = useCallback(async (name: string) => {
     const ok = await confirmDelete('workflow definition', name, {
       body: 'Existing runs keep their own copy of the spec and are unaffected.',
@@ -174,6 +202,9 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
           )}
         </div>}
         right={<div className="flex items-center gap-s">
+          <QuietButton onClick={startFromTemplate} title="Describe what you want to do; we'll pick the template">
+            <Sparkles size={13} /> Start from template
+          </QuietButton>
           <SearchField value={q} onChange={setQ} placeholder="Search runs and definitions" size="md" />
           <Segmented options={TABS} value={tab} onChange={setTab} ariaLabel="Workflows view" />
         </div>}

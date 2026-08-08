@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { KIND_TO_TEMPLATE, baseContainer, keysEquivalent, templateForKind } from './containerKey'
+import { KIND_TO_TEMPLATE, baseContainer, belongsToLoop, keysEquivalent, templateForKind } from './containerKey'
 
 describe('stream-key equivalence', () => {
   it('treats a loop key and a run key for the same id as the same container', () => {
@@ -41,6 +41,41 @@ describe('stream-key equivalence', () => {
   it('is reflexive and symmetric', () => {
     expect(keysEquivalent('loop:abc', 'loop:abc')).toBe(true)
     expect(keysEquivalent('run:abc', 'loop:abc')).toBe(keysEquivalent('loop:abc', 'run:abc'))
+  })
+})
+
+describe('belongsToLoop — cockpit live-follow (R10c)', () => {
+  it('matches the legacy hyphen worker key exactly', () => {
+    expect(belongsToLoop('loop-abc', 'abc')).toBe(true)
+  })
+
+  it('matches a task-scoped sub-worker of the same loop', () => {
+    // The code cockpit fans out `loop-<id>-<taskid>` parallel workers; each is still this
+    // loop's activity.
+    expect(belongsToLoop('loop-abc-task7', 'abc')).toBe(true)
+  })
+
+  it('matches a coexistence run-scoped key for the same container', () => {
+    // The whole point of R10c: once a loop runs as a template its worker streams under a
+    // run-scoped colon key, and a raw `===` against `loop-abc` matched none of them.
+    expect(belongsToLoop('run:abc', 'abc')).toBe(true)
+    expect(belongsToLoop('workflow:run:abc', 'abc')).toBe(true)
+    expect(belongsToLoop('loop:abc', 'abc')).toBe(true)
+  })
+
+  it('does not match a different loop, even one whose id shares this prefix', () => {
+    // `loop-abcx` is NOT `loop-abc`; a bare prefix test would wrongly accept it.
+    expect(belongsToLoop('loop-xyz', 'abc')).toBe(false)
+    expect(belongsToLoop('loop-abcx', 'abc')).toBe(false)
+    expect(belongsToLoop('run:xyz', 'abc')).toBe(false)
+  })
+
+  it('never matches on an empty key or loop id', () => {
+    // A blank matching would route every unkeyed event to every open cockpit.
+    expect(belongsToLoop('', 'abc')).toBe(false)
+    expect(belongsToLoop('loop-abc', '')).toBe(false)
+    expect(belongsToLoop(null, 'abc')).toBe(false)
+    expect(belongsToLoop('loop-abc', undefined)).toBe(false)
   })
 })
 

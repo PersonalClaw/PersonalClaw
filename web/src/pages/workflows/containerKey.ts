@@ -40,6 +40,47 @@ export function keysEquivalent(
   return a === b
 }
 
+/** The legacy hyphen prefix a loop's worker session carries: `loop-<id>` (and
+ *  `loop-<id>-<subtask>` for a parallel task worker). Distinct from the colon
+ *  container namespace above — the WS activity stream keys on this, the SSE hubs on
+ *  the colon form. */
+const WORKER_PREFIX = 'loop-'
+
+/** Does this worker/stream session key belong to the loop cockpit for `loopId`? (R10c)
+ *
+ *  The cockpit follows a running loop over TWO channels: the per-loop SSE (already
+ *  loop-scoped server-side) and the shared activity WS, whose events carry a `session`
+ *  key the cockpit must match. That match used a raw `===` against `loop-<id>`, which
+ *  is the exact silent-drop bug this closes for coexistence: once a legacy loop can run
+ *  as a template, its worker streams under a run-scoped key (`run:<id>` /
+ *  `workflow:run:<id>`), and `===` against `loop-<id>` matches none of them — the
+ *  stream connects, the cockpit renders, nothing updates, no error anywhere.
+ *
+ *  Two namespaces, so two cases:
+ *   • the LEGACY hyphen worker key `loop-<id>`, and `loop-<id>-<taskid>` for the parallel
+ *     task workers the code cockpit fans out — matched by prefix so those keep working
+ *     byte-for-byte;
+ *   • a coexistence COLON key (`loop:<id>`, `run:<id>`, `workflow:run:<id>`), matched
+ *     through `keysEquivalent` so a template-run event lands on the loop it drives.
+ *
+ *  An empty loop id or key is never a match — the same rule `keysEquivalent` holds, for
+ *  the same reason: a blank matching would route every unkeyed event to every cockpit. */
+export function belongsToLoop(
+  sessionKey: string | null | undefined,
+  loopId: string | null | undefined,
+): boolean {
+  const id = (loopId ?? '').trim()
+  const raw = (sessionKey ?? '').trim()
+  if (!id || !raw) return false
+  if (raw.startsWith(WORKER_PREFIX)) {
+    const rest = raw.slice(WORKER_PREFIX.length)
+    // Exact worker OR a task-scoped sub-worker (`loop-<id>-<taskid>`). A bare prefix test
+    // would also match `loop-<id>x`, a different loop whose id shares this one's prefix.
+    return rest === id || rest.startsWith(`${id}-`)
+  }
+  return keysEquivalent(raw, `loop:${id}`)
+}
+
 /** Legacy loop kind → the template that replaces it.
  *
  *  Mirrors `KIND_TO_TEMPLATE` in `workflows/loop_aliases.py`, and a test asserts the two
