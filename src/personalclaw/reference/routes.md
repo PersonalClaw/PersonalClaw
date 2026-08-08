@@ -43,6 +43,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/apps/local-sources` — remove a local app-source dir.
 - `GET /api/apps/local-sources` — the configured local app-source directories.
 - `POST /api/apps/local-sources` — add a local app-source dir ``{path}`` (a
+- `GET /api/apps/message` — drain THIS app's inbox (read-once).
+- `POST /api/apps/message` — send a typed message ``{to, type, payload}`` to
 - `DELETE /api/apps/sources` — remove a user git source URL.
 - `GET /api/apps/sources` — the configured git source URLs (defaults + user).
 - `POST /api/apps/sources` — add a user git source URL ``{url}``.

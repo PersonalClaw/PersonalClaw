@@ -78,6 +78,17 @@ class PermissionChecker:
     def can_use_mcp_tool(self, tool_name: str) -> bool:
         return _matches_any(tool_name, self.permissions.mcpTools)
 
+    # -- app-to-app messaging (APE-9) ------------------------------------
+    def can_use_app_messaging(self, target_app: str) -> bool:
+        """Whether this app may send a brokered message TO ``target_app``.
+
+        Deny-by-default: an app that declares no ``appMessaging`` scope can message
+        NO app. A declared entry is an exact target name or a trailing-``*`` prefix
+        (``_matches_any``), mirroring ``can_use_mcp_tool``. The gateway broker
+        (``POST /api/apps/message``) is the only app-to-app path, so this is the sole
+        gate on the sender→target edge; an undeclared pair is refused there."""
+        return _matches_any(target_app, self.permissions.appMessaging)
+
     # -- coarse capability flags -----------------------------------------
     def can_use_memory(self, scope: str = "app-scoped") -> bool:
         """``memory:""`` → no memory; ``app-scoped`` → only app-scoped; ``shared``
