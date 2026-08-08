@@ -514,6 +514,10 @@ async def dispatch_stage(
         # so the spawn's own audit + session plumbing attributes it to the run rather than to
         # whatever chat happened to start it.
         parent_session_key=ownership.owned_key(run_id, node.id or "node"),
+        # Scope the run-level concurrency lane, breaker and budget to the RUN
+        # (`workflow:<run_id>`), so every node of one run shares one fan-out lane and
+        # a wide run cannot starve other runs (WF2WOR-8 C1.4/C1.5).
+        parent_run=(f"{ownership.OWNED_PREFIX}{run_id}" if run_id else ""),
         agent=str(cfg.get("agent", "") or ""),
         max_turns=int(cfg.get("max_turns", 0) or 0),
         cwd=cwd,

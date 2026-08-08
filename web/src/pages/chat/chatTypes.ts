@@ -135,6 +135,8 @@ export interface SubagentCard {
   error?: string | null
   elapsed?: number       // seconds (on done)
   result?: string        // accumulated/final output (on done)
+  costUsd?: number       // per-child cost in USD (on done, WF2WOR-8 C1.5)
+  tokens?: number        // per-child total tokens (on done)
 }
 
 // ── activity-panel derivation (Index / Files / Links) — all client-side from turns ──

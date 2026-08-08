@@ -144,6 +144,7 @@ def _register_upload_routes(app: web.Application) -> None:
 def _register_mcp_routes(app: web.Application) -> None:
     """Register API routes used by MCP tools (spawn, lessons, crons, etc.)."""
     app.router.add_post("/api/spawn", handlers.api_spawn)
+    app.router.add_post("/api/spawn/cancel-fanout", handlers.api_spawn_cancel_fanout)
     app.router.add_get("/api/spawn", handlers.api_spawn_list)
     app.router.add_get("/api/spawn/{agent_id}", handlers.api_spawn_status)
     app.router.add_delete("/api/spawn/{agent_id}", handlers.api_spawn_delete)

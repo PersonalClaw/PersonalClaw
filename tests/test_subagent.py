@@ -194,8 +194,9 @@ class TestSpawnWithoutApprovalCallback:
         assert info.error == ""
 
     @pytest.mark.asyncio
-    async def test_spawn_at_capacity_returns_none(self) -> None:
-        """Spawn returns None when max concurrent limit is reached."""
+    async def test_spawn_at_capacity_queues_with_real_id(self) -> None:
+        """At capacity a spawn is QUEUED with a REAL addressable id (C1.2), not a
+        colliding ``q<N>`` placeholder — so it can be polled and cancelled."""
         # need approval callback so spawns actually run
         approval_callback = AsyncMock(return_value=True)
         manager = SubagentManager(
@@ -206,12 +207,16 @@ class TestSpawnWithoutApprovalCallback:
         )
 
         with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
-            first: object = manager.spawn("task one")
-            second: object = manager.spawn("task two")
+            first = manager.spawn("task one")
+            second = manager.spawn("task two")
 
         assert first is not None
         assert second is not None  # queued, not rejected
-        assert second.id.startswith("q")  # queued ID prefix
+        assert second.queued is True
+        assert not second.id.startswith("q")  # real id, not a placeholder
+        assert second.id != first.id  # ids never collide
+        # the queued spawn is addressable via get()
+        assert manager.get(second.id) is second
 
 
 class TestSpawnWithApprovalCallback:
@@ -259,7 +264,7 @@ class TestSpawnWithApprovalCallback:
         assert info.done is True
         assert info.error == "spawn rejected"
         assert info.result == ""
-        on_done_callback.assert_awaited_once_with(info)
+        on_done_callback.assert_awaited_once_with([info])  # batch contract (C1.1)
 
     @pytest.mark.asyncio
     async def test_rejected_spawn_decrements_running_count(self) -> None:
@@ -505,11 +510,12 @@ class TestSubagentReaper:
 
         with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as mock_sel:
             await manager._force_reap("dead0001", info, _TIMEOUT_SECS + 120)
+            await manager.flush_deliveries()  # delivery is coalesced (C1.1)
 
         assert info.done is True
         assert "Reaped" in info.error
         assert manager._running_count == 0
-        on_done.assert_awaited_once_with(info)
+        on_done.assert_awaited_once_with([info])  # batch contract (C1.1)
         # subagent_done WS event must fire BEFORE on_done (stream_and_collect)
         assert call_order == ["fire_event_done", "on_done"]
         mock_sel().log_tool_invocation.assert_called_once_with(
@@ -855,6 +861,7 @@ class TestFireEvent:
             info = manager.spawn("event test")
             assert info is not None
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # delivery is coalesced (C1.1)
 
         assert "subagent_spawn" in events
         assert "subagent_done" in events
@@ -969,6 +976,7 @@ class TestOnDoneTimeout:
             info = manager.spawn("timeout test", parent_session_key="dashboard:test-session")
             assert info is not None
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
             # Give ensure_future a tick to run
             await asyncio.sleep(0.05)
 
@@ -1006,6 +1014,7 @@ class TestOnDoneTimeout:
             info = manager.spawn("path test", parent_session_key="dashboard:session-x")
             assert info is not None
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
             await asyncio.sleep(0.05)
 
         assert "failure_msg" in captured_extra
@@ -1049,6 +1058,7 @@ class TestOnDoneTimeout:
             patch("personalclaw.subagent._ON_DONE_TIMEOUT", 0.1),
         ):
             await manager._force_reap("hang0002", info, _TIMEOUT_SECS + 60)
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
 
         assert info.done is True
         assert info.reaped is True
@@ -1104,25 +1114,35 @@ class TestOnDoneTimeout:
             info = manager.spawn("fast task")
             assert info is not None
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
 
         assert info.done is True
-        on_done.assert_awaited_once_with(info)
+        on_done.assert_awaited_once_with([info])  # batch contract (C1.1)
 
     @pytest.mark.asyncio
-    async def test_injection_timeout_resets_parent_session(self) -> None:
-        """When _on_done times out, the parent session must be reset (killed)
-        so the next agent's injection gets a clean personalclaw-cli process."""
+    async def test_injection_timeout_PRESERVES_parent_session(self) -> None:
+        """C1.1 REGRESSION: a delivery-timeout must NOT reset the parent session —
+        resetting wiped the orchestrator's context (the whole conversation that
+        asked for the work). The failure is surfaced via notify_injection_failed
+        instead, and the parent session is left intact.
+        """
         from personalclaw.subagent import SubagentInfo
 
-        async def hanging_on_done(info: SubagentInfo) -> None:
+        async def hanging_on_done(batch: list[SubagentInfo]) -> None:
             await asyncio.sleep(999)
 
         sessions = _mock_sessions()
+        failed_events: list[str] = []
+
+        async def track_event(etype: str, info: object, extra: dict) -> None:
+            if etype == "subagent_injection_failed":
+                failed_events.append(etype)
+
         manager = SubagentManager(
             sessions=sessions,
             ctx_builder=_mock_ctx_builder(),
             on_done=hanging_on_done,
-            on_event=AsyncMock(),
+            on_event=track_event,
             is_yolo=lambda: True,
         )
 
@@ -1134,9 +1154,13 @@ class TestOnDoneTimeout:
             info = manager.spawn("timeout reset test", parent_session_key="dashboard:session-1")
             assert info is not None
             await manager._tasks[info.id]
+            await manager.flush_deliveries()
             await asyncio.sleep(0.05)
 
-        sessions.reset.assert_any_await("dashboard:session-1")
+        # The parent session is PRESERVED — its context is not wiped.
+        assert "dashboard:session-1" not in [c.args[0] for c in sessions.reset.await_args_list]
+        # The failure is surfaced instead.
+        assert "subagent_injection_failed" in failed_events
 
 
 class TestTimeoutContext:
