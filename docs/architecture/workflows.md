@@ -144,13 +144,14 @@ rather than assumed.
 
 ## Node kinds
 
-Twelve, and no more. Every orchestration pattern is a *composition*:
+Thirteen, and no more. Every orchestration pattern is a *composition*:
 
 | Kind | Notes |
 |---|---|
 | `sequence` `parallel` `foreach` `loop` | containers; DAG shapes come from per-child `needs` |
 | `stage` | one subagent execution — tools, session, can spawn |
 | `infer` | exactly ONE bounded model call — no tools, no session |
+| `visualize` | ONE bounded reasoning-axis call → a genui widget spec — no tools (agency-free) |
 | `branch` | conditional dispatch on a binding |
 | `transform` | zero-token pure data reshaping |
 | `action` | zero-token action-provider dispatch |

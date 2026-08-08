@@ -56,6 +56,7 @@ class NodeKind(str, Enum):
     BRANCH = "branch"  # conditional dispatch on a binding
     TRANSFORM = "transform"  # zero-token pure data reshaping
     ACTION = "action"  # zero-token action-provider dispatch
+    VISUALIZE = "visualize"  # ONE bounded model call → a genui widget spec, no tools
     WAIT = "wait"
     GATE = "gate"
     SUBWORKFLOW = "subworkflow"
@@ -66,7 +67,11 @@ CONTAINER_KINDS = frozenset(
     {NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH, NodeKind.LOOP, NodeKind.BRANCH}
 )
 
-#: Kinds that consume model tokens — the only ones a `model_tier` means anything on.
+#: Kinds that consume model tokens AND take an author-tunable `model_tier`. `visualize`
+#: is deliberately NOT here: it makes a model call but is pinned to the reasoning axis
+#: (AMBIENT-SURFACES §5.3), so a `model_tier` would mean nothing on it — and the
+#: validator's `prompt` requirement keys off this set, which `visualize` (data+hint, no
+#: prompt) must not trip.
 LLM_KINDS = frozenset({NodeKind.STAGE, NodeKind.INFER})
 
 #: Executor lanes (WF2-R21). Derived from kind, never author-declared: a foreach over
@@ -77,7 +82,10 @@ LANE_COMPUTE = "compute"
 
 
 def lane_for(kind: NodeKind) -> str:
-    if kind in LLM_KINDS:
+    # `visualize` shares the LLM lane: it makes a blocking model call, so scheduling it
+    # on the compute lane would head-of-line-block zero-token reshaping behind a network
+    # round-trip — the exact inversion WF2-R21's lanes exist to prevent.
+    if kind in LLM_KINDS or kind is NodeKind.VISUALIZE:
         return LANE_LLM
     if kind in (NodeKind.ACTION, NodeKind.SUBWORKFLOW):
         return LANE_IO
