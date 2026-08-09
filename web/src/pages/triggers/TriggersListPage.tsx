@@ -17,7 +17,7 @@ import { api, type ScheduleJob, type HookItem, type ActionProvider, type Trigger
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, type Trigger, type TriggerKind } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, type Trigger } from './triggerMeta'
 import { statusMeta, triggerHealthMeta } from '../schedule/scheduleMeta'
 
 const FILTERS: Array<{ key: string; label: string }> = [
@@ -111,7 +111,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
               value: filter,
               defaultKey: 'all',
               onChange: setFilter,
-              options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as TriggerKind] })),
+              options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as keyof typeof counts] })),
             } satisfies FilterSectionDef]} />}
           </ListControls>
         : undefined}

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger } from './triggerMeta'
+import {
+  eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger,
+  EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon, actionIsSendCapable,
+} from './triggerMeta'
 import type { TriggerVariables, Trigger as WireTrigger } from '../../lib/api'
 
 // ── Lifecycle-event dormancy, from the UI's side (S67) ──────────────────────
@@ -145,5 +148,112 @@ describe('storeToTrigger', () => {
     for (const [k, label] of kinds) {
       expect(storeToTrigger(storeRow({ store_kind: k })).whenLabel).toBe(label)
     }
+  })
+})
+
+// ── Data-event pattern metadata (EIAT-5) ────────────────────────────────────
+//
+// The create form shows one matcher field per pattern, chosen by EVENT_PATTERN_META. The invariants
+// that keep the form honest: the table is in lockstep with the backend `event_triggers.EVENT_PATTERNS`
+// tuple (same 6 members), each row's `matcher` names the ONE spec field the backend's `matches()`
+// reads for that pattern (so the form never shows an inert field), and `matcherRequired` mirrors the
+// server's `sender_glob_required` gate so the UI blocks the same empty submit the API would reject.
+
+describe('EVENT_PATTERN_META', () => {
+  it('has exactly one row per backend EVENT_PATTERNS member', () => {
+    // Lockstep with src/personalclaw/event_triggers.py::EVENT_PATTERNS — a drift here means the form
+    // offers a pattern the backend rejects, or hides one it accepts.
+    const patterns = EVENT_PATTERN_META.map((p) => p.pattern).sort()
+    expect(patterns).toEqual(
+      ['ContentMatch', 'InboxAddress', 'InboxMessage', 'InboxSender', 'MemoryKeyPattern', 'MemoryUpdate'],
+    )
+  })
+
+  it('maps each pattern to the source the backend derives, never a free choice', () => {
+    // source is display-only here; the backend derives it from the pattern (PATTERN_SOURCE). The
+    // three Inbox* patterns are inbox; the three Memory*/Content are memory.
+    const bySource = (s: string) => EVENT_PATTERN_META.filter((p) => p.source === s).map((p) => p.pattern).sort()
+    expect(bySource('inbox')).toEqual(['InboxAddress', 'InboxMessage', 'InboxSender'])
+    expect(bySource('memory')).toEqual(['ContentMatch', 'MemoryKeyPattern', 'MemoryUpdate'])
+  })
+
+  it('names a real spec matcher field (or null) for every pattern', () => {
+    // Each `matcher` must be one of the EventTrigger fields matches() reads — or null for the
+    // fire-on-everything patterns. A typo'd field name would post a key the backend ignores.
+    const allowed = new Set(['sender_glob', 'address_glob', 'key_glob', 'content_re', null])
+    for (const p of EVENT_PATTERN_META) expect(allowed.has(p.matcher)).toBe(true)
+    // The two catch-all patterns carry no matcher.
+    expect(eventPatternMeta('InboxMessage').matcher).toBeNull()
+    expect(eventPatternMeta('MemoryUpdate').matcher).toBeNull()
+    // The narrowing patterns each read their one field.
+    expect(eventPatternMeta('InboxSender').matcher).toBe('sender_glob')
+    expect(eventPatternMeta('InboxAddress').matcher).toBe('address_glob')
+    expect(eventPatternMeta('MemoryKeyPattern').matcher).toBe('key_glob')
+    expect(eventPatternMeta('ContentMatch').matcher).toBe('content_re')
+  })
+
+  it('marks only InboxSender as matcher-required, mirroring the server gate', () => {
+    // The backend rejects an empty sender_glob on InboxSender (code sender_glob_required); no other
+    // pattern gates its matcher. The form must block the same submit, not a different set.
+    const required = EVENT_PATTERN_META.filter((p) => p.matcherRequired).map((p) => p.pattern)
+    expect(required).toEqual(['InboxSender'])
+  })
+})
+
+describe('eventPatternMeta', () => {
+  it('resolves a known pattern to its row', () => {
+    expect(eventPatternMeta('InboxSender').label).toBe('Inbox message from a sender')
+  })
+
+  it('falls back to the first row for an unknown/absent pattern rather than crashing', () => {
+    // The URL is the source of truth for the pattern (?pattern=…); a hand-edited or stale value must
+    // degrade to a valid default, never undefined (which would blow up pm.matcher reads in the form).
+    expect(eventPatternMeta('bogus').pattern).toBe('InboxMessage')
+    expect(eventPatternMeta(undefined).pattern).toBe('InboxMessage')
+  })
+})
+
+describe('eventSourceIcon', () => {
+  it('gives distinct icons for inbox vs memory', () => {
+    // Not a value assertion beyond "they differ" — the icons are lucide components; the contract is
+    // that the two sources are visually distinguishable in the option list.
+    expect(eventSourceIcon('inbox')).not.toBe(eventSourceIcon('memory'))
+  })
+
+  it('falls back to the memory icon for an unknown source', () => {
+    expect(eventSourceIcon('whatever')).toBe(eventSourceIcon('memory'))
+  })
+})
+
+// ── actionIsSendCapable (EIAT-5 draft-by-default surfacing) ──────────────────
+//
+// A UI-copy heuristic, NOT a core capability flag (none exists — EIAT-3 owns the real posture in the
+// mail-inbox app). It decides whether to show the draft-by-default reminder next to the action. It
+// must catch the one bundled send provider today and any future `send-*` channel provider, without
+// false-flagging unrelated providers whose names merely contain "send".
+
+describe('actionIsSendCapable', () => {
+  it('flags the bundled send-message provider', () => {
+    expect(actionIsSendCapable('send-message')).toBe(true)
+  })
+
+  it('flags a future send-* channel provider', () => {
+    expect(actionIsSendCapable('send-telegram')).toBe(true)
+  })
+
+  it('does not flag non-sending providers', () => {
+    for (const p of ['bash', 'notify', 'run-prompt', 'create-task', 'webhook', 'run-workflow']) {
+      expect(actionIsSendCapable(p)).toBe(false)
+    }
+  })
+
+  it('does not flag a provider that merely contains "send" mid-name', () => {
+    // The check is a `send-` prefix, not a substring — `resend-digest` is not a send-capable action.
+    expect(actionIsSendCapable('resend-digest')).toBe(false)
+  })
+
+  it('is false for an absent provider', () => {
+    expect(actionIsSendCapable(undefined)).toBe(false)
+    expect(actionIsSendCapable('')).toBe(false)
   })
 })

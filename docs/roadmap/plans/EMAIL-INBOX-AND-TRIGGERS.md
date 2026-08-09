@@ -264,3 +264,37 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
   - **Owner-gated remainder (out of scope):** live-wiring an installed inbox app into the gateway
     (`_init_inbox` hardcodes the filesystem source) and the real-mailbox V2 validation. EIAT-3 (SMTP
     send-reply, draft-by-default) is the next atom in this plan.
+
+- **2026-08-09 — DONE: EIAT-5** (Triggers page inbox-event configuration UI, web/, S3). Core `web/`
+  frontend only (separate PR seam from EIAT-4's apps-repo work); backend was already fully wired by
+  EIAT-1 with no create UI on the page (only chat tools / the raw API).
+  - **T3.2 (create UI):** the Triggers create page (`web/src/pages/triggers/TriggerCreatePage.tsx`)
+    gained a third kind — **Data event** — beside Schedule and Lifecycle. It renders a pattern
+    Combobox over the six wired `event_triggers.EVENT_PATTERNS` members, and per pattern shows exactly
+    the ONE matcher field the backend's `matches()` reads (sender/address/key glob or content regex) —
+    no inert extras — plus a derived source badge (Inbox vs Memory; the source is never sent, mirroring
+    `PATTERN_SOURCE`). `InboxSender` is client-gated matcher-required to match the server's
+    `sender_glob_required` code, so the empty submit is blocked before the round-trip; catch-all
+    patterns (`InboxMessage`/`MemoryUpdate`) render a "fires on everything" note instead of a field.
+  - **URL-backed state:** both the chosen kind and the pattern live in the hash query (`?kind` /
+    `?pattern`, replace-mode) via `useQueryParam`, so the flow is deep-linkable and back/forward-safe.
+  - **Draft-by-default:** a send-capable action surfaces an info note before Create (see DEVIATION).
+  - **API + helpers:** new `api.createEvent` (posts `trigger_type:'event'` + pattern + the one matcher
+    + action; backend derives source); new `triggerMeta` helpers `EVENT_PATTERN_META` (lockstep with
+    the Python tuple), `eventPatternMeta`, `eventSourceIcon`, `actionIsSendCapable`, each unit-tested.
+  - **Primitives/a11y:** built only on Field / TextInput / Combobox / Button / Segmented — no
+    primitive-adoption ratchet trip; focus-visible + reduced-motion inherited from the global rings.
+  - **DEVIATION — "subject/body matcher" → the wired content matcher.** The done_when named a
+    subject/body matcher for inbox events, but the shipped backend has NO subject/body field for the
+    inbox source (inbox matching is sender/address glob only; content matching lives on the memory
+    source via `ContentMatch`/`content_re`). Building a subject/body input would ship an inert control
+    the backend ignores — a no-inert-control violation. Resolution: expose the content matcher where it
+    is actually wired (memory `ContentMatch`) + the two wired inbox globs; an inbox subject/body matcher
+    is a backend feature (new field + `matches()` branch on `event_triggers.py`) that must precede any UI.
+  - **DEVIATION — draft-by-default via a provider heuristic, not a capability flag.** Core has no
+    per-provider send/draft flag today (the real posture is owned by mail-inbox `send_reply`, EIAT-3,
+    still todo). `actionIsSendCapable()` is a documented UI-copy heuristic keyed to `send-message` +
+    future `send-*`; when EIAT-3 lands a real posture the note should read it instead of the name.
+  - **Gate green:** `make lint` (771 files); `npm run typecheck`; `npm test` **887 passed** (incl. the
+    new triggerMeta cases); `npm run build`. Ran under lockfile-pinned deps (`npm ci`) — a stale local
+    `node_modules` (lucide 0.469 vs pinned 1.30) had reded an unrelated chat-icon test; syncing fixed it.
