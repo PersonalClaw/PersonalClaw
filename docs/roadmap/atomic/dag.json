@@ -3639,7 +3639,7 @@
         {
           "id": "FS-6",
           "title": "Re-add a live gated consumer of suppressed_producers() so suppression is enforced again",
-          "status": "todo",
+          "status": "done",
           "scope": "Status line 🔴 REMAINING; Contract C2 suppressed_producers(); Integration points 'workflows/surfacing.py + skills/surfacing.py consult suppressed_producers()'",
           "done_when": "a runtime path withholds a suppressed producer: a producer below retire_threshold with n>=min_n stops surfacing at a live WF2 surfacing gate (or flywheel skill-surfacing eligibility filter), with a test proving suppression prevents surfacing. Today (verified 2026-08-04) no runtime path enforces it because WF2 Phase 1 deleted workflows.surfacing.eligible_workflows, T3.1's only gated consumer.",
           "deps": [
@@ -3649,7 +3649,7 @@
           ]
         }
       ],
-      "summary": "FEEDBACK-SIGNAL decomposed into 6 atoms: FS-1/FS-2/FS-3 shipped (the 3 sessions), FS-5 shipped in AGENT-ROUTING, FS-4 (app fixture) is deferred-by-design todo, and FS-6 is the one live remaining gap — re-wiring the inert suppressed_producers() control into a WF2/flywheel surfacing gate."
+      "summary": "FEEDBACK-SIGNAL: FS-1/FS-2/FS-3 (the 3 sessions) + FS-5 (in AGENT-ROUTING) + FS-6 (suppression re-enforced at the live skill-surfacing gate, PR #928) shipped. FS-4 (app-path validation fixture) is deferred-by-design; its dag flag and FS.md table disagree (a pre-existing drift, not adjudicated here)."
     },
     {
       "plan": "PROVIDER-BOUNDARY-COMPLETION",
@@ -7109,11 +7109,6 @@
         "id": "FM-1",
         "title": "Physics preset system: named springs, gesture helpers, Motion tokens + author guide",
         "plan": "FM"
-      },
-      {
-        "id": "FS-6",
-        "title": "Re-add a live gated consumer of suppressed_producers() so suppression is enforced again",
-        "plan": "FS"
       },
       {
         "id": "HC-1",
