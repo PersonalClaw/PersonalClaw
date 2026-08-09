@@ -221,32 +221,79 @@ class TestThresholds:
 
 
 class TestSurfacingSuppression:
-    """Suppression gating a real consumer.
+    """Suppression gating a real consumer (FS-6).
 
-    This used to drive `workflows.surfacing.eligible_workflows` end to end — the only
-    *gated* consumer Feedback-Signal ever had (its own S3 log records that skills
-    surfacing was deliberately left unwired). WORKFLOWS-V2 Phase 1 deleted that module,
-    so as of now **no runtime path consults `suppressed_producers()`**: the Settings
-    panel reads it for display, and `check_retire_candidates` proposes retirement, but
-    nothing is actually withheld.
-
-    That is an honest capability gap, not a silent one. The threshold machinery below
-    stays fully covered, and WORKFLOWS-V2 Slice 6 (workflow surfacing in chat) or the
-    Learning-Flywheel skill work is where a gated consumer returns; whichever lands
-    first should re-add an end-to-end case here.
+    Feedback-Signal's original gated consumer (`workflows.surfacing.eligible_workflows`)
+    was deleted in WORKFLOWS-V2 Phase 1, leaving `suppressed_producers()` inert — read
+    only by the Settings display and the retire-proposal path, withholding nothing. FS-6
+    re-adds a LIVE consumer: turn-time **skill surfacing** (`SkillsLoader.get_surfaced_
+    skills` → `skills.surfacing.surface_skills`), the one turn-time surfacing gate that
+    actually runs (the workflow suggestion path is itself inert). A skill whose judgments
+    persistently draw 👎 — identity `("skill_synthesis", <key>)` — falls below
+    `retire_threshold` with `n >= min_n`, enters the suppressed set, and is withheld from
+    surfacing until the user edits it (which clears it).
     """
 
     def test_suppression_set_is_the_contract_a_consumer_reads(self):
         """The shape a gate consumes: a set of (kind, id) pairs, membership-checked."""
-        _drive_below_threshold(producer_kind="workflow_surfacing", producer_id="wf_abc")
+        _drive_below_threshold(producer_kind="skill_synthesis", producer_id="auto/wrong-skill")
         suppressed = fb.suppressed_producers()
-        assert ("workflow_surfacing", "wf_abc") in suppressed
+        assert ("skill_synthesis", "auto/wrong-skill") in suppressed
         assert all(isinstance(p, tuple) and len(p) == 2 for p in suppressed)
         # Clearing restores eligibility — the round-trip a consumer depends on.
-        fb.clear_producer("workflow_surfacing", "wf_abc")
-        assert ("workflow_surfacing", "wf_abc") not in fb.suppressed_producers()
+        fb.clear_producer("skill_synthesis", "auto/wrong-skill")
+        assert ("skill_synthesis", "auto/wrong-skill") not in fb.suppressed_producers()
 
     def test_workflow_surfacing_stays_in_the_producer_vocabulary(self):
         """`PRODUCER_KINDS` is append-only: records on disk reference this label, so it
         must not be removed just because its consumer is between implementations."""
         assert "workflow_surfacing" in fb.PRODUCER_KINDS
+
+    def test_live_skill_gate_withholds_a_suppressed_producer(self, isolated):
+        """End-to-end through the LIVE gate: a suppressed skill stops surfacing while a
+        healthy one still does. Drives feedback below threshold for one skill, then runs
+        the real `get_surfaced_skills` path and asserts it is withheld."""
+        from personalclaw.skills.loader import SkillsLoader
+
+        # A skills library isolated to the test home; two skills that both match on
+        # the keyword "deploy service".
+        skills_root = isolated / "skills"
+        for key in ("wrong-skill", "good-skill"):
+            d = skills_root / key
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "SKILL.md").write_text(f"---\nname: {key}\ntriggers: deploy service\n---\nbody\n")
+        loader = SkillsLoader(skills_path=skills_root, install_builtins=False)
+
+        # Healthy state: both surface.
+        assert set(loader.get_surfaced_skills("deploy service")) == {"wrong-skill", "good-skill"}
+
+        # Drive one skill's producer below the retire threshold (n>=min_n, acc<threshold).
+        _drive_below_threshold(producer_kind="skill_synthesis", producer_id="wrong-skill")
+        assert ("skill_synthesis", "wrong-skill") in fb.suppressed_producers()
+
+        # The live gate now WITHHOLDS the suppressed producer; the healthy one stays.
+        surfaced = loader.get_surfaced_skills("deploy service")
+        assert "wrong-skill" not in surfaced
+        assert "good-skill" in surfaced
+
+        # Clearing (the user edited the skill) restores surfacing — the round trip.
+        fb.clear_producer("skill_synthesis", "wrong-skill")
+        assert set(loader.get_surfaced_skills("deploy service")) == {"wrong-skill", "good-skill"}
+
+    def test_live_skill_gate_fails_open_when_suppression_raises(self, isolated, monkeypatch):
+        """A suppression-lookup fault must never empty the turn's skills: the gate
+        surfaces normally (fail-open)."""
+        from personalclaw.skills.loader import SkillsLoader
+
+        skills_root = isolated / "skills"
+        d = skills_root / "a-skill"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text("---\nname: a-skill\ntriggers: deploy service\n---\nbody\n")
+        loader = SkillsLoader(skills_path=skills_root, install_builtins=False)
+
+        def _boom(*a, **k):
+            raise RuntimeError("suppression store exploded")
+
+        monkeypatch.setattr(fb, "suppressed_producers", _boom)
+        # Even driven-suppressed, a raising lookup degrades to suppress-nothing.
+        assert loader.get_surfaced_skills("deploy service") == ["a-skill"]

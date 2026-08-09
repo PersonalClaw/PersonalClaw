@@ -4,7 +4,7 @@
 **Code:** `FS`  
 **Source status:** in_progress
 
-FEEDBACK-SIGNAL decomposed into 6 atoms: FS-1/FS-2/FS-3 shipped (the 3 sessions), FS-5 shipped in AGENT-ROUTING, FS-4 (app fixture) is deferred-by-design todo, and FS-6 is the one live remaining gap — re-wiring the inert suppressed_producers() control into a WF2/flywheel surfacing gate.
+FEEDBACK-SIGNAL decomposed into 6 atoms: FS-1/FS-2/FS-3 shipped (the 3 sessions), FS-5 shipped in AGENT-ROUTING, FS-6 shipped (PR #928 — suppression re-enforced at the live skill-surfacing gate). Only FS-4 (app-path validation fixture) remains, deferred-by-design todo.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `FS-3` | ✅ | Deterministic thresholds + retire proposals + Settings->AI accuracy table (S3 / T3.1-T3.3) | `FS-1` | suppressed_producers() fail-open + entity_settings/feedback.json (snoozed/cleared/retire_proposed); check_retire_candidates() rides InboxService.run_maintenance emitting one notify('feedback_retire') per crossing (dedup, snooze-reset); Settings->AI FeedbackPanel shows honest per-producer counts, min-N 'collecting' gate, suppressed badge, snooze/clear, registered in SUBPAGES + bento grid. Log: [2026-07-27][S3] DONE (skills/surfacing NOT wired per S3 deviation — no per-skill producer identity). |
 | `FS-4` | ⬜ | App-path validation fixture: declared /api/feedback app records via sdk/feedback and route; undeclared app 403s (T2.4) | `FS-1` | a fixture app under tests/ declares /api/feedback in permissions.api, lands records via both sdk/feedback and the route with source_app set and producer forced to app:<name>:<producer>; an undeclared app path 403s (permission test green). Header notes T2.4 'remain unwired by design'. |
 | `FS-5` | ✅ | Routing suggestion double-write into feedback (routing chip Route->up / dismiss->down) (T3.4) | `FS-1`, `EXT:AGENT-ROUTING:routing chip accept/dismiss handlers that call record_feedback` | routing accept/dismiss double-writes a ('routing_pair', pair) verdict so routing accuracy appears in the producers API with zero extra UI. Shipped inside AGENT-ROUTING (plan 56) rather than here; FEEDBACK-SIGNAL S3 left the coordination note when agents/routing.py was absent. Log: [2026-07-27][S3] T3.4 coordination note; header: 'shipped inside AGENT-ROUTING'. |
-| `FS-6` | ⬜ | Re-add a live gated consumer of suppressed_producers() so suppression is enforced again | `FS-3`, `EXT:WORKFLOWS-V2:a surfacing eligibility gate to host the `in suppressed_producers()` membership check`, `EXT:LEARNING-FLYWHEEL:skill-level producer identity/surfacing gate (alternative consumer)` | a runtime path withholds a suppressed producer: a producer below retire_threshold with n>=min_n stops surfacing at a live WF2 surfacing gate (or flywheel skill-surfacing eligibility filter), with a test proving suppression prevents surfacing. Today (verified 2026-08-04) no runtime path enforces it because WF2 Phase 1 deleted workflows.surfacing.eligible_workflows, T3.1's only gated consumer. |
+| `FS-6` | ✅ | Re-add a live gated consumer of suppressed_producers() so suppression is enforced again | `FS-3`, `EXT:WORKFLOWS-V2:a surfacing eligibility gate to host the `in suppressed_producers()` membership check`, `EXT:LEARNING-FLYWHEEL:skill-level producer identity/surfacing gate (alternative consumer)` | a runtime path withholds a suppressed producer: a producer below retire_threshold with n>=min_n stops surfacing at a live WF2 surfacing gate (or flywheel skill-surfacing eligibility filter), with a test proving suppression prevents surfacing. Today (verified 2026-08-04) no runtime path enforces it because WF2 Phase 1 deleted workflows.surfacing.eligible_workflows, T3.1's only gated consumer. |
 
 ## Atom scopes
 
@@ -61,9 +61,9 @@ Session 3 T3.4 (plan-56 double-write); Design 'Routing suggestions' producer ('r
 
 ### `FS-6` — Re-add a live gated consumer of suppressed_producers() so suppression is enforced again
 
-**Status:** todo
+**Status:** done
 
-Status line 🔴 REMAINING; Contract C2 suppressed_producers(); Integration points 'workflows/surfacing.py + skills/surfacing.py consult suppressed_producers()'
+Status line ✅ DONE (PR #928); Contract C2 suppressed_producers(); host gate = `skills/surfacing.py::surface_skills` (the live turn-time gate via `SkillsLoader.get_surfaced_skills` → `context.py`), NOT `workflows/surfacing.py` — that path's `may_suggest`/`veto_reasons` are themselves inert (zero runtime callers), so hosting there would have re-created the inert-control defect FS-6 fixes. Producer identity for a skill = `("skill_synthesis", <key>)`; fail-open in depth. See `docs/roadmap/design-notes/fs6-suppression-consumer.md`.
 
 **Done when:** a runtime path withholds a suppressed producer: a producer below retire_threshold with n>=min_n stops surfacing at a live WF2 surfacing gate (or flywheel skill-surfacing eligibility filter), with a test proving suppression prevents surfacing. Today (verified 2026-08-04) no runtime path enforces it because WF2 Phase 1 deleted workflows.surfacing.eligible_workflows, T3.1's only gated consumer.
 
