@@ -142,14 +142,6 @@ INVENTORY: tuple[StateEntry, ...] = (
         derived=True,
         help="vector index id map (rebuilt with the index)",
     ),
-    StateEntry(
-        id="plan_memory",
-        kind=KIND_TREE,
-        path="plan_memory",
-        domain=DOMAIN_MEMORY,
-        merge=MERGE_UNION_BY_ID,
-        help="per-plan working memory notes",
-    ),
     # ── knowledge ──
     StateEntry(
         id="knowledge_db",

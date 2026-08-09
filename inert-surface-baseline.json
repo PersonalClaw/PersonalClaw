@@ -9,12 +9,6 @@
         "enum:ItemStatus.SENT"
       ]
     },
-    "src/personalclaw/learning/gate.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:Cadence.RUN_END"
-      ]
-    },
     "src/personalclaw/learning/staging.py": {
       "inert": 1,
       "surfaces": [
@@ -218,6 +212,14 @@
         "sdk_export:PromptVariable"
       ]
     },
+    "src/personalclaw/sdk/sandbox.py": {
+      "inert": 3,
+      "surfaces": [
+        "sdk_export:SandboxHandle",
+        "sdk_export:SandboxProvider",
+        "sdk_export:SandboxSpec"
+      ]
+    },
     "src/personalclaw/sdk/search.py": {
       "inert": 9,
       "surfaces": [
@@ -323,12 +325,6 @@
         "enum:Interrupt.UNINFERABLE"
       ]
     },
-    "src/personalclaw/workflows/batch_compile.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:Capability.MUTATING"
-      ]
-    },
     "src/personalclaw/workflows/confirmation.py": {
       "inert": 1,
       "surfaces": [
@@ -380,10 +376,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 30,
-      "sdk_export": 124,
+      "enum": 28,
+      "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 154
+    "inert": 155
   }
 }

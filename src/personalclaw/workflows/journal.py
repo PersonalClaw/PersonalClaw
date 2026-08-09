@@ -118,6 +118,17 @@ SEEN_SET = "seen_set"
 BUFFER_SEAL = "buffer_seal"
 DELAY_CLAMPED = "delay_clamped"
 
+#: LEARNING-FLYWHEEL §3.3 (LEARN-R18): the pending→resolved outcome lifecycle. A
+#: decision-producing run journals `pending_outcome` {subject, metric, horizon, baseline}
+#: AT DECISION TIME — before the outcome is knowable — and the curator's resolver writes
+#: `outcome_resolved` once the horizon has elapsed and ground truth has been measured. Both
+#: are ledger kinds because a decision's later outcome is the richest refiner signal there
+#: is, and a `pending_outcome` with no matching `outcome_resolved` is the "open question"
+#: retention must never evict. Keyed to each other by `pending_event_id`, so the resolver is
+#: idempotent — a second curator tick finds the resolution and skips.
+PENDING_OUTCOME = "pending_outcome"
+OUTCOME_RESOLVED = "outcome_resolved"
+
 #: The task-projection events. Ledger kinds rather than a parallel
 #: channel, because every one of them answers a question a reader asks of the ledger and nowhere
 #: else: WHY does this task exist (`task_materialized`), WHO answered this gate
@@ -130,6 +141,15 @@ CONFIRMATION_PENDING = "confirmation_pending"
 CONFIRMATION_RESOLVED = "confirmation_resolved"
 TASK_VERIFIED = "task_verified"
 CASCADE_BLOCKED = "cascade_blocked"
+
+#: What happened to the run's workspace. A ledger kind because
+#: WHERE a run worked changes how its result reads — a stage that failed on a missing dependency
+#: after a setup step failed is a different fact from one that failed on its own logic, and a
+#: refiner comparing two runs of one template cannot tell them apart without this. `teardown` is
+#: separate because it fires long after the run, on a deletion path, and folding it into the
+#: provisioning record would mean rewriting a journal line after the run ended.
+WORKSPACE_PROVISIONED = "workspace_provisioned"
+WORKSPACE_TEARDOWN = "workspace_teardown"
 
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
@@ -170,6 +190,10 @@ LEDGER_KINDS = frozenset(
         SEEN_SET,
         BUFFER_SEAL,
         DELAY_CLAMPED,
+        PENDING_OUTCOME,
+        OUTCOME_RESOLVED,
+        WORKSPACE_PROVISIONED,
+        WORKSPACE_TEARDOWN,
     }
 )
 
@@ -568,6 +592,70 @@ class Journal:
         """
         self.write(DECISION, instance_path=path, node_id=node_id, epoch=epoch, **decision)
 
+    def pending_outcome(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        epoch: int,
+        subject: str,
+        metric: str,
+        horizon_secs: float,
+        baseline: float,
+    ) -> dict[str, Any]:
+        """Journal a decision's OPEN QUESTION at decision time (LEARN-R18).
+
+        The bet, not the answer: this run decided `subject`, and whether that decision was
+        right can only be measured later by reading `metric` after `horizon_secs` have
+        elapsed and comparing to `baseline`. Returns the written record so the caller can
+        note its `event_id` — the key the resolver's `outcome_resolved` cites back, making a
+        second curator tick idempotent.
+        """
+        return self.write(
+            PENDING_OUTCOME,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            subject=subject,
+            metric=metric,
+            horizon_secs=round(float(horizon_secs), 3),
+            baseline=round(float(baseline), 6),
+            resolved_at="",
+        )
+
+    def outcome_resolved(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        pending_event_id: str,
+        subject: str,
+        metric: str,
+        baseline: float,
+        measured: float | None,
+        score: float,
+        resolution: str,
+    ) -> dict[str, Any]:
+        """Journal the ground-truth resolution of a `pending_outcome` (LEARN-R18).
+
+        `resolution` is "measured" when `metric` was readable after the horizon and
+        "inconclusive" when it was not — the latter decays faster, because an outcome we
+        could not measure is weaker evidence than one we could. `pending_event_id` links
+        back to the open question so the resolver never re-resolves the same one.
+        """
+        return self.write(
+            OUTCOME_RESOLVED,
+            instance_path=path,
+            node_id=node_id,
+            pending_event_id=pending_event_id,
+            subject=subject,
+            metric=metric,
+            baseline=round(float(baseline), 6),
+            measured=(None if measured is None else round(float(measured), 6)),
+            score=round(float(score), 6),
+            resolution=resolution,
+        )
+
     def child_run_attach(self, parent_run_id: str, child_run_id: str, node_id: str) -> None:
         self.write(
             CHILD_RUN_ATTACH,
@@ -826,6 +914,28 @@ class Journal:
             blocked_task_ids=list(blocked_task_ids),
             cause=cause,
         )
+
+    def workspace_provisioned(self, outcome: dict[str, Any]) -> None:
+        """What the run's workspace ended up being (WORK-CONTAINERS §4.1).
+
+        Recorded even for a REFUSED or degraded workspace — especially then. A run that silently
+        fell back from `worktree` to a scratch dir because git was missing behaves differently
+        from one that got the isolation it asked for, and without the record the difference is
+        invisible to the cockpit and to a refiner reading the ledger.
+
+        The outcome dict comes from `provisioning.Provisioned.to_dict`, whose env block carries
+        presence flags only — a journal is read by the flywheel and shipped in bug reports.
+        """
+        self.write(WORKSPACE_PROVISIONED, workspace=redact(outcome))
+
+    def workspace_teardown(self, outcome: dict[str, Any], *, reason: str = "") -> None:
+        """What teardown did before the workspace was deleted.
+
+        `reason` names the deletion path (`delete` vs `retention`), because the two arrive at the
+        same removal for different causes and a user asking "where did my worktree go" needs the
+        cause, not just the fact.
+        """
+        self.write(WORKSPACE_TEARDOWN, workspace=redact(outcome), reason=reason)
 
 
 def ledger(run_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any]]:

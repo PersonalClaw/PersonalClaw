@@ -695,7 +695,12 @@ def _embed(store, item_id: str, embedder) -> str:
 
     The phase is the item's ONLY record that this step ran, so it must reflect whether a
     vector exists. Reporting "done" for a no-op made an item with no embedding look
-    fully processed, hiding the missing-vector condition from the ingest view."""
+    fully processed, hiding the missing-vector condition from the ingest view.
+
+    KL-9: after the WHOLE-ITEM vector, the item's consolidated text is structurally
+    chunked (``knowledge.chunking``) and each chunk embedded into the ``chunks`` table.
+    Chunks are ADDITIVE — the item row keeps its own vector; the chunk index is what
+    gives retrieval reach into content deep in a long document."""
     if not embedder:
         return "skipped"
     try:
@@ -704,8 +709,9 @@ def _embed(store, item_id: str, embedder) -> str:
         item = store.get_item(item_id)
         if not item:
             return "skipped"
-        # Embed title + summary, anchored by a body slice when the summary is thin —
-        # a title-only vector gives poor semantic recall (see compose_item_text).
+        # The whole-item vector is a compact title+summary identity/topic signal; the
+        # body's semantic recall lives in the chunk index built below (KL-9 clean break —
+        # the old body top-up is gone; see compose_item_text).
         vec = embedder.embed_for_item(
             item.get("title") or "",
             item.get("summary"),
@@ -719,10 +725,40 @@ def _embed(store, item_id: str, embedder) -> str:
             "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id)
         )
         store.db.commit()
+        _embed_chunks(store, item_id, item.get("content") or "", embedder)
         return "done"
     except Exception:
         logger.debug("knowledge embed failed for %s", item_id, exc_info=True)
         return "failed"
+
+
+def _embed_chunks(store, item_id: str, content: str, embedder) -> None:
+    """Structurally chunk *content* and write each chunk (with its embedding) to the
+    ``chunks`` table, additive to the item's whole-item vector.
+
+    Never raises into the ingest: a chunking/embedding hiccup must not fail an item whose
+    whole-item vector already landed. A chunk whose embedding degrades to None is stored
+    vector-less (still FTS/keyword reachable) rather than dropped. When the embedder has
+    no ``embed`` (a minimal test stub) chunk embedding is skipped, matching the graceful
+    no-model path."""
+    from personalclaw.knowledge.chunking import chunk_text
+    from personalclaw.knowledge.embedder import floats_to_bytes
+
+    embed_one = getattr(embedder, "embed", None)
+    if not callable(embed_one):
+        return
+    try:
+        chunks = chunk_text(content)
+        for c in chunks:
+            vec = None
+            try:
+                vec = embed_one(c.text)
+            except Exception:
+                vec = None
+            c.embedding = floats_to_bytes(vec) if vec else None
+        store.replace_chunks(item_id, chunks)
+    except Exception:
+        logger.debug("knowledge chunk-embed failed for %s", item_id, exc_info=True)
 
 
 def _dedup(store, item_id: str, embedder) -> dict | None:

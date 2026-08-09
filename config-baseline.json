@@ -605,6 +605,12 @@
     "type": "int"
   },
   {
+    "default": true,
+    "path": "learning.attribution_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 4000,
     "path": "learning.context_budget_tokens",
     "sensitive": false,
@@ -651,6 +657,12 @@
     "path": "learning.propose_quota_per_run",
     "sensitive": false,
     "type": "int"
+  },
+  {
+    "default": true,
+    "path": "learning.run_end_enabled",
+    "sensitive": false,
+    "type": "bool"
   },
   {
     "default": true,
@@ -1227,5 +1239,17 @@
     "path": "workflows.surface_mode_default",
     "sensitive": false,
     "type": "str"
+  },
+  {
+    "default": "scratch",
+    "path": "workflows.workspace_default_mode",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "workflows.workspace_teardown_on_expiry",
+    "sensitive": false,
+    "type": "bool"
   }
 ]

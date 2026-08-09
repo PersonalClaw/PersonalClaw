@@ -392,7 +392,7 @@ class TestPublisher:
 
 
 class TestRetention:
-    def test_old_terminal_runs_are_pruned_oldest_first(self) -> None:
+    async def test_old_terminal_runs_are_pruned_oldest_first(self) -> None:
         for i in range(5):
             r = store.create(
                 WorkflowRun(
@@ -403,13 +403,13 @@ class TestRetention:
                 )
             )
             store.save(r)
-        assert prune_runs("keeper", keep=2) == 3
+        assert await prune_runs("keeper", keep=2) == 3
         remaining, total = store.list_runs(workflow_name="keeper")
         assert total == 2
         # Newest survive.
         assert {r.created_at for r in remaining} == {"2026-01-05T00:00:00Z", "2026-01-04T00:00:00Z"}
 
-    def test_a_pinned_run_is_never_pruned(self) -> None:
+    async def test_a_pinned_run_is_never_pruned(self) -> None:
         for i in range(4):
             r = store.create(
                 WorkflowRun(
@@ -421,11 +421,11 @@ class TestRetention:
                 )
             )
             store.save(r)
-        prune_runs("pin", keep=1)
+        await prune_runs("pin", keep=1)
         remaining, _ = store.list_runs(workflow_name="pin")
         assert any(r.pinned for r in remaining)
 
-    def test_a_still_running_run_is_never_pruned(self) -> None:
+    async def test_a_still_running_run_is_never_pruned(self) -> None:
         for i in range(4):
             r = store.create(
                 WorkflowRun(
@@ -436,16 +436,16 @@ class TestRetention:
                 )
             )
             store.save(r)
-        prune_runs("live", keep=1)
+        await prune_runs("live", keep=1)
         remaining, _ = store.list_runs(workflow_name="live")
         assert any(r.status == RunStatus.RUNNING for r in remaining)
 
-    def test_pruning_under_the_cap_is_a_no_op(self) -> None:
+    async def test_pruning_under_the_cap_is_a_no_op(self) -> None:
         r = store.create(WorkflowRun(id="", workflow_name="few", status=RunStatus.COMPLETE))
         store.save(r)
-        assert prune_runs("few", keep=10) == 0
+        assert await prune_runs("few", keep=10) == 0
 
-    def test_the_directory_goes_before_the_row(self) -> None:
+    async def test_the_directory_goes_before_the_row(self) -> None:
         """Deleting the row first would orphan megabytes of journal with nothing left to
         find it by."""
         for i in range(3):
@@ -460,7 +460,7 @@ class TestRetention:
             store.save(r)
             store.write_spec(r.id, SPEC)
         dirs_before = {p.name for p in store.runs_root().iterdir() if p.is_dir()}
-        prune_runs("dirs", keep=1)
+        await prune_runs("dirs", keep=1)
         dirs_after = {p.name for p in store.runs_root().iterdir() if p.is_dir()}
         rows, _ = store.list_runs(workflow_name="dirs")
         assert len(dirs_after) == 1

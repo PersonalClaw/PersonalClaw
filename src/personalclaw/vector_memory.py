@@ -1647,9 +1647,15 @@ class VectorMemoryStore(MemoryProvider):
         try:
             import time as _time
 
-            from personalclaw.event_triggers import emit_memory_event
+            from personalclaw.event_triggers import SOURCE_MEMORY, emit_event
 
-            emit_memory_event(event_type=event_type, key=key, value=new_value, now=_time.time())
+            emit_event(
+                source=SOURCE_MEMORY,
+                event_type=event_type,
+                key=key,
+                value=new_value,
+                now=_time.time(),
+            )
         except Exception:
             logger.debug("event-trigger emit failed", exc_info=True)
 

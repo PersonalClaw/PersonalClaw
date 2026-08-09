@@ -81,13 +81,25 @@ _CEILING_WRAPPED: dict[str, str] = {
     "mcp_client.py::McpServerConn._open_transport::StdioServerParameters": (
         "MCP stdio client → tool ceiling via spawn_shim_argv baked into StdioServerParameters"
     ),
-    # ACP session host transport (session_host profile — the EMFILE fix).
-    "acp/transport.py::AcpProcess.spawn::create_subprocess_limited": (
-        "ACP session host → session_host ceiling (NOFILE raised, no OOM bias)"
-    ),
     # Workflow BYOI teardown command (tool profile).
     "workflows/effects.py::run_teardown::create_subprocess_limited": (
         "workflow BYOI teardown → tool ceiling via create_subprocess_limited"
+    ),
+    # Run-workspace setup/teardown steps. Agent-influenced by the same
+    # reasoning as the BYOI teardown above: the command text comes from a workflow template an
+    # agent can author. Same shape deliberately — `shlex.split`, no shell, the binary resolved up
+    # front for a typed not-found, and the ceiling delivered post-exec by the shim.
+    "workflows/provisioning.py::run_step::create_subprocess_limited": (
+        "workspace setup/teardown step → tool ceiling via create_subprocess_limited"
+    ),
+    # The ``none`` sandbox provider's handle exec — the single seam every routed spawn
+    # now funnels through. EI-1 moved the direct create_subprocess_limited call out of
+    # AcpProcess.spawn (session_host profile — the EMFILE fix, NOFILE raised, no OOM bias) and
+    # into this provider handle, which composes the OS path sandbox with the resource ceilings;
+    # the profile still rides on the SandboxSpec, so the ACP ceiling is unchanged.
+    "sandbox_providers/none.py::_NoneHandle.exec::create_subprocess_limited": (
+        "none sandbox provider → profile ceiling via create_subprocess_limited (post-exec shim); "
+        "the single routed-spawn seam (subsumes the former AcpProcess.spawn session_host site)"
     ),
     # Interactive terminal — explicitly the ``none`` profile (routed for legibility; the
     # helper is a no-op there so no shim cost, but the site stays audited).
@@ -372,7 +384,10 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen",
         "mcp_discovery.py::probe_server::create_subprocess_limited",
         "mcp_client.py::McpServerConn._open_transport::StdioServerParameters",
-        "acp/transport.py::AcpProcess.spawn::create_subprocess_limited",
+        # EI-1 routed the ACP session_host spawn through the sandbox provider handle — the
+        # single seam every routed spawn now funnels through — so the ACP ceiling is asserted
+        # here rather than at the former AcpProcess.spawn site.
+        "sandbox_providers/none.py::_NoneHandle.exec::create_subprocess_limited",
         "loop/gates.py::run_verify_command::create_subprocess_limited",
         "loop/worktree.py::_git::subprocess.run",
     }

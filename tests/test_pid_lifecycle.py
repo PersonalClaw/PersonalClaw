@@ -411,7 +411,7 @@ class TestResetStateUntracksParentPid:
         client._buffer = bytearray()
         client._cancelled = False
         client._resumed = False
-        client._sandbox_cleanup = None
+        client._sandbox_handle = None
         client._child_pids = {}
         client._stderr_lines = deque(["some error"], maxlen=20)
         mock_task = Mock()

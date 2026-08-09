@@ -184,7 +184,7 @@ class TestTheGuardMeetsARealHome:
         staged = set(snap._everything_paths(tmp_path)) | {
             f for files in snap.CORE_FILES.values() for f in files
         }
-        staged |= {"workspace", "plan_memory", "skills"}
+        staged |= {"workspace", "skills"}
         staged |= set(snap._declared_db_paths())
 
         for new_id in (

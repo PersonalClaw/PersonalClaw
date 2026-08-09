@@ -606,7 +606,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/manifest` — the machine-readable self-description of this instance.
 - `GET /api/workflows/runs` — Paginated run list. Reads the store directly: this is a projection for a table, not
 - `POST /api/workflows/runs` — _(no summary)_
-- `DELETE /api/workflows/runs/{run_id}` — Delete a terminal run and its artifacts.
+- `DELETE /api/workflows/runs/{run_id}` — Delete a terminal run and its artifacts, tearing its workspace down first.
 - `GET /api/workflows/runs/{run_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/cancel` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/confirm` — Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
@@ -622,6 +622,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
 - `GET /api/workflows/runs/{run_id}/steering` — GET what is queued but unconsumed — so the UI can show it as pending.
+- `GET /api/workflows/runs/{run_id}/workspace` — GET the run's workspace review: changed files + the two reintegration verbs (§4.1).
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_

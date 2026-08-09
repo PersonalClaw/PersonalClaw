@@ -260,28 +260,6 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         ),
     ),
     BundledPrompt(
-        name="task-plan-consolidation",
-        use_case="plan_consolidation",
-        filename="task-plan_consolidation.md",
-        kind="user",
-        category="internal",
-        description="Plan-memory consolidation: synthesize orchestration events into plan_lessons.md guidance.",  # noqa: E501
-        variables=(
-            PromptVariable(
-                name="existing",
-                type="textarea",
-                default="",
-                description="Current plan_lessons.md content.",
-            ),
-            PromptVariable(
-                name="event_lines",
-                type="textarea",
-                required=True,
-                description="Recent orchestration events, one per line.",
-            ),
-        ),
-    ),
-    BundledPrompt(
         name="task-plan-rephrase",
         use_case="plan_rephrase",
         filename="task-plan_rephrase.md",

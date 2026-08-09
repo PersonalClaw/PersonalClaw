@@ -13,21 +13,18 @@ from personalclaw.knowledge.retrieval import HybridRetriever, _attach_locator, _
 from personalclaw.knowledge.store import KnowledgeStore, SimpleDiGraph, normalize_url
 
 
-def test_compose_item_text_anchors_thin_summary_with_body():
-    """The embed text is title + summary, topped up with a body slice when the summary
-    is thin/absent — so a summary-less item gets a useful vector, not a title-only one."""
+def test_compose_item_text_is_title_and_summary_only():
+    """KL-9 clean break: the whole-item vector text is title + summary ONLY. The old
+    1000-char body top-up is retired — body-level recall now lives in the chunk index —
+    so ``content`` is accepted (stable signature) but never appended."""
     from personalclaw.knowledge.embedder import compose_item_text as c
 
-    # No summary → body anchors the vector.
-    assert (
-        c("Meeting notes", None, "quantum dot solar coating")
-        == "Meeting notes quantum dot solar coating"
-    )
-    # Rich summary (≥80 chars) → body is NOT appended (summary already carries signal).
+    # Body is NOT appended even when the summary is thin/absent.
+    assert c("Meeting notes", None, "quantum dot solar coating") == "Meeting notes"
     rich = "x" * 90
     assert c("T", rich, "body text") == f"T {rich}"
-    # Body is capped; empties collapse cleanly.
-    assert len(c("t", None, "z" * 5000)) <= 1010
+    # A huge body cannot bloat the item vector text; empties collapse cleanly.
+    assert c("t", None, "z" * 5000) == "t"
     assert c("", "", "") == "" and c("Only", None, None) == "Only"
 
 

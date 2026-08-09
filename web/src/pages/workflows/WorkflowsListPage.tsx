@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Play, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { EmptyState, ListRow, Loading } from '../../ui/ListScaffold'
-import { SearchField } from '../../ui/SearchField'
-import { Segmented } from '../../ui/Segmented'
+import { ListControls } from '../../ui/ListControls'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
 import { api, type WorkflowDef, type WorkflowDefSummary, type WorkflowRunSummary, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -201,14 +201,17 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             <span className="shrink-0 text-warning text-[0.75rem]">{needingInput} waiting on you</span>
           )}
         </div>}
-        right={<div className="flex items-center gap-s">
-          <QuietButton onClick={startFromTemplate} title="Describe what you want to do; we'll pick the template">
-            <Sparkles size={13} /> Start from template
-          </QuietButton>
-          <SearchField value={q} onChange={setQ} placeholder="Search runs and definitions" size="md" />
-          <Segmented options={TABS} value={tab} onChange={setTab} ariaLabel="Workflows view" />
-        </div>}
+        // The header keeps only the structural view-switch + the primary action; search moved to
+        // the page's ListControls bar, which is `ListControls`' documented rule and what the other
+        // 12 list pages do. Crammed in here the search input was visibly TRUNCATED at 1440px
+        // ("Search runs and defini…") because it competed with the tab strip for header width.
+        right={<HeaderActions>
+          <HeaderSegmented options={TABS} value={tab} onChange={setTab} ariaLabel="Workflows view" />
+          <HeaderControl icon={Sparkles} label="Start from template" variant="primary" priority="primary"
+            onClick={startFromTemplate} hint="Describe what you want to do; we'll pick the template" />
+        </HeaderActions>}
       />
+      <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading /> : tab === 'defs' ? (
           filteredDefs.length === 0 ? (

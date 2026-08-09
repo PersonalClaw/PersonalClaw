@@ -108,6 +108,21 @@ def _surface_mode_default(value: object) -> str:
     return word if word in {"off", "passive", "suggest"} else "off"
 
 
+def _workspace_default_mode(value: object) -> str:
+    """Coerce the default run-workspace mode, refusing anything the engine does not implement.
+
+    An unknown value reads as `scratch`, NOT as the declared value and NOT as `in_place`. The
+    reason is the same one `workspace.parse_workspace` gives for making an unknown mode fatal in a
+    template: the modes differ in exactly the way that matters, and `in_place` is the one where a
+    destructive step runs against the user's real tree. A config typo must not be what puts a run
+    there. `container` is accepted as a WORD (it is in the enum) but degrades to an isolated
+    scratch dir at provisioning time — §4.4 is deferred, and rejecting the word here would make
+    the config disagree with the enum.
+    """
+    word = str(value or "").strip().lower()
+    return word if word in {"scratch", "worktree", "in_place", "container"} else "scratch"
+
+
 def _safe_int(value: object, default: int) -> int:
     """Convert *value* to int, returning *default* on failure."""
     try:
@@ -1469,6 +1484,26 @@ class LearningConfig:
             "finishes reading is a queue that stops being read at all.",
         ),
     )
+    run_end_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learn From Run Failures",
+            "When a workflow run ends, mine its Run Ledger for failed steps and file "
+            "lesson proposals (never auto-written) keyed by failure mode, plus a "
+            "procedural-outcome record per failed step. Off = terminal runs leave no "
+            "learning trace. Only fires when a memory service is available.",
+        ),
+    )
+    attribution_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Grade Accepted Changes",
+            "After you accept a proposal, watch its target's Run Ledger. Once enough runs "
+            "have accumulated, grade whether the change delivered what it predicted — and if "
+            "it only made things worse, file a revert proposal (never auto-applied) that names "
+            "what broke. Off = accepted changes are never measured against their promise.",
+        ),
+    )
 
 
 @dataclass
@@ -2097,6 +2132,28 @@ class WorkflowsConfig:
             "means no gate. `manual` is the built-in on/off toggle; apps can supply others (a "
             "calendar, for instance). The gate always fails OPEN — if it cannot answer, the "
             "automation still fires, so a broken calendar app can never silence everything.",
+        ),
+    )
+    workspace_default_mode: str = field(
+        default="scratch",
+        metadata=_meta(
+            "Default Workspace Mode",
+            "Where a run works when its template declares no `workspace.mode`: `scratch` (a "
+            "per-run directory), `worktree` (a git worktree of the project's workspace) or "
+            "`in_place` (the real tree, no isolation). A template's own declaration always "
+            "wins. `scratch` is the default because being wrong about isolation should cost a "
+            "copy, not the original — and `in_place` is deliberately never the default, since "
+            "that is the mode in which a destructive step runs against real state.",
+        ),
+    )
+    workspace_teardown_on_expiry: bool = field(
+        default=True,
+        metadata=_meta(
+            "Run Teardown Before Deletion",
+            "Run a workspace's declared `teardown` command before its directory is deleted by "
+            "retention or an explicit delete. On, because teardown's whole job is to stop "
+            "services and sync work out while the directory still exists — turning it off "
+            "leaves a `docker compose` up after the run that started it is gone.",
         ),
     )
 
@@ -3481,6 +3538,12 @@ class AppConfig:
                     workflows_data.get("default_quiet_windows", "") or ""
                 ).strip(),
                 duty_gate_default=str(workflows_data.get("duty_gate_default", "") or "").strip(),
+                workspace_default_mode=_workspace_default_mode(
+                    workflows_data.get("workspace_default_mode")
+                ),
+                workspace_teardown_on_expiry=bool(
+                    workflows_data.get("workspace_teardown_on_expiry", True)
+                ),
             ),
             learning=LearningConfig(
                 enabled=bool(learning_data.get("enabled", True)),
@@ -3495,6 +3558,8 @@ class AppConfig:
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
+                run_end_enabled=bool(learning_data.get("run_end_enabled", True)),
+                attribution_enabled=bool(learning_data.get("attribution_enabled", True)),
             ),
             knowledge=KnowledgeConfig(
                 idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),

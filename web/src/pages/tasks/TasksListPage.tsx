@@ -26,9 +26,18 @@ type ViewMode = 'list' | 'cards' | 'board' | 'dag'
 // views that ignore the status filter (they present all statuses themselves)
 const FULL_WIDTH: ViewMode[] = ['board', 'dag']
 const VIEW_KEY = 'tasks-view'
+// Status filter. The three real statuses take their label from `taskMeta`'s
+// STATUSES — the single source of truth every other task surface renders (the
+// board's columns, a row's status chip, the detail panel). Hardcoding them here
+// meant the filter said "Open"/"Done" while the same keys read "Not started"/
+// "Completed" three feet away on the board.
+// `all` and `ready` are filter-only pseudo-states with no status equivalent
+// (`ready` = unblocked and actionable, spanning open + in_progress), so they
+// keep their own labels.
 const FILTERS = [
-  { key: 'all', label: 'All' }, { key: 'ready', label: 'Ready' }, { key: 'open', label: 'Open' }, { key: 'in_progress', label: 'In progress' },
-  { key: 'blocked', label: 'Blocked' }, { key: 'done', label: 'Done' },
+  { key: 'all', label: 'All' },
+  { key: 'ready', label: 'Ready' },
+  ...['open', 'in_progress', 'blocked', 'done'].map((k) => ({ key: k, label: statusMeta(k).label })),
 ]
 const SORT_KEY = 'tasks-sort'
 const SORTS = [

@@ -106,8 +106,14 @@ def stamp_run_mode(extra: dict[str, Any], mode: MemoryMode) -> dict[str, Any]:
 
     A new dict rather than a mutation: run records are compared and journaled, and mutating the one
     the caller holds would make a rejected create leave a stamped object behind.
+
+    The stamped field IS `durable_metadata` — `RUN_MODE_KEY` and the JSONL `memory_mode` line are
+    the same key on purpose. A run owns no `ConversationLog` file (its stage subagents persist under
+    their own `subagent:` keys), so the run RECORD's `extra` head is the run's durable metadata
+    head: it round-trips on disk and is what a restart replays. Composing over `durable_metadata`
+    keeps the two the same value rather than two string literals that could drift.
     """
-    return {**(extra or {}), RUN_MODE_KEY: mode.value}
+    return {**(extra or {}), **durable_metadata(mode)}
 
 
 def owned_key(run_id: str, node_id: str) -> str:
@@ -220,9 +226,17 @@ def parse_mode(raw: Any) -> MemoryMode:
     the value exists because someone asked for privacy, and a typo or a newer mode name this build
     does not know must not be read as "record everything". A lost note is recoverable; a memory the
     user believed was never written is not.
+
+    `"persistent"` is the ONE alias that must map to `NORMAL` rather than the restricted default.
+    It is the on-disk `memory_mode` a normal chat session writes (`VALID_MEMORY_MODES` in
+    `dashboard.state`, and history's `setdefault(..., "persistent")` for pre-mode sessions), so it
+    is genuinely "record everything" — not a privacy request. Treating it as unknown would suppress
+    writes for EVERY normal run inheriting from a chat, which is the opposite of the feature: the
+    fail-closed direction is for values that mean privacy, and `persistent` is the value that means
+    the reverse.
     """
     text = str(raw or "").strip().lower()
-    if not text:
+    if not text or text == "persistent":
         return MemoryMode.NORMAL
     try:
         return MemoryMode(text)

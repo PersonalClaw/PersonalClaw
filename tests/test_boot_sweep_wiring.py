@@ -243,7 +243,9 @@ def test_a_fire_with_NO_RUNNING_LOOP_is_spooled_not_dropped(tmp_path, monkeypatc
     engine._store = store
 
     # No running loop — this IS the sync CLI write.
-    engine.on_memory_event(event_type="memory_write", key="notes/x", value="hi", now=NOW)
+    engine.on_event(
+        source=et.SOURCE_MEMORY, event_type="memory_write", key="notes/x", value="hi", now=NOW
+    )
 
     assert store.load()[0].fire_count == 1, "the fire was counted against max_fires either way"
     envelopes, bad = drain_spool()
@@ -280,7 +282,9 @@ def test_a_spool_failure_does_not_BREAK_THE_MEMORY_WRITE(tmp_path, monkeypatch):
     )
     engine = et.EventTriggerEngine()
     engine._store = store
-    engine.on_memory_event(event_type="memory_write", key="k", value="v", now=NOW)  # must not raise
+    engine.on_event(
+        source=et.SOURCE_MEMORY, event_type="memory_write", key="k", value="v", now=NOW
+    )  # must not raise
 
 
 def test_a_LIVE_fire_still_dispatches_rather_than_spooling(tmp_path, monkeypatch):
@@ -315,7 +319,9 @@ def test_a_LIVE_fire_still_dispatches_rather_than_spooling(tmp_path, monkeypatch
             "execute_event_action",
             lambda t, **kw: _record(fired, kw["key"]),
         )
-        engine.on_memory_event(event_type="memory_write", key="live", value="v", now=NOW)
+        engine.on_event(
+            source=et.SOURCE_MEMORY, event_type="memory_write", key="live", value="v", now=NOW
+        )
         await asyncio.sleep(0)  # let the created task run
         return fired
 

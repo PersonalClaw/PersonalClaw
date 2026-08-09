@@ -8,7 +8,7 @@ from personalclaw.config.loader import config_dir
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.plan_memory import extract_plan_metadata, rephrase_plan
+from personalclaw.plan_format import extract_plan_metadata, rephrase_plan
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY

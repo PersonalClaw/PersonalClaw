@@ -666,6 +666,37 @@ export interface NodeInspect {
   ledger_events: Array<Record<string, unknown>>
   cached: boolean
 }
+// The code-run workspace review — the cockpit's diff panel and the two
+// reintegration verbs. `changed` EXCLUDES the engine's own machinery (setup markers, files the
+// preserve pass copied in), because a review panel listing them is one the user learns to skim
+// with the file that mattered in the same list.
+//
+// Both verbs are OFFERS, never actions: `safe` says whether picking one would conflict, and the
+// gateway deliberately has no endpoint that performs them — reviewing before it lands is why the
+// run was isolated. `preserved_workspace_path` is non-empty only when the workspace is alive AND
+// dirty; a path to a clean directory is a false lead.
+export interface WorkflowDiffEntry { path: string; status: string; staged: boolean }
+export interface WorkflowReintegrationVerb {
+  verb: 'apply_locally' | 'checkout_branch'; label: string; detail: string; safe: boolean
+}
+export interface WorkflowWorkspaceReview {
+  run_id: string
+  workspace: {
+    run_id: string; path: string; branch: string; alive: boolean; dirty: boolean
+    changed: WorkflowDiffEntry[]
+    preserved_workspace_path: string
+  }
+  reintegration: {
+    run_id: string; branch: string; changed_files: number; conflicts: string[]
+    verbs: WorkflowReintegrationVerb[]
+    note: string
+  }
+  declared: {
+    mode?: string; isolated?: boolean; name?: string; degraded_reason?: string
+    setup?: { ran: string[]; skipped: string[]; failed: string[]; blocked_run: boolean }
+    issues?: Array<{ code: string; message: string; fatal: boolean }>
+  }
+}
 export interface WorkflowManifest {
   spec_semver: string
   node_kinds: Array<{ kind: string; container: boolean; lane: string }>
@@ -762,12 +793,27 @@ export interface HookItem {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
 }
+// The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
+// source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
+// Kept in lockstep with the Python tuple; the meta table in triggerMeta.ts maps each to its one
+// matcher field. A pattern the backend does not know is rejected server-side with a typed error.
+export type EventPattern =
+  | 'MemoryUpdate' | 'MemoryKeyPattern' | 'ContentMatch'
+  | 'InboxMessage' | 'InboxSender' | 'InboxAddress'
+  | 'AppEvent'
 // Unified Trigger wire shape from /api/triggers (both kinds). The schedule
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
 export interface Trigger {
-  kind: 'schedule' | 'lifecycle' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
+  // `GET /api/triggers` serves FOUR kinds (handlers/triggers.py `api_triggers_list`); `event` was
+  // missing from this union while `_serialize_event` was already emitting it, so a data-event row
+  // was untypeable on the wire and the list page fetched only three of the four sources.
+  kind: 'schedule' | 'lifecycle' | 'event' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
   action: TriggerAction
+  // event fields (kind=event) — the data-event trigger's pattern + the ONE matcher its pattern
+  // reads (`eventPatternMeta().matcher` names which), plus its fire budget.
+  pattern?: string; sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
+  event_glob?: string; fire_count?: number; max_fires?: number
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
   // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
   store_kind?: string; created_by?: string; spec?: Record<string, unknown>
@@ -828,7 +874,14 @@ export interface ActionProvider {
 // Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
 // working hook is dead the moment the backend wires one.
 export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
-export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// One app-contributed trigger source and the events it declares (AUTO-A4). Read from the LIVE
+// `trigger_sources` registry, so a disabled app's source is absent rather than offered — authoring a
+// trigger against an event that cannot fire is the failure this list exists to prevent.
+// `source_event` is the namespaced name (`app:<app>:<event>`) the backend matches `event_glob`
+// against; the UI never re-derives that prefix, or it would drift from `trigger_sources.namespace`.
+export interface AppSourceEvent { event: string; source_event: string }
+export interface AppSourceInfo { app: string; label: string; events: AppSourceEvent[] }
+export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[] }
 // One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
 // `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
 // action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
@@ -2350,6 +2403,18 @@ export const api = {
   // verdict — a misconfigured action reports ran:true / success:false, which is a different problem
   // from "it never fired" and must stay distinguishable.
   eventTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=event').then((d) => d.triggers),
+  // Create a data-event trigger. The backend DERIVES `source` from `pattern`
+  // (PATTERN_SOURCE) — never taken from the wire — so the body carries only the pattern, its
+  // one wired matcher field, the action, and an optional max_fires. A 201 body may carry a
+  // `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
+  createEvent: (body: {
+    name?: string; pattern: EventPattern
+    sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
+    // AppEvent's matcher (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`).
+    // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
+    event_glob?: string
+    max_fires?: number; action: { provider: string; config: Record<string, unknown> }
+  }) => post<Trigger & { warning?: string }>('/api/triggers', { trigger_type: 'event', ...body }),
   updateEventTrigger: (id: string, body: Record<string, unknown>) =>
     put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}`, body),
   deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
@@ -3064,6 +3129,12 @@ export const api = {
       `/api/workflows/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/inspect`),
   workflowContinuations: (id: string) =>
     get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
+  /** The run's workspace review: changed files + the two reintegration verbs. A GET
+   *  because reintegration is OFFERED, never performed — there is no companion POST, and that
+   *  is the plan's ruling rather than a gap. 404s for an unknown run; a run with no managed
+   *  workspace answers with an empty `workspace`, which the panel renders as "no diff". */
+  workflowRunWorkspace: (id: string) =>
+    get<WorkflowWorkspaceReview>(`/api/workflows/runs/${encodeURIComponent(id)}/workspace`),
   // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees
   // before accepting an edit that would re-run completed work.
   editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>

@@ -15,19 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 def compose_item_text(title: str, summary: str | None, content: str | None = None) -> str:
-    """Build the text to embed for a knowledge item: title + summary, topped up with a
-    slice of the body when the summary is thin/absent. A title-only vector — common for
-    summary-less items (fleeting notes, skipped summary category, mid-enrichment) —
-    gives poor semantic recall; the body anchors it. Kept here so the ingest pipeline,
-    batch re-embed, and reembed_all all compose the same vector text."""
+    """Build the WHOLE-ITEM vector text for a knowledge item: title + summary.
+
+    The 1000-char body top-up that used to anchor a thin/absent summary is gone (KL-9,
+    clean break): body-level semantic recall now lives in the chunk index (``chunking``
+    + the ``chunks`` table), which embeds real structural slices of the document rather
+    than an arbitrary title-length prefix. The item vector stays a compact
+    identity/topic signal; ``content`` is accepted for a stable signature but unused.
+    Kept here so the ingest pipeline, batch re-embed, and reembed_all all compose the
+    same item vector text."""
     title = (title or "").strip()
     summary = (summary or "").strip()
-    parts = [p for p in (title, summary) if p]
-    if len(summary) < 80:
-        body = (content or "").strip()
-        if body:
-            parts.append(body[:1000])
-    return " ".join(parts).strip()
+    return " ".join(p for p in (title, summary) if p).strip()
 
 
 def floats_to_bytes(vec: list[float]) -> bytes:

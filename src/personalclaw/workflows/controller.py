@@ -47,7 +47,7 @@ from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import judge_calibration, longrun, mutations, store
+from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
@@ -169,6 +169,12 @@ class EngineServices:
     #: tests never run real teardown subprocesses; production defaults to the
     #: subprocess runner in `effects.run_teardown`.
     teardown_runner: Any = None
+    #: The memory service the run-end learner writes through. Left
+    #: None on purpose in every test and CLI path: the run-end capture spoke is inert unless
+    #: this is a service with a live vector store, exactly as `self_model_observer.observe_turn`
+    #: no-ops without `has_vector`. So a terminal-run controller test never touches the real
+    #: home, and production wires `MemoryService.over_vector_store(self.vector_memory)` in.
+    memory: Any = None
 
 
 @dataclass
@@ -443,7 +449,11 @@ class RunController:
 
     async def _tick_loop(self) -> None:
         try:
-            await self._prepare()
+            if not await self._prepare():
+                # The run was refused before any node ran (a fatal `workspace:` declaration or a
+                # contended named workspace). `_prepare` already wrote the terminal status through
+                # `_finish`, so scheduling anything now would run nodes for a failed run.
+                return
             while True:
                 async with self._lock:
                     if await self._step():
@@ -467,8 +477,14 @@ class RunController:
         finally:
             self._terminal.set()
 
-    async def _prepare(self) -> None:
-        """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it."""
+    async def _prepare(self) -> bool:
+        """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it.
+
+        Returns False when the run was REFUSED before any node ran — today only a fatal
+        `workspace:` declaration does that, and `_provision_workspace` has already written the
+        terminal status. The tick loop stops rather than scheduling into a workspace that could
+        not be honored.
+        """
         resumed = bool(self.run.started_at)
         totals = journal_mod.run_totals(self.run.id)
         # Budget pre-charge (WF2-R4 #1): a resumed run inherits its own spend. Without
@@ -490,7 +506,172 @@ class RunController:
             spec_version=self.run.spec_version,
             resumed=resumed,
         )
+        self._enforce_inherited_mode()
+        provisioned = await self._provision_workspace()
         self._publish("workflow_run_update", {"status": self.run.status.value})
+        return provisioned
+
+    async def _provision_workspace(self) -> bool:
+        """Stand up the run's declared workspace before the first node (WORK-CONTAINERS §4.1).
+
+        Returns False when the run was refused. This is the first production caller of
+        `workspace.plan_provisioning` / `worktrees.pending_setup`: before it, a spec's
+        `workspace:` block was parsed nowhere, so every run ran in place no matter what its
+        template declared — the whole §4.1 mechanism was a decision layer with no call site.
+
+        **A FATAL declaration REFUSES the run.** `parse_workspace` marks an unknown mode and a
+        greedy preserve pattern fatal precisely because they cannot be honored, and honoring
+        neither means running in a mode nobody chose. An ignored fatal issue is the inert-control
+        shape this program keeps finding, so it terminates the run through `_finish` (the single
+        terminal writer) instead of degrading quietly.
+
+        **The lock is taken and RELEASED here, not held for the run.** Holding a flock across a
+        multi-hour run would tie the workspace to this process's lifetime, so a gateway restart
+        would strand it. What the lock actually protects is the provisioning WINDOW — the
+        preserve+setup pass, where two processes writing the same tree corrupt each other. Live
+        contention refuses the run rather than queueing: two runs interleaving writes in one
+        worktree is worse than telling the second one now.
+
+        Idempotent, because `_prepare` runs again on resume: `add_worktree` returns the same path
+        for an existing run id (measured), setup is marker-guarded and content-addressed, and
+        preserve is an overwriting copy. The second pass is therefore cheap and safe rather than a
+        second workspace.
+
+        Guarded on everything except the deliberate refusal: a provisioning bug must cost the
+        isolation, never the run — a run that cannot start because a scratch dir failed to `mkdir`
+        would be strictly worse than one that runs in the project workspace and says so.
+        """
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.workflows import provisioning
+
+        if not provisioning.declares_workspace(self.spec):
+            # No `workspace:` block, no managed workspace. The default mode fills in a block that
+            # declared the OTHER fields; it does not opt every run in — see `declares_workspace`
+            # for the boot-sweep interaction that measurement caught.
+            return True
+        try:
+            cfg = AppConfig.load().workflows
+            spec, issues = provisioning.resolve_spec(
+                self.spec, default_mode=cfg.workspace_default_mode
+            )
+        except Exception:
+            logger.debug("run %s: workspace spec unreadable", self.run.id, exc_info=True)
+            return True
+
+        fatal = [i for i in issues if i.fatal]
+        if fatal:
+            reason = "; ".join(i.message for i in fatal)
+            self.journal.workspace_provisioned(
+                {"ok": False, "issues": [i.to_dict() for i in fatal], "refused": True}
+            )
+            async with self._lock:
+                await self._finish(
+                    RunStatus.FAILED, error=f"workspace declaration refused: {reason}"[:500]
+                )
+            return False
+
+        lock = provisioning.acquire_workspace_lock(self.run.id, name=spec.name)
+        if not lock.acquired:
+            # A named workspace another live run holds. Refused, not queued — see the docstring.
+            self.journal.workspace_provisioned(
+                {"ok": False, "contended": True, "degraded_reason": lock.reason}
+            )
+            async with self._lock:
+                await self._finish(RunStatus.FAILED, error=lock.reason[:500])
+            return False
+        try:
+            result = await provisioning.provision(
+                spec,
+                run_id=self.run.id,
+                project_id=self.run.project_id,
+                workspace_dir=self._project_workspace(),
+                issues=issues,
+                runner=self.services.teardown_runner,
+            )
+        except Exception:
+            logger.warning("run %s: workspace provisioning failed", self.run.id, exc_info=True)
+            return True
+        finally:
+            lock.release()
+
+        async with self._lock:
+            provisioning.stamp_run(self.run, result, spec)
+            self._save_run()
+        self.journal.workspace_provisioned(result.to_dict())
+        if result.isolated and result.path:
+            # The stage dispatcher's cwd, so a code-kind run's subagents actually work IN the
+            # worktree. Without this the isolation would be a directory nothing ran in — the
+            # mechanism would look provisioned and be decorative.
+            self.services.cwd = result.path
+        return True
+
+    def _project_workspace(self) -> str:
+        """The codebase this run's project binds, or the services cwd.
+
+        A project's `workspace_dir` is the tree a worktree branches from and the tree
+        `preserve_patterns` copies out of. Falling back to `services.cwd` keeps a project-less
+        run (a chat-launched batch) provisionable — its workspace is simply wherever the gateway
+        is rooted, which is what every other cwd-consuming node already assumes.
+        """
+        pid = self.run.project_id
+        if not pid:
+            return self.services.cwd
+        try:
+            from personalclaw.tasks.hierarchy import HierarchyStore
+
+            project = HierarchyStore().get_project(pid)
+            bound = str(getattr(project, "workspace_dir", "") or "") if project else ""
+            return bound or self.services.cwd
+        except Exception:
+            logger.debug("run %s: project workspace lookup failed", self.run.id, exc_info=True)
+            return self.services.cwd
+
+    def _enforce_inherited_mode(self) -> None:
+        """Apply a restricted origin's memory posture at run start (WORK-CONTAINERS §5.1).
+
+        The run already carries the inherited mode in `extra` (stamped by `start_run`); this is the
+        moment it becomes ENFORCED in the process-global `session_restrictions` registry — the fast
+        path the knowledge/learning writers consult during the run. The chat layer never marks the
+        registry (it enforces off `session.is_restricted` on the LIVE session object, which a
+        background run no longer holds), so this is the registry's FIRST writer for a run's keys.
+
+        The mark is made for BOTH the launching session key AND the run-owned key: the origin key is
+        what the run-end LearningGate reads (`_capture_run_end` keys `for_session` off
+        `origin.session_key`), and the owned key is what any run-scoped write would carry. A
+        `temporary` run gets both marks per `restriction_calls`, because `is_temporary` gates reads
+        while `is_restricted` gates writes.
+
+        **Durability lives in `run.extra`, not a session JSONL.** A run owns no `ConversationLog`
+        file — stage subagents persist under their own `subagent:<id>` keys, and the `workflow:`
+        owned string is a provenance ref, not a JSONL key. The run record's `extra["memory_mode"]`
+        IS the run's durable metadata head: `start_run` stamps it via `ownership.stamp_run_mode`,
+        which is `ownership.durable_metadata` (same `memory_mode` key by construction, not two
+        literals). It round-trips through the run record on disk and is what a gateway restart
+        replays — after which `_prepare` runs again and re-marks the registry from it, and the
+        engine's node-skip + the run-end gate keep reading it. Materializing an owned-session JSONL
+        line would create a file no reader consumes (the reindex path forgets restricted sessions on
+        sight), so the durable write is deliberately the `extra` head. DEVIATION from the literal
+        "JSONL write" phrasing, recorded in the plan's Execution log.
+
+        Idempotent and best-effort: `_prepare` runs once per live controller and again on resume,
+        and re-marking a key already in the LRU is a no-op. A NORMAL run does nothing — an
+        unrestricted origin has nothing to suppress. Guarded because `_prepare` must not fail the
+        run over a registry mutation.
+        """
+        mode = ownership.run_mode(self.run)
+        if mode is ownership.MemoryMode.NORMAL:
+            return
+        owned = ownership.own_session(self.run.id, "run", inherited_mode=mode)
+        try:
+            from personalclaw import session_restrictions
+
+            for call in ownership.restriction_calls(owned):
+                mark = getattr(session_restrictions, call)
+                if self.run.origin.session_key:
+                    mark(self.run.origin.session_key)
+                mark(owned.key)
+        except Exception:
+            logger.debug("run %s: registry mark failed", self.run.id, exc_info=True)
 
     async def _step(self) -> bool:
         """One scheduling step under the lock. Returns True when the run is terminal.
@@ -2280,6 +2461,37 @@ class RunController:
                 self.journal.decision(
                     parent_path, node.id, epoch=inst.epoch, decision=decision.to_dict()
                 )
+
+            # LEARN-R18: a node that made a measurable bet says so in a `pending_outcome`
+            # key {subject, metric, horizon_secs, baseline}. It is journaled as an OPEN
+            # question at decision time — a single/list of dicts, mirroring `decision` —
+            # and the curator's resolver measures ground truth once the horizon elapses.
+            # Kept separate from `decision` on purpose: a Decision is a settled choice, a
+            # pending outcome is a claim about the future the run cannot yet evaluate.
+            raw_pending = output.get("pending_outcomes")
+            if isinstance(output.get("pending_outcome"), dict):
+                raw_pending = [output["pending_outcome"]]
+            for raw in raw_pending if isinstance(raw_pending, list) else []:
+                if not isinstance(raw, dict):
+                    continue
+                subject = str(raw.get("subject") or "").strip()
+                metric = str(raw.get("metric") or "").strip()
+                if not subject or not metric:
+                    continue
+                try:
+                    horizon = float(raw.get("horizon_secs") or 0.0)
+                    baseline = float(raw.get("baseline") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                self.journal.pending_outcome(
+                    parent_path,
+                    node.id,
+                    epoch=inst.epoch,
+                    subject=subject,
+                    metric=metric,
+                    horizon_secs=horizon,
+                    baseline=baseline,
+                )
         except Exception:
             logger.debug(
                 "run %s: could not capture iteration context at %s",
@@ -2709,7 +2921,56 @@ class RunController:
             attention.resolve_run_items(self.services.attention_state, self.run.id)
             if status == RunStatus.COMPLETE:
                 self._revise_project_overview()
+            self._capture_run_end()
         self._publish("workflow_run_update", {"status": status.value, "error": error})
+
+    def _capture_run_end(self) -> None:
+        """Route a terminal run through the LearningGate → run-end learner (LEARNING-FLYWHEEL §3.3).
+
+        The RUN_END cadence. Best-effort and fully guarded: `_finish` is the single terminal
+        writer (WF2-R10) and MUST NOT raise, so a failure here costs a lesson, never the run's
+        terminal status.
+
+        Inert unless a memory service with a live vector store was injected into EngineServices —
+        every test and CLI path leaves `services.memory` None, so this no-ops there exactly as
+        `self_model_observer.observe_turn` no-ops without `has_vector`. The gate is what honors
+        success criterion 10: an incognito/temporary session's terminal run is denied here (via
+        the session-key restriction registry) and writes nothing through this cadence, and
+        `learning.run_end_enabled=False` turns the cadence off without touching the others.
+        """
+        service = getattr(self.services, "memory", None)
+        if service is None or not getattr(service, "has_vector", False):
+            return
+        try:
+            from types import SimpleNamespace
+
+            from personalclaw.config.loader import AppConfig
+            from personalclaw.learning import run_end
+            from personalclaw.learning.gate import Cadence, LearningGate
+
+            cfg = AppConfig.load().learning
+            # The session that started the run is likely gone by terminal time. `for_session` then
+            # reads the process-global registry by key (`_enforce_inherited_mode` marked it at
+            # start), AND the `is_restricted` flag carried on this namespace — set from the RUN's
+            # inherited mode, not hardcoded False. The run record is the durable authority: a
+            # registry mark can evict from the bounded LRU over a long run, and reading
+            # `is_restricted=False` there would re-open the gate an incognito origin closed. Belt
+            # (record) and suspenders (registry), fail-closed by construction.
+            restricted = ownership.run_mode(self.run) in ownership.WRITE_SUPPRESSED
+            session = SimpleNamespace(
+                key=self.run.origin.session_key, is_restricted=restricted, _ephemeral=False
+            )
+            decision = LearningGate.for_session(session, cfg).decide(
+                Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
+            )
+            if not decision.allowed:
+                logger.debug(
+                    "run %s: run-end capture gated (%s)", self.run.id, decision.reason.value
+                )
+                return
+            run_end.capture(self.run, service, journal=journal_mod)
+        except Exception:
+            logger.debug("run %s: run-end capture failed", self.run.id, exc_info=True)
 
     def _revise_project_overview(self) -> None:
         """Auto-revise the run's project overview on a successful completion (WORK-CONTAINERS §6.1).

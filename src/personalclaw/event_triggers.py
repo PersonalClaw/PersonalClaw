@@ -1,20 +1,37 @@
 """Data-event triggers (#38) — the event-pattern layer of the triggers facade.
 
 The third trigger kind alongside ``schedule`` (clock) and ``lifecycle`` (agent-loop
-event): an **event** trigger fires when PClaw's own state changes. v1 exposes the
-cheapest source — memory writes (``vector_memory._log_event``):
+event): an **event** trigger fires when PClaw's own state changes. The vocabulary is
+**source-agnostic**: every event carries a ``source`` and a source can never
+fire another source's trigger.
+
+Memory writes (``vector_memory._log_event``) — ``source="memory"``:
 
 - **MemoryUpdate**     — any memory write (create/update/delete).
 - **MemoryKeyPattern** — a write whose key matches a glob (``project.acme.*``).
 - **ContentMatch**     — a write whose value matches a regex/substring.
 
+Inbox messages (``inbox_service._ingest``, after the allowlist) — ``source="inbox"``:
+
+- **InboxMessage**     — any accepted inbox message from a watched source.
+- **InboxSender**      — a message whose sender matches ``sender_glob``.
+- **InboxAddress**     — a message whose receiving address matches ``address_glob``.
+
+App-contributed sources (``trigger_sources.emit``, AUTO-A4) — ``source="app"``:
+
+- **AppEvent**         — an event from an installed app's ``trigger_source`` provider, whose
+  namespaced name (``app:<app>:<event>``) matches ``event_glob``. An empty glob matches every app
+  event. The payload is fenced at ingestion with the app's provenance, so the app's own text can
+  never arrive as instructions.
+
 Each spec carries an action (reusing the action-provider registry) + an optional
 ``max_fires`` so a trigger auto-disables once exhausted ("alert me the NEXT time X").
 A per-spec debounce + a global rate cap guard against trigger storms.
 
-This is deliberately a small, decoupled engine: ``vector_memory`` calls
-``emit_memory_event`` best-effort (never blocking a write), and the registry persists
-specs as JSON like crons. Folds into ``triggers-unification`` as its event layer.
+This is deliberately a small, decoupled engine: every source calls the ONE emitter
+``emit_event`` best-effort (never blocking the source's own work), and the registry
+persists specs as JSON like crons. Folds into ``triggers-unification`` as its event
+layer.
 """
 
 from __future__ import annotations
@@ -32,11 +49,57 @@ from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
 
-# Event-pattern kinds.
+# Event sources (EIAT-1 C1). A source is the CLASS of origin — the engine scopes
+# matching by it so a memory trigger can never fire on an inbox event and vice versa.
+SOURCE_MEMORY = "memory"
+SOURCE_INBOX = "inbox"
+#: App-contributed sources (AUTO-A4). Its PRODUCER is `trigger_sources.registry.emit`, the single
+#: ingestion point that namespaces the event (`app:<app>:<event>`) from the app's registered name
+#: and fences its text at origin. Declared here since EIAT-1 with no producer at all — an "enum
+#: member nobody writes" — which is precisely what AUTO-A4 closed.
+SOURCE_APP = "app"
+EVENT_SOURCES = (SOURCE_MEMORY, SOURCE_INBOX, SOURCE_APP)
+
+# Event-pattern kinds. The three memory patterns are KEPT VERBATIM — they are
+# persisted values, and renaming them would silently retire every stored trigger.
 MEMORY_UPDATE = "MemoryUpdate"
 MEMORY_KEY_PATTERN = "MemoryKeyPattern"
 CONTENT_MATCH = "ContentMatch"
-EVENT_PATTERNS = (MEMORY_UPDATE, MEMORY_KEY_PATTERN, CONTENT_MATCH)
+# Inbox patterns. InboxSender/InboxAddress read the meta dict a source
+# supplies, so the engine never learns any source's schema.
+INBOX_MESSAGE = "InboxMessage"
+INBOX_SENDER = "InboxSender"
+INBOX_ADDRESS = "InboxAddress"
+# App-source pattern (AUTO-A4). ONE pattern, not two, and that is a decision worth stating: an
+# earlier sketch had a catch-all `AppEvent` plus a separate glob pattern, mirroring the
+# InboxMessage/InboxSender split. But the inbox split exists because its two matchers read
+# DIFFERENT meta fields (`sender` vs `address`), whereas both app variants would read the same
+# `event_type` — so the catch-all is just `event_glob: "*"`, and shipping it as a second pattern
+# would be two persisted values for one matcher. An empty glob matches every app event, which is
+# the catch-all, and `matches()` documents it.
+APP_EVENT = "AppEvent"
+EVENT_PATTERNS = (
+    MEMORY_UPDATE,
+    MEMORY_KEY_PATTERN,
+    CONTENT_MATCH,
+    INBOX_MESSAGE,
+    INBOX_SENDER,
+    INBOX_ADDRESS,
+    APP_EVENT,
+)
+
+# Which source each pattern belongs to. A pattern is only ever evaluated for events
+# of its own source — this is the table `matches()` reads to enforce source scoping,
+# and the create/update handlers read to reject a pattern paired with the wrong source.
+PATTERN_SOURCE: dict[str, str] = {
+    MEMORY_UPDATE: SOURCE_MEMORY,
+    MEMORY_KEY_PATTERN: SOURCE_MEMORY,
+    CONTENT_MATCH: SOURCE_MEMORY,
+    INBOX_MESSAGE: SOURCE_INBOX,
+    INBOX_SENDER: SOURCE_INBOX,
+    INBOX_ADDRESS: SOURCE_INBOX,
+    APP_EVENT: SOURCE_APP,
+}
 
 # Global rate cap: at most this many event-trigger fires per window (storm guard).
 _RATE_WINDOW_SECS = 60.0
@@ -50,11 +113,33 @@ class EventTrigger:
 
     id: str
     pattern: str  # one of EVENT_PATTERNS
+    source: str = SOURCE_MEMORY  # one of EVENT_SOURCES — the origin this trigger listens to
     action_provider: str = "notify"  # action-provider name
     action_config: dict = field(default_factory=dict)
     key_glob: str = ""  # for MemoryKeyPattern
     content_re: str = ""  # for ContentMatch
+    sender_glob: str = ""  # for InboxSender
+    address_glob: str = ""  # for InboxAddress
+    #: For AppEvent (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`). Empty
+    #: matches every app event — the catch-all, which is why `AppEvent` needs no second pattern.
+    event_glob: str = ""
     enabled: bool = True
+    #: Lifecycle state, from `triggers.models.TriggerState` (AUTO-A4). DISTINCT from `enabled`, and
+    #: that distinction is the whole point: `enabled` is the user's switch, `state` is the system's.
+    #: Defaults to `active`, so every row persisted before this field existed keeps firing exactly
+    #: as before — a default of anything else would silently retire the whole population.
+    #:
+    #: Only `parked` is produced here today (an app source vanishing — `trigger_sources.parking`).
+    #: The other members belong to the unified store's own fire path; this store's rows reach them
+    #: through no path, which is why nothing here maps a fire outcome onto `state`.
+    state: str = "active"
+    #: Why this trigger is parked, in words the user can act on. Empty when not parked. Persisted
+    #: rather than derived because the CAUSE (which app went away) is not recoverable from the
+    #: state once the app is gone from the registry.
+    park_reason: str = ""
+    #: Epoch seconds after which a parked trigger may retry — `autopause.unpark_due`'s contract.
+    #: 0.0 reads as due, so a park written before this field existed cannot strand a trigger.
+    park_retry_after: float = 0.0
     max_fires: int = 0  # 0 = unlimited
     fire_count: int = 0
     debounce_secs: float = _DEFAULT_DEBOUNCE_SECS
@@ -64,11 +149,18 @@ class EventTrigger:
         return {
             "id": self.id,
             "pattern": self.pattern,
+            "source": self.source,
             "action_provider": self.action_provider,
             "action_config": self.action_config,
             "key_glob": self.key_glob,
             "content_re": self.content_re,
+            "sender_glob": self.sender_glob,
+            "address_glob": self.address_glob,
+            "event_glob": self.event_glob,
             "enabled": self.enabled,
+            "state": self.state,
+            "park_reason": self.park_reason,
+            "park_retry_after": self.park_retry_after,
             "max_fires": self.max_fires,
             "fire_count": self.fire_count,
             "debounce_secs": self.debounce_secs,
@@ -77,19 +169,51 @@ class EventTrigger:
 
     @classmethod
     def from_dict(cls, d: dict) -> "EventTrigger":
+        pattern = str(d.get("pattern", MEMORY_UPDATE))
+        # Tolerate specs persisted before EIAT-1 (no ``source`` key): infer it from the
+        # pattern's home so a legacy memory trigger keeps its exact matching semantics.
+        source = str(d.get("source") or PATTERN_SOURCE.get(pattern, SOURCE_MEMORY))
         return cls(
             id=str(d.get("id", "")),
-            pattern=str(d.get("pattern", MEMORY_UPDATE)),
+            pattern=pattern,
+            source=source,
             action_provider=str(d.get("action_provider", "notify")),
             action_config=dict(d.get("action_config") or {}),
             key_glob=str(d.get("key_glob", "")),
             content_re=str(d.get("content_re", "")),
+            sender_glob=str(d.get("sender_glob", "")),
+            address_glob=str(d.get("address_glob", "")),
+            event_glob=str(d.get("event_glob", "")),
             enabled=bool(d.get("enabled", True)),
+            # `active` default: a row persisted before `state` existed must keep firing. Reading a
+            # missing state as anything else would retire the whole existing population at once.
+            state=str(d.get("state") or "active"),
+            park_reason=str(d.get("park_reason", "")),
+            park_retry_after=float(d.get("park_retry_after", 0.0) or 0.0),
             max_fires=int(d.get("max_fires", 0) or 0),
             fire_count=int(d.get("fire_count", 0) or 0),
             debounce_secs=float(d.get("debounce_secs", _DEFAULT_DEBOUNCE_SECS) or 0.0),
             last_fired_at=float(d.get("last_fired_at", 0.0) or 0.0),
         )
+
+
+def fires_automatically(trigger: EventTrigger) -> bool:
+    """Whether the engine may fire this trigger on its own (AUTO-A4).
+
+    🔴 Asked as ONE question, mirroring `Trigger.fires_automatically`, for the reason its docstring
+    gives: "checking `enabled` without `state` is how an autopaused trigger keeps firing". This
+    store's only non-active state today is `parked` (an app source vanished), and a park that did
+    not actually stop the fire would be a control that looks enforced and is not — the exact shape
+    this repo keeps finding.
+
+    Read through this rather than comparing `state` at each call site: `matches()` is the ONE gate
+    every source reaches, so putting the check there means a new source cannot forget it. Both
+    halves live HERE rather than as two separate lines in `matches()`, so a caller cannot ask half
+    the question — which is the failure `Trigger.fires_automatically` was written to prevent.
+    """
+    from personalclaw.triggers.models import TriggerState
+
+    return trigger.enabled and trigger.state == TriggerState.ACTIVE.value
 
 
 #: How much of a memory value `ContentMatch` will scan.
@@ -147,16 +271,37 @@ def catastrophic_regex_hint(pattern: str) -> str:
     )
 
 
-def matches(trigger: EventTrigger, *, event_type: str, key: str, value: str) -> bool:
-    """Pure: does *trigger* match this memory event?
+def matches(
+    trigger: EventTrigger,
+    *,
+    source: str,
+    event_type: str,
+    key: str,
+    value: str,
+    meta: dict | None = None,
+) -> bool:
+    """Pure: does *trigger* match this event?
 
-    §7/R4 rule (d): only the trigger SPEC supplies patterns. `key_glob` and `content_re` come from
-    the trigger; `key` and `value` are data and are only ever matched AGAINST. The value's scan
-    length is capped — see `CONTENT_MATCH_SCAN_LIMIT` for the measurement that made that necessary.
+    **Source scoping first (EIAT-1).** An event carries the CLASS of origin it came from; a
+    trigger only ever fires on its own source. So a `memory` write can never trip an `inbox`
+    trigger and vice versa, regardless of pattern — the source gate is checked before any
+    pattern logic.
+
+    §7/R4 rule (d): only the trigger SPEC supplies patterns. `key_glob`, `content_re`,
+    `sender_glob`, `address_glob` and `event_glob` come from the trigger; `key`, `value`,
+    `event_type` and the `meta` fields are data and are only ever matched AGAINST. The value's
+    scan length is capped — see `CONTENT_MATCH_SCAN_LIMIT` for the measurement that made that
+    necessary.
     """
-    if not trigger.enabled:
+    # `enabled` AND `state`, asked as ONE question (AUTO-A4) — see `fires_automatically`. Checking
+    # `enabled` alone is how a parked trigger keeps firing.
+    if not fires_automatically(trigger):
         return False
     if trigger.max_fires and trigger.fire_count >= trigger.max_fires:
+        return False
+    # A trigger listens to exactly one source. This gate — not the pattern table — is what makes
+    # cross-source firing impossible even if a caller supplied a mismatched pattern/source pair.
+    if trigger.source != source:
         return False
     if trigger.pattern == MEMORY_UPDATE:
         return True
@@ -173,6 +318,28 @@ def matches(trigger: EventTrigger, *, event_type: str, key: str, value: str) -> 
             return re.search(trigger.content_re, scanned) is not None
         except re.error:
             return trigger.content_re in scanned
+    if trigger.pattern == APP_EVENT:
+        # 🔴 Matched on the NAMESPACED `event_type` (`app:<app>:<event>`), which core derives from
+        # the app's REGISTERED name at ingestion — never from anything the app supplies. So a glob
+        # of `app:calendar:*` cannot be tripped by a hostile app claiming to be `calendar`.
+        #
+        # An empty glob matches EVERY app event (the catch-all), unlike `MemoryKeyPattern`, where
+        # an empty glob matches nothing. The asymmetry is deliberate and follows what an author
+        # means in each case: `MemoryKeyPattern` exists ONLY to narrow by key, so an empty key is
+        # an unfinished trigger; `AppEvent` is the whole app-source vocabulary, so an empty glob is
+        # "any app event" — the same reading `InboxMessage` has for its source.
+        return not trigger.event_glob or fnmatch.fnmatch(event_type or "", trigger.event_glob)
+    meta = meta or {}
+    if trigger.pattern == INBOX_MESSAGE:
+        return True
+    if trigger.pattern == INBOX_SENDER:
+        return bool(trigger.sender_glob) and fnmatch.fnmatch(
+            str(meta.get("sender") or ""), trigger.sender_glob
+        )
+    if trigger.pattern == INBOX_ADDRESS:
+        return bool(trigger.address_glob) and fnmatch.fnmatch(
+            str(meta.get("address") or ""), trigger.address_glob
+        )
     return False
 
 
@@ -256,15 +423,39 @@ class FireOutcome:
         return out
 
 
+def _truncate_fenced(value: str, limit: int) -> str:
+    """Truncate text that is ALREADY fenced, keeping the fence closed (AUTO-A4).
+
+    Extracted because both fencing sites below need it and a per-site copy is a control that must be
+    re-added correctly at each one — the same reasoning `CONTENT_MATCH_SCAN_LIMIT` gives for living
+    in `matches()` rather than at each emitter.
+
+    Cutting a fenced span can remove its closing marker, and an UNTERMINATED fence is worse than a
+    truncated one: everything the model reads after it falls outside the fence, which is exactly the
+    fence-break the wrapper defends against. So the close is re-appended when the cut removed it.
+    """
+    from personalclaw.security import UNTRUSTED_CLOSE
+
+    cut = value[:limit]
+    return cut if UNTRUSTED_CLOSE in cut else f"{cut}\n{UNTRUSTED_CLOSE}"
+
+
 def _fenced_excerpt(trigger_id: str, key: str, value: str) -> str:
     """A short fenced excerpt for the context line, with its own provenance.
 
     Separate from the 2000-char payload fence because the TRANSFORMATION differs — this one is
     truncated to 200 — and `transformation_path` is only honest if it names the truncation that
     actually happened.
-    """
-    from personalclaw.security import fence_untrusted
 
+    **Text already fenced at origin is truncated but NOT re-wrapped** (AUTO-A4). An app-sourced
+    payload arrives fenced by `trigger_sources.emit` with the app's own provenance; wrapping it
+    again would escape the inner markers, so the origin's attributes would read to the model as
+    literal text — the exact damage `fence_payload`'s idempotence exists to avoid.
+    """
+    from personalclaw.security import fence_untrusted, is_fenced
+
+    if is_fenced(value):
+        return _truncate_fenced(value, 200)
     return fence_untrusted(
         value[:200],
         source=f"trigger:{trigger_id}",
@@ -277,9 +468,11 @@ def _fenced_excerpt(trigger_id: str, key: str, value: str) -> str:
 async def execute_event_action(
     t: EventTrigger,
     *,
+    source: str,
     event_type: str,
     key: str,
     value: str,
+    meta: dict | None = None,
     test: bool = False,
 ) -> FireOutcome:
     """Run one event trigger's action through both guardrail gates. Returns a typed outcome.
@@ -324,7 +517,7 @@ async def execute_event_action(
             screen=verdict,
         )
 
-    from personalclaw.security import fence_untrusted
+    from personalclaw.security import fence_untrusted, is_fenced
 
     # Fenced for EVERY fire, not only a suspicious one. A memory value is untrusted text by
     # definition, and fencing only the flagged ones would mean the screen's misses arrive as
@@ -333,26 +526,40 @@ async def execute_event_action(
     # three different claims. "a memory event said this" and "THIS key said it, truncated to 2000
     # chars on the way" differ, and only the second lets a reader tell whether the text the model
     # acted on is the text that arrived.
-    fenced = fence_untrusted(
-        value[:2000],
-        source=f"trigger:{t.id}:{event_type}",
-        source_type=f"event:{event_type}",
-        source_id=key,
-        transformation_path="truncate:2000",
-    )
+    #
+    # 🔴 IDEMPOTENT (AUTO-A4), via `security.is_fenced` and never `UNTRUSTED_OPEN in text` — the
+    # substring form misses every ATTRIBUTED fence, which is the fail-open direction and has bitten
+    # this repo twice. An app-sourced payload is fenced at ORIGIN by `trigger_sources.emit` with the
+    # app's own provenance (`source_type=app:<name>`, `transformation_path=app-source:emit`); this
+    # is the `web_watch` precedent and the reason `screen.fence_payload` is idempotent too.
+    # Re-wrapping would escape the inner markers, so the origin attributes would reach the model as
+    # literal text — losing exactly the provenance the outer fence is trying to add.
+    if is_fenced(value):
+        fenced = _truncate_fenced(value, 2000)
+    else:
+        fenced = fence_untrusted(
+            value[:2000],
+            source=f"trigger:{t.id}:{source}:{event_type}",
+            source_type=f"event:{source}:{event_type}",
+            source_id=key,
+            transformation_path="truncate:2000",
+        )
 
     # Annotated: the literal alone infers `dict[str, str]`, which mypy correctly refuses at the
     # `payload["test"] = True` below. Same two-step the migration path needed.
     payload: dict[str, Any] = {
+        "source": source,
         "event_type": event_type,
         "key": key,
         "value": fenced,
         "trigger_id": t.id,
     }
+    if meta:
+        payload["meta"] = dict(meta)
     if test:
         payload["test"] = True
     ctx = ActionContext(
-        event=f"memory.{event_type}",
+        event=f"{source}.{event_type}",
         context=f"{key}: {_fenced_excerpt(t.id, key, value)}",
         payload=payload,
     )
@@ -388,11 +595,12 @@ def get_engine() -> "EventTriggerEngine":
 
 
 class EventTriggerEngine:
-    """Matches memory events against stored triggers + fires their actions.
+    """Matches events against stored triggers + fires their actions.
 
-    Memory writes call :meth:`on_memory_event` (best-effort, never blocking). A
-    match schedules the action on the event loop; debounce + a global rate cap
-    prevent storms. Actions reuse the action-provider registry."""
+    Every source (memory writes, inbox messages, …) calls :meth:`on_event`
+    (best-effort, never blocking). A match schedules the action on the event loop;
+    debounce + a global rate cap prevent storms. Actions reuse the action-provider
+    registry."""
 
     def __init__(self, store: EventTriggerStore | None = None):
         self._store = store
@@ -405,8 +613,21 @@ class EventTriggerEngine:
             self._store = EventTriggerStore(config_dir() / "event_triggers.json")
         return self._store
 
-    def on_memory_event(self, *, event_type: str, key: str, value: str, now: float) -> None:
-        """Notified by vector_memory on a write. Fires matching triggers. Never raises."""
+    def on_event(
+        self,
+        *,
+        source: str,
+        event_type: str,
+        key: str,
+        value: str,
+        now: float,
+        meta: dict | None = None,
+    ) -> None:
+        """Notified by a source on an event. Fires matching triggers. Never raises.
+
+        ``source`` scopes matching (EIAT-1): a trigger only fires on its own source, so an
+        inbox event can never trip a memory trigger and vice versa.
+        """
         try:
             triggers = self._get_store().load()
         except Exception:
@@ -414,7 +635,9 @@ class EventTriggerEngine:
         if not triggers:
             return
         for t in triggers:
-            if not matches(t, event_type=event_type, key=key, value=value):
+            if not matches(
+                t, source=source, event_type=event_type, key=key, value=value, meta=meta
+            ):
                 continue
             # Debounce only a trigger that has actually fired before (last_fired_at>0).
             if t.debounce_secs and t.last_fired_at and (now - t.last_fired_at) < t.debounce_secs:
@@ -423,14 +646,24 @@ class EventTriggerEngine:
                 logger.warning("event-trigger rate cap hit — dropping fire for %s", t.id)
                 break
             self._fire_times.append(now)
-            self._schedule_fire(t, event_type=event_type, key=key, value=value, now=now)
+            self._schedule_fire(
+                t, source=source, event_type=event_type, key=key, value=value, now=now, meta=meta
+            )
 
     def _rate_ok(self, now: float) -> bool:
         self._fire_times = [ts for ts in self._fire_times if now - ts < _RATE_WINDOW_SECS]
         return len(self._fire_times) < _RATE_MAX_FIRES
 
     def _schedule_fire(
-        self, t: EventTrigger, *, event_type: str, key: str, value: str, now: float
+        self,
+        t: EventTrigger,
+        *,
+        source: str,
+        event_type: str,
+        key: str,
+        value: str,
+        now: float,
+        meta: dict | None = None,
     ) -> None:
         # Record the fire synchronously (auto-disable is immediate); dispatch async.
         try:
@@ -451,36 +684,62 @@ class EventTriggerEngine:
             # ran. Spooling parks the envelope on disk for the next tick to drain —
             # criterion 7's "no lost fire" across a restart, and why the spool is
             # append-only JSONL (one torn write loses one line, not the file).
-            self._spool(t, event_type=event_type, key=key, value=value, now=now)
+            self._spool(
+                t, source=source, event_type=event_type, key=key, value=value, now=now, meta=meta
+            )
             return
-        loop.create_task(self._fire(t, event_type=event_type, key=key, value=value))
+        loop.create_task(
+            self._fire(t, source=source, event_type=event_type, key=key, value=value, meta=meta)
+        )
 
     def _spool(
-        self, t: "EventTrigger", *, event_type: str, key: str, value: str, now: float
+        self,
+        t: "EventTrigger",
+        *,
+        source: str,
+        event_type: str,
+        key: str,
+        value: str,
+        now: float,
+        meta: dict | None = None,
     ) -> None:
         """Park a fire with no loop to run on, so the next tick picks it up (crit 7 — S142).
 
-        Never raises. A spool failure must not break the memory WRITE that triggered it:
+        Never raises. A spool failure must not break the WRITE that triggered it:
         that write is the user's actual work, and this is bookkeeping on top of it.
         """
         try:
             from personalclaw.triggers.dispatch import Envelope, spool_fire
 
+            payload: dict[str, Any] = {"trigger_id": t.id, "key": key, "value": value}
+            if meta:
+                payload["meta"] = dict(meta)
             spool_fire(
                 Envelope(
                     seq=0,
                     source=f"event:{t.id}",
-                    kind=f"memory.{event_type}",
-                    payload={"trigger_id": t.id, "key": key, "value": value},
+                    kind=f"{source}.{event_type}",
+                    payload=payload,
                     emitted_at=now,
                 )
             )
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not spool the event fire for %s", t.id, exc_info=True)
 
-    async def _fire(self, t: EventTrigger, *, event_type: str, key: str, value: str) -> None:
+    async def _fire(
+        self,
+        t: EventTrigger,
+        *,
+        source: str,
+        event_type: str,
+        key: str,
+        value: str,
+        meta: dict | None = None,
+    ) -> None:
         try:
-            outcome = await execute_event_action(t, event_type=event_type, key=key, value=value)
+            outcome = await execute_event_action(
+                t, source=source, event_type=event_type, key=key, value=value, meta=meta
+            )
             if not outcome.ran:
                 logger.debug("event-trigger %s did not run: %s", t.id, outcome.reason)
         except Exception as exc:
@@ -494,9 +753,25 @@ class EventTriggerEngine:
             logger.warning("event-trigger action failed for %s — %s", t.id, envelope.render())
 
 
-def emit_memory_event(*, event_type: str, key: str, value: str | None, now: float) -> None:
-    """The seam vector_memory calls after logging a memory event. Best-effort."""
+def emit_event(
+    *,
+    source: str,
+    event_type: str,
+    key: str,
+    value: str | None,
+    now: float,
+    meta: dict | None = None,
+) -> None:
+    """The ONE emitter every source calls after an event (EIAT-1). Best-effort.
+
+    Source-agnostic: ``source`` (``SOURCE_MEMORY``/``SOURCE_INBOX``/``SOURCE_APP``) scopes which
+    triggers can fire, and ``meta`` carries source-specific fields (e.g. an inbox message's
+    ``sender``/``address``) that the inbox patterns match against. Never raises — a trigger fault
+    must not break the source's own work.
+    """
     try:
-        get_engine().on_memory_event(event_type=event_type, key=key, value=value or "", now=now)
+        get_engine().on_event(
+            source=source, event_type=event_type, key=key, value=value or "", now=now, meta=meta
+        )
     except Exception:
-        logger.debug("emit_memory_event failed", exc_info=True)
+        logger.debug("emit_event failed", exc_info=True)

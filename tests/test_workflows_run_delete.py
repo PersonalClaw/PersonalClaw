@@ -61,51 +61,51 @@ def _terminal_run(status: RunStatus = RunStatus.COMPLETE) -> WorkflowRun:
 
 
 class TestDeleteRefusals:
-    def test_an_unknown_run_is_not_found(self) -> None:
-        result = service.delete_run("nope")
+    async def test_an_unknown_run_is_not_found(self) -> None:
+        result = await service.delete_run("nope")
         assert result["ok"] is False and result["code"] == "WF_RUN_NOT_FOUND"
 
-    def test_a_RUNNING_run_is_refused(self) -> None:
+    async def test_a_RUNNING_run_is_refused(self) -> None:
         """The single-writer invariant: a live controller would keep writing to a row that no
         longer exists. The message names the fix rather than just refusing."""
         run = _terminal_run(RunStatus.RUNNING)
-        result = service.delete_run(run.id)
+        result = await service.delete_run(run.id)
         assert result["ok"] is False
         assert result["code"] == "WF_RUN_NOT_TERMINAL"
         assert "cancel" in result["message"].lower()
         assert store.get(run.id) is not None
 
-    def test_a_NEEDS_INPUT_run_is_refused(self) -> None:
+    async def test_a_NEEDS_INPUT_run_is_refused(self) -> None:
         """Waiting, not finished — and it holds a live resume token somebody may still use."""
         run = _terminal_run(RunStatus.NEEDS_INPUT)
-        assert service.delete_run(run.id)["code"] == "WF_RUN_NOT_TERMINAL"
+        assert (await service.delete_run(run.id))["code"] == "WF_RUN_NOT_TERMINAL"
 
-    def test_a_PAUSED_run_is_refused(self) -> None:
+    async def test_a_PAUSED_run_is_refused(self) -> None:
         run = _terminal_run(RunStatus.PAUSED)
-        assert service.delete_run(run.id)["code"] == "WF_RUN_NOT_TERMINAL"
+        assert (await service.delete_run(run.id))["code"] == "WF_RUN_NOT_TERMINAL"
 
     @pytest.mark.parametrize(
         "status",
         [RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.ESCALATED],
     )
-    def test_every_terminal_status_is_deletable(self, status: RunStatus) -> None:
+    async def test_every_terminal_status_is_deletable(self, status: RunStatus) -> None:
         run = _terminal_run(status)
-        assert service.delete_run(run.id)["ok"] is True
+        assert (await service.delete_run(run.id))["ok"] is True
 
 
 class TestDeleteEffects:
-    def test_the_row_and_the_directory_both_go(self) -> None:
+    async def test_the_row_and_the_directory_both_go(self) -> None:
         """A row-only delete would leave the journal, outputs and continuation tokens on disk
         forever — invisible to every surface, and still a valid resume link."""
         run = _terminal_run()
         run_dir = store.run_dir(run.id)
         assert run_dir.is_dir(), "expected artifacts to exist before the delete"
 
-        assert service.delete_run(run.id)["deleted"] is True
+        assert (await service.delete_run(run.id))["deleted"] is True
         assert store.get(run.id) is None
         assert not run_dir.exists()
 
-    def test_it_closes_the_runs_open_inbox_rows(self) -> None:
+    async def test_it_closes_the_runs_open_inbox_rows(self) -> None:
         """A gate open when the run was cancelled would otherwise outlive the run entirely and
         be unanswerable forever."""
         from personalclaw.inbox import InboxItem, InboxStore, ItemKind
@@ -128,19 +128,19 @@ class TestDeleteEffects:
         )
         inbox.save()
 
-        service.delete_run(run.id)
+        await service.delete_run(run.id)
         after = InboxStore()
         after.load()
         assert after.items["needs_input-x"].status != "pending"
 
-    def test_a_deleted_run_is_gone_from_the_list(self) -> None:
+    async def test_a_deleted_run_is_gone_from_the_list(self) -> None:
         run = _terminal_run()
-        service.delete_run(run.id)
+        await service.delete_run(run.id)
         rows, total = store.list_runs()
         assert all(r.id != run.id for r in rows)
         assert total == 0
 
-    def test_the_supervisors_controller_is_dropped(self) -> None:
+    async def test_the_supervisors_controller_is_dropped(self) -> None:
         """Nothing may hold a handle to a run whose row is about to disappear, or the next poll
         would try to reconcile a run that no longer exists."""
 
@@ -159,10 +159,10 @@ class TestDeleteEffects:
         run = _terminal_run()
         sup = _Supervisor()
         sup.held[run.id] = object()
-        assert service.delete_run(run.id, supervisor=sup)["ok"] is True
+        assert (await service.delete_run(run.id, supervisor=sup))["ok"] is True
         assert sup.forgotten == [run.id]
 
-    def test_a_supervisor_that_cannot_forget_does_not_block_the_delete(self) -> None:
+    async def test_a_supervisor_that_cannot_forget_does_not_block_the_delete(self) -> None:
         """A registry failure must not strand a run the user asked to remove."""
 
         class _Broken:
@@ -173,14 +173,14 @@ class TestDeleteEffects:
                 raise RuntimeError("registry is wedged")
 
         run = _terminal_run()
-        assert service.delete_run(run.id, supervisor=_Broken())["ok"] is True
+        assert (await service.delete_run(run.id, supervisor=_Broken()))["ok"] is True
         assert store.get(run.id) is None
 
-    def test_deleting_twice_is_not_an_error_the_second_time(self) -> None:
+    async def test_deleting_twice_is_not_an_error_the_second_time(self) -> None:
         """It is a 404, not a 500: the state the caller wanted is the state that exists."""
         run = _terminal_run()
-        service.delete_run(run.id)
-        assert service.delete_run(run.id)["code"] == "WF_RUN_NOT_FOUND"
+        await service.delete_run(run.id)
+        assert (await service.delete_run(run.id))["code"] == "WF_RUN_NOT_FOUND"
 
 
 class TestForeachItemLabels:
