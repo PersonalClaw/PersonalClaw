@@ -427,6 +427,26 @@ class KnowledgeStore:
 
             CREATE INDEX IF NOT EXISTS idx_extracted_item_id ON extracted_contents(item_id);
 
+            -- Chunk index (KL-9). ADDITIVE to the item's whole-item embedding: the item
+            -- row keeps its own vector, and each chunk carries a vector over a
+            -- structural slice of the document so retrieval can reach content deep in a
+            -- long doc and cite it to a section/line span. `chunk_index` is the 0..N-1
+            -- order within the item (a chunker detail, distinct from the retired legacy
+            -- source/chunk model). ON DELETE CASCADE means a deleted item drops its
+            -- chunks with it.
+            CREATE TABLE IF NOT EXISTS chunks (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                embedding BLOB,
+                section TEXT,
+                line_start INTEGER,
+                line_end INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chunks_item_id ON chunks(item_id);
+
             -- Intent outcomes (Tier-3, redesign). A natural-language intent's match
             -- against one item, stored BY VALUE: the takeaway + typed fields + a
             -- denormalized item title are copied in. item_id is a SOFT back-reference
@@ -1310,6 +1330,69 @@ class KnowledgeStore:
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
         self.db.commit()
 
+    # -- Chunk index (KL-9): additive per-item slices with their own embeddings --------
+
+    def replace_chunks(self, item_id: str, chunks: list) -> int:
+        """Replace an item's chunk rows with *chunks* (``knowledge.chunking.Chunk``),
+        embedding each with *embedder* handled by the caller.
+
+        The item's OWN whole-item embedding is untouched — chunks are additive. Delete-
+        then-insert (not upsert) keeps the row set exactly in step with a re-chunk, so a
+        shorter document after an edit never leaves stale tail chunks behind. ``embedding``
+        is written pre-serialized on the Chunk (``.embedding`` bytes) or NULL. Caller owns
+        no commit — this commits its own single statement batch. Returns rows written.
+        """
+        self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
+        rows = [
+            (
+                uuid4().hex,
+                item_id,
+                c.chunk_index,
+                c.text,
+                c.embedding,
+                c.section,
+                c.line_start,
+                c.line_end,
+            )
+            for c in chunks
+        ]
+        if rows:
+            self.db.executemany(
+                "INSERT INTO chunks "
+                "(id, item_id, chunk_index, text, embedding, section, line_start, line_end) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        self.db.commit()
+        return len(rows)
+
+    def get_chunks(self, item_id: str, *, with_embedding: bool = False) -> list[dict]:
+        """An item's chunks in order. The raw embedding BLOB is an internal detail, so it
+        is decoded to a float list only when *with_embedding* is set (the retrieval path);
+        otherwise a lightweight ``has_embedding`` flag is returned instead."""
+        cols = "id, item_id, chunk_index, text, section, line_start, line_end, embedding"
+        rows = self.db.execute(
+            f"SELECT {cols} FROM chunks WHERE item_id = ? ORDER BY chunk_index",
+            (item_id,),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            raw = d.pop("embedding", None)
+            if with_embedding:
+                from personalclaw.knowledge.embedder import bytes_to_floats
+
+                d["embedding"] = bytes_to_floats(raw) if raw else []
+            else:
+                d["has_embedding"] = bool(raw)
+            out.append(d)
+        return out
+
+    def clear_chunks(self, item_id: str) -> None:
+        """Drop an item's chunk rows (e.g. before a re-ingest)."""
+        self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
+        self.db.commit()
+
     # -- Intent outcomes (Tier-3, stored by value with a soft back-ref) -----------
 
     def record_intent_outcome(
@@ -1637,6 +1720,7 @@ class KnowledgeStore:
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
+        self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         # Intent outcomes are kept BY VALUE — only the soft back-ref is severed, so the
         # gathered insight survives the item's deletion.
         self.db.execute("UPDATE intent_outcomes SET item_id = NULL WHERE item_id = ?", (item_id,))
