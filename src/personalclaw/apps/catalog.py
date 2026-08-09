@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.manifest import AppManifest
+from personalclaw.apps.manifest import AppManifest, version_tuple
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 
@@ -793,6 +793,177 @@ def available_bundled() -> list[CatalogEntry]:
             )
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Update surfacing (APE-7)
+#
+# An installed app's SOURCE may offer a newer version than the copy on disk. We
+# surface that WITHOUT a polling loop: the latest-available version is computed on
+# the existing ``/api/apps`` read path from CHEAP, on-disk local-source manifest
+# reads (the same dir-scan ``_scan_local_sources`` does) — no network clone on the
+# hot path. The Store keeps its own (cached, network-capable) discovery for BROWSING;
+# this is the always-cheap "is anything I already have out of date?" check.
+#
+# One notification per ``(name, latest_version)`` is delivered through the registered
+# ``apps/update`` attention kind, deduped by a persisted ``entity_settings/app_updates.json``
+# high-water mark so re-computing on every read never re-nags — only a version NEWER than the
+# one already announced fires again.
+# ---------------------------------------------------------------------------
+
+_APP_UPDATES_ENTITY = "app_updates"
+
+
+def _latest_local_versions() -> dict[str, str]:
+    """``{app_name: highest version}`` discoverable across the configured LOCAL sources.
+
+    Unlike ``_scan_local_sources`` (which OMITS installed apps, since it feeds the Store's
+    "available to install" list), this includes every app a local source declares — because
+    the whole point here is to compare an INSTALLED app against the newer copy its source now
+    carries. On-disk manifest reads only; a bad manifest is skipped, never fatal."""
+    from pathlib import Path
+
+    latest: dict[str, str] = {}
+    for root in list_local_sources():
+        base = Path(root).expanduser()
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.iterdir()):
+            manifest_file = entry / "app.json" if entry.is_dir() else None
+            if not manifest_file or not manifest_file.is_file():
+                continue
+            try:
+                m = AppManifest.from_json_file(manifest_file)
+            except Exception:
+                logger.debug("update check: bad local manifest %s", entry, exc_info=True)
+                continue
+            if not m.name or not m.version:
+                continue
+            current = latest.get(m.name)
+            if current is None or version_tuple(m.version) > version_tuple(current):
+                latest[m.name] = m.version
+    return latest
+
+
+def updates_available() -> list[dict[str, Any]]:
+    """Installed apps whose local source now offers a NEWER version.
+
+    Compares each installed app's on-disk version against the highest version the configured
+    local sources declare for that app, using the single app-version comparator
+    (``manifest.version_tuple``). Returns one entry per out-of-date app::
+
+        {"name", "displayName", "installedVersion", "latestVersion", "source"}
+
+    Pure + cheap (on-disk reads, no network, no side effects) — safe to call on the
+    ``/api/apps`` read path. An app with no newer version, or with no source-side manifest,
+    is simply absent."""
+    from personalclaw.apps.manager import list_apps
+
+    latest = _latest_local_versions()
+    out: list[dict[str, Any]] = []
+    for app in list_apps():
+        name = app.get("name", "")
+        installed_version = str(app.get("version", ""))
+        latest_version = latest.get(name)
+        if not name or not latest_version:
+            continue
+        if version_tuple(latest_version) > version_tuple(installed_version):
+            manifest = app.get("manifest") or {}
+            out.append(
+                {
+                    "name": name,
+                    "displayName": manifest.get("displayName") or name,
+                    "installedVersion": installed_version,
+                    "latestVersion": latest_version,
+                    "source": app.get("source", ""),
+                }
+            )
+    return out
+
+
+def _load_notified() -> dict[str, str]:
+    """The per-app high-water mark of the latest version we've already notified about
+    (``entity_settings/app_updates.json`` → ``{"notified": {name: version}}``). Tolerant:
+    an unreadable/corrupt file means we've announced nothing (fail open — a duplicate
+    notification is a lesser evil than a silently-swallowed one)."""
+    try:
+        from personalclaw.providers.entity_routes import _load_entity_settings
+
+        data = _load_entity_settings(_APP_UPDATES_ENTITY)
+        notified = data.get("notified") if isinstance(data, dict) else None
+        return {str(k): str(v) for k, v in notified.items()} if isinstance(notified, dict) else {}
+    except Exception:
+        logger.debug("app-update notified state unreadable", exc_info=True)
+        return {}
+
+
+def _save_notified(notified: dict[str, str]) -> None:
+    from personalclaw.providers.entity_routes import _save_entity_settings
+
+    _save_entity_settings(_APP_UPDATES_ENTITY, {"notified": notified})
+
+
+def surface_app_updates(state: Any) -> list[dict[str, Any]]:
+    """Compute available updates AND emit ONE notification per newly-available version.
+
+    The dedup contract (APE-7): a notification fires the first time an app's source offers a
+    given ``latestVersion``, and never again for that version — even after the inbox row is
+    dismissed — because the high-water mark is persisted OUTSIDE the inbox
+    (``entity_settings/app_updates.json``), keyed by ``name``. Only a version strictly newer
+    than the one last announced re-fires. Emission routes through the registered
+    ``apps/update`` attention kind via ``emit_attention_item`` (dual-honesty: even if the
+    kind's delivery rule is muted, the inbox row still lands and ``state.notify`` still runs —
+    the rules layer, not this code, decides whether to toast).
+
+    Returns the same list as :func:`updates_available` so a caller on the read path can attach
+    it to its response without recomputing. Best-effort: a persistence/emit error is logged and
+    never breaks the read path."""
+    updates = updates_available()
+    if state is None:
+        return updates
+    try:
+        notified = _load_notified()
+    except Exception:
+        notified = {}
+    changed = False
+    for u in updates:
+        name = u["name"]
+        latest_version = u["latestVersion"]
+        already = notified.get(name, "")
+        if version_tuple(latest_version) > version_tuple(already):
+            _emit_app_update(state, u)
+            notified[name] = latest_version
+            changed = True
+    if changed:
+        try:
+            _save_notified(notified)
+        except Exception:
+            logger.warning("could not persist app-update notified state", exc_info=True)
+    return updates
+
+
+def _emit_app_update(state: Any, update: dict[str, Any]) -> None:
+    from personalclaw.inbox import emit_attention_item
+
+    name = update["name"]
+    display = update.get("displayName") or name
+    latest_version = update["latestVersion"]
+    installed_version = update.get("installedVersion", "")
+    try:
+        emit_attention_item(
+            state,
+            source="apps",
+            kind="update",
+            title=f"Update available for {display}",
+            body=f"Version {latest_version} is available (you have {installed_version}).",
+            refs={"app": name, "latest_version": latest_version},
+            # Dedup within the inbox on the exact version too; the persisted high-water mark
+            # above is the durable "never re-nag" guarantee, this just avoids a duplicate row
+            # if the same version is surfaced twice before the mark is written.
+            dedup_key=f"app_update:{name}:{latest_version}",
+        )
+    except Exception:
+        logger.warning("app-update notification failed for %s", name, exc_info=True)
 
 
 def available_catalog() -> dict[str, Any]:

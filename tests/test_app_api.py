@@ -24,9 +24,19 @@ from personalclaw.dashboard.handlers.apps import register_app_routes
 
 @asynccontextmanager
 async def _client(tmp_path):
+    from personalclaw import inbox as _inbox
+    from personalclaw.apps import catalog as _catalog
+    from personalclaw.providers import entity_routes as _er
+
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
         patch.object(manager, "config_dir", return_value=tmp_path),
+        # catalog / entity_routes / inbox each bind config_dir at import into their own
+        # namespace; patch those too so the APE-7 update-surfacing read path (local
+        # sources + notified high-water mark + inbox fallback) stays in the sandbox.
+        patch.object(_catalog, "config_dir", return_value=tmp_path),
+        patch.object(_er, "config_dir", return_value=tmp_path),
+        patch.object(_inbox, "config_dir", return_value=tmp_path),
     ):
         # Fresh supervisor per test so backend processes don't leak between tests.
         backend_runtime._supervisor = backend_runtime.BackendSupervisor()
@@ -524,3 +534,32 @@ async def test_startup_relaunches_enabled_backends(tmp_path, monkeypatch):
                 break
             await asyncio.sleep(0.1)
         assert got == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_apps_list_flags_available_update(tmp_path, monkeypatch):
+    """APE-7 end-to-end over HTTP: install v1.0.0, register a local source carrying a
+    v1.1.0 copy, and GET /api/apps → the installed app is flagged updateAvailable with
+    the newer latestVersion (computed on the read path, no polling)."""
+    # Neutralize the always-present first-party default source so this test's source set
+    # is exactly the one it adds (env → nonexistent dir disables the default).
+    monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(tmp_path / "no-first-party"))
+    from personalclaw.apps import catalog
+
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "notes", version="1.0.0")
+        assert (await client.post("/api/apps", json={"source": src})).status == 201
+
+        # No newer source yet → no update flagged.
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        notes = next(a for a in apps if a["name"] == "notes")
+        assert notes["updateAvailable"] is False and notes["latestVersion"] == ""
+
+        # A local source now carries a NEWER copy of the same app.
+        newer = _app_src(tmp_path, "notes", version="1.1.0", subdir="newer-src")
+        catalog.add_local_source(str(Path(newer).parent))
+
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+        notes = next(a for a in apps if a["name"] == "notes")
+        assert notes["updateAvailable"] is True
+        assert notes["latestVersion"] == "1.1.0"

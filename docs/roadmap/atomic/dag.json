@@ -5244,7 +5244,7 @@
         {
           "id": "APE-7",
           "title": "Update surfacing: catalog.updates_available() + card/nav badges + kind-registered notification",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 T2.4 (update-available surfacing; folds into Session 2)",
           "done_when": "bump a local source's version -> installed-card badge + Store nav count + ONE notification; re-view -> no re-nag (dedup by name+latest_version); zero polling processes added",
           "deps": [
@@ -6838,11 +6838,6 @@
       {
         "id": "APE-5",
         "title": "Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles",
-        "plan": "APE"
-      },
-      {
-        "id": "APE-7",
-        "title": "Update surfacing: catalog.updates_available() + card/nav badges + kind-registered notification",
         "plan": "APE"
       },
       {

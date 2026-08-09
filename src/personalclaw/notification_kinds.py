@@ -216,6 +216,12 @@ _KINDS: tuple[NotificationKind, ...] = (
         "system", "agent_request", "Agent request", "immediate", SEV_WARNING, attention=True
     ),
     NotificationKind("system", "digest", "Daily digest", "immediate", SEV_INFO, attention=True),
+    # apps — an installed app's source offers a newer version (APE-7). Attention-bearing
+    # (a durable inbox row deep-links to the app), emitted once per (name, latest_version)
+    # via emit_attention_item on the existing /api/apps read path — no polling loop.
+    NotificationKind(
+        "apps", "update", "App update available", "immediate", SEV_INFO, attention=True
+    ),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
 )
@@ -263,6 +269,7 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     "proposal": ("skills", "proposal"),
     "agent_request": ("system", "agent_request"),
     "digest": ("system", "digest"),
+    "app_update": ("apps", "update"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
