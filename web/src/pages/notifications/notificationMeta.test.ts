@@ -40,9 +40,9 @@ const BACKEND_KINDS = [
   // bare `kind` of every registration
   'agent_request', 'alert', 'complete', 'digest', 'error', 'failed', 'fired', 'generic',
   'info', 'message', 'needs_input', 'progress', 'proposal', 'result', 'retire',
-  'route_drift', 'session', 'stalled', 'status', 'subagent', 'success', 'warning',
+  'route_drift', 'session', 'stalled', 'status', 'subagent', 'success', 'update', 'warning',
   // legacy + attention flat wire strings
-  'agent', 'app.route.drift', 'cron', 'feedback_retire', 'heartbeat', 'hook',
+  'agent', 'app.route.drift', 'app_update', 'cron', 'feedback_retire', 'heartbeat', 'hook',
   'inbox_alert', 'loop', 'schedule',
 ]
 

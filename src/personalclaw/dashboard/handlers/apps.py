@@ -163,9 +163,25 @@ def _app_status(name: str) -> dict[str, Any]:
 
 
 async def api_apps_list(request: web.Request) -> web.Response:
-    """GET /api/apps — installed apps with manifest summary + runtime state."""
-    from personalclaw.apps.catalog import resolve_hero_url
+    """GET /api/apps — installed apps with manifest summary + runtime state.
+
+    APE-7: on this existing read path (no polling loop) we also compute which installed
+    apps have a newer version available from their local source, tag each such app
+    ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
+    notification per newly-available version (deduped by ``name + latest_version`` in
+    ``surface_app_updates`` so re-viewing never re-nags)."""
+    from personalclaw.apps.catalog import resolve_hero_url, surface_app_updates
     from personalclaw.apps.manager import app_dir, list_apps
+
+    # Compute available updates + emit the (deduped) notifications, on this read path.
+    # Best-effort: an update-check failure must never break the apps list.
+    updates_by_name: dict[str, dict[str, Any]] = {}
+    try:
+        state = request.app.get("state")
+        updates = await asyncio.to_thread(surface_app_updates, state)
+        updates_by_name = {u["name"]: u for u in updates}
+    except Exception:
+        logger.debug("apps list: update surfacing skipped", exc_info=True)
 
     out: list[dict[str, Any]] = []
     for app in list_apps():
@@ -225,6 +241,10 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
                 "installedAt": app.get("installedAt", ""),
                 "updatedAt": app.get("updatedAt", ""),
+                # APE-7: a newer version is available from this app's source. The card
+                # renders an "update available" badge and the Store nav counts these.
+                "updateAvailable": name in updates_by_name,
+                "latestVersion": updates_by_name.get(name, {}).get("latestVersion", ""),
                 **_app_status(name),
             }
         )

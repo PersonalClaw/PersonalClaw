@@ -52,6 +52,10 @@ interface StoreItem extends AppCatalogEntry {
   /** Provenance for the source divider: builtin/registry origin → "Built-in";
    *  a git URL or a local path → that source. */
   origin?: string
+  /** APE-7: the app's source offers a newer version — card shows an "Update" badge. */
+  updateAvailable?: boolean
+  /** APE-7: that newer version (for the badge tooltip). */
+  latestVersion?: string
 }
 
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
@@ -64,6 +68,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     isProvider: a.isProvider, providerType: a.providerType, tags: a.tags ?? [],
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
     native: !!a.native, hasConfig: a.hasConfig, origin: a.origin,
+    updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion,
   }
 }
 
@@ -909,6 +914,13 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
             <div className="flex items-center gap-1.5">
               <span data-type="body-l" className="truncate text-on-surface transition-colors group-hover:text-primary" style={fvs(550)}>{item.displayName}</span>
               {item.version && <span data-type="label-s" className="shrink-0 text-on-surface-low">v{item.version}</span>}
+              {item.installed && item.updateAvailable && (
+                <span data-type="label-s" title={item.latestVersion ? `Update to v${item.latestVersion} available` : 'Update available'}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary"
+                  style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+                  <RefreshCw size={11} /> Update
+                </span>
+              )}
             </div>
             {providerLabel && (
               <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary" data-type="label-s"
@@ -1185,6 +1197,19 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
           <div data-type="body-s" className="text-on-surface-low">{app.description || app.name}</div>
           <div data-type="label-s" className="mt-1 text-on-surface-low">v{app.version} · {app.origin || 'local'}</div>
         </div>
+
+        {app.updateAvailable && (
+          <div className="flex items-center justify-between gap-3 rounded-m border border-primary/40 bg-surface-high p-m"
+            style={{ background: 'color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-high))' }}>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-primary" data-type="body-s"><RefreshCw size={14} /> Update available</div>
+              <div className="mt-0.5 text-on-surface-low" data-type="label-s">
+                {app.latestVersion ? `Version ${app.latestVersion} is available (you have ${app.version}).` : 'A newer version is available.'}
+              </div>
+            </div>
+            <Button variant="primary" size="sm" className="shrink-0" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
+          </div>
+        )}
 
         <PermissionList perms={app.permissions} />
 

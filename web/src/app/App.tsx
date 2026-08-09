@@ -325,7 +325,11 @@ function AppInner() {
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
     : rendered
   // Ambient active-loop count badges the Projects tile (loops live under projects now).
-  const appBadgeTotal = Object.values(appBadges).reduce((a, b) => a + b, 0)
+  // APE-7: installed apps with an available update badge the Store nav tile with a count,
+  // so an out-of-date app is visible from any page (computed from the same /api/apps
+  // read the Library uses — no extra poll). Summed with any SDK-set per-app badges.
+  const updatesCount = (installedApps ?? []).filter((a) => a.updateAvailable).length
+  const appBadgeTotal = Object.values(appBadges).reduce((a, b) => a + b, 0) + updatesCount
   // Build the rail: static NAV with badges, then splice the dynamic app UI tiles
   // in right after the Store tile (so they sit contiguous under the Apps section
   // header). A per-app badge (set via the SDK setNavBadge) lights its own tile.
