@@ -81,13 +81,18 @@ _CEILING_WRAPPED: dict[str, str] = {
     "mcp_client.py::McpServerConn._open_transport::StdioServerParameters": (
         "MCP stdio client → tool ceiling via spawn_shim_argv baked into StdioServerParameters"
     ),
-    # ACP session host transport (session_host profile — the EMFILE fix).
-    "acp/transport.py::AcpProcess.spawn::create_subprocess_limited": (
-        "ACP session host → session_host ceiling (NOFILE raised, no OOM bias)"
-    ),
     # Workflow BYOI teardown command (tool profile).
     "workflows/effects.py::run_teardown::create_subprocess_limited": (
         "workflow BYOI teardown → tool ceiling via create_subprocess_limited"
+    ),
+    # The ``none`` sandbox provider's handle exec (EI-1) — the single seam every routed spawn
+    # now funnels through. EI-1 moved the direct create_subprocess_limited call out of
+    # AcpProcess.spawn (session_host profile — the EMFILE fix, NOFILE raised, no OOM bias) and
+    # into this provider handle, which composes the OS path sandbox with the resource ceilings;
+    # the profile still rides on the SandboxSpec, so the ACP ceiling is unchanged.
+    "sandbox_providers/none.py::_NoneHandle.exec::create_subprocess_limited": (
+        "none sandbox provider → profile ceiling via create_subprocess_limited (post-exec shim); "
+        "the single routed-spawn seam (subsumes the former AcpProcess.spawn session_host site)"
     ),
     # Interactive terminal — explicitly the ``none`` profile (routed for legibility; the
     # helper is a no-op there so no shim cost, but the site stays audited).
@@ -372,7 +377,10 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen",
         "mcp_discovery.py::probe_server::create_subprocess_limited",
         "mcp_client.py::McpServerConn._open_transport::StdioServerParameters",
-        "acp/transport.py::AcpProcess.spawn::create_subprocess_limited",
+        # EI-1 routed the ACP session_host spawn through the sandbox provider handle — the
+        # single seam every routed spawn now funnels through — so the ACP ceiling is asserted
+        # here rather than at the former AcpProcess.spawn site.
+        "sandbox_providers/none.py::_NoneHandle.exec::create_subprocess_limited",
         "loop/gates.py::run_verify_command::create_subprocess_limited",
         "loop/worktree.py::_git::subprocess.run",
     }
