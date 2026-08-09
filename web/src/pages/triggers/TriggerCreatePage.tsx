@@ -16,7 +16,7 @@ import { schemaProps } from '../tools/schema'
 import {
   TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
   eventDormancyReason, eventIsDormant, EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon,
-  actionIsSendCapable,
+  eventSourceLabel, appEventOptions, actionIsSendCapable,
 } from './triggerMeta'
 
 /** Create flow for a Trigger, with a CLEAN split between the Trigger mechanism
@@ -72,6 +72,11 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const patternOptions = useMemo(() => EVENT_PATTERN_META.map((p) => ({
     value: p.pattern, label: p.label, description: p.desc,
   })), [])
+  // AppEvent's matcher is a PICKER over the live app-source vocabulary (AUTO-A4), not free text:
+  // the namespaced name (`app:<app>:<event>`) is core's to derive, so typing it by hand is how a
+  // trigger ends up bound to an event that will never fire. Falls back to the plain glob input when
+  // no app contributes a source — an empty picker with no fallback would be a dead end.
+  const appEvents = useMemo(() => appEventOptions(catalog), [catalog])
   // The variables available to the ACTION depend on the configured TRIGGER.
   const actionVars = kind === 'schedule' ? (catalog?.schedule ?? []) : kind === 'lifecycle' ? em.vars : []
   // Draft-by-default surfacing (EIAT-5): a send-capable action delivers OUT to a channel, so an
@@ -185,10 +190,32 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
                     names the origin rather than offering it as a choice: inbox message vs memory write. */}
                 <div className="mt-2 inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]">
                   <SourceIcon size={14} className="shrink-0" />
-                  <span>Source: <span style={fvs(600)}>{pm.source === 'inbox' ? 'Inbox' : 'Memory'}</span></span>
+                  <span>Source: <span style={fvs(600)}>{eventSourceLabel(pm.source)}</span></span>
                 </div>
               </Field>
-              {pm.matcher ? (
+              {pm.matcher === 'event_glob' && appEvents.length > 0 ? (
+                /* The declared app events, from the live registry. A source whose app is disabled is
+                   absent, so the list only ever offers events that can actually fire. */
+                <Field label={pm.matcherLabel} hint="Pick a declared app event. Leave empty to fire on every app event.">
+                  <Combobox options={appEvents} value={eventMatcher} onChange={setEventMatcher} placeholder="Pick an app event…" emptyText="No app events" />
+                </Field>
+              ) : pm.matcher === 'event_glob' ? (
+                <>
+                  <Field label={pm.matcherLabel} hint={pm.matcherHint}>
+                    <TextInput value={eventMatcher} onChange={setEventMatcher} placeholder={pm.matcherPlaceholder} mono />
+                  </Field>
+                  {/* No app contributes a source, so nothing can fire this yet. Warned at the point
+                      of CHOICE — the same treatment a dormant lifecycle event gets above, and for
+                      the same reason: the trigger saves and stays idle, which is indistinguishable
+                      from a working one until the user waits for a fire that never comes. */}
+                  <div role="note" className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem] -mt-2" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      No installed app contributes a trigger source yet, so nothing fires app events. This trigger will save and stay idle until you install one.
+                    </span>
+                  </div>
+                </>
+              ) : pm.matcher ? (
                 <Field label={pm.matcherLabel} hint={pm.matcherHint}>
                   <TextInput value={eventMatcher} onChange={setEventMatcher} placeholder={pm.matcherPlaceholder} mono />
                 </Field>

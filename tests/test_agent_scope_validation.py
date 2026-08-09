@@ -177,10 +177,17 @@ def test_the_chat_path_has_NO_GLOBAL_firing_fallback():
 
 def test_the_substrate_event_kind_has_no_chat_turn_source():
     """Why the scope has no reader yet: the store-backed `event` kind's sources are data origins
-    (memory writes, inbox arrivals) — never chat turns. EIAT-1 widened the vocabulary to inbox
-    patterns, but that is still not a chat-turn source, so `agent_scope` remains unread and this
-    guard stays valid. Pinned so that adding a *chat-turn* source is what is forced to confront the
-    scope, not merely adding another data source."""
+    (memory writes, inbox arrivals, app-contributed sources) — never chat turns. EIAT-1 widened the
+    vocabulary to inbox patterns and AUTO-A4 added the app-source `AppEvent`; neither is a chat-turn
+    source, so `agent_scope` remains unread and this guard stays valid. Pinned so that adding a
+    *chat-turn* source is what is forced to confront the scope, not merely adding another data
+    source.
+
+    🔴 AUTO-A4 is the interesting case for this guard, because an APP could plausibly contribute a
+    chat-turn-shaped source. It cannot reach the scope: `trigger_sources.emit` namespaces every app
+    event under `app:<name>:<event>` and emits with `source=SOURCE_APP`, so an app naming its event
+    `chat_turn` still arrives as an `app` event and matches only `AppEvent` triggers. A chat-turn
+    SOURCE — a new `EVENT_SOURCES` member — is what would break the pin, which is exactly right."""
     from personalclaw.event_triggers import EVENT_PATTERNS, EVENT_SOURCES
 
     assert EVENT_PATTERNS == (
@@ -190,6 +197,7 @@ def test_the_substrate_event_kind_has_no_chat_turn_source():
         "InboxMessage",
         "InboxSender",
         "InboxAddress",
+        "AppEvent",
     )
     # The invariant that keeps agent_scope legitimately unread: no source is a chat turn.
     assert "chat" not in EVENT_SOURCES and "chat_turn" not in EVENT_SOURCES

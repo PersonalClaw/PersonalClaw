@@ -769,6 +769,7 @@ export interface HookItem {
 export type EventPattern =
   | 'MemoryUpdate' | 'MemoryKeyPattern' | 'ContentMatch'
   | 'InboxMessage' | 'InboxSender' | 'InboxAddress'
+  | 'AppEvent'
 // Unified Trigger wire shape from /api/triggers (both kinds). The schedule
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
@@ -835,7 +836,14 @@ export interface ActionProvider {
 // Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
 // working hook is dead the moment the backend wires one.
 export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
-export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[] }
+// One app-contributed trigger source and the events it declares (AUTO-A4). Read from the LIVE
+// `trigger_sources` registry, so a disabled app's source is absent rather than offered — authoring a
+// trigger against an event that cannot fire is the failure this list exists to prevent.
+// `source_event` is the namespaced name (`app:<app>:<event>`) the backend matches `event_glob`
+// against; the UI never re-derives that prefix, or it would drift from `trigger_sources.namespace`.
+export interface AppSourceEvent { event: string; source_event: string }
+export interface AppSourceInfo { app: string; label: string; events: AppSourceEvent[] }
+export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEventInfo[]; app_sources: AppSourceInfo[] }
 // One manual store/schedule-trigger fire (POST /api/triggers/{schedule|store}:{id}/run).
 // `ok` is whether the action ACTUALLY RAN — not whether the request was understood. A trigger whose
 // action cannot be resolved answers 200 with `ok: false` and the reason in `result`, because a
@@ -2364,6 +2372,9 @@ export const api = {
   createEvent: (body: {
     name?: string; pattern: EventPattern
     sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
+    // AppEvent's matcher (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`).
+    // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
+    event_glob?: string
     max_fires?: number; action: { provider: string; config: Record<string, unknown> }
   }) => post<Trigger & { warning?: string }>('/api/triggers', { trigger_type: 'event', ...body }),
   updateEventTrigger: (id: string, body: Record<string, unknown>) =>

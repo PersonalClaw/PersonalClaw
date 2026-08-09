@@ -1181,6 +1181,14 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
         "content_re": "spec.pattern.regex",
         "sender_glob": "spec.pattern.sender_glob",  # EIAT-1: inbox sender matcher
         "address_glob": "spec.pattern.address_glob",  # EIAT-1: inbox address matcher
+        # AUTO-A4: the app-source matcher — a glob on the namespaced `app:<app>:<event>` name.
+        "event_glob": "spec.pattern.event_glob",
+        # AUTO-A4: the lifecycle state, which `Trigger` already carries as a first-class field. Maps
+        # by NAME rather than into `spec`, because it is the same vocabulary (`TriggerState`) — an
+        # app-source park must survive the migration as a park, not as prose in a spec dict.
+        "state": "state",
+        "park_reason": "last_error_summary",
+        "park_retry_after": "park_retry_after",
         "action_provider": "workflow.inline.provider",
         "action_config": "workflow.inline",
         "max_fires": "gates.max_fires",

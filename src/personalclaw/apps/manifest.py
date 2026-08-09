@@ -636,6 +636,11 @@ PROVIDER_TYPES = frozenset(
         # tier). Its `SandboxTypeHandler` lands in the same commit (the #47 rule). The `none`
         # provider is a core builtin, not an app.
         "sandbox",
+        # AUTOMATION-SUBSTRATE AUTO-A4: an app-contributed ORIGIN of trigger events. The app emits
+        # typed events onto the one event bus under a namespaced source (`app:<name>:<event>`),
+        # which `kind: event` triggers match with the existing `{source, pattern}` spec — no new
+        # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit (the #47 rule).
+        "trigger_source",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry

@@ -69,10 +69,35 @@ def _serialize_event(t) -> dict[str, Any]:
         "content_re": t.content_re,
         "sender_glob": t.sender_glob,
         "address_glob": t.address_glob,
+        "event_glob": t.event_glob,
         "max_fires": t.max_fires,
         "fire_count": t.fire_count,
         "action": {"provider": t.action_provider, "config": t.action_config},
+        # The LIFECYCLE state, distinct from `enabled` (AUTO-A4). An app-source trigger parks when
+        # its app is disabled, and a row that shows only `enabled: true` while never firing is the
+        # "backend truth, frontend silence" shape — the panel needs the state AND the reason to say
+        # anything true. `health` rides along so the shared `triggerHealthMeta` mapper works here
+        # exactly as it does for store triggers, rather than a third vocabulary on a third surface.
+        "state": t.state,
+        "health": _event_health(t),
+        "last_error": t.park_reason,
     }
+
+
+def _event_health(t) -> str:
+    """The `TriggerHealth` rollup for an event trigger.
+
+    Derived, not stored: this store keeps no run history to roll up, so the only honest answer comes
+    from the lifecycle state. Mapped through `TriggerHealth` rather than invented so the FE's one
+    `triggerHealthMeta` mapper renders a parked event trigger the same way it renders a parked store
+    trigger — S164's finding was that a second local copy of this vocabulary rendered three distinct
+    states as one grey dot.
+    """
+    from personalclaw.triggers.models import TriggerHealth, TriggerState
+
+    if t.state == TriggerState.PARKED.value:
+        return TriggerHealth.PARKED.value
+    return TriggerHealth.OK.value
 
 
 def _sel():
@@ -451,10 +476,17 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
     """GET /api/triggers/variables — the ``$variables`` each trigger kind exposes.
 
     The single server-sourced catalog both UIs read instead of mirroring it:
-    ``{schedule: [...], lifecycle: [{event, label, desc, vars, blocking?}, ...]}``.
+    ``{schedule: [...], lifecycle: [{event, label, desc, vars, blocking?}, ...],
+    app_sources: [{app, label, events: [{event, source_event}]}]}``.
     Lifecycle entries come from :data:`personalclaw.hooks.LIFECYCLE_EVENT_CATALOG`
     (co-located with the payload assembly that produces those vars); schedule vars
     from :data:`personalclaw.schedule.SCHEDULE_VARS`.
+
+    ``app_sources`` (AUTO-A4) is the LIVE app-contributed event vocabulary, read from the
+    ``trigger_sources`` registry rather than from manifests: a declared source whose app is
+    disabled is not registered, and offering its events would let a user author a trigger that
+    cannot fire until they realise the app is off. Served here rather than on a new route for the
+    same reason the lifecycle dormancy badge rides here — one catalog fetch, one source of truth.
     """
     from personalclaw.hooks import LIFECYCLE_EVENT_CATALOG
     from personalclaw.schedule import SCHEDULE_VARS
@@ -476,7 +508,44 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
         }
         for e in LIFECYCLE_EVENT_CATALOG
     ]
-    return web.json_response({"schedule": list(SCHEDULE_VARS), "lifecycle": lifecycle})
+    return web.json_response(
+        {
+            "schedule": list(SCHEDULE_VARS),
+            "lifecycle": lifecycle,
+            "app_sources": _app_source_catalog(),
+        }
+    )
+
+
+def _app_source_catalog() -> list[dict[str, Any]]:
+    """The live app-contributed event vocabulary (AUTO-A4), sorted by app then by event.
+
+    Each event carries BOTH its bare name and its full namespaced form, because those answer
+    different questions: the bare name is what the app's own docs call it, and `source_event` is the
+    literal string a trigger's `event_glob` matches. Handing the UI only the bare name would make it
+    re-derive the prefix — a second place for the namespace rule to drift from
+    `trigger_sources.namespace`.
+
+    Sorted here rather than in the UI so there is ONE ordering rule: a list the server describes and
+    a list the user scans that disagree is a small thing that costs a real minute to reconcile.
+    """
+    from personalclaw.trigger_sources import declared_events, get_source, namespace
+
+    declared = declared_events()
+    out: list[dict[str, Any]] = []
+    for app in sorted(declared):
+        provider = get_source(app)
+        out.append(
+            {
+                "app": app,
+                "label": str(getattr(provider, "display_name", "") or app),
+                "events": [
+                    {"event": event, "source_event": namespace(app, event)}
+                    for event in sorted(declared[app])
+                ],
+            }
+        )
+    return out
 
 
 # ── list ──
@@ -592,6 +661,7 @@ def _create_event(body: dict) -> web.Response:
         content_re=str(body.get("content_re") or ""),
         sender_glob=sender_glob,
         address_glob=str(body.get("address_glob") or ""),
+        event_glob=str(body.get("event_glob") or ""),
         max_fires=int(body.get("max_fires", 0) or 0),
     )
     _event_store().upsert(t)
@@ -863,6 +933,8 @@ def _update_event(raw: str, body: dict) -> web.Response:
         trigger.sender_glob = str(body.get("sender_glob") or "")
     if "address_glob" in body:
         trigger.address_glob = str(body.get("address_glob") or "")
+    if "event_glob" in body:
+        trigger.event_glob = str(body.get("event_glob") or "")
     # Re-check against the FINAL state: whether the pattern or the glob was the field edited, an
     # InboxSender trigger must never end up with an empty sender_glob (matches every message).
     if trigger.pattern == INBOX_SENDER and not trigger.sender_glob:

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database } from 'lucide-react'
+import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, type ScheduleJob, type HookItem, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
@@ -12,7 +12,7 @@ export interface TriggerKindMeta { key: TriggerKind; label: string; icon: Lucide
 export const TRIGGER_KINDS: TriggerKindMeta[] = [
   { key: 'schedule', label: 'Schedule', icon: CalendarClock, tone: 'var(--color-info)', hint: 'Fires on a clock — every N, on a cron, or once at a set time.' },
   { key: 'lifecycle', label: 'Lifecycle event', icon: Anchor, tone: 'var(--color-primary)', hint: 'Fires on an agent-loop event — a tool call, a prompt, session end, …' },
-  { key: 'event', label: 'Data event', icon: Inbox, tone: 'var(--color-secondary)', hint: 'Fires on an inbox message or a memory write matching a pattern you choose.' },
+  { key: 'event', label: 'Data event', icon: Inbox, tone: 'var(--color-secondary)', hint: 'Fires on an inbox message, a memory write, or an app-contributed event matching a pattern you choose.' },
 ]
 
 // ── Data-event patterns (EIAT-5). One row per wired `event_triggers.EVENT_PATTERNS` member,
@@ -20,10 +20,10 @@ export const TRIGGER_KINDS: TriggerKindMeta[] = [
 //    pattern (never sent on the wire); `matcher` names the ONE spec field this pattern reads
 //    (event_triggers.matches()) — so the form shows exactly that field and no inert extras. A
 //    pattern with no matcher fires on every event from its source. ──
-export type EventMatcherField = 'sender_glob' | 'address_glob' | 'key_glob' | 'content_re' | null
+export type EventMatcherField = 'sender_glob' | 'address_glob' | 'key_glob' | 'content_re' | 'event_glob' | null
 export interface EventPatternMeta {
   pattern: EventPattern
-  source: 'inbox' | 'memory'
+  source: 'inbox' | 'memory' | 'app'
   label: string
   desc: string
   matcher: EventMatcherField
@@ -41,13 +41,34 @@ export const EVENT_PATTERN_META: EventPatternMeta[] = [
   { pattern: 'MemoryUpdate', source: 'memory', label: 'Any memory write', desc: 'Every memory create, update, or delete.', matcher: null, matcherLabel: '', matcherHint: '', matcherPlaceholder: '', matcherRequired: false },
   { pattern: 'MemoryKeyPattern', source: 'memory', label: 'Memory write to a key', desc: 'A memory write whose key matches a glob.', matcher: 'key_glob', matcherLabel: 'Key glob', matcherHint: 'Glob on the memory key (e.g. project.acme.*). Empty matches nothing.', matcherPlaceholder: 'project.acme.*', matcherRequired: false },
   { pattern: 'ContentMatch', source: 'memory', label: 'Memory write matching content', desc: "A memory write whose value matches a regex (or substring if it isn't valid regex).", matcher: 'content_re', matcherLabel: 'Content matcher', matcherHint: 'Regex matched against the written value (substring fallback). Empty matches nothing.', matcherPlaceholder: 'invoice|payment', matcherRequired: false },
+  // AUTO-A4. `matcherRequired: false` because an empty glob is the deliberate CATCH-ALL here, unlike
+  // MemoryKeyPattern's empty glob (which matches nothing) — the backend's `matches()` documents the
+  // asymmetry, and this row mirrors it rather than inventing a stricter form-side rule.
+  { pattern: 'AppEvent', source: 'app', label: 'App event', desc: 'An event from an installed app that contributes a trigger source (a calendar, a device, a watched service).', matcher: 'event_glob', matcherLabel: 'Event', matcherHint: 'Pick a declared event, or glob the namespaced name (e.g. app:my-source:*). Empty matches every app event.', matcherPlaceholder: 'app:my-source:*', matcherRequired: false },
 ]
 export function eventPatternMeta(pattern?: string): EventPatternMeta {
   return EVENT_PATTERN_META.find((p) => p.pattern === pattern) ?? EVENT_PATTERN_META[0]
 }
 /** The event-source icon, for the pattern option list and the panel row. */
 export function eventSourceIcon(source: string): LucideIcon {
-  return source === 'inbox' ? Inbox : Database
+  if (source === 'inbox') return Inbox
+  if (source === 'app') return Plug
+  return Database
+}
+/** The event-source label. One mapper so the option list, the badge and the empty-state copy cannot
+ *  disagree about what to call a source — the S164 lesson applied to naming rather than to colour. */
+export function eventSourceLabel(source: string): string {
+  if (source === 'inbox') return 'Inbox'
+  if (source === 'app') return 'App'
+  return 'Memory'
+}
+/** Every declared app event as `{ value: source_event, label }` options for the matcher picker.
+ *  Empty when no app contributes a source — the form then falls back to a free-text glob, so a user
+ *  with no source app installed still sees an honest field rather than a broken picker. */
+export function appEventOptions(catalog: TriggerVariables | null): { value: string; label: string; description: string }[] {
+  return (catalog?.app_sources ?? []).flatMap((s) =>
+    s.events.map((e) => ({ value: e.source_event, label: `${s.label} · ${e.event}`, description: e.source_event })),
+  )
 }
 
 // ── Store-kind presentation: the "when" label/icon per store_kind. These automations are
