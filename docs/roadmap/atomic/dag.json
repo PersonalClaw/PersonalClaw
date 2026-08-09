@@ -4773,12 +4773,14 @@
         {
           "id": "CE-4",
           "title": "Discord channel app (Gateway WS + REST over httpx): gateway client, delivery+buttons, transport+trust, setup/doctor",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 4-5 — Discord: T4.1–T4.4 + V4; Design §S4-5; Contracts C3 (Discord column)",
           "done_when": "fake-WS tests cover identify/heartbeat/ack/resume/dispatch (guilds, guild_messages, direct_messages, message_content intents); REST delivery tests incl. 429-bucket backoff and approval-button round-trip; transport passes trust integration (DM pairing, guild channels tracked-only, fencing) with honest capabilities; setup/doctor configure end to end; V4 real-test-server validation recorded (owner task 3: Discord app+bot+server)",
           "deps": [
             "CE-1"
-          ]
+          ],
+          "pr": "apps#29",
+          "evidence": "PersonalClawApps/discord-channel/ \u2014 ChannelTransportProvider + ChannelDelivery over the raw Gateway WS (websockets) + REST (httpx), no vendor SDK anywhere (tests incl.), so the manifest declares no pythonDependencies; imports core ONLY via personalclaw.sdk.*. gateway.py: full WS lifecycle \u2014 HELLO-driven heartbeat with ACK tracking, IDENTIFY with the intents bitfield summed from NAMED bits (guilds|guild_messages|direct_messages|message_content = 37377, pinned 3 ways + a dedicated DIRECT_MESSAGES guard, since dropping bit 12 yields 33281 and a bot that silently never receives a DM), READY->session_id/resume_gateway_url, RESUME(op 6) with the last processed seq, INVALID_SESSION resumable-vs-not, RECONNECT(op 7); the ZOMBIE trap is contained \u2014 a beat unacked when the next is due closes 4000 (never 1000, which makes the session unresumable) and resumes, and the sequence advances BEFORE dispatch so a raising handler cannot replay one event forever. api.py: PER-BUCKET rate limiting (Discord's real difference from a flat retry_after) \u2014 bucket state folded from X-RateLimit-Bucket/Remaining/Reset-After, an exhausted bucket waited off PRE-EMPTIVELY instead of spending a 429, a GLOBAL limit tracked separately from a per-route one, buckets keyed on method+concrete path so one busy channel cannot stall another, pathological retry_after capped, 'Authorization: Bot <token>' prefix pinned by test. delivery.py: approvals as message COMPONENTS (Approve/Deny action row, request id in custom_id, the INTERACTION_CREATE press always acknowledged inside Discord's 3s window even for a stale id, then the prompt edited to its outcome with components=[] so no clickable Approve survives), throttled edit-streaming with an exact final flush, 2000-char splitting, redaction on every send, real guild+DM thread links. transport.py: the REAL core trust seam (guard_inbound, provider 'discord') with is_dm derived from the ABSENCE of guild_id (Discord's actual signal) and self-authored/other-bot messages dropped \u2014 MESSAGE_CREATE fires for the bot's own sends, a trap Telegram's getUpdates does not have. Honest capabilities: every True has an implementation (reactions->add_reaction, typing_indicator->show_typing, edits->streaming PATCH, attachments->multipart upload, threads->a thread IS a channel id), max_text_len=2000. settings.py + cli_setup/doctor: app-owned dm_activation + application_id (deliberately NOT a credential \u2014 Discord prints it publicly and it rides in every invite URL) in the app's own store; bot token in the shared credential store under the app's own DISCORD_BOT_TOKEN key; setup prints the OAuth2 invite URL with exactly the 6 permission bits the code exercises (274878008384, no ADMINISTRATOR bit, test-guarded); doctor points at the Channels-page Test for the live GET /gateway/bot hello probe. Gate GREEN: manifest round-trip stable + validate() clean, SDK-only boundary lint clean (CI's repo-wide logic, conftest.py included), `python -m pytest discord-channel -q` -> 198 passed with no network and no wall-clock sleeps (httpx.MockTransport, a scripted fake WS, injected heartbeat/throttle clocks; trust exercised against the real seam in an isolated PERSONALCLAW_HOME), telegram-channel 108 still green. The zombie check, the 4000-not-1000 close code, the DIRECT_MESSAGES bit, the is_dm derivation, the self-message filter and the global-429 gate were each FALSIFIED by breaking them (each reds a specific test). Two defects the tests surfaced and fixed: _handle_dispatch coerced a bogus non-dict payload to {} and handed handlers a silently-empty event; and a tmp PERSONALCLAW_HOME alone is NOT isolation because core's save_credential mirrors into os.environ and load_credentials reads it back, so one test's owner id stayed visible to the next. Pre-existing, not from this change: slack-channel's TestCronMessageSplitting has 4 failures on a clean origin/main tree (verified by stashing the bundle out). Owner V4 (real Developer-Portal application + the MESSAGE CONTENT privileged intent + a bot invite to a test server, plan 'Owner tasks' 3) is a real-world owner step, pending outside this automated tick."
         },
         {
           "id": "CE-5",
@@ -6929,16 +6931,6 @@
         "plan": "CC"
       },
       {
-        "id": "CE-3",
-        "title": "Telegram channel app (raw Bot API over httpx): api client, MarkdownV2 escaper, transport, delivery, setup/doctor",
-        "plan": "CE"
-      },
-      {
-        "id": "CE-4",
-        "title": "Discord channel app (Gateway WS + REST over httpx): gateway client, delivery+buttons, transport+trust, setup/doctor",
-        "plan": "CE"
-      },
-      {
         "id": "CE-5",
         "title": "Email channel app (stdlib IMAP/SMTP in thread executors): poll transport+address-allowlist pairing, SMTP delivery+Message-ID threading, setup/doctor",
         "plan": "CE"
@@ -7052,16 +7044,6 @@
         "id": "EI-5",
         "title": "BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings→Agents evidence",
         "plan": "EI"
-      },
-      {
-        "id": "EIAT-2",
-        "title": "mail-inbox provider app: IMAP inbound, checkpointing, fail-closed allowlist, MIME extraction (S2)",
-        "plan": "EIAT"
-      },
-      {
-        "id": "EIAT-5",
-        "title": "Triggers page inbox-event configuration UI (web/, S3)",
-        "plan": "EIAT"
       },
       {
         "id": "ES-11",
@@ -7339,11 +7321,6 @@
         "plan": "PR"
       },
       {
-        "id": "PR-8",
-        "title": "Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code)",
-        "plan": "PR"
-      },
-      {
         "id": "PR2-10",
         "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
         "plan": "PR2"
@@ -7481,11 +7458,6 @@
       {
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
-        "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LEA-4",
-        "title": "Step 5: run-end capture spoke + route SESSION_END/RUN_END cadences through the gate (criterion 10 remainder)",
         "plan": "WF2LEA"
       },
       {
