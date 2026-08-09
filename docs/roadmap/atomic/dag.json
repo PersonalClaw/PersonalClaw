@@ -3989,7 +3989,7 @@
         {
           "id": "EIAT-5",
           "title": "Triggers page inbox-event configuration UI (web/, S3)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 — T3.2. Core web/ frontend only (separate repo/PR seam from EIAT-4's apps-repo work).",
           "done_when": "An inbox trigger (source, address glob, sender glob, subject/body matcher) is creatable from the Triggers page with URL-backed state, and draft-by-default is clearly surfaced for send-capable actions; no primitive-adoption ratchet trips (uses Button / ui/forms); a11y (focus-visible, reduced-motion) passes; cd web && npm run typecheck && npm test && npm run build all green.",
           "deps": [

@@ -762,6 +762,13 @@ export interface HookItem {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
 }
+// The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
+// source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
+// Kept in lockstep with the Python tuple; the meta table in triggerMeta.ts maps each to its one
+// matcher field. A pattern the backend does not know is rejected server-side with a typed error.
+export type EventPattern =
+  | 'MemoryUpdate' | 'MemoryKeyPattern' | 'ContentMatch'
+  | 'InboxMessage' | 'InboxSender' | 'InboxAddress'
 // Unified Trigger wire shape from /api/triggers (both kinds). The schedule
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
@@ -2350,6 +2357,15 @@ export const api = {
   // verdict — a misconfigured action reports ran:true / success:false, which is a different problem
   // from "it never fired" and must stay distinguishable.
   eventTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=event').then((d) => d.triggers),
+  // Create a data-event trigger (EIAT-5). The backend DERIVES `source` from `pattern`
+  // (PATTERN_SOURCE) — never taken from the wire — so the body carries only the pattern, its
+  // one wired matcher field, the action, and an optional max_fires. A 201 body may carry a
+  // `warning` (a catastrophic content_re warns rather than refuses, §7/R4 rule d).
+  createEvent: (body: {
+    name?: string; pattern: EventPattern
+    sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
+    max_fires?: number; action: { provider: string; config: Record<string, unknown> }
+  }) => post<Trigger & { warning?: string }>('/api/triggers', { trigger_type: 'event', ...body }),
   updateEventTrigger: (id: string, body: Record<string, unknown>) =>
     put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/event:${encodeURIComponent(id)}`, body),
   deleteEventTrigger: (id: string) => del(`/api/triggers/event:${encodeURIComponent(id)}`),
