@@ -632,6 +632,10 @@ PROVIDER_TYPES = frozenset(
         # DURABILITY-AND-SYNC §4.3: an app-contributed sync transport (git-sync, dir-sync). Its
         # `SyncTypeHandler` lands in the same commit (the #47 rule).
         "sync",
+        # EXECUTION-ISOLATION EI-1: an app-contributed sandbox provider (container/VM isolation
+        # tier). Its `SandboxTypeHandler` lands in the same commit (the #47 rule). The `none`
+        # provider is a core builtin, not an app.
+        "sandbox",
     }
 )
 # NOTE: this set MUST equal the runtime type-handler registry

@@ -449,6 +449,40 @@ class SyncTypeHandler(_TypeHandler):
             unregister_transport(name)
 
 
+class SandboxTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'sandbox'`` extensions (EXECUTION-ISOLATION EI-1).
+
+    Builds a ``SandboxProvider`` via the manifest factory and registers it in the
+    ``sandbox_providers`` registry so a spawn site can resolve the configured isolation backend
+    by name. Enabling a container-tier app registers it; disabling it unregisters it — the same
+    one-source-of-truth lifecycle the sync + channel transports follow. The ``none`` provider is
+    a core builtin (self-registered on import), not an app. Lands in the same commit as the
+    ``sandbox`` entry in ``PROVIDER_TYPES`` (the #47 rule).
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.sandbox_providers import register_provider
+
+        register_provider(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.sandbox_providers import unregister_provider
+
+        # Fallback computed without a getattr default so ``ext`` is not dereferenced
+        # when the instance already carries a name (ext may be absent in tests).
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_provider(name)
+
+
 class PromptTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'prompt'`` extensions.
 
@@ -792,6 +826,7 @@ def get_provider_registry() -> ProviderRegistry:
         )
         _registry.register_type_handler("channel", ChannelTypeHandler())
         _registry.register_type_handler("sync", SyncTypeHandler())
+        _registry.register_type_handler("sandbox", SandboxTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
         # a pluggable provider family — so Spaces config lives under Settings >

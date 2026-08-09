@@ -218,6 +218,14 @@
         "sdk_export:PromptVariable"
       ]
     },
+    "src/personalclaw/sdk/sandbox.py": {
+      "inert": 3,
+      "surfaces": [
+        "sdk_export:SandboxHandle",
+        "sdk_export:SandboxProvider",
+        "sdk_export:SandboxSpec"
+      ]
+    },
     "src/personalclaw/sdk/search.py": {
       "inert": 9,
       "surfaces": [
@@ -381,9 +389,9 @@
       "config": 0,
       "editable_config": 0,
       "enum": 30,
-      "sdk_export": 124,
+      "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 154
+    "inert": 157
   }
 }
