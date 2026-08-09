@@ -19,8 +19,8 @@ itself, with an author regex of `(a+)+$` — a shape people write by accident, n
     value len 28: 10.122s
     value len 30: 40.7s
 
-`matches` runs on every memory write (`vector_memory` → `emit_memory_event` →
-`on_memory_event`), and
+`matches` runs on every memory write (`vector_memory` → `emit_event` →
+`on_event`), and
 the value was not length-bounded. **A length cap does NOT fix exponential backtracking** — that is
 recorded on `CONTENT_MATCH_SCAN_LIMIT` rather than pretended otherwise — so catastrophic
 patterns are
@@ -37,10 +37,17 @@ from personalclaw.event_triggers import (
     CONTENT_MATCH,
     CONTENT_MATCH_SCAN_LIMIT,
     MEMORY_KEY_PATTERN,
+    SOURCE_MEMORY,
     EventTrigger,
     catastrophic_regex_hint,
-    matches,
 )
+from personalclaw.event_triggers import matches as _matches
+
+
+def matches(t, **kw):
+    """This file exercises the payload-is-data rule for MEMORY triggers; source scoping is
+    covered in ``test_event_triggers.py``, so default the source here to keep the calls focused."""
+    return _matches(t, source=kw.pop("source", SOURCE_MEMORY), **kw)
 
 
 def _trigger(**kw) -> EventTrigger:
@@ -114,7 +121,8 @@ def test_the_cap_does_not_truncate_what_is_STORED_or_FIRED():
     never writes."""
     import inspect
 
-    src = inspect.getsource(matches)
+    # Inspect the real matcher, not this file's source-defaulting wrapper.
+    src = inspect.getsource(_matches)
     assert "scanned" in src, "the cap applies to a local scan copy"
     assert "value =" not in src, "matches must never rebind the caller's value"
 

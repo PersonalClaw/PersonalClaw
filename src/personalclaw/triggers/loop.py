@@ -190,7 +190,7 @@ def _drain_spool(*, now: float = 0.0) -> int:
     spool is only truncated after the envelopes have been handed on, so a crash mid-drain re-drains
     rather than losing them. `clear_spool(handled=...)` keeps whatever arrived during the drain.
 
-    A spooled fire re-enters through `emit_memory_event`, the SAME seam a live memory write uses —
+    A spooled fire re-enters through `emit_event`, the SAME seam a live source write uses —
     not through a second dispatch path. That is what stops a spooled fire skipping the gates a live
     one walks, which is exactly how the `web_watch` screen gap (S134) happened.
     """
@@ -213,17 +213,27 @@ def _drain_spool(*, now: float = 0.0) -> int:
     for envelope in envelopes:
         payload = getattr(envelope, "payload", None) or {}
         try:
-            from personalclaw.event_triggers import emit_memory_event
+            from personalclaw.event_triggers import SOURCE_MEMORY, emit_event
 
-            emit_memory_event(
-                event_type=str(getattr(envelope, "kind", "") or "").removeprefix("memory."),
+            # `kind` is `f"{source}.{event_type}"` (EIAT-1); split on the first dot so the
+            # spooled fire re-enters scoped to the source it came from. Legacy envelopes with
+            # no source prefix fall back to memory — the only source that spooled before EIAT-1.
+            kind = str(getattr(envelope, "kind", "") or "")
+            source, _, event_type = kind.partition(".")
+            if not event_type:
+                source, event_type = SOURCE_MEMORY, kind
+            meta = payload.get("meta")
+            emit_event(
+                source=source,
+                event_type=event_type,
                 key=str(payload.get("key", "") or ""),
                 value=str(payload.get("value", "") or ""),
                 now=now or time.time(),
+                meta=dict(meta) if isinstance(meta, dict) else None,
             )
         except Exception:  # noqa: BLE001 - one bad envelope must not strand the rest
             logger.warning("spooled fire failed to re-enter the event path", exc_info=True)
-        # Counted as handled either way: `emit_memory_event` is itself best-effort, and holding a
+        # Counted as handled either way: `emit_event` is itself best-effort, and holding a
         # line whose re-entry raised would retry it on every tick forever — the poison pill
         # `drain_decision` names. The warning above is the record.
         handled += 1

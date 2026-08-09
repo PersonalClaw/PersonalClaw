@@ -1176,8 +1176,11 @@ LEGACY_FIELD_MAP: dict[str, dict[str, str | None]] = {
         "id": "id",
         "enabled": "enabled",
         "pattern": "spec.source",
+        "source": "spec.source",  # EIAT-1: the event's origin class (memory/inbox/app)
         "key_glob": "spec.pattern.glob",
         "content_re": "spec.pattern.regex",
+        "sender_glob": "spec.pattern.sender_glob",  # EIAT-1: inbox sender matcher
+        "address_glob": "spec.pattern.address_glob",  # EIAT-1: inbox address matcher
         "action_provider": "workflow.inline.provider",
         "action_config": "workflow.inline",
         "max_fires": "gates.max_fires",

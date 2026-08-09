@@ -458,7 +458,7 @@ def test_the_spool_drains_EXACTLY_ONCE(tmp_path, monkeypatch):
     fired: list[str] = []
     import personalclaw.event_triggers as et
 
-    monkeypatch.setattr(et, "emit_memory_event", lambda **kw: fired.append(kw["key"]))
+    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
     asyncio.run(L.tick_once(store, runner=_ok, sessions=None, base_dir=tmp_path, now=NOW))
     assert fired == ["notes/x"]
     asyncio.run(L.tick_once(store, runner=_ok, sessions=None, base_dir=tmp_path, now=NOW + 1))
@@ -467,7 +467,7 @@ def test_the_spool_drains_EXACTLY_ONCE(tmp_path, monkeypatch):
 
 
 def test_a_spooled_fire_re_enters_through_the_SAME_seam(tmp_path, monkeypatch):
-    """Not a second dispatch path. A spooled fire goes back through `emit_memory_event`, the seam a
+    """Not a second dispatch path. A spooled fire goes back through `emit_event`, the seam a
     LIVE memory write uses, so it cannot skip a gate a live fire walks — which is exactly how the
     `web_watch` screen gap (S134) opened."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
@@ -477,7 +477,7 @@ def test_a_spooled_fire_re_enters_through_the_SAME_seam(tmp_path, monkeypatch):
     seen: list[dict] = []
     import personalclaw.event_triggers as et
 
-    monkeypatch.setattr(et, "emit_memory_event", lambda **kw: seen.append(kw))
+    monkeypatch.setattr(et, "emit_event", lambda **kw: seen.append(kw))
     _spool_one(tmp_path)
     asyncio.run(
         L.tick_once(
@@ -503,7 +503,7 @@ def test_a_DAMAGED_spool_line_does_not_hide_the_rest(tmp_path, monkeypatch):
     fired: list[str] = []
     import personalclaw.event_triggers as et
 
-    monkeypatch.setattr(et, "emit_memory_event", lambda **kw: fired.append(kw["key"]))
+    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
     asyncio.run(
         L.tick_once(
             TriggerStore(base_dir=tmp_path), runner=_ok, sessions=None, base_dir=tmp_path, now=NOW
