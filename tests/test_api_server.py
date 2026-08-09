@@ -50,6 +50,7 @@ class TestRegisterMcpRoutes:
         routes = {(r.method, r.resource.canonical) for r in app.router.routes()}
         expected = {
             ("POST", "/api/spawn"),
+            ("POST", "/api/spawn/cancel-fanout"),
             ("GET", "/api/spawn"),
             ("GET", "/api/spawn/{agent_id}"),
             ("DELETE", "/api/spawn/{agent_id}"),
@@ -101,6 +102,31 @@ class TestApiServerSpawn:
             resp = await client.post("/api/spawn", json={"task": "hi", "max_turns": 50})
             assert resp.status == 200
             assert mock_mgr.spawn.call_args.kwargs.get("max_turns") == 50
+
+    @pytest.mark.asyncio
+    async def test_cancel_fanout_kills_parent_session_children(self, tmp_path):
+        """POST /api/spawn/cancel-fanout kills every child of one parent (C1.4).
+        The parent session is prefixed to dashboard: to match the spawn key."""
+        from unittest.mock import AsyncMock
+
+        mock_mgr = MagicMock()
+        mock_mgr.cancel_fanout = AsyncMock(return_value=3)
+        state = _make_state(tmp_path, subagents=mock_mgr)
+        async with TestClient(TestServer(_make_api_app(state))) as client:
+            resp = await client.post("/api/spawn/cancel-fanout", json={"parent_session": "orch"})
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["cancelled"] == 3
+            mock_mgr.cancel_fanout.assert_awaited_once()
+            assert mock_mgr.cancel_fanout.call_args.args[0] == "dashboard:orch"
+
+    @pytest.mark.asyncio
+    async def test_cancel_fanout_requires_a_key(self, tmp_path):
+        mock_mgr = MagicMock()
+        state = _make_state(tmp_path, subagents=mock_mgr)
+        async with TestClient(TestServer(_make_api_app(state))) as client:
+            resp = await client.post("/api/spawn/cancel-fanout", json={})
+            assert resp.status == 400
 
     @pytest.mark.asyncio
     async def test_spawn_list_empty(self, tmp_path):

@@ -2514,7 +2514,23 @@ class GatewayOrchestrator:
             _task.add_done_callback(self._background_tasks.discard)
             _task.add_done_callback(_done)
 
-        async def _subagent_done(info: SubagentInfo) -> None:
+        async def _subagent_done(batch: "list[SubagentInfo]") -> None:
+            # C1.1: a batch of completions that all share ONE parent session,
+            # delivered in a SINGLE parent turn. The manager coalesces per parent, so
+            # every member here has the same parent_key. ``info`` is the
+            # representative used for routing/logging; per-child failures notify each
+            # member. This replaces the old one-turn-per-completion path that
+            # serialized behind the parent's Semaphore(1) and lost bursts.
+            if not batch:
+                return
+            info = batch[0]
+
+            def _notify_all_failed(reason: str) -> None:
+                if not self.subagent_mgr:
+                    return
+                for _member in batch:
+                    self.subagent_mgr.notify_injection_failed(_member, reason=reason)
+
             async def _inject_with_retry(
                 client,
                 msg: str,
@@ -2559,11 +2575,7 @@ class GatewayOrchestrator:
                                 parent_key,
                                 exc_info=True,
                             )
-                        if self.subagent_mgr:
-                            self.subagent_mgr.notify_injection_failed(
-                                info,
-                                reason="provider dead after prompt-busy retries",
-                            )
+                        _notify_all_failed("provider dead after prompt-busy retries")
                         return None
                     except AcpProcessDied:
                         logger.warning(
@@ -2580,11 +2592,7 @@ class GatewayOrchestrator:
                                 parent_key,
                                 exc_info=True,
                             )
-                        if self.subagent_mgr:
-                            self.subagent_mgr.notify_injection_failed(
-                                info,
-                                reason="ACP process died",
-                            )
+                        _notify_all_failed("ACP process died")
                         return None
                     except AcpError:
                         if attempt == 2:
@@ -2607,48 +2615,57 @@ class GatewayOrchestrator:
                         await asyncio.sleep(2**attempt)
                 return None  # unreachable, but satisfies type checker
 
-            await _broadcast_subagent_status(info, "done")
-            status = "failed" if info.error else "completed"
-            title = f"Subagent `{info.id}` {status}"
-
             parent_key = info.parent_session_key
-            guard_msg = ""
-            # Subagent result → the parent transcript. A blind head-cut here was a real
-            # failure class ("the subagent found it but the 3000-char cap ate it" — a
-            # finding buried past char 3000 vanished). Route through project_and_retain
-            # (Context Economy §2.5a) so the parent gets a TYPE-PROJECTED digest plus a
-            # raw_ref recovery handle (tool_result_get) instead of a truncated prefix. The
-            # raw is retained under the PARENT's session key (the injected message lives in
-            # the parent transcript, so its raw must share that lifecycle). Fail-soft: no
-            # session key or a small result passes through untouched.
-            if info.error:
-                detail = f"Error: {info.error}"
-            else:
-                detail = info.result or "_No response._"
-                if len(detail) > 3000:
-                    from personalclaw.tool_providers.projection import project_and_retain
+            for _member in batch:
+                await _broadcast_subagent_status(_member, "done")
 
-                    detail, _meta = project_and_retain(detail, session_key=parent_key, cap=3000)
-            detail, _ = redact_exfiltration_urls(detail)
-            detail, _ = redact_credentials(detail)
-            task_text, _ = redact_exfiltration_urls(info.task)
-            task_text, _ = redact_credentials(task_text)
-            task_text = task_text[:100]
-            body = f"{task_text}\n\n{detail}"
+            # Build ONE announce covering every completion in the batch (C1.1). A
+            # burst of 8 completions becomes a single parent turn listing all 8,
+            # rather than 8 turns serialized behind the parent's Semaphore(1).
+            def _one_block(member: "SubagentInfo") -> str:
+                m_status = "failed" if member.error else "completed"
+                # Subagent result → the parent transcript. A blind head-cut here was a
+                # real failure class; route long output through project_and_retain
+                # (Context Economy §2.5a) for a type-projected digest + raw_ref handle.
+                if member.error:
+                    m_detail = f"Error: {member.error}"
+                else:
+                    m_detail = member.result or "_No response._"
+                    if len(m_detail) > 3000:
+                        from personalclaw.tool_providers.projection import project_and_retain
+
+                        m_detail, _m = project_and_retain(
+                            m_detail, session_key=parent_key, cap=3000
+                        )
+                m_detail, _ = redact_exfiltration_urls(m_detail)
+                m_detail, _ = redact_credentials(m_detail)
+                m_task, _ = redact_exfiltration_urls(member.task)
+                m_task, _ = redact_credentials(m_task)
+                m_task = m_task[:100]
+                return (
+                    f"Agent `{member.id}`"
+                    f"{f' ({member.agent})' if member.agent else ''}"
+                    f" {m_status}\n"
+                    f"Task: {m_task}\n\n"
+                    f"{m_detail}"
+                )
+
+            blocks = [_one_block(m) for m in batch]
+            n_failed = sum(1 for m in batch if m.error)
+            if len(batch) == 1:
+                status = "failed" if info.error else "completed"
+                title = f"Subagent `{info.id}` {status}"
+                announce = "[Subagent completion event]\n" + blocks[0]
+            else:
+                status = "completed" if n_failed == 0 else "with failures"
+                title = f"{len(batch)} subagents {status}"
+                announce = (
+                    f"[Subagent completion batch — {len(batch)} agents, "
+                    f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
+                )
             title, _ = redact_exfiltration_urls(title)
             title, _ = redact_credentials(title)
-
-            announce = (
-                f"[Subagent completion event]\n"
-                f"Agent `{info.id}`"
-                f"{f' ({info.agent})' if info.agent else ''}"
-                f" {status}\n"
-                f"Task: {task_text}\n\n"
-                f"{detail}"
-                f"{guard_msg}"
-            )
-
-            parent_key = info.parent_session_key
+            body = announce
 
             # ── Route completion back to the originating session ──
             # Dashboard → dashboard only (no channel delivery)
@@ -2723,14 +2740,10 @@ class GatewayOrchestrator:
                             _injection_session.task = None
                         if not t.cancelled() and t.exception():
                             logger.error("Subagent injection _run_chat failed: %s", t.exception())
-                            if self.subagent_mgr:
-                                _reason = str(t.exception())
-                                _reason, _ = redact_exfiltration_urls(_reason)
-                                _reason, _ = redact_credentials(_reason)
-                                self.subagent_mgr.notify_injection_failed(
-                                    info,
-                                    reason=_reason,
-                                )
+                            _reason = str(t.exception())
+                            _reason, _ = redact_exfiltration_urls(_reason)
+                            _reason, _ = redact_credentials(_reason)
+                            _notify_all_failed(_reason)
 
                     _task.add_done_callback(_on_inject_done)
                     self.dashboard_state.push_sessions_update()
@@ -2859,11 +2872,7 @@ class GatewayOrchestrator:
                         _MAX_INJECT_ATTEMPTS,
                         _last_failure_reason,
                     )
-                    if self.subagent_mgr:
-                        self.subagent_mgr.notify_injection_failed(
-                            info,
-                            reason=_last_failure_reason,
-                        )
+                    _notify_all_failed(_last_failure_reason)
                 # Dashboard notification
                 if self.dashboard_state:
                     self.dashboard_state.notify(
@@ -2907,11 +2916,7 @@ class GatewayOrchestrator:
                             parent_key,
                             exc_info=True,
                         )
-                    if self.subagent_mgr:
-                        self.subagent_mgr.notify_injection_failed(
-                            info,
-                            reason=f"injection timed out after {int(INJECTION_TIMEOUT)}s",
-                        )
+                    _notify_all_failed(f"injection timed out after {int(INJECTION_TIMEOUT)}s")
                 except Exception:
                     logger.exception("Subagent %s cron injection failed", info.id)
                 finally:
@@ -2935,8 +2940,9 @@ class GatewayOrchestrator:
                     body = f"{body}\n\n{cron_response}"
                     logger.info("Subagent %s → cron session %s", info.id, parent_key)
                 # Reset only when no subagents running AND no injections pending
+                _batch_ids = {m.id for m in batch}
                 still_running = self.subagent_mgr and any(
-                    a.parent_session_key == parent_key and a.id != info.id
+                    a.parent_session_key == parent_key and a.id not in _batch_ids
                     for a in self.subagent_mgr.running
                 )
                 still_injecting = self._cron_injecting.get(parent_key, 0) > 0
@@ -2951,8 +2957,8 @@ class GatewayOrchestrator:
                             "Cron session %s: reset failed after last subagent", parent_key
                         )
 
-            # Dashboard notification
-            if self.dashboard_state and not info.silent:
+            # Dashboard notification — suppressed only when EVERY member is silent.
+            if self.dashboard_state and not all(m.silent for m in batch):
                 self.dashboard_state.notify(
                     notification_kinds.SUBAGENT,
                     title,

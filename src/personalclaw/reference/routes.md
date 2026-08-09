@@ -527,6 +527,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/spawn` — clear all completed subagents.
 - `GET /api/spawn` — list all subagents.
 - `POST /api/spawn` — spawn a subagent.
+- `POST /api/spawn/cancel-fanout` — kill EVERY child of one parent/run in one
 - `DELETE /api/spawn/{agent_id}` — cancel a running subagent or remove a finished one.
 - `GET /api/spawn/{agent_id}` — poll subagent status.
 - `GET /api/status` — _(no summary)_

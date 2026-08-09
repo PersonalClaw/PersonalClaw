@@ -280,9 +280,9 @@ class TestSpawnCwd:
     ) -> None:
         """When the pool is at capacity, the resolved cwd must survive the queue.
 
-        The queue tuple carries cwd alongside (task, parent, agent, max_turns)
-        so dequeue re-spawns the subagent in the requested directory rather than
-        the default sandbox.
+        C1.2: the queued spawn carries its FULL parameter set on the addressable
+        ``SubagentInfo`` itself (including the resolved cwd), so dequeue re-spawns in
+        the requested directory rather than the default sandbox.
         """
         project = tmp_path / "project"
         project.mkdir()
@@ -303,12 +303,13 @@ class TestSpawnCwd:
             info = manager.spawn("t", cwd=str(project))
 
         assert info is not None
-        assert info.id.startswith("q"), "spawn at capacity should have returned a queued id"
+        assert info.queued is True, "spawn at capacity should have been queued"
+        assert not info.id.startswith("q"), "C1.2: queued spawn gets a real, not placeholder, id"
         # Queue must carry the resolved cwd so dequeue can re-spawn correctly.
         assert len(manager._queue) == 1
         queued = manager._queue[0]
-        assert len(queued) == 5
-        assert queued[4] == os.path.realpath(str(project))
+        assert queued is info
+        assert queued.cwd == os.path.realpath(str(project))
 
     @pytest.mark.asyncio
     async def test_spawn_fails_closed_when_config_load_raises(

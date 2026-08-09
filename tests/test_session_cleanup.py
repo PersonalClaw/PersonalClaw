@@ -426,6 +426,7 @@ class TestSubagentManagerCleanupIntegration:
             info = manager.spawn("cleanup fail test", parent_session_key="dashboard:default")
             assert info is not None
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
 
         # Completion should still succeed (on_done called) despite release raising
         on_done.assert_awaited_once()

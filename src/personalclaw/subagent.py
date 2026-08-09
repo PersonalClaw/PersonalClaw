@@ -128,9 +128,14 @@ def resolve_max_subagents(configured: int, per_agent_gb: float = 4.0) -> int:
 
 
 def _validate_agent(requested: str) -> tuple[str, str]:
-    """Validate agent name against the configured agents in AppConfig.
+    """Validate an agent name against the configured agents in AppConfig.
 
-    Returns (agent_name, error). If agent found, error is empty.
+    Returns ``(agent_name, error)``. An empty ``requested`` resolves to the
+    default agent with no error (``("", "")``). A KNOWN agent returns its name.
+    An UNKNOWN agent returns a TYPED error naming the valid agents — never a
+    silent downgrade to the default (C1.3): a fan-out that named the wrong agent
+    used to run entirely on ``personalclaw`` with nothing but a log line, so the
+    caller must fail loudly and let the user fix the name.
     """
     if not requested:
         return "", ""
@@ -140,12 +145,8 @@ def _validate_agent(requested: str) -> tuple[str, str]:
     if requested in cfg.agents:
         return requested, ""
     available = sorted(cfg.agents.keys() - {"personalclaw", "personalclaw-orchestrator"})
-    logger.warning(
-        "Agent %r not found in config, falling back to personalclaw. Available: %s",
-        requested,
-        available,
-    )
-    return "", ""
+    listed = ", ".join(available) if available else "(none configured)"
+    return "", f"unknown agent {requested!r}; valid agents: {listed}"
 
 
 def _redact(text: str) -> str:
@@ -174,6 +175,21 @@ _REAPER_INTERVAL = 60  # seconds between reaper sweeps
 _RESET_TIMEOUT = 30.0  # max seconds for session reset in finally block
 _ON_DONE_TIMEOUT = 1200.0  # outer cap: max total seconds for semaphore wait + injection
 INJECTION_TIMEOUT = 300.0  # inner cap: max seconds for a single stream_and_collect call
+
+# Consecutive child failures within one fan-out before its breaker trips (C1.4).
+# Mirrors ``session._CIRCUIT_BREAKER_THRESHOLD`` — the per-child ``subagent:<id>``
+# session is released before it can fail, so the breaker must key on the FAN-OUT.
+_CIRCUIT_BREAKER_THRESHOLD = 5
+
+
+def _fanout_key(info: "SubagentInfo") -> str:
+    """The concurrency-lane / breaker / budget key for a spawn.
+
+    A workflow run scopes by its ``parent_run`` (``workflow:<run_id>``); a chat
+    fan-out scopes by the parent session key. Empty only for a truly parentless
+    lone spawn, which shares the ``""`` lane (bounded by the global cap regardless).
+    """
+    return info.parent_run or info.parent_session_key or ""
 
 
 def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> str:
@@ -295,10 +311,29 @@ class SubagentInfo:
     # ``AgentConfig.subagent_cwd_allowed_roots``.
     cwd: str = ""
     _pid: int | None = None  # PID of ACP agent child process, for tombstone diagnostics
+    # Fan-out identity (C1.4): the run a spawn belongs to. Empty for a lone spawn.
+    # The run-scoped concurrency lane, the consecutive-failure breaker and the
+    # run budget all key on ``parent_run or parent_session_key`` (see
+    # ``_fanout_key``) so a workflow fan-out and a chat fan-out are each scoped.
+    parent_run: str = ""
+    # True while this spawn is waiting for a slot (C1.2). A queued spawn carries a
+    # REAL, addressable id (this info) and its FULL parameter set, so it can be
+    # polled and cancelled before it ever runs; the drain reuses this same info.
+    queued: bool = False
+    # Set when a spawn is stopped by the user / kill-fan-out / run-budget stop, so
+    # the consecutive-failure breaker does NOT count an intentional stop as a
+    # child failure.
+    cancelled: bool = False
+    _outcome_noted: bool = False  # guards double-counting in the breaker/meter
 
 
-# Callback: (subagent_info) -> None
-AnnounceCallback = Callable[[SubagentInfo], Awaitable[None]]
+# Delivery callback (C1.1): a BATCH of completed subagents that all share one
+# parent session, delivered in a SINGLE parent turn. Batching is the fix for the
+# injection wall — N near-simultaneous completions used to each start a full
+# parent turn, serialized behind the per-session ``Semaphore(1)``, so a burst lost
+# most results. The manager coalesces per parent; the callback delivers the group
+# once.
+AnnounceCallback = Callable[[list[SubagentInfo]], Awaitable[None]]
 
 # Event callback: (event_type, info, extra_data) -> None
 SubagentEventCallback = Callable[[str, "SubagentInfo", dict], Awaitable[None]]
@@ -334,11 +369,23 @@ class SubagentManager:
         on_spawn_approval: SpawnApprovalCallback | None = None,
         is_yolo: Callable[[], bool] | None = None,
         on_event: SubagentEventCallback | None = None,
+        run_lane_cap: int = 0,
+        delivery_coalesce_secs: float = 0.05,
     ):
         self._sessions = sessions
         self._ctx_builder = ctx_builder
         self._on_done = on_done
         self._max_concurrent = max_concurrent
+        # Per-run concurrency lane cap (C1.4). 0 → the global cap (a lone run may use
+        # every slot; the lane only bites once TWO fan-outs contend). A caller that
+        # wants strict fairness sets it below ``max_concurrent``.
+        self._run_lane_cap = run_lane_cap if run_lane_cap > 0 else max_concurrent
+        # Delivery coalescing (C1.1): completions for one parent are buffered for a
+        # short window and delivered as ONE batch turn, so a burst of N completions
+        # is one parent turn, not N serialized behind the per-session Semaphore(1).
+        self._delivery_coalesce_secs = max(0.0, delivery_coalesce_secs)
+        self._pending_delivery: dict[str, list[SubagentInfo]] = {}
+        self._delivery_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         self._default_turn_limit = default_turn_limit
         self._default_timeout = default_timeout if default_timeout > 0 else _TIMEOUT_SECS
         self._on_tool_approval = on_tool_approval  # fallback for non-auto sessions
@@ -347,12 +394,27 @@ class SubagentManager:
         self._is_yolo = is_yolo
         self._on_event = on_event
         self._running_count = 0
+        # Per-fan-out running count (C1.4): keyed by ``_fanout_key(info)``. A run's
+        # lane is capped independently so one wide fan-out cannot starve every other
+        # run — the global ``_running_count`` still bounds the whole host.
+        self._running_by_fanout: dict[str, int] = {}
+        # Consecutive child-failure count per fan-out (C1.4). ``record_failure`` on
+        # the fan-out KEY (not the ephemeral per-child session) trips the breaker at
+        # ``_CIRCUIT_BREAKER_THRESHOLD`` — the per-child ``subagent:<id>`` session is
+        # gone by the time it fails, so the session-level breaker could never trip.
+        self._fanout_failures: dict[str, int] = {}
+        # Fan-outs that must refuse further spawns, keyed to a TYPED reason string
+        # (C1.4 breaker trip, C1.5 run-budget exceeded, kill-fan-out). A queued or
+        # new spawn for one of these is refused with that reason rather than started.
+        self._fanout_stops: dict[str, str] = {}
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         self._agents: dict[str, SubagentInfo] = {}
         self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
-        self._queue: list[tuple[str, str, str, int, str]] = (
-            []
-        )  # (task, parent, agent, max_turns, cwd)
+        # Queued spawns carry their addressable ``SubagentInfo`` (C1.2): a real id so
+        # they can be polled/cancelled, and the FULL parameter set on the info itself
+        # (approval_mode/model/silent/dry_run/parent_run) so a drained spawn keeps
+        # them instead of silently dropping them and re-entering the interactive gate.
+        self._queue: list[SubagentInfo] = []
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Cache global approval_mode at init to avoid disk I/O on every
         # parentless spawn (cron, webhooks).
@@ -681,10 +743,12 @@ class SubagentManager:
         if not info.done:
             info.done = True
             info.error = f"Reaped after {int(elapsed)}s (exceeded {self._default_timeout}s deadline) [{_timeout_context(info, include_elapsed=False)}]"  # noqa: E501
-            self._running_count = max(0, self._running_count - 1)
+            self._dec_running(info)
             Stats().inc_subagent_failed()
             self._write_tombstone(info, "reaped")
+            self._note_child_outcome(info)
         info.reaped = True
+        self._maybe_clear_fanout(_fanout_key(info))
 
         try:
             sel().log_tool_invocation(
@@ -722,27 +786,10 @@ class SubagentManager:
         )
 
         if self._on_done:
-            try:
-                await asyncio.wait_for(self._on_done(info), timeout=_ON_DONE_TIMEOUT)
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Reaper: completion injection timed out for %s after %.0fs",
-                    agent_id,
-                    _ON_DONE_TIMEOUT,
-                )
-                try:
-                    await self._sessions.reset(info.parent_session_key)
-                except Exception:
-                    logger.debug(
-                        "Reaper: failed to reset parent session %s",
-                        info.parent_session_key,
-                        exc_info=True,
-                    )
-                self.notify_injection_failed(
-                    info, reason=f"delivery timed out after {int(_ON_DONE_TIMEOUT)}s (reaper)"
-                )
-            except Exception:
-                logger.exception("Reaper: announce failed for %s", agent_id)
+            # C1.1: reaped completions go through the SAME coalesced batch delivery,
+            # and a delivery failure NEVER resets the parent — the orchestrator's
+            # context is preserved and the failure is surfaced instead.
+            self._enqueue_delivery(info)
 
         # Truncate retained text AFTER _on_done to preserve full output for result injection
         if len(info.streaming_text) > 10_000:
@@ -904,6 +951,7 @@ class SubagentManager:
         approval_mode: str | None = None,
         silent: bool = False,
         dry_run: bool = False,
+        parent_run: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -941,6 +989,10 @@ class SubagentManager:
                 set session-level auto-approve.  Only honored from
                 authenticated internal callers (X-Internal-Secret).
             silent (bool): Suppress completion notifications.
+            parent_run (str): The run this spawn belongs to (``workflow:<run_id>``
+                or any caller-chosen fan-out key). Scopes the run-level concurrency
+                lane, the consecutive-failure breaker and the run budget so one
+                wide fan-out cannot starve or overspend against every other run.
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1066,22 +1118,20 @@ class SubagentManager:
                 )
                 return info
 
-        if self._running_count >= self._max_concurrent:
-            self._queue.append((task, parent_session_key, agent, max_turns, resolved_cwd))
-            logger.info(
-                "Subagent queued (%d running, %d queued)", self._running_count, len(self._queue)
-            )
-            info = SubagentInfo(id=f"q{len(self._queue)}", task=_redacted_task, agent=agent)
-            return info
-
+        # --- Agent validation (C1.3): an unknown agent is a TYPED error, never a
+        # silent downgrade. Done BEFORE any queue slot so a bad name fails fast and a
+        # queued spawn is never drained onto the wrong agent. ---
         if agent:
             agent, err = _validate_agent(agent)
             if err:
-                info = SubagentInfo(
+                return SubagentInfo(
                     id=uuid.uuid4().hex[:8], task=_redacted_task, agent="", done=True, error=err
                 )
-                return info
 
+        # --- Build the addressable info up front (C1.2): a queued spawn carries a
+        # REAL id and its full parameter set (approval_mode/model/silent/dry_run/
+        # parent_run), so it is pollable + cancellable and a drain never re-generates
+        # the id or drops a parameter. ---
         agent_id: str = uuid.uuid4().hex[:8]
         info = SubagentInfo(
             id=agent_id,
@@ -1094,20 +1144,73 @@ class SubagentManager:
             max_turns=max_turns,
             model=model or "",
             cwd=resolved_cwd,
+            parent_run=parent_run,
         )
         info._raw_task = task  # unredacted prompt for ACP agent execution
+
+        # --- Fan-out stop (C1.4 breaker / C1.5 run budget / kill-fan-out): a stopped
+        # fan-out refuses further spawns with the recorded TYPED reason. ---
+        fkey = _fanout_key(info)
+        stop_reason = self._fanout_stops.get(fkey)
+        if stop_reason:
+            info.done = True
+            info.error = f"spawn refused: {stop_reason}"
+            sel().log_tool_invocation(
+                session_key=parent_session_key or "",
+                source="subagent",
+                tool_name="subagent_run",
+                outcome="refused_fanout_stopped",
+                metadata={"subagent_id": agent_id, "reason": stop_reason},
+            )
+            return info
+
+        # --- Capacity: queue when the GLOBAL cap OR this run's LANE cap is full. The
+        # per-run lane (C1.4) reserves host headroom for other runs, so one wide
+        # fan-out cannot starve them even while global slots remain free. ---
+        if (
+            self._running_count >= self._max_concurrent
+            or self._lane_count(fkey) >= self._run_lane_cap
+        ):
+            info.queued = True
+            self._agents[agent_id] = info
+            self._queue.append(info)
+            logger.info(
+                "Subagent %s queued (%d running, lane[%s]=%d, %d queued)",
+                agent_id,
+                self._running_count,
+                fkey or "-",
+                self._lane_count(fkey),
+                len(self._queue),
+            )
+            return info
+
         self._agents[agent_id] = info
-        self._running_count += 1
+        self._dispatch_run(info)
+        return info
+
+    def _dispatch_run(self, info: SubagentInfo) -> None:
+        """Start (or gate) a spawn that has cleared the queue.
+
+        Increments the global + run-lane counts, then routes through the same
+        approval priority ``spawn`` documents. Shared by the initial spawn and the
+        queue drain so a drained spawn takes the identical path with its original
+        id + parameters (C1.2). A rejection here decrements the counts it took.
+        """
+        agent = info.agent
+        agent_id = info.id
+        info.queued = False
+        self._inc_running(info)
 
         # Check parent session trust (approval_policy="auto") set by dashboard trust toggle.
         parent_trusted = (
-            parent_session_key and self._sessions.get_approval_policy(parent_session_key) == "auto"
+            info.parent_session_key
+            and self._sessions.get_approval_policy(info.parent_session_key) == "auto"
         )
 
         if self._is_yolo and self._is_yolo():
             self._tasks[agent_id] = asyncio.create_task(self._run(info))
             self._log_spawned(info)
-        elif approval_mode == "auto":
+        elif info.approval_mode == "auto":
             self._tasks[agent_id] = asyncio.create_task(self._run(info))
             self._log_spawned(info)
             sel().log_tool_invocation(
@@ -1143,7 +1246,7 @@ class SubagentManager:
             else:
                 info.done = True
                 info.error = "spawn rejected: no approval mechanism configured"
-                self._running_count -= 1
+                self._dec_running(info)
                 self._drain_queue()
                 sel().log_tool_invocation(
                     session_key=info.parent_session_key,
@@ -1152,13 +1255,13 @@ class SubagentManager:
                     outcome="rejected_spawn",
                     metadata={"subagent_id": agent_id, "reason": "no_approval_mechanism"},
                 )
-                return info
+                return
         elif self._on_spawn_approval:
             self._tasks[agent_id] = asyncio.create_task(self._spawn_with_approval(info))
         else:
             info.done = True
             info.error = "spawn rejected: no approval mechanism configured"
-            self._running_count -= 1
+            self._dec_running(info)
             self._drain_queue()
             sel().log_tool_invocation(
                 session_key=info.parent_session_key,
@@ -1192,30 +1295,187 @@ class SubagentManager:
                 parent_session_key=info.parent_session_key,
                 agent_role=agent or "",
             )
-        return info
+
+    # ── Run-scoped concurrency lane (C1.4) ──────────────────────────────
+
+    def _lane_count(self, fkey: str) -> int:
+        """Running spawns in one fan-out's lane."""
+        return self._running_by_fanout.get(fkey, 0)
+
+    def _inc_running(self, info: SubagentInfo) -> None:
+        """Take a global + run-lane slot for a starting spawn."""
+        self._running_count += 1
+        fkey = _fanout_key(info)
+        self._running_by_fanout[fkey] = self._running_by_fanout.get(fkey, 0) + 1
+
+    def _dec_running(self, info: SubagentInfo) -> None:
+        """Release the global + run-lane slot a spawn held. Idempotent-safe: the
+        lane entry is dropped at zero so a completed fan-out leaves no residue."""
+        self._running_count = max(0, self._running_count - 1)
+        fkey = _fanout_key(info)
+        remaining = self._running_by_fanout.get(fkey, 0) - 1
+        if remaining > 0:
+            self._running_by_fanout[fkey] = remaining
+        else:
+            self._running_by_fanout.pop(fkey, None)
+
+    def _note_child_outcome(self, info: SubagentInfo) -> None:
+        """Fold one finished child into its fan-out's consecutive-failure breaker.
+
+        The per-child ``subagent:<id>`` session is already released by the time a
+        child fails, so the session-level breaker (``session._CIRCUIT_BREAKER_``) can
+        never trip for sub-agents — the real guards were only the turn limit and the
+        reaper (C1.4). This keys the breaker on the FAN-OUT instead: a SUCCESS resets
+        the count; a genuine FAILURE increments it, and at
+        ``_CIRCUIT_BREAKER_THRESHOLD`` consecutive failures the whole fan-out is
+        stopped so a broken run cannot keep burning children. A user-CANCELLED child
+        is neither (an intentional stop is not a failure).
+        """
+        if info._outcome_noted:
+            return
+        info._outcome_noted = True
+        fkey = _fanout_key(info)
+        if info.cancelled:
+            return
+        if info.error:
+            count = self._fanout_failures.get(fkey, 0) + 1
+            self._fanout_failures[fkey] = count
+            if count >= _CIRCUIT_BREAKER_THRESHOLD and fkey not in self._fanout_stops:
+                reason = f"fan-out breaker tripped after {count} consecutive child failures"
+                self._fanout_stops[fkey] = reason
+                logger.error("Subagent fan-out breaker tripped for %s: %s", fkey or "-", reason)
+                try:
+                    sel().log_tool_invocation(
+                        session_key=info.parent_session_key or "",
+                        source="subagent",
+                        tool_name="subagent_run",
+                        outcome="fanout_breaker_tripped",
+                        metadata={"fanout": fkey, "failures": count},
+                    )
+                except Exception:
+                    logger.debug("SEL audit failed for breaker trip %s", fkey, exc_info=True)
+        else:
+            # A success clears the consecutive-failure streak for this fan-out.
+            self._fanout_failures.pop(fkey, None)
+
+    def _charge_child_and_check_budget(self, info: SubagentInfo) -> None:
+        """Fold one child's cost into the fan-out's RUN-scoped budget and, if the
+        run ceiling is now exceeded, STOP the fan-out mid-flight (C1.5).
+
+        Consumes the per-child cost/tokens already captured at ``EVENT_COMPLETE``
+        (COST-AND-TOKEN-OBSERVABILITY T1.3 — NOT a second ledger) and composes with
+        AUTONOMY-GUARDRAILS' :class:`SpendMeter` run scope: it charges the meter
+        keyed on the fan-out key and re-reads ``check_run`` after each child. The
+        day-scope check at spawn is a point-in-time snapshot; N children each spend
+        under it, so the run scope is what actually bounds a fan-out. On EXCEEDED the
+        fan-out is stopped with a TYPED reason (refusing queued/new spawns) and its
+        in-flight children are cancelled. Fail-open: a budget is a guardrail.
+        """
+        fkey = _fanout_key(info)
+        try:
+            from personalclaw.guardrails.budgets import (
+                BudgetVerdict,
+                get_meter,
+                run_budget_from_config,
+            )
+
+            budget = run_budget_from_config()
+            if budget.is_unlimited:
+                return
+            meter = get_meter()
+            meter.charge(info.input_tokens + info.output_tokens, info.cost_usd, run_key=fkey)
+            verdict, reason = meter.check_run(fkey, budget)
+            if verdict is BudgetVerdict.EXCEEDED and fkey not in self._fanout_stops:
+                typed = f"run budget exceeded ({reason})"
+                self._fanout_stops[fkey] = typed
+                logger.warning("Subagent fan-out %s stopped mid-flight: %s", fkey or "-", typed)
+                try:
+                    sel().log_tool_invocation(
+                        session_key=info.parent_session_key or "",
+                        source="subagent",
+                        tool_name="subagent_run",
+                        outcome="fanout_budget_exceeded",
+                        metadata={"fanout": fkey, "reason": reason},
+                    )
+                except Exception:
+                    logger.debug("SEL audit failed for budget stop %s", fkey, exc_info=True)
+                # Kill the in-flight children of this fan-out so "stops mid-flight"
+                # is literal, not just "refuses the next one".
+                asyncio.ensure_future(self.cancel_fanout(fkey, reason=typed))
+        except Exception:
+            logger.debug("fan-out budget check failed (fail-open)", exc_info=True)
+
+    def _maybe_clear_fanout(self, fkey: str) -> None:
+        """Drop a fan-out's breaker/budget/stop state once it is fully drained.
+
+        A later fan-out reusing the same key (a new workflow run rarely does; a
+        chat parent may) must start clean — otherwise a prior run's tripped breaker
+        would pre-stop it. Called after each child finishes; clears only when no
+        child of this key is running or queued.
+        """
+        if self._lane_count(fkey) > 0:
+            return
+        if any(_fanout_key(qi) == fkey for qi in self._queue):
+            return
+        self._fanout_failures.pop(fkey, None)
+        self._fanout_stops.pop(fkey, None)
+        try:
+            from personalclaw.guardrails.budgets import get_meter
+
+            get_meter().end_run(fkey)
+        except Exception:
+            logger.debug("fan-out meter end_run failed for %s", fkey, exc_info=True)
 
     async def _safe_announce(self, info: SubagentInfo) -> None:
-        """Notify completion callback with error handling.
+        """Notify completion callback (single info, as a one-element batch) with
+        error handling. Used by rejection paths that never entered ``_run``.
 
         Args:
             info (SubagentInfo): The subagent metadata.
         """
         assert self._on_done is not None
         try:
-            await self._on_done(info)
+            await self._on_done([info])
         except Exception:
             logger.exception("Subagent announce failed for %s", info.id)
 
     def _drain_queue(self) -> None:
-        """Spawn the next queued task if a session is available.
+        """Dispatch the next queued spawn when a slot frees up.
 
-        Staggers spawns by 2 seconds to avoid CPU/memory spikes.
+        Respects BOTH the global cap and the queued spawn's own run-lane cap
+        (C1.4) — a queued spawn whose lane is still full is skipped and the next
+        eligible one is tried, so a wide fan-out cannot monopolise the drain. The
+        queued ``SubagentInfo`` (with its full parameter set, C1.2) is dispatched
+        as-is via ``_dispatch_run`` — the id and every parameter survive the drain.
+        Staggers by 2 seconds to avoid CPU/memory spikes.
         """
         if not self._queue or self._running_count >= self._max_concurrent:
             return
-        task, parent, agent, max_turns, cwd = self._queue.pop(0)
-        logger.info("Draining queue: spawning '%s' (%d left)", task[:40], len(self._queue))
-        self.spawn(task, parent_session_key=parent, agent=agent, max_turns=max_turns, cwd=cwd)
+        # Find the first queued spawn whose run-lane also has room.
+        idx = next(
+            (
+                i
+                for i, qi in enumerate(self._queue)
+                if self._lane_count(_fanout_key(qi)) < self._run_lane_cap
+            ),
+            None,
+        )
+        if idx is None:
+            return  # every queued spawn's lane is full; wait for a lane to free
+        info = self._queue.pop(idx)
+        # A spawn cancelled while queued must not be dispatched.
+        if info.done or info.cancelled:
+            self._drain_queue()
+            return
+        # A fan-out stopped while this spawn waited is refused, not started.
+        stop_reason = self._fanout_stops.get(_fanout_key(info))
+        if stop_reason:
+            info.done = True
+            info.error = f"spawn refused: {stop_reason}"
+            self._drain_queue()
+            return
+        logger.info("Draining queue: dispatching %s (%d left)", info.id, len(self._queue))
+        self._dispatch_run(info)
         if self._queue and self._running_count < self._max_concurrent:
             asyncio.get_event_loop().call_later(2.0, self._drain_queue)
 
@@ -1249,7 +1509,7 @@ class SubagentManager:
         if not approved:
             info.done = True
             info.error = "spawn rejected"
-            self._running_count -= 1
+            self._dec_running(info)
             self._drain_queue()
             self._tasks.pop(info.id, None)
             sel().log_tool_invocation(
@@ -1360,14 +1620,23 @@ class SubagentManager:
                         "task": _redact(info.task),
                         "agent": _redact(info.agent),
                         "result": _done_result(info.result),
+                        # Per-child cost/tokens for the activity panel (C1.5) — the
+                        # T1.3 ledger figures already captured at EVENT_COMPLETE.
+                        "cost_usd": round(info.cost_usd, 6),
+                        "tokens": info.input_tokens + info.output_tokens,
                     },
                 )
                 try:
                     self._sessions.release(session_key, cleanup=True)
                 except Exception:
                     logger.warning("Subagent %s: release failed", info.id, exc_info=True)
-                self._running_count -= 1
+                self._dec_running(info)
+                # Record the child's outcome against the fan-out breaker (C1.4)
+                # BEFORE draining, so a failing fan-out trips before the next child
+                # takes its freed slot.
+                self._note_child_outcome(info)
                 self._drain_queue()
+                self._maybe_clear_fanout(_fanout_key(info))
                 try:
                     await asyncio.wait_for(
                         self._sessions.reset(session_key), timeout=_RESET_TIMEOUT
@@ -1390,49 +1659,112 @@ class SubagentManager:
             self._tasks.pop(info.id, None)
 
         if self._on_done and not info.reaped:
-            try:
-                await asyncio.wait_for(self._on_done(info), timeout=_ON_DONE_TIMEOUT)
-                # Clean up agent folder after successful delivery
+            # C1.1: enqueue for COALESCED batch delivery instead of starting a
+            # dedicated parent turn per completion. A burst of completions for one
+            # parent is delivered as a single turn.
+            self._enqueue_delivery(info)
+
+    def _enqueue_delivery(self, info: SubagentInfo) -> None:
+        """Buffer a completed subagent for coalesced batch delivery (C1.1).
+
+        Groups by parent session key and (re)arms a short coalescing timer, so all
+        completions that land within the window ship in ONE parent turn. A parent
+        with a completion already mid-delivery has the new one appended to the next
+        batch rather than racing the semaphore.
+        """
+        parent_key = info.parent_session_key
+        self._pending_delivery.setdefault(parent_key, []).append(info)
+        existing = self._delivery_tasks.get(parent_key)
+        if existing and not existing.done():
+            return  # a timer/flush is already pending for this parent
+        self._delivery_tasks[parent_key] = asyncio.create_task(
+            self._deliver_after_delay(parent_key)
+        )
+
+    async def _deliver_after_delay(self, parent_key: str) -> None:
+        """Wait the coalescing window, then flush this parent's pending batch."""
+        rearm = False
+        try:
+            if self._delivery_coalesce_secs > 0:
+                await asyncio.sleep(self._delivery_coalesce_secs)
+            await self._flush_delivery(parent_key)
+        except asyncio.CancelledError:
+            self._delivery_tasks.pop(parent_key, None)
+            raise
+        except Exception:
+            logger.exception("Subagent delivery flush failed for %s", parent_key)
+        self._delivery_tasks.pop(parent_key, None)
+        # A completion that arrived DURING the flush re-arms the timer — done here
+        # (not in a finally) so a cancelled task never touches create_task with no
+        # running loop during teardown.
+        if self._pending_delivery.get(parent_key):
+            rearm = True
+        if rearm:
+            self._delivery_tasks[parent_key] = asyncio.create_task(
+                self._deliver_after_delay(parent_key)
+            )
+
+    async def _flush_delivery(self, parent_key: str) -> None:
+        """Deliver one parent's buffered completions as a single batch (C1.1).
+
+        The whole batch is delivered under ONE ``_ON_DONE_TIMEOUT``. On a delivery
+        FAILURE the orchestrator's context is PRESERVED — the parent session is NOT
+        reset (the old remedy wiped the very conversation that asked for the work);
+        the failure is surfaced per child via ``notify_injection_failed`` instead.
+        """
+        batch = self._pending_delivery.pop(parent_key, [])
+        if not batch or not self._on_done:
+            return
+        try:
+            await asyncio.wait_for(self._on_done(batch), timeout=_ON_DONE_TIMEOUT)
+            for info in batch:
                 if not info.error:
-                    try:
-                        delete_agent_folder(info.id)
-                    except Exception:
-                        logger.debug(
-                            "Failed to clean up agent folder for %s", info.id, exc_info=True
-                        )
-                    # Clean up workspace result file (agent-{id}.md in parent session dir)
-                    try:
-                        parent_key = info.parent_session_key
-                        if parent_key.startswith("dashboard:"):
-                            session_name = parent_key.removeprefix("dashboard:")
-                            _ws_result_path(session_name, info.id).unlink(missing_ok=True)
-                    except Exception:
-                        logger.debug(
-                            "Failed to clean workspace result for %s", info.id, exc_info=True
-                        )
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Subagent %s: completion injection timed out after %.0fs",
-                    info.id,
-                    _ON_DONE_TIMEOUT,
-                )
-                # Kill the parent session's ACP agent process so the next
-                # agent's injection gets a clean provider instead of hitting
-                # "Prompt already in progress" on the stuck one.
-                try:
-                    await self._sessions.reset(info.parent_session_key)
-                except Exception:
-                    logger.debug(
-                        "Failed to reset parent session %s after injection timeout",
-                        info.parent_session_key,
-                        exc_info=True,
-                    )
+                    self._cleanup_delivered(info)
+        except asyncio.TimeoutError:
+            logger.error(
+                "Subagent batch delivery for %s timed out after %.0fs (%d result(s)) — "
+                "parent context PRESERVED, surfacing failure",
+                parent_key,
+                _ON_DONE_TIMEOUT,
+                len(batch),
+            )
+            # DO NOT reset the parent session (C1.1): resetting wiped the
+            # orchestrator's context. Surface the failure to the parent instead so
+            # the LLM can read each result from disk on its next turn.
+            for info in batch:
                 self.notify_injection_failed(
                     info,
-                    reason=f"delivery timed out after {int(_ON_DONE_TIMEOUT)}s (queue + injection)",
+                    reason=f"batch delivery timed out after {int(_ON_DONE_TIMEOUT)}s",
                 )
-            except Exception:
-                logger.exception("Subagent announce failed for %s", info.id)
+        except Exception:
+            logger.exception("Subagent batch delivery failed for %s", parent_key)
+            for info in batch:
+                self.notify_injection_failed(info, reason="batch delivery failed")
+
+    async def flush_deliveries(self) -> None:
+        """Await every pending coalesced delivery (C1.1). Called at graceful
+        shutdown so a burst of completions in flight is delivered before the loop
+        stops, and by tests to make the deferred delivery deterministic."""
+        for _ in range(100):  # bounded: a re-arm may enqueue one more round
+            tasks = [t for t in self._delivery_tasks.values() if not t.done()]
+            if not tasks:
+                return
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _cleanup_delivered(self, info: SubagentInfo) -> None:
+        """Clean up the agent folder + workspace result file after a delivered
+        completion (unchanged from the per-completion path, just factored out)."""
+        try:
+            delete_agent_folder(info.id)
+        except Exception:
+            logger.debug("Failed to clean up agent folder for %s", info.id, exc_info=True)
+        try:
+            parent_key = info.parent_session_key
+            if parent_key.startswith("dashboard:"):
+                session_name = parent_key.removeprefix("dashboard:")
+                _ws_result_path(session_name, info.id).unlink(missing_ok=True)
+        except Exception:
+            logger.debug("Failed to clean workspace result for %s", info.id, exc_info=True)
 
     async def _fire_event(self, etype: str, info: SubagentInfo, extra: dict | None = None) -> None:
         if self._on_event:
@@ -1756,6 +2088,11 @@ class SubagentManager:
             evict_completed_agents(self._agents)
         info.done = True
         self._sessions.record_success(session_key)
+        # Fold this child's cost into the run-scoped budget and stop the fan-out
+        # mid-flight if the run ceiling is now exceeded (C1.5). Charged here, at the
+        # one place the per-child cost is known, so the check re-runs after EVERY
+        # child rather than once at spawn.
+        self._charge_child_and_check_budget(info)
         Stats().inc_subagent_completed()
         logger.info("Subagent %s completed", info.id)
 
@@ -1780,13 +2117,46 @@ class SubagentManager:
         )
 
     async def cancel(self, agent_id: str) -> bool:
-        """Cancel a single running subagent. Returns True if found and cancelled."""
+        """Cancel a single subagent — running OR still queued. Returns True if found."""
         info = self._agents.get(agent_id)
         if not info or info.done:
             return False
+        info.cancelled = True  # an intentional stop is not a child failure (C1.4)
+        if info.queued:
+            # Not yet started: drop it from the queue and mark done without a reap.
+            self._queue = [qi for qi in self._queue if qi.id != agent_id]
+            info.queued = False
+            info.done = True
+            info.error = "Cancelled by user"
+            return True
         info.error = "Cancelled by user"
         await self._force_reap(agent_id, info, time.time() - info.started)
         return True
+
+    async def cancel_fanout(self, fanout_key: str, *, reason: str = "") -> int:
+        """Kill EVERY child (running + queued) of one parent/run — "stop this
+        fan-out" (C1.4). Returns the number cancelled.
+
+        Keyed on ``_fanout_key`` so a chat fan-out (parent session) and a workflow
+        fan-out (``workflow:<run_id>``) are each addressable as a unit. Marks the
+        fan-out stopped so a spawn already in flight to the queue is refused too,
+        then cancels each child concurrently. Idempotent: a second call finds
+        nothing to cancel. Unlike ``cancel_all`` (the shutdown switch) this touches
+        ONE fan-out and leaves other runs untouched.
+        """
+        if not fanout_key:
+            return 0
+        self._fanout_stops.setdefault(fanout_key, reason or "fan-out cancelled by user")
+        victims = [
+            info
+            for info in list(self._agents.values())
+            if not info.done and _fanout_key(info) == fanout_key
+        ]
+        for info in victims:
+            info.cancelled = True
+        await asyncio.gather(*(self.cancel(info.id) for info in victims), return_exceptions=True)
+        logger.info("Cancelled fan-out %s (%d child(ren))", fanout_key, len(victims))
+        return len(victims)
 
     async def cancel_all(self) -> None:
         """Cancel all running subagents and wait for cleanup."""

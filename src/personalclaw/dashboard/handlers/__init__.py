@@ -251,6 +251,7 @@ from personalclaw.dashboard.handlers.messaging import (  # noqa: E402, F401
     api_notifications_clear,
     api_send_message,
     api_spawn,
+    api_spawn_cancel_fanout,
     api_spawn_clear,
     api_spawn_delete,
     api_spawn_list,
