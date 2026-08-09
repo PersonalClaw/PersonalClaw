@@ -65,7 +65,6 @@ _PACK_DATA_DIRS: frozenset[str] = frozenset(
     {
         "sessions",
         "workspace",
-        "plan_memory",
         "cron-history",
         "snapshots",
         "outbox",

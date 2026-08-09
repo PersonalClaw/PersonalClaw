@@ -36,7 +36,6 @@ SESSIONS_DIR_NAME = "sessions"
 ARCHIVE_DIR_NAME = "archive"
 ARCHIVE_RETENTION_DAYS = 7
 _CONSOLIDATION_THRESHOLD = 30  # preferences/projects update threshold (messages)
-_PLAN_CONSOLIDATION_THRESHOLD = 20  # plan lessons: consolidate after N new events
 _SESSION_MAX_BYTES = 2 * 1024 * 1024  # 2MB
 _SESSION_KEEP_LINES = 200
 SEARCH_MIN_CHARS = 2  # shortest query string that triggers backend search
@@ -941,9 +940,6 @@ class HistoryConsolidator:
         self._history_consolidated: dict[str, float] = {}  # key → last history consolidation time
         # Separate offset for prefs-only consolidation (doesn't advance main offset)
         self._prefs_offset: dict[str, int] = {}
-        self._last_plan_event_count: int = 0  # event count at last plan consolidation
-        self._plan_consolidation_backoff: float = 0.0  # monotonic time to retry after failure
-        self._plan_next_check: float = 0.0  # monotonic time for next threshold check
         # Autonomous episodic→semantic promotion: count history consolidations to
         # fire promotion every Nth, with a min-interval floor (monotonic time).
         self._consolidation_count: int = 0
@@ -1070,74 +1066,6 @@ class HistoryConsolidator:
                     self._history_consolidated[k] = ts
 
             t.add_done_callback(_on_idle_done)
-
-        # Consolidate plan lessons (global, not per-session) — only after 20+ new events
-        _now = _time.monotonic()
-        if (
-            "plan_lessons" not in self._running
-            and _now >= self._plan_consolidation_backoff
-            and _now >= self._plan_next_check
-        ):
-            try:
-                from personalclaw.plan_memory import plan_memory_path
-
-                path = plan_memory_path()
-                if path.exists():
-                    self._running.add("plan_lessons")
-                    t = asyncio.create_task(self._consolidate_plan_lessons(path))
-                    self._tasks.add(t)
-                    t.add_done_callback(self._tasks.discard)
-                else:
-                    self._plan_next_check = _now + 60
-            except Exception:
-                self._plan_next_check = _now + 60
-                logger.debug("Plan lesson check failed", exc_info=True)
-
-    async def _consolidate_plan_lessons(self, path: Path) -> None:
-        """Consolidate plan memory into plan_lessons.md using LLM."""
-        try:
-
-            def _count_lines(p: Path) -> int:
-                with open(p, encoding="utf-8") as f:
-                    return sum(1 for _ in f)
-
-            count = await asyncio.to_thread(_count_lines, path)
-            if count < self._last_plan_event_count:
-                self._last_plan_event_count = 0  # file truncated/rotated
-            if count - self._last_plan_event_count < _PLAN_CONSOLIDATION_THRESHOLD:
-                self._plan_next_check = _time.monotonic() + 60
-                return
-
-            from personalclaw.llm_helpers import stream_and_collect
-            from personalclaw.plan_memory import (
-                build_plan_consolidation_prompt,
-                save_plan_lessons,
-            )
-
-            prompt = build_plan_consolidation_prompt()
-            if not prompt:
-                self._plan_next_check = _time.monotonic() + 60
-                return
-            if not self._sessions:
-                self._plan_next_check = _time.monotonic() + 60
-                return
-            session_key = BACKGROUND_KEY
-            try:
-                client, _, _ = await self._sessions.get_or_create(
-                    session_key, agent="personalclaw-lite"
-                )
-                result = await stream_and_collect(client, prompt)
-                save_plan_lessons(result)
-                self._last_plan_event_count = count
-                self._plan_next_check = _time.monotonic() + 60
-            finally:
-                self._sessions.release(session_key)
-                await self._sessions.recycle_background()
-        except Exception:
-            self._plan_consolidation_backoff = _time.monotonic() + 300  # 5 min cooldown
-            logger.warning("Plan lesson consolidation failed", exc_info=True)
-        finally:
-            self._running.discard("plan_lessons")
 
     async def _consolidate(self, key: str, include_history: bool = True) -> None:
         """Run LLM consolidation for a session, single-flight across processes.
@@ -1434,6 +1362,22 @@ class HistoryConsolidator:
         if not getattr(cfg, "enabled", True) or not getattr(cfg, "curator_enabled", True):
             return ""
 
+        # LEARN-R18: grade any decision whose horizon has elapsed BEFORE the aging pass, so a
+        # freshly-measured outcome is in the library the same tick it resolves. Inert unless a
+        # vector store is wired (`_svc` degrades to null), and best-effort — a resolver failure
+        # never blocks curation.
+        outcomes_note = ""
+        try:
+            from personalclaw.learning import outcome_resolver
+
+            rep = outcome_resolver.resolve(self._svc)
+            if rep.get("resolved") or rep.get("inconclusive"):
+                outcomes_note = (
+                    f"outcomes resolved={rep['resolved']} inconclusive={rep['inconclusive']}"
+                )
+        except Exception:
+            logger.debug("Outcome resolver failed", exc_info=True)
+
         store = UsageStore()
         try:
             candidates = [
@@ -1450,10 +1394,11 @@ class HistoryConsolidator:
                 for rec in store.list_kind(kind)
             ]
             if not candidates:
-                return ""
+                return outcomes_note
             report = curator_mod.run_aging(candidates, active_dates=store.active_days(), mode="")
             curator_mod.file_review_proposals(report)
-            return report.summary() if (report.changed or report.review_proposals) else ""
+            summary = report.summary() if (report.changed or report.review_proposals) else ""
+            return "; ".join(p for p in (summary, outcomes_note) if p)
         finally:
             store.close()
 

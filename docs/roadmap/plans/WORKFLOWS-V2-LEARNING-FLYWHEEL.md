@@ -1211,3 +1211,59 @@ because the full index fits there.
   budget instead of appending a sixth independent block. The memory context keeps `_memory_caps`: a
   different, already-window-scaled mechanism, and swapping a working recall render for an unproven one
   is what S71 refused to do blind.
+
+### WF2LEA-4 — Step 5: run-end capture spoke + SESSION_END/RUN_END routed through the gate (criterion 10) — DONE (PR #938)
+
+**This closes success criterion 10**: the incognito capture gate is closed AND every declared cadence is
+routed through it. Before this atom `SESSION_END` and `RUN_END` were `Cadence` members with ZERO live call
+sites — `assert_gate_covers_cadences()` reported `["RUN_END", "SESSION_END"]`. Now `SESSION_END` runs through
+the dashboard consolidation envelope and `RUN_END` through `controller._finish → _capture_run_end`, so the
+gap set is `[]` and the checker's regression test pins it there (adding a fourth cadence, or dropping a call
+site, is now a deliberate edit, not a silent hole).
+
+What landed, each driven against the REAL `MemoryService`/`VectorMemoryStore`, the REAL Run Ledger, and the
+REAL proposal store (isolated to a tmp home):
+
+- **The RUN_END spoke** (`learning/run_end.py`): a terminal run mines its own ledger's `step_failed` events
+  into `lesson_batch` PROPOSALS through the shared human-gated queue (never a live lesson — the injection
+  hole §3.3 names), each carrying an **R8 failure CAPSULE** (repro `workflow_start(name="diagnose-run", …)`,
+  signature, forbidden success modes, bounded evidence) keyed by `(template, mode, signature)` so one
+  mechanism failing on every retry is ONE proposal. The §3.3 environment deny-filter drops world-condition
+  failures first (a refused connection must never teach the agent to refuse a valid action), and a
+  `record_procedural(outcome="failed")` prior is recorded per failed step even when the lesson is
+  quota-suppressed.
+- **The R18 pending-outcome resolver** (`learning/outcome_resolver.py`): a decision journals a
+  `pending_outcome` at DECISION time (subject/metric/horizon/baseline — wired in `controller`'s
+  iteration-context capture, kept separate from `decision` because a settled choice ≠ a claim about the
+  future). On the curator tick (`history._run_learning_curator`, BEFORE the aging pass) every open question
+  past its horizon is measured against ground truth in semantic memory, scored benchmark-relative, closed
+  with an `outcome_resolved` that cites the question's `pending_event_id` (which makes a second tick
+  idempotent), and filed as a graded proposal — `measured` or an honest `inconclusive`, never a fabricated
+  pass.
+- **plan_memory absorbed and DELETED**: the per-plan JSONL silo (`plan_memory.py` → renamed to
+  `plan_format.py` keeping only the formatting helpers; the store half gone) is removed from the durability
+  inventory, snapshot capture/restore/merge, AND the portability export list — a run's working memory now
+  lives in the Run Ledger, the single source the resolver and run-end learner both read.
+
+**🔴 THE DISCOVERY — both new spokes shipped their lesson-proposal path INERT, and neither would ever file.**
+`run_end.capture` and `outcome_resolver.resolve` both called `proposals.enqueue(occurrences=1)` WITHOUT a
+`min_evidence` argument. `enqueue`'s evidence floor is `if provenance != "human" and occurrences and
+occurrences < max(1, min_evidence): return SKIP`, and `min_evidence` defaults to `MIN_EVIDENCE_DEFAULT = 3`.
+So every inferred, once-per-signal proposal (`occurrences=1 < 3`) was SILENTLY SKIPPED — the whole
+propose-a-lesson half of the RUN_END cadence and the entire graded-outcome path were dead on arrival, and a
+test that only asserted "capture ran" would have passed over a spoke that files nothing. The ≥3 floor is for
+consolidation-mined habits that must recur to be worth proposing; a terminal failure and a resolved bet are
+each a single first-class signal (R8 wants the lesson re-injectable on the NEXT run, not after three separate
+runs fail the same way). Fixed both to `min_evidence=1`, matching the curator's own review proposals
+(`curator.py:435`). Regression tests now assert the proposal is actually FILED (`list_pending` returns it),
+not merely that capture returned — the guard that would have caught the inert path.
+
+**Two isolation hazards, both from `config_dir` binding time.** The run-end/resolver tests scan runs through
+`workflows/store.py`, which does `from personalclaw.config.loader import config_dir` at MODULE import — so
+`monkeypatch.setattr("…loader.config_dir", …)` does NOT reach the store's own binding, and the resolver was
+scanning the REAL `~/.personalclaw`, accumulating cross-test runs (resolved:5 where 1 was expected). Fixed by
+setting `PERSONALCLAW_HOME` in the `home` fixture — `config_dir()` re-reads that env live every call, so it
+reaches the import-bound reference too. Separately, the quota test's five node failures were first named
+`attr0..attr4`; `refiner.failure_signature` does `re.findall(r"[a-z_]{3,}", …)` and STRIPS DIGITS, collapsing
+all five to signature `attr` → one `LessonKey` → one proposal, silently defeating the quota path. Renamed to
+alphabetic `foo/bar/baz/qux/quux` so five distinct signatures actually exercise the per-run quota.

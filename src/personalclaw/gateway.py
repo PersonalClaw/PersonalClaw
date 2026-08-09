@@ -2107,6 +2107,15 @@ class GatewayOrchestrator:
             register_bundled_provider()
 
             wf_cfg = self._cfg.workflows
+            # The run-end learner (LEARNING-FLYWHEEL §3.3) writes through a MemoryService over
+            # the same vector store the rest of the process uses. Handed in here so a terminal
+            # run mines its own ledger for failed steps and files lesson proposals — inert until
+            # this service reports `has_vector`, so an embedder-less box (or a partially-inited
+            # orchestrator, e.g. a test that drives only this path) learns nothing rather than
+            # crashing. `over_vector_store(None)` is itself an inert service, so the `getattr`
+            # default is a real no-op, not a workaround.
+            from personalclaw.memory_service import MemoryService
+
             self.workflow_watchdog = WorkflowWatchdog(
                 self.dashboard_state,
                 EngineServices(
@@ -2115,6 +2124,7 @@ class GatewayOrchestrator:
                     lane_limits=Limits(lanes=wf_cfg.lane_caps()),
                     node_timeout_total=wf_cfg.default_node_timeout_total_secs,
                     node_timeout_stall=wf_cfg.default_node_timeout_stall_secs,
+                    memory=MemoryService.over_vector_store(getattr(self, "vector_memory", None)),
                 ),
             )
             self.workflow_watchdog.start()

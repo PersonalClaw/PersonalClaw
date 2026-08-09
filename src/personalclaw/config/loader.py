@@ -1469,6 +1469,16 @@ class LearningConfig:
             "finishes reading is a queue that stops being read at all.",
         ),
     )
+    run_end_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Learn From Run Failures",
+            "When a workflow run ends, mine its Run Ledger for failed steps and file "
+            "lesson proposals (never auto-written) keyed by failure mode, plus a "
+            "procedural-outcome record per failed step. Off = terminal runs leave no "
+            "learning trace. Only fires when a memory service is available.",
+        ),
+    )
 
 
 @dataclass
@@ -3495,6 +3505,7 @@ class AppConfig:
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
+                run_end_enabled=bool(learning_data.get("run_end_enabled", True)),
             ),
             knowledge=KnowledgeConfig(
                 idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),

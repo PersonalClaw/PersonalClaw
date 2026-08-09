@@ -9,12 +9,6 @@
         "enum:ItemStatus.SENT"
       ]
     },
-    "src/personalclaw/learning/gate.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:Cadence.RUN_END"
-      ]
-    },
     "src/personalclaw/learning/staging.py": {
       "inert": 1,
       "surfaces": [
@@ -388,10 +382,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 30,
+      "enum": 29,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 157
+    "inert": 156
   }
 }

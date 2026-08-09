@@ -169,6 +169,12 @@ class EngineServices:
     #: tests never run real teardown subprocesses; production defaults to the
     #: subprocess runner in `effects.run_teardown`.
     teardown_runner: Any = None
+    #: The memory service the run-end learner writes through (LEARNING-FLYWHEEL §3.3). Left
+    #: None on purpose in every test and CLI path: the run-end capture spoke is inert unless
+    #: this is a service with a live vector store, exactly as `self_model_observer.observe_turn`
+    #: no-ops without `has_vector`. So a terminal-run controller test never touches the real
+    #: home, and production wires `MemoryService.over_vector_store(self.vector_memory)` in.
+    memory: Any = None
 
 
 @dataclass
@@ -2280,6 +2286,37 @@ class RunController:
                 self.journal.decision(
                     parent_path, node.id, epoch=inst.epoch, decision=decision.to_dict()
                 )
+
+            # LEARN-R18: a node that made a measurable bet says so in a `pending_outcome`
+            # key {subject, metric, horizon_secs, baseline}. It is journaled as an OPEN
+            # question at decision time — a single/list of dicts, mirroring `decision` —
+            # and the curator's resolver measures ground truth once the horizon elapses.
+            # Kept separate from `decision` on purpose: a Decision is a settled choice, a
+            # pending outcome is a claim about the future the run cannot yet evaluate.
+            raw_pending = output.get("pending_outcomes")
+            if isinstance(output.get("pending_outcome"), dict):
+                raw_pending = [output["pending_outcome"]]
+            for raw in raw_pending if isinstance(raw_pending, list) else []:
+                if not isinstance(raw, dict):
+                    continue
+                subject = str(raw.get("subject") or "").strip()
+                metric = str(raw.get("metric") or "").strip()
+                if not subject or not metric:
+                    continue
+                try:
+                    horizon = float(raw.get("horizon_secs") or 0.0)
+                    baseline = float(raw.get("baseline") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                self.journal.pending_outcome(
+                    parent_path,
+                    node.id,
+                    epoch=inst.epoch,
+                    subject=subject,
+                    metric=metric,
+                    horizon_secs=horizon,
+                    baseline=baseline,
+                )
         except Exception:
             logger.debug(
                 "run %s: could not capture iteration context at %s",
@@ -2709,7 +2746,51 @@ class RunController:
             attention.resolve_run_items(self.services.attention_state, self.run.id)
             if status == RunStatus.COMPLETE:
                 self._revise_project_overview()
+            self._capture_run_end()
         self._publish("workflow_run_update", {"status": status.value, "error": error})
+
+    def _capture_run_end(self) -> None:
+        """Route a terminal run through the LearningGate → run-end learner (LEARNING-FLYWHEEL §3.3).
+
+        The RUN_END cadence. Best-effort and fully guarded: `_finish` is the single terminal
+        writer (WF2-R10) and MUST NOT raise, so a failure here costs a lesson, never the run's
+        terminal status.
+
+        Inert unless a memory service with a live vector store was injected into EngineServices —
+        every test and CLI path leaves `services.memory` None, so this no-ops there exactly as
+        `self_model_observer.observe_turn` no-ops without `has_vector`. The gate is what honors
+        success criterion 10: an incognito/temporary session's terminal run is denied here (via
+        the session-key restriction registry) and writes nothing through this cadence, and
+        `learning.run_end_enabled=False` turns the cadence off without touching the others.
+        """
+        service = getattr(self.services, "memory", None)
+        if service is None or not getattr(service, "has_vector", False):
+            return
+        try:
+            from types import SimpleNamespace
+
+            from personalclaw.config.loader import AppConfig
+            from personalclaw.learning import run_end
+            from personalclaw.learning.gate import Cadence, LearningGate
+
+            cfg = AppConfig.load().learning
+            # The session that started the run is likely gone by terminal time, but its
+            # restriction flag is process-global and keyed — that key is all `for_session`
+            # needs to enforce criterion 10.
+            session = SimpleNamespace(
+                key=self.run.origin.session_key, is_restricted=False, _ephemeral=False
+            )
+            decision = LearningGate.for_session(session, cfg).decide(
+                Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
+            )
+            if not decision.allowed:
+                logger.debug(
+                    "run %s: run-end capture gated (%s)", self.run.id, decision.reason.value
+                )
+                return
+            run_end.capture(self.run, service, journal=journal_mod)
+        except Exception:
+            logger.debug("run %s: run-end capture failed", self.run.id, exc_info=True)
 
     def _revise_project_overview(self) -> None:
         """Auto-revise the run's project overview on a successful completion (WORK-CONTAINERS §6.1).
