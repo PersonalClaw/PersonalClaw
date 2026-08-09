@@ -237,3 +237,30 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
   - **Note:** two other full-suite reds (`providers.md` `+sandbox` drift; unclassified
     `sandbox_providers/none.py` spawn site) were PRE-EXISTING EI-1 (#933) debt on `main`, not EIAT-1 —
     fixed in the stack-base commit that this atom stacks on. PR stacked on that health fix.
+
+- **2026-08-09 — DONE: EIAT-2** (mail-inbox provider app: IMAP inbound, checkpointing, fail-closed
+  allowlist, MIME extraction, S2). New `PersonalClawApps/mail-inbox/` bundle (apps#27), Contract C3.
+  - **T2.1 (IMAP + checkpointing):** `MailInboxProvider.poll` returns `(messages, checkpoints)` where
+    the checkpoint dict carries a per-mailbox UID cursor (`mailuid:<user>:<folder>`). The IMAP client
+    does `UID SEARCH (last+1):*` and filters strictly `> last_uid`, so `start:*` always returning the
+    highest UID can't reprocess the cursor message; an empty FETCH breaks the loop rather than skipping.
+    A restart handed the same checkpoint dict refetches nothing; a newer UID is surfaced, older are not.
+    Second belt: `Message-ID` dedup persisted to `seen_message_ids.json` (bounded 5000) via `app_data_dir`.
+  - **T2.2 (fail-closed allowlist + SEL):** the allowlist is provider-enforced with `fnmatch` globs.
+    An **empty allowlist surfaces zero messages and never even connects**; an unlisted sender is rejected
+    (zero messages) and logs a `mail_sender_rejected` event via `sel().log_api_access`. A rejected message
+    still advances the cursor so a restart doesn't refetch-and-re-log it forever. Posture logged once at
+    startup. Credentials come **only** from the SDK credential store (`MAIL_INBOX_PASSWORD`); a password
+    wrongly placed in ProviderSettings is ignored (asserted).
+  - **T2.3 (MIME):** `extract_body` prefers `text/plain`, sanitizes HTML-only mail (drops
+    `<script>`/`<style>`, strips tags), and appends PDF/DOCX/PPTX attachment text via the core document
+    readers (`sdk.channel.extract_text`). Charset honored.
+  - **Boundary/deps:** core reached only via `personalclaw.sdk.*` (inbox/channel/settings/cli/util);
+    **stdlib-only**, zero `pythonDependencies`. The SEL-singleton test reset reaches the class SDK-legally
+    via `type(sel())` (the class itself isn't an SDK export; `conftest.py` is linted, only `test_*.py` is
+    skipped).
+  - **Gate green:** manifest round-trip (`AppManifest.from_dict`), boundary AST lint, `pytest mail-inbox`
+    **32 passed** — all against core installed from `main`.
+  - **Owner-gated remainder (out of scope):** live-wiring an installed inbox app into the gateway
+    (`_init_inbox` hardcodes the filesystem source) and the real-mailbox V2 validation. EIAT-3 (SMTP
+    send-reply, draft-by-default) is the next atom in this plan.
