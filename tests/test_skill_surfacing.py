@@ -73,6 +73,60 @@ def test_use_count_breaks_keyword_ties():
     assert out == ["hot", "cold"]
 
 
+# ── FS-6: feedback suppression withholds a matched skill ──
+
+
+def test_suppressed_skill_is_withheld():
+    # Two skills that both match on keyword; one is feedback-suppressed and must
+    # not surface, the healthy one must.
+    skills = [
+        _skill("wrong-one", "d", "deploy service"),
+        _skill("good-one", "d", "deploy service"),
+    ]
+    out = surface_skills(
+        "deploy service",
+        skills,
+        max_skills=5,
+        suppressed={("skill_synthesis", "wrong-one")},
+    )
+    assert out == ["good-one"]  # the suppressed producer is withheld, the healthy one stays
+
+
+def test_default_suppresses_nothing():
+    # Absent the arg (fail-open default), a matched skill surfaces as before.
+    skills = [_skill("s", "d", "deploy service")]
+    assert surface_skills("deploy service", skills, max_skills=5) == ["s"]
+
+
+def test_explain_shows_suppression_withheld():
+    skills = [_skill("wrong-one", "d", "deploy service")]
+    rows = surface_skills(
+        "deploy service",
+        skills,
+        max_skills=5,
+        suppressed={("skill_synthesis", "wrong-one")},
+        explain=True,
+    )
+    row = next(r for r in rows if r["key"] == "wrong-one")
+    # matched but withheld — surfaced with a suppression reason, never dropped silently
+    assert row["included"] is False
+    assert row["kw_score"] >= 0.7  # it DID match — this is a withhold, not a miss
+    assert "suppression" in row["reason"]
+
+
+def test_suppression_only_bites_matches():
+    # A skill that would not match anyway is unaffected by being in the set (no crash,
+    # not surfaced for an unrelated reason).
+    skills = [_skill("off-topic", "d", "shorten url")]
+    out = surface_skills(
+        "deploy service",
+        skills,
+        max_skills=5,
+        suppressed={("skill_synthesis", "off-topic")},
+    )
+    assert out == []
+
+
 # ── semantic path (stub embedder) ──
 
 

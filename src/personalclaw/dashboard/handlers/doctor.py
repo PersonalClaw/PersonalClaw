@@ -189,12 +189,20 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
 
     def _simulate() -> list[dict]:
         from personalclaw.config.loader import AppConfig
-        from personalclaw.skills.loader import SkillsLoader
+        from personalclaw.skills.loader import SkillsLoader, _suppressed_producers
         from personalclaw.skills.surfacing import surface_skills
 
         cfg = AppConfig.load()
         skills = SkillsLoader().list_skills(with_usage=True)
-        rows = surface_skills(text, skills, max_skills=cfg.skills.max_triggered, explain=True)
+        # FS-6: mirror the real turn — a feedback-suppressed skill is surfaced as a
+        # withheld row so the simulator explains why it did not surface.
+        rows = surface_skills(
+            text,
+            skills,
+            max_skills=cfg.skills.max_triggered,
+            suppressed=_suppressed_producers(),
+            explain=True,
+        )
         return list(rows)  # type: ignore[arg-type]
 
     return web.json_response({"query": text, "candidates": await asyncio.to_thread(_simulate)})
