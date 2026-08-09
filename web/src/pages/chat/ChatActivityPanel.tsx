@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ListTree, FileText, Link2, MessageSquare, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle } from 'lucide-react'
+import { ListTree, FileText, Link2, MessageSquare, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX } from 'lucide-react'
 import { Markdown } from '../../ui/Markdown'
+import { Button } from '../../ui/Button'
 import { spring } from '../../design/motion'
 import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
@@ -23,11 +24,12 @@ export interface SidePanelData {
  *   • Files — files touched this session; click → open in the file side panel.
  *   • Links — http(s) URLs surfaced in the conversation.
  *  (+ Side — an isolated throwaway Q&A against the frozen session context.) */
-export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = [], side }: {
+export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = [], onKillFanout, side }: {
   activity: ChatActivity
   onJumpTo: (turnIndex: number) => void
   onOpenFile: (path: string) => void
   subagents?: SubagentCard[]
+  onKillFanout?: () => void  // kill EVERY running child of this chat's fan-out (C1.4)
   side?: SidePanelData
 }) {
   const [tab, setTab] = useState<Tab>('index')
@@ -146,6 +148,12 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
           subagents.length === 0
             ? <Empty icon={Bot} text="No subagents spawned yet." />
             : <div className="flex flex-col gap-1.5">
+                {onKillFanout && subagents.some((s) => !s.done) && (
+                  <Button variant="danger" size="sm" onClick={onKillFanout} className="mb-0.5 self-end"
+                    title="Stop every running subagent in this chat">
+                    <OctagonX size={13} /> Stop fan-out ({subagents.filter((s) => !s.done).length})
+                  </Button>
+                )}
                 {subagents.map((s, i) => <SubagentRow key={s.id} sub={s} index={i} />)}
               </div>
         )}
@@ -190,6 +198,8 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
             {sub.agent || 'subagent'}
             {status === 'running' && sub.lastTool ? ` · ${sub.lastTool}` : ''}
             {sub.done && sub.elapsed !== undefined ? ` · ${sub.elapsed.toFixed(1)}s` : ''}
+            {sub.done && sub.costUsd !== undefined && sub.costUsd > 0 ? ` · $${sub.costUsd < 0.01 ? sub.costUsd.toFixed(4) : sub.costUsd.toFixed(2)}` : ''}
+            {sub.done && sub.tokens ? ` · ${sub.tokens.toLocaleString()} tok` : ''}
             {status === 'running' && !sub.lastTool ? ' · working…' : ''}
           </span>
         </span>

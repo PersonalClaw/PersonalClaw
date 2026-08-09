@@ -1696,7 +1696,7 @@ class TestSubagentDone:
             new_callable=AsyncMock,
             return_value=None,
         ):
-            await on_done(info)
+            await on_done([info])
 
         orch.dashboard_state.notify.assert_called()
         orch.dashboard_state.push_sessions_update.assert_called()
@@ -1735,7 +1735,7 @@ class TestSubagentDone:
         info.elapsed = 1.0
         info.started = 0.0
 
-        await on_done(info)
+        await on_done([info])
         session.queue_append.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1762,7 +1762,7 @@ class TestSubagentDone:
             new_callable=AsyncMock,
             return_value="llm response",
         ):
-            await on_done(info)
+            await on_done([info])
 
         orch.dashboard_state.notify.assert_called()
 
@@ -1784,7 +1784,7 @@ class TestSubagentDone:
         info.elapsed = 0.5
         info.started = 0.0
 
-        await on_done(info)
+        await on_done([info])
         orch.dashboard_state.notify.assert_called()
 
     @pytest.mark.asyncio
@@ -1805,7 +1805,7 @@ class TestSubagentDone:
         info.elapsed = 1.0
         info.started = 0.0
 
-        await on_done(info)
+        await on_done([info])
         orch.dashboard_state.notify.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1832,7 +1832,7 @@ class TestSubagentDone:
             new_callable=AsyncMock,
             return_value="synthesized response",
         ):
-            await on_done(info)
+            await on_done([info])
 
         orch.dashboard_state.notify.assert_called()
 
@@ -1855,7 +1855,7 @@ class TestSubagentDone:
         info.elapsed = 1.0
         info.started = 0.0
 
-        await on_done(info)
+        await on_done([info])
         orch.dashboard_state.notify.assert_called()
 
 
@@ -2209,7 +2209,7 @@ class TestSubagentSlackInjection:
             new_callable=AsyncMock,
             side_effect=asyncio.TimeoutError,
         ):
-            await on_done(info)
+            await on_done([info])
 
         # Should have notified injection failed
         orch.subagent_mgr.notify_injection_failed.assert_called()
@@ -2238,7 +2238,7 @@ class TestSubagentSlackInjection:
             new_callable=AsyncMock,
             side_effect=asyncio.TimeoutError,
         ):
-            await on_done(info)
+            await on_done([info])
 
         orch.subagent_mgr.notify_injection_failed.assert_called()
 
@@ -2485,7 +2485,7 @@ class TestInjectWithRetry:
             new_callable=AsyncMock,
             side_effect=AcpProcessDied("dead"),
         ):
-            await on_done(info)
+            await on_done([info])
 
         orch.subagent_mgr.notify_injection_failed.assert_called()
 
@@ -2514,7 +2514,7 @@ class TestInjectWithRetry:
             new_callable=AsyncMock,
             side_effect=PromptBusyExhaustedError("exhausted"),
         ):
-            await on_done(info)
+            await on_done([info])
 
         orch.subagent_mgr.notify_injection_failed.assert_called()
 

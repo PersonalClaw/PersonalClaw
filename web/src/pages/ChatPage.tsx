@@ -1080,7 +1080,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         if (d.session !== sessionRef.current) break
         const id = String(d.id ?? '')
         if (id) setSubagents((prev) => prev.map((s) => s.id === id
-          ? { ...s, done: true, error: (d.error as string | null) ?? null, elapsed: typeof d.elapsed === 'number' ? d.elapsed : undefined, result: String(d.result ?? '') }
+          ? { ...s, done: true, error: (d.error as string | null) ?? null, elapsed: typeof d.elapsed === 'number' ? d.elapsed : undefined, result: String(d.result ?? ''),
+              costUsd: typeof d.cost_usd === 'number' ? d.cost_usd : undefined, tokens: typeof d.tokens === 'number' ? d.tokens : undefined }
           : s))
         break
       }
@@ -1800,6 +1801,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     node?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 
+  // Kill EVERY running subagent of this chat's fan-out in one click (WF2WOR-8 C1.4).
+  // Optimistically mark the running cards done; the subagent_done WS events reconcile.
+  async function killFanout() {
+    const s = sessionRef.current
+    if (!s) return
+    setSubagents((prev) => prev.map((c) => (c.done ? c : { ...c, done: true, error: 'cancelled' })))
+    await api.cancelFanout(s).catch(() => {})
+  }
+
   // ── side chat (stage 6) ──
   async function openSide() {
     const s = sessionRef.current
@@ -2457,6 +2467,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <SidePanel title="Activity" icon={<Activity size={18} className="text-primary" />} storeKey="chat-activity-w"
               fillHeight urlKey={{ key: 'activity', setQuery }} onClose={() => setActivityOpen(false)}>
               <ChatActivityPanel activity={activity} onJumpTo={jumpToTurn} onOpenFile={setOpenFile} subagents={subagents}
+                onKillFanout={killFanout}
                 side={{ msgs: sideMsgs, busy: sideBusy, onAsk: askSide, onOpen: openSide }} />
             </SidePanel>
           )}

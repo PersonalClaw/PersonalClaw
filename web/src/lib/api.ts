@@ -1926,6 +1926,9 @@ export const api = {
   spawnedAgents: () => get<{ agents: SpawnedAgent[] }>('/api/spawn').then((d) => d.agents),
   cancelSpawnedAgent: (id: string) => del(`/api/spawn/${encodeURIComponent(id)}`),
   clearSpawnedAgents: () => del('/api/spawn'),
+  // Kill EVERY child of one parent/run in one click (WF2WOR-8 C1.4).
+  cancelFanout: (parentSession: string) =>
+    post<{ ok: boolean; cancelled: number }>('/api/spawn/cancel-fanout', { parent_session: parentSession }),
 
   // ── Knowledge context search (token-budgeted cards for the composer picker) ──
   knowledgeSearchForContext: (q: string, maxTokens = 4000) =>

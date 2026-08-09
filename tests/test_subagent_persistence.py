@@ -303,16 +303,19 @@ class TestSpawnCreatesFolder:
             info1 = manager.spawn("task1", parent_session_key="dashboard:default")
             # Second spawn gets queued
             info2 = manager.spawn("task2", parent_session_key="dashboard:default")
+            # C1.2: a queued spawn has a REAL id (no 'q' placeholder) and is queued.
+            assert info2 is not None
+            assert info2.queued is True
+            assert not info2.id.startswith("q")
+            # No folder WHILE queued — the folder is created on dispatch, not queue.
+            folders_while_queued = (
+                [f.name for f in agent_root.iterdir()] if agent_root.exists() else []
+            )
+            assert info2.id not in folders_while_queued
             # Ensure info1's background task completes while patches are active
             await manager._tasks[info1.id]
 
-        assert info2 is not None
-        # Queued agent ID starts with 'q'
-        assert info2.id.startswith("q")
-        # No folder for queued agent
-        folders = list(agent_root.iterdir()) if agent_root.exists() else []
-        queued_folders = [f for f in folders if f.name.startswith("q")]
-        assert len(queued_folders) == 0
+        await manager.flush_deliveries()  # coalesced delivery (C1.1)
 
 
 # ── Slice 3: Result streaming to agent folder ────────────────────────
@@ -689,6 +692,7 @@ class TestFolderCleanupOnSuccess:
         with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
             info = manager.spawn("cleanup test", parent_session_key="dashboard:default")
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
 
         # Folder should be cleaned up after successful delivery
         assert not (agent_root / info.id).exists()
@@ -727,7 +731,7 @@ class TestFolderCleanupOnSuccess:
         ctx.hooks.on_tool_call = MagicMock()
         ctx.hooks.auto_approve_subagent_spawn = True
 
-        async def _slow_on_done(_info):
+        async def _slow_on_done(_batch):
             await asyncio.sleep(999)
 
         manager = SubagentManager(sessions=sessions, ctx_builder=ctx, on_done=_slow_on_done)
@@ -739,6 +743,7 @@ class TestFolderCleanupOnSuccess:
         ):
             info = manager.spawn("delivery failure test", parent_session_key="dashboard:default")
             await manager._tasks[info.id]
+            await manager.flush_deliveries()  # coalesced delivery (C1.1)
 
         # Folder must survive when delivery times out
         assert (agent_root / info.id).exists()
