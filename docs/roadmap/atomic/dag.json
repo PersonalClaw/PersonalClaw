@@ -3958,7 +3958,7 @@
         {
           "id": "EIAT-2",
           "title": "mail-inbox provider app: IMAP inbound, checkpointing, fail-closed allowlist, MIME extraction (S2)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 — The mail inbox provider app (T2.1, T2.2, T2.3); Contract C3. New PersonalClawApps/mail-inbox/ app.",
           "done_when": "Polling a real IMAP mailbox surfaces messages as inbox items; a restart neither reprocesses nor skips (UID checkpoint via poll's returned dict, tested) and a duplicate Message-ID is dropped; the sender allowlist is provider-enforced and fail-closed — an unlisted sender and an empty allowlist both surface ZERO messages and zero events (both asserted), startup logs the posture, and SEL mail_sender_rejected fires per rejection; multipart mail extracts text/plain, HTML-only mail is sanitized, a PDF attachment contributes extracted text via the platform's existing document readers; credentials come only from the SDK credential store (never app.json/ProviderSettings); app installs from a local Store source. Validation (V2) requires an owner-provided test mailbox.",
           "deps": [
