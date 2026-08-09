@@ -1042,3 +1042,36 @@ plan's reality note was verified rather than trusted.
 ---
 
 **Section F (Work Containers) is COMPLETE:** sessions 46-54, PRs #185-#193.
+
+---
+
+- **2026-08-09 — DONE — WF2WOR-6 (§5.1, criterion 5): `workflows/ownership.py` wired into the run
+  lifecycle.** Branch `feature-wf2wor6-run-ownership-wiring`, PR #947. Session 50 shipped the ownership
+  module and its enforcement helpers, but the module had ZERO production call sites — an incognito or
+  temporary origin did not actually carry write-suppression down into the run it launched. This atom
+  wires the seam end-to-end: (1) `service.py` stamps the inherited `MemoryMode` onto `run.extra`
+  (`RUN_MODE_KEY`) via `stamp_run_mode` BEFORE `store.create`, so the posture round-trips on disk and
+  survives a restart, and it drives the already-wired engine node-skip (`_restriction_skip`) and the
+  run-end LearningGate; (2) `controller._prepare` enforces the inherited mode into the process-global
+  `session_restrictions` registry for BOTH the origin and owned keys (per `restriction_calls`), and
+  `_capture_run_end` no longer leaks writes from a restricted run; (3) the blocking-run path mirrors a
+  one-line completion summary back into the launching session via the tool RESULT `body`, with
+  indexability decided at source by `ownership.announcement()` (previously inert, now its first live
+  call site) — a restricted origin gets the summary WITHOUT it being indexed. `parse_mode('persistent')
+  → NORMAL`, fail-closed to `INCOGNITO` on any unknown value. 6 new `TestMemoryModeInheritance` async
+  tests; `make lint` (black/isort/flake8/mypy, 771 files) clean; 220 targeted tests (69 tools + 151
+  ownership/controller) green.
+
+- **DEVIATION — the run's durable memory-mode head is `run.extra`, NOT a JSONL `memory_mode` line.**
+  Criterion 5 names "the JSONL `memory_mode` write" for run durability, but a run owns no
+  `ConversationLog` file — its stage subagents persist under their own `subagent:` keys. The run
+  RECORD's `extra` dict IS the run's durable metadata head: it round-trips on disk and is what a restart
+  replays. `stamp_run_mode` composes over `durable_metadata` so `RUN_MODE_KEY` and the metadata line
+  are the same key rather than two literals that could drift. Pinned by
+  `test_an_incognito_origin_stamps_the_run_record` (survives `WorkflowRun.from_dict(run.to_dict())`).
+
+- **DESIGN — the mirror surface is the blocking tool RESULT `body`, not a `ConversationLog.append`.** A
+  controller-side append into the origin JSONL would be clobbered by `_save_session_to_history`, which
+  rebuilds the file from the chat's in-memory messages. The tool result lands in the launching chat's
+  transcript as a normal message and is persisted by that chat's own full rewrite — the honest,
+  non-clobbering delivery. Only blocking runs mirror (a detached run has no launching turn to land in).

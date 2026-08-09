@@ -391,6 +391,25 @@ async def delete_def(name: str) -> dict[str, Any]:
 # ── runs ─────────────────────────────────────────────────────────────────────
 
 
+def _origin_metadata(session_key: str) -> dict[str, Any]:
+    """The launching session's durable metadata head, for memory-mode inheritance.
+
+    Read here rather than inside `inherit_mode` because that module is pure-by-design (no I/O, so
+    it stays testable without a home). A missing key or an unreadable log yields `{}`, and
+    `inherit_mode` then falls back to the process-global registry — the same both-sources order
+    `session_search.is_restricted` uses so a restart cannot silently un-mark an in-flight run.
+    """
+    if not session_key:
+        return {}
+    try:
+        from personalclaw.history import ConversationLog
+
+        return ConversationLog().get_metadata(session_key) or {}
+    except Exception:
+        logger.debug("origin metadata read failed for %r", session_key, exc_info=True)
+        return {}
+
+
 async def start_run(
     *,
     name: str,
@@ -464,6 +483,22 @@ async def start_run(
                 len(checks.warnings),
             )
 
+    # Inherit the launching session's memory posture (WORK-CONTAINERS §5.1). A run started from an
+    # incognito/temporary chat must carry that mode DOWN into everything it owns, or its stages
+    # would quietly write memories the user asked not to record — invisibly, because the chat itself
+    # stayed clean. The mode rides in `extra` (already persisted and round-tripped), so a restart
+    # replays it and the engine's node-skip + the run-end gate keep enforcing it after the process
+    # forgets the in-memory registry. Stamped BEFORE create so the very first tick already sees it.
+    from personalclaw.workflows import ownership
+
+    inherited = ownership.inherit_mode(session_key, origin_metadata=_origin_metadata(session_key))
+    # NORMAL is left UNSTAMPED: `run_mode` reads an absent key as normal, so stamping it would add a
+    # redundant string to every unrestricted run's record for no behavioural gain. Only a restricted
+    # inheritance is a fact worth recording.
+    run_extra: dict[str, Any] = {}
+    if inherited is not ownership.MemoryMode.NORMAL:
+        run_extra = ownership.stamp_run_mode({}, inherited)
+
     run = store.create(
         WorkflowRun(
             id="",
@@ -474,6 +509,7 @@ async def start_run(
             mode=mode if mode in ("blocking", "background") else "background",
             project_id=project_id,
             origin=RunOrigin(kind=origin_kind, session_key=session_key),
+            extra=run_extra,
         )
     )
     store.write_spec(run.id, spec)
@@ -515,6 +551,24 @@ async def start_run(
                 }
                 for c in pending
             ]
+        else:
+            # Mirror a completion summary back into the launching session (WORK-CONTAINERS §5.1).
+            # The blocking tool RESULT is the honest mirror surface: it lands in the launching
+            # chat's transcript as a normal message and is persisted by that chat's own full
+            # rewrite — a controller-side `ConversationLog.append` into the origin JSONL would be
+            # clobbered by `_save_session_to_history`, which rebuilds the file from in-memory
+            # messages. Indexability travels WITH the text via `ownership.announcement` rather
+            # than being re-derived at the destination: a restricted origin gets the summary
+            # WITHOUT it being indexed. (The durable control is belt-and-suspenders — a restricted
+            # origin session is already skipped whole by `session_search` on reindex — but deciding
+            # here keeps every future mirror surface from re-deriving the rule and getting it
+            # wrong.)
+            note = ownership.announcement(
+                origin_key=run.origin.session_key,
+                text=_completion_summary(store.get(run.id) or run, status),
+                mode=inherited,
+            )
+            body["announcement"] = note.to_dict()
         return body
     return _ok(run_id=run.id, status=RunStatus.RUNNING.value, blocking=False)
 
@@ -1293,6 +1347,24 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
                 row["item_label"] = inst.item_label
         out.append(row)
     return out
+
+
+def _completion_summary(run: Any, status: RunStatus) -> str:
+    """A one-line completion summary for the launching session's mirror.
+
+    Drawn from the run's own recorded handoff summary — what the run said it produced —
+    rather than fabricated, matching `controller._revise_project_overview`. A run that said
+    nothing hands over nothing, so the line falls back to name + status, which is honest.
+    """
+    name = getattr(run, "workflow_name", "") or "run"
+    line = f"{name} → {status.value}"
+    try:
+        handoff = (getattr(run, "extra", {}) or {}).get("summary")
+        if isinstance(handoff, str) and handoff.strip():
+            line += f": {handoff.strip().splitlines()[0][:200]}"
+    except Exception:
+        logger.debug("completion summary handoff read failed for %r", name, exc_info=True)
+    return line
 
 
 def _status_of(run_id: str) -> str:
