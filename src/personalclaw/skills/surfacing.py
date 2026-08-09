@@ -162,6 +162,7 @@ def surface_skills(
     max_skills: int,
     semantic_threshold: float = ...,
     embed_cache: _EmbedCache | None = ...,
+    suppressed: set[tuple[str, str]] = ...,
     explain: Literal[False] = ...,
 ) -> list[str]: ...
 
@@ -174,6 +175,7 @@ def surface_skills(
     max_skills: int,
     semantic_threshold: float = ...,
     embed_cache: _EmbedCache | None = ...,
+    suppressed: set[tuple[str, str]] = ...,
     explain: Literal[True],
 ) -> list[dict]: ...
 
@@ -185,6 +187,7 @@ def surface_skills(
     max_skills: int,
     semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     embed_cache: _EmbedCache | None = None,
+    suppressed: set[tuple[str, str]] | None = None,
     explain: bool = False,
 ) -> list[str] | list[dict]:
     """Return up to *max_skills* skill keys for this turn, semantic ∪ keyword.
@@ -193,13 +196,23 @@ def surface_skills(
     key/description/triggers/path/always/use_count). The ``use_count`` field (#25)
     is the tiebreak. Excludes ``always`` skills (injected unconditionally elsewhere).
 
+    *suppressed* (FS-6) is Feedback-Signal's withholding set — the
+    ``(producer_kind, producer_id)`` pairs :func:`feedback.suppressed_producers`
+    computed as persistently-wrong. A matched skill whose identity
+    ``("skill_synthesis", <key>)`` is in it is WITHHELD: a producer whose judgments
+    keep drawing 👎 stops surfacing until the user edits it (which clears it). Default
+    empty = suppress nothing; the live wiring (``SkillsLoader.get_surfaced_skills``)
+    fetches the set fail-open, so a feedback fault degrades to normal surfacing.
+
     With ``explain=True`` (the Doctor surfacing simulator, PLATFORM-RESILIENCE §3.1)
     it returns instead a per-candidate breakdown — ``[{key, kw_score, sem_score,
     threshold_kw, threshold_sem, negated, included, reason}, …]`` for EVERY candidate
-    (including excluded ones, so the user sees WHY something was excluded), sorted the
+    (including excluded ones, so the user sees WHY something was excluded — a withheld
+    skill is surfaced with a suppression reason, never dropped silently), sorted the
     same way. Pure deterministic scoring, zero LLM calls — the same arms the real turn
     computes, returned instead of discarded.
     """
+    suppressed = suppressed or set()
     query = (text or "").strip()
     if not query or not skills:
         return []
@@ -283,9 +296,20 @@ def surface_skills(
                 sem_score = _cosine(query_vec, vec)
         sem_hit = sem_score >= semantic_threshold
 
-        included = kw_hit or sem_hit
+        matched = kw_hit or sem_hit
+        # FS-6: a matched producer Feedback-Signal marked persistently-wrong is
+        # WITHHELD — the match stands, but the skill does not surface until the user
+        # edits it (which clears the suppression). Membership is exact-tuple against
+        # feedback's producer identity for a skill: ("skill_synthesis", <key>).
+        withheld = matched and ("skill_synthesis", key) in suppressed
+        included = matched and not withheld
         if explain:
-            if included:
+            if withheld:
+                reason = (
+                    "withheld (feedback suppression: this skill's judgments keep drawing 👎 — "
+                    "edit it to restore surfacing)"
+                )
+            elif included:
                 why = (
                     f"keyword {kw_score:.2f} ≥ {_KEYWORD_GATE}"
                     if kw_hit
