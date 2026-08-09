@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import json as _json
+
+import pytest
+from aiohttp.test_utils import make_mocked_request
+
+import personalclaw.config.loader as _loader
+import personalclaw.dashboard.handlers as _handlers
+import personalclaw.dashboard.handlers.agents as _agents_h
 from personalclaw.agents.defaults import (
     DEFAULT_NATIVE_AGENT_NAME,
     default_agent_name,
@@ -64,15 +72,6 @@ def test_normalize_agent_name_canonicalizes_default():
 # back to the real default, so the change silently didn't stick. It now rejects an
 # unknown agent up-front (same set-time-validation principle as models #16 / search
 # #17). Empty string is allowed (reset to system default).
-
-import json as _json  # noqa: E402
-
-import pytest  # noqa: E402
-from aiohttp.test_utils import make_mocked_request  # noqa: E402
-
-import personalclaw.config.loader as _loader  # noqa: E402
-import personalclaw.dashboard.handlers as _handlers  # noqa: E402
-import personalclaw.dashboard.handlers.agents as _agents_h  # noqa: E402
 
 
 def _acfg(monkeypatch, tmp_path, agents: dict):
