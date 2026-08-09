@@ -605,6 +605,12 @@
     "type": "int"
   },
   {
+    "default": true,
+    "path": "learning.attribution_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 4000,
     "path": "learning.context_budget_tokens",
     "sensitive": false,

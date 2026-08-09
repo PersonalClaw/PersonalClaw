@@ -952,6 +952,16 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
     prop.status = Status.ACCEPTED.value
     prop.updated_at = _now()
     record_decision(prop, "accepted")
+    # Snapshot the bet for predict-then-verify grading (§3.1 / WF2LEA-5). This is the ONLY moment
+    # the change's predicted_fixes + target + pre-acceptance failure rates are still knowable: the
+    # proposal file is unlinked below and only a manifest-less Decision survives. Best-effort and
+    # self-guarded: recording a change for LATER grading must never fail the accept just made.
+    try:
+        from personalclaw.learning import attribution
+
+        attribution.record_accepted_change(prop)
+    except Exception:
+        logger.debug("attribution record failed for %s", pid, exc_info=True)
     try:
         (_dir() / f"{pid}.json").unlink()
     except OSError:

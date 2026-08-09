@@ -2972,13 +2972,14 @@
         {
           "id": "WF2LEA-5",
           "title": "Criterion 9: wire accountability.attribute on the curator tick — Run-Ledger deltas → verdicts → auto-filed HARMFUL reverts",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.1 change-manifest attribution (predict-then-verify, 5-way verdicts, HARMFUL auto-revert), Status line 'accountability.py has ZERO production importers', success criterion 9",
           "done_when": "A production caller on the curator tick computes fixed[]/regressed[] deltas from Run Ledger outcomes after N post-acceptance runs, invokes accountability.attribute(), records the EFFECTIVE..HARMFUL verdict on the accepted change, and a HARMFUL verdict has auto-filed a revert proposal through the queue; verified end-to-end (module no longer has zero importers)",
           "deps": [
             "WF2LEA-1",
             "WF2LEA-4"
-          ]
+          ],
+          "evidence": "New learning/attribution.py is the production importer of accountability.py (its purity invariant intact — orchestration/store live here, not there). proposals.accept() snapshots the bet (target+predicted_fixes+before-rates keyed by run id) the instant before it unlinks the proposal file; history._run_learning_curator calls attribution.grade_accepted_changes() each curator tick, which recomputes after-rates from the Run Ledger over ≥MIN_RUNS post-acceptance runs of the target, calls accountability.attribute(), records the 5-way verdict, and files a HARMFUL revert PROPOSAL through the shared human-gated queue (never applied). Reads the ledger directly (NOT vector-gated) so it works on every box; inert-by-data when nothing accepted. Config round-trip: learning.attribution_enabled (default on) through dataclass+_meta/load/to_dict/_EDITABLE_CONFIG + config-baseline. 14 new end-to-end tests (real store+ledger+config) incl. accountability-now-has-a-production-importer; make lint (black/isort/flake8/mypy) + 3 gate_report gates + 280 sibling tests green."
         },
         {
           "id": "WF2LEA-6",
