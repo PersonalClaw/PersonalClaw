@@ -140,3 +140,32 @@ def require_fts5() -> None: ...                # raises RuntimeError with the re
   `personalclaw.sqlite_compat` (else the cached pysqlite3 binding defeats the fallback). Verified
   under a simulated pysqlite3-present environment (the CI condition): all three modules fall back to
   stdlib and `sqlite_compat` is restored afterward.
+- **PR-8 DONE — native-Windows rung-3 audit (audit ONLY, zero code).** Wrote
+  `docs/roadmap/research/windows-native-audit.md`. Honors the soul guardrail: the doc adds NO
+  implementation code — it costs a native `pip install personalclaw` on Windows PowerShell (no WSL2,
+  no Docker) and recommends against it. Each of the six mechanisms is grounded in a verified as-built
+  citation and given options+effort+risk+verdict: (1) process reaping — `start_new_session=True` +
+  `os.killpg` across 4 spawn / 5 kill sites (`acp/transport.py:366`/`:456`, escaped-child PPID walk
+  `:109-208`) → **Job Objects** (M) beat `taskkill /T` (which reintroduces the escaped-child bug the
+  POSIX code closes); (2) file perms — `chmod 0o600` + `_enforce_perms` on `mode & 0o077`
+  (`llm/credentials.py:96`/`:288-297`, ~30 secret sites) → **`icacls`/ACL seam** (M) — the load-bearing
+  risk, because `os.chmod` on NTFS only toggles read-only so the owner-only guarantee **silently**
+  fails; (3) symlinks — 3 create sites (`frontend.py:71`/`:98`, `resilience/fixes.py:137`) →
+  **junction-or-copy fallback** (S, cheapest); (4) PTY — module-load POSIX imports
+  (`terminal.py:4-12`) + `pty.openpty()` `:273` → **disable the page** (S) or pywinpty (M); (5) service
+  — `service/common.py:63-74` dispatch with no `Platform.WINDOWS` → **Task Scheduler** (S–M, fits the
+  personal-agent model; a Windows Service fights the gateway's user-session + browser-open); (6) sandbox
+  — `detect_backend()` (`sandbox.py:596-618`) + `_spawn_exec_shim.py:54-85` degradation → **isolation =
+  none, ceilings via Job Object limits, agent command execution off-by-default with a loud
+  acknowledgement** — the decisive posture question, and an owner-level call. **Verdict: NO-GO now** —
+  the two blocking mechanisms (perms §2, sandbox §6) silently weaken security guarantees, are the most
+  expensive to validate (a real Windows host, not CI mocks), and a finished port would still be weaker
+  than the WSL2 path (rungs 1–2) that runs the real Linux code intact. Demand-evidence gate to flip to
+  go: ≥10 distinct native-Windows-only issues, a top-5 sustained community theme, requests that
+  converge on an environment WSL2/Docker genuinely cannot serve, and owner ratification of the §6
+  posture. **Rung-2.5 finding (recorded, NOT fixed here — out of this rung's audit-only scope):** the
+  unguarded method-local `import resource` at `gateway.py:3471` `ImportError`s at gateway **boot** on
+  native Windows, so even "run it and observe" fails before start; guarding it (as
+  `_spawn_exec_shim.py:54-57` already does) is a future one-line-class hardening, not a port. **Gate:**
+  doc-only change — `make lint` clean; `python3 -c 'json.load(dag.json)'` parses (598 atoms). No source
+  touched, so no pytest/web run applies.

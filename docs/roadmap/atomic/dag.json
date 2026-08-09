@@ -5172,10 +5172,12 @@
         {
           "id": "PR-8",
           "title": "Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code)",
-          "status": "todo",
+          "status": "done",
           "scope": "Track B Session B3; Task B3.1",
           "done_when": "docs/roadmap/research/windows-native-audit.md covers each verified mechanism (Job Objects vs PPID reaping, icacls vs chmod, junction/copy vs symlink, ConPTY/pywinpty vs disable-terminal, Windows Service vs Task Scheduler, sandbox-degradation policy) with options+effort+risk and an explicit go/no-go + demand-evidence criteria; NO implementation code (soul guardrail — E6 if tempted)",
-          "deps": []
+          "deps": [],
+          "evidence": "docs/roadmap/research/windows-native-audit.md written as audit-only (zero implementation code, soul guardrail honored). Grounds every mechanism in verified as-built citations: process reaping via start_new_session/os.killpg (acp/transport.py:366/:456, escaped-child PPID walk :109-208) → Job Objects vs taskkill/T; chmod 0o600 enforcement (llm/credentials.py:96/:288-297, _enforce_perms on mode&0o077) → icacls/ACL seam (silent NTFS leak is the load-bearing risk); symlink creation at frontend.py:71/:98 + resilience/fixes.py:137 → junction/copy fallback; PTY at terminal.py:4-12 POSIX imports + :273 pty.openpty → ConPTY/pywinpty vs disable; service dispatch service/common.py:63-74 (no Platform.WINDOWS) → Task Scheduler vs Windows Service; sandbox detect_backend sandbox.py:596-618 + _spawn_exec_shim.py:54-85 degradation → isolation=none posture. Costed roll-up (M+M+S+S+S–M+M), explicit NO-GO with 4-criterion demand-evidence gate (≥10 native-only issues, top-5 community theme, WSL2/Docker genuinely-cannot-serve specificity, owner ratification of §6 posture), and a rung-2.5 finding: the unguarded gateway.py:3471 import resource ImportErrors at boot on native Windows. No code touched.",
+          "pr": "#944"
         }
       ],
       "summary": "PLATFORM-REACH is DESIGNED with nothing shipped; decomposed into 8 todo atoms across the two owner-declared independent tracks (ARM: PR-1..PR-5; Windows: PR-6..PR-8)."
