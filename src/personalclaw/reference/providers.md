@@ -14,6 +14,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - `model`
 - `notification`
 - `prompt`
+- `sandbox`
 - `search`
 - `skills`
 - `sync`
