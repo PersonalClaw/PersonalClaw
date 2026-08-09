@@ -212,4 +212,28 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
 
 ## Execution log
 
-_(empty — no session has run yet)_
+- **2026-08-09 — DONE: EIAT-1** (Generalize the event-trigger vocabulary to source-agnostic, core, S1).
+  Widened the shipped `event_triggers.py` vocabulary (the live runtime for the unified `event` kind
+  per `KIND_RUNTIMES["event"]`) to be source-agnostic per Contracts C1 & C2 — a clean break, no shim.
+  - **C1 (source-agnostic matcher):** `EventTrigger` gained `source` (memory/inbox/app, defaulted from
+    the pattern via `PATTERN_SOURCE` so a mismatched pattern/source pair can't defeat isolation),
+    `sender_glob`, `address_glob`; `EVENT_PATTERNS` extended with `InboxMessage`/`InboxSender`/
+    `InboxAddress`. `matches()` now takes keyword `source`/`meta` and gates on `trigger.source != source`
+    **before** any pattern logic — a memory trigger is invisible to an inbox event and vice versa.
+    Legacy specs with no `source` key infer memory semantics via `from_dict`.
+  - **Clean break:** `emit_memory_event`/`on_memory_event` were DELETED (not aliased) and replaced by
+    `emit_event`/`on_event(*, source, event_type, key, value, now, meta=None)`; the two callers
+    (`vector_memory`, `triggers/loop` spool re-entry) and the dispatch spool envelope kind
+    (`f"{source}.{event_type}"`) were updated same-change.
+  - **C2 (inbox→event bridge):** `inbox_service._ingest` emits exactly one `source=inbox`
+    `message_received` event per accepted item, carrying the raw value + structured meta
+    (sender/sender_name/address/source_name); best-effort so a bridge failure never breaks ingest.
+  - **Typed error:** the dashboard create/update handlers reject an `InboxSender` trigger with no
+    `sender_glob` (wire code `sender_glob_required`) and derive `source` from the pattern.
+  - **Gate:** `make lint` green; targeted pytest green (262 trigger/inbox/memory tests incl. 8 new EIAT-1
+    matchers + the engine source-scoping test); `make test` green after satisfying three full-suite-only
+    ratchets EIAT-1 legitimately moved (`LEGACY_FIELD_MAP` +3 fields; `EVENT_PATTERNS` scope-pin test
+    re-affirmed on the no-chat-turn-source invariant; offline reference unaffected).
+  - **Note:** two other full-suite reds (`providers.md` `+sandbox` drift; unclassified
+    `sandbox_providers/none.py` spawn site) were PRE-EXISTING EI-1 (#933) debt on `main`, not EIAT-1 —
+    fixed in the stack-base commit that this atom stacks on. PR stacked on that health fix.

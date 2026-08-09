@@ -3939,13 +3939,13 @@
     {
       "code": "EIAT",
       "plan": "EMAIL-INBOX-AND-TRIGGERS",
-      "status": "proposed",
-      "summary": "No session has run (execution log empty) — all atoms TODO. Premise verified live: unified triggers/ package with a source-bearing `event` kind is shipped (S1 target moved there); MessageSourceProvider ABC, 16 action providers, and AUTONOMY-GUARDRAILS are DONE, so nothing cross-plan blocks a start. No mail-inbox app and zero imap/smtp anywhere (greenfield app). Owner real-world gates (test mailbox for S2 validation, receiving-address strategy, draft-by-default confirmation) gate validation, not implementation.",
+      "status": "in-progress",
+      "summary": "EIAT-1 DONE (2026-08-09): the event-trigger vocabulary is source-agnostic — event_triggers.py (live runtime for the unified `event` kind) carries source/sender_glob/address_glob + Inbox* patterns, matches() gates on source before pattern, emit_memory_event→emit_event clean break, and inbox_service bridges accepted items to source=inbox events. EIAT-2..5 TODO (EIAT-2/3 are the greenfield mail-inbox app; EIAT-4/5 prompt-bound addresses + Triggers-page UI, owner-gated on test mailbox / receiving-address strategy / draft-by-default confirmation — those gate validation, not implementation).",
       "atoms": [
         {
           "id": "EIAT-1",
           "title": "Generalize the event-trigger vocabulary to source-agnostic (core, S1)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 — Generalize the event vocabulary (core) (T1.1-T1.4, V1); Contracts C1 & C2; Design §S1. Re-scoped per the 2026-08-04 PREMISE AMENDMENT: widen the SHIPPED unified triggers/ `event` kind source vocabulary, not the legacy event_triggers.py.",
           "done_when": "An inbox trigger created against the existing filesystem inbox source fires a notify action; a memory trigger never fires on an inbox event and vice versa (source-scoped matching, unit-tested per matcher); the emitter is source-agnostic with no memory-specific shim left behind and memory triggers still fire exactly as before (regression); accepted inbox items emit exactly one event with correct raw value + structured meta while a rejected sender emits none (negative proven); inbox trigger routes round-trip, an InboxSender trigger with no sender_glob is rejected with a typed error code, and the offline reference drift test is green; debounce/storm-cap/max_fires behavior unchanged; make lint + targeted pytest + make test pass.",
           "deps": [
@@ -7046,8 +7046,13 @@
         "plan": "EI"
       },
       {
-        "id": "EIAT-1",
-        "title": "Generalize the event-trigger vocabulary to source-agnostic (core, S1)",
+        "id": "EIAT-2",
+        "title": "mail-inbox provider app: IMAP inbound, checkpointing, fail-closed allowlist, MIME extraction (S2)",
+        "plan": "EIAT"
+      },
+      {
+        "id": "EIAT-5",
+        "title": "Triggers page inbox-event configuration UI (web/, S3)",
         "plan": "EIAT"
       },
       {
