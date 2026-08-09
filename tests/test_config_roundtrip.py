@@ -72,6 +72,7 @@ def test_save_load_roundtrip_skills(cfg_file):
 # load() — covered by dedicated tests elsewhere, not leaf-walkable.
 _SECTIONS = [
     "agent",
+    "sandbox",
     "session",
     "loops",
     "memory",

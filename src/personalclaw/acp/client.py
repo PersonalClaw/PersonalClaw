@@ -115,6 +115,7 @@ class AcpClient:
         model: str | None = None,
         agent: str = CLIENT_NAME,
         sandbox_mode: str = "auto",
+        sandbox: str = "none",
         session_key: str | None = None,
         channel_id: str | None = None,
         extra_env: dict[str, str] | None = None,
@@ -133,6 +134,7 @@ class AcpClient:
         self._mode: str = mode or ""
         self._reasoning_effort: str = reasoning_effort or ""
         self._sandbox_mode = sandbox_mode
+        self._sandbox = sandbox or "none"
         self._session_key = session_key
         self._channel_id = channel_id
         self._extra_env = extra_env or {}
@@ -148,6 +150,7 @@ class AcpClient:
             command=self._command or [],
             work_dir=self._work_dir,
             sandbox_mode=self._sandbox_mode,
+            sandbox=self._sandbox,
             extra_env=self._extra_env or None,
             session_key=self._session_key,
             channel_id=self._channel_id,
@@ -201,12 +204,12 @@ class AcpClient:
         self._transport._child_pids = value
 
     @property
-    def _sandbox_cleanup(self) -> str | None:
-        return self._transport._sandbox_cleanup
+    def _sandbox_handle(self) -> object | None:
+        return self._transport._sandbox_handle
 
-    @_sandbox_cleanup.setter
-    def _sandbox_cleanup(self, value: str | None) -> None:
-        self._transport._sandbox_cleanup = value
+    @_sandbox_handle.setter
+    def _sandbox_handle(self, value: object | None) -> None:
+        self._transport._sandbox_handle = value
 
     @property
     def _stderr_lines(self) -> "deque[str]":

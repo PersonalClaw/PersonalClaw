@@ -24,7 +24,10 @@ async def _spawned_env(transport: AcpProcess) -> dict:
     """Spawn *transport* against a mocked subprocess and return the env dict it passed
     to ``create_subprocess_exec`` (the env-building the transport owns)."""
     with (
-        patch("personalclaw.acp.transport.wrap_argv", return_value=(["/bin/echo"], None)),
+        # EI-1: the OS-sandbox wrap now lives behind the ``none`` sandbox provider, so patch
+        # wrap_argv where that provider imports it. The transport composes it via
+        # resolve_provider("none").wrap(...); the final launch is still create_subprocess_exec.
+        patch("personalclaw.sandbox_providers.none.wrap_argv", return_value=(["/bin/echo"], None)),
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         patch("personalclaw.session._track_pid"),
         patch("personalclaw.session._track_session_pid"),
@@ -73,6 +76,41 @@ async def test_spawn_env_omits_session_key_when_absent(tmp_path):
     assert env is not None
     assert env["PERSONALCLAW_CHANNEL_ID"] == "C0ABC123"
     assert "PERSONALCLAW_SESSION_KEY" not in env
+
+
+@pytest.mark.asyncio
+async def test_spawn_routes_through_sandbox_provider_handle(tmp_path):
+    """EI-1: spawn resolves the named sandbox provider and launches via handle.exec — the
+    inline wrap_argv/create_subprocess_limited pair is gone. A fake provider proves the seam."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    fake_proc = MagicMock()
+    fake_proc.pid = 4242
+    fake_proc.returncode = None
+    fake_proc.stderr = MagicMock()
+    fake_proc.stderr.readline = AsyncMock(return_value=b"")
+
+    handle = MagicMock()
+    handle.argv = ["/bin/echo", "wrapped"]
+    handle.exec = AsyncMock(return_value=fake_proc)
+    provider = MagicMock()
+    provider.wrap = MagicMock(return_value=handle)
+
+    t = _mk(work_dir=tmp_path, sandbox="container-tier")
+    with (
+        patch("personalclaw.sandbox_providers.resolve_provider", return_value=provider) as resolve,
+        patch("personalclaw.session._track_pid"),
+        patch("personalclaw.session._track_session_pid"),
+    ):
+        await t.spawn()
+
+    resolve.assert_called_once_with("container-tier")
+    # The spec carried the OS mode + the session_host ceiling profile.
+    spec = provider.wrap.call_args.args[0]
+    assert spec.mode == "auto"
+    assert spec.profile == "session_host"
+    handle.exec.assert_awaited_once()
+    assert t.pid == 4242
 
 
 def test_liveness_before_spawn():
@@ -181,13 +219,17 @@ async def test_kill_sigterm_then_sweeps_escaped():
 
 
 def test_teardown_clears_and_unlinks(tmp_path):
+    from personalclaw.sandbox_providers.none import _NoneHandle
+
     t = _mk()
     proc = MagicMock()
     proc.stdin = proc.stdout = proc.stderr = MagicMock()
     t._process = proc
     sb = tmp_path / "sandbox.sb"
     sb.write_text("profile")
-    t._sandbox_cleanup = str(sb)
+    # EI-1: the sandbox temp file is owned by the provider handle; teardown() delegates to
+    # handle.cleanup() to unlink it.
+    t._sandbox_handle = _NoneHandle(["/bin/echo"], "none", None, str(sb))
     t._child_pids = {123: None}
     with (
         patch("personalclaw.session._untrack_child_pids"),

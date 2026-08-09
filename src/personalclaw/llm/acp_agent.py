@@ -383,6 +383,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         session_key: str | None = None,
         channel_id: str | None = None,
         sandbox_mode: str = "auto",
+        sandbox: str = "none",
         session_files_dir: Path | None = None,
         dialect: str | None = None,
         mode: str = "",
@@ -404,6 +405,9 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
         self._session_key: str | None = session_key
         self._channel_id: str | None = channel_id
         self._sandbox_mode: str = sandbox_mode
+        # Sandbox provider name (EI-1) — the isolation backend the ACP process launches through.
+        # Threaded into the client → transport; ``none`` is the always-available default.
+        self._sandbox: str = sandbox or "none"
         # Permission/operating mode for adapters with a separate mode axis (Zed:
         # default/acceptEdits/plan/dontAsk/bypassPermissions). Empty for the default dialect
         # (no separate mode axis) and for native default behaviour.
@@ -429,6 +433,7 @@ class AcpAgentProvider(ModelProvider, AgentProvider):
             model=self._model,
             agent=self._agent_name,
             sandbox_mode=self._sandbox_mode,
+            sandbox=self._sandbox,
             session_key=self._session_key,
             channel_id=self._channel_id,
             extra_env=self._env or None,
@@ -814,6 +819,16 @@ def _factory(
 
     sandbox_mode = str(options.get("sandbox_mode") or "auto")
 
+    # Sandbox PROVIDER (EI-1), distinct from sandbox_MODE above: the mode is the OS path-sandbox
+    # level; the provider is the isolation backend (``none`` builtin, or an installed container
+    # tier). The bridge threads a per-session choice as the ``sandbox`` kwarg; falls back to the
+    # entry option, else ``none``.
+    sandbox = (
+        str(kwargs.get("sandbox") or "").strip()
+        or str(options.get("sandbox") or "").strip()
+        or "none"
+    )
+
     session_files_dir_value = options.get("session_files_dir")
     session_files_dir: Path | None = (
         Path(str(session_files_dir_value)) if session_files_dir_value else None
@@ -849,6 +864,7 @@ def _factory(
         session_key=session_key,
         channel_id=channel_id,
         sandbox_mode=sandbox_mode,
+        sandbox=sandbox,
         session_files_dir=session_files_dir,
         dialect=dialect,
         mode=mode,
