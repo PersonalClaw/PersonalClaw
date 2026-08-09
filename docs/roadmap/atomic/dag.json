@@ -6385,13 +6385,14 @@
         {
           "id": "WF2WOR-6",
           "title": "Session-ownership run-start wiring + incognito enforcement at run start",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§5.1 (session ownership + incognito inheritance), Migration Order step 7",
           "done_when": "Success Criterion 5: at run start the controller performs the session_restrictions mark and the JSONL memory_mode write, and mirrors a completion summary into the launching session; a blocking run launched from an incognito session writes nothing to knowledge/learning stores, verified durable after a gateway restart",
           "deps": [
             "WF2WOR-1"
           ],
-          "pr": "#189"
+          "pr": "#947",
+          "evidence": "Wires the previously-inert workflows/ownership.py into the run lifecycle. service.py stamps the inherited MemoryMode onto run.extra (RUN_MODE_KEY) before store.create so the posture round-trips on disk and survives a restart, and the blocking-run path mirrors a completion summary back into the launching session via the tool RESULT body (the non-clobbering surface — a direct ConversationLog.append would be clobbered by _save_session_to_history's full rewrite), with indexability decided at source by ownership.announcement() (previously inert, now its first live call site): a restricted origin gets the summary WITHOUT it being indexed. controller._prepare enforces the inherited mode into session_restrictions for BOTH the origin and owned keys (per restriction_calls); _capture_run_end no longer leaks writes from a restricted run. ownership.parse_mode('persistent')->NORMAL, fail-closed to INCOGNITO otherwise. DEVIATION: plan named a JSONL memory_mode line for run durability, but a run owns no ConversationLog file, so the durable head is run.extra (same RUN_MODE_KEY via durable_metadata) — recorded in the plan Execution log. 6 new TestMemoryModeInheritance async tests; make lint (black/isort/flake8/mypy, 771 files) clean; 220 targeted tests (69 tools + 151 ownership/controller) green."
         },
         {
           "id": "WF2WOR-7",

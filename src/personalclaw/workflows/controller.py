@@ -47,7 +47,7 @@ from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import judge_calibration, longrun, mutations, store
+from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
@@ -496,7 +496,55 @@ class RunController:
             spec_version=self.run.spec_version,
             resumed=resumed,
         )
+        self._enforce_inherited_mode()
         self._publish("workflow_run_update", {"status": self.run.status.value})
+
+    def _enforce_inherited_mode(self) -> None:
+        """Apply a restricted origin's memory posture at run start (WORK-CONTAINERS §5.1).
+
+        The run already carries the inherited mode in `extra` (stamped by `start_run`); this is the
+        moment it becomes ENFORCED in the process-global `session_restrictions` registry — the fast
+        path the knowledge/learning writers consult during the run. The chat layer never marks the
+        registry (it enforces off `session.is_restricted` on the LIVE session object, which a
+        background run no longer holds), so this is the registry's FIRST writer for a run's keys.
+
+        The mark is made for BOTH the launching session key AND the run-owned key: the origin key is
+        what the run-end LearningGate reads (`_capture_run_end` keys `for_session` off
+        `origin.session_key`), and the owned key is what any run-scoped write would carry. A
+        `temporary` run gets both marks per `restriction_calls`, because `is_temporary` gates reads
+        while `is_restricted` gates writes.
+
+        **Durability lives in `run.extra`, not a session JSONL.** A run owns no `ConversationLog`
+        file — stage subagents persist under their own `subagent:<id>` keys, and the `workflow:`
+        owned string is a provenance ref, not a JSONL key. The run record's `extra["memory_mode"]`
+        IS the run's durable metadata head: `start_run` stamps it via `ownership.stamp_run_mode`,
+        which is `ownership.durable_metadata` (same `memory_mode` key by construction, not two
+        literals). It round-trips through the run record on disk and is what a gateway restart
+        replays — after which `_prepare` runs again and re-marks the registry from it, and the
+        engine's node-skip + the run-end gate keep reading it. Materializing an owned-session JSONL
+        line would create a file no reader consumes (the reindex path forgets restricted sessions on
+        sight), so the durable write is deliberately the `extra` head. DEVIATION from the literal
+        "JSONL write" phrasing, recorded in the plan's Execution log.
+
+        Idempotent and best-effort: `_prepare` runs once per live controller and again on resume,
+        and re-marking a key already in the LRU is a no-op. A NORMAL run does nothing — an
+        unrestricted origin has nothing to suppress. Guarded because `_prepare` must not fail the
+        run over a registry mutation.
+        """
+        mode = ownership.run_mode(self.run)
+        if mode is ownership.MemoryMode.NORMAL:
+            return
+        owned = ownership.own_session(self.run.id, "run", inherited_mode=mode)
+        try:
+            from personalclaw import session_restrictions
+
+            for call in ownership.restriction_calls(owned):
+                mark = getattr(session_restrictions, call)
+                if self.run.origin.session_key:
+                    mark(self.run.origin.session_key)
+                mark(owned.key)
+        except Exception:
+            logger.debug("run %s: registry mark failed", self.run.id, exc_info=True)
 
     async def _step(self) -> bool:
         """One scheduling step under the lock. Returns True when the run is terminal.
@@ -2774,11 +2822,16 @@ class RunController:
             from personalclaw.learning.gate import Cadence, LearningGate
 
             cfg = AppConfig.load().learning
-            # The session that started the run is likely gone by terminal time, but its
-            # restriction flag is process-global and keyed — that key is all `for_session`
-            # needs to enforce criterion 10.
+            # The session that started the run is likely gone by terminal time. `for_session` then
+            # reads the process-global registry by key (`_enforce_inherited_mode` marked it at
+            # start), AND the `is_restricted` flag carried on this namespace — set from the RUN's
+            # inherited mode, not hardcoded False. The run record is the durable authority: a
+            # registry mark can evict from the bounded LRU over a long run, and reading
+            # `is_restricted=False` there would re-open the gate an incognito origin closed. Belt
+            # (record) and suspenders (registry), fail-closed by construction.
+            restricted = ownership.run_mode(self.run) in ownership.WRITE_SUPPRESSED
             session = SimpleNamespace(
-                key=self.run.origin.session_key, is_restricted=False, _ephemeral=False
+                key=self.run.origin.session_key, is_restricted=restricted, _ephemeral=False
             )
             decision = LearningGate.for_session(session, cfg).decide(
                 Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))

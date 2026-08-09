@@ -641,3 +641,162 @@ class TestErrorContract:
         ):
             out = T._call_tool(name, args)
             assert isinstance(out, str) and "cannot be called from a running" not in out, name
+
+
+# ── memory-mode inheritance, wired end to end (WORK-CONTAINERS §5.1) ───────────
+
+
+class TestMemoryModeInheritance:
+    """The property: a run launched from an incognito/temporary chat carries that posture
+    the whole way down — stamped on the run record at start, enforced in the process-global
+    registry when the controller prepares, and mirrored back to the launching chat WITHOUT
+    being indexed. These drive the REAL service + controller, not the pure helpers (those
+    live in `test_workflows_ownership`)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_history(self, tmp_path, monkeypatch):
+        """`_origin_metadata` reads the launching session's JSONL via `ConversationLog`, which
+        resolves through `config.loader.config_dir` — a DIFFERENT symbol than the store's own
+        `config_dir` the module autouse fixture patches. Set `PERSONALCLAW_HOME` so an origin
+        metadata read cannot touch the real home."""
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "pc-home"))
+
+    async def test_an_incognito_origin_stamps_the_run_record(self, provider) -> None:
+        """The durable spine: the inherited mode lands in `run.extra` so a restart replays it.
+        Driven through the registry path (no durable JSONL line needed) to prove `start_run`
+        consults the live registry for the launching key."""
+        from personalclaw import session_restrictions
+        from personalclaw.workflows.ownership import MemoryMode, run_mode
+
+        session_restrictions.clear("dashboard:inc-origin")
+        session_restrictions.mark_incognito("dashboard:inc-origin")
+        try:
+            await service.author_def(name="wf-inc", root=SPEC_ROOT)
+            body = await service.start_run(
+                name="wf-inc",
+                supervisor=_FakeSupervisor(),
+                session_key="dashboard:inc-origin",
+                skip_preflight=True,
+            )
+            assert body["ok"]
+            run = store.get(body["run_id"])
+            assert run_mode(run) is MemoryMode.INCOGNITO
+            # And it survives the record's own serialization round trip — what a restart replays.
+            from personalclaw.workflows.models import WorkflowRun
+
+            assert run_mode(WorkflowRun.from_dict(run.to_dict())) is MemoryMode.INCOGNITO
+        finally:
+            session_restrictions.clear("dashboard:inc-origin")
+
+    async def test_a_normal_origin_leaves_the_record_unstamped(self, provider) -> None:
+        """NORMAL is left unstamped — `run_mode` reads an absent key as normal, so stamping it
+        would add a redundant string to every unrestricted run for no behavioural gain."""
+        from personalclaw.workflows.ownership import RUN_MODE_KEY
+
+        await service.author_def(name="wf-norm-origin", root=SPEC_ROOT)
+        body = await service.start_run(
+            name="wf-norm-origin",
+            supervisor=_FakeSupervisor(),
+            session_key="dashboard:clean",
+            skip_preflight=True,
+        )
+        assert body["ok"]
+        assert RUN_MODE_KEY not in store.get(body["run_id"]).extra
+
+    async def test_the_controller_ENFORCES_the_mode_in_the_registry(self, provider) -> None:
+        """The registry is the fast path the knowledge/learning writers consult during the run,
+        and the chat layer never marks it for a background run (it enforces off the live session
+        object, which the run no longer holds). So the controller's run-start mark is the
+        registry's first writer for these keys — for BOTH the origin key and the run-owned key."""
+        from personalclaw import session_restrictions
+        from personalclaw.workflows.ownership import owned_key
+
+        session_restrictions.clear("dashboard:enf-origin")
+        session_restrictions.mark_incognito("dashboard:enf-origin")
+        try:
+            await service.author_def(name="wf-enf", root=SPEC_ROOT)
+            body = await service.start_run(
+                name="wf-enf",
+                mode="blocking",
+                supervisor=_FakeSupervisor(),
+                blocking_timeout=20,
+                session_key="dashboard:enf-origin",
+                skip_preflight=True,
+            )
+            assert body["status"] == RunStatus.COMPLETE.value
+            # The controller marked the run-owned key too, off its own record — proving the mark
+            # is re-derived from `extra` at `_prepare`, not carried only from the launching session.
+            assert session_restrictions.is_restricted(owned_key(body["run_id"], "run"))
+        finally:
+            session_restrictions.clear("dashboard:enf-origin")
+            session_restrictions.clear(owned_key(body["run_id"], "run"))
+
+    async def test_a_blocking_run_MIRRORS_an_indexable_summary_for_a_normal_origin(
+        self, provider
+    ) -> None:
+        """The mirror surface is the blocking tool RESULT, not a JSONL append (which the chat's
+        own full rewrite would clobber). A normal origin's summary is indexable."""
+        await service.author_def(name="wf-mir-norm", root=SPEC_ROOT)
+        body = await service.start_run(
+            name="wf-mir-norm",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            session_key="dashboard:mir-norm",
+            skip_preflight=True,
+        )
+        note = body["announcement"]
+        assert note["origin_key"] == "dashboard:mir-norm"
+        assert note["indexable"] is True
+        assert "wf-mir-norm" in note["text"] and RunStatus.COMPLETE.value in note["text"]
+
+    async def test_a_blocking_run_mirrors_the_summary_WITHOUT_indexing_for_incognito(
+        self, provider
+    ) -> None:
+        """The run's outcome is still useful to the person who asked for it; what they asked to
+        avoid is the record. The indexability decision travels WITH the text, decided once."""
+        from personalclaw import session_restrictions
+
+        session_restrictions.clear("dashboard:mir-inc")
+        session_restrictions.mark_incognito("dashboard:mir-inc")
+        try:
+            await service.author_def(name="wf-mir-inc", root=SPEC_ROOT)
+            body = await service.start_run(
+                name="wf-mir-inc",
+                mode="blocking",
+                supervisor=_FakeSupervisor(),
+                blocking_timeout=20,
+                session_key="dashboard:mir-inc",
+                skip_preflight=True,
+            )
+            note = body["announcement"]
+            assert note["indexable"] is False
+            assert "incognito" in note["reason"]
+            # The summary text is still delivered — suppressed from the index, not withheld.
+            assert note["text"]
+        finally:
+            session_restrictions.clear("dashboard:mir-inc")
+
+    async def test_a_needs_input_run_carries_no_announcement(self, provider) -> None:
+        """The mirror is a COMPLETION summary. A run parked on needs_input has not completed, so
+        it returns the continuation payload instead — announcing "done" would be a lie. A gate
+        awaiting a human surfaces as needs_input immediately (WF2-R7)."""
+        root = {
+            "kind": "sequence",
+            "id": "main",
+            "children": [
+                {"kind": "gate", "id": "ask", "config": {"kind": "approval", "prompt": "proceed?"}},
+            ],
+        }
+        await service.author_def(name="wf-ask", root=root)
+        body = await service.start_run(
+            name="wf-ask",
+            mode="blocking",
+            supervisor=_FakeSupervisor(),
+            blocking_timeout=20,
+            session_key="dashboard:ask",
+            skip_preflight=True,
+        )
+        assert body["status"] == RunStatus.NEEDS_INPUT.value
+        assert "announcement" not in body
+        assert body["needs_input"]
