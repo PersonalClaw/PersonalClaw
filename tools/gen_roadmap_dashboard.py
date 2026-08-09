@@ -291,7 +291,48 @@ def parse_driver_state() -> dict:
     except Exception:
         stack = []
 
-    return {"loaded": loaded, "ticks": ticks, "stack": stack, "stack_is_chain": is_chain}
+    # ── LIVE "what is processing RIGHT NOW" ────────────────────────────────────
+    # `.roadmap-exec-state.json` is only written AFTER an atom finishes, so it can
+    # never answer "what's running now" — it showed stale hand-written text instead.
+    # These signals CAN answer it, and are cheap:
+    #   * the tick LOCK dir — created at tick start, held for the whole run
+    #   * the last FIRE line — when the running tick started
+    #   * the newest per-run log — its sink, growing as it works
+    #   * the repo's current branch + dirty files — what it is actually building
+    live: dict = {"running": False}
+    lock = DRIVER_DIR / ".tick.lock"
+    try:
+        if lock.is_dir():
+            started = lock.stat().st_mtime
+            live["running"] = True
+            live["elapsed_min"] = max(0, int((time.time() - started) // 60))
+            runs = sorted(
+                DRIVER_DIR.glob("tick-*.run.log"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if runs:
+                live["run_log"] = runs[0].name
+                live["run_log_bytes"] = runs[0].stat().st_size
+        for t in reversed(ticks):
+            if t.get("verb") == "FIRE":
+                live["last_fire"] = t.get("ts", "")
+                break
+    except OSError:
+        pass
+    live["branch"] = sh("git branch --show-current") or ""
+    dirty = sh("git status --porcelain 2>/dev/null")
+    dirty_lines = [ln for ln in dirty.splitlines() if ln.strip()]
+    live["dirty_files"] = [ln[3:] for ln in dirty_lines][:6]
+    live["dirty_count"] = len(dirty_lines)
+
+    return {
+        "loaded": loaded,
+        "ticks": ticks,
+        "stack": stack,
+        "stack_is_chain": is_chain,
+        "live": live,
+    }
 
 
 # ── full execution order (from workspace ROADMAP §5; collapsed) ──
@@ -668,7 +709,15 @@ def _tile(r: dict, pct) -> str:
 def _render_working(exec_state: dict, git: dict, ready: list) -> str:
     pr_by_branch = git.get("pr_by_branch") or {}
     stack = exec_state.get("stack") or []
-    next_up = exec_state.get("next_up") or []
+    # Drop PLACEHOLDER next_up rows (e.g. atom "(driver-selected)") — they are not
+    # real queued atoms, and rendering them made this panel read as stale forever
+    # while hiding the genuinely useful DAG ready-frontier fallback below.
+    next_up = [
+        e
+        for e in (exec_state.get("next_up") or [])
+        if (e.get("atom") or "").strip().strip("()").lower()
+        not in {"", "driver-selected", "tbd", "n/a", "-"}
+    ]
 
     def pr_link(entry) -> str:
         n = entry.get("pr") or pr_by_branch.get(entry.get("branch") or "")
@@ -827,11 +876,45 @@ def _render_driver(driver: dict) -> str:
     else:
         stack_label = f"Open PRs ({len(stack)}) — independent, any merge order"
 
+    # ── "Processing now" strip: LIVE truth, not exec-state's after-the-fact text ──
+    live = driver.get("live") or {}
+    if live.get("running"):
+        mins = live.get("elapsed_min", 0)
+        bits = [f"<b>running {mins}m</b>"]
+        if live.get("last_fire"):
+            bits.append(f'started {esc(live["last_fire"][11:19])}Z')
+        if live.get("branch"):
+            bits.append(f'on <code class="br">{esc(live["branch"])}</code>')
+        if live.get("dirty_count"):
+            files = ", ".join(esc(f) for f in (live.get("dirty_files") or [])[:3])
+            more = f" +{live['dirty_count'] - 3} more" if live["dirty_count"] > 3 else ""
+            bits.append(f'editing {live["dirty_count"]} file(s): {files}{more}')
+        if live.get("run_log"):
+            bits.append(f'log {esc(live["run_log"])} ({live.get("run_log_bytes", 0)}B)')
+        now_html = (
+            '<div class="drv-now live"><span class="drv-pulse"></span>'
+            '<span class="drv-nowlbl">Processing now</span>'
+            f'<span class="drv-nowbody">{" · ".join(bits)}</span></div>'
+        )
+    else:
+        idle_bits = []
+        if live.get("last_fire"):
+            idle_bits.append(f'last tick fired {esc(live["last_fire"][11:19])}Z')
+        if live.get("branch"):
+            idle_bits.append(f'tree on <code class="br">{esc(live["branch"])}</code>')
+        idle_bits.append("next wakeup within 5 min")
+        now_html = (
+            '<div class="drv-now idle"><span class="drv-pulse idle"></span>'
+            '<span class="drv-nowlbl">Idle between ticks</span>'
+            f'<span class="drv-nowbody">{" · ".join(idle_bits)}</span></div>'
+        )
+
     return (
         f'<section class="box drv"><h2 class="section">'
         f'<span class="valdot {dot}"></span>Autonomous driver '
         f'<span class="wn-meta">{esc(hdr)} · every-5-min launchd tick · one atom/run '
         f'· PRs stack on the prior open one{(" · " if last_html else "")}</span>{last_html}</h2>'
+        f"{now_html}"
         f'<div class="drv-cols">'
         f'<div class="drv-col"><h3 class="drv-h3">Recent ticks</h3>'
         f'<ul class="drv-ticks">{tick_rows}</ul></div>'
@@ -1044,6 +1127,21 @@ _CSS = """
   .valdot.off { background:#8b949e; } .valdot.stall { background:#f85149; }
   .val.warn { border-color:#d29922; }
   /* autonomous driver panel */
+  .drv-now { display:flex; align-items:center; gap:9px; margin:10px 0 2px; padding:7px 10px;
+    border-radius:8px; font-size:12px; border:1px solid var(--border); flex-wrap:wrap; }
+  .drv-now.live { background:rgba(63,185,80,.08); border-color:rgba(63,185,80,.45); }
+  .drv-now.idle { background:#161b22; }
+  .drv-pulse { width:8px; height:8px; border-radius:50%; background:#3fb950; flex:0 0 8px;
+    box-shadow:0 0 0 0 rgba(63,185,80,.7); animation:drvpulse 2s infinite; }
+  .drv-pulse.idle { background:#8b949e; animation:none; box-shadow:none; }
+  @keyframes drvpulse { 70% { box-shadow:0 0 0 7px rgba(63,185,80,0); }
+    100% { box-shadow:0 0 0 0 rgba(63,185,80,0); } }
+  .drv-nowlbl { font-weight:700; font-size:11px; text-transform:uppercase;
+    letter-spacing:.05em; flex:0 0 auto; }
+  .drv-now.live .drv-nowlbl { color:#3fb950; }
+  .drv-now.idle .drv-nowlbl { color:var(--muted); }
+  .drv-nowbody { color:var(--muted); flex:1 1 auto; min-width:0; }
+  .drv-nowbody b { color:var(--text); }
   .drv .section { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .drv-last { font-size:11px; text-transform:none; letter-spacing:0; color:var(--muted); }
   .drv-last b { color:var(--text); }
