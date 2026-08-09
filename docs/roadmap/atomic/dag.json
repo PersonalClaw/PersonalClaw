@@ -4760,12 +4760,14 @@
         {
           "id": "CE-3",
           "title": "Telegram channel app (raw Bot API over httpx): api client, MarkdownV2 escaper, transport, delivery, setup/doctor",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 2-3 — Telegram: T2.1–T2.5 + V2; Design §S2-3; Contracts C3 (Telegram column)",
           "done_when": "MockTransport tests cover getUpdates/sendMessage/editMessageText/sendDocument/sendPhoto/answerCallbackQuery/getMe incl. 429 retry-after; MarkdownV2 escaper table-driven tests pass full reserved set; long-poll transport maps ChannelMessage with trust hooks (DM pairing, group tracked-only, fencing) and honest capabilities; throttled edit-streaming <=1 edit/1.1s with exact final flush; inline-keyboard request_approval resolves the pending approval; `personalclaw setup` configures Telegram on a fixture; V2 owner-phone walkthrough recorded (owner task 1+2: BotFather bot + phone validation)",
           "deps": [
             "CE-1"
-          ]
+          ],
+          "pr": "apps#26",
+          "evidence": "PersonalClawApps/telegram-channel/ — ChannelTransportProvider (getUpdates long-poll, offset persisted+advanced-before-dispatch, 401->stop) + ChannelDelivery over the raw Bot API on httpx (no vendor SDK); imports core ONLY via personalclaw.sdk.*. api.py: TelegramAPI ABC + HTTPTelegramAPI with injectable client+sleep, 429 retry_after (body param->Retry-After header, capped 60s) + 5xx backoff. transport.py: ChannelMessage mapping + trust hooks against the real channel_trust seam (DM pairing canned reply, group tracked_only drop, non-owner fencing), honest capabilities (reactions/typing=False, max_text=4096), routes to a channel-linked session via _run_chat. delivery.py: MarkdownV2 render+split, throttled edit-stream (<=1 edit/1.1s + exact final flush on stop), inline-keyboard request_approval resolved by callback. format.py: context-correct escaper over the full 18-char reserved set + markup preservation. settings.py + cli_setup/doctor: app-owned dm_activation config; bot token in the shared credential store under the app's own TELEGRAM_BOT_TOKEN key. Gate GREEN: manifest-validate round-trip stable, SDK-only boundary lint clean, `python -m pytest telegram-channel -q` -> 108 passed. Owner V2 (real-phone BotFather + pairing walkthrough, plan 'Owner tasks' 1-2) is a real-world owner step, pending outside this automated tick."
         },
         {
           "id": "CE-4",
