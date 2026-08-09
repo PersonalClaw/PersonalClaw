@@ -30,7 +30,6 @@ from pathlib import Path
 
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.env import augmented_path
-from personalclaw.sandbox import wrap_argv
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +225,7 @@ class AcpProcess:
         session_key: str | None = None,
         channel_id: str | None = None,
         ceiling_profile: str = "session_host",
+        sandbox: str = "none",
     ) -> None:
         self._command = list(command) if command else []
         self._work_dir = Path(work_dir)
@@ -236,6 +236,12 @@ class AcpProcess:
         # (a trusted host must not be the preferred kill target). Hence session_host is
         # the default; NPROC/RSS still apply.
         self._ceiling_profile = ceiling_profile
+        # Sandbox provider name (EI-1). The provider composes the OS path sandbox
+        # (``sandbox_mode``) + the resource ceilings (``ceiling_profile``) behind a single
+        # ``wrap`` → ``exec`` seam. ``none`` is the default builtin; an installed sandbox app
+        # supplies a stronger container/VM tier. Resolution fails open to ``none``, so an
+        # unknown/absent provider name never blocks a spawn.
+        self._sandbox = sandbox or "none"
         self._extra_env = dict(extra_env) if extra_env else None
         self._session_key = session_key
         self._channel_id = channel_id
@@ -244,7 +250,7 @@ class AcpProcess:
         self._pid: int | None = None
         self._start_time: int | None = None  # start time for PID-recycle detection
         self._child_pids: dict[int, int | None] = {}  # pid → start_time snapshot
-        self._sandbox_cleanup: str | None = None
+        self._sandbox_handle: object | None = None
         self._stderr_lines: deque[str] = deque(maxlen=20)
         self._stderr_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._last_activity: float = time.monotonic()
@@ -318,10 +324,20 @@ class AcpProcess:
 
         if not self._command:
             raise AcpError("AcpProcess requires a non-empty command argv to spawn an ACP agent")
-        argv = list(self._command)
 
-        # OS-level sandbox: wrap the command to hide sensitive paths
-        argv, self._sandbox_cleanup = wrap_argv(argv, mode=self._sandbox_mode)
+        # Sandbox seam (EI-1): resolve the configured provider (``none`` by default, fail-open)
+        # and wrap the command. The provider composes the OS path sandbox (``sandbox_mode``) here;
+        # the resource ceilings (``ceiling_profile``) are applied post-exec in ``handle.exec``.
+        from personalclaw.sandbox_providers import resolve_provider
+        from personalclaw.sandbox_providers.base import SandboxSpec
+
+        provider = resolve_provider(self._sandbox)
+        handle = provider.wrap(
+            SandboxSpec(mode=self._sandbox_mode, profile=self._ceiling_profile),
+            list(self._command),
+        )
+        self._sandbox_handle = handle
+        argv = handle.argv
 
         # Process group isolation: start_new_session=True (calls setsid, enables killpg)
         env = {**os.environ}
@@ -351,14 +367,10 @@ class AcpProcess:
             "env": env,
         }
 
-        # Ceiling delivery (PHF-1): prepend the post-exec shim for the session_host
-        # profile. No preexec_fn — the limit is applied in the exec'd child, so this
+        # Ceiling delivery (PHF-1): the provider's handle prepends the post-exec shim for the
+        # session_host profile. No preexec_fn — the limit is applied in the exec'd child, so this
         # spawn stays on posix_spawn and the event loop is never blocked on a fork.
-        from personalclaw.sandbox import create_subprocess_limited
-
-        self._process = await create_subprocess_limited(
-            *argv, profile=self._ceiling_profile, **kwargs
-        )
+        self._process = await handle.exec(**kwargs)
         self._pid = self._process.pid
         self._start_time = _get_start_time(self._pid)
         # Log the binary basename without leaking the full argv (may carry creds).
@@ -475,13 +487,14 @@ class AcpProcess:
                         pipe.close()  # type: ignore[union-attr]
                     except Exception:
                         pass
-        # Clean up sandbox temp files (macOS seatbelt profile)
-        if self._sandbox_cleanup:
+        # Clean up sandbox temp files (macOS seatbelt profile) via the provider handle (EI-1).
+        # Best-effort + idempotent; the handle owns whatever temp state its wrap created.
+        if self._sandbox_handle is not None:
             try:
-                os.remove(self._sandbox_cleanup)
-            except OSError:
-                pass
-            self._sandbox_cleanup = None
+                self._sandbox_handle.cleanup()  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("sandbox handle cleanup failed", exc_info=True)
+            self._sandbox_handle = None
         saved_pid = self._pid
         saved_child_pids = self._child_pids
         self._process = None

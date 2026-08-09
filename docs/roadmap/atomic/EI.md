@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `EI-1` | ⬜ | SandboxProvider seam + `none` provider + ResourceCeilings foundation | — | sandbox_providers/ package + `none` provider composing sandbox.wrap_argv exists; SubagentManager.spawn(sandbox="none") runs the worker through handle.exec; a child `ulimit -n` reports the ceiling; sandbox.nofile/max_pids/max_rss_mb round-trip via test_config_roundtrip; test_manifest_types_match_handlers passes (type+handler in one commit) |
+| `EI-1` | ✅ | SandboxProvider seam + `none` provider + ResourceCeilings foundation | — | sandbox_providers/ package + `none` provider composing sandbox.wrap_argv exists; SubagentManager.spawn(sandbox="none") runs the worker through handle.exec; a child `ulimit -n` reports the ceiling; sandbox.nofile/max_pids/max_rss_mb round-trip via test_config_roundtrip; test_manifest_types_match_handlers passes (type+handler in one commit) |
 | `EI-2` | ⬜ | `docker` provider + engine/workspace-block adoption + cgroup v2 tier | `EI-1`, `EXT:WORK-CONTAINERS:WORK-R3 workspace block call sites + WORK-R20 mode:container re-expression` | SC1: a stage `sandbox: docker` runs its process tree in a UID-aligned bind-mount container over its WORK-R3 worktree; a write outside allowed_write_paths is blocked by the boundary; a no-Docker machine parks needs-input with a typed reason (no silent host downgrade for unattended). SC2: a subagent `sandbox: docker` without a grant to ~/.personalclaw/models cannot delete a real local model. Linux fork-bomb child hits pids.max; macOS logs a one-time not-enforced warning |
 | `EI-3` | ⬜ | Spawn-audit CI test + wrap remaining agent-influenced spawn seams | `EI-1` | tests/test_spawn_ceiling_audit.py is green with every agent-influenced seam ceiling-wrapped or explicitly operator-exempt; adding an unmapped create_subprocess_exec/Popen/StdioServerParameters on a branch fails CI naming the file:line |
 | `EI-4` | ⬜ | Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker | `EI-1`, `EI-2` | SC3: with apps/lima-sandbox installed + instance running, a terminal opened "inside the run's sandbox" executes in the VM with correct path translation; stopping the instance flips the provider to greyed-out-with-reason within one probe TTL; an interactive request gets the path-guard-only dialog; app backends launch through backend.sandbox |
@@ -27,7 +27,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `EI-1` — SandboxProvider seam + `none` provider + ResourceCeilings foundation
 
-**Status:** todo
+**Status:** done (PR #933)
 
 §1.1 contract (SandboxProvider/SandboxSpec/SandboxHandle 6-method), §1.2 provider fidelity (PROVIDER_TYPES + SandboxTypeHandler same commit, sdk/sandbox.py facade, boot-register none), §1.3(1) subagents; §11 Session 1; Amendment 2026-07-26 EI-A1 (ResourceCeilings + ceiling_kwargs/wrap_ceilings applied in none + native bash + bash action provider + subagent)
 

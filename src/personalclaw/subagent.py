@@ -310,6 +310,10 @@ class SubagentInfo:
     # resolve against this directory. Validated on spawn against
     # ``AgentConfig.subagent_cwd_allowed_roots``.
     cwd: str = ""
+    # Sandbox provider name (EI-1): the isolation backend this subagent's ACP worker launches
+    # through. ``none`` (the default builtin) composes the host path-sandbox + resource ceilings
+    # with no further isolation; an installed ``sandbox`` app supplies a stronger container tier.
+    sandbox: str = "none"
     _pid: int | None = None  # PID of ACP agent child process, for tombstone diagnostics
     # Fan-out identity (C1.4): the run a spawn belongs to. Empty for a lone spawn.
     # The run-scoped concurrency lane, the consecutive-failure breaker and the
@@ -952,6 +956,7 @@ class SubagentManager:
         silent: bool = False,
         dry_run: bool = False,
         parent_run: str = "",
+        sandbox: str = "none",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1145,6 +1150,7 @@ class SubagentManager:
             model=model or "",
             cwd=resolved_cwd,
             parent_run=parent_run,
+            sandbox=sandbox or "none",
         )
         info._raw_task = task  # unredacted prompt for ACP agent execution
 
@@ -1854,6 +1860,11 @@ class SubagentManager:
             extra_kwargs["model_axis"] = "orchestration"
         if info.cwd:
             extra_kwargs["cwd"] = info.cwd
+        # Sandbox provider (EI-1): thread the chosen isolation backend to the ACP worker
+        # launch. Only forward a non-default so the chat/native paths (which ignore it) are
+        # untouched; ``none`` is the transport default.
+        if info.sandbox and info.sandbox != "none":
+            extra_kwargs["sandbox"] = info.sandbox
         # Unattended = no human can answer an interactive tool/approval prompt, so
         # strip those tools + fail their gate fast (T5). This is true for HEADLESS
         # spawns only — cron / scheduled run-prompt/run-workflow / invoke-agent —
