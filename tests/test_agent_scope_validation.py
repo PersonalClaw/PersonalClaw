@@ -22,9 +22,10 @@ resolves the
 session agent's own trigger ids per fire and calls `fire_for_ids`, whose resolver returns `[]`
 on any
 failure precisely so a broken lookup cannot fall back to global firing. The substrate has not
-introduced a global chat firing path — the store-backed `event` kind fires on MEMORY events only. So
-this session validates the field and makes its unenforced state visible, rather than inventing a
-scoping mechanism for events that do not exist yet.
+introduced a global chat firing path — the store-backed `event` kind fires on DATA events (memory
+writes, and after EIAT-1 inbox arrivals), never on chat turns. So this session validates the field
+and makes its unenforced state visible, rather than inventing a scoping mechanism for events that do
+not exist yet.
 """
 
 from __future__ import annotations
@@ -174,9 +175,21 @@ def test_the_chat_path_has_NO_GLOBAL_firing_fallback():
     assert "never silently fall back to global firing" in src or "no global firing path" in src
 
 
-def test_the_substrate_event_kind_fires_on_MEMORY_events_only():
-    """Why the scope has no reader yet: the store-backed `event` kind's sources are memory writes,
-    not chat turns. Pinned so that adding a chat-turn source is forced to confront the scope."""
-    from personalclaw.event_triggers import EVENT_PATTERNS
+def test_the_substrate_event_kind_has_no_chat_turn_source():
+    """Why the scope has no reader yet: the store-backed `event` kind's sources are data origins
+    (memory writes, inbox arrivals) — never chat turns. EIAT-1 widened the vocabulary to inbox
+    patterns, but that is still not a chat-turn source, so `agent_scope` remains unread and this
+    guard stays valid. Pinned so that adding a *chat-turn* source is what is forced to confront the
+    scope, not merely adding another data source."""
+    from personalclaw.event_triggers import EVENT_PATTERNS, EVENT_SOURCES
 
-    assert EVENT_PATTERNS == ("MemoryUpdate", "MemoryKeyPattern", "ContentMatch")
+    assert EVENT_PATTERNS == (
+        "MemoryUpdate",
+        "MemoryKeyPattern",
+        "ContentMatch",
+        "InboxMessage",
+        "InboxSender",
+        "InboxAddress",
+    )
+    # The invariant that keeps agent_scope legitimately unread: no source is a chat turn.
+    assert "chat" not in EVENT_SOURCES and "chat_turn" not in EVENT_SOURCES

@@ -63,9 +63,12 @@ def _serialize_event(t) -> dict[str, Any]:
         "id": f"{_EVENT}:{t.id}",
         "name": t.id,
         "enabled": t.enabled,
+        "source": t.source,
         "pattern": t.pattern,
         "key_glob": t.key_glob,
         "content_re": t.content_re,
+        "sender_glob": t.sender_glob,
+        "address_glob": t.address_glob,
         "max_fires": t.max_fires,
         "fire_count": t.fire_count,
         "action": {"provider": t.action_provider, "config": t.action_config},
@@ -555,21 +558,40 @@ def _create_event(body: dict) -> web.Response:
     """Create a data-event trigger (#38)."""
     import uuid
 
-    from personalclaw.event_triggers import EVENT_PATTERNS, EventTrigger
+    from personalclaw.event_triggers import (
+        EVENT_PATTERNS,
+        INBOX_SENDER,
+        PATTERN_SOURCE,
+        EventTrigger,
+    )
 
     pattern = str(body.get("pattern") or "").strip()
     if pattern not in EVENT_PATTERNS:
         return web.json_response(
             {"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400
         )
+    sender_glob = str(body.get("sender_glob") or "")
+    # A pattern that has nothing to match on is a trigger that would fire on EVERY message from its
+    # source — never what the author who chose `InboxSender` meant. Reject it with a typed code so
+    # the UI can point at the empty field, rather than silently persisting a footgun.
+    if pattern == INBOX_SENDER and not sender_glob:
+        return web.json_response(
+            {"error": "InboxSender requires a sender_glob", "code": "sender_glob_required"},
+            status=400,
+        )
     action = body.get("action") or {}
+    # The source is DERIVED from the pattern, never taken from the wire — a client-supplied source
+    # could contradict the pattern and defeat the isolation the source gate exists to enforce.
     t = EventTrigger(
         id=str(body.get("name") or uuid.uuid4().hex[:8]).strip(),
         pattern=pattern,
+        source=PATTERN_SOURCE[pattern],
         action_provider=str(action.get("provider") or "notify"),
         action_config=dict(action.get("config") or {}),
         key_glob=str(body.get("key_glob") or ""),
         content_re=str(body.get("content_re") or ""),
+        sender_glob=sender_glob,
+        address_glob=str(body.get("address_glob") or ""),
         max_fires=int(body.get("max_fires", 0) or 0),
     )
     _event_store().upsert(t)
@@ -816,7 +838,11 @@ def _update_event(raw: str, body: dict) -> web.Response:
     matches nothing, so a typo would silently retire a working trigger — the exact failure the
     create path already guards.
     """
-    from personalclaw.event_triggers import EVENT_PATTERNS
+    from personalclaw.event_triggers import (
+        EVENT_PATTERNS,
+        INBOX_SENDER,
+        PATTERN_SOURCE,
+    )
 
     store = _event_store()
     trigger = next((t for t in store.load() if t.id == raw), None)
@@ -830,6 +856,20 @@ def _update_event(raw: str, body: dict) -> web.Response:
                 {"error": f"pattern must be one of {list(EVENT_PATTERNS)}"}, status=400
             )
         trigger.pattern = pattern
+        # Source follows the pattern (EIAT-1) — never taken from the wire, so an edit can't
+        # leave a trigger listening to a source its pattern can never match.
+        trigger.source = PATTERN_SOURCE[pattern]
+    if "sender_glob" in body:
+        trigger.sender_glob = str(body.get("sender_glob") or "")
+    if "address_glob" in body:
+        trigger.address_glob = str(body.get("address_glob") or "")
+    # Re-check against the FINAL state: whether the pattern or the glob was the field edited, an
+    # InboxSender trigger must never end up with an empty sender_glob (matches every message).
+    if trigger.pattern == INBOX_SENDER and not trigger.sender_glob:
+        return web.json_response(
+            {"error": "InboxSender requires a sender_glob", "code": "sender_glob_required"},
+            status=400,
+        )
     if "enabled" in body:
         trigger.enabled = bool(body["enabled"])
     if "key_glob" in body:
@@ -1442,12 +1482,20 @@ async def _run_event(raw: str, request: web.Request) -> web.Response:
     body = body if isinstance(body, dict) else {}
     key = sanitize_string(str(body.get("key", "") or "manual"))[:500]
     value = sanitize_string(str(body.get("value", "") or "manual fire"))[:10000]
+    # An inbox trigger's manual fire may carry the same meta a live message would, so the fenced
+    # provenance a Run button produces matches the real path (sender/address are sanitized too).
+    raw_meta = body.get("meta")
+    meta = None
+    if isinstance(raw_meta, dict):
+        meta = {str(k): sanitize_string(str(v))[:500] for k, v in raw_meta.items()}
 
     outcome = await execute_event_action(
         trigger,
+        source=trigger.source,
         event_type=str(body.get("event_type", "") or "MemoryUpdate"),
         key=key,
         value=value,
+        meta=meta,
         test=bool(body.get("test")),
     )
     payload = outcome.to_dict()

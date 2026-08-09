@@ -59,7 +59,12 @@ def test_the_SHIPPED_sync_context_drop_is_REAL(tmp_path, monkeypatch):
     so. This test documents the defect the spool exists to fix; if `event_triggers` is ever fixed
     directly, this is where that shows up."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    from personalclaw.event_triggers import EventTrigger, EventTriggerEngine, EventTriggerStore
+    from personalclaw.event_triggers import (
+        SOURCE_MEMORY,
+        EventTrigger,
+        EventTriggerEngine,
+        EventTriggerStore,
+    )
 
     store = EventTriggerStore(tmp_path / "event_triggers.json")
     store.upsert(
@@ -74,7 +79,9 @@ def test_the_SHIPPED_sync_context_drop_is_REAL(tmp_path, monkeypatch):
     engine = EventTriggerEngine()
     monkeypatch.setattr(engine, "_get_store", lambda: store)
     # No running loop — exactly a sync CLI write.
-    engine.on_memory_event(event_type="MemoryUpdate", key="k", value="v", now=time.time())
+    engine.on_event(
+        source=SOURCE_MEMORY, event_type="MemoryUpdate", key="k", value="v", now=time.time()
+    )
     assert store.load()[0].fire_count == 1, "the fire was counted"
     # …and the action went nowhere. That is the whole point.
 
