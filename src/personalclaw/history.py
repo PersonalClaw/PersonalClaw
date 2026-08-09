@@ -1378,6 +1378,21 @@ class HistoryConsolidator:
         except Exception:
             logger.debug("Outcome resolver failed", exc_info=True)
 
+        # LEARN-R16 / criterion 9: grade every accepted change whose post-acceptance horizon has
+        # elapsed. Reads the Run Ledger (not semantic memory) so it runs on every box regardless of
+        # embedder; inert-by-data when nothing has been accepted, gated on `learning.attribution_*`
+        # internally, best-effort — a grading failure never blocks curation. A HARMFUL verdict files
+        # a revert PROPOSAL through the shared queue; nothing is ever applied here.
+        attribution_note = ""
+        try:
+            from personalclaw.learning import attribution
+
+            rep = attribution.grade_accepted_changes()
+            if rep.get("graded") or rep.get("reverts"):
+                attribution_note = f"attribution graded={rep['graded']} reverts={rep['reverts']}"
+        except Exception:
+            logger.debug("Attribution grading failed", exc_info=True)
+
         store = UsageStore()
         try:
             candidates = [
@@ -1394,11 +1409,11 @@ class HistoryConsolidator:
                 for rec in store.list_kind(kind)
             ]
             if not candidates:
-                return outcomes_note
+                return "; ".join(p for p in (outcomes_note, attribution_note) if p)
             report = curator_mod.run_aging(candidates, active_dates=store.active_days(), mode="")
             curator_mod.file_review_proposals(report)
             summary = report.summary() if (report.changed or report.review_proposals) else ""
-            return "; ".join(p for p in (summary, outcomes_note) if p)
+            return "; ".join(p for p in (summary, outcomes_note, attribution_note) if p)
         finally:
             store.close()
 

@@ -1267,3 +1267,33 @@ reaches the import-bound reference too. Separately, the quota test's five node f
 `attr0..attr4`; `refiner.failure_signature` does `re.findall(r"[a-z_]{3,}", …)` and STRIPS DIGITS, collapsing
 all five to signature `attr` → one `LessonKey` → one proposal, silently defeating the quota path. Renamed to
 alphabetic `foo/bar/baz/qux/quux` so five distinct signatures actually exercise the per-run quota.
+
+- **2026-08-09 — DONE — WF2LEA-5 (criterion 9): `accountability.attribute` wired on the curator tick.**
+  Branch `feature-wf2lea5-attribution-wiring`. `accountability.py` had ZERO production importers by
+  design (its purity is asserted by `test_a_revert_is_a_PROPOSAL_never_an_application` — the source
+  may contain no `sqlite3`/`atomic_write`/`accept(`/`installer`), so all orchestration and storage
+  had to live elsewhere). New `learning/attribution.py` is that importer and the missing half of §3.1
+  predict-then-verify. Two halves join across time: (1) **accept-time snapshot** — `proposals.accept`
+  now records the bet (target + `predicted_fixes` + pre-acceptance failure rates, baseline keyed by
+  run id) the instant BEFORE it unlinks the proposal file, the only moment those are still knowable;
+  (2) **curator-tick grading** — `history._run_learning_curator` calls `attribution.grade_accepted_changes()`,
+  which finds records with ≥`MIN_RUNS` post-acceptance terminal runs of the target, recomputes
+  after-rates from the Run Ledger, calls `accountability.attribute()`, records the 5-way verdict, and
+  for a HARMFUL verdict files a revert PROPOSAL through the shared human-gated queue (named clusters,
+  never auto-applied). Config round-trip: `learning.attribution_enabled` (default on) through
+  dataclass+`_meta` / `load` / `to_dict` / `_EDITABLE_CONFIG` + `config-baseline.json`. 14 new
+  end-to-end tests over the real proposal store, Run Ledger, and config loader (repointed via
+  `PERSONALCLAW_HOME`), including the headline `test_accountability_now_has_a_production_importer`.
+  `make lint` (black/isort/flake8/mypy) + all 3 `gate_report.py` gates + 280 sibling tests green.
+
+- **DEVIATION — grading reads the Run Ledger directly, NOT gated on a vector store.** `outcome_resolver`
+  is gated on a configured embedder because it queries semantic memory; attribution instead reads the
+  sqlite/jsonl Run Ledger available on every box, so gating HARMFUL auto-reverts on an embedder would
+  be a silent capability loss. It is inert-by-DATA (no accepted-change records → the scan returns
+  immediately), which is the correct floor here.
+
+- **DESIGN — cluster = failure MODE, scope = the target's own runs.** The join between what a proposer
+  PREDICTED and what the ledger MEASURED needs one shared vocabulary; free-form prediction strings and
+  per-run signatures do not share one, but the closed `FailureMode` enum does. Rates are scoped by
+  `workflow_name == target`, so a HARMFUL verdict names a real regression in THIS template's runs, not
+  global noise after an unrelated accept — pinned by `test_only_the_targets_own_runs_are_scored`.
