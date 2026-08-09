@@ -1,7 +1,13 @@
-"""WS dead-client cleanup, plan_memory rotation, and plan_lessons cache."""
+"""WS dead-client cleanup for the dashboard broadcast paths.
+
+Renamed from ``test_ws_and_plan_memory`` when WF2LEA-4 deleted the plan-memory journal silo:
+the Learning Flywheel's RUN_END cadence absorbed run outcomes into the Run Ledger + proposal
+pipeline, so the ``append_plan_event`` rotation and ``load_plan_lessons`` cache these once also
+covered are gone. What remains — the WebSocket dead-client detection — is the subject that
+actually lived here.
+"""
 
 import json
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,12 +24,6 @@ def state(monkeypatch, tmp_path):
         sessions=MagicMock(count=0),
         start_time=0.0,
     )
-
-
-@pytest.fixture
-def plan_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.plan_memory.config_dir", lambda: tmp_path)
-    return tmp_path / "plan_memory"
 
 
 # ── WS dead client cleanup ─────────────────────────────────────────
@@ -130,169 +130,6 @@ class TestWsDeadClientCleanup:
         state.register_ws(ws)
         state.unregister_ws(ws)
         state.unregister_ws(ws)  # should not raise
-
-
-# ── Plan memory rotation ────────────────────────────────────────────
-
-
-class TestPlanMemoryRotation:
-    """Scenarios for append_plan_event JSONL rotation."""
-
-    def test_append_creates_file(self, plan_dir) -> None:
-        from personalclaw.plan_memory import append_plan_event, plan_memory_path
-
-        append_plan_event("sess1", {"type": "plan_created", "task_description": "test"})
-        path = plan_memory_path()
-        assert path.exists()
-        lines = path.read_text().strip().splitlines()
-        assert len(lines) == 1
-        event = json.loads(lines[0])
-        assert event["session_id"] == "sess1"
-        assert event["type"] == "plan_created"
-
-    def test_no_rotation_under_limit(self, plan_dir) -> None:
-        from personalclaw.plan_memory import append_plan_event, plan_memory_path
-
-        for i in range(10):
-            append_plan_event("sess1", {"type": "test", "i": i})
-        lines = plan_memory_path().read_text().strip().splitlines()
-        assert len(lines) == 10
-
-    def test_rotation_at_limit(self, plan_dir) -> None:
-        from personalclaw.plan_memory import (
-            _PLAN_MEMORY_MAX_LINES,
-            append_plan_event,
-            plan_memory_path,
-        )
-
-        # Fill to exactly the limit
-        path = plan_memory_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
-            for i in range(_PLAN_MEMORY_MAX_LINES):
-                f.write(json.dumps({"type": "old", "i": i}) + "\n")
-
-        # One more should trigger rotation
-        append_plan_event("sess1", {"type": "new", "i": 999})
-        lines = path.read_text().strip().splitlines()
-        assert len(lines) == _PLAN_MEMORY_MAX_LINES
-
-        # Last line should be the new event
-        last = json.loads(lines[-1])
-        assert last["type"] == "new"
-        assert last["i"] == 999
-
-        # First line should NOT be i=0 (it was rotated out)
-        first = json.loads(lines[0])
-        assert first["i"] != 0
-
-    def test_rotation_preserves_newest(self, plan_dir) -> None:
-        from personalclaw.plan_memory import (
-            _PLAN_MEMORY_MAX_LINES,
-            append_plan_event,
-            plan_memory_path,
-        )
-
-        path = plan_memory_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Write 600 lines (over limit)
-        with open(path, "w") as f:
-            for i in range(600):
-                f.write(json.dumps({"type": "old", "i": i}) + "\n")
-
-        append_plan_event("sess1", {"type": "trigger"})
-        lines = path.read_text().strip().splitlines()
-        assert len(lines) == _PLAN_MEMORY_MAX_LINES
-
-    def test_load_plan_memory_works_after_rotation(self, plan_dir) -> None:
-        from personalclaw.plan_memory import (
-            append_plan_event,
-            load_plan_memory,
-        )
-
-        for i in range(5):
-            append_plan_event("sessA", {"type": "test", "i": i})
-        for i in range(3):
-            append_plan_event("sessB", {"type": "test", "i": i})
-
-        all_events = load_plan_memory()
-        assert len(all_events) == 8
-
-        sess_a = load_plan_memory("sessA")
-        assert len(sess_a) == 5
-
-        sess_b = load_plan_memory("sessB")
-        assert len(sess_b) == 3
-
-
-# ── Plan lessons cache ──────────────────────────────────────────────
-
-
-class TestPlanLessonsCache:
-    """Scenarios for load_plan_lessons TTL cache."""
-
-    def test_returns_empty_when_no_file(self, plan_dir) -> None:
-        import personalclaw.plan_memory as cm
-
-        cm._plan_lessons_cache = (0.0, "")
-        result = cm.load_plan_lessons()
-        assert result == ""
-
-    def test_reads_file_content(self, plan_dir) -> None:
-        import personalclaw.plan_memory as cm
-
-        cm._plan_lessons_cache = (0.0, "")
-        path = cm.plan_lessons_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("- lesson 1\n- lesson 2\n")
-
-        result = cm.load_plan_lessons()
-        assert "lesson 1" in result
-        assert "lesson 2" in result
-
-    def test_cache_hit_within_ttl(self, plan_dir) -> None:
-        import personalclaw.plan_memory as cm
-
-        cm._plan_lessons_cache = (time.time(), "cached value")
-        # Even if file has different content, cache should be returned
-        path = cm.plan_lessons_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("different content")
-
-        result = cm.load_plan_lessons()
-        assert result == "cached value"
-
-    def test_cache_miss_after_ttl(self, plan_dir) -> None:
-        import personalclaw.plan_memory as cm
-
-        # Set cache to expired (31s ago)
-        cm._plan_lessons_cache = (time.time() - 31, "stale")
-        path = cm.plan_lessons_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("fresh content")
-
-        result = cm.load_plan_lessons()
-        assert result == "fresh content"
-
-    def test_save_invalidates_cache(self, plan_dir) -> None:
-        import personalclaw.plan_memory as cm
-
-        cm._plan_lessons_cache = (time.time(), "old cached")
-        cm.save_plan_lessons("new lessons from consolidation cycle")
-
-        # Cache should now have the new value
-        assert cm._plan_lessons_cache[1] == "new lessons from consolidation cycle"
-        # And load should return it without reading file
-        result = cm.load_plan_lessons()
-        assert result == "new lessons from consolidation cycle"
-
-    def test_save_too_short_ignored(self, plan_dir) -> None:
-        import personalclaw.plan_memory as cm
-
-        cm._plan_lessons_cache = (0.0, "")
-        cm.save_plan_lessons("short")  # < 20 chars, should be ignored
-        path = cm.plan_lessons_path()
-        assert not path.exists()
 
 
 # ── WS user experience edge cases ───────────────────────────────────

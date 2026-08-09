@@ -614,16 +614,29 @@ def _project_context_preamble(project_id: str) -> str:
 
 
 def _maybe_consolidate(state, session) -> None:
-    """Run memory consolidation unless session is restricted."""
-    if state.consolidator and not session.is_restricted:
+    """Run the SESSION_END consolidation envelope, gated by the LearningGate.
+
+    Consolidation is the SESSION_END cadence (LEARNING-FLYWHEEL §3.3). Its permission question —
+    "may this session teach us anything?" — is the gate's job, not this site's: routing it through
+    `LearningGate.decide(Cadence.SESSION_END, ...)` is what makes the restriction check identical
+    to every other cadence's, and it is the live `Cadence.SESSION_END` reference that lets
+    `assert_gate_covers_cadences()` see this cadence as wired. A denial (ephemeral, incognito,
+    temporary, or learning disabled) is audited with its reason rather than silently skipped.
+    """
+    if not state.consolidator:
+        return
+    from personalclaw.learning.gate import Cadence, LearningGate
+
+    decision = LearningGate.for_session(session).decide(Cadence.SESSION_END)
+    if decision.permitted:
         state.consolidator.maybe_consolidate(_history_key_for(session.key))
-    elif state.consolidator and session.is_restricted:
+    else:
         sel().log_api_access(
             caller=f"dashboard:{session.key}",
             operation="consolidate",
             outcome="denied",
             source="dashboard",
-            resources="restricted_session_block",
+            resources=f"gate:{decision.reason.value}",
         )
 
 

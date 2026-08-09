@@ -26,7 +26,6 @@ def _setup_fake_personalclaw(d: Path) -> None:
         "workspace/memory/history",
         "workspace/hygiene_data",
         "skills/my-skill",
-        "plan_memory",
     ):
         (d / sub).mkdir(parents=True, exist_ok=True)
 
@@ -93,7 +92,6 @@ def _setup_fake_personalclaw(d: Path) -> None:
     (d / "workspace/memory/history/2026-01-01.md").write_text("history entry")
     (d / "workspace/doc.md").write_text("doc content")
     (d / "workspace/hygiene_data/week1.json").write_text("big data")
-    (d / "plan_memory/plan1.json").write_text("plan data")
     (d / "skills/my-skill/SKILL.md").write_text("# My Skill")
 
     # The unified trigger store + an event trigger (S113). The fake home carried `crons.json`
@@ -204,7 +202,6 @@ class TestSnapshot:
             "notifications.jsonl",
             "project_dir",
             "workspace_dir",
-            "plan_memory/plan1.json",
         ):
             assert (snap / f).is_file(), f"{f} missing"
 
@@ -270,7 +267,6 @@ class TestRestoreReplace:
         assert (fresh / "skills/my-skill/SKILL.md").is_file()
         assert (fresh / "sel_hmac.key").is_file()
         assert (fresh / "notifications.jsonl").is_file()
-        assert (fresh / "plan_memory/plan1.json").is_file()
         conn = sqlite3.connect(str(fresh / "memory.db"))
         assert conn.execute("SELECT count(*) FROM semantic_memory").fetchone()[0] == 2
         conn.close()
@@ -466,18 +462,6 @@ class TestRestoreMerge:
         restore_main([str(tarball), "--mode", "merge"])
         lines = (dst / "notifications.jsonl").read_text().strip().split("\n")
         assert len(lines) == 2
-
-    def test_merge_plan_memory(self, env, monkeypatch):
-        """TEST 15"""
-        _, _, tarball, tmp_path = env
-        dst = tmp_path / "dst15"
-        _setup_fake_personalclaw(dst)
-        (dst / "plan_memory/local_plan.json").write_text("local plan")
-        monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
-        ret = restore_main([str(tarball), "--mode", "merge"])
-        assert ret == 0
-        assert (dst / "plan_memory/plan1.json").is_file()
-        assert (dst / "plan_memory/local_plan.json").read_text() == "local plan"
 
     def test_merge_restores_missing_security(self, env, capsys, monkeypatch):
         """TEST 16"""

@@ -168,7 +168,7 @@ def _everything_paths(pc: Path) -> list[str]:
     from personalclaw.durability import inventory as inv
 
     already = {f for files in CORE_FILES.values() for f in files}
-    already |= {"workspace", "plan_memory", "skills"}  # staged as trees below
+    already |= {"workspace", "skills"}  # staged as trees below
     out: list[str] = []
     for entry in inv.backup_entries():
         top = entry.path.split("/", 1)[0]
@@ -191,7 +191,7 @@ def _extra_restore_paths_for_test_paths() -> list[str]:
 
     secret = inv.secret_paths()
     already = {f for files in CORE_FILES.values() for f in files}
-    already |= {"workspace", "plan_memory", "skills"}
+    already |= {"workspace", "skills"}
     out: list[str] = []
     for entry in inv.backup_entries():
         top = entry.path.split("/", 1)[0]
@@ -229,7 +229,7 @@ def _extra_restore_paths(snap: Path) -> list[str]:
 
     secret = inv.secret_paths()
     already = {f for files in CORE_FILES.values() for f in files}
-    already |= {"workspace", "plan_memory", "skills"}
+    already |= {"workspace", "skills"}
     out: list[str] = []
     for entry in inv.backup_entries():
         top = entry.path.split("/", 1)[0]
@@ -245,7 +245,7 @@ COMPONENT_HELP = {
     "crons": "triggers.json + event_triggers.json + crons.json (automations)",
     "config": "config.json, session_map.json, hooks.json, project_dir, workspace_dir",
     "skills": "skills/ directory",
-    "workspace": "workspace/, plan_memory/ directories",
+    "workspace": "workspace/ directory",
     "notifications": "notifications.jsonl (notification history)",
     "security": "sel_hmac.key, telemetry_salt",
     "everything": "every other store: tasks, projects, agents, prompts, workflows, uploads, …",
@@ -385,7 +385,7 @@ def snapshot_main(
 
     with tempfile.TemporaryDirectory() as work:
         stage = Path(work) / name
-        for d in ("workspace", "skills", "plan_memory"):
+        for d in ("workspace", "skills"):
             (stage / d).mkdir(parents=True, exist_ok=True)
 
         # Core files
@@ -438,10 +438,6 @@ def snapshot_main(
                 ignore=_ws_ignore,
             )
 
-        # Plan memory
-        if (pc / "plan_memory").is_dir():
-            _copytree_safe(pc / "plan_memory", stage / "plan_memory", dirs_exist_ok=True)
-
         # Skills
         if (pc / "skills").is_dir():
             _copytree_safe(pc / "skills", stage / "skills", dirs_exist_ok=True)
@@ -469,7 +465,6 @@ def snapshot_main(
 
         # Manifest
         ws_files = sum(1 for _ in (stage / "workspace").rglob("*") if _.is_file())
-        pm_files = sum(1 for _ in (stage / "plan_memory").rglob("*") if _.is_file())
         sk_count = sum(1 for _ in (stage / "skills").iterdir() if _.is_dir())
         manifest = {
             "version": 2,
@@ -486,7 +481,6 @@ def snapshot_main(
                 "config_json": _fsize(stage / "config.json"),
                 "notifications_jsonl": _fsize(stage / "notifications.jsonl"),
                 "workspace_files": ws_files,
-                "plan_memory_files": pm_files,
                 "skill_count": sk_count,
             },
         }
@@ -552,7 +546,6 @@ def _print_manifest(snap: Path) -> None:
         print(f"  Workspace files: {c.get('workspace_files', 0)}")
         print(f"  Skills: {c.get('skill_count', 0)}")
         print(f"  Notifications: {c.get('notifications_jsonl', 0) // 1024} KB")
-        print(f"  Plan memory files: {c.get('plan_memory_files', 0)}")
     except Exception as e:
         print(f"  (Could not read manifest: {e})")
 
@@ -1195,15 +1188,14 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
             print(f"  ✅ {comp}")
 
     if _want(components, "workspace"):
-        for dirname in ("workspace", "plan_memory"):
-            d = pc / dirname
+        d = pc / "workspace"
+        if d.is_dir():
+            _copytree_safe(d, backup / "workspace", dirs_exist_ok=True)
+        sd = snap / "workspace"
+        if sd.is_dir():
             if d.is_dir():
-                _copytree_safe(d, backup / dirname, dirs_exist_ok=True)
-            sd = snap / dirname
-            if sd.is_dir():
-                if d.is_dir():
-                    shutil.rmtree(str(d))
-                _copytree_safe(sd, d)
+                shutil.rmtree(str(d))
+            _copytree_safe(sd, d)
         print("  ✅ workspace")
 
     if _want(components, "skills"):
@@ -1337,8 +1329,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
             _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, chmod 0600")
         _add("security_events.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on event_id; HMAC-key gated")
     if _want(components, "workspace"):
-        for name in ("workspace", "plan_memory"):
-            _add(name, inv.MERGE_UNION_BY_ID, "tree, no overwrite")
+        _add("workspace", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
     if _want(components, "skills"):
         _add("skills", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
     if _want(components, "everything"):
@@ -1477,12 +1468,11 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
         print("  ✅ security")
 
     if _want(components, "workspace"):
-        for dirname in ("workspace", "plan_memory"):
-            sd = snap / dirname
-            if sd.is_dir():
-                dd = pc / dirname
-                dd.mkdir(parents=True, exist_ok=True)
-                _copy_tree_no_overwrite(sd, dd)
+        sd = snap / "workspace"
+        if sd.is_dir():
+            dd = pc / "workspace"
+            dd.mkdir(parents=True, exist_ok=True)
+            _copy_tree_no_overwrite(sd, dd)
         print("  ✅ workspace")
 
     if _want(components, "skills"):
