@@ -4537,7 +4537,7 @@
         {
           "id": "SV-6",
           "title": "Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.4 (resume-audit workflow-run half; resume_audit.py exports only audit_loop today)",
           "done_when": "resume-audit kills and resumes a persisted workflow run from disk alone and verifies the journal replay reconstructs frontier state byte-equal to the pre-kill snapshot (Success Criterion #5, workflow half)",
           "deps": [
@@ -4748,7 +4748,7 @@
         {
           "id": "CE-2",
           "title": "Migrate the Slack app onto the core trust seam with a one-time loud migrate_to_core_trust()",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 — T1.4 (apps repo slack-channel); Design §S1 'Slack migration'",
           "done_when": "slack-channel persist_allowed_user/persist_tracking_channel delegate to core channel_trust; migrate_to_core_trust() moves app-local JSON into the core store once (idempotent, logged, second run no-op per fixture); Slack app tests green",
           "deps": [
@@ -6401,7 +6401,7 @@
         {
           "id": "WF2WOR-8",
           "title": "Fan-out subagent-path defect fixes (C1: injection wall, queue, agent-validate, control, budget)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment §'Audit findings that must be fixed before any width increase' + Amendment task table C1.1-C1.5",
           "done_when": "8 near-simultaneous sub-agent completions deliver without loss and without resetting the parent session; queued spawns carry the full parameter set and get real cancellable ids; _validate_agent returns a typed error (no silent downgrade); a run-scoped concurrency lane + one-click 'kill this fan-out' + record_failure breaker work; the run-scoped budget re-checks mid-flight and stops a fan-out that would exceed it",
           "deps": [
@@ -6921,11 +6921,6 @@
         "plan": "CC"
       },
       {
-        "id": "CE-2",
-        "title": "Migrate the Slack app onto the core trust seam with a one-time loud migrate_to_core_trust()",
-        "plan": "CE"
-      },
-      {
         "id": "CE-3",
         "title": "Telegram channel app (raw Bot API over httpx): api client, MarkdownV2 escaper, transport, delivery, setup/doctor",
         "plan": "CE"
@@ -7436,11 +7431,6 @@
         "plan": "SM"
       },
       {
-        "id": "SV-6",
-        "title": "Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold",
-        "plan": "SV"
-      },
-      {
         "id": "SV-9",
         "title": "Self-QA Companion core: commit-watch cron script, self-qa bundled template, self_qa config four-point wiring",
         "plan": "SV"
@@ -7526,11 +7516,6 @@
         "plan": "WF2UNI"
       },
       {
-        "id": "WF2WOR-8",
-        "title": "Fan-out subagent-path defect fixes (C1: injection wall, queue, agent-validate, control, budget)",
-        "plan": "WF2WOR"
-      },
-      {
         "id": "WS-3",
         "title": "web-source: five-detector stack, selector configs, escalating fetch, preview+create flow",
         "plan": "WS"
@@ -7559,6 +7544,16 @@
         "id": "WV-12",
         "title": "Two-layer context-compaction ladder for LLM-backed nodes",
         "plan": "WV"
+      },
+      {
+        "id": "CE-8",
+        "title": "Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue",
+        "plan": "CHANNEL-EXPANSION"
+      },
+      {
+        "id": "WF2WOR-9",
+        "title": "Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC)",
+        "plan": "WORKFLOWS-V2-WORK-CONTAINERS"
       }
     ],
     "topo_order": [
