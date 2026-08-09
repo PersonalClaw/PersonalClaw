@@ -176,8 +176,12 @@ jobs:
     # fail on any commit missing sign-off. PR-only — a feature-branch push has no
     # base to diff, and the merge to main preserves the signed commits.
     # Dependabot is exempt: its bot commits cannot carry a Signed-off-by trailer,
-    # and dependency bumps are provenance-clear by construction.
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    # and dependency bumps are provenance-clear by construction. The exemption is
+    # per-COMMIT (skip commits authored by dependabot), not gated on the run's
+    # triggering actor — so it still holds after a maintainer pushes a fix onto a
+    # dependabot branch (rebase, lockfile regen), which changes github.actor to a
+    # human and would otherwise re-fail on dependabot's own unsigned commit.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -190,6 +194,12 @@ jobs:
         run: |
           missing=0
           for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
+            email="$(git show -s --format='%ae' "$sha")"
+            # Skip dependabot's own commits — a bot can't sign off, and bumps are
+            # provenance-clear. Maintainer commits on the same branch still checked.
+            case "$email" in
+              *dependabot*@users.noreply.github.com) continue ;;
+            esac
             author="$(git show -s --format='%an <%ae>' "$sha")"
             if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$author"; then
               echo "::error::commit $sha is missing a matching 'Signed-off-by: $author' trailer — run: git commit -s (or git rebase --signoff)"
