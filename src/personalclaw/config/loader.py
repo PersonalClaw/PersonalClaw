@@ -1479,6 +1479,16 @@ class LearningConfig:
             "learning trace. Only fires when a memory service is available.",
         ),
     )
+    attribution_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Grade Accepted Changes",
+            "After you accept a proposal, watch its target's Run Ledger. Once enough runs "
+            "have accumulated, grade whether the change delivered what it predicted — and if "
+            "it only made things worse, file a revert proposal (never auto-applied) that names "
+            "what broke. Off = accepted changes are never measured against their promise.",
+        ),
+    )
 
 
 @dataclass
@@ -3506,6 +3516,7 @@ class AppConfig:
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
                 run_end_enabled=bool(learning_data.get("run_end_enabled", True)),
+                attribution_enabled=bool(learning_data.get("attribution_enabled", True)),
             ),
             knowledge=KnowledgeConfig(
                 idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),

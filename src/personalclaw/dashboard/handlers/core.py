@@ -610,6 +610,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # who finds run-end lesson proposals noisy should be able to silence them without a
     # restart, the same as every other learning-eagerness knob above.
     "learning.run_end_enabled": {"type": "bool"},
+    # WF2LEA-5: grade accepted changes against their predictions and auto-file HARMFUL
+    # reverts. Live-editable for the same reason — a user who does not want the flywheel
+    # measuring its own accepted proposals should be able to stop it without a restart.
+    "learning.attribution_enabled": {"type": "bool"},
     # KNOWLEDGE-SYNTHESIS: the write-semantics knobs worth changing without a restart.
     # `require_citations` is here deliberately — an owner mid-research may need to store an
     # unsourced note and should not have to restart the gateway to do it.
