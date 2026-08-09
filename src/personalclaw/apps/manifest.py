@@ -26,6 +26,28 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-]|$)")
 ROUTE_OP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
+def version_tuple(v: str) -> tuple[int, ...]:
+    """Parse an app semver string to a numeric tuple for comparison (best-effort).
+
+    Manifests are validated against ``SEMVER_RE`` (``MAJOR.MINOR.PATCH`` with an optional
+    ``+build``/``-pre`` suffix), so the core is the dotted release. The pre-release/build
+    suffix is dropped (SemVer pre-release ordering is out of scope for "is a newer release
+    available"), and a leading ``v`` is tolerated. A value that can't be parsed sorts as
+    ``(0,)`` so a malformed version never falsely reads as an available update.
+
+    This is the ONE app-version comparator (``apps.catalog`` reuses it) — the version
+    field and ``SEMVER_RE`` both live here, so the comparator does too, rather than
+    inverting the apps→dashboard layering to borrow the self-updater's tag comparator.
+    """
+    core = (v or "").strip()
+    core = core[1:] if core[:1] == "v" else core
+    core = core.split("+", 1)[0].split("-", 1)[0]
+    try:
+        return tuple(int(x) for x in core.split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 @dataclass
 class CronEntry:
     """A scheduled agent job declared by an app."""

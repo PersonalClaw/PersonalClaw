@@ -25,6 +25,15 @@ def _isolate(tmp_path, monkeypatch):
     # config_dir), so patch it there too — otherwise catalog._sources_path() escapes
     # the sandbox and reads/writes the real ~/.personalclaw/apps/app-sources.json.
     monkeypatch.setattr(catalog, "config_dir", lambda: tmp_path)
+    # The APE-7 update-surfacing path persists its notified high-water mark via
+    # entity_routes (entity_settings/app_updates.json) and falls back to an InboxStore
+    # under inbox.config_dir — both bind config_dir at import into their own namespace,
+    # so patch those too or the "no re-nag" state would touch the real ~/.personalclaw.
+    from personalclaw import inbox as _inbox
+    from personalclaw.providers import entity_routes as _er
+
+    monkeypatch.setattr(_er, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(_inbox, "config_dir", lambda: tmp_path)
     native = tmp_path / "native"
     native.mkdir()
     monkeypatch.setattr(loader, "BUNDLED_DIR", native)
@@ -197,6 +206,176 @@ def test_legacy_flat_sources_file_upgrades(tmp_path):
     catalog.add_local_source(str(src))
     assert "https://github.com/x/legacy" in catalog.list_git_sources()
     assert str(src) in catalog.list_local_sources()
+
+
+# ── update surfacing (APE-7) ──
+
+
+def _installed_app(root: Path, name: str, version: str) -> None:
+    """Write an installed app under apps/<name>/ (installed.json + app.json), as
+    `manager.list_apps` discovers it."""
+    d = root / "apps" / name
+    d.mkdir(parents=True)
+    (d / "installed.json").write_text(
+        json.dumps({"name": name, "version": version, "enabled": True, "origin": "local"}),
+        encoding="utf-8",
+    )
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": version,
+                "displayName": name.title(),
+                "description": f"{name} installed",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _source_app(root: Path, name: str, version: str) -> None:
+    """Write a source-side app manifest (a local source dir of app subdirs)."""
+    d = root / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": version,
+                "displayName": name.title(),
+                "description": f"{name} source",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+class _FakeState:
+    """Minimal state: records notify() calls; no live inbox service (so
+    emit_attention_item uses its own InboxStore under the patched config_dir)."""
+
+    def __init__(self) -> None:
+        self.notifications: list[tuple[str, str, str]] = []
+        self._inbox_svc = None
+
+    def notify(self, kind, title, body, *, meta=None):  # noqa: ANN001
+        self.notifications.append((kind, title, body))
+
+
+def test_updates_available_lists_only_newer(tmp_path):
+    _installed_app(tmp_path, "notes", "1.0.0")
+    _installed_app(tmp_path, "todo", "2.0.0")
+    _installed_app(tmp_path, "wiki", "1.0.0")
+    src = tmp_path / "myapps"
+    src.mkdir()
+    _source_app(src, "notes", "1.2.0")  # newer → listed
+    _source_app(src, "todo", "1.9.0")  # older → not listed
+    _source_app(src, "wiki", "1.0.0")  # same → not listed
+    catalog.add_local_source(str(src))
+
+    updates = catalog.updates_available()
+    by_name = {u["name"]: u for u in updates}
+    assert set(by_name) == {"notes"}
+    assert by_name["notes"]["installedVersion"] == "1.0.0"
+    assert by_name["notes"]["latestVersion"] == "1.2.0"
+    assert by_name["notes"]["displayName"] == "Notes"
+
+
+def test_updates_available_ignores_app_with_no_source(tmp_path):
+    """An installed app whose source declares nothing newer (or isn't present) is absent."""
+    _installed_app(tmp_path, "notes", "1.0.0")
+    src = tmp_path / "myapps"
+    src.mkdir()
+    catalog.add_local_source(str(src))  # empty source
+    assert catalog.updates_available() == []
+
+
+def test_updates_available_takes_highest_across_sources(tmp_path):
+    _installed_app(tmp_path, "notes", "1.0.0")
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    _source_app(a, "notes", "1.1.0")
+    _source_app(b, "notes", "1.3.0")
+    catalog.add_local_source(str(a))
+    catalog.add_local_source(str(b))
+    updates = {u["name"]: u for u in catalog.updates_available()}
+    assert updates["notes"]["latestVersion"] == "1.3.0"
+
+
+def test_surface_app_updates_emits_one_notification(tmp_path):
+    _installed_app(tmp_path, "notes", "1.0.0")
+    src = tmp_path / "myapps"
+    src.mkdir()
+    _source_app(src, "notes", "1.2.0")
+    catalog.add_local_source(str(src))
+
+    state = _FakeState()
+    updates = catalog.surface_app_updates(state)
+    assert {u["name"] for u in updates} == {"notes"}
+    assert len(state.notifications) == 1
+    kind, title, _ = state.notifications[0]
+    # the wire kind resolves back to the registered apps/update pair
+    from personalclaw import notification_kinds as nk
+
+    assert nk.kind_for_legacy(kind).key == "apps/update"
+    assert "Notes" in title
+
+
+def test_surface_app_updates_does_not_renag_on_review(tmp_path):
+    """Re-computing with the same latest_version emits no second notification (dedup by
+    name + latest_version, persisted outside the inbox)."""
+    _installed_app(tmp_path, "notes", "1.0.0")
+    src = tmp_path / "myapps"
+    src.mkdir()
+    _source_app(src, "notes", "1.2.0")
+    catalog.add_local_source(str(src))
+
+    state = _FakeState()
+    catalog.surface_app_updates(state)
+    catalog.surface_app_updates(state)  # second view — must not re-nag
+    assert len(state.notifications) == 1
+
+
+def test_surface_app_updates_refires_only_for_a_newer_version(tmp_path):
+    """A NEWER latest_version is a genuinely new event → a new notification fires."""
+    _installed_app(tmp_path, "notes", "1.0.0")
+    src = tmp_path / "myapps"
+    src.mkdir()
+    _source_app(src, "notes", "1.2.0")
+    catalog.add_local_source(str(src))
+
+    state = _FakeState()
+    catalog.surface_app_updates(state)
+    assert len(state.notifications) == 1
+    # source bumps again → a new version the user hasn't been told about
+    _source_app(src, "notes", "1.3.0")
+    catalog.surface_app_updates(state)
+    assert len(state.notifications) == 2
+    assert catalog._load_notified()["notes"] == "1.3.0"
+
+
+def test_surface_app_updates_no_state_is_noop_emit(tmp_path):
+    """Called before the dashboard exists: still returns the list, emits nothing."""
+    _installed_app(tmp_path, "notes", "1.0.0")
+    src = tmp_path / "myapps"
+    src.mkdir()
+    _source_app(src, "notes", "1.2.0")
+    catalog.add_local_source(str(src))
+    updates = catalog.surface_app_updates(None)
+    assert {u["name"] for u in updates} == {"notes"}
+
+
+def test_app_update_notification_kind_is_registered():
+    from personalclaw import notification_kinds as nk
+
+    k = nk.resolve_kind("apps", "update")
+    assert k.key == "apps/update"
+    assert k.attention is True
+    assert k.default_mode == "immediate"
+    # the wire string round-trips (or a rule against it would be silently ignored)
+    assert nk.kind_for_legacy_pair("apps", "update") == "app_update"
+    assert nk.kind_for_legacy("app_update").key == "apps/update"
 
 
 # ── SDK boundary (workspace-core-app-split §3) ──

@@ -12,7 +12,43 @@ from personalclaw.apps.manifest import (
     Dependencies,
     MarketplaceDependencies,
     SetupConfig,
+    version_tuple,
 )
+
+# ---------------------------------------------------------------------------
+# version_tuple — the single app-version comparator (APE-7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ("1.2.0", "1.0.0"),
+        ("2.0.0", "1.9.9"),
+        ("1.0.10", "1.0.9"),  # numeric, not lexical
+        ("1.1.0", "1.0.5"),
+    ],
+)
+def test_version_tuple_orders_newer_greater(a, b):
+    assert version_tuple(a) > version_tuple(b)
+
+
+def test_version_tuple_equal_versions_compare_equal():
+    assert version_tuple("1.2.3") == version_tuple("1.2.3")
+
+
+def test_version_tuple_tolerates_v_prefix_and_suffix():
+    assert version_tuple("v1.2.3") == version_tuple("1.2.3")
+    assert version_tuple("1.2.3+build.5") == version_tuple("1.2.3")
+    assert version_tuple("1.2.3-rc1") == version_tuple("1.2.3")
+
+
+def test_version_tuple_bad_value_sorts_lowest():
+    # A malformed version must never read as a newer release.
+    assert version_tuple("not-a-version") == (0,)
+    assert version_tuple("") == (0,)
+    assert version_tuple("1.2.0") > version_tuple("garbage")
+
 
 # ---------------------------------------------------------------------------
 # Helpers

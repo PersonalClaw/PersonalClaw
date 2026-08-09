@@ -263,6 +263,10 @@ export interface AppSummary {
   // false = a first-party or third-party app the user installs/uninstalls. Whether
   // a native app has a settings surface is `hasConfig` (not a separate flag).
   native?: boolean
+  // APE-7: this app's source offers a newer version than the installed copy. Computed
+  // on the /api/apps read path (no polling); `latestVersion` is that newer version.
+  updateAvailable?: boolean
+  latestVersion?: string
 }
 export interface AppDetail {
   name: string
