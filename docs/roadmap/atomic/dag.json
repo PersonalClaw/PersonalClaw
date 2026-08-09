@@ -400,7 +400,7 @@
         {
           "id": "KL-9",
           "title": "Indexing H1.1+H1.2: chunks table + structural chunker + chunk embedding in ingest (retire 1000-char top-up)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment task table — H1.1 (chunks table + chunker) and H1.2 (embed chunks in ingest, retire compose_item_text top-up); Amendment Design (a); Owner task 2 (confirm clean break)",
           "done_when": "a chunks table (id,item_id,chunk_index,text,embedding,section,line_start,line_end) and knowledge/chunking.py exist; long markdown/PDF/pptx items chunk on real structural boundaries (headings/slides/sheets) with size fallback + overlap; structureless items chunk by size; chunk section/line_start/line_end are populated; the item row keeps its whole-item embedding; ingest embeds chunks and the compose_item_text 1000-char top-up is deleted (clean break, no dual path); a test retrieves content deep in a long document that fails before the change",
           "deps": []
@@ -7133,11 +7133,6 @@
       {
         "id": "KL-7",
         "title": "S3 reading view: editorial type scale, progress, in-reader highlight→note",
-        "plan": "KL"
-      },
-      {
-        "id": "KL-9",
-        "title": "Indexing H1.1+H1.2: chunks table + structural chunker + chunk embedding in ingest (retire 1000-char top-up)",
         "plan": "KL"
       },
       {
