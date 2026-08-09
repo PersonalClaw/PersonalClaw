@@ -606,6 +606,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     "learning.curator_enabled": {"type": "bool"},
     "learning.context_budget_tokens": {"type": "int", "min": 500, "max": 100000},
+    # WF2LEA-4: learn from terminal workflow-run failures. Live-editable because a user
+    # who finds run-end lesson proposals noisy should be able to silence them without a
+    # restart, the same as every other learning-eagerness knob above.
+    "learning.run_end_enabled": {"type": "bool"},
     # KNOWLEDGE-SYNTHESIS: the write-semantics knobs worth changing without a restart.
     # `require_citations` is here deliberately — an owner mid-research may need to store an
     # unsourced note and should not have to restart the gateway to do it.

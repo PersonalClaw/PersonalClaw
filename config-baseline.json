@@ -654,6 +654,12 @@
   },
   {
     "default": true,
+    "path": "learning.run_end_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
     "path": "learning.self_model_enabled",
     "sensitive": false,
     "type": "bool"

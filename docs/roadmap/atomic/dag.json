@@ -2959,13 +2959,15 @@
         {
           "id": "WF2LEA-4",
           "title": "Step 5: run-end capture spoke + route SESSION_END/RUN_END cadences through the gate (criterion 10 remainder)",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.1 run-end cadence, §3.3 typed/checkable/outcome-grounded lessons (R8 capsules, R18 pending-outcome resolver), §7 step 5, success criterion 10; plan-memory absorption + deletion (+ portability list)",
           "done_when": "WorkflowRun terminal state routes through LearningGate; step_failed emits write_lesson(source=workflow_run) via proposal queue + record_procedural; R8 failure-mode keying + capsules; R18 pending_outcome journaled at decision-time and resolved on curator tick; plan_memory absorbed into Run Ledger and deleted (removed from portability export); assert_gate_covers_cadences() reports zero gaps; criterion 10 regression test green",
           "deps": [
             "WF2LEA-1",
             "EXT:WORKFLOWS-V2:run-ledger-slices-0-3"
-          ]
+          ],
+          "pr": "#938",
+          "evidence": "run_end.capture + outcome_resolver.resolve wired (controller._capture_run_end via gate; resolver on curator tick); R8 FailureCapsule + LessonKey; R18 pending_outcome journaled at decision-time; plan_memory silo deleted (portability/snapshot/inventory refs gone); assert_gate_covers_cadences()==[]. DISCOVERY: both spokes shipped INERT — enqueue(occurrences=1) hit the MIN_EVIDENCE_DEFAULT=3 floor and silently SKIPPED every inferred proposal; fixed to min_evidence=1 (curator precedent)"
         },
         {
           "id": "WF2LEA-5",

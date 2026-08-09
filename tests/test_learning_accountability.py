@@ -319,21 +319,39 @@ def test_a_permitted_session_still_gates_on_worthwhileness():
     assert gate.decide(Cadence.PER_TURN, tool_calls=0, correction=True).allowed
 
 
-def test_the_uncovered_cadences_are_pinned():
-    """THE coverage finding. A gate cannot suppress a path nobody routes through it.
+def test_every_cadence_is_routed_through_the_gate():
+    """Criterion 10. A gate cannot suppress a path nobody routes through it.
 
-    `SESSION_END` and `RUN_END` are declared with ZERO live call sites, so pinning the gap set makes
-    wiring one — or adding a fourth cadence — a deliberate edit here rather than a silent hole.
+    Before WF2LEA-4, `SESSION_END` and `RUN_END` were declared with ZERO live call sites — the
+    coverage gap the checker reported. WF2LEA-4 wired the last two: `SESSION_END` through the
+    dashboard consolidation envelope and `RUN_END` through `controller._finish`. So the gap set is
+    now EMPTY, and pinning it at empty makes adding a fourth cadence (or removing a call site) a
+    deliberate edit here rather than a silent hole.
     """
-    assert assert_gate_covers_cadences() == ["RUN_END", "SESSION_END"]
+    assert assert_gate_covers_cadences() == []
 
 
 def test_the_coverage_checker_does_not_find_ITSELF():
-    """A defect measured while writing it.
+    """A defect measured while writing the checker, still guarded now that the gap set is empty.
 
     The first version matched its own docstring's `Cadence.SESSION_END` mention and reported ZERO
-    gaps
-    for two cadences that genuinely had no callers — a checker that certifies coverage by finding
-    itself. Same self-referential trap S67's fire-site scan fell into.
+    gaps for two cadences that genuinely had no callers — a checker that certifies coverage by
+    finding itself, the same self-referential trap S67's fire-site scan fell into. Now that all
+    three cadences ARE wired the honest answer is also `[]`, so a truthy assertion could no longer
+    distinguish real coverage from the bug. Instead, prove the checker still SEES a phantom cadence:
+    a name with no call site anywhere must surface as a gap.
     """
-    assert assert_gate_covers_cadences(), "the checker reports full coverage, which was the bug"
+    import personalclaw.learning.gate as gate_mod
+
+    class _Phantom:
+        # A cadence member no source file references — the checker must report it as uncovered.
+        name = "PHANTOM_CADENCE"
+
+    # The checker resolves `Cadence` by a call-time `from ...gate import Cadence`, so the phantom
+    # has to be injected on the gate module, not on accountability.
+    real_cadence = gate_mod.Cadence
+    try:
+        gate_mod.Cadence = [_Phantom]  # type: ignore[assignment]
+        assert assert_gate_covers_cadences() == ["PHANTOM_CADENCE"]
+    finally:
+        gate_mod.Cadence = real_cadence

@@ -166,6 +166,10 @@ class WorkflowWatchdog:
             node_timeout_total=base.node_timeout_total,
             node_timeout_stall=base.node_timeout_stall,
             cwd=base.cwd,
+            # The run-end learner (LEARNING-FLYWHEEL §3.3): forwarded so a run driven by the
+            # supervisor mines its own ledger on termination. Shared, not per-run — one memory
+            # service backs every run, the same way `subagents` does.
+            memory=base.memory,
         )
 
     def _publisher(self, run_id: str) -> Any:

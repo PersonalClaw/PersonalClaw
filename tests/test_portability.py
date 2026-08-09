@@ -114,11 +114,6 @@ def fake_personalclaw_home(tmp_path):
         "# 2026-05-18\n\n#### 10:00 PDT\nImplemented export feature\n"
     )
 
-    # plan_memory/
-    pm_dir = pc / "plan_memory"
-    pm_dir.mkdir()
-    (pm_dir / "current_plan.md").write_text("# Plan\n\nStep 1: Export\nStep 2: Import\n")
-
     # skills/
     sk_dir = pc / "skills" / "my-skill"
     sk_dir.mkdir(parents=True)
@@ -228,14 +223,6 @@ class TestExport:
         zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
         names = zf.namelist()
         assert any("SKILL.md" in n for n in names)
-        zf.close()
-
-    def test_export_includes_plan_memory(self, patched_config_dir):
-        zip_bytes, manifest = create_export_zip()
-        assert manifest["contents"]["plan_memory_files"] >= 1
-        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-        names = zf.namelist()
-        assert any("current_plan.md" in n for n in names)
         zf.close()
 
     def test_export_excludes_credentials(self, patched_config_dir):

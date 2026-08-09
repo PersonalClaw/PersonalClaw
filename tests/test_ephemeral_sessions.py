@@ -311,12 +311,15 @@ class TestConsolidation:
             _maybe_consolidate(state, session)
 
         state.consolidator.maybe_consolidate.assert_not_called()
+        # Consolidation is the SESSION_END cadence, now routed through the LearningGate: a denial
+        # is audited with the gate's specific reason (`gate:<reason>`) rather than the old bespoke
+        # `restricted_session_block` string, so the audit trail is uniform with every other cadence.
         mock_sel().log_api_access.assert_called_once_with(
             caller="dashboard:e1",
             operation="consolidate",
             outcome="denied",
             source="dashboard",
-            resources="restricted_session_block",
+            resources="gate:restricted_session",
         )
 
     def test_consolidation_triggered_for_persistent(self, tmp_path):

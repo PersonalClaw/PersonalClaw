@@ -176,7 +176,6 @@ def _remaining_export_paths(pc: Path) -> list[str]:
         "memory_index.db",
         "learning.db",
         "workspace",
-        "plan_memory",
         "skills",
         "cron-history",
     }
@@ -272,14 +271,14 @@ def create_export_zip() -> tuple[bytes, dict]:
                 zf.writestr(f"{prefix}/{db_name}", db_buf.getvalue())
                 contents_summary[db_name] = db_buf.tell()
 
-        # Directory trees: workspace, plan_memory, skills
+        # Directory trees: workspace, skills, cron-history
         dir_counts: dict[str, int] = {}
         # `cron-history` is the run ledger `ScheduleRunStore` owns (JSONL per job + a cross-job
         # index). Carried with the automations: a restored home whose triggers exist but whose run
         # history is empty reports "never ran" for automations that have run for months, which is
         # indistinguishable from a broken fire path — the same ambiguity the learning staging log
         # travels to avoid (see the note above).
-        for dirname in ("workspace", "plan_memory", "skills", "cron-history"):
+        for dirname in ("workspace", "skills", "cron-history"):
             src_dir = pc / dirname
             count = 0
             if src_dir.is_dir():
@@ -298,7 +297,6 @@ def create_export_zip() -> tuple[bytes, dict]:
                         count += 1
             dir_counts[dirname] = count
         contents_summary["workspace_files"] = dir_counts.get("workspace", 0)
-        contents_summary["plan_memory_files"] = dir_counts.get("plan_memory", 0)
         contents_summary["skill_count"] = dir_counts.get("skills", 0)
         contents_summary["run_history_files"] = dir_counts.get("cron-history", 0)
 
@@ -510,7 +508,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # JSONL, and concatenating two homes' rows would double-count runs that
             # `_last_run_status` and the autopause counters read. A job this home already has keeps
             # its own history; a job arriving from the snapshot brings its own.
-            for dirname in ("workspace", "plan_memory", "cron-history"):
+            for dirname in ("workspace", "cron-history"):
                 sd = snap / dirname
                 if sd.is_dir():
                     dd = pc / dirname
