@@ -4481,7 +4481,7 @@
       "plan": "SELF-VERIFICATION",
       "code": "SV",
       "status": "in_progress",
-      "summary": "SELF-VERIFICATION: 4 of 11 atoms done (spec harness + scanner + replay substrate + loop resume-audit/MCP). Remaining: WF2 replay scenarios, workflow-run resume-audit, CI gate, exemplars backfill, and the two-session Self-QA Companion. WF2 engine now exists so the prior blocker cleared.",
+      "summary": "SELF-VERIFICATION: 7 of 11 atoms done (spec harness + scanner + replay substrate + loop resume-audit/MCP + WF2 replay scenarios + per-slice WF2 exemplars; dag SV-6/SV-7 flags trail their landed code). Remaining: the two-session Self-QA Companion. WF2 engine now exists so the prior blocker cleared.",
       "atoms": [
         {
           "id": "SV-1",
@@ -4559,7 +4559,7 @@
         {
           "id": "SV-8",
           "title": "Backfill per-slice runnable exemplars for the landed WF2 slices",
-          "status": "todo",
+          "status": "done",
           "scope": "§4.1 (milestone exemplars: per-slice standalone spec + ≤30s smoke script + rationale note under harness/exemplars/<slice>/)",
           "done_when": "harness/exemplars/ holds runnable exemplars for the landed WF2 slices (e.g. Slice 2 3-node run with a failing required_artifacts gate), each with a smoke script and rationale note, runnable via harness run profile exemplars; validate flags a slice merged without its exemplar",
           "deps": [
@@ -7453,11 +7453,6 @@
       {
         "id": "SV-6",
         "title": "Workflow-run half of resume-audit: byte-equal frontier reconstruction from the event-fold",
-        "plan": "SV"
-      },
-      {
-        "id": "SV-8",
-        "title": "Backfill per-slice runnable exemplars for the landed WF2 slices",
         "plan": "SV"
       },
       {
