@@ -12,9 +12,11 @@ import { hydrateTurns, type ApprovalSegment, type HistMsg } from './chatTypes'
 // wording per outcome, not merely that something rendered.
 
 // Lucide renders a stable per-icon class (`lucide-check` / `lucide-ban` /
-// `lucide-circle-help`), which is what makes the ICON assertable rather than just
-// the text. Probed against the installed lucide-react, not assumed.
-const ICON_CLASS = { check: 'lucide-check', ban: 'lucide-ban', unknown: 'lucide-circle-help' } as const
+// `lucide-circle-question-mark`), which is what makes the ICON assertable rather
+// than just the text. Probed against the installed lucide-react, not assumed:
+// lucide-react 1.x renders the `HelpCircle` glyph (unchanged) under the renamed
+// class `lucide-circle-question-mark` (was `lucide-circle-help` in 0.x).
+const ICON_CLASS = { check: 'lucide-check', ban: 'lucide-ban', unknown: 'lucide-circle-question-mark' } as const
 
 /** The outcome line a settled card actually paints: its icon and its text. */
 function paintSettled(resolved: string): { icon: string | null; text: string } {
