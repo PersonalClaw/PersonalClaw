@@ -17,7 +17,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PR-5` | ⬜ | docs/guides/platforms.md + README support matrix (C2): [models] arm64 wheel/dep audit, Pi-class note, proof-token matrix | `PR-1` | docs/guides/platforms.md created with [models]-extra per-arch reality (faiss-cpu/torch/sentence-transformers, verified by recorded install attempts) + Pi-class RAM floor/skip-extras/swap note; README + platforms.md carry the support matrix where every row names its proof token (CI:<job> \| checklist:<section> \| community), no unproven 'supported' |
 | `PR-6` | ⬜ | Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook | `EXT:DISTRIBUTION:published Windows-runnable images` | docs/guides/platforms.md Windows-via-Docker-Desktop section (WSL2 backend, volume semantics, localhost ports, .env Windows paths); per-release Windows checklist (compose up, dashboard, one chat, snapshot) merged into docs/maintainers/release-runbook.md (owner task 2 validates verbatim) |
 | `PR-7` | ⬜ | Windows rung 2 (WSL2): browser auto-open fallback + doctor WSL awareness + WSL2 guide | — | auto-open site (near cli_server.py --no-open handling) prints URL prominently + tries wslview when launch fails or /proc/version contains microsoft, normal Linux unchanged (WSL fixture); cli_doctor.py detects WSL and notes service/systemd status; docs/guides/platforms.md WSL2 guide (uv install, systemd wsl.conf note, localhost forwarding, ext4-not-/mnt/c perf) |
-| `PR-8` | ⬜ | Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code) | — | docs/roadmap/research/windows-native-audit.md covers each verified mechanism (Job Objects vs PPID reaping, icacls vs chmod, junction/copy vs symlink, ConPTY/pywinpty vs disable-terminal, Windows Service vs Task Scheduler, sandbox-degradation policy) with options+effort+risk and an explicit go/no-go + demand-evidence criteria; NO implementation code (soul guardrail — E6 if tempted) |
+| `PR-8` | ✅ (#944) | Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code) | — | docs/roadmap/research/windows-native-audit.md covers each verified mechanism (Job Objects vs PPID reaping, icacls vs chmod, junction/copy vs symlink, ConPTY/pywinpty vs disable-terminal, Windows Service vs Task Scheduler, sandbox-degradation policy) with options+effort+risk and an explicit go/no-go + demand-evidence criteria; NO implementation code (soul guardrail — E6 if tempted) |
 
 ## Atom scopes
 
@@ -79,7 +79,7 @@ Track B Session B2; Tasks B2.1, B2.2, B2.3
 
 ### `PR-8` — Windows rung 3: per-mechanism native-Windows audit doc (audit ONLY, no code)
 
-**Status:** todo
+**Status:** done (#944)
 
 Track B Session B3; Task B3.1
 
