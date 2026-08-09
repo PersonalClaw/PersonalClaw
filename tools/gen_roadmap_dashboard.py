@@ -33,11 +33,12 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 # ── locate the repos relative to this file ──
@@ -176,9 +177,7 @@ def parse_queue() -> QueueStats:
         return QueueStats()
     text = WF2_QUEUE.read_text(encoding="utf-8")
     q = QueueStats()
-    rows = re.findall(
-        r"^\|\s*(S?\d+)\s*\|(.+?)\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$", text, re.M
-    )
+    rows = re.findall(r"^\|\s*(S?\d+)\s*\|(.+?)\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$", text, re.M)
     for _sid, _subj, _group, status in rows:
         s = status.upper()
         q.total += 1
@@ -201,8 +200,10 @@ def git_state() -> dict:
     ahead = sh("git log --oneline origin/main..HEAD 2>/dev/null")
     n_ahead = len([x for x in ahead.splitlines() if x.strip()])
     branch = sh("git branch --show-current")
+    # --author @me: only OUR PRs. Without it this map (PR-link resolution in
+    # "Working now" + the open-PR count) folds in every other contributor's open PR.
     prs_raw = sh(
-        "gh pr list --state open --limit 80 --json number,headRefName 2>/dev/null",
+        "gh pr list --state open --limit 80 --author @me --json number,headRefName 2>/dev/null",
         timeout=25,
     )
     pr_by_branch: dict[str, int] = {}
@@ -225,6 +226,72 @@ def parse_exec_state() -> dict:
     except (OSError, ValueError):
         logger_warn(f"could not read {EXEC_STATE}")
         return {}
+
+
+# ── autonomous driver state (launchd headless ticks — the headless window) ──
+
+DRIVER_DIR = WORKSPACE / "roadmap-driver"
+DRIVER_LOG = DRIVER_DIR / "tick.log"
+DRIVER_LABEL = "com.keyurgolani.roadmap-driver"
+
+
+def parse_driver_state() -> dict:
+    """Make the background driver legible: whether launchd has it loaded, the recent
+    tick decisions (FIRE/NOOP/STALL/DONE), and OUR open PR stack in base→tip order.
+    All best-effort — a missing file / unloaded job degrades to a clear off/unknown."""
+    loaded = False
+    try:
+        uid = os.getuid()
+        out = sh(f"launchctl print gui/{uid}/{DRIVER_LABEL} 2>/dev/null", timeout=8)
+        loaded = bool(out.strip())
+    except Exception:
+        loaded = False
+
+    ticks: list[dict] = []
+    if DRIVER_LOG.exists():
+        try:
+            lines = [ln for ln in DRIVER_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            for ln in lines[-60:]:
+                parts = ln.split(" ", 2)
+                if len(parts) >= 2:
+                    msg = parts[2] if len(parts) > 2 else ""
+                    ticks.append({"ts": parts[0], "verb": parts[1], "msg": msg})
+        except OSError:
+            pass
+
+    # OUR open PRs (--author @me), ordered base→tip; a chain only if a PR bases on
+    # another of ours (not main). Drops any head==base==main corruptor.
+    stack: list[dict] = []
+    is_chain = False
+    try:
+        raw = sh(
+            "gh pr list --state open --limit 80 --author @me "
+            "--json number,title,headRefName,baseRefName,mergeStateStatus,isDraft 2>/dev/null",
+            timeout=25,
+        )
+        prs = [p for p in json.loads(raw or "[]") if p.get("headRefName") != p.get("baseRefName")]
+        by_head = {p["headRefName"]: p for p in prs}
+        based_on = {p["baseRefName"] for p in prs if p["baseRefName"] in by_head}
+        is_chain = bool(based_on)
+        tips = [p for p in prs if p["headRefName"] not in based_on]
+        ordered: list[dict] = []
+        seen_b: set[str] = set()
+        for tip in sorted(tips, key=lambda p: p.get("number", 0)):
+            chain = []
+            cur = tip
+            while cur and cur["headRefName"] not in seen_b:
+                seen_b.add(cur["headRefName"])
+                chain.append(cur)
+                cur = by_head.get(cur.get("baseRefName"))
+            ordered.extend(reversed(chain))
+        for p in sorted(prs, key=lambda p: p.get("number", 0)):
+            if p["headRefName"] not in seen_b:
+                ordered.append(p)
+        stack = ordered
+    except Exception:
+        stack = []
+
+    return {"loaded": loaded, "ticks": ticks, "stack": stack, "stack_is_chain": is_chain}
 
 
 # ── full execution order (from workspace ROADMAP §5; collapsed) ──
@@ -377,9 +444,7 @@ def _bar(counts: dict[str, int], total: int, height: int, labels: bool = False) 
         text = ""
         if labels:
             text = f"{n} {lbl}" if pc >= 12 else (str(n) if pc >= 5 else "")
-        segs += (
-            f'<i class="{cls}" style="width:{pc:.3f}%" title="{n} {lbl}">{text}</i>'
-        )
+        segs += f'<i class="{cls}" style="width:{pc:.3f}%" title="{n} {lbl}">{text}</i>'
     return f'<div class="statbar" style="height:{height}px">{segs}</div>'
 
 
@@ -414,7 +479,13 @@ def _plan_state(counts: dict[str, int]) -> str:
 
 
 def render(
-    plans: list[Plan], queue: QueueStats, git: dict, nxt: list[dict], dag: dict, exec_state: dict
+    plans: list[Plan],
+    queue: QueueStats,
+    git: dict,
+    nxt: list[dict],
+    dag: dict,
+    exec_state: dict,
+    driver: dict,
 ) -> str:
     def pct(a, b):
         return round(100 * a / b) if b else 0
@@ -467,9 +538,7 @@ def render(
         if name not in seen and al
     ]
     if other:
-        pillars["Pillar Z — Other (not in pillar tables)"] = sorted(
-            other, key=lambda r: r["name"]
-        )
+        pillars["Pillar Z — Other (not in pillar tables)"] = sorted(other, key=lambda r: r["name"])
 
     all_recs = [r for recs in pillars.values() for r in recs]
 
@@ -490,7 +559,7 @@ def render(
             f'<span class="herotitle">{esc(title)}</span>'
             f'<span class="herobig">{pct(counts["done"], total)}<small>%</small></span>'
             f'<span class="herosub">{counts["done"]}/{total} done</span></div>'
-            f'{_bar(counts, total, 30, labels=True)}'
+            f"{_bar(counts, total, 30, labels=True)}"
             f'<div class="cap">{esc(_caption(counts))}</div></div>'
         )
 
@@ -501,13 +570,18 @@ def render(
         + "</section>"
     )
 
-    legend = '<div class="legend">' + "".join(
-        f'<span><b style="background:{col}"></b>{lbl}</span>'
-        for _k, _c, col, lbl in DAG_STATES
-    ) + '<span class="hint">click any tile to drill into its atoms</span></div>'
+    legend = (
+        '<div class="legend">'
+        + "".join(
+            f'<span><b style="background:{col}"></b>{lbl}</span>' for _k, _c, col, lbl in DAG_STATES
+        )
+        + '<span class="hint">click any tile to drill into its atoms</span></div>'
+    )
 
     # ---- working now (live stack + next-up), from .roadmap-exec-state.json ----
     working = _render_working(exec_state, git, ready)
+
+    driver_html = _render_driver(driver)
 
     # ---- validation strip (cycles / unresolved / dangling) ----
     validation = _render_validation(dag)
@@ -517,9 +591,7 @@ def render(
     for pillar, recs in pillars.items():
         letter = pillar.split("—")[0].replace("Pillar", "").strip()
         rest = pillar.split("—", 1)[1].strip() if "—" in pillar else pillar
-        recs_sorted = sorted(
-            recs, key=lambda r: (999 if r["num"] == "—" else int(r["num"]))
-        )
+        recs_sorted = sorted(recs, key=lambda r: (999 if r["num"] == "—" else int(r["num"])))
         pc = {k: 0 for k, *_ in DAG_STATES}
         for r in recs_sorted:
             for k in pc:
@@ -547,6 +619,7 @@ def render(
         hero=hero,
         legend=legend,
         working=working,
+        driver=driver_html,
         validation=validation,
         grid=grid_sections,
         extras=extras,
@@ -557,18 +630,23 @@ def _tile(r: dict, pct) -> str:
     state = r["state"]
     total = r["total"]
     p = pct(r["counts"]["done"], total)
-    bar = _bar(r["counts"], total, 8) if total else (
-        f'<div class="statbar" style="height:8px"><i class="{_DAG_CLASS[state]}" '
-        f'style="width:100%"></i></div>'
+    bar = (
+        _bar(r["counts"], total, 8)
+        if total
+        else (
+            f'<div class="statbar" style="height:8px"><i class="{_DAG_CLASS[state]}" '
+            f'style="width:100%"></i></div>'
+        )
     )
-    atomrows = "".join(
-        f'<li><span class="atom {_DAG_CLASS[st]}" title="{esc(_DAG_LABEL[st])}"></span>'
-        f'<code>{esc(a.get("id", ""))}</code> {esc(a.get("title", ""))}</li>'
-        for a, st in r["atoms"]
-    ) or "<li class='muted'>No atoms decomposed for this plan yet.</li>"
-    status_html = (
-        f'<p class="tstatus">{esc(r["status_line"])}</p>' if r["status_line"] else ""
+    atomrows = (
+        "".join(
+            f'<li><span class="atom {_DAG_CLASS[st]}" title="{esc(_DAG_LABEL[st])}"></span>'
+            f'<code>{esc(a.get("id", ""))}</code> {esc(a.get("title", ""))}</li>'
+            for a, st in r["atoms"]
+        )
+        or "<li class='muted'>No atoms decomposed for this plan yet.</li>"
     )
+    status_html = f'<p class="tstatus">{esc(r["status_line"])}</p>' if r["status_line"] else ""
     link = (
         f'<a class="tlink" href="PersonalClaw/docs/roadmap/plans/{esc(r["slug"])}.md" '
         f'target="_blank">open plan file →</a>'
@@ -603,8 +681,9 @@ def _render_working(exec_state: dict, git: dict, ready: list) -> str:
         for e in stack:
             branch = e.get("branch") or ""
             branch_html = f'<code class="br">{esc(branch)}</code>' if branch else ""
+            st = esc(e.get("status", "in flight"))
             rows += (
-                f'<li class="wn-live"><span class="wn-badge live">{esc(e.get("status", "in flight"))}</span>'
+                f'<li class="wn-live"><span class="wn-badge live">{st}</span>'
                 f'<code>{esc(e.get("atom", ""))}</code> {esc(e.get("title", ""))} '
                 f"{branch_html} {pr_link(e)}</li>"
             )
@@ -628,16 +707,137 @@ def _render_working(exec_state: dict, git: dict, ready: list) -> str:
         )
 
     # fallback: no exec-state file → show the DAG's ready frontier top 5
-    rows = "".join(
-        f'<li><span class="wn-badge next">startable</span>'
-        f'<code>{esc(r.get("id", ""))}</code> {esc(r.get("title", ""))} '
-        f'<span class="wn-recon">{esc(r.get("plan", ""))}</span></li>'
-        for r in ready[:5]
-    ) or "<li class='muted'>Nothing in flight and nothing startable.</li>"
+    rows = (
+        "".join(
+            f'<li><span class="wn-badge next">startable</span>'
+            f'<code>{esc(r.get("id", ""))}</code> {esc(r.get("title", ""))} '
+            f'<span class="wn-recon">{esc(r.get("plan", ""))}</span></li>'
+            for r in ready[:5]
+        )
+        or "<li class='muted'>Nothing in flight and nothing startable.</li>"
+    )
     return (
         f'<section class="box wn"><h2 class="section">Working now '
         f'<span class="wn-meta">no exec-state file — showing DAG ready frontier</span></h2>'
         f"<ul class='wn-list'>{rows}</ul></section>"
+    )
+
+
+def _render_driver(driver: dict) -> str:
+    """The headless-operation window: is the launchd driver live, when did it last
+    act and to what effect, and what open PR stack is it building."""
+    loaded = driver.get("loaded")
+    ticks = driver.get("ticks") or []
+    stack = driver.get("stack") or []
+
+    # headline = last real OUTCOME, not the DASH/regen bookkeeping the tick emits
+    _DECISIONS = {"FIRE", "NOOP", "STALL", "DONE", "RECLAIM"}
+    last = next((t for t in reversed(ticks) if t.get("verb") in _DECISIONS), None)
+    last_verb = last.get("verb") if last else ""
+    if not loaded:
+        dot, hdr = "off", "Driver NOT loaded"
+    elif last_verb == "STALL":
+        dot, hdr = "warn", "Driver loaded — STALLED (see last tick)"
+    else:
+        dot, hdr = "ok", "Driver loaded"
+
+    last_html = ""
+    if last:
+        last_html = (
+            f'<span class="drv-last"><b>{esc(last_verb)}</b> '
+            f'<span class="drv-ts">{esc(last.get("ts", ""))}</span> '
+            f'{esc((last.get("msg") or "")[:140])}</span>'
+        )
+
+    verb_class = {
+        "FIRE": "fire",
+        "DONE": "done",
+        "NOOP": "noop",
+        "STALL": "stall",
+        "WARN": "warn",
+        "RECLAIM": "warn",
+    }
+    # collapse consecutive identical (verb,msg) ticks into one ×N row (kills NOOP walls)
+    decisions = [t for t in ticks if t.get("verb") != "DASH"]
+    runs: list[dict] = []
+    for t in decisions:
+        key = (t.get("verb"), t.get("msg", ""))
+        if runs and runs[-1]["key"] == key:
+            runs[-1]["count"] += 1
+            runs[-1]["last_ts"] = t.get("ts", "")
+        else:
+            runs.append(
+                {
+                    "key": key,
+                    "verb": t.get("verb"),
+                    "msg": t.get("msg", ""),
+                    "count": 1,
+                    "first_ts": t.get("ts", ""),
+                    "last_ts": t.get("ts", ""),
+                }
+            )
+
+    def _run_row(r: dict) -> str:
+        cnt = r["count"]
+        vc = verb_class.get(r["verb"], "noop")
+        span = f' <span class="drv-ct">×{cnt}</span>' if cnt > 1 else ""
+        since = (
+            f' <span class="drv-since">since {esc(r["first_ts"][11:19])}</span>' if cnt > 1 else ""
+        )
+        return (
+            f'<li><span class="drv-verb {vc}">{esc(r["verb"])}</span>'
+            f'{span}<span class="drv-ts">{esc(r["last_ts"][11:19])}</span>'
+            f'<span class="drv-msg">{esc((r["msg"] or "")[:110])}</span>{since}</li>'
+        )
+
+    tick_rows = "".join(_run_row(r) for r in reversed(runs[-10:])) or (
+        '<li class="muted">No tick log yet — driver has not run.</li>'
+    )
+
+    def pr_row(p: dict, i: int) -> str:
+        n = p.get("number")
+        ms = (p.get("mergeStateStatus") or "").upper()
+        badge = {
+            "CLEAN": ("ok", "mergeable"),
+            "UNSTABLE": ("warn", "CI running"),
+            "BLOCKED": ("warn", "blocked"),
+            "DIRTY": ("stall", "CONFLICT"),
+            "BEHIND": ("warn", "behind"),
+            "UNKNOWN": ("noop", "checking"),
+        }.get(ms, ("noop", ms.lower() or "—"))
+        draft = " · draft" if p.get("isDraft") else ""
+        return (
+            f'<li class="drv-pr"><span class="drv-idx">{i}</span>'
+            f'<a class="prlink" href="{REPO_URL}/pull/{n}" target="_blank">#{n}</a>'
+            f'<span class="drv-prtitle">{esc((p.get("title") or "")[:64])}</span>'
+            f'<code class="br">{esc(p.get("headRefName", ""))}</code>'
+            f'<span class="drv-verb {badge[0]}">{esc(badge[1])}{draft}</span>'
+            f'<span class="drv-base">on {esc(p.get("baseRefName", ""))}</span></li>'
+        )
+
+    stack_html = "".join(pr_row(p, i + 1) for i, p in enumerate(stack)) or (
+        '<li class="muted">No open PRs of ours — stack empty '
+        "(all merged or nothing in flight).</li>"
+    )
+    is_chain = driver.get("stack_is_chain")
+    if not stack:
+        stack_label = f"Open PR stack ({len(stack)})"
+    elif is_chain:
+        stack_label = f"Open PR stack ({len(stack)}) — merge bottom-up"
+    else:
+        stack_label = f"Open PRs ({len(stack)}) — independent, any merge order"
+
+    return (
+        f'<section class="box drv"><h2 class="section">'
+        f'<span class="valdot {dot}"></span>Autonomous driver '
+        f'<span class="wn-meta">{esc(hdr)} · every-5-min launchd tick · one atom/run '
+        f'· PRs stack on the prior open one{(" · " if last_html else "")}</span>{last_html}</h2>'
+        f'<div class="drv-cols">'
+        f'<div class="drv-col"><h3 class="drv-h3">Recent ticks</h3>'
+        f'<ul class="drv-ticks">{tick_rows}</ul></div>'
+        f'<div class="drv-col"><h3 class="drv-h3">{esc(stack_label)}</h3>'
+        f'<ul class="drv-stack">{stack_html}</ul></div>'
+        f"</div></section>"
     )
 
 
@@ -695,16 +895,28 @@ def _render_extras(dag: dict, nxt: list[dict], queue: QueueStats, ready: list) -
 
     # startable frontier (authoritative)
     if ready:
+        CAP = 40
+        shown = ready[:CAP]
         items = "".join(
             f'<li><code>{esc(r.get("id", ""))}</code> {esc(r.get("title", ""))}'
             f'<span class="rf-plan">{esc(r.get("plan", ""))}</span></li>'
-            for r in ready
+            for r in shown
         )
+        more = ""
+        if len(ready) > CAP:
+            from collections import Counter
+
+            tail = Counter(r.get("plan", "?") for r in ready[CAP:])
+            top = ", ".join(f"{esc(pl)} ×{n}" for pl, n in tail.most_common(6))
+            more = (
+                f'<li class="rf-more">+{len(ready) - CAP} more across '
+                f"{len(tail)} plans — {top}…</li>"
+            )
         out += (
-            f'<details class="xd"><summary>Startable now — full frontier ({len(ready)})'
-            "</summary>"
+            f'<details class="xd"><summary>Startable now — frontier ({len(ready)}, '
+            f"showing {len(shown)})</summary>"
             f'<p class="xhint">Every dependency satisfied; begin any of these without putting '
-            f'another plan in flight.</p><ol class="rf-list">{items}</ol></details>'
+            f'another plan in flight.</p><ol class="rf-list">{items}{more}</ol></details>'
         )
 
     # dependency tiers
@@ -829,7 +1041,37 @@ _CSS = """
   .val.ok { color:#3fb950; align-items:center; }
   .valdot { width:10px; height:10px; border-radius:50%; flex:0 0 10px; margin-top:4px; }
   .valdot.ok { background:#3fb950; } .valdot.warn { background:#d29922; }
+  .valdot.off { background:#8b949e; } .valdot.stall { background:#f85149; }
   .val.warn { border-color:#d29922; }
+  /* autonomous driver panel */
+  .drv .section { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .drv-last { font-size:11px; text-transform:none; letter-spacing:0; color:var(--muted); }
+  .drv-last b { color:var(--text); }
+  .drv-cols { display:grid; grid-template-columns:1fr 1.3fr; gap:18px; margin-top:10px; }
+  @media (max-width:760px){ .drv-cols { grid-template-columns:1fr; } }
+  .drv-h3 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+    margin:0 0 6px; font-weight:600; }
+  .drv-ticks, .drv-stack { list-style:none; margin:0; padding:0; font-size:12px; }
+  .drv-ticks li, .drv-stack li { display:flex; align-items:center; gap:8px; padding:2px 0;
+    border-bottom:1px solid #21262d; }
+  .drv-ticks li:last-child, .drv-stack li:last-child { border-bottom:none; }
+  .drv-verb { font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+    padding:1px 6px; border-radius:5px; color:#fff; flex:0 0 auto; }
+  .drv-verb.fire { background:#3fb950; } .drv-verb.done { background:#238636; }
+  .drv-verb.noop { background:#30363d; color:var(--muted); }
+  .drv-verb.stall { background:#f85149; } .drv-verb.warn { background:#d29922; }
+  .drv-verb.ok { background:#238636; }
+  .drv-ts { color:var(--muted); font-variant-numeric:tabular-nums; flex:0 0 auto; font-size:11px; }
+  .drv-msg { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    flex:1 1 auto; min-width:0; }
+  .drv-ct { font-size:10px; font-weight:700; color:var(--text); background:#30363d;
+    padding:0 5px; border-radius:5px; flex:0 0 auto; }
+  .drv-since { color:var(--muted); font-size:10px; flex:0 0 auto; opacity:.8; }
+  .drv-idx { width:18px; height:18px; border-radius:5px; background:#21262d; color:var(--muted);
+    display:grid; place-items:center; font-size:10px; font-weight:700; flex:0 0 18px; }
+  .drv-prtitle { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .drv-base { color:var(--muted); font-size:10.5px; flex:0 0 auto; }
   .valtitle { display:block; margin-bottom:6px; color:var(--text); }
   .valblk { margin-bottom:8px; } .valblk:last-child { margin-bottom:0; }
   .valblk b { color:#f0883e; font-size:12px; }
@@ -917,10 +1159,12 @@ _PAGE = """<!doctype html>
 <style>{css}</style></head>
 <body><div class="wrap">
   <h1>PersonalClaw Roadmap</h1>
-  <div class="sub">Generated {stamp} · {plan_pct}% of plans done · {atom_pct}% of {atom_total} atoms done · derived from dag.json, ROADMAP.md, plan files &amp; live git/exec state</div>
+  <div class="sub">Generated {stamp} · {plan_pct}% of plans done ·
+    {atom_pct}% of {atom_total} atoms done · from dag.json + ROADMAP + live git/exec</div>
   {hero}
   {legend}
   {working}
+  {driver}
   {validation}
   {grid}
   {extras}
@@ -943,7 +1187,8 @@ def main() -> int:
     nxt = parse_next()
     dag = parse_atoms()
     exec_state = parse_exec_state()
-    html_out = render(plans, queue, git, nxt, dag, exec_state)
+    driver = parse_driver_state()
+    html_out = render(plans, queue, git, nxt, dag, exec_state, driver)
     OUT.write_text(html_out, encoding="utf-8")
 
     print(f"wrote {OUT}")
