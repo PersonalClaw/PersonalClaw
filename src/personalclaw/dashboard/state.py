@@ -757,7 +757,6 @@ class DashboardState:
         self.channel_delivery: Any = None
         self.owner_id = owner_id
         self._owner_hash: str | None = None
-        self.messages_received = 0
         # Per-resource SSE: one hub per goal loop (key ``loop:<id>``). The loop
         # watchdog publishes lifecycle events here; the per-loop /stream endpoint
         # serves them. Single source of truth on the state so producer (watchdog)
@@ -943,7 +942,6 @@ class DashboardState:
             "uptime": _fmt_duration(uptime),
             "start_time": self.start_time,
             "sessions": self.sessions.count,
-            "messages": self.messages_received,
             # The STORE's count (S107). This fed the SPA's "triggers" metric from the legacy
             # service, which the cutover left holding nothing.
             "cron_jobs": self.trigger_counts()["total"],

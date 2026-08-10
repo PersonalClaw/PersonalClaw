@@ -1,4 +1,12 @@
-"""Runtime statistics — thread-safe counters for messages, tools, sessions, subagents."""
+"""Runtime statistics — thread-safe counters for sessions, subagents, tokens and turns.
+
+Every counter here MUST have a writer on a real runtime path. A counter nothing increments
+reports a confident `0` forever, which reads as "this never happened" rather than "this is not
+measured" — the more misleading of the two failure modes, because it is indistinguishable from a
+genuinely quiet system. Seven such counters (messages_received/success/failed, tool_approvals/
+denials/auto_approved, timeouts) were removed rather than kept as aspirational fields; if the
+message and tool-approval paths later need counting, add the counter WITH its call site.
+"""
 
 import logging
 import threading
@@ -25,13 +33,6 @@ class Stats:
         self._mu = threading.Lock()
         self._start_time = time.monotonic()
         self._c: dict[str, int] = {
-            "messages_received": 0,
-            "messages_success": 0,
-            "messages_failed": 0,
-            "tool_approvals": 0,
-            "tool_denials": 0,
-            "tool_auto_approved": 0,
-            "timeouts": 0,
             "sessions_created": 0,
             "sessions_cleaned": 0,
             "subagents_spawned": 0,
@@ -52,24 +53,6 @@ class Stats:
         """Increment counter *key* by *n*."""
         with self._mu:
             self._c[key] = self._c.get(key, 0) + n
-
-    def inc_message_received(self) -> None:
-        self.inc("messages_received")
-
-    def inc_message_success(self) -> None:
-        self.inc("messages_success")
-
-    def inc_message_failed(self) -> None:
-        self.inc("messages_failed")
-
-    def inc_tool_approval(self) -> None:
-        self.inc("tool_approvals")
-
-    def inc_tool_denial(self) -> None:
-        self.inc("tool_denials")
-
-    def inc_tool_auto_approved(self) -> None:
-        self.inc("tool_auto_approved")
 
     def inc_input_tokens(self, n: int) -> None:
         self.inc("input_tokens", n)
@@ -96,9 +79,6 @@ class Stats:
     def get_cost_usd(self) -> float:
         with self._mu:
             return self._cost_usd
-
-    def inc_timeout(self) -> None:
-        self.inc("timeouts")
 
     def inc_session_created(self) -> None:
         self.inc("sessions_created")
@@ -136,45 +116,23 @@ class Stats:
             return dict(self._c)
 
     def summary(self) -> str:
-        """One-line summary for channel status replies."""
+        """One-line summary of the counters that are actually measured.
+
+        Reports only written counters. The previous version led with
+        ``msgs 0 (ok 0 / fail 0) · tools approved 0 denied 0 auto 0 · timeouts 0`` on every
+        install — six writerless counters presented as measurements, which made a busy gateway
+        look idle. ``daily_report()`` was worse and is gone: it derived a health verdict
+        (🟢 healthy / 🟡 degraded / 🔴 critical) from ``messages_success / messages_received``,
+        so it could only ever emit "🔇 no messages". It had no caller.
+        """
         s = self.snapshot()
         return (
             f"uptime {self.uptime_str()} · "
-            f"msgs {s['messages_received']} "
-            f"(ok {s['messages_success']} / fail {s['messages_failed']}) · "
-            f"tools approved {s['tool_approvals']} denied {s['tool_denials']} "
-            f"auto {s['tool_auto_approved']} · "
-            f"timeouts {s['timeouts']} · "
             f"sessions {s['sessions_created']}/{s['sessions_cleaned']} · "
-            f"subagents {s['subagents_spawned']}"
-        )
-
-    def daily_report(self) -> str:
-        """Multi-line report suitable for a daily digest."""
-        s = self.snapshot()
-        total = s["messages_received"]
-        if total == 0:
-            health = "🔇 no messages"
-        else:
-            rate = s["messages_success"] / total * 100
-            if rate >= 90:
-                health = f"🟢 healthy ({rate:.0f}%)"
-            elif rate >= 70:
-                health = f"🟡 degraded ({rate:.0f}%)"
-            else:
-                health = f"🔴 critical ({rate:.0f}%)"
-        return (
-            f"📊 *PersonalClaw Daily Report*\n"
-            f"Health: {health}\n"
-            f"Uptime: {self.uptime_str()}\n"
-            f"Messages: {s['messages_received']} received, "
-            f"{s['messages_success']} ok, {s['messages_failed']} failed\n"
-            f"Tools: {s['tool_approvals']} approved, {s['tool_denials']} denied, "
-            f"{s['tool_auto_approved']} auto-approved\n"
-            f"Timeouts: {s['timeouts']}\n"
-            f"Sessions: {s['sessions_created']} created, {s['sessions_cleaned']} cleaned\n"
-            f"Subagents: {s['subagents_spawned']} spawned, "
-            f"{s['subagents_completed']} completed, {s['subagents_failed']} failed"
+            f"subagents {s['subagents_spawned']} spawned, "
+            f"{s['subagents_completed']} completed, {s['subagents_failed']} failed · "
+            f"turns {s['total_turns']} · "
+            f"tokens {s['input_tokens']} in / {s['output_tokens']} out"
         )
 
     def reset(self) -> None:
