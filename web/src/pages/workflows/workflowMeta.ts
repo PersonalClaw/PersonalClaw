@@ -14,7 +14,12 @@ const RUN_LOOK: Record<WorkflowRunStatus, StatusLook> = {
   // needs_input is the only status a user can ACT on, so it is the only one that gets a
   // warning tone in the list — everything else is informational.
   needs_input: { label: 'Needs you', icon: TriangleAlert, tone: 'text-warning' },
-  complete: { label: 'Complete', icon: CircleCheck, tone: 'text-success' },
+  // "Completed", not "Complete" — the past-tense form the other two status registries already use
+  // for this exact wire value (`loopStatusMeta.complete` and `taskMeta`'s terminal `done`). A run
+  // that has finished is being DESCRIBED, and "Complete" reads as an adjective (or worse, as the
+  // imperative verb TasksListPage uses for its "Complete this task" action), so the same backend
+  // `"complete"` was narrated three different ways across three surfaces a user moves between.
+  complete: { label: 'Completed', icon: CircleCheck, tone: 'text-success' },
   failed: { label: 'Failed', icon: OctagonAlert, tone: 'text-danger' },
   cancelled: { label: 'Cancelled', icon: CircleSlash, tone: 'text-on-surface-low' },
   escalated: { label: 'Escalated', icon: TriangleAlert, tone: 'text-danger' },
