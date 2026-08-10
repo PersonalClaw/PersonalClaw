@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2KNO-7` | ⬜ | render_report action provider (deferred/optional last slice) | `WF2KNO-2` | render_report ships in apps/native/knowledge-actions/ providers[] and ALLOWED_HOOK_PROVIDERS; declarative spec (markdown/table-ops/Mermaid xychart) → sanitized self-contained HTML/SVG; spec text stored as the versioned record in artifacts/registry with rendered output as a derived export; periodic synthesizer regenerates visuals from updated data |
 | `WF2KNO-8` | ⬜ | Route gap-healing drafts to the LEARNING-FLYWHEEL proposal queue | `WF2KNO-4`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:extend proposal-queue Kind enum with a knowledge-draft kind` | gap-healing / schema-edit drafts enqueue via learning.proposals.enqueue under a knowledge-draft Kind; the session-37 workaround (persisting a TTL'd probe tagged 'proposal') is removed — blocked because learning.proposals.Kind is a closed 6-value enum with no knowledge-draft kind |
 | `WF2KNO-9` | ⬜ | Provider-blocked template slate: market-monitor, trending-repo-digest, dual-sink watcher, paper-ingest | `WF2KNO-6`, `EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:dispatchable net.fetch action provider (HTTP egress chokepoint)` | the four monitor/ingest templates ship and dispatch a real HTTP-egress action node at run time without ALLOWED_HOOK_PROVIDERS/run-time failure — blocked because net.fetch is a library egress function, not a dispatchable action provider |
-| `WF2KNO-10` | ⬜ | Wire the model-tier (fast-model) contradiction pass to a live model via a stage node | `WF2KNO-5` | the built-and-tested fast-model conflict pass runs against a live model through a stage node (not inside the action provider, per the action/stage split), and background typed-edge inference beyond `contradicts` is wired; observed end-to-end |
+| `WF2KNO-10` | ✅ | Wire the model-tier (fast-model) contradiction pass to a live model via a stage node | `WF2KNO-5` | the built-and-tested fast-model conflict pass runs against a live model through a stage node (not inside the action provider, per the action/stage split), and background typed-edge inference beyond `contradicts` is wired; observed end-to-end |
 
 ## Atom scopes
 
@@ -97,7 +97,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `WF2KNO-10` — Wire the model-tier (fast-model) contradiction pass to a live model via a stage node
 
-**Status:** todo
+**Status:** done
 
 §3.2 Contradiction check on persist (fast-model conflict pass + background typed-edge inference); Session 5 residual (the plan header's sole named residual)
 

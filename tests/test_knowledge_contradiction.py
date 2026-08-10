@@ -784,3 +784,42 @@ def test_no_module_composes_the_knowledge_path_itself():
         and path.name != "store.py"
     ]
     assert offenders == [], f"these compose the knowledge path directly: {offenders}"
+
+
+# ── typed edges beyond `contradicts` (WF2KNO-10 half 2) ──
+#
+# RELATION_VERBS has five entries; only `contradicts` was ever written. That threw away a
+# distinction the conflict already carried: `prefer` names the side the source-precedence
+# ladder favours, so a conflict whose INCOMING side wins is the new claim *superseding* the
+# old one — which a graph query for "what replaced this?" cannot recover from `contradicts`.
+
+
+def test_a_preferred_incoming_claim_supersedes_rather_than_contradicts():
+    from personalclaw.action_providers.knowledge_persist_provider import _relation_for
+
+    # `left` is the incoming side throughout the conflict tier.
+    assert _relation_for({"prefer": "left"}) == "supersedes"
+
+
+def test_a_preferred_STORED_claim_stays_a_contradiction():
+    """The older side winning does NOT mean the new claim supersedes it — the reverse edge is
+    not ours to assert from the incoming item's row."""
+    from personalclaw.action_providers.knowledge_persist_provider import _relation_for
+
+    assert _relation_for({"prefer": "right"}) == "contradicts"
+
+
+def test_an_undecided_ladder_stays_a_contradiction():
+    """Two same-tier sources: "" is the honest answer, and inventing supersession there would
+    manufacture authority out of arrival order."""
+    from personalclaw.action_providers.knowledge_persist_provider import _relation_for
+
+    assert _relation_for({"prefer": ""}) == "contradicts"
+    assert _relation_for({}) == "contradicts"
+
+
+def test_supersedes_is_in_the_edge_vocabulary():
+    """A verb outside RELATION_VERBS makes Edge.valid False and the edge is silently dropped."""
+    from personalclaw.knowledge.contradiction import RELATION_VERBS
+
+    assert "supersedes" in RELATION_VERBS

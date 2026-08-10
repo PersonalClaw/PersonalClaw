@@ -541,7 +541,7 @@
         {
           "id": "WF2KNO-10",
           "title": "Wire the model-tier (fast-model) contradiction pass to a live model via a stage node",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.2 Contradiction check on persist (fast-model conflict pass + background typed-edge inference); Session 5 residual (the plan header's sole named residual)",
           "done_when": "the built-and-tested fast-model conflict pass runs against a live model through a stage node (not inside the action provider, per the action/stage split), and background typed-edge inference beyond `contradicts` is wired; observed end-to-end",
           "deps": [
@@ -7411,11 +7411,6 @@
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
-      },
-      {
-        "id": "WF2KNO-10",
-        "title": "Wire the model-tier (fast-model) contradiction pass to a live model via a stage node",
-        "plan": "WF2KNO"
       },
       {
         "id": "WF2KNO-7",
