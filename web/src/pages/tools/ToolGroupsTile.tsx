@@ -84,8 +84,12 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
               title={`${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}: ${g.tools.slice(0, 8).join(', ')}${g.tools.length > 8 ? '…' : ''}${g.alwaysOn ? '\nAlways loaded — these are the primitives an agent cannot work without.' : ''}`}
               className={`inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem] ${g.alwaysOn ? 'bg-primary/12 text-primary' : 'bg-surface-high text-on-surface-low'}`}>
               {g.display}
-              <span className="tabular-nums opacity-70">{g.toolCount}</span>
-              {g.alwaysOn && <span className="opacity-70">always</span>}
+              {/* No `opacity-*` on the count: the chip's own colour is ALREADY the dimmed token
+                  (`text-on-surface-low` / `text-primary`), so dimming again halves an intentional
+                  value — measured 3.62:1, under the 4.5:1 AA floor. Without it: 5.93:1. The
+                  canonical count chip (LoopsListPage) has never carried opacity. */}
+              <span className="tabular-nums">{g.toolCount}</span>
+              {g.alwaysOn && <span>always</span>}
             </span>
           ))}
         </div>

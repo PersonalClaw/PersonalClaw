@@ -126,7 +126,7 @@ function SourceDivider({ label, count }: { label: string; count: number }) {
   return (
     <div className="mb-2 flex items-center gap-2">
       <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
-      <span className="text-on-surface-low text-[0.75rem] tabular-nums opacity-70">{count}</span>
+      <span className="text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>
       <span className="ml-1 h-px flex-1 bg-outline-variant/30" />
     </div>
   )
