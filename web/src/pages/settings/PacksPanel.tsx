@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type InstalledPackRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, Row, Field, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Row, Field, SavedToast, ToggleRow } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -108,22 +108,6 @@ function PackRow({ pack }: { pack: InstalledPackRec }) {
 }
 
 // ── field renderers ─────────────────────────────────────────────────────────
-function ToggleRow({ label, hint, cfg, field, patch }: {
-  label: string; hint?: string; cfg: PacksCfg; field: string
-  patch: (k: string, v: unknown, cb?: () => void) => void
-}) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
-  const on = Boolean(cfg[field])
-  return (
-    <Row label={label} hint={hint}>
-      <div className="flex items-center gap-2">
-        <SavedToast show={saved} />
-        <Toggle on={on} onChange={(v) => patch(field, v, flash)} label={label} />
-      </div>
-    </Row>
-  )
-}
 
 function TextRow({ label, hint, cfg, field, patch, placeholder }: {
   label: string; hint?: string; cfg: PacksCfg; field: string; placeholder?: string
