@@ -15,7 +15,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
-import { KnowledgeDetail } from './KnowledgeDetail'
+import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -725,16 +725,6 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
 }
 
 /** Render one outcome's typed fields type-aware (number/date/url/boolean/tags/string). */
-function OutcomeFieldValue({ field }: { field: { type: string; value: unknown } }) {
-  const { type, value } = field
-  if (value === null || value === undefined || value === '') return <span className="text-on-surface-low">—</span>
-  if (type === 'boolean') return <span className="text-on-surface">{value ? 'Yes' : 'No'}</span>
-  if (type === 'number') return <span className="text-on-surface tabular-nums">{String(value)}</span>
-  if (type === 'url') return <a href={String(value)} target="_blank" rel="noreferrer" className="text-primary underline decoration-primary/40 break-all">{String(value)}</a>
-  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{String(t)}</span>)}</span>
-  return <span className="text-on-surface break-words">{String(value)}</span>
-}
-
 function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: string) => void }) {
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-container p-m flex flex-col gap-s">
