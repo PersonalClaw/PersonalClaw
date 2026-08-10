@@ -83,7 +83,40 @@ function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
   )
 }
 
-function PackRow({ pack }: { pack: InstalledPackRec }) {
+/** One resolved connector, as the ledger recorded it.
+ *
+ *  `mode` is `configure` | `substitute` | `skip`, and each mode means something different to a
+ *  user reading "did my pack actually work": configure wrote an mcp.json server, substitute bound
+ *  a different one, skip left a `connector_missing:<name>` marker. The row said only "Unavailable:
+ *  <markers>", which reports the skips and stays silent about everything that succeeded — so a
+ *  pack with three configured connectors and no skips looked identical to one with none at all. */
+function ConnectorLine({ c }: { c: InstalledPackRec['connectors'][number] }) {
+  const skipped = c.mode === 'skip'
+  return (
+    <div className="flex items-baseline gap-m text-[0.75rem]">
+      <span className={`shrink-0 ${skipped ? 'text-warn' : 'text-on-surface-var'}`}>{c.name}</span>
+      <div className="min-w-0 flex-1 text-on-surface-low">
+        {c.mode}
+        {/* Which mcp.json key was written (configure) or which substitute was bound. Empty on
+            skip, where the marker below carries the story instead. */}
+        {c.server_name && <span> → {c.server_name}</span>}
+        {/* `error` is set only when a configure/substitute DEGRADED to skip — the difference
+            between "the pack didn't ask for this" and "it asked and something went wrong". */}
+        {c.error && <span className="text-warn"> · {c.error}</span>}
+        {/* The audit fact the backend describes as "proving a credential reached the store, not
+            the pack" — names only, never values (the schema bans value-bearing auth fields). */}
+        {!!c.credentials_saved?.length && (
+          <span> · saved {c.credentials_saved.join(', ')}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Exported for test: the gate and the per-mode connector rendering are only observable by
+ *  rendering the row against a stubbed ledger record — jsdom reports every box as 0, so nothing
+ *  about them is measurable from layout. */
+export function PackRow({ pack }: { pack: InstalledPackRec }) {
   const [busy, setBusy] = useState(false)
   const finishSetup = () => {
     setBusy(true)
@@ -95,6 +128,15 @@ function PackRow({ pack }: { pack: InstalledPackRec }) {
       notify(`Couldn't start setup: ${String((e as Error)?.message || e)}`, 'error')
     }).finally(() => setBusy(false))
   }
+  // What the pack actually put on this machine ("skill:cfo-report", "trigger:month-end", …).
+  // The ledger exists to answer that without re-deriving it, and the row never showed it: an
+  // installed pack was a name and a version, with no way to see what it brought.
+  const components = pack.components ?? []
+  const connectors = pack.connectors ?? []
+  // The backend writes "%Y-%m-%dT%H:%M:%SZ". A malformed or empty value renders nothing rather
+  // than "Invalid Date" — a ledger row predating the field is a real case, not an error to show.
+  const parsed = pack.installed_at ? new Date(pack.installed_at) : null
+  const installedOn = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleDateString() : ''
   return (
     <div className="rounded-lg bg-surface-container px-4 py-3">
       <Row label={`${pack.name} ${pack.version}`.trim()}
@@ -103,6 +145,35 @@ function PackRow({ pack }: { pack: InstalledPackRec }) {
           <Button variant="primary" size="sm" disabled={busy} onClick={finishSetup}>Finish setup</Button>
         )}
       </Row>
+      {/* Every fact this block can show joins its gate. Gating on components/connectors alone
+          would hide a pack that has only a setup id and an install date — the same
+          activity-vs-existence mistake the MCP pool tile made. */}
+      {(components.length > 0 || connectors.length > 0 || installedOn || (pack.setup_skill && !pack.setup_pending)) && (
+        <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+          {components.length > 0 && (
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[0.75rem]">
+              <span className="text-on-surface-low">Installed</span>
+              {components.map((c) => (
+                <span key={c} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{c}</span>
+              ))}
+            </div>
+          )}
+          {connectors.map((c) => <ConnectorLine key={c.name} c={c} />)}
+          {/* `setup_skill` is the committed skill id behind the chip above. Shown only when the
+              chip is NOT — a pending pack already has the affordance, so naming the id there
+              would be redundant; a pack whose setup is done keeps a record of what ran. */}
+          {pack.setup_skill && !pack.setup_pending && (
+            <div className="text-on-surface-low text-[0.75rem]">Setup skill: {pack.setup_skill}</div>
+          )}
+          {/* When it landed. Unlike a report's `generated_at`, this is a durable record of a PAST
+              event that nothing else on screen can re-derive — "has this pack been here since
+              before the thing broke?" has no other answer. Formatted with `toLocaleDateString`
+              rather than a new shared helper: one call site does not justify a date primitive. */}
+          {installedOn && (
+            <div className="text-on-surface-low text-[0.75rem]">Installed {installedOn}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
