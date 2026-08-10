@@ -197,7 +197,7 @@ and not verified by us. Details and the `[models]`-extra per-arch reality:
 | macOS Apple silicon | first-class | `CI:full/matrix (macos-14)` |
 | macOS Intel | best-effort | `community` |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` — [Platforms](docs/guides/platforms.md) |
-| Windows via Docker Desktop | unverified | no guide yet — see [Platforms](docs/guides/platforms.md) |
+| Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` — [Platforms](docs/guides/platforms.md) |
 | Windows native | not supported | — |
 
 ## <a name="privacy"></a>Privacy
