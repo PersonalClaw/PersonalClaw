@@ -12,13 +12,17 @@ The original design record is kept below — execution logs, measured findings a
 **Status:** IN PROGRESS — sessions 46-54 shipped the DECISION LAYERS (PRs #185-#193; the code is on
 `main` inside squashes): `containers`, `publish`, `batch_compile`, `workspace`, `worktrees`,
 `needs_input`, `introspection`, `project_export`.
-🔴 **BUT THE CALL SITES AND THE ENTIRE FE ARE MISSING** (AST audit 2026-08-04):
-`workflows/{worktrees,introspection,project_export,batch_compile}.py` have **zero production
-importers**; `containers`' board projection (`collect_sections`/`group_board`/`board_row`/
-`sweep_decision`/`attention_count`/`board_state_for`) has no caller; there is no
-`GET /api/projects/{id}/work` route and no React work board; `compile_batch` is never called from
-`mcp_subagents`. Provisioning I/O, setup/teardown execution and archive I/O are all
-decided-but-never-performed. Criteria 1/6/7/8/9 are structurally unmet. Status corrected 2026-08-04.
+🔴 **MOST CALL SITES AND MOST OF THE FE ARE STILL MISSING** (AST audit 2026-08-04, partially
+superseded — see the Execution log, which wins): `workflows/{introspection,project_export,
+batch_compile}.py` have **zero production importers**; `containers`' board projection
+(`collect_sections`/`group_board`/`board_row`/`attention_count`/`board_state_for`) has no caller;
+there is no `GET /api/projects/{id}/work` route and no React work board; `compile_batch` is never
+called from `mcp_subagents`; archive I/O is decided-but-never-performed. Criteria 1/6/8/9 are
+structurally unmet. **Criterion 7 is MET as of 2026-08-10 (WF2WOR-4):** `workspace`/`worktrees` now
+have production callers via `workflows/provisioning.py` + `controller._provision_workspace`,
+provisioning and setup/teardown I/O are performed, `sweep_decision`'s substrate now comes from
+`worktrees.substrate_for`, and the code-run cockpit's diff panel + reintegration offer ship.
+Status corrected 2026-08-04; criterion-7 half corrected 2026-08-10.
 (rev 2 — research-integrated 2026-07-12)
 
 ---
@@ -1179,3 +1183,137 @@ plan's reality note was verified rather than trusted.
   C1.1-C1.5 defect fixes, and the tool-handler posture seam — `unenforced()` still names the three
   posture items with no seam (tool denials/read-only, `workspace_mode`, per-node `timeout_secs`), and
   they are unchanged by this atom.
+
+---
+
+- **2026-08-10 — DONE — WF2WOR-4 (§4.1, criterion 7): the workspace block is now REAL, and both
+  decision layers have production callers.** Branch `feature-wf2wor4-workspace-wiring`.
+  `workflows/workspace.py` (S49) and `workflows/worktrees.py` (S52) shipped 1,096 lines of
+  well-tested decision logic with **zero importers in `src/`** — no spec key `"workspace"` was read
+  anywhere, so a template declaring `mode: worktree` ran in place exactly like one declaring
+  nothing. This atom ships `workflows/provisioning.py` as the performer and
+  `controller._provision_workspace` (called from `_prepare`, modelled on `_enforce_inherited_mode`)
+  as its caller, plus the two config knobs, the teardown wiring at both deletion paths, the
+  watchdog tightening, and the cockpit surface. 68 new tests (40 provisioning + 9 controller + 5
+  API + 1 worktrees regression + 6 vitest + config round-trip); `make lint` clean (black/isort/
+  flake8/mypy, 778 files); 898 vitest green including the global design ratchets.
+
+- **DECISION — a spec with NO `workspace:` block provisions NOTHING, and this was forced by a
+  measurement.** The first cut applied `workflows.workspace_default_mode` to every run, which is
+  the literal reading of "the mode a run gets when its spec declares none". That broke
+  `test_an_adopted_run_resumes_without_re_running_finished_work`: a scratch dir on every run made
+  every stale `RUNNING` run look like an ISOLATED substrate to S46's boot sweep, so a
+  crash-survivor whose journal-backed work is perfectly resumable became SUSPENDED awaiting a
+  manual Resume instead of being adopted. The sweep's own DEVIATION note says inline runs stay
+  owned by adoption; a default-on workspace silently took every run out of that path. So the
+  default fills in an UNDECLARED MODE inside a block that declared its other fields
+  (`{preserve_patterns: [...], setup: "npm ci"}`), and `declares_workspace()` is the opt-in gate.
+  §4.1's own framing is that the workspace is a declaration rather than a convention — the
+  measurement just made the cost of ignoring that visible.
+
+- **DISCOVERY (measured, changed the design) — `git add -A` committed the preserved `.env` and the
+  engine's own setup markers into the run branch.** Driving a real repo showed the durable-branch
+  commit (§4.1's "the run record references git, not a filesystem") carrying `TOKEN=local-secret`
+  and `.pclaw-setup/*.done` into git history — and both reintegration verbs would then offer to
+  apply the user's own credentials back over their tree. S52 fixed the *review* half of this
+  (`is_infrastructure` excludes machinery from the diff panel), but a review filter cannot
+  un-commit a secret: the exclusion has to run at the ADD. `_commit_outstanding` passes git
+  pathspecs (`:(exclude).pclaw-setup`, `:(exclude).pclaw-setup/**`, plus one per preserved file)
+  and the test asserts against `git ls-tree` on the real branch, not against our own bookkeeping.
+
+- **DISCOVERY (pre-existing in S52, root-caused and fixed) — `inspect_worktree("")` reported
+  ALIVE.** `Path("")` is `.`, whose `is_dir()` is True, so an unprovisioned run would have named
+  the GATEWAY's own working directory as its live workspace — and the boot sweep would then read
+  that as a survived substrate and SUSPEND a run with nothing to resume into. No test caught it
+  because nothing in `src/` called the function at all: the empty-path case only exists once there
+  is a production caller. Fixed at the source with a regression test in
+  `test_workflows_worktrees.py` (the module that owns the defect), not worked around here.
+
+- **DECISION — the PID lock is BOTH flock and a pid line, because each covers the other's blind
+  spot.** `fcntl.flock(LOCK_NB)` is the authority (the OS releases it on death — the property
+  `concurrency.py` chose it for, so a crashed gateway can never wedge a workspace). The recorded
+  pid is the EXPLANATION: flock says only "someone holds it", and a refusal that cannot name the
+  holder is one a user cannot act on. Measured asymmetry in the probe: `EPERM` counts as ALIVE,
+  because a process we may not signal is still a process and reading it as dead would let us steal
+  a live workspace. When flock refuses but the recorded pid is gone we still REFUSE — fail-closed,
+  since flock's death-release means a refusal implies a live holder that simply had not recorded
+  its pid yet, and two runs writing one worktree is the corruption the lock exists to prevent.
+  Fail-FAST rather than queue: waiting behind a run that may take an hour is worse than saying so.
+
+- **DECISION — the lock covers the PROVISIONING WINDOW, not the run.** Holding a flock across a
+  multi-hour run would tie the workspace to this process's lifetime, so a gateway restart would
+  strand it. What actually needs mutual exclusion is the preserve+setup pass, where two processes
+  writing one tree corrupt each other; the run itself is protected by the per-run path (or, for a
+  named workspace, by the next provisioning attempt refusing).
+
+- **DECISION — a declared mode that cannot be honored DEGRADES with the reason recorded; only a
+  FATAL declaration refuses.** No git on PATH, a non-repo workspace, an unborn HEAD, `container`
+  mode: each returns an isolated scratch dir plus a `degraded_reason`, and `isolated` is reported
+  FALSE so the board never offers a Resume into isolation we do not have. A user who declared
+  `worktree` wanted isolation, and the isolation is deliverable without git — refusing would trade
+  the property they asked for against the mechanism they did not. The hard refusals are exactly
+  `parse_workspace`'s fatal issues (unknown mode, greedy preserve pattern), because honoring those
+  is impossible and running anyway is the ignored-fatal-issue shape.
+
+- **DECISION — both deletion paths go through ONE performer, and both became async.**
+  `service.teardown_workspace` is called by `service.delete_run` and by `watchdog.prune_runs`. Two
+  call sites each doing the ordering would eventually disagree, and the ORDER is the contract: a
+  scratch workspace lives UNDER the run dir, so an `rmtree` first would run `docker compose down`
+  against a path that no longer holds the compose file. Retention was wired deliberately, not just
+  the explicit delete — retention is the path that fires with nobody watching, so it is the one
+  where a leak accumulates silently. `delete_run`/`prune_runs` are now `async` (their only
+  production callers already were); the affected existing tests were realigned to `await`, not
+  weakened.
+
+- **DECISION — both config knobs have a REAL reader, named in a test.**
+  `workspace_default_mode` is read by `provisioning.resolve_spec` (driven for all four enum
+  values); `workspace_teardown_on_expiry` is read by `service.teardown_workspace` and its OFF path
+  is driven end-to-end (the command is skipped, the removal still happens — otherwise the directory
+  would be orphaned). An unparseable stored mode loads as `scratch`, never as the declared value
+  and never as `in_place`: S49's ruling is that `in_place` is never a default, and a config typo
+  must not be what puts a destructive step against the user's real tree. All four points wired,
+  plus `config-baseline.json` regenerated in the same commit and a `_SPECIAL` entry for the
+  enum-constrained field.
+
+- **DECISION — `worktree_path` is written for EVERY isolated mode, not just `worktree`.** It had a
+  live reader (`watchdog._substrate_for`, whose own comment named this atom) and zero writers — the
+  live-reader-of-an-unwritten-key shape. A scratch workspace that survived a restart is just as
+  recoverable as a git one, so keying the sweep's decision on the mode name would abort recoverable
+  work for the commoner mode. It is also CLEARED when a run degrades out of isolation, or the sweep
+  would read a stale path as a live substrate.
+
+- **DECISION — reintegration stays OFFERED, and the absence of a POST is asserted structurally.**
+  Two measurements settle why: `git checkout <branch>` REFUSES a branch a live worktree holds
+  (fatal 128), and `git merge --squash` refuses when an untracked file would be overwritten — so
+  the safe order depends on state the gateway does not own. The panel renders each verb as the
+  COMMAND it corresponds to, and two tests fail if a performing route or client method is ever
+  added. Conflicts are probed with `merge-tree --write-tree`, which reports without touching either
+  tree (measured: exit 1 plus the conflicted paths); a real merge-and-abort would leave the user's
+  index dirty for the duration of a READ.
+
+- **DEVIATION — the task→run branch rename uses `-M`, not `-m`.** `add_worktree` names the branch
+  `pclaw/task-<id>` and a RUN's branch is `pclaw/run-<id>` (S52's `run_branch`). Measured: `git
+  branch -m` on a branch checked out in a LIVE worktree succeeds and the worktree follows it, which
+  makes the rename free — but `-m` onto an EXISTING name fails with fatal 128, and a retried run
+  finds its own previous run-branch already there, which would leave the run on a task-shaped
+  branch. A failed rename keeps the worktree and reports the branch we actually have, because a
+  wrong branch name on the record would send both verbs at a ref that does not exist.
+
+- **DEVIATION — §4.2 folder contracts got no new wiring in this atom.** The atom's scope line names
+  §4.2, but `parse_folder_contract`/`may_write`/`validate_frontmatter` are consumed by the FILE-WRITE
+  path (an agent writing into a project directory), not by the run-start workspace path, and no
+  file-write call site in this atom's blast radius reads a `.folder.yaml`. Wiring them here would
+  mean inventing a caller in the provisioning module that provisioning does not need — the
+  inert-control shape in reverse. The `SETUP_MARKER_DIR` half of §4.2's contract vocabulary IS live
+  (shared between the two modules and honored by the performer).
+
+- **NOT DONE:** container mode (§4.4) remains owner-deferred to **WF2WOR-12** and degrades to an
+  isolated scratch dir with the reason recorded rather than refusing a template that declares it —
+  the config enum accepts the word because `workspace.Mode` contains it, and accepting the word
+  never promises a runtime. Reuse-with-safe-ff-only-refresh for named workspaces is unbuilt: the
+  lock keys on the NAME and `cleanup_markers` exists for the reuse case, but the ff-only refresh
+  itself has no caller and no named-workspace consumer exists yet. §4.3's per-project keychain
+  namespace is untouched (`spawn_env`/`presence_flags` remain S49-only; the run record serializes
+  env PRESENCE through `WorkspaceSpec.to_dict`, which is the surface half of it). The
+  run-owned-resource cleanup for browser pages/terminals (§4.1's "spawned_by: run_id") is not
+  part of this atom's criterion and stays unbuilt.

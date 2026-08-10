@@ -666,6 +666,37 @@ export interface NodeInspect {
   ledger_events: Array<Record<string, unknown>>
   cached: boolean
 }
+// The code-run workspace review (WORK-CONTAINERS §4.1) — the cockpit's diff panel and the two
+// reintegration verbs. `changed` EXCLUDES the engine's own machinery (setup markers, files the
+// preserve pass copied in), because a review panel listing them is one the user learns to skim
+// with the file that mattered in the same list.
+//
+// Both verbs are OFFERS, never actions: `safe` says whether picking one would conflict, and the
+// gateway deliberately has no endpoint that performs them — reviewing before it lands is why the
+// run was isolated. `preserved_workspace_path` is non-empty only when the workspace is alive AND
+// dirty; a path to a clean directory is a false lead.
+export interface WorkflowDiffEntry { path: string; status: string; staged: boolean }
+export interface WorkflowReintegrationVerb {
+  verb: 'apply_locally' | 'checkout_branch'; label: string; detail: string; safe: boolean
+}
+export interface WorkflowWorkspaceReview {
+  run_id: string
+  workspace: {
+    run_id: string; path: string; branch: string; alive: boolean; dirty: boolean
+    changed: WorkflowDiffEntry[]
+    preserved_workspace_path: string
+  }
+  reintegration: {
+    run_id: string; branch: string; changed_files: number; conflicts: string[]
+    verbs: WorkflowReintegrationVerb[]
+    note: string
+  }
+  declared: {
+    mode?: string; isolated?: boolean; name?: string; degraded_reason?: string
+    setup?: { ran: string[]; skipped: string[]; failed: string[]; blocked_run: boolean }
+    issues?: Array<{ code: string; message: string; fatal: boolean }>
+  }
+}
 export interface WorkflowManifest {
   spec_semver: string
   node_kinds: Array<{ kind: string; container: boolean; lane: string }>
@@ -3091,6 +3122,12 @@ export const api = {
       `/api/workflows/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/inspect`),
   workflowContinuations: (id: string) =>
     get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
+  /** The run's workspace review: changed files + the two reintegration verbs (§4.1). A GET
+   *  because reintegration is OFFERED, never performed — there is no companion POST, and that
+   *  is the plan's ruling rather than a gap. 404s for an unknown run; a run with no managed
+   *  workspace answers with an empty `workspace`, which the panel renders as "no diff". */
+  workflowRunWorkspace: (id: string) =>
+    get<WorkflowWorkspaceReview>(`/api/workflows/runs/${encodeURIComponent(id)}/workspace`),
   // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees
   // before accepting an edit that would re-run completed work.
   editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>

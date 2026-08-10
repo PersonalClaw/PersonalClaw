@@ -83,6 +83,9 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # it by cancelling first, which a 400 ("you sent nonsense") would not suggest.
     "WF_RUN_NOT_TERMINAL": (409, "not_terminal"),
     "WF_RUN_DELETE_REFUSED": (400, "delete_refused"),
+    # 500: the run and its recorded workspace both exist, so an unreadable one is OUR fault (a
+    # git call that failed, a permission problem) — not a bad request the client can fix.
+    "WF_WORKSPACE_UNREADABLE": (500, "workspace_unreadable"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -314,18 +317,39 @@ async def api_run_status(request: web.Request) -> web.Response:
 
 
 async def api_run_delete(request: web.Request) -> web.Response:
-    """Delete a terminal run and its artifacts.
+    """Delete a terminal run and its artifacts, tearing its workspace down first.
 
     SEL-audited like the other mutations: a delete is the one workflow action with no undo, so
     an audit trail is what makes "where did that run go?" answerable.
+
+    `keep_open=true` keeps the workspace directory when the workspace IS the deliverable (§4.1).
+    A query flag rather than a second route: it is one deletion with two dispositions for the
+    workspace, and a second route would be a second place to keep the ordering rule right.
     """
     denied = _guard(request, "workflow_run_delete")
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    result = service.delete_run(run_id, supervisor=_supervisor(request))
+    keep_open = str(request.query.get("keep_open", "")).lower() in ("1", "true", "yes")
+    result = await service.delete_run(run_id, supervisor=_supervisor(request), keep_open=keep_open)
     _audit(request, "workflow_run_delete", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)
+
+
+async def api_run_workspace(request: web.Request) -> web.Response:
+    """GET the run's workspace review: changed files + the two reintegration verbs (§4.1).
+
+    A READ, deliberately — reintegration is offered, never performed. There is no POST companion
+    here: `Apply Locally` and `Checkout Branch` are commands the USER runs in their own shell
+    (the offer carries the branch name), so the gateway never merges into the user's working tree
+    on their behalf. That is the plan's ruling, not a limitation — "apply this" that silently
+    stomps an unrelated local edit is exactly what isolating the run was for.
+
+    Not `_guard`ed: a read is not a mutation, matching `api_run_status` and `api_run_output`. The
+    payload carries no secrets — `WorkspaceSpec.to_dict` serializes env PRESENCE only, and the
+    changed-file list is paths.
+    """
+    return _reply(service.workspace_review(request.match_info.get("run_id", "")))
 
 
 async def api_run_output(request: web.Request) -> web.Response:
@@ -674,6 +698,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_delete("/api/workflows/runs/{run_id}", api_run_delete)
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)
     app.router.add_get("/api/workflows/runs/{run_id}/continuations", api_run_continuations)
+    app.router.add_get("/api/workflows/runs/{run_id}/workspace", api_run_workspace)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)

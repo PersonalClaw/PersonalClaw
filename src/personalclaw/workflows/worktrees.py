@@ -463,7 +463,12 @@ def inspect_worktree(
     skims, with the file that mattered in the same list.
     """
     root = Path(path)
-    alive = root.is_dir()
+    # An EMPTY path is not a worktree. `Path("")` is `.`, whose `is_dir()` is True — so without
+    # this an unprovisioned run would report the gateway's own working directory as its live
+    # workspace, and the boot sweep would then read it as a survived substrate and SUSPEND a run
+    # that has nothing to resume into. Found by WF2WOR-4's first production caller; no test passed
+    # an empty path before, because nothing called this with one.
+    alive = bool(str(path).strip()) and root.is_dir()
     changed = (
         [c for c in parse_status(porcelain) if not is_infrastructure(c.path, preserved)]
         if alive

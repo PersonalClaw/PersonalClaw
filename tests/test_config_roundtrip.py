@@ -119,6 +119,11 @@ _SPECIAL = {
     # workflows.match_threshold is a cosine floor clamped to [0,1] by load() — the generic rule's
     # 0.62 + 1.5 = 2.12 would (correctly) come back clamped, so supply an in-range non-default.
     ("workflows", "match_threshold"): 0.75,
+    # workspace_default_mode is enum-constrained (scratch|worktree|in_place|container) — a
+    # generated "scratch-x" would (correctly) fall back to `scratch`. `worktree` is the real
+    # non-default that proves the field round-trips; `in_place` deliberately is NOT used here,
+    # since a test fixture should not be the thing that models "isolation off" as normal.
+    ("workflows", "workspace_default_mode"): "worktree",
     ("tools", "projection_rules"): [
         ProjectionRuleConfig(name="t", match_regex="^x", strategy="log")
     ],

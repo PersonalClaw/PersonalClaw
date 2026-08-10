@@ -1299,3 +1299,153 @@ class TestProjectOverviewOnComplete:
         assert await c.run_to_completion(timeout=25) == RunStatus.FAILED
         # Only COMPLETE revises the overview; a FAILED run leaves it empty.
         assert project_context.read_overview(project.id) == ""
+
+
+class TestWorkspaceProvisioningAtRunStart:
+    """The §4.1 run-start hook (WF2WOR-4). `_prepare` is where a spec's `workspace:` block stops
+    being a declaration nobody reads and becomes the directory the run's stages work in.
+
+    The load-bearing properties, each of which fails silently without a test:
+
+    * a FATAL declaration REFUSES the run rather than running in an unchosen mode (the
+      ignored-fatal-issue shape this program keeps finding);
+    * a spec with NO block provisions nothing — a workspace is a declaration, not a default, and
+      defaulting it took every crash-survivor run out of the adoption path;
+    * `services.cwd` is REPOINTED at the workspace, or the isolation would be a directory nothing
+      ran in.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _home(self, _isolated_home, monkeypatch):
+        import personalclaw.config.loader as cfg
+        import personalclaw.tasks.hierarchy as hierarchy
+
+        monkeypatch.setattr(cfg, "config_dir", lambda: _isolated_home)
+        monkeypatch.setattr(hierarchy, "config_dir", lambda: _isolated_home)
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(_isolated_home))
+        return _isolated_home
+
+    @staticmethod
+    def _spec(workspace: dict | None) -> dict:
+        spec: dict = {
+            "name": "wsrun",
+            "root": {
+                "kind": "sequence",
+                "id": "s",
+                "children": [{"kind": "transform", "id": "a", "config": {"expr": {"n": 1}}}],
+            },
+        }
+        if workspace is not None:
+            spec["workspace"] = workspace
+        return spec
+
+    async def test_an_unknown_MODE_refuses_the_run(self) -> None:
+        """`parse_workspace` marks it fatal because defaulting would run in a mode nobody chose —
+        and `in_place` touches the real tree. Refused through `_finish`, the single terminal
+        writer, so the row is honest rather than left RUNNING forever."""
+        spec = self._spec({"mode": "kubernetes"})
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=_echo()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
+        assert "workspace declaration refused" in run.error_message
+        # No node ran: the refusal happened before the first tick scheduled anything.
+        assert all(i.state == InstanceState.PENDING for i in c.instances.values())
+
+    async def test_a_greedy_preserve_pattern_refuses_the_run(self) -> None:
+        """`**` copies the whole tree into the workspace it is being isolated FROM, which defeats
+        the isolation — so it is fatal, not a warning."""
+        spec = self._spec({"mode": "worktree", "preserve_patterns": ["**"]})
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=_echo()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
+        assert "preserve pattern" in run.error_message
+
+    async def test_a_spec_with_NO_workspace_block_provisions_nothing(self) -> None:
+        """Measured: provisioning every run made every stale RUNNING run look isolated to the boot
+        sweep, so a journal-resumable crash-survivor would be SUSPENDED instead of adopted."""
+        spec = self._spec(None)
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=_echo(), cwd="/tmp"))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert "worktree_path" not in run.extra
+        assert "workspace" not in run.extra
+        assert c.services.cwd == "/tmp", "an undeclared workspace leaves the cwd alone"
+
+    async def test_a_declared_scratch_workspace_lands_on_the_record_and_the_cwd(self) -> None:
+        """`worktree_path` had a live READER (`watchdog._substrate_for`) and zero writers before
+        this atom. The cwd repoint is what makes the isolation real rather than decorative."""
+        import os
+
+        spec = self._spec({"mode": "scratch"})
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=_echo()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+
+        path = run.extra["worktree_path"]
+        assert path and os.path.isdir(path)
+        assert c.services.cwd == path, "the stages ran IN the workspace"
+        assert run.extra["workspace"]["mode"] == "scratch"
+        assert run.extra["workspace"]["isolated"] is True
+        # It round-trips on disk, which is what a restart replays.
+        assert store.get(run.id).extra["worktree_path"] == path
+
+    async def test_setup_runs_through_the_INJECTED_runner_never_a_real_subprocess(self) -> None:
+        """`teardown_runner` is the established injection seam (its docstring: "injected so tests
+        never run real teardown subprocesses"). Reused for setup rather than adding a second
+        seam — two injection points would let one path escape into a real spawn."""
+        spec = self._spec({"mode": "scratch", "setup": "npm ci\nmake build"})
+        run = _make_run(spec)
+        seen: list[tuple[str, str]] = []
+
+        async def runner(command: str, cwd: str) -> tuple[bool, str]:
+            seen.append((command, cwd))
+            return True, "ok"
+
+        c = RunController(
+            run, spec, services=EngineServices(completion=_echo(), teardown_runner=runner)
+        )
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert [s[0] for s in seen] == ["npm ci", "make build"]
+        assert run.extra["workspace"]["setup"]["ran"] == ["npm ci", "make build"]
+
+    async def test_a_setup_FAILURE_still_completes_the_run(self) -> None:
+        """S52's contract, driven end to end: `blocked_run` is False by construction, so a failed
+        `npm ci` costs an explanation on the record and not the run."""
+        spec = self._spec({"mode": "scratch", "setup": "npm ci"})
+        run = _make_run(spec)
+
+        async def runner(command: str, cwd: str) -> tuple[bool, str]:
+            return False, "ENOTFOUND registry.example"
+
+        c = RunController(
+            run, spec, services=EngineServices(completion=_echo(), teardown_runner=runner)
+        )
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert run.extra["workspace"]["setup"]["failed"], "the failure is recorded"
+        assert run.extra["workspace"]["setup"]["blocked_run"] is False
+
+    async def test_the_provisioning_outcome_is_JOURNALLED(self) -> None:
+        """A run that fell back from `worktree` to scratch behaves differently from one that got
+        the isolation it asked for, and a refiner reading the ledger cannot tell them apart
+        without the record."""
+        spec = self._spec({"mode": "scratch"})
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=_echo()))
+        await c.run_to_completion(timeout=20)
+        kinds = [e.get("kind") for e in J.ledger(run.id)]
+        assert J.WORKSPACE_PROVISIONED in kinds
+
+    async def test_a_provisioning_CRASH_costs_the_isolation_not_the_run(self, monkeypatch) -> None:
+        """Guarded on everything except the deliberate refusal: a run that could not start because
+        a `mkdir` failed would be strictly worse than one that runs in the project workspace."""
+        from personalclaw.workflows import provisioning
+
+        async def boom(*a, **k):
+            raise RuntimeError("the filesystem is on fire")
+
+        monkeypatch.setattr(provisioning, "provision", boom)
+        spec = self._spec({"mode": "scratch"})
+        run = _make_run(spec)
+        c = RunController(run, spec, services=EngineServices(completion=_echo()))
+        assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        assert "worktree_path" not in run.extra

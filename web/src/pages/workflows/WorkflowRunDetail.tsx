@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, GitBranch, MessageSquarePlus, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -19,6 +19,7 @@ import { revalidateNotice, revalidateSummary } from './revalidate'
 import { WorkflowAsk } from './WorkflowAsk'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
+import { WorkspacePanel } from './WorkspacePanel'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -40,6 +41,11 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // The mid-run steering + judge-triage panel (R14 / criterion 8). Docked to the right like
   // the inspector; toggled from the header, live runs only.
   const [steerOpen, setSteerOpen] = useState(false)
+  // The code-run workspace review (§4.1): changed files + the two reintegration verbs. Closed by
+  // default and fetched on open — answering costs a `git status` plus a conflict probe, and most
+  // runs are never reviewed. Available on a TERMINAL run too, which is exactly when a user wants
+  // to decide what to do with the work.
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
   // Coalesce refetches: a fan-out completing fires many node_done events at once, and one
   // request per event would hammer the gateway for the same answer.
   const pending = useRef<number | null>(null)
@@ -247,20 +253,30 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             </span>
           )}
         </div>}
-        right={run && !isTerminal(run.status) ? (
+        right={run ? (
           <div className="flex items-center gap-xs">
-            <QuietButton onClick={() => setSteerOpen((v) => !v)} title="Steer this run — queue an instruction or accept a judge comment">
-              <MessageSquarePlus size={13} /> Steer
+            {/* Workspace on BOTH sides of the terminal split, unlike Steer/Pause/Fork: reviewing
+                what a run changed is the one thing a user wants equally mid-run (is it touching
+                what I expected) and after (do I take this work). */}
+            <QuietButton onClick={() => setWorkspaceOpen((v) => !v)} title="Workspace — changed files and how to take this work">
+              <FolderGit2 size={13} /> Workspace
             </QuietButton>
-            <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — in-flight steps finish">
-              <Pause size={13} /> Pause
-            </QuietButton>
-            <QuietButton onClick={cancel} title="Cancel this run"><X size={13} /> Cancel</QuietButton>
+            {!isTerminal(run.status) ? (
+              <>
+                <QuietButton onClick={() => setSteerOpen((v) => !v)} title="Steer this run — queue an instruction or accept a judge comment">
+                  <MessageSquarePlus size={13} /> Steer
+                </QuietButton>
+                <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — in-flight steps finish">
+                  <Pause size={13} /> Pause
+                </QuietButton>
+                <QuietButton onClick={cancel} title="Cancel this run"><X size={13} /> Cancel</QuietButton>
+              </>
+            ) : (
+              <QuietButton onClick={fork} title="Branch a new run from this one; the original is untouched">
+                <GitBranch size={13} /> Fork
+              </QuietButton>
+            )}
           </div>
-        ) : run ? (
-          <QuietButton onClick={fork} title="Branch a new run from this one; the original is untouched">
-            <GitBranch size={13} /> Fork
-          </QuietButton>
         ) : undefined}
       />
 
@@ -421,6 +437,12 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           previous node's data. Only a terminal node's row exposes the Inspect trigger. */}
       {inspectNodeId && (
         <NodeInspectorDrawer runId={runId} nodeId={inspectNodeId} onClose={() => setInspectNodeId(null)} />
+      )}
+
+      {/* The workspace review drawer (§4.1 / criterion 7), docked right. Keyed on the run id so
+          navigating between runs refetches rather than showing the previous run's diff. */}
+      {workspaceOpen && (
+        <WorkspacePanel runId={runId} onClose={() => setWorkspaceOpen(false)} />
       )}
 
       {/* The steering + judge-triage drawer (R14 / criterion 8), docked right. Mounted only for

@@ -13,7 +13,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2WOR-1` | 🟡 (##185) | Project umbrella + Work board: /work endpoint, lease files, hub FE | — | Success Criterion 1: GET /api/projects/{id}/work is registered (register_unified_loop_routes pattern) over containers.py's projection with per-section isolation; the hub Work tab shows runs+legacy loops+tasks in one state-grouped board (needs-input pinned, queued/suspended/claimed), truthful across a gateway kill; claim leases ride the concurrency.single_flight flock; overview auto-revises on run completion via the controller completion hook |
 | `WF2WOR-2` | 🟡 (##190) | Cross-project needs-input inbox FE + reply-resume routing | `WF2WOR-1`, `EXT:WORKFLOWS-V2:workflow_resume answer grammar for modify-and-approve`, `EXT:SELF-VERIFICATION:replay harness gates needs-input/approval journal-event reification` | Success Criterion 4: the needs-input inbox surfaces a gated run, an attention-state loop, and a blocked task as decision-ready NeedsInputItem cards; a reply resumes the exact blocked node via resume_token; modify-and-approve (permission_suggestions + updated_input) works; count pills, digest-batching, staleness re-notify and the Open Decisions lane render |
 | `WF2WOR-3` | 🟡 (##186) | Artifact publishing: media self-containment, file drop/outbox, cockpit diffs | — | Success Criterion 3: a publish:{artifact} output appears in the existing Artifacts UI versioned only on material change with a change_note and typed lineage deep links; local files copied into the version dir with content-hash names; per-run file drop (approval-gated multipart) + outbox listing route work; cockpit renders structured version diffs + multi-view tabs on the contentTypes.ts registry |
-| `WF2WOR-4` | 🟡 (##188,#191) | Run workspace + worktree execution wiring + code-run cockpit | `WF2WOR-1` | Success Criterion 7: plan_provisioning/pending_setup/plan_teardown are wired into the controller run-start path and executed (subprocess setup/teardown); PID-liveness lock files + preserved_workspace_path land on the run record; workspace_default_mode/workspace_teardown_on_expiry config defaults wire through all four points; a code-kind run provisions a worktree with preserve_patterns + idempotent setup, survives resume, tears down before deletion, and the cockpit diff panel + Apply Locally/Checkout Branch verbs work end-to-end |
+| `WF2WOR-4` | ✅ | Run workspace + worktree execution wiring + code-run cockpit | `WF2WOR-1` | Success Criterion 7: plan_provisioning/pending_setup/plan_teardown are wired into the controller run-start path and executed (subprocess setup/teardown); PID-liveness lock files + preserved_workspace_path land on the run record; workspace_default_mode/workspace_teardown_on_expiry config defaults wire through all four points; a code-kind run provisions a worktree with preserve_patterns + idempotent setup, survives resume, tears down before deletion, and the cockpit diff panel + Apply Locally/Checkout Branch verbs work end-to-end |
 | `WF2WOR-5` | 🟡 (##187) | Batch subagent_run compile-cutover + tool-handler posture seam + agent roster | `WF2WOR-4`, `WF2WOR-8`, `WF2WOR-9` | Success Criterion 2: mcp_subagents.subagent_run(tasks=[...]) routes through compile_batch (N>=2) producing a live widget that survives a gateway restart with individually-retryable branches; the __wf_depth tool-handler seam enforces capability classes, orchestration-tool denial and the secret-filtered leaf env; each branch runs in an isolated workspace, returns schema-validated typed output, and holds a lease (no double-execution); agent-roster slug-keyed catalog projection over config agents + drift check ship |
 | `WF2WOR-6` | ✅ (##947) | Session-ownership run-start wiring + incognito enforcement at run start | `WF2WOR-1` | Success Criterion 5: at run start the controller performs the session_restrictions mark and the JSONL memory_mode write, and mirrors a completion summary into the launching session; a blocking run launched from an incognito session writes nothing to knowledge/learning stores, verified durable after a gateway restart |
 | `WF2WOR-7` | 🟡 (##192) | Run cockpit + introspection/RunStats FE + live-adoption plumbing | `WF2WOR-1`, `WF2WOR-3` | Success Criteria 6 & 8: from the hub + cockpit alone an evaluator answers all nine introspection questions (node tree, journal timeline, attempt ledger, RunStats cost/latency strip, template p50/p95 cards, said-no fake-check badge, Proof section); the session-key equivalence helper adopts in-flight runs live; run-id-keyed streaming + useRunStream event-union additions land; live touched-items feed + PinnedArtifacts widget render |
@@ -51,9 +51,41 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `WF2WOR-4` — Run workspace + worktree execution wiring + code-run cockpit
 
-**Status:** in_progress (PR ##188,#191)
+**Status:** done
 
 §4.1 (workspace-provisioning block), §4.2 (folder contracts), Migration Order steps 2 & 5
+
+`workflows/provisioning.py` (new) is the PERFORMER for S49's plan and S52's decisions, and
+`controller._provision_workspace` (called from `_prepare`) is its caller — before it, a spec's
+`workspace:` block was parsed nowhere in `src/`, so every run ran in place no matter what its
+template declared. A FATAL declaration (unknown mode, greedy preserve pattern) now REFUSES the run
+through `_finish`; provisioning runs preserve → setup in that order through the existing injected
+`teardown_runner` seam; setup is marker-guarded and content-addressed so a resume skips a done step
+and re-runs an EDITED one; a setup failure is recorded and never blocks the run. The PID-liveness
+lock rides `concurrency.lock_path` OUTSIDE the workspace (fail-fast on a live holder it can NAME,
+self-healing on a stale pid). `run.extra["worktree_path"]` is written for every isolated mode — it
+had a live reader (`watchdog._substrate_for`) and zero writers — and `preserved_workspace_path`
+lands from `WorktreeState`. `service.teardown_workspace` is the ONE performer both deletion paths
+go through (`delete_run` and `watchdog.prune_runs`, both now async), gated by the new
+`workflows.workspace_teardown_on_expiry`. `_substrate_for` now consults
+`worktrees.substrate_for(inspect_worktree(...))`, which is what S52 built it for. The cockpit ships
+`GET /api/workflows/runs/{id}/workspace` + `WorkspacePanel.tsx`: changed files (machinery excluded)
+and both reintegration verbs as READABLE COMMANDS — offered, never performed, with conflicts named
+on the offer via a non-mutating `merge-tree --write-tree` probe.
+
+**DISCOVERY (measured, changed the design):** a plain `git add -A` in the worktree committed the
+preserved `.env` AND `.pclaw-setup/` into the run branch, so the durable record of a run's work
+would carry the user's local credentials into git history and both verbs would then offer to apply
+them; the exclusion runs at the ADD via git pathspecs, because a review filter cannot un-commit a
+secret. **DISCOVERY (pre-existing, fixed):** `worktrees.inspect_worktree("", ...)` reported ALIVE —
+`Path("")` is `.` — so an unprovisioned run would have named the gateway's own cwd as its live
+workspace and the boot sweep would suspend a run with nothing to resume into. **DEVIATION:** a
+spec with no `workspace:` block provisions NOTHING (a workspace is a declaration, not a default);
+defaulting every run into a scratch dir made every stale RUNNING run look isolated to the boot
+sweep, which `test_an_adopted_run_resumes_without_re_running_finished_work` caught. **NOT DONE:**
+container mode (§4.4) stays owner-deferred to `WF2WOR-12` and degrades to an isolated scratch dir
+with the reason recorded; ff-only refresh for named workspaces is unbuilt (the lock and the name
+keying that it needs are in place).
 
 **Done when:** Success Criterion 7: plan_provisioning/pending_setup/plan_teardown are wired into the controller run-start path and executed (subprocess setup/teardown); PID-liveness lock files + preserved_workspace_path land on the run record; workspace_default_mode/workspace_teardown_on_expiry config defaults wire through all four points; a code-kind run provisions a worktree with preserve_patterns + idempotent setup, survives resume, tears down before deletion, and the cockpit diff panel + Apply Locally/Checkout Branch verbs work end-to-end
 

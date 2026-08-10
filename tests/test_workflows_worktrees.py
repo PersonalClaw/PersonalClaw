@@ -418,6 +418,19 @@ def test_a_missing_worktree_reports_dead(tmp_path):
     assert state.path == ""
 
 
+def test_an_EMPTY_path_reports_dead_not_the_process_cwd():
+    """`Path("")` is `.`, whose `is_dir()` is True. Without the emptiness guard an unprovisioned run
+    would report the GATEWAY's own working directory as its live workspace — and the boot sweep
+    would read that as a survived substrate and SUSPEND a run with nothing to resume into.
+
+    Found by WF2WOR-4's first production caller: no test passed an empty path before, because
+    nothing in `src/` called this function at all."""
+    state = inspect_worktree("run-52", "")
+    assert state.alive is False
+    assert state.path == ""
+    assert state.preserved_workspace_path == ""
+
+
 def test_a_dirty_worktree_surfaces_its_PRESERVED_PATH(repo, worktree):
     from pathlib import Path
 

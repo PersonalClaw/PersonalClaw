@@ -1239,5 +1239,17 @@
     "path": "workflows.surface_mode_default",
     "sensitive": false,
     "type": "str"
+  },
+  {
+    "default": "scratch",
+    "path": "workflows.workspace_default_mode",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": true,
+    "path": "workflows.workspace_teardown_on_expiry",
+    "sensitive": false,
+    "type": "bool"
   }
 ]

@@ -592,6 +592,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # accidentally matched all day would look exactly like a broken scheduler.
     "workflows.default_quiet_windows": {"type": "str", "max_len": 64},
     "workflows.duty_gate_default": {"type": "str", "max_len": 64},
+    # WORK-CONTAINERS §4.1 (WF2WOR-4). Both live-editable, and each for a concrete reason: the
+    # default mode is what a user changes after watching a run touch their real tree, and the
+    # teardown switch is what they reach for when a teardown command is itself the problem — both
+    # mid-session decisions. `container` is in the enum because it is in `workspace.Mode`; it
+    # degrades to an isolated scratch dir until §4.4 lands, so accepting the word here never
+    # promises a runtime the engine does not have.
+    "workflows.workspace_default_mode": {
+        "type": "enum",
+        "values": ["scratch", "worktree", "in_place", "container"],
+    },
+    "workflows.workspace_teardown_on_expiry": {"type": "bool"},
     # LEARNING-FLYWHEEL capture: the knobs worth changing without a restart. The
     # evidence floor and the session-score threshold are how an owner tunes how
     # eagerly the system learns, and staging can be turned off if the log is
