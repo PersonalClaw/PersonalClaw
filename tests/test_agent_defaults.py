@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import json as _json
+
+import pytest
+from aiohttp.test_utils import make_mocked_request
+
+import personalclaw.config.loader as _loader
+import personalclaw.dashboard.handlers as _handlers
+import personalclaw.dashboard.handlers.agents as _agents_h
 from personalclaw.agents.defaults import (
     DEFAULT_NATIVE_AGENT_NAME,
     default_agent_name,
@@ -65,15 +73,6 @@ def test_normalize_agent_name_canonicalizes_default():
 # unknown agent up-front (same set-time-validation principle as models #16 / search
 # #17). Empty string is allowed (reset to system default).
 
-import json as _json  # noqa: E402
-
-import pytest  # noqa: E402
-from aiohttp.test_utils import make_mocked_request  # noqa: E402
-
-import personalclaw.config.loader as _loader  # noqa: E402
-import personalclaw.dashboard.handlers as _handlers  # noqa: E402
-import personalclaw.dashboard.handlers.agents as _agents_h  # noqa: E402
-
 
 def _acfg(monkeypatch, tmp_path, agents: dict):
     """A config.json with the given agents dict; point both config_path seams at it."""
@@ -132,3 +131,58 @@ async def test_default_agent_missing_key_is_400_not_silent_clear(monkeypatch, tm
     assert resp.status == 400
     # default_agent untouched on disk
     assert _json.loads(cfg.read_text())["default_agent"] == "default"
+
+
+def test_is_reserved_agent_case_insensitive():
+    from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME, is_reserved_agent
+
+    reserved = LOOP_WORKER_AGENT_NAME
+    assert is_reserved_agent(reserved)
+    assert is_reserved_agent(reserved.upper())
+    assert is_reserved_agent(reserved.lower())
+    assert not is_reserved_agent("my-custom-agent")
+
+
+@pytest.mark.asyncio
+async def test_api_agents_create_rejects_non_alphanumeric(monkeypatch, tmp_path):
+    _acfg(monkeypatch, tmp_path, {"default": {}})
+    req = make_mocked_request("POST", "/api/agents")
+
+    async def _j():
+        return {"name": "---"}
+
+    req.json = _j
+    resp = await _agents_h.api_personalclaw_agents_create(req)
+    assert resp.status == 400
+    assert "Agent name must match" in _json.loads(resp.body.decode())["error"]
+
+
+@pytest.mark.asyncio
+async def test_api_agents_create_case_insensitive_conflict(monkeypatch, tmp_path):
+    from personalclaw.agents.defaults import LOOP_WORKER_AGENT_NAME
+
+    _acfg(monkeypatch, tmp_path, {LOOP_WORKER_AGENT_NAME: {}})
+    req = make_mocked_request("POST", "/api/agents")
+
+    async def _j():
+        return {"name": LOOP_WORKER_AGENT_NAME.upper()}
+
+    req.json = _j
+    resp = await _agents_h.api_personalclaw_agents_create(req)
+    assert resp.status == 409
+    assert "already exists" in _json.loads(resp.body.decode())["error"]
+
+
+@pytest.mark.asyncio
+async def test_api_agents_create_lowercases_name(monkeypatch, tmp_path):
+    cfg = _acfg(monkeypatch, tmp_path, {})
+    req = make_mocked_request("POST", "/api/agents")
+
+    async def _j():
+        return {"name": "MyNewAgent"}
+
+    req.json = _j
+    resp = await _agents_h.api_personalclaw_agents_create(req)
+    assert resp.status == 200
+    # ensure it landed lowercase in config
+    assert "mynewagent" in _json.loads(cfg.read_text())["agents"]

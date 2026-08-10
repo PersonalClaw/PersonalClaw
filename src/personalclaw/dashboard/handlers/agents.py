@@ -616,6 +616,15 @@ async def api_agent_detail(request: web.Request) -> web.Response:
 # ── PersonalClaw Agent CRUD API ──
 
 
+def _resolve_agent_name(name: str, cfg) -> str | None:
+    """Case-insensitively resolve an agent name against the loaded config."""
+    name_lower = name.lower()
+    for existing in cfg.agents:
+        if existing.lower() == name_lower:
+            return existing
+    return None
+
+
 async def api_personalclaw_agents(request: web.Request) -> web.Response:
     """GET /api/agents — list all PersonalClaw agent definitions."""
     from personalclaw.agents.defaults import is_reserved_agent
@@ -681,20 +690,22 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     if not name:
         return web.json_response({"error": "Agent name is required"}, status=400)
     # Restrict to a safe character set so names can't be later interpolated
-    # into filesystem paths or shell commands. Same shape as the prompt-name
-    # regex.
+    name = name.lower()
+
     import re as _re
 
-    if not _re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
+    # The canonical agent name validator (matches marketplace.py)
+    if not _re.fullmatch(r"^[a-z0-9][a-z0-9-]{0,62}$", name):
         return web.json_response(
             {
-                "error": "Agent name must match ^[a-zA-Z0-9_-]{1,64}$ (letters, digits, dashes, underscores)"  # noqa: E501
+                "error": "Agent name must match ^[a-z0-9][a-z0-9-]{0,62}$ (lowercase letters, digits, dashes, no leading dash)"  # noqa: E501
             },
             status=400,
         )
+
     async with _get_config_lock():
         cfg = AppConfig.load()
-        if name in cfg.agents:
+        if _resolve_agent_name(name, cfg):
             return web.json_response({"error": f"Agent '{name}' already exists"}, status=409)
         cfg.agents[name] = AgentProfile(
             provider=body.get("provider", ""),
