@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-05T11:12:28.884Z",
+  "generatedAt": "2026-08-10T04:06:07.050Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 402,
+    "filesScanned": 430,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -30,8 +30,8 @@
     },
     {
       "file": "pages/loops/LoopPlanReview.tsx",
-      "score": 25,
-      "detail": "8 raw-button, 9 raw-input"
+      "score": 24,
+      "detail": "8 raw-button, 8 raw-input"
     },
     {
       "file": "pages/code/CodePlanReview.tsx",
@@ -215,11 +215,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 135,
+    "outlineNoneCount": 134,
     "outlineNoneFiles": 59,
-    "localFocusVisibleFiles": 14,
+    "localFocusVisibleFiles": 15,
     "reducedMotionFiles": 8,
-    "animatedFiles": 158,
+    "animatedFiles": 160,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -515,7 +515,7 @@
     },
     "pages/loops/LoopPlanReview.tsx": {
       "raw-button": 8,
-      "raw-input": 9,
+      "raw-input": 8,
       "raw-dialog": 0
     },
     "pages/projects/ProjectsSection.tsx": {
@@ -624,7 +624,7 @@
       "raw-dialog": 0
     },
     "pages/settings/ModelsPanel.tsx": {
-      "raw-button": 2,
+      "raw-button": 3,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -788,7 +788,7 @@
     },
     {
       "file": "pages/notifications/notificationMeta.ts",
-      "line": 68,
+      "line": 72,
       "category": "shadow",
       "snippet": "return acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${tone}` }"
     },
@@ -818,7 +818,7 @@
     },
     {
       "file": "ui/widget/WidgetFrame.tsx",
-      "line": 206,
+      "line": 235,
       "category": "spacing",
       "snippet": "style={{ height: expanded ? 'calc(100% - 36px)' : height }}"
     }

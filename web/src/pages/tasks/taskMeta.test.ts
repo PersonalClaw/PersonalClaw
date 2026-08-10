@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseDueDate, dueMeta } from './taskMeta'
+import { parseDueDate, dueMeta, statusMeta, STATUSES } from './taskMeta'
 
 /** The LOCAL calendar day `offset` days from today, at midnight. */
 const localDay = (offset = 0): Date => {
@@ -77,5 +77,37 @@ describe('dueMeta', () => {
     expect(dueMeta('whenever')).toEqual({ label: 'whenever', tone: 'var(--color-on-surface-low)' })
     expect(dueMeta('')).toBeNull()
     expect(dueMeta(undefined)).toBeNull()
+  })
+})
+
+describe('status-label parity across task surfaces', () => {
+  // The list page's status filter, the Kanban columns, a row's status chip and the
+  // detail panel all name the SAME task statuses. They must use the SAME words:
+  // the filter used to hardcode "Open"/"Done" while the board rendered
+  // "Not started"/"Completed" from STATUSES three feet away.
+  // This locks the words to their one owner. `all`/`ready` are filter-only
+  // pseudo-states with no status equivalent and are deliberately excluded.
+  const FILTERABLE = ['open', 'in_progress', 'blocked', 'done'] as const
+
+  it('every filterable status resolves to a real STATUSES entry', () => {
+    for (const key of FILTERABLE) {
+      expect(STATUSES.some((s) => s.key === key), `${key} missing from STATUSES`).toBe(true)
+    }
+  })
+
+  it('statusMeta() is the single source of the user-facing word', () => {
+    // Guards the regression directly: if someone reintroduces a hardcoded label,
+    // it will disagree with the owner and this fails.
+    expect(statusMeta('open').label).toBe('Not started')
+    expect(statusMeta('done').label).toBe('Completed')
+    expect(statusMeta('in_progress').label).toBe('In progress')
+    expect(statusMeta('blocked').label).toBe('Blocked')
+  })
+
+  it('falls back to the raw key rather than rendering blank for an unknown status', () => {
+    // A closed-enum default branch that renders '' is the shape that shipped a
+    // grey "never run" for a real `failed` state elsewhere in this app.
+    expect(statusMeta('some_new_backend_status').label).toBe('some_new_backend_status')
+    expect(statusMeta(undefined).label).toBe('Unknown')
   })
 })
