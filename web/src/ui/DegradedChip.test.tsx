@@ -30,9 +30,21 @@ import { api } from '../lib/api'
 // observable input. Both directions are pinned: dropping the label unconditionally would
 // silently degrade the desktop chip, which no viewport-less test would otherwise catch.
 
+// NOTE: deliberately WITHOUT `use_cases`, matching the pre-existing fixture. A payload missing
+// the key is the shape the width tests below have always used, and the chip must not crash on it —
+// which is why the render guards on `use_cases.length` via a defaulted read.
 const SURFACES = [
   { surface: 'search_ranking', available: false, floor: 'Keyword ranking', backlog: 3 },
   { surface: 'inbox_classify', available: false, floor: 'Rules only', backlog: 0 },
+]
+
+/** The real registry shape: every `DegradedContract` declares the use-cases it needs
+ *  (`degraded.py` ships exactly three distinct slugs — chat, embedding, stt). */
+const SURFACES_WITH_USE_CASES = [
+  { surface: 'inbox_classify', available: false, floor: 'Rules only', backlog: 0, use_cases: ['chat'] },
+  { surface: 'knowledge_enrich', available: false, floor: 'Documents still captured', backlog: 7, use_cases: ['embedding'] },
+  { surface: 'voice_capture', available: false, floor: 'Text input keeps working', backlog: 0, use_cases: ['stt'] },
+  { surface: 'future_thing', available: false, floor: 'Something still works', backlog: 0, use_cases: ['some_new_case'] },
 ]
 
 /** Point `matchMedia('(max-width: 768px)')` at a fixed answer. Returns the listener-less
@@ -91,5 +103,78 @@ describe('DegradedChip width in the shell corner', () => {
     await waitFor(() => expect(api.degraded).toHaveBeenCalled())
     // The chip is an EXCEPTION indicator; a healthy system must show no corner cost at all.
     expect(container.textContent).toBe('')
+  })
+})
+
+// ── The popover says what is MISSING, not only what still works ──────────────
+//
+// `DegradedSurface` carries `use_cases` — the `active_models` use-cases a surface needs to run at
+// full capability — and the popover read 4 of the row's 5 fields, skipping exactly that one. So it
+// told a user their surface was degraded and nothing about the CAUSE, on a chip whose entire job is
+// "a provider went away".
+//
+// The backend already treats this as the headline. Its own degradation notice is:
+//
+//     f"No model for {', '.join(contract.use_cases)} — {contract.floor}"
+//
+// `floor` is the reassurance; `use_cases` is the diagnosis, and therefore the thing that tells you
+// what to go bind. The popover was the one surface stating the second half without the first.
+//
+// Labels match ModelsPanel's `USE_CASE_META` wording ("stt" → "Speech-to-text") so the chip and the
+// settings row you go bind it in agree. That map is NOT imported: it is a page-local const carrying
+// icons, descriptions and chain flags for 14 use cases, and a shell chip depending on a settings
+// page would be a worse coupling than three labels.
+async function openPopover(surfaces: unknown[]) {
+  setViewport(false)
+  vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces } as never)
+  const r = render(<DegradedChip />)
+  await waitFor(() => expect(api.degraded).toHaveBeenCalled())
+  await waitFor(() => expect(screen.getByRole('button')).toBeTruthy())
+  screen.getByRole('button').click()
+  await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+  return r
+}
+
+describe('the degraded popover names the missing use-case', () => {
+  it('states what is missing beside what still works', async () => {
+    const { container } = await openPopover(SURFACES_WITH_USE_CASES)
+    const text = container.textContent ?? ''
+    expect(text).toContain('No model for Chat')
+    expect(text).toContain('Rules only')          // the floor is still there, not replaced
+  })
+
+  it('uses the canonical use-case label, not the raw slug', async () => {
+    // "stt" is the case a naive slug-prettifier gets wrong — it would render "Stt".
+    const { container } = await openPopover(SURFACES_WITH_USE_CASES)
+    expect(container.textContent).toContain('No model for Speech-to-text')
+    expect(container.textContent).not.toContain('Stt')
+  })
+
+  it('names Embedding for the knowledge surface', async () => {
+    expect((await openPopover(SURFACES_WITH_USE_CASES)).container.textContent)
+      .toContain('No model for Embedding')
+  })
+
+  it('falls back to a prettified slug for a use-case the map does not know', async () => {
+    // A new DegradedContract must still read sensibly rather than showing a raw slug — the map is
+    // deliberately minimal (only the three the registry declares), so the fallback is load-bearing.
+    const { container } = await openPopover(SURFACES_WITH_USE_CASES)
+    expect(container.textContent).toContain('No model for Some new case')
+  })
+
+  it('renders no use-case line when the payload omits the field', async () => {
+    // The pre-existing fixture has no `use_cases` at all. A missing key must not crash the chip or
+    // print an empty "No model for" — the popover degrades to exactly what it showed before.
+    const { container } = await openPopover(SURFACES)
+    expect(container.textContent).toContain('Keyword ranking')
+    expect(container.textContent).not.toContain('No model for')
+  })
+
+  it('renders no use-case line for an empty use_cases array', async () => {
+    const { container } = await openPopover([
+      { surface: 'x', available: false, floor: 'Still fine', backlog: 0, use_cases: [] },
+    ])
+    expect(container.textContent).toContain('Still fine')
+    expect(container.textContent).not.toContain('No model for')
   })
 })
