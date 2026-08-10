@@ -102,6 +102,45 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
 
 const TIER_ORDER: Tier[] = ['full', 'text', 'icon', 'overflow']
 
+/** The title (left slot) keeps a floor before the cluster eats into it — but the floor must
+ *  scale DOWN on narrow headers, else on a phone (~360px, inner ~154px) reserving a fixed 96px
+ *  leaves the cluster almost nothing and forces it to overflow far too early. Reserve at most
+ *  ~1/3 of the inner width (the title truncates), clamped to a legible [48, 96] band. This is
+ *  "shedding frees width for the title" in reverse: when space is scarce the TITLE yields so
+ *  the controls stay usable. */
+export const titleFloor = (inner: number): number =>
+  Math.round(Math.min(96, Math.max(48, inner * 0.34)))
+
+/** What the title is ACTUALLY owed: nothing when the slot holds no visible content, otherwise
+ *  `min(its natural width, titleFloor)`.
+ *
+ *  Exported and pure so the arithmetic can be tested. It cannot be exercised through a render:
+ *  jsdom reports every box as 0, so the whole width computation collapses to zeros there and a
+ *  component test would pass against any implementation — which is exactly what happened when
+ *  this was first written as a render assertion.
+ *
+ *  `hasContent` is the load-bearing input. Several headers render `left={undefined}` (`#/chat`
+ *  on a new chat is one), and an empty flex slot still reports a non-zero `scrollWidth` from
+ *  its own padding/gap — so keying on width alone would keep reserving for a title that does
+ *  not exist. Measured cost of that phantom reserve at 390px: the rail capped at 58px for 88px
+ *  of mode pills, and the permission-mode pill collided with the `…` and became unclickable. */
+export function titleReserveFor(
+  { hasContent, naturalWidth, inner }: { hasContent: boolean; naturalWidth: number; inner: number },
+): number {
+  if (!hasContent) return 0
+  return Math.min(naturalWidth, titleFloor(inner))
+}
+
+/** The rail's hard ceiling: the inner box minus the `…` slot minus whatever the title is owed.
+ *  Keeping this in one place is what stops the two halves of the width split from disagreeing —
+ *  the availability math and the ceiling were computing the title's share differently, and the
+ *  ceiling's blanket floor is what starved the controls on a title-less header. */
+export function railCeiling(
+  { inner, dots, title }: { inner: number; dots: number; title: number },
+): number {
+  return Math.max(0, inner - dots - title)
+}
+
 export function HeaderActions({ children, className }: { children: ReactNode; className?: string }) {
   const outerRef = useRef<HTMLDivElement>(null)
   // Offscreen probe rows, one per non-overflow tier — their scrollWidth is the
@@ -147,17 +186,10 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
     // flop every RO tick. Only applied when moving up (down-steps are immediate to
     // avoid clipping).
     const HYST = 8
-    // The title (left slot) keeps a floor before the cluster eats into it — but the
-    // floor must scale DOWN on narrow headers, else on a phone (~360px, inner ~154px)
-    // reserving a fixed 96px leaves the cluster almost nothing and forces it to overflow
-    // far too early. Reserve at most ~1/3 of the inner width (title truncates), clamped
-    // to a legible [48, 96] band. This is "shedding frees width for the title" in reverse:
-    // when space is scarce the TITLE yields so the controls stay usable.
     const GAP_TO_TITLE = 16
-    const titleFloor = (inner: number) => Math.round(Math.min(96, Math.max(48, inner * 0.34)))
 
     // Available width = the header's inner CONTENT box (its width minus the shell-corner
-    // padding it reserves on both ends) MINUS the title's floor — NOT the cluster's own
+    // padding it reserves on both ends) MINUS the title's reserve — NOT the cluster's own
     // (content-collapsed) width. Measuring our own box would latch overflow: shedding
     // shrinks the box → re-measures as "no room" → never recovers.
     // The header's inner CONTENT box — its width minus the padding it reserves to clear
@@ -169,16 +201,32 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       const cs = getComputedStyle(header)
       return header.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
     }
-    const availableWidth = (): number => {
+    // Read the live title measurements and hand them to the pure `titleReserveFor` above,
+    // which both this and the rail's ceiling use — so the two cannot disagree about what the
+    // title is owed. (They did: the ceiling subtracted a blanket floor even for an EMPTY slot.)
+    const titleReserve = (inner: number): number => {
       const header = outer.closest('header')
       const left = header?.querySelector<HTMLElement>('[data-header-left]')
+      if (!left) return 0
+      // An empty flex slot still reports a non-zero `scrollWidth` from its own padding/gap, so
+      // measure the CONTENT: no visible child means there is no title to protect.
+      const hasContent = Array.from(left.children).some((c) => {
+        const r = (c as HTMLElement).getBoundingClientRect()
+        return r.width > 2 && r.height > 2
+      })
+      return titleReserveFor({
+        hasContent,
+        naturalWidth: Math.min(left.scrollWidth, left.clientWidth || left.scrollWidth),
+        inner,
+      })
+    }
+    const availableWidth = (): number => {
+      const header = outer.closest('header')
       if (!header) return outer.clientWidth
       const inner = innerBox()
-      // The title needs min(its natural width, the scale-aware floor); give the cluster
-      // the rest. On narrow headers the floor shrinks so the cluster keeps usable width.
-      const leftNatural = left ? Math.min(left.scrollWidth, left.clientWidth || left.scrollWidth) : 0
-      const titleReserve = Math.min(leftNatural, titleFloor(inner))
-      return Math.max(0, inner - titleReserve - GAP_TO_TITLE)
+      // The title needs its reserve; give the cluster the rest. On narrow headers the floor
+      // shrinks so the cluster keeps usable width.
+      return Math.max(0, inner - titleReserve(inner) - GAP_TO_TITLE)
     }
 
     const measure = () => {
@@ -269,8 +317,16 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       // this file telling the same story, and the title then truncates inside a slot that is
       // never zero. The row is `justify-end` in a `min-w-0 flex-1` slot, so whatever the rail
       // does not take goes back to the title.
+      //
+      // Reserve what the title actually NEEDS, not a blanket floor. Using `titleFloor()`
+      // unconditionally held 53px back for headers whose left slot is EMPTY (`#/chat` on a
+      // new chat renders `left={undefined}`), and 53px was exactly what its two 40px mode
+      // pills were short of: the rail capped at 58px for 88px of content, so the
+      // permission-mode pill painted out to x=181 and collided with the `…` at x=159 — the
+      // `…` is a later sibling, so it won and the pill became unclickable. `titleReserve()`
+      // returns 0 when there is no title, which lets the pills have the room.
       const inner = innerBox()
-      const ceiling = Math.max(0, inner - DOTS - titleFloor(inner))
+      const ceiling = railCeiling({ inner, dots: DOTS, title: titleReserve(inner) })
       const cap = used > avail
         ? Math.min(Math.max(floorW, Math.round(avail - DOTS)), ceiling)
         : null
