@@ -908,8 +908,10 @@ def cancel_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     return _ok(run_id=run_id, cancel_requested=True)
 
 
-def delete_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
-    """Delete a TERMINAL run and its artifacts.
+async def delete_run(
+    run_id: str, *, supervisor: Any = None, keep_open: bool = False
+) -> dict[str, Any]:
+    """Delete a TERMINAL run and its artifacts, tearing its workspace down FIRST.
 
     Refused while a run can still move. Deleting a live run would leave its controller writing
     journal entries and terminal status to a row that no longer exists — the single-writer
@@ -919,6 +921,16 @@ def delete_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     Removes the run DIRECTORY as well as the row. A row-only delete would leave the journal,
     outputs and continuations on disk forever, invisible to every surface — the run would look
     gone while still costing the disk and still holding a live resume token.
+
+    ASYNC because teardown runs a subprocess (WORK-CONTAINERS §4.1), and it must run BEFORE the
+    directory goes away — that is the whole reason teardown exists. A scratch workspace lives
+    UNDER the run dir, so the `rmtree` below would take it out; running teardown after that would
+    execute `docker compose down` against a path that no longer holds the compose file. The one
+    caller (`handlers.api_run_delete`) is already async.
+
+    `keep_open` is the §4.1 override for when the workspace IS the deliverable: the run row and
+    directory go, the workspace stays. Teardown still runs — keeping the directory is not keeping
+    the processes.
     """
     run = store.get(run_id)
     if run is None:
@@ -944,6 +956,7 @@ def delete_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     root = store.runs_root().resolve()
     if root not in target.parents:
         return _err("WF_RUN_DELETE_REFUSED", "refusing to delete a path outside the runs root")
+    torn = await teardown_workspace(run, reason="delete", keep_open=keep_open)
     if target.is_dir():
         shutil.rmtree(target, ignore_errors=True)
     # The inbox rows go too: a gate that was open when the run was cancelled would otherwise
@@ -951,7 +964,115 @@ def delete_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
     # which is what the route has — a delete is a request path, not the engine's own.
     attention.resolve_run_items(getattr(supervisor, "_state", None), run_id)
     deleted = store.delete(run_id)
-    return _ok(run_id=run_id, deleted=deleted)
+    return _ok(run_id=run_id, deleted=deleted, teardown=torn.to_dict())
+
+
+async def teardown_workspace(
+    run: Any, *, reason: str, keep_open: bool = False, runner: Any = None
+) -> Any:
+    """Tear a run's workspace down before its directory is deleted (WORK-CONTAINERS §4.1).
+
+    The shared performer for BOTH deletion paths — the explicit delete here and retention expiry
+    in `watchdog.prune_runs`. One function rather than two call sites doing the same thing,
+    because the two would eventually disagree about the order, and the order IS the contract.
+
+    Gated by `workflows.workspace_teardown_on_expiry`. That knob has a real reader precisely
+    here: when it is off, the workspace is removed without running its command. Off is the
+    escape hatch for a teardown command that is itself the problem (one that hangs, or one whose
+    author got it wrong), which is a real situation — but it defaults ON, because leaving a
+    `docker compose` up after the run that started it is gone is the commoner harm.
+
+    Never raises: both callers are deletion paths, and a run that cannot be deleted because its
+    teardown threw would be a row visible forever with no way to remove it.
+    """
+    from personalclaw.workflows import provisioning
+
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        enabled = bool(AppConfig.load().workflows.workspace_teardown_on_expiry)
+    except Exception:
+        # A config read failure defaults to RUNNING teardown. Fail-safe in the direction of
+        # stopping services: the cost of an extra teardown is a no-op (the BYOI contract requires
+        # idempotency), while skipping one leaks whatever it was going to stop.
+        enabled = True
+
+    state = provisioning.workspace_state(run)
+    if not state:
+        return provisioning.TornDown()
+    if not enabled:
+        # Removal still happens (the directory would be orphaned otherwise) — only the declared
+        # COMMAND is skipped, which is what the knob is about.
+        state = dict(state)
+        state.pop("teardown", None)
+        extra = getattr(run, "extra", None)
+        if isinstance(extra, dict):
+            extra[provisioning.WORKSPACE_KEY] = state
+    try:
+        workspace_dir = _run_workspace_dir(run)
+        torn = await provisioning.teardown(
+            run, workspace_dir=workspace_dir, keep_open=keep_open, runner=runner
+        )
+    except Exception:
+        logger.warning("workspace teardown failed for %s", getattr(run, "id", "?"), exc_info=True)
+        return provisioning.TornDown()
+    try:
+        from personalclaw.workflows.journal import Journal
+
+        Journal(str(getattr(run, "id", "") or "")).workspace_teardown(torn.to_dict(), reason=reason)
+    except Exception:
+        logger.debug("could not journal the workspace teardown", exc_info=True)
+    return torn
+
+
+def _run_workspace_dir(run: Any) -> str:
+    """The codebase a run's project binds, for git-side teardown. "" when there is none.
+
+    Read from the PROJECT rather than the run record on purpose: a bound workspace can be
+    re-pointed between the run and its deletion, and the git operations (worktree remove, branch
+    bookkeeping) must target wherever the repo is NOW, not where it was.
+    """
+    pid = str(getattr(run, "project_id", "") or "")
+    if not pid:
+        return ""
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        project = HierarchyStore().get_project(pid)
+        return str(getattr(project, "workspace_dir", "") or "") if project else ""
+    except Exception:
+        logger.debug("project workspace lookup failed for %s", pid, exc_info=True)
+        return ""
+
+
+def workspace_review(run_id: str) -> dict[str, Any]:
+    """The code-run cockpit's diff panel + the two reintegration verbs (WORK-CONTAINERS §4.1).
+
+    Pure read: it shells out for `git status --porcelain` and a `merge-tree` conflict probe,
+    neither of which mutates either tree. Reintegration is OFFERED, never performed — the plan's
+    explicit ruling, and the reason this is a GET rather than a POST.
+    """
+    from personalclaw.workflows import provisioning
+
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    try:
+        body = provisioning.reintegration(run, workspace_dir=_run_workspace_dir(run))
+    except Exception as exc:
+        logger.debug("workspace review failed for %s", run_id, exc_info=True)
+        return _err("WF_WORKSPACE_UNREADABLE", f"could not read the run's workspace: {exc}")
+    # `preserved_workspace_path` is recorded HERE because this is where the live alive+dirty state
+    # is computed. Reading it costs a git call, so the run record carries the answer for every
+    # surface that cannot afford one (the Work board, the export archive) — and the value is only
+    # non-empty when a dirty workspace was genuinely kept.
+    try:
+        state = provisioning.inspect_run(run)
+        if provisioning.stamp_preserved_path(run, state):
+            store.save(run)
+    except Exception:
+        logger.debug("could not record preserved_workspace_path for %s", run_id, exc_info=True)
+    return _ok(**body)
 
 
 def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:

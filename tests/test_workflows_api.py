@@ -721,3 +721,58 @@ class TestReferenceCoverage:
 def test_asyncio_is_importable_for_the_sync_helpers() -> None:
     """Guard against an unused-import cleanup breaking the sync test helpers."""
     assert asyncio is not None
+
+
+class TestWorkspaceRoute:
+    """`GET /api/workflows/runs/{run_id}/workspace` — the code-run cockpit's review (WF2WOR-4).
+
+    A READ, deliberately: reintegration is OFFERED, never performed. The absence of a POST
+    companion is the plan's ruling, and it is asserted here so a future one cannot be added
+    without a reviewer meeting this note.
+    """
+
+    def test_the_route_is_registered(self) -> None:
+        app = web.Application()
+        H.register_workflow_routes(app)
+        paths = [r.resource.canonical for r in app.router.routes()]
+        assert "/api/workflows/runs/{run_id}/workspace" in paths
+
+    def test_there_is_NO_route_that_PERFORMS_a_reintegration_verb(self) -> None:
+        """A run that auto-merged would decide for the user, and the decision is the whole reason
+        the work was isolated. Structural rather than documentary: adding an apply/checkout POST
+        reds this line."""
+        app = web.Application()
+        H.register_workflow_routes(app)
+        offending = [
+            f"{r.method} {r.resource.canonical}"
+            for r in app.router.routes()
+            if r.method != "GET"
+            and any(w in r.resource.canonical for w in ("apply", "checkout", "reintegrat"))
+        ]
+        assert offending == [], offending
+
+    async def test_an_unknown_run_is_a_404(self) -> None:
+        resp = await H.api_run_workspace(_req("GET", "/api/workflows/runs/nope/workspace"))
+        assert resp.status == 404
+        assert _body(resp)["error"]["code"] == "not_found"
+
+    async def test_a_run_with_no_workspace_answers_with_an_empty_review(self) -> None:
+        """The COMMON case — a workspace is a declaration, not a default — so it answers 200 with
+        an empty diff rather than an error the FE would render as a failure."""
+        run = store.create(WorkflowRun(id="", workflow_name="wf", status=RunStatus.COMPLETE))
+        req = _req("GET", f"/api/workflows/runs/{run.id}/workspace")
+        req.match_info["run_id"] = run.id  # type: ignore[index]
+        resp = await H.api_run_workspace(req)
+        assert resp.status == 200
+        body = _body(resp)
+        assert body["workspace"]["path"] == ""
+        assert body["workspace"]["changed"] == []
+
+    async def test_the_delete_route_forwards_keep_open(self) -> None:
+        """One deletion with two dispositions for the workspace. A second route would be a second
+        place to keep the teardown-before-removal ordering right."""
+        import inspect
+
+        source = inspect.getsource(H.api_run_delete)
+        assert 'request.query.get("keep_open"' in source
+        assert "keep_open=keep_open" in source

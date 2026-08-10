@@ -85,6 +85,13 @@ _CEILING_WRAPPED: dict[str, str] = {
     "workflows/effects.py::run_teardown::create_subprocess_limited": (
         "workflow BYOI teardown → tool ceiling via create_subprocess_limited"
     ),
+    # Run-workspace setup/teardown steps (WORK-CONTAINERS §4.1). Agent-influenced by the same
+    # reasoning as the BYOI teardown above: the command text comes from a workflow template an
+    # agent can author. Same shape deliberately — `shlex.split`, no shell, the binary resolved up
+    # front for a typed not-found, and the ceiling delivered post-exec by the shim.
+    "workflows/provisioning.py::run_step::create_subprocess_limited": (
+        "workspace setup/teardown step → tool ceiling via create_subprocess_limited"
+    ),
     # The ``none`` sandbox provider's handle exec (EI-1) — the single seam every routed spawn
     # now funnels through. EI-1 moved the direct create_subprocess_limited call out of
     # AcpProcess.spawn (session_host profile — the EMFILE fix, NOFILE raised, no OOM bias) and

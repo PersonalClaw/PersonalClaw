@@ -449,7 +449,11 @@ class RunController:
 
     async def _tick_loop(self) -> None:
         try:
-            await self._prepare()
+            if not await self._prepare():
+                # The run was refused before any node ran (a fatal `workspace:` declaration or a
+                # contended named workspace). `_prepare` already wrote the terminal status through
+                # `_finish`, so scheduling anything now would run nodes for a failed run.
+                return
             while True:
                 async with self._lock:
                     if await self._step():
@@ -473,8 +477,14 @@ class RunController:
         finally:
             self._terminal.set()
 
-    async def _prepare(self) -> None:
-        """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it."""
+    async def _prepare(self) -> bool:
+        """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it.
+
+        Returns False when the run was REFUSED before any node ran — today only a fatal
+        `workspace:` declaration does that, and `_provision_workspace` has already written the
+        terminal status. The tick loop stops rather than scheduling into a workspace that could
+        not be honored.
+        """
         resumed = bool(self.run.started_at)
         totals = journal_mod.run_totals(self.run.id)
         # Budget pre-charge (WF2-R4 #1): a resumed run inherits its own spend. Without
@@ -497,7 +507,124 @@ class RunController:
             resumed=resumed,
         )
         self._enforce_inherited_mode()
+        provisioned = await self._provision_workspace()
         self._publish("workflow_run_update", {"status": self.run.status.value})
+        return provisioned
+
+    async def _provision_workspace(self) -> bool:
+        """Stand up the run's declared workspace before the first node (WORK-CONTAINERS §4.1).
+
+        Returns False when the run was refused. This is the first production caller of
+        `workspace.plan_provisioning` / `worktrees.pending_setup`: before it, a spec's
+        `workspace:` block was parsed nowhere, so every run ran in place no matter what its
+        template declared — the whole §4.1 mechanism was a decision layer with no call site.
+
+        **A FATAL declaration REFUSES the run.** `parse_workspace` marks an unknown mode and a
+        greedy preserve pattern fatal precisely because they cannot be honored, and honoring
+        neither means running in a mode nobody chose. An ignored fatal issue is the inert-control
+        shape this program keeps finding, so it terminates the run through `_finish` (the single
+        terminal writer) instead of degrading quietly.
+
+        **The lock is taken and RELEASED here, not held for the run.** Holding a flock across a
+        multi-hour run would tie the workspace to this process's lifetime, so a gateway restart
+        would strand it. What the lock actually protects is the provisioning WINDOW — the
+        preserve+setup pass, where two processes writing the same tree corrupt each other. Live
+        contention refuses the run rather than queueing: two runs interleaving writes in one
+        worktree is worse than telling the second one now.
+
+        Idempotent, because `_prepare` runs again on resume: `add_worktree` returns the same path
+        for an existing run id (measured), setup is marker-guarded and content-addressed, and
+        preserve is an overwriting copy. The second pass is therefore cheap and safe rather than a
+        second workspace.
+
+        Guarded on everything except the deliberate refusal: a provisioning bug must cost the
+        isolation, never the run — a run that cannot start because a scratch dir failed to `mkdir`
+        would be strictly worse than one that runs in the project workspace and says so.
+        """
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.workflows import provisioning
+
+        if not provisioning.declares_workspace(self.spec):
+            # No `workspace:` block, no managed workspace. The default mode fills in a block that
+            # declared the OTHER fields; it does not opt every run in — see `declares_workspace`
+            # for the boot-sweep interaction that measurement caught.
+            return True
+        try:
+            cfg = AppConfig.load().workflows
+            spec, issues = provisioning.resolve_spec(
+                self.spec, default_mode=cfg.workspace_default_mode
+            )
+        except Exception:
+            logger.debug("run %s: workspace spec unreadable", self.run.id, exc_info=True)
+            return True
+
+        fatal = [i for i in issues if i.fatal]
+        if fatal:
+            reason = "; ".join(i.message for i in fatal)
+            self.journal.workspace_provisioned(
+                {"ok": False, "issues": [i.to_dict() for i in fatal], "refused": True}
+            )
+            async with self._lock:
+                await self._finish(
+                    RunStatus.FAILED, error=f"workspace declaration refused: {reason}"[:500]
+                )
+            return False
+
+        lock = provisioning.acquire_workspace_lock(self.run.id, name=spec.name)
+        if not lock.acquired:
+            # A named workspace another live run holds. Refused, not queued — see the docstring.
+            self.journal.workspace_provisioned(
+                {"ok": False, "contended": True, "degraded_reason": lock.reason}
+            )
+            async with self._lock:
+                await self._finish(RunStatus.FAILED, error=lock.reason[:500])
+            return False
+        try:
+            result = await provisioning.provision(
+                spec,
+                run_id=self.run.id,
+                project_id=self.run.project_id,
+                workspace_dir=self._project_workspace(),
+                issues=issues,
+                runner=self.services.teardown_runner,
+            )
+        except Exception:
+            logger.warning("run %s: workspace provisioning failed", self.run.id, exc_info=True)
+            return True
+        finally:
+            lock.release()
+
+        async with self._lock:
+            provisioning.stamp_run(self.run, result, spec)
+            self._save_run()
+        self.journal.workspace_provisioned(result.to_dict())
+        if result.isolated and result.path:
+            # The stage dispatcher's cwd, so a code-kind run's subagents actually work IN the
+            # worktree. Without this the isolation would be a directory nothing ran in — the
+            # mechanism would look provisioned and be decorative.
+            self.services.cwd = result.path
+        return True
+
+    def _project_workspace(self) -> str:
+        """The codebase this run's project binds, or the services cwd.
+
+        A project's `workspace_dir` is the tree a worktree branches from and the tree
+        `preserve_patterns` copies out of. Falling back to `services.cwd` keeps a project-less
+        run (a chat-launched batch) provisionable — its workspace is simply wherever the gateway
+        is rooted, which is what every other cwd-consuming node already assumes.
+        """
+        pid = self.run.project_id
+        if not pid:
+            return self.services.cwd
+        try:
+            from personalclaw.tasks.hierarchy import HierarchyStore
+
+            project = HierarchyStore().get_project(pid)
+            bound = str(getattr(project, "workspace_dir", "") or "") if project else ""
+            return bound or self.services.cwd
+        except Exception:
+            logger.debug("run %s: project workspace lookup failed", self.run.id, exc_info=True)
+            return self.services.cwd
 
     def _enforce_inherited_mode(self) -> None:
         """Apply a restricted origin's memory posture at run start (WORK-CONTAINERS §5.1).

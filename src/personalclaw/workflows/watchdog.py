@@ -322,19 +322,40 @@ class WorkflowWatchdog:
     def _substrate_for(self, run: WorkflowRun) -> containers.Substrate:
         """The execution substrate for a stale run, for the sweep's substrate check.
 
-        A run is treated as isolated only when it recorded a worktree dir; that dir's
-        on-disk existence is its `alive`. An isolated-but-gone worktree is honestly aborted
-        (a Resume that points at a gone worktree is worse than an abort); an inline run
-        (no recorded worktree) is reported not-isolated so the sweep leaves it to adoption.
+        A run is treated as isolated only when it recorded a workspace path; that path's on-disk
+        existence is its `alive`. An isolated-but-gone workspace is honestly aborted (a Resume
+        that points at a gone worktree is worse than an abort); an inline run (no recorded
+        workspace) is reported not-isolated so the sweep leaves it to adoption.
 
-        WF2WOR-4 tightens this to consult `worktrees.inspect_worktree` for the full
-        alive/dirty/branch state; here we take the cheap on-disk existence check the
-        recorded path already supports.
+        WF2WOR-4: the answer now comes from `worktrees.substrate_for(inspect_worktree(...))`,
+        which is what S52 built it FOR — "the substrate is built HERE so S46's boot sweep has one
+        source of truth". Before this, the sweep did its own `Path(wt).is_dir()`, so two places
+        computed the same decision and the disagreement would show up as a run aborted despite
+        having recoverable work. `provisioning.inspect_run` additionally records the DIRTY state
+        and the changed files, which is what makes the suspended run's Resume affordance able to
+        say what is waiting in it rather than only that something is.
+
+        Falls back to the cheap existence check if the inspection raises: a boot sweep must
+        decide, and an unanswerable git call is not a reason to leave a stale `running` row.
         """
         wt = str((run.extra or {}).get("worktree_path", "") or "")
-        if wt:
+        if not wt:
+            return containers.Substrate(kind="inline", alive=False)
+        try:
+            from personalclaw.workflows import provisioning
+            from personalclaw.workflows import worktrees as wt_mod
+
+            state = provisioning.inspect_run(run)
+            # Recorded on the way past: this is the one place at boot that knows whether a
+            # survived workspace has UNCOMMITTED work in it, and that is precisely what
+            # `preserved_workspace_path` means. A sweep that suspended a run without it would
+            # leave the user a Resume button and no path to the work.
+            if provisioning.stamp_preserved_path(run, state):
+                store.save(run)
+            return wt_mod.substrate_for(state)
+        except Exception:
+            logger.debug("substrate inspection failed for run %s", run.id, exc_info=True)
             return containers.Substrate(kind="worktree", alive=Path(wt).is_dir(), detail=wt)
-        return containers.Substrate(kind="inline", alive=False)
 
     async def _adopt(self, run: WorkflowRun) -> None:
         """Resume a run with no live controller.
@@ -407,13 +428,22 @@ def _now() -> str:
 # ── retention ────────────────────────────────────────────────────────────────
 
 
-def prune_runs(workflow_name: str, *, keep: int = 100) -> int:
-    """Prune old runs for one def, oldest first.
+async def prune_runs(workflow_name: str, *, keep: int = 100) -> int:
+    """Prune old runs for one def, oldest first, tearing each workspace down FIRST.
 
     Pinned runs are never pruned, and the row is deleted only after its directory sweep
     succeeds — the reverse order would orphan megabytes of journal with no row left to
     find them by.
+
+    ASYNC because retention is the OTHER deletion path teardown has to cover (§4.1: "teardown
+    ties to run retention expiry"). Wiring only the explicit delete would leave every
+    retention-expired run's services running — and retention is the path that fires without
+    anyone watching, so it is the one where a leak accumulates silently. The teardown goes
+    through `service.teardown_workspace`, the SAME performer the explicit delete uses, gated by
+    the same `workspace_teardown_on_expiry` config.
     """
+    from personalclaw.workflows.service import teardown_workspace
+
     runs, _total = store.list_runs(workflow_name=workflow_name, limit=10_000)
     prunable = [r for r in runs if r.is_terminal and not r.pinned]
     if len(prunable) <= keep:
@@ -422,6 +452,9 @@ def prune_runs(workflow_name: str, *, keep: int = 100) -> int:
     doomed = prunable[keep:]
     removed = 0
     for run in doomed:
+        # BEFORE the sweep, always: a scratch workspace lives under the run dir, so sweeping
+        # first would run teardown against a directory that is already gone.
+        await teardown_workspace(run, reason="retention")
         if _sweep_run_dir(run.id):
             store.delete(run.id)
             removed += 1

@@ -142,6 +142,15 @@ CONFIRMATION_RESOLVED = "confirmation_resolved"
 TASK_VERIFIED = "task_verified"
 CASCADE_BLOCKED = "cascade_blocked"
 
+#: WORK-CONTAINERS §4.1 (WF2WOR-4): what happened to the run's workspace. A ledger kind because
+#: WHERE a run worked changes how its result reads — a stage that failed on a missing dependency
+#: after a setup step failed is a different fact from one that failed on its own logic, and a
+#: refiner comparing two runs of one template cannot tell them apart without this. `teardown` is
+#: separate because it fires long after the run, on a deletion path, and folding it into the
+#: provisioning record would mean rewriting a journal line after the run ended.
+WORKSPACE_PROVISIONED = "workspace_provisioned"
+WORKSPACE_TEARDOWN = "workspace_teardown"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
@@ -183,6 +192,8 @@ LEDGER_KINDS = frozenset(
         DELAY_CLAMPED,
         PENDING_OUTCOME,
         OUTCOME_RESOLVED,
+        WORKSPACE_PROVISIONED,
+        WORKSPACE_TEARDOWN,
     }
 )
 
@@ -903,6 +914,28 @@ class Journal:
             blocked_task_ids=list(blocked_task_ids),
             cause=cause,
         )
+
+    def workspace_provisioned(self, outcome: dict[str, Any]) -> None:
+        """What the run's workspace ended up being (WORK-CONTAINERS §4.1).
+
+        Recorded even for a REFUSED or degraded workspace — especially then. A run that silently
+        fell back from `worktree` to a scratch dir because git was missing behaves differently
+        from one that got the isolation it asked for, and without the record the difference is
+        invisible to the cockpit and to a refiner reading the ledger.
+
+        The outcome dict comes from `provisioning.Provisioned.to_dict`, whose env block carries
+        presence flags only — a journal is read by the flywheel and shipped in bug reports.
+        """
+        self.write(WORKSPACE_PROVISIONED, workspace=redact(outcome))
+
+    def workspace_teardown(self, outcome: dict[str, Any], *, reason: str = "") -> None:
+        """What teardown did before the workspace was deleted.
+
+        `reason` names the deletion path (`delete` vs `retention`), because the two arrive at the
+        same removal for different causes and a user asking "where did my worktree go" needs the
+        cause, not just the fact.
+        """
+        self.write(WORKSPACE_TEARDOWN, workspace=redact(outcome), reason=reason)
 
 
 def ledger(run_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any]]:

@@ -6365,7 +6365,7 @@
         {
           "id": "WF2WOR-4",
           "title": "Run workspace + worktree execution wiring + code-run cockpit",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§4.1 (workspace-provisioning block), §4.2 (folder contracts), Migration Order steps 2 & 5",
           "done_when": "Success Criterion 7: plan_provisioning/pending_setup/plan_teardown are wired into the controller run-start path and executed (subprocess setup/teardown); PID-liveness lock files + preserved_workspace_path land on the run record; workspace_default_mode/workspace_teardown_on_expiry config defaults wire through all four points; a code-kind run provisions a worktree with preserve_patterns + idempotent setup, survives resume, tears down before deletion, and the cockpit diff panel + Apply Locally/Checkout Branch verbs work end-to-end",
           "deps": [
