@@ -276,15 +276,31 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
  *  (shared vs per-session connections) + lifetime spawn/reuse counters so the user can
  *  see pooling working. Hidden when the mcp SDK extra is absent or nothing has connected
  *  yet (no pool activity → no tile clutter). */
-function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
-  if (!stats || !stats.available || !(stats.live_connections || stats.spawns)) return null
+/** Exported for test: the gate (which pool states render at all) and the conditional Evicted cell
+ *  are only observable by rendering the tile against a stubbed stats object — jsdom reports every
+ *  box as 0, so nothing about them is measurable from layout. */
+export function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
+  // `configured_servers` joins the gate: the old condition was `live_connections || spawns`, so a
+  // pool with servers CONFIGURED but none spawned yet rendered nothing — exactly the state where
+  // "the pool knows about N servers and has opened none" is the useful fact. A configured pool with
+  // no activity is a real answer; an empty pool is the only thing worth hiding.
+  if (!stats || !stats.available) return null
+  if (!(stats.live_connections || stats.spawns || stats.configured_servers)) return null
   const cells: Array<{ label: string; value: number | undefined; hint: string }> = [
+    // Configured leads: it is the denominator the other numbers are read against — 0 live out of 1
+    // configured means something different from 0 live out of 6.
+    { label: 'Configured', value: stats.configured_servers, hint: 'MCP servers the pool knows about, whether or not a connection is open' },
     { label: 'Live', value: stats.live_connections, hint: 'Open MCP connections right now' },
     { label: 'Shared', value: stats.shared_conns, hint: 'Poolable servers shared across sessions (one process each)' },
     { label: 'Per-session', value: stats.session_conns, hint: 'Stateful servers isolated to one session' },
     { label: 'Reused', value: stats.reused, hint: 'Calls served by an existing connection instead of a new spawn' },
     { label: 'Spawns', value: stats.spawns, hint: 'Connections started this process lifetime' },
     { label: 'Reaped', value: stats.reaps, hint: 'Idle connections swept to reclaim memory' },
+    // Evicted is the ONLY counter here tied to session lifecycle rather than pooling: session
+    // expiry drops that session's isolated connections (shared ones are untouched). Shown only
+    // when non-zero — on the common single-session install it is permanently 0, and a zero cell
+    // beside six live ones reads as a metric that is broken rather than one that has not happened.
+    ...(stats.evicted ? [{ label: 'Evicted', value: stats.evicted, hint: 'Per-session connections dropped when their session expired (shared connections are untouched)' }] : []),
   ]
   return (
     <div>
