@@ -20,6 +20,45 @@ function useRightPanelOpen(): boolean {
   return open
 }
 
+/** Make the left slot's "…flexes and truncates" promise actually TRUE.
+ *
+ *  `min-w-0 flex-1` shrinks the SLOT correctly, but a child `<span>` has `min-width: auto`
+ *  and **42 of the app's 52 `title-l` call sites carry no `truncate` class** — so the text
+ *  laid out at its full intrinsic width and PAINTED THROUGH the slot, sliding under the
+ *  `shrink-0` control row. Measured at 390px: the title overlapped the controls on 6
+ *  otherwise-canonical pages (prompts, workflows, notifications, inbox, knowledge,
+ *  learning), 2 at 834px, 0 at 1280px, identically in both themes.
+ *
+ *  Fixing it at the slot that OWNS the contract beats adding `truncate` to 42 call sites
+ *  that would each drift again:
+ *   · `truncate` on the title gives it `overflow-hidden` + `text-overflow: ellipsis` +
+ *     `nowrap`, so it stops at the slot edge with an ellipsis rather than a cut mid-glyph.
+ *     Scoped by `[data-type]` so it hits the page title, not sibling chips/buttons. Matched
+ *     as a DESCENDANT, not a direct child: three of the six wrap the title one level deeper
+ *     (`learning`/`workflows` in a `<div>`) or make it a flex container whose own child
+ *     overflows (`inbox`), so a `>` selector reached only half the family.
+ *   · `[&_div]:min-w-0` so the shrink can propagate — a nested flex wrapper otherwise
+ *     re-establishes `min-width: auto` and the text overflows again.
+ *   · `pr-s` — a title that ends flush against the control row reads as broken rather than
+ *     truncated. Measured `gapToControls: 0` on all six before this.
+ *
+ *  NOT `overflow-hidden` on the SLOT, which was the first thing I tried. It fixes titles but
+ *  it also clips the pages that put a whole CONTROL ROW in this slot (`#/loops`, `#/code`,
+ *  `#/files` — the already-logged LoopComposer overflow), turning controls that were merely
+ *  overlapping into controls that are **gone**: measured reachable 3 → 1 on `#/loops` and
+ *  `#/code`. Clipping text is a graceful degradation; clipping a button is a regression. The
+ *  overflowing-control-row family stays an owner taste call, untouched here.
+ *
+ *  Also depends on `HeaderActions` leaving the title `titleFloor()` px — see the ceiling in
+ *  that file. Truncating inside a slot that can still reach 0px width shows nothing at all;
+ *  measured on #/prompts, which is why that ceiling fix ships with this one. */
+const TITLE_TRUNCATES = [
+  // every ancestor between the slot and the title must allow shrinking, else the innermost
+  // flex box keeps `min-width: auto` and the text still overflows.
+  '[&_div]:min-w-0',
+  '[&_[data-type]]:min-w-0 [&_[data-type]]:truncate [&_[data-type]]:pr-s',
+].join(' ')
+
 /** App top bar — sparse NE chrome. Left slot for context (model pill / page
  *  title), right slot for actions. Theme + width controls are NOT here — they
  *  live in the persistent shell CORNERS (see ShellCorners), which float above
@@ -64,7 +103,7 @@ export function TopBar({ left, right, keepCornerPadding = false, contentAligned 
         {/* Left takes the slack and truncates (the title shrinks gracefully); the action
             cluster keeps its full size so a wide set (Cancel/Save/Pin/… in edit mode)
             never crushes the breadcrumb into an overlap. */}
-        <div className="flex min-w-0 flex-1 items-center gap-s pl-l" data-header-left>{left}</div>
+        <div className={`flex min-w-0 flex-1 items-center gap-s pl-l ${TITLE_TRUNCATES}`} data-header-left>{left}</div>
         <div className="flex shrink-0 items-center gap-s pr-l">{right}</div>
       </header>
     )
@@ -80,7 +119,7 @@ export function TopBar({ left, right, keepCornerPadding = false, contentAligned 
       {/* Left flexes + truncates; right is content-sized. A responsive HeaderActions
           cluster measures the AVAILABLE gap (header width − left width) rather than its
           own content box, so shedding controls can't latch overflow (see HeaderActions). */}
-      <div className="flex items-center gap-s min-w-0 flex-1" data-header-left>{left}</div>
+      <div className={`flex items-center gap-s min-w-0 flex-1 ${TITLE_TRUNCATES}`} data-header-left>{left}</div>
       <div className="flex items-center gap-s shrink-0">{right}</div>
     </header>
   )
