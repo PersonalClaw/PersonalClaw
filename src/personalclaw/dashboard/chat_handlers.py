@@ -227,6 +227,19 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     except Exception:
         logger.warning("autonudge.notify_user_input failed", exc_info=True)
 
+    # ── kind:idle: the same signal, for store-defined idle triggers (WF2AUT-11). ──
+    # 🔴 Wired HERE, beside autonudge's own cancel, rather than left for a later session: a
+    # re-arm reader with no writer is the worst inert shape — `armed_at` would only ever advance on
+    # a fire, so a user typing all afternoon would still be nudged for "going quiet". Autonudge
+    # CANCELS a pending timer; a poll has no timer, so the equivalent is moving the arm point.
+    try:
+        from personalclaw.triggers.idle_poll import notify_activity
+        from personalclaw.triggers.store import TriggerStore
+
+        notify_activity(session_key=session.key, store=TriggerStore(base_dir=config_dir()))
+    except Exception:
+        logger.debug("idle re-arm on user input failed", exc_info=True)
+
     # ── Orchestrator stop detection ─────────────────────────────────
     _stop_words = {"stop", "cancel", "abort"}
     tracker = session._orch_tracker
