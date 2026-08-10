@@ -160,14 +160,20 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
     // padding it reserves on both ends) MINUS the title's floor — NOT the cluster's own
     // (content-collapsed) width. Measuring our own box would latch overflow: shedding
     // shrinks the box → re-measures as "no room" → never recovers.
+    // The header's inner CONTENT box — its width minus the padding it reserves to clear
+    // the floating shell corners. This is the hard ceiling for anything in the row: grow
+    // past it and you are under the corner chrome, which swallows clicks.
+    const innerBox = (): number => {
+      const header = outer.closest('header')
+      if (!header) return outer.clientWidth
+      const cs = getComputedStyle(header)
+      return header.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+    }
     const availableWidth = (): number => {
       const header = outer.closest('header')
       const left = header?.querySelector<HTMLElement>('[data-header-left]')
       if (!header) return outer.clientWidth
-      // clientWidth INCLUDES padding — the TopBar pads both ends to clear the floating
-      // shell corners, so subtract that padding to get the row's real usable width.
-      const cs = getComputedStyle(header)
-      const inner = header.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      const inner = innerBox()
       // The title needs min(its natural width, the scale-aware floor); give the cluster
       // the rest. On narrow headers the floor shrinks so the cluster keeps usable width.
       const leftNatural = left ? Math.min(left.scrollWidth, left.clientWidth || left.scrollWidth) : 0
@@ -223,8 +229,10 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       let used = DOTS
       // `neverOverflow` children (e.g. a Segmented mode-slider) can't live in the `…`
       // menu — reserve their icon-only width up front so they always stay visible.
+      // Total that reservation separately: it is the rail's FLOOR (see the cap below).
+      let floorW = 0
       for (const r of regs.current.values()) {
-        if (r.neverOverflow) { keep.add(r.id); used += iconW(r.id) }
+        if (r.neverOverflow) { keep.add(r.id); used += iconW(r.id); floorW += iconW(r.id) }
       }
       for (const { r } of ordered) {
         if (keep.has(r.id)) continue
@@ -241,7 +249,23 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       // cap the rail at `avail - DOTS` so the rail + the `…` beside it together fit in
       // `avail` and the `…` stays in-box (never pushed under the shell corner). The rail
       // then fills its cap and scrolls its controls horizontally beneath the fixed `…`.
-      const cap = used > avail ? Math.max(0, Math.round(avail - DOTS)) : null
+      // FLOOR the cap at the `neverOverflow` children's own total width, because capping
+      // below it cannot help: those controls can't move into the `…` menu, so a too-small
+      // cap only CLIPS them — and scrolling is no escape here, since scrollbars are hidden
+      // app-wide by owner tenet, making a clipped control read as absent. Measured at
+      // 390px: #/chat carries two mode pills (40px each = 88px) in a rail capped to 42px,
+      // so the permission-mode pill was unreachable.
+      //
+      // But the floor is itself bounded by the header's inner box: letting the rail grow
+      // past it pushes the `…` trigger under the floating shell corner, which INTERCEPTS
+      // the click (verified — Playwright times out on it, while a programmatic .click()
+      // still works, so a geometry-only check misses this). Clamping to
+      // `innerBox - DOTS` keeps the `…` reachable, and the row is `justify-end` in a
+      // `min-w-0 flex-1` slot so the extra width comes out of the TITLE, which truncates.
+      const ceiling = Math.max(0, innerBox() - DOTS)
+      const cap = used > avail
+        ? Math.min(Math.max(floorW, Math.round(avail - DOTS)), ceiling)
+        : null
       setMaxW((prev) => (prev === cap ? prev : cap))
     }
 
@@ -421,7 +445,23 @@ export function HeaderControl({
  *  segment stays highlighted, so the current value is always visible). It never
  *  drops into the `…` menu (a mode-slider has no single-row form) — it participates
  *  in the tier decision and stays visible, going icon-only when tight. Options MUST
- *  supply `icon` (dev-guard in place); label-only options can't reach the icon tier. */
+ *  supply `icon` (dev-guard in place); label-only options can't reach the icon tier.
+ *
+ *  ICON-ONLY IS NOT THE LAST RUNG. A 4-option strip is still ~142px icon-only, and a
+ *  phone header's whole content box is ~155px — so on a narrow screen the cluster ran
+ *  out of ladder: `neverOverflow` kept the strip visible, the rail capped itself below
+ *  the strip's width, and the surplus segments were simply CLIPPED. Measured at 390px
+ *  before this was fixed: 6 surfaces lost 1-3 controls each — #/tasks showed 1 of its 4
+ *  view buttons (Cards / Board / Graph gone, 2 of them under the `…` trigger),
+ *  #/prompts lost System + Snippets, #/chat its permission-mode pill, #/workflows its
+ *  Definitions tab. Horizontal scroll was NOT a rescue: scrollbars are hidden app-wide
+ *  by owner tenet, so a clipped segment reads as absent.
+ *
+ *  So pass `collapse="menu"`: below its own fit threshold the strip becomes ONE pill
+ *  showing the active option, which opens the full list in a Popover. That is the same
+ *  final rung `ArtifactCompare` and `LoopComposer` already use — the canonical form
+ *  existed, this wrapper just never offered it. Widening the cap instead cannot work:
+ *  even with the title fully yielded the box is 39px short of strip + `…`. */
 export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled }: {
   options: SegOption[]
   value: string
@@ -440,7 +480,7 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
   // Match HeaderControl: icon+label at FULL/TEXT, icon-only when tight (ICON/OVERFLOW).
   // The active segment stays highlighted so the current value is always visible.
   const iconOnly = tier === 'icon' || tier === 'overflow'
-  return <Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} />
+  return <Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu" />
 }
 
 /** A header mode control that shows ONLY the current selection, and expands on
