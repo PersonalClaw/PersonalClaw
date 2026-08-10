@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -137,7 +137,10 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
         {loading && !projects ? <ListSkeleton rows={5} />
           : !shown.length ? (
             needle
-              ? <p className="py-10 text-center text-on-surface-low text-[0.8125rem]">No projects match “{q.trim()}”.</p>
+              // Through the primitive, like every other list's no-match state — a bare centered
+              // <p> skipped the shared icon/title/hint rhythm and read as a different kind of
+              // screen than the same condition on Apps, Knowledge or Prompts.
+              ? <EmptyState icon={Search} title="No matching projects" hint="Try a different term." />
               : <EmptyState icon={FolderKanban} title="No projects yet"
                   hint="A project ties your loops (General, Goal, Code, Design), chats, and tasks into one context-continuous unit."
                   action={{ label: 'New project', onClick: () => setCreating(true), icon: Plus }} />
