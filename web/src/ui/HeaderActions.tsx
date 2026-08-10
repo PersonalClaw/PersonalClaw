@@ -259,10 +259,18 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
       // But the floor is itself bounded by the header's inner box: letting the rail grow
       // past it pushes the `…` trigger under the floating shell corner, which INTERCEPTS
       // the click (verified — Playwright times out on it, while a programmatic .click()
-      // still works, so a geometry-only check misses this). Clamping to
-      // `innerBox - DOTS` keeps the `…` reachable, and the row is `justify-end` in a
-      // `min-w-0 flex-1` slot so the extra width comes out of the TITLE, which truncates.
-      const ceiling = Math.max(0, innerBox() - DOTS)
+      // still works, so a geometry-only check misses this).
+      //
+      // The ceiling must ALSO leave the title its floor. `availableWidth()` already promises
+      // the title `titleFloor(inner)` px, but the ceiling was computed from the raw inner box
+      // and so could overrule that promise: on #/prompts a 3-icon strip (108px) plus the `…`
+      // (40px) exactly filled the 155px box, leaving the title slot **0px** — the page name
+      // vanished rather than truncating. Subtracting the same floor keeps the two halves of
+      // this file telling the same story, and the title then truncates inside a slot that is
+      // never zero. The row is `justify-end` in a `min-w-0 flex-1` slot, so whatever the rail
+      // does not take goes back to the title.
+      const inner = innerBox()
+      const ceiling = Math.max(0, inner - DOTS - titleFloor(inner))
       const cap = used > avail
         ? Math.min(Math.max(floorW, Math.round(avail - DOTS)), ceiling)
         : null
