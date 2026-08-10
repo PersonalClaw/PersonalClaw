@@ -198,7 +198,13 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
         </div>
         <div className="flex shrink-0 items-center gap-s">
           <Button size="sm" onClick={onAccept} disabled={busy}><Check size={14} /> Accept</Button>
-          <Button size="sm" variant="ghost" onClick={onReject} disabled={busy}><X size={14} /> Dismiss</Button>
+          {/* "Reject", not "Dismiss". The app already distinguishes the two verbs consistently:
+              DISMISS triages an item off your list (InboxDetail writes `status: 'dismissed'`),
+              while REJECT declines a PROPOSAL and is always paired with Accept. This row is a
+              proposal — the handler is `decide(row, 'reject')`, the endpoint is
+              `rejectLearningProposal`, the prop is `onReject`, and the file's own doc comment says
+              "accept installs, reject …". Every layer said reject; only the label said Dismiss. */}
+          <Button size="sm" variant="ghost" onClick={onReject} disabled={busy}><X size={14} /> Reject</Button>
         </div>
       </div>
     </div>

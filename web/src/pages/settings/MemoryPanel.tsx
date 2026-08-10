@@ -15,7 +15,7 @@ import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settings
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, FormSkeleton } from '../../ui/ListScaffold'
-import { TextInput, Select, ChipInput } from '../../ui/forms'
+import { TextInput, Select, ChipInput, NumberField } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
@@ -1078,10 +1078,10 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
     <div>
       <Section title="Retention" hint="When idle conversations roll up into memory and how long history is kept.">
         <Field label="Idle before history rollup (hours)" hint="A conversation idle this long gets consolidated into memory.">
-          <NumInput value={s.history_idle_hours} onChange={(v) => patch({ history_idle_hours: v })} step={0.5} min={0.5} />
+          <NumberField value={s.history_idle_hours} onChange={(v) => patch({ history_idle_hours: v })} step={0.5} min={0.5} width="w-28" ariaLabel="Idle before history rollup (hours)" />
         </Field>
         <Field label="Max history age (days)" hint="History older than this is pruned.">
-          <NumInput value={s.history_max_days} onChange={(v) => patch({ history_max_days: v })} step={1} min={1} />
+          <NumberField value={s.history_max_days} onChange={(v) => patch({ history_max_days: v })} step={1} min={1} width="w-28" ariaLabel="Max history age (days)" />
         </Field>
         <div className="mt-2"><SavedToast show={saved} /></div>
       </Section>
@@ -1104,7 +1104,7 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
         </Row>
         {s.push_context && s.graph_enabled !== false && (
           <Row label="Volunteer confidence" hint="How sure the match must be before memory is volunteered. 0.9 = declared aliases only · 0.8 also admits exact names · 0.6 admits looser matches (more offered, more of it irrelevant).">
-            <NumInput value={Number(s.push_min_confidence ?? 0.7)} min={0} max={1} step={0.05} onChange={(v) => patch({ push_min_confidence: v })} />
+            <NumberField value={Number(s.push_min_confidence ?? 0.7)} min={0} max={1} step={0.05} onChange={(v) => patch({ push_min_confidence: v })} width="w-28" ariaLabel="Volunteer confidence" />
           </Row>
         )}
         <div className="mt-2"><SavedToast show={saved} /></div>
@@ -1220,13 +1220,6 @@ function VaultSection({ settings, onToggle, saved }: {
       </div>
       <div className="mt-2"><SavedToast show={saved} /></div>
     </Section>
-  )
-}
-
-function NumInput({ value, onChange, step, min, max }: { value: number; onChange: (v: number) => void; step: number; min: number; max?: number }) {
-  return (
-    <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))}
-      className="h-9 w-28 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
   )
 }
 

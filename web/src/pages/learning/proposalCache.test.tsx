@@ -10,8 +10,13 @@ import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
 // Measured before the fix: DELETE /api/learning/proposals/{id} returned 200, the server's own list
 // went to `rows: 0`, and the row was still on screen at 7.5s with no second request. `decide()`
 // dropped the cache entry and stopped there — that arms the next MOUNT, it does not re-render the
-// live one. The row was not merely cosmetic either: a second Dismiss on the ghost escalates the
+// live one. The row was not merely cosmetic either: a second Reject on the ghost escalates the
 // rejection cooldown (learning/proposals.py:298-302), so the user's own retry compounds the damage.
+//
+// The button read "Dismiss" when #676 was written and reads "Reject" now: the app reserves Dismiss
+// for triaging an item off a list (InboxDetail writes `status: 'dismissed'`), and this declines a
+// PROPOSAL. Same handler, same endpoint — only the label moved, so these assertions are unchanged
+// in substance.
 //
 // The first describe drives the REAL page, because that is the only thing that proves the row is
 // gone from the DOM — a helper test can only prove the helper. The second pins the cache reasoning
@@ -63,7 +68,7 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
   })
 
   /** Mount the page with one row, click `label`, and report what the list shows afterwards. */
-  async function decideOnly(label: 'Accept' | 'Dismiss') {
+  async function decideOnly(label: 'Accept' | 'Reject') {
     // The server truth from the bug report: one row, then zero.
     learningProposals
       .mockResolvedValueOnce(inboxOf([row()]))
@@ -78,8 +83,8 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     return { getByText, queryByText }
   }
 
-  it('removes the row after Dismiss and shows the empty state', async () => {
-    const { getByText } = await decideOnly('Dismiss')
+  it('removes the row after Reject and shows the empty state', async () => {
+    const { getByText } = await decideOnly('Reject')
     // `rows: 0` means the page must now say so. Before the fix this assertion failed at 7.5s.
     expect(getByText('Nothing to review')).toBeInTheDocument()
     // The refetch is the mechanism: two list reads, the second one AFTER the DELETE.
@@ -102,7 +107,7 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
 
     const { findByText, getByText } = render(<LearningPage />)
     await findByText('summarize before filing')
-    await act(async () => { getByText('Dismiss').click() })
+    await act(async () => { getByText('Reject').click() })
 
     await waitFor(() => expect(getByText('only a human reviewer may reject proposals')).toBeInTheDocument())
     expect(getByText('summarize before filing')).toBeInTheDocument()
@@ -112,7 +117,7 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // The week's numbers come from the staging store's flush/staging tables — what a capture PASS
     // did. Neither accept nor reject writes either, so a decision-time refetch would be a request
     // that provably cannot return anything new.
-    await decideOnly('Dismiss')
+    await decideOnly('Reject')
     expect(learningStagingWeek).toHaveBeenCalledTimes(1)
   })
 
