@@ -1,9 +1,15 @@
+> [!IMPORTANT]
+> **Every commit must be signed off** (DCO) or CI fails. Commit with `git commit -s`.
+> Forgot on commits you already pushed? Fix and re-push:
+> ```bash
+> git rebase --signoff main && git push --force-with-lease
+> ```
+> The sign-off name/email must match your commit author. See [CONTRIBUTING.md](../CONTRIBUTING.md#developer-certificate-of-origin-dco).
+
 <!--
 Thanks for the PR. Fill in the four sections below — they mirror the project's
 definition of done (see CONTRIBUTING.md / AGENTS.md). A reviewer checks a PR at a
 glance against these.
-
-Every commit must be signed off (DCO): `git commit -s`. CI enforces it.
 -->
 
 ## What changed
