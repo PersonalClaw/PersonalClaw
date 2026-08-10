@@ -28,6 +28,10 @@ export const ROUTES: RouteEntry[] = [
   { route: 'agents', label: 'Agents', needsData: true },
   { route: 'tools', label: 'Tools', needsData: true },
   { route: 'skills', label: 'Skills', needsData: true },
+  // `learning` was missing while sitting in NAV — 18 nav ids vs 17 entries — so the one page
+  // this manifest exists to cover got NO axe scan and NO visual baseline. The gap was silent
+  // precisely because the manifest is the only thing that would have reported it.
+  { route: 'learning', label: 'Learning', needsData: true },
   { route: 'workflows', label: 'Workflows', needsData: true },
   { route: 'prompts', label: 'Prompts', needsData: true },
   { route: 'apps', label: 'Store', needsData: true },

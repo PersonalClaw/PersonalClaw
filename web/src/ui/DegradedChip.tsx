@@ -42,7 +42,17 @@ export function DegradedChip() {
     <div className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)}
         className={`flex items-center gap-1.5 rounded-pill py-1 text-[0.75rem] transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
-        style={{ background: 'var(--color-warn-container, color-mix(in srgb, var(--color-warn) 20%, transparent))', color: 'var(--color-warn)' }}
+        // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
+        // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put
+        // warn ink on a warn-hued tint under AA: axe measured it FAILING at 20% and PASSING at
+        // 16% on #/learning in light mode (4.35:1 vs the 4.5 floor — same hue on same hue, so
+        // deepening the tint darkens the ground toward the ink).
+        //
+        // The `--color-warn-container` var it used to reach for DOES NOT EXIST — no theme
+        // defines it and this was its only reference, so the fallback was always what shipped.
+        // Naming a token that isn't there hid the real value from anyone reading the line;
+        // dropping it makes the tint depth visible and lints alongside its siblings.
+        style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
         aria-expanded={open}
         // Icon-only has no visible text, so the name must come from aria-label — a title
         // alone is not an accessible name for AT in every engine.
