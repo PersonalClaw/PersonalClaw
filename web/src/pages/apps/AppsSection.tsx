@@ -974,6 +974,10 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
   inbox: 'Inbox', notification: 'Notification', tool: 'Tool', task: 'Task',
   action: 'Action', skills: 'Skills', knowledge: 'Knowledge', memory: 'Memory',
   prompt: 'Prompt', workflow: 'Workflow',
+  // Types whose label was missing fell through to the raw snake_case key in the Store indicator
+  // ("trigger_source provider", "duty_gate provider"). Named here so the install-consent card reads
+  // as prose — the card is where a user decides what to grant, so its wording is part of the control.
+  trigger_source: 'Trigger source', duty_gate: 'Duty gate', sync: 'Sync', sandbox: 'Sandbox',
 }
 
 

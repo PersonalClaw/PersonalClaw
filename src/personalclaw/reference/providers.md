@@ -20,6 +20,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - `sync`
 - `task`
 - `tool`
+- `trigger_source`
 - `workflow`
 
 ## Registered providers

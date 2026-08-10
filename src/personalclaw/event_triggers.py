@@ -17,6 +17,13 @@ Inbox messages (``inbox_service._ingest``, after the allowlist) — ``source="in
 - **InboxSender**      — a message whose sender matches ``sender_glob``.
 - **InboxAddress**     — a message whose receiving address matches ``address_glob``.
 
+App-contributed sources (``trigger_sources.emit``, AUTO-A4) — ``source="app"``:
+
+- **AppEvent**         — an event from an installed app's ``trigger_source`` provider, whose
+  namespaced name (``app:<app>:<event>``) matches ``event_glob``. An empty glob matches every app
+  event. The payload is fenced at ingestion with the app's provenance, so the app's own text can
+  never arrive as instructions.
+
 Each spec carries an action (reusing the action-provider registry) + an optional
 ``max_fires`` so a trigger auto-disables once exhausted ("alert me the NEXT time X").
 A per-spec debounce + a global rate cap guard against trigger storms.
@@ -46,6 +53,10 @@ logger = logging.getLogger(__name__)
 # matching by it so a memory trigger can never fire on an inbox event and vice versa.
 SOURCE_MEMORY = "memory"
 SOURCE_INBOX = "inbox"
+#: App-contributed sources (AUTO-A4). Its PRODUCER is `trigger_sources.registry.emit`, the single
+#: ingestion point that namespaces the event (`app:<app>:<event>`) from the app's registered name
+#: and fences its text at origin. Declared here since EIAT-1 with no producer at all — an "enum
+#: member nobody writes" — which is precisely what AUTO-A4 closed.
 SOURCE_APP = "app"
 EVENT_SOURCES = (SOURCE_MEMORY, SOURCE_INBOX, SOURCE_APP)
 
@@ -59,6 +70,14 @@ CONTENT_MATCH = "ContentMatch"
 INBOX_MESSAGE = "InboxMessage"
 INBOX_SENDER = "InboxSender"
 INBOX_ADDRESS = "InboxAddress"
+# App-source pattern (AUTO-A4). ONE pattern, not two, and that is a decision worth stating: an
+# earlier sketch had a catch-all `AppEvent` plus a separate glob pattern, mirroring the
+# InboxMessage/InboxSender split. But the inbox split exists because its two matchers read
+# DIFFERENT meta fields (`sender` vs `address`), whereas both app variants would read the same
+# `event_type` — so the catch-all is just `event_glob: "*"`, and shipping it as a second pattern
+# would be two persisted values for one matcher. An empty glob matches every app event, which is
+# the catch-all, and `matches()` documents it.
+APP_EVENT = "AppEvent"
 EVENT_PATTERNS = (
     MEMORY_UPDATE,
     MEMORY_KEY_PATTERN,
@@ -66,6 +85,7 @@ EVENT_PATTERNS = (
     INBOX_MESSAGE,
     INBOX_SENDER,
     INBOX_ADDRESS,
+    APP_EVENT,
 )
 
 # Which source each pattern belongs to. A pattern is only ever evaluated for events
@@ -78,6 +98,7 @@ PATTERN_SOURCE: dict[str, str] = {
     INBOX_MESSAGE: SOURCE_INBOX,
     INBOX_SENDER: SOURCE_INBOX,
     INBOX_ADDRESS: SOURCE_INBOX,
+    APP_EVENT: SOURCE_APP,
 }
 
 # Global rate cap: at most this many event-trigger fires per window (storm guard).
@@ -99,7 +120,26 @@ class EventTrigger:
     content_re: str = ""  # for ContentMatch
     sender_glob: str = ""  # for InboxSender
     address_glob: str = ""  # for InboxAddress
+    #: For AppEvent (AUTO-A4): a glob on the NAMESPACED event name (`app:<app>:<event>`). Empty
+    #: matches every app event — the catch-all, which is why `AppEvent` needs no second pattern.
+    event_glob: str = ""
     enabled: bool = True
+    #: Lifecycle state, from `triggers.models.TriggerState` (AUTO-A4). DISTINCT from `enabled`, and
+    #: that distinction is the whole point: `enabled` is the user's switch, `state` is the system's.
+    #: Defaults to `active`, so every row persisted before this field existed keeps firing exactly
+    #: as before — a default of anything else would silently retire the whole population.
+    #:
+    #: Only `parked` is produced here today (an app source vanishing — `trigger_sources.parking`).
+    #: The other members belong to the unified store's own fire path; this store's rows reach them
+    #: through no path, which is why nothing here maps a fire outcome onto `state`.
+    state: str = "active"
+    #: Why this trigger is parked, in words the user can act on. Empty when not parked. Persisted
+    #: rather than derived because the CAUSE (which app went away) is not recoverable from the
+    #: state once the app is gone from the registry.
+    park_reason: str = ""
+    #: Epoch seconds after which a parked trigger may retry — `autopause.unpark_due`'s contract.
+    #: 0.0 reads as due, so a park written before this field existed cannot strand a trigger.
+    park_retry_after: float = 0.0
     max_fires: int = 0  # 0 = unlimited
     fire_count: int = 0
     debounce_secs: float = _DEFAULT_DEBOUNCE_SECS
@@ -116,7 +156,11 @@ class EventTrigger:
             "content_re": self.content_re,
             "sender_glob": self.sender_glob,
             "address_glob": self.address_glob,
+            "event_glob": self.event_glob,
             "enabled": self.enabled,
+            "state": self.state,
+            "park_reason": self.park_reason,
+            "park_retry_after": self.park_retry_after,
             "max_fires": self.max_fires,
             "fire_count": self.fire_count,
             "debounce_secs": self.debounce_secs,
@@ -139,12 +183,37 @@ class EventTrigger:
             content_re=str(d.get("content_re", "")),
             sender_glob=str(d.get("sender_glob", "")),
             address_glob=str(d.get("address_glob", "")),
+            event_glob=str(d.get("event_glob", "")),
             enabled=bool(d.get("enabled", True)),
+            # `active` default: a row persisted before `state` existed must keep firing. Reading a
+            # missing state as anything else would retire the whole existing population at once.
+            state=str(d.get("state") or "active"),
+            park_reason=str(d.get("park_reason", "")),
+            park_retry_after=float(d.get("park_retry_after", 0.0) or 0.0),
             max_fires=int(d.get("max_fires", 0) or 0),
             fire_count=int(d.get("fire_count", 0) or 0),
             debounce_secs=float(d.get("debounce_secs", _DEFAULT_DEBOUNCE_SECS) or 0.0),
             last_fired_at=float(d.get("last_fired_at", 0.0) or 0.0),
         )
+
+
+def fires_automatically(trigger: EventTrigger) -> bool:
+    """Whether the engine may fire this trigger on its own (AUTO-A4).
+
+    🔴 Asked as ONE question, mirroring `Trigger.fires_automatically`, for the reason its docstring
+    gives: "checking `enabled` without `state` is how an autopaused trigger keeps firing". This
+    store's only non-active state today is `parked` (an app source vanished), and a park that did
+    not actually stop the fire would be a control that looks enforced and is not — the exact shape
+    this repo keeps finding.
+
+    Read through this rather than comparing `state` at each call site: `matches()` is the ONE gate
+    every source reaches, so putting the check there means a new source cannot forget it. Both
+    halves live HERE rather than as two separate lines in `matches()`, so a caller cannot ask half
+    the question — which is the failure `Trigger.fires_automatically` was written to prevent.
+    """
+    from personalclaw.triggers.models import TriggerState
+
+    return trigger.enabled and trigger.state == TriggerState.ACTIVE.value
 
 
 #: How much of a memory value `ContentMatch` will scan.
@@ -219,11 +288,14 @@ def matches(
     pattern logic.
 
     §7/R4 rule (d): only the trigger SPEC supplies patterns. `key_glob`, `content_re`,
-    `sender_glob`, `address_glob` come from the trigger; `key`, `value`, and the `meta` fields
-    are data and are only ever matched AGAINST. The value's scan length is capped — see
-    `CONTENT_MATCH_SCAN_LIMIT` for the measurement that made that necessary.
+    `sender_glob`, `address_glob` and `event_glob` come from the trigger; `key`, `value`,
+    `event_type` and the `meta` fields are data and are only ever matched AGAINST. The value's
+    scan length is capped — see `CONTENT_MATCH_SCAN_LIMIT` for the measurement that made that
+    necessary.
     """
-    if not trigger.enabled:
+    # `enabled` AND `state`, asked as ONE question (AUTO-A4) — see `fires_automatically`. Checking
+    # `enabled` alone is how a parked trigger keeps firing.
+    if not fires_automatically(trigger):
         return False
     if trigger.max_fires and trigger.fire_count >= trigger.max_fires:
         return False
@@ -246,6 +318,17 @@ def matches(
             return re.search(trigger.content_re, scanned) is not None
         except re.error:
             return trigger.content_re in scanned
+    if trigger.pattern == APP_EVENT:
+        # 🔴 Matched on the NAMESPACED `event_type` (`app:<app>:<event>`), which core derives from
+        # the app's REGISTERED name at ingestion — never from anything the app supplies. So a glob
+        # of `app:calendar:*` cannot be tripped by a hostile app claiming to be `calendar`.
+        #
+        # An empty glob matches EVERY app event (the catch-all), unlike `MemoryKeyPattern`, where
+        # an empty glob matches nothing. The asymmetry is deliberate and follows what an author
+        # means in each case: `MemoryKeyPattern` exists ONLY to narrow by key, so an empty key is
+        # an unfinished trigger; `AppEvent` is the whole app-source vocabulary, so an empty glob is
+        # "any app event" — the same reading `InboxMessage` has for its source.
+        return not trigger.event_glob or fnmatch.fnmatch(event_type or "", trigger.event_glob)
     meta = meta or {}
     if trigger.pattern == INBOX_MESSAGE:
         return True
@@ -340,15 +423,39 @@ class FireOutcome:
         return out
 
 
+def _truncate_fenced(value: str, limit: int) -> str:
+    """Truncate text that is ALREADY fenced, keeping the fence closed (AUTO-A4).
+
+    Extracted because both fencing sites below need it and a per-site copy is a control that must be
+    re-added correctly at each one — the same reasoning `CONTENT_MATCH_SCAN_LIMIT` gives for living
+    in `matches()` rather than at each emitter.
+
+    Cutting a fenced span can remove its closing marker, and an UNTERMINATED fence is worse than a
+    truncated one: everything the model reads after it falls outside the fence, which is exactly the
+    fence-break the wrapper defends against. So the close is re-appended when the cut removed it.
+    """
+    from personalclaw.security import UNTRUSTED_CLOSE
+
+    cut = value[:limit]
+    return cut if UNTRUSTED_CLOSE in cut else f"{cut}\n{UNTRUSTED_CLOSE}"
+
+
 def _fenced_excerpt(trigger_id: str, key: str, value: str) -> str:
     """A short fenced excerpt for the context line, with its own provenance.
 
     Separate from the 2000-char payload fence because the TRANSFORMATION differs — this one is
     truncated to 200 — and `transformation_path` is only honest if it names the truncation that
     actually happened.
-    """
-    from personalclaw.security import fence_untrusted
 
+    **Text already fenced at origin is truncated but NOT re-wrapped** (AUTO-A4). An app-sourced
+    payload arrives fenced by `trigger_sources.emit` with the app's own provenance; wrapping it
+    again would escape the inner markers, so the origin's attributes would read to the model as
+    literal text — the exact damage `fence_payload`'s idempotence exists to avoid.
+    """
+    from personalclaw.security import fence_untrusted, is_fenced
+
+    if is_fenced(value):
+        return _truncate_fenced(value, 200)
     return fence_untrusted(
         value[:200],
         source=f"trigger:{trigger_id}",
@@ -410,7 +517,7 @@ async def execute_event_action(
             screen=verdict,
         )
 
-    from personalclaw.security import fence_untrusted
+    from personalclaw.security import fence_untrusted, is_fenced
 
     # Fenced for EVERY fire, not only a suspicious one. A memory value is untrusted text by
     # definition, and fencing only the flagged ones would mean the screen's misses arrive as
@@ -419,13 +526,24 @@ async def execute_event_action(
     # three different claims. "a memory event said this" and "THIS key said it, truncated to 2000
     # chars on the way" differ, and only the second lets a reader tell whether the text the model
     # acted on is the text that arrived.
-    fenced = fence_untrusted(
-        value[:2000],
-        source=f"trigger:{t.id}:{source}:{event_type}",
-        source_type=f"event:{source}:{event_type}",
-        source_id=key,
-        transformation_path="truncate:2000",
-    )
+    #
+    # 🔴 IDEMPOTENT (AUTO-A4), via `security.is_fenced` and never `UNTRUSTED_OPEN in text` — the
+    # substring form misses every ATTRIBUTED fence, which is the fail-open direction and has bitten
+    # this repo twice. An app-sourced payload is fenced at ORIGIN by `trigger_sources.emit` with the
+    # app's own provenance (`source_type=app:<name>`, `transformation_path=app-source:emit`); this
+    # is the `web_watch` precedent (S127) and the reason `screen.fence_payload` is idempotent too.
+    # Re-wrapping would escape the inner markers, so the origin attributes would reach the model as
+    # literal text — losing exactly the provenance the outer fence is trying to add.
+    if is_fenced(value):
+        fenced = _truncate_fenced(value, 2000)
+    else:
+        fenced = fence_untrusted(
+            value[:2000],
+            source=f"trigger:{t.id}:{source}:{event_type}",
+            source_type=f"event:{source}:{event_type}",
+            source_id=key,
+            transformation_path="truncate:2000",
+        )
 
     # Annotated: the literal alone infers `dict[str, str]`, which mypy correctly refuses at the
     # `payload["test"] = True` below. Same two-step the migration path needed (S66).

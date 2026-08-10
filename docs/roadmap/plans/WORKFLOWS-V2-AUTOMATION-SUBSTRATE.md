@@ -17,7 +17,7 @@ contract, the boot sweep, the system-scheduler handoff, and the Automations page
 🛑 **REMAINING:** the webhook fire endpoint is BLOCKED (E4 — owner decision; the threat model assigns
 the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS); `idle`'s loop-ticker absorption waits
 on LOOPS-EVOLUTION Phase 4 (note §3/§7 say `kind:idle` itself may ship EARLY for user automations —
-only the autonudge deletion is gated); AUTO-A4's `trigger_source` seam is unbuilt; §3.5's
+only the autonudge deletion is gated); §3.5's
 `skip_if_active`/`acting_on` are undeclared anywhere; the §5 did/suppressed fold affordance has no FE
 consumer; and 🔴 the `view` kind's runtime (`triggers/pull_on_view.py`) has **ZERO production
 callers** — declared, listed by the API, rendered on the Automations page, and unreachable.
@@ -5968,3 +5968,72 @@ while the work-only and multi-file tests stay green — confirming the revert to
 - **All three rotation paths now share one policy**: append-time per job (S173), append-time index
   (S174), and boot-time both (here). The retention question this chain opened is closed on every path
   that writes.
+
+### S176 — AUTO-A4: the `app` event source had no producer (WF2AUT-8) — DONE
+
+`SOURCE_APP` has sat in `event_triggers.EVENT_SOURCES` since EIAT-1 with **no producer and no entry in
+`PATTERN_SOURCE`** — declared, listed by the API, and unreachable. An enum member nobody writes. This
+session is its producer, and the seam is deliberately small: no new trigger kind, no second matcher, no
+per-vendor glue.
+
+**The namespace is derived, never accepted.** `trigger_sources.emit` builds `app:<app>:<event>` from the
+REGISTERED provider name, not from the payload, so an app emitting an event literally named
+`app:other:thing` still lands under its own namespace and cannot trip a neighbour's glob. Core's four
+provenance `meta` keys are written last for the same reason. A seam that trusted the payload for its own
+namespace would be a tenant-isolation hole dressed as a string format.
+
+**Fencing at origin, and both downstream fences made idempotent.** The payload is fenced where it enters
+with rich provenance (`source_type=app:<name>`, `transformation_path=app-source:emit`) — the `web_watch`
+precedent (S127). That only works if nothing re-wraps it: a second wrap escapes the inner markers, so
+the origin's attributes would reach the model as literal text. Both downstream fences now test
+`security.is_fenced` rather than `UNTRUSTED_OPEN in text`, which misses attributed fences and fails
+**open** — the substring form has already bitten this repo twice. Truncating a fenced span re-appends the
+close, because an unterminated fence is worse than a truncated one.
+
+**One pattern, not two.** An earlier sketch had a catch-all `AppEvent` plus a separate glob pattern,
+mirroring the inbox split. The inbox split exists because `InboxSender`/`InboxAddress` read *different*
+`meta` fields; both app variants would read `event_type`, so the catch-all is just an empty `event_glob`.
+Two patterns would have been two persisted values to keep in step forever for no matching difference.
+
+**Everything else is inherited, on purpose.** The app path re-enters through the same `emit_event` seam a
+memory write uses, so the injection screen, the frozen capability fence, the denylist, incident mode, the
+debounce and the rate cap all govern an app-sourced fire without a line of new gate code. The #47 pairing
+lands in this commit and is asserted in **both** directions — the shipped guard only checks
+`handlers ⊆ PROVIDER_TYPES`, so a type declared with no handler (installs fine, then does nothing) would
+have slipped straight through it.
+
+**Disable parks; it does not cancel.** The handler unregisters the source BEFORE parking, and the order is
+load-bearing: `emit` must be closed to new events before the bound triggers are moved, or an in-flight
+push races the park. `park_for_app` then reuses `autopause.evaluate(TRANSPORT_UNAVAILABLE)` for
+state/health/reason/cooldown rather than inventing a parallel mechanism — a park is reversible and
+self-heals, so re-enabling the app un-parks its triggers. The park is **enforced**, not merely recorded: a
+test proves a parked trigger does not fire, which is the difference between a lifecycle state and a label.
+
+**Each of the three load-bearing controls was falsified by breaking it** — the end-to-end fire (4 reds),
+the park enforcement (1 red), the fence idempotence (1 red). A green test that stays green when you break
+the thing it names is not evidence.
+
+**DEVIATION:** `test_agent_scope_validation`'s pinned `EVENT_PATTERNS` tuple gains `AppEvent`. The guard's
+real invariant — no event source is a chat turn, so `agent_scope` stays legitimately unread — still holds,
+and the app case is now explained in the test: an app naming its event `chat_turn` still arrives with
+`source=app`, so only a new `EVENT_SOURCES` member can break the pin, which is exactly what it was written
+to catch.
+
+**Scope held:** the APE-side install-consent GRANT surfacing (`eventSubscriptions`, the platform event
+registry) stays with `APE-1`/`APE-2`, this atom's EXT dep. What lands here is the type being declarable,
+validated, consent-visible through the existing provider/permissions surfacing, and backed by a live
+handler.
+
+**Gate:** `make lint` clean (776 files, mypy included); 139 targeted + 201 trigger-family + 26
+manifest/registry/boundary tests green; `-k inert_surface` 10 passed (no baseline regen needed — the SDK
+export has a real consumer); FE `typecheck` clean, full `npm test` 892 passed across 79 files (the global
+design ratchets scan the whole tree, so a path-scoped run would not have covered them), `build` clean;
+repo pre-push render-smoke gate green on 5 routes. Re-verified in full after `#947` merged mid-session and
+this branch was rebased onto `main` — a clean rebase is not proof the runtime still agrees.
+
+Two reds diagnosed and NOT attributed here: `test_harness_validate.py`'s 3 failures are environmental (the
+test shells out to a worktree-relative `.venv/bin/python`; all 11 pass once a venv is present), and
+`docs/design/consistency-audit.json` is stale on `main` — the FE build refreshes it with **zero new drift**
+(`driftHits` 7 and `filesWithDrift` 6 unchanged; the delta is in `LoopPlanReview.tsx`, untouched here), so
+it was reverted rather than folded in. It will re-dirty any tree that runs the FE build and deserves its
+own commit.

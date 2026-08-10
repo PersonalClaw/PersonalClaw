@@ -449,6 +449,149 @@ class SyncTypeHandler(_TypeHandler):
             unregister_transport(name)
 
 
+class TriggerSourceTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'trigger_source'`` extensions (AUTOMATION-SUBSTRATE AUTO-A4).
+
+    An app-contributed ORIGIN of trigger events: the app observes something core knows nothing
+    about and pushes typed events onto the ONE event bus under a namespaced source
+    (``app:<name>:<event>``), which ``kind: event`` triggers match with the existing
+    ``{source, pattern}`` spec. Registered in the ``trigger_sources`` flat registry, matching the
+    ``sync_transports`` / ``sandbox_providers`` shape rather than inventing a fourth idiom.
+
+    Lands in the SAME commit as its ``PROVIDER_TYPES`` entry (the #47 rule): a manifest type with no
+    runtime handler installs successfully and then does nothing, which is the failure
+    ``test_manifest_types_match_handlers`` exists to prevent.
+
+    **Deregistration PARKS, it does not silently drop** — the difference from every other type
+    handler here, and the plan's explicit requirement ("triggers bound to a vanished source park
+    with a typed reason, never silently die"). Contrast ``DutyGateTypeHandler``, whose gate fails
+    OPEN on deregistration: a duty gate only ever REFINES when a trigger fires, so losing it means
+    running unfiltered; a trigger SOURCE is the reason the fire happens at all, so losing it means
+    nothing fires and a user must be able to see why. `trigger_sources.parking` reuses
+    ``autopause.evaluate(TRANSPORT_UNAVAILABLE)`` for the state/reason/cooldown, so this handler
+    decides only WHEN, never what parking means.
+
+    Re-enabling the app un-parks them: the app being back is the proof the outage ended, so the
+    round trip is symmetric and a user who toggles an app off for an afternoon does not have to
+    hunt down each trigger it fed.
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.trigger_sources import register_source
+        from personalclaw.trigger_sources.parking import _default_store, unpark_for_app
+
+        name = getattr(instance, "name", "") or ext.name
+        # Contract validated at REGISTER time, naming what is missing — the `DutyGateTypeHandler`
+        # precedent. A source registered without a usable `start` would sit in the registry looking
+        # live and emit nothing, so the app would appear installed-and-working while producing no
+        # events at all.
+        for attr in ("start", "stop"):
+            if not callable(getattr(instance, attr, None)):
+                raise ValueError(
+                    f"trigger-source provider {name!r} must expose an async {attr}() — "
+                    "see personalclaw.sdk.trigger_source.TriggerSourceProvider"
+                )
+        register_source(instance)
+        self._start(instance, name)
+        try:
+            unpark_for_app(_default_store(), name)
+        except Exception:  # noqa: BLE001 - a store fault must not block the app enable
+            logger.debug("could not un-park triggers for %s", name, exc_info=True)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.trigger_sources import unregister_source
+        from personalclaw.trigger_sources.parking import _default_store, park_for_app
+
+        # Fallback computed without a getattr default so ``ext`` is not dereferenced
+        # when the instance already carries a name (ext may be absent in tests).
+        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        if not name:
+            return
+        self._stop(instance, name)
+        # Unregistered BEFORE parking, and the order matters: `trigger_sources.emit` drops events
+        # from an unregistered source, so this closes the ingestion door first. Parking after would
+        # otherwise leave a window where the app's last in-flight event revives nothing but still
+        # fires a trigger that is about to be parked.
+        unregister_source(name)
+        try:
+            park_for_app(_default_store(), name)
+        except Exception:  # noqa: BLE001 - a store fault must not block the app disable
+            logger.debug("could not park triggers for %s", name, exc_info=True)
+
+    def _start(self, instance: Any, name: str) -> None:
+        """Kick off the source's watch, on the running loop when there is one.
+
+        A source is a PUSH origin, so `start` is what makes it live. Scheduled as a task rather than
+        awaited: `register` is called synchronously from the app-enable path, and awaiting a watch
+        loop there would stall the enable (and, for a long-lived watcher, never return).
+
+        With NO running loop (a CLI enable, a test) the source is registered but not started, and
+        that is logged rather than raised: the registration is still correct, the gateway's own boot
+        enable runs on a loop, and refusing the enable would make `personalclaw` app commands unable
+        to install a source app at all.
+        """
+        import asyncio
+
+        from personalclaw.trigger_sources import SourceEvent, emit
+
+        def _emit(event: SourceEvent) -> None:
+            emit(name, event)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.info(
+                "trigger source %r registered without a running event loop; it will start with "
+                "the gateway",
+                name,
+            )
+            return
+        loop.create_task(self._run_start(instance, name, _emit))
+
+    @staticmethod
+    async def _run_start(instance: Any, name: str, emit_fn: Any) -> None:
+        """Await the source's `start`, logging a raise legibly (PLATFORM-LEGIBILITY §2).
+
+        Fire-and-forget has no result surface, so the log line IS the report — a source whose watch
+        cannot start must not fail as an unretrieved-task warning nobody reads.
+        """
+        try:
+            await instance.start(emit_fn)
+        except Exception:  # noqa: BLE001 - one app's broken watch must not break the gateway
+            logger.warning("trigger source %r failed to start", name, exc_info=True)
+
+    def _stop(self, instance: Any, name: str) -> None:
+        """Ask the source to stop. Never raises — see the class docstring.
+
+        A provider that cannot be stopped cleanly must not be able to hold its registration
+        hostage: the caller unregisters and parks regardless, because the user asked for the app to
+        be off and a stuck watcher is not a reason to keep firing their automations.
+        """
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("no running loop to stop trigger source %s on", name)
+            return
+        loop.create_task(self._run_stop(instance, name))
+
+    @staticmethod
+    async def _run_stop(instance: Any, name: str) -> None:
+        try:
+            await instance.stop()
+        except Exception:  # noqa: BLE001
+            logger.warning("trigger source %r raised on stop", name, exc_info=True)
+
+
 class SandboxTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'sandbox'`` extensions (EXECUTION-ISOLATION EI-1).
 
@@ -827,6 +970,7 @@ def get_provider_registry() -> ProviderRegistry:
         _registry.register_type_handler("channel", ChannelTypeHandler())
         _registry.register_type_handler("sync", SyncTypeHandler())
         _registry.register_type_handler("sandbox", SandboxTypeHandler())
+        _registry.register_type_handler("trigger_source", TriggerSourceTypeHandler())
         # NOTE: there is intentionally NO "space" provider type. Multi-agent
         # native feature (one engine + a switchable orchestration strategy), not
         # a pluggable provider family — so Spaces config lives under Settings >

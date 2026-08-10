@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger,
-  EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon, actionIsSendCapable,
+  EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon, eventSourceLabel,
+  appEventOptions, actionIsSendCapable,
 } from './triggerMeta'
 import type { TriggerVariables, Trigger as WireTrigger } from '../../lib/api'
 
@@ -23,6 +24,7 @@ const cat = (over: Partial<TriggerVariables> = {}): TriggerVariables => ({
     { event: 'SessionEnd', label: 'Session end', desc: 'A session ends', vars: ['$EVENT'], blocking: false, dormant: true, dormant_reason: 'session teardown has no fire site' },
     { event: 'MemoryWrite', label: 'Memory write', desc: 'A memory is written', vars: ['$EVENT'], blocking: false, dormant: true },
   ],
+  app_sources: [],
   ...over,
 })
 
@@ -165,23 +167,25 @@ describe('EVENT_PATTERN_META', () => {
     // offers a pattern the backend rejects, or hides one it accepts.
     const patterns = EVENT_PATTERN_META.map((p) => p.pattern).sort()
     expect(patterns).toEqual(
-      ['ContentMatch', 'InboxAddress', 'InboxMessage', 'InboxSender', 'MemoryKeyPattern', 'MemoryUpdate'],
+      ['AppEvent', 'ContentMatch', 'InboxAddress', 'InboxMessage', 'InboxSender', 'MemoryKeyPattern', 'MemoryUpdate'],
     )
   })
 
   it('maps each pattern to the source the backend derives, never a free choice', () => {
     // source is display-only here; the backend derives it from the pattern (PATTERN_SOURCE). The
-    // three Inbox* patterns are inbox; the three Memory*/Content are memory.
+    // three Inbox* patterns are inbox; the three Memory*/Content are memory; AppEvent is app.
     const bySource = (s: string) => EVENT_PATTERN_META.filter((p) => p.source === s).map((p) => p.pattern).sort()
     expect(bySource('inbox')).toEqual(['InboxAddress', 'InboxMessage', 'InboxSender'])
     expect(bySource('memory')).toEqual(['ContentMatch', 'MemoryKeyPattern', 'MemoryUpdate'])
+    expect(bySource('app')).toEqual(['AppEvent'])
   })
 
   it('names a real spec matcher field (or null) for every pattern', () => {
     // Each `matcher` must be one of the EventTrigger fields matches() reads — or null for the
     // fire-on-everything patterns. A typo'd field name would post a key the backend ignores.
-    const allowed = new Set(['sender_glob', 'address_glob', 'key_glob', 'content_re', null])
+    const allowed = new Set(['sender_glob', 'address_glob', 'key_glob', 'content_re', 'event_glob', null])
     for (const p of EVENT_PATTERN_META) expect(allowed.has(p.matcher)).toBe(true)
+    expect(eventPatternMeta('AppEvent').matcher).toBe('event_glob')
     // The two catch-all patterns carry no matcher.
     expect(eventPatternMeta('InboxMessage').matcher).toBeNull()
     expect(eventPatternMeta('MemoryUpdate').matcher).toBeNull()
@@ -214,14 +218,73 @@ describe('eventPatternMeta', () => {
 })
 
 describe('eventSourceIcon', () => {
-  it('gives distinct icons for inbox vs memory', () => {
+  it('gives a distinct icon for every source', () => {
     // Not a value assertion beyond "they differ" — the icons are lucide components; the contract is
-    // that the two sources are visually distinguishable in the option list.
-    expect(eventSourceIcon('inbox')).not.toBe(eventSourceIcon('memory'))
+    // that the sources are visually distinguishable in the option list. Asserted as a SET size so
+    // adding a source that reuses an existing icon fails here, rather than shipping two origins that
+    // look identical (the S164 defect shape, applied to icons).
+    const icons = new Set(['inbox', 'memory', 'app'].map(eventSourceIcon))
+    expect(icons.size).toBe(3)
   })
 
   it('falls back to the memory icon for an unknown source', () => {
     expect(eventSourceIcon('whatever')).toBe(eventSourceIcon('memory'))
+  })
+})
+
+describe('eventSourceLabel', () => {
+  it('names each source the way the badge and the copy both read it', () => {
+    // ONE mapper, so the source badge, the option list and the empty-state sentence cannot disagree
+    // about what a source is called. The create form used an inline `=== 'inbox' ? … : 'Memory'`
+    // ternary, which silently labelled a THIRD source as "Memory" the moment one existed.
+    expect(eventSourceLabel('inbox')).toBe('Inbox')
+    expect(eventSourceLabel('memory')).toBe('Memory')
+    expect(eventSourceLabel('app')).toBe('App')
+  })
+
+  it('falls back to Memory for an unknown source rather than rendering blank', () => {
+    expect(eventSourceLabel('whatever')).toBe('Memory')
+  })
+})
+
+// ── App-source event vocabulary (AUTO-A4) ───────────────────────────────────
+//
+// The AppEvent matcher is a picker over the LIVE registry, not free text: the namespaced name
+// (`app:<app>:<event>`) is derived by core from the app's registered name, so a hand-typed value is
+// how a trigger ends up bound to an event that can never fire. The options must therefore carry the
+// backend's `source_event` verbatim as their VALUE — the FE never re-derives the prefix.
+
+describe('appEventOptions', () => {
+  const withSources = cat({
+    app_sources: [
+      { app: 'sample-source', label: 'Sample Source', events: [
+        { event: 'thing_happened', source_event: 'app:sample-source:thing_happened' },
+        { event: 'other_thing', source_event: 'app:sample-source:other_thing' },
+      ] },
+    ],
+  })
+
+  it('uses the backend source_event as the option VALUE, never a locally-built name', () => {
+    // The value is what gets POSTed as `event_glob`. Re-deriving `app:` + app + ':' + event here
+    // would be a second copy of `trigger_sources.namespace` free to drift from it.
+    //
+    // Order is the BACKEND's (it sorts by app then event) and is preserved VERBATIM rather than
+    // re-sorted here — a second sort would be a second ordering rule, and the list a user scans
+    // should match the one the server describes. So this fixture is deliberately in a non-sorted
+    // order: if the UI re-sorted, this assertion would fail.
+    const values = appEventOptions(withSources).map((o) => o.value)
+    expect(values).toEqual(['app:sample-source:thing_happened', 'app:sample-source:other_thing'])
+  })
+
+  it('labels an option with the app first, so two apps sharing an event name stay distinguishable', () => {
+    expect(appEventOptions(withSources)[0].label).toContain('Sample Source')
+  })
+
+  it('is empty when no app contributes a source, and when the catalog has not loaded', () => {
+    // Both must be empty rather than throwing: the form switches to a free-text glob plus a warning
+    // on an empty list, and renders while the catalog is still null.
+    expect(appEventOptions(cat())).toEqual([])
+    expect(appEventOptions(null)).toEqual([])
   })
 })
 

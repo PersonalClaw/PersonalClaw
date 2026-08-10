@@ -3354,7 +3354,7 @@
         {
           "id": "WF2AUT-8",
           "title": "trigger_source provider seam (AUTO-A4): PROVIDER_TYPES + handler, manifest declaration, namespaced app:<name>:<event> bus sources",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment round-2 AUTO-A4; §7 step 8; Plug-in Map (#47 rule); apps/manifest.py, providers/registry.py, event-bus ingestion, sdk/ facade",
           "done_when": "a fixture app's declared trigger_source fires an event trigger end-to-end with fenced+provenanced payload and frozen capabilities honored; disabling the app parks its bound triggers with a typed reason; test_manifest_types_match_handlers green; core contains no vendor names",
           "deps": [
@@ -7456,11 +7456,6 @@
       {
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
-        "plan": "WF2AUT"
-      },
-      {
-        "id": "WF2AUT-8",
-        "title": "trigger_source provider seam (AUTO-A4): PROVIDER_TYPES + handler, manifest declaration, namespaced app:<name>:<event> bus sources",
         "plan": "WF2AUT"
       },
       {
