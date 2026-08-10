@@ -137,6 +137,38 @@ gh release view vX.Y.Z
 
 Then clean up: `rm -rf /tmp/relcheck`.
 
+### Windows smoke (rung 1 — Docker Desktop)
+
+Do this once per release on a Windows box with Docker Desktop (WSL2 backend).
+It is the only evidence behind the *Windows via Docker Desktop* row in the
+[support matrix](../guides/platforms.md#support-matrix) — if it is not run, that
+row is a claim rather than a fact. Follow
+[Windows via Docker Desktop](../guides/platforms.md#windows-via-docker-desktop)
+verbatim; the point is to catch drift between the guide and reality.
+
+```powershell
+# 1. Pull the tagged release and bring the stack up
+#    (set PERSONALCLAW_IMAGE_TAG=X.Y.Z in .env first, so this is not `latest`)
+docker compose -f deploy/compose/compose.yaml pull
+docker compose -f deploy/compose/compose.yaml up -d
+
+# 2. Both services healthy (gateway must report healthy, not just "running")
+docker compose -f deploy/compose/compose.yaml ps
+```
+
+Then, in a Windows browser:
+
+- [ ] `https://localhost:3443` loads the dashboard (self-signed warning is expected — click through)
+- [ ] `http://localhost:3000` 308-redirects to the HTTPS port
+- [ ] **one chat turn** against a real provider returns a streamed reply (proves the gateway, the SSE/WS path through nginx, and credentials)
+- [ ] `personalclaw snapshot` inside the container writes an archive:
+      `docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personalclaw snapshot`
+- [ ] state survives a restart: `... restart` (not `down -v`), reload, history still there
+
+Record the result in the release notes or this runbook's log. A failure here is
+a **release-blocking** finding for the Windows row: fix the guide or demote the
+row — do not leave it claiming support it did not earn.
+
 ### The cross-repo obligation
 
 A published core release is an **obligation on the other two repos**:

@@ -5157,7 +5157,7 @@
         {
           "id": "PR-6",
           "title": "Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook",
-          "status": "todo",
+          "status": "done",
           "scope": "Track B Session B1; Tasks B1.1, B1.2",
           "done_when": "docs/guides/platforms.md Windows-via-Docker-Desktop section (WSL2 backend, volume semantics, localhost ports, .env Windows paths); per-release Windows checklist (compose up, dashboard, one chat, snapshot) merged into docs/maintainers/release-runbook.md (owner task 2 validates verbatim)",
           "deps": [
@@ -7296,11 +7296,6 @@
         "id": "PHF-9",
         "title": "Suite flake root-cause fixes + xdist scheduler decision",
         "plan": "PHF"
-      },
-      {
-        "id": "PR-6",
-        "title": "Windows rung 1: Docker-Desktop guide section + per-release Windows checklist in release-runbook",
-        "plan": "PR"
       },
       {
         "id": "PR2-10",
