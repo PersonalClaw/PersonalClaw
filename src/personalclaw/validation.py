@@ -765,6 +765,10 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         "knowledge-health",
         "knowledge-consolidate",
         "knowledge-gaps",
+        # KNOWLEDGE-SYNTHESIS §6.2 (KNOW-R15): renders a declarative spec into a sanitized,
+        # self-contained artifact export. Registered in the action-provider registry in the same
+        # commit as this line, for the reason stated above.
+        "render-report",
         # WORKFLOWS-V2 WV-11: the read half of output-offloading — pulls a `{{nodes.x.artifact}}`
         # body on demand, confined to the run's own `artifacts/`. Registered in the action-provider
         # registry in the same commit as this line; a provider in one set but not the other
