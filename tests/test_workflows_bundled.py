@@ -67,6 +67,10 @@ EXPECTED = {
     "knowledge-health",
     "knowledge-lint",
     "gap-healing",
+    # The contradiction judge (§3.2): the free deterministic tier lives in the
+    # knowledge-persist action; this template is where the fast-model tier runs, because a
+    # model call belongs in a `stage` and never inside an action provider.
+    "contradiction-review",
     # The Knowledge Synthesis slate (§7.1). Four of the twelve: the ones whose mechanisms
     # actually ship. See the plan's execution log for which were deferred and why — every
     # omission is a missing PROVIDER (net.fetch, a calendar source), not a missing template.
