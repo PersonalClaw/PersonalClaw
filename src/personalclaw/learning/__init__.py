@@ -36,6 +36,7 @@ from personalclaw.learning.gate import (
     GateDecision,
     GateReason,
     LearningGate,
+    record_denial,
 )
 from personalclaw.learning.hygiene import (
     MIN_EVIDENCE_DEFAULT,
@@ -81,6 +82,7 @@ __all__ = [
     "HygieneVerdict",
     "Kind",
     "LearningGate",
+    "record_denial",
     "MutationLog",
     "MIN_EVIDENCE_DEFAULT",
     "Proposal",

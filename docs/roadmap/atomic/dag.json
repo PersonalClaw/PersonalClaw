@@ -2996,7 +2996,7 @@
         {
           "id": "WF2LEA-7",
           "title": "Step 7: ad-hoc→template detector call sites + tier-migration detector + template_save_from_session",
-          "status": "todo",
+          "status": "in_progress",
           "scope": "§3.2 gate chain signal sources (R13), §3.5 tier-migration (R17), §5 template_save_from_session; Status line 'detectors.py has ZERO production importers'",
           "done_when": "detectors.py wired at its call sites: fifth run_skill_ladder_review branch, per-spec embedding + registry-miss logging, intent inversion, positive-path trace mining, grill SaveFn; every negative decision writes a skipped(reason) ledger event; R17 tier_migration proposals from ledger statistics; template_save_from_session tool files a draft proposal (module no longer has zero importers)",
           "deps": [

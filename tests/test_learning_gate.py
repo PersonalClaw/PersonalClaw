@@ -246,3 +246,117 @@ def test_both_reviews_share_one_decision(monkeypatch):
         MagicMock(), session, "hello", "ok", 4, decision=decision
     )
     assert computed == []
+
+
+# ── §3.2: every negative decision leaves a row (WF2LEA-7 clause 6) ──
+#
+# GateReason's own docstring promises the reason is "recorded, not just returned",
+# and staging.FlushOutcome.FLUSH_SKIPPED exists for "the gate denied it — recorded
+# so a config-off period is legible". Before this, NOTHING in production wrote
+# FLUSH_SKIPPED: a denial left no trace, so a permanently-disabled gate looked
+# exactly like a healthy pass that found nothing. These tests pin the loop shut.
+
+
+def _isolated_store(tmp_path, monkeypatch):
+    """Point the process-global staging store at tmp_path."""
+    from personalclaw.learning import staging
+
+    staging.reset_store()
+    store = staging.StagingStore(tmp_path)
+    monkeypatch.setattr(staging, "get_store", lambda *a, **k: store)
+    return store
+
+
+def _skipped_rows(store):
+    """Read flush_records directly — the same way the staging tests do."""
+    from personalclaw.learning.staging import FlushOutcome
+
+    with store._cursor() as cur:
+        rows = cur.execute(
+            "SELECT cadence, outcome, detail FROM flush_records "
+            "WHERE outcome = ? ORDER BY id DESC;",
+            (FlushOutcome.FLUSH_SKIPPED.value,),
+        ).fetchall()
+    return [{"cadence": r[0], "outcome": r[1], "detail": r[2]} for r in rows]
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        ({"enabled": False}, GateReason.DISABLED),
+        ({"is_ephemeral": True}, GateReason.EPHEMERAL),
+        ({"is_restricted": True}, GateReason.RESTRICTED),
+    ],
+)
+def test_a_permission_denial_is_recorded_with_its_typed_reason(
+    tmp_path, monkeypatch, kwargs, expected
+):
+    from personalclaw.learning import record_denial
+
+    store = _isolated_store(tmp_path, monkeypatch)
+    d = LearningGate(**kwargs).decide(Cadence.PER_TURN, tool_calls=9)
+    assert d.reason is expected and not d.allowed
+
+    assert record_denial(d) is True
+    rows = _skipped_rows(store)
+    assert len(rows) == 1
+    # The typed reason — not just "declined" — is what thresholds get tuned against.
+    assert expected.value in str(rows[0].get("detail", ""))
+    assert str(rows[0].get("cadence")) == Cadence.PER_TURN.value
+
+
+def test_a_below_threshold_denial_is_recorded_too(tmp_path, monkeypatch):
+    """Permitted but not worthwhile still explains why no expensive review ran."""
+    from personalclaw.learning import record_denial
+
+    store = _isolated_store(tmp_path, monkeypatch)
+    d = LearningGate(min_tool_calls=4).decide(Cadence.PER_TURN, correction=False, tool_calls=0)
+    assert d.permitted and not d.worthwhile
+
+    assert record_denial(d) is True
+    assert GateReason.NOT_WORTHWHILE.value in str(_skipped_rows(store)[0].get("detail", ""))
+
+
+def test_an_allowed_decision_records_nothing(tmp_path, monkeypatch):
+    """Only NEGATIVE decisions get a row — otherwise the table is just traffic."""
+    from personalclaw.learning import record_denial
+
+    store = _isolated_store(tmp_path, monkeypatch)
+    d = LearningGate().decide(Cadence.PER_TURN, correction=True)
+    assert d.allowed and d.worthwhile
+
+    assert record_denial(d) is False
+    assert _skipped_rows(store) == []
+
+
+def test_recording_never_breaks_the_capture_path(tmp_path, monkeypatch):
+    """Observability must not be able to fail a turn."""
+    from personalclaw.learning import record_denial, staging
+
+    staging.reset_store()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("staging unavailable")
+
+    monkeypatch.setattr(staging, "get_store", _boom)
+    d = LearningGate(enabled=False).decide(Cadence.PER_TURN)
+    assert record_denial(d) is False  # swallowed, not raised
+
+
+def test_chat_runner_records_the_denial_it_acts_on(tmp_path, monkeypatch):
+    """The WIRING, not just the function: the real branch must write the row."""
+    from personalclaw.dashboard import chat_runner
+    from personalclaw.learning import staging
+
+    store = _isolated_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(staging, "get_store", lambda *a, **k: store)
+
+    session = MagicMock()
+    session.key = "s1"
+    denied = LearningGate(is_restricted=True).decide(Cadence.PER_TURN, tool_calls=9)
+    assert not denied.permitted
+
+    chat_runner._maybe_after_turn_review(MagicMock(), session, "hello", "ok", 9, decision=denied)
+    rows = _skipped_rows(store)
+    assert len(rows) == 1
+    assert GateReason.RESTRICTED.value in str(rows[0].get("detail", ""))
