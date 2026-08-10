@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { DownloadCloud, CheckCircle2, RefreshCw, Loader2 } from 'lucide-react'
+import { DownloadCloud, CheckCircle2, RefreshCw } from 'lucide-react'
 import { api, type UpdateCheck } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
@@ -91,8 +92,8 @@ export function UpdatesPanel() {
               <div className="text-on-surface-low mt-0.5 text-[0.75rem]">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button busy={checking} onClick={check} label="Check"><RefreshCw size={14} /> Check</Button>
-              {info.available && canApplyInApp && <Button busy={applying} primary onClick={apply} label="Update"><DownloadCloud size={14} /> Update</Button>}
+              <Button variant="secondary" size="sm" loading={checking} onClick={check}><RefreshCw size={14} /> Check</Button>
+              {info.available && canApplyInApp && <Button size="sm" loading={applying} onClick={apply}><DownloadCloud size={14} /> Update</Button>}
             </div>
           </div>
           {msg && <div className="mt-2 text-on-surface-low text-[0.75rem]">{msg}</div>}
@@ -134,16 +135,5 @@ export function UpdatesPanel() {
           : <p className="text-on-surface-low text-[0.8125rem] italic">No changelog available.</p>}
       </Section>
     </div>
-  )
-}
-
-// small inline button (the shared Button is fine, but these need a busy spinner inline)
-function Button({ children, onClick, busy, primary, label }: { children: React.ReactNode; onClick: () => void; busy?: boolean; primary?: boolean; label: string }) {
-  return (
-    <button type="button" onClick={onClick} disabled={busy} aria-label={label}
-      className="inline-flex h-8 items-center gap-1.5 rounded-pill px-l text-[0.8125rem] transition-colors disabled:opacity-50"
-      style={primary ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' }}>
-      {busy ? <Loader2 size={14} className="animate-spin" /> : children}
-    </button>
   )
 }
