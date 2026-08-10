@@ -1847,7 +1847,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             <ol className="mt-1 flex flex-col gap-0.5">
               {plan.map((a, i) => (
                 <li key={i} className={`flex items-start gap-1.5 text-[0.75rem] leading-snug ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
-                  <span className="mt-[1px] shrink-0 tabular-nums opacity-50">{i + 1}.</span><span>{a.content}</span>
+                  <span className="mt-[1px] shrink-0 tabular-nums text-on-surface-low">{i + 1}.</span><span>{a.content}</span>
                 </li>
               ))}
             </ol>
