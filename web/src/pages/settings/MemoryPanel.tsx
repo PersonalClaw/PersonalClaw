@@ -992,7 +992,12 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
       {links.map((l) => (
         <div key={l.id} className="text-[0.75rem]">
           <span className="rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
-          <span className="ml-2 font-mono text-on-surface-var">{l.from_ref}</span>
+          {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
+              keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
+              `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and
+              there was no way to tell which store to look in. */}
+          <span className="ml-2 text-on-surface-low">{l.from_kind}</span>
+          <span className="ml-1.5 font-mono text-on-surface-var">{l.from_ref}</span>
           {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
         </div>
       ))}

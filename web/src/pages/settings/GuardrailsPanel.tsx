@@ -130,7 +130,11 @@ function ProviderHealthSection() {
   )
 }
 
-function HealthRow({ p }: { p: ProviderHealth }) {
+/** Exported for test: jsdom reports every box as 0, so the only way to pin this row's derived
+ *  values (mode ordering, the p99 threshold) is to render the component directly. */
+export function HealthRow({ p }: { p: ProviderHealth }) {
+  // Dominant mode first — with a handful of modes the ordering is what makes the row scannable.
+  const failureModes = Object.entries(p.failure_modes ?? {}).sort((a, b) => b[1] - a[1])
   const stateColor = p.breaker_state === 'open' ? 'var(--color-error)'
     : p.breaker_state === 'half_open' ? 'var(--color-warning)' : 'var(--color-success)'
   const stateLabel = p.breaker_state === 'open' ? 'Open' : p.breaker_state === 'half_open' ? 'Half-open' : 'Closed'
@@ -146,8 +150,28 @@ function HealthRow({ p }: { p: ProviderHealth }) {
         <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
           {p.calls} calls · {p.pass_rate === null ? '—' : `${Math.round(p.pass_rate * 100)}% ok`}
           {p.p90_ms > 0 && ` · p90 ${Math.round(p.p90_ms)}ms`}
+          {/* The tail, only when it diverges from p90. `provider_health` computes p50/p90/p99 and
+              this row rendered p90 alone, so a provider that is usually fast but occasionally
+              stalls looked identical to one that is uniformly fast — the exact case a circuit
+              breaker exists for. Shown only when p99 is materially worse, so a healthy provider
+              keeps a one-line summary instead of two numbers that always agree. */}
+          {p.p99_ms > 0 && p.p99_ms >= p.p90_ms * 1.5 && ` (p99 ${Math.round(p.p99_ms)}ms)`}
           {p.failed > 0 && ` · ${p.failed} failed`}
         </div>
+        {/* WHY it failed, not just how often. `failure_modes` is the per-mode tally behind the
+            `failed` count above; without it "12 failed" gives no way to tell a rate limit from a
+            bad key from a timeout, which are three different user actions. Ordered by frequency
+            so the dominant mode reads first. */}
+        {failureModes.length > 0 && (
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {failureModes.map(([mode, n]) => (
+              <span key={mode}
+                className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.6875rem] tabular-nums">
+                {mode.replace(/_/g, ' ')} ×{n}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
