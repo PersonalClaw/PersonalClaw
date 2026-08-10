@@ -19,13 +19,23 @@ permissions:
 
 jobs:
   matrix:
-    # Python {3.12, 3.13} × OS {ubuntu, macos}. ARM runners are added by
-    # PLATFORM-REACH (plan 39) — this job is the seam it extends.
+    # Python {3.12, 3.13} × OS {ubuntu, macos} on x86_64, plus two arm64 runners
+    # (PLATFORM-REACH A1.3). The arm pair is added via `include` — one job each on
+    # the newest supported Python — rather than crossing arm into the full grid:
+    # A1.3 scopes arm to the non-PR path "for budget", so two extra jobs prove the
+    # arch while four would double this workflow's arm cost for no new signal.
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13"]
         os: [ubuntu-latest, macos-latest]
+        include:
+          # linux arm64 + macOS Apple-silicon. macos-14 is the arm64 image
+          # (macos-latest is arm64 too, but pinning keeps the arch explicit here).
+          - python: "3.13"
+            os: ubuntu-24.04-arm
+          - python: "3.13"
+            os: macos-14
     runs-on: ${{ matrix.os }}
     # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
