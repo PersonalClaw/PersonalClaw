@@ -609,7 +609,23 @@ export interface WorkflowDef {
     // How the template is driven (WF2-R15) — surfaced in the picker so a user choosing a
     // template can see a concrete example rather than inferring one from the node tree.
     steering_examples?: Array<{ event?: string; description?: string }>
+    /** Declared template-to-template transitions (`DefMetadata.hands_off_to`, S60). The def
+     *  payload has always carried these — `DefMetadata.from_dict` parses them on the bundled-def
+     *  load path — but this type declared only 3 of the backend's 20 metadata keys, so the field
+     *  was invisible to TypeScript and no surface could read it. `handoffs_from_def` drops entries
+     *  with no `target_def`, so the FE applies the same filter rather than rendering an edge that
+     *  points nowhere. */
+    hands_off_to?: WorkflowHandoff[]
   }
+}
+/** One declared transition out of a template. `condition` is prose (when to take the edge);
+ *  `context_fields` name what carries over; `requires_user_request` marks an edge the system must
+ *  never take on its own. */
+export interface WorkflowHandoff {
+  target_def: string
+  condition?: string
+  context_fields?: string[]
+  requires_user_request?: boolean
 }
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'

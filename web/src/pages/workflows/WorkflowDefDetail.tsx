@@ -68,6 +68,14 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
 
   const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
   const declared = useMemo(() => Object.entries(def?.inputs ?? {}), [def])
+  // Mirror `handoffs_from_def`'s filter: an entry with no `target_def` is dropped there because
+  // "an edge pointing nowhere would render as a suggestion the user cannot accept, and a dead
+  // affordance teaches them to ignore the live ones". Applying it here too keeps this view and the
+  // engine's edge set in agreement instead of showing a row the backend refuses to build.
+  const handoffs = useMemo(
+    () => (def?.metadata?.hands_off_to ?? []).filter((h) => (h?.target_def ?? '').trim()),
+    [def],
+  )
 
   const start = useCallback(async () => {
     setStarting(true)
@@ -145,6 +153,43 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 </div>
               ))}
             </div>
+
+            {/* Where this workflow leads next. `hands_off_to` exists so a transition is a graph
+                EDGE instead of something the user has to remember — the backend's own words: "what
+                a user remembers is not a procedure". It was parsed on the def load path, built into
+                `HandOff` edges, and shipped on both the def and surfacing payloads, but no surface
+                ever read it, so the edge was declared and invisible.
+
+                On the def page rather than the list row: an outgoing edge is a property OF the
+                definition, and a list row already carries freshness + mode + packs. */}
+            {handoffs.length > 0 && (
+              <div className="flex flex-col gap-2xs">
+                <span data-type="title-m" className="text-on-surface">Hands off to</span>
+                {handoffs.map((h) => (
+                  <div key={h.target_def} className="flex items-baseline gap-m py-2xs">
+                    <span className="shrink-0 text-on-surface text-[0.8125rem]">{h.target_def}</span>
+                    <div className="min-w-0 flex-1">
+                      {/* The condition is WHEN to take the edge. Without it a handoff reads as
+                          "always next", which is the improvisation the field exists to replace. */}
+                      {h.condition && <span className="text-on-surface-low text-[0.75rem]">{h.condition}</span>}
+                      {/* What carries over. A user deciding whether to accept a handoff needs to
+                          know what the next workflow starts with. */}
+                      {!!h.context_fields?.length && (
+                        <div className="text-on-surface-low text-[0.75rem]">
+                          carries {h.context_fields.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                    {/* An edge the system must never take on its own. Marked, not hidden: the
+                        difference between "this can happen automatically" and "only if you ask"
+                        is the whole autonomy question for a chained workflow. */}
+                    {h.requires_user_request && (
+                      <span className="shrink-0 text-on-surface-low text-[0.75rem]">only on request</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Requirements are what preflight will check at start — showing them here means
                 a user learns about a missing credential before they press Run, not after. */}
