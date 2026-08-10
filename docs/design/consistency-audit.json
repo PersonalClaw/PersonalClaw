@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-10T07:20:50.741Z",
+  "generatedAt": "2026-08-10T13:54:38.322Z",
   "totals": {
     "driftHits": 7,
     "filesScanned": 431,
@@ -39,14 +39,14 @@
       "detail": "7 raw-button, 9 raw-input"
     },
     {
-      "file": "pages/settings/MemoryPanel.tsx",
-      "score": 19,
-      "detail": "7 raw-button, 5 raw-input"
-    },
-    {
       "file": "pages/loops/LoopCockpitPage.tsx",
       "score": 18,
       "detail": "8 raw-button, 2 raw-input"
+    },
+    {
+      "file": "pages/settings/MemoryPanel.tsx",
+      "score": 18,
+      "detail": "7 raw-button, 4 raw-input"
     },
     {
       "file": "pages/knowledge/KnowledgeDetail.tsx",
@@ -215,8 +215,8 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 134,
-    "outlineNoneFiles": 59,
+    "outlineNoneCount": 132,
+    "outlineNoneFiles": 58,
     "localFocusVisibleFiles": 15,
     "reducedMotionFiles": 8,
     "animatedFiles": 160,
@@ -458,11 +458,6 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
-    "pages/inbox/InboxSettingsPanel.tsx": {
-      "raw-button": 0,
-      "raw-input": 1,
-      "raw-dialog": 0
-    },
     "pages/inbox/WorkflowGateActions.tsx": {
       "raw-button": 1,
       "raw-input": 0,
@@ -615,7 +610,7 @@
     },
     "pages/settings/MemoryPanel.tsx": {
       "raw-button": 7,
-      "raw-input": 5,
+      "raw-input": 4,
       "raw-dialog": 0
     },
     "pages/settings/ModelBackends.tsx": {
