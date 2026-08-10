@@ -302,6 +302,25 @@ class TestStage:
         assert sp.calls[0]["silent"] is True
         assert sp.calls[0]["task"] == "do work"
 
+    async def test_a_stage_may_PIN_a_model_and_defaults_to_INHERITING_one(self) -> None:
+        """Homogeneous-by-default, heterogeneous by MODEL (WORK-CONTAINERS amendment (a), WF2WOR-9).
+        An absent pin must send `None`, which is what makes `spawn` resolve the `orchestration`
+        chain and inherit the parent's binding — sending `""` would look to `spawn` like a pin to
+        nothing in particular, and homogeneity would stop being the default."""
+        sp = self._Spawner(self._Info())
+        await dispatch_stage(
+            _n({"kind": "stage", "id": "s", "config": {"prompt": "p"}}), _ctx(), subagents=sp
+        )
+        assert sp.calls[0]["model"] is None
+
+        pinned = self._Spawner(self._Info())
+        await dispatch_stage(
+            _n({"kind": "stage", "id": "s", "config": {"prompt": "p", "model": "Prov:some-id"}}),
+            _ctx(),
+            subagents=pinned,
+        )
+        assert pinned.calls[0]["model"] == "Prov:some-id"
+
     async def test_the_depth_cap_is_enforced_in_code(self) -> None:
         """The pre-existing contract was a sentence in a system prompt. A prompt is not an
         enforcement mechanism, so this check is new."""

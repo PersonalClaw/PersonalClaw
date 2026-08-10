@@ -1075,3 +1075,107 @@ plan's reality note was verified rather than trusted.
   rebuilds the file from the chat's in-memory messages. The tool result lands in the launching chat's
   transcript as a normal message and is persisted by that chat's own full rewrite — the honest,
   non-clobbering delivery. Only blocking runs mirror (a detached run has no launching turn to land in).
+
+---
+
+- **2026-08-09 — DONE — WF2WOR-9 (amendment C2.1 + C2.2 + C2.3, partial VC): the fan-out leaf contract
+  is now load-bearing, `mutating` leaves are serialized by the engine's own scheduler, and the
+  token-matched measurement harness exists.** Branch
+  `feature-wf2wor9-fanout-leaf-contract`. `batch_compile.LeafTask` grew three REQUIRED,
+  default-less fields — `objective`, `output_format`, `boundary` — plus an optional per-leaf `model_ref`
+  pin; two new lints (`contract_lint`, `boundary_lint`) refuse an under-specified or self-contradictory
+  leaf at compile; `LeafTask.prompt()` carries all three declarations plus the literal `output_schema`
+  into the leaf's own prompt; `compile_batch` emits a `needs` chain over the `mutating` leaves and a
+  `config.model` pin that `engine.dispatch_stage` now threads into `spawn(model=...)`;
+  `CompileResult.enforced()` joins `unenforced()` so the honest list is readable against its complement.
+  `harness/fanout_measure.py` + `python -m harness fanout-measure` + a documented procedure in
+  `harness/README.md` implement amendment (e). 51 new tests (31 in
+  `tests/test_workflows_batch_compile.py`, 20 in `tests/test_harness_fanout_measure.py`, 1 in
+  `tests/test_workflows_engine.py`); `make lint` clean (black/isort/flake8/mypy, 1500 files, 777 typed);
+  160 targeted + 228 sweep tests green.
+
+- **DISCOVERY — `Capability.MUTATING` was a DECLARED-BUT-INERT enum member until this atom.** The
+  inert-surface census had it on the books (`enum:Capability.MUTATING`, the "enum member nobody writes"
+  shape): S48 shipped the capability vocabulary, the posture map and the `research_leaf_writes` lint, but
+  nothing in `src/` ever BRANCHED on `MUTATING` — `leaf_tool_posture` reached it only by falling off the
+  end of an `is RESEARCH` check, so the value could have been any other string with identical behaviour.
+  Amendment (c) is what gives it teeth: the serialization chain is its first real reader.
+  `inert-surface-baseline.json` regenerated in this commit for the legitimate shrink (156 → 155,
+  enum 29 → 28), per the ratchet's same-commit rule.
+
+- **MEASURED — the `needs` chain serializes writes WITHOUT re-introducing the failure the batch had
+  already fixed.** Driven through the real `tick.frontier` (the S48 note in this file records what
+  assuming join semantics cost the last author, so nothing here was assumed): with 8 leaves and 3
+  mutators, all 5 research leaves launch on tick 0 alongside the first mutator, and the chain advances
+  exactly one mutator per tick. The property that mattered most: `_visit_parallel` satisfies a `needs`
+  edge on any TERMINAL predecessor — done, degraded, skipped or FAILED alike — so a failed mutator HANDS
+  THE LANE ON. Had it required success, serialization would have become a second way for one bad leaf to
+  sink a batch, which is precisely what `join: quorum, quorum: 1` exists to prevent. An all-mutating
+  4-leaf batch runs strictly `[1, 1, 1, 1]`, and one failed leaf in a chained tree still derives DONE.
+
+- **DESIGN — `boundary` is NOT `writes`, and the compile refuses only where they CONTRADICT.** `writes`
+  is a POSITIVE declaration consumed by the compiler to detect sibling collisions (coordination data
+  between leaves); `boundary` is a NEGATIVE declaration consumed by the WORKER (instruction content —
+  the active ingredient evidence items 2 and 3 point at). They are duals, not complements: an empty
+  `writes` does not mean "the boundary is everything". They meet in exactly one place — a leaf declaring
+  a write INSIDE its own boundary — which is a contradiction only the author can resolve, so it is an
+  ERROR (`boundary_contradicts_writes`). That check compares PATH-shaped tokens only, not substrings: a
+  boundary reading "do not touch the production report pipeline" must NOT flag `writes=["reports/x.md"]`,
+  because a gate that cries wolf on a legitimate fan-out is a gate that gets switched off.
+
+- **DESIGN — the contract rides into the PROMPT, not just into the lint.** The engine's existing
+  `output_contract` REJECTS off-format output before any binding resolves, so a declared format the
+  worker was never shown would be a gate that fails 100% of the time — which reads as a broken fan-out
+  rather than as a missing declaration. The `output_schema` is serialized VERBATIM into the prompt so the
+  worker is held to the same shape `check_output_contract` will hold it to; a paraphrase would let the
+  two drift and the worker would satisfy the paraphrase. No second validator was added (the module's
+  standing rule).
+
+- **DEVIATION — the per-leaf model pin field is `model_ref`, not `model`.** `mutations._FIELD_ALIASES`
+  already maps the author-facing name `model` onto `model_tier` (WF2-R20d), so a `workflow_edit` op
+  saying `fields: {model: "..."}` against a compiled leaf would silently rewrite the TIER and leave the
+  pin untouched — the author would then debug why the pin "did not apply" while looking at a key that was
+  never written. The emitted NODE CONFIG key stays `model` (that is what `dispatch_stage` reads); only
+  the leaf-contract field is renamed. Homogeneity stays the default by ABSENCE: no pin means no `model`
+  key at all, and `dispatch_stage` sends `None` so `spawn` resolves the `orchestration` chain — passing
+  `""` would have looked like a pin to nothing in particular.
+
+- **The persona prohibition is a CHECK, not a comment.** `forbidden_declarations()` asserts no
+  persona-shaped field (`persona`/`role`/`character`/`personality`/`style`/`voice`) exists on
+  `LeafTask`. "We did not add one" is a fact about one commit; a check is a fact about every future one,
+  and amendment (a) is a standing prohibition — a future author reaching for `role` trips the same gate
+  as one reaching for `persona`.
+
+- **C2.3 reports refusals, and exits 0 when it does.** Five verdicts, three of them refusals:
+  `inconclusive` (|delta| < 5 points, OR a delta smaller than the arms' own within-arm spread),
+  `not_token_matched` (spends differ >5%, or an arm spent nothing), `insufficient_trials` (<3 trials per
+  arm). The within-arm-spread rule is an addition to the letter of amendment (e) and deliberate: six
+  points between arms means nothing when one arm varies by seven across its own trials, and a reader
+  shown only the six would stop reading. `python -m harness fanout-measure` exits **0 for every honest
+  verdict including `inconclusive`** — a non-zero would make the honest answer look like a broken run,
+  which is the failure mode the amendment's own risk register names ("a plan that only ever reports wins
+  is not measuring"). Only a malformed observation file exits non-zero (2).
+
+- **VC — PARTIALLY proved, and the split is recorded rather than glossed.** PROVED here, driven through
+  the real engine in one test over one compiled spec: an 8-wide fan-out with 3 mutating leaves (a) has
+  all 8 leaves delivered and reach terminal state, (b) never has two mutators concurrent on any tick,
+  and (c) still derives DONE with one leaf FAILED; the spec also passes `validate_node_tree` with the
+  chain in it. NOT proved and NOT claimed: **"per-child cost is visible"** and **"one click kills the
+  fan-out mid-flight"** belong to rows **C1.4/C1.5** (shipped under WF2WOR-8, but their FE/observability
+  surfaces are that atom's `done_when`, not this one's), and **"the parent keeps its context"** is
+  **C1.1**'s injection-wall clause. The end-to-end live drive of a real 8-wide `subagent_run` is blocked
+  on the production call site, which does not exist: `compile_batch` still has NO caller, and the
+  cutover is **WF2WOR-5**, which depends on this atom. An over-claimed VC is worse than a deferred one.
+
+- **C2.3 harness verdict: NOT YET RUN on real work — deferred to WF2WOR-5 with the call site.** The
+  measurement instrument, its refusal semantics and its procedure ship here and are unit-proven
+  (including that a 3-point delta reports `inconclusive` and does not report a win). Running it requires
+  executing a real fan-out against a real single-agent arm on identical work at matched token spend, and
+  there is no production path that starts a compiled batch yet. Recording a verdict from a synthetic
+  arm would be exactly the dishonesty amendment (e) exists to prevent, so the row's "report the verdict
+  in this plan's execution log" obligation is carried to the atom that can honestly discharge it.
+
+- **NOT DONE (out of scope, by row):** the `mcp_subagents.subagent_run` compile-cutover (WF2WOR-5), the
+  C1.1-C1.5 defect fixes, and the tool-handler posture seam — `unenforced()` still names the three
+  posture items with no seam (tool denials/read-only, `workspace_mode`, per-node `timeout_secs`), and
+  they are unchanged by this atom.

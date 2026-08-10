@@ -15,6 +15,9 @@ The agent-facing surface of the self-development harness:
 - ``workflow-resume-audit <run_id>`` — check a workflow run resumes byte-equal from disk
   alone: the reconstructed frontier matches the pre-kill snapshot and the journal event-fold
   rebuilds the same node states (§2.4, workflow half).
+- ``fanout-measure <observations.json>`` — token-matched fan-out vs single-agent verdict
+  (WORK-CONTAINERS amendment (e)). Exits 0 for ANY honest verdict including
+  ``inconclusive``; only a malformed observation file fails.
 
 Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == usage error
 (unknown task id, no spec set). Warnings print but do not change the exit code.
@@ -23,6 +26,7 @@ Exit codes: 0 == clean/pass, 1 == validation errors or a failed command, 2 == us
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -404,6 +408,44 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fanout_measure(args: argparse.Namespace) -> int:
+    """Token-matched fan-out vs single-agent comparison (WORK-CONTAINERS amendment (e), C2.3).
+
+    Exit 0 for every HONEST verdict, `inconclusive` included, and that is the design decision. A
+    non-zero exit on "inconclusive" would make the honest answer look like a broken run, and the
+    amendment's own risk register says the failure mode to guard against is a measurement that only
+    ever reports wins. Only a malformed observation file — which is a measurement that did not
+    happen — exits non-zero.
+    """
+    from harness import fanout_measure
+
+    try:
+        result = fanout_measure.measure_file(args.observations)
+    except fanout_measure.MeasurementError as exc:
+        print(f"{_FAIL} {exc}", file=sys.stderr)
+        return 2
+
+    marker = _OK if result.conclusive else _WARN
+    print(f"work: {result.work}")
+    for arm in (result.fanout, result.single):
+        print(
+            f"  {arm.name:<7} n={len(arm.trials)} mean={arm.mean_score:.2f} "
+            f"spread={arm.spread:.2f} tokens={arm.tokens} "
+            f"tokens/point={arm.tokens_per_point:.1f}"
+        )
+    print(
+        f"  delta={result.delta_points:+.2f} points "
+        f"(band {fanout_measure.INCONCLUSIVE_BAND_POINTS}) "
+        f"token_ratio={result.token_ratio:.3f}"
+    )
+    print(f"{marker} verdict: {result.verdict}")
+    for note in result.notes:
+        print(f"    - {note}")
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m harness",
@@ -449,6 +491,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_wf_resume.add_argument("run_id", help="Workflow run id to audit")
     p_wf_resume.set_defaults(func=cmd_workflow_resume_audit)
+
+    p_fanout = sub.add_parser(
+        "fanout-measure",
+        help="Token-matched fan-out vs single-agent verdict (amendment (e); "
+        "sub-5-point delta == inconclusive).",
+    )
+    p_fanout.add_argument("observations", help="Path to an observations JSON file")
+    p_fanout.add_argument(
+        "--json", action="store_true", help="Also print the machine-readable dict."
+    )
+    p_fanout.set_defaults(func=cmd_fanout_measure)
 
     return parser
 
