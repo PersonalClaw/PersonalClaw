@@ -11,8 +11,11 @@ import { FormSkeleton } from '../../ui/ListScaffold'
 // Prettify a capability key for a card title ("serving-fs" → "Serving / fs",
 // "model-providers" → "Model providers"). The backend keys are URL-safe slugs;
 // this is display only.
+// Capability keys are kebab/slash-separated ("serving-fs", "model-providers"); deficit keys are
+// snake_case ("knowledge_missing_embeddings"). One helper covers both rather than a second,
+// near-identical one appearing beside it — `_` joins the same separator class.
 function capLabel(key: string): string {
-  const words = key.replace(/[-/]/g, ' ').split(' ')
+  const words = key.replace(/[-/_]/g, ' ').split(' ')
   return words.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(' ')
 }
 
@@ -75,11 +78,21 @@ export function DoctorPanel() {
 // A health score + a confirm-gated "run maintenance now" + the recent-run ledger.
 // The engine also runs itself on an adaptive heartbeat cadence; this is the manual
 // surface + visibility.
-function RemediationSection() {
+/** Exported for test: the deficit list's derivations (zero-count filter, reachable-first ordering,
+ *  the penalty attribution) are only observable by rendering the section against a stubbed
+ *  snapshot — jsdom reports every box as 0, so nothing about them is measurable from layout. */
+export function RemediationSection() {
   const [snap, setSnap] = useState<RemediationSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
   const load = useCallback(() => { api.doctorRemediation().then(setSnap).catch(() => setSnap(null)) }, [])
   useEffect(() => { load() }, [load])
+
+  // `measure_deficits()` returns EVERY source it can read, including the ones currently at zero
+  // (a clean install reports skill_aging_due ×0). Those are measurements, not problems — listing
+  // them would bury the real ones. Worst first: the biggest reachable penalty is the actionable row.
+  const scored = (snap?.deficits ?? [])
+    .filter((d) => d.count > 0)
+    .sort((a, b) => Number(b.reachable) - Number(a.reachable) || b.penalty - a.penalty)
 
   const run = async () => {
     if (!(await confirm({
@@ -108,6 +121,47 @@ function RemediationSection() {
             <Wrench size={14} /> Run now
           </Button>
         </div>
+        {/* WHY the score is what it is. `deficits` is the measured breakdown behind it — the
+            engine's own input — and the panel showed only the total. On a real install this read
+            "Health score 90 / target 90" in success green while carrying 26 orphan locks that are
+            `reachable: true`, i.e. fixable by pressing Run now. A score with no breakdown cannot
+            tell "nothing wrong" from "nothing the engine will act on".
+
+            `reachable` is the load-bearing distinction: health_score() sums penalties over
+            REACHABLE deficits only, because an unreachable one is at its floor and the engine
+            cannot improve it (e.g. missing embeddings with no embedder bound). Those are shown
+            greyed and marked, so a user does not press Run now expecting them to clear. */}
+        {scored.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
+            {scored.map((d) => (
+              <div key={d.key} className="flex items-baseline justify-between gap-2 text-[0.75rem]">
+                <span className={d.reachable ? 'text-on-surface-var' : 'text-on-surface-low'}>
+                  {capLabel(d.key)}
+                  <span className="ml-1.5 text-on-surface-low tabular-nums">×{d.count}</span>
+                  {!d.reachable && <span className="ml-1.5 text-on-surface-low">· not fixable yet</span>}
+                </span>
+                {/* An unreachable deficit is NOT subtracted from the score, so showing its penalty
+                    as if it counted would misattribute the number the row above reports. */}
+                <span className="shrink-0 text-on-surface-low tabular-nums">
+                  {d.reachable ? `−${d.penalty.toFixed(1)}` : '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* What Run now would actually DO. The dry-run plan was already fetched and discarded, so
+            the button was unpreviewable. An empty plan is not silence: the engine stops with a
+            reason (most often "target_score already met"), which is exactly the state that makes
+            a nonzero deficit list look contradictory — so say it. */}
+        {snap && (
+          <div className="mt-2 border-t border-outline-variant/30 pt-2 text-on-surface-low text-[0.75rem]">
+            {snap.plan.length > 0
+              ? <>Run now would: {snap.plan.map((j) => capLabel(j.id)).join(' · ')}</>
+              : scored.some((d) => d.reachable)
+                ? 'Run now would do nothing — the score already meets its target, so the engine stops before touching the fixable items above.'
+                : 'Nothing to do — no fixable deficits.'}
+          </div>
+        )}
         {snap && snap.recent_runs.length > 0 && (
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
             {snap.recent_runs.slice(0, 5).map((r, i) => (

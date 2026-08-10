@@ -2776,6 +2776,25 @@ class FeedbackConfig:
 
 
 @dataclass
+class PlanningConfig:
+    """Planner entry surfaces (WORKFLOWS-V2-UNIVERSAL-PLANNING UP-R18) — the watched
+    scratchpad. Empty by default: an unset path reads no files at all, so ambient capture
+    is something the user opts into by naming one local file, never a default that starts
+    scanning their notes."""
+
+    scratchpad_path: str = field(
+        default="",
+        metadata=_meta(
+            "Scratchpad path",
+            "A local notes file to scan for jotted todos. Each actionable line becomes a "
+            "PROPOSED plan in your inbox with a link back to the source line — never run "
+            "automatically. Checked (- [x]) and struck-through lines are ignored. "
+            "Empty = off.",
+        ),
+    )
+
+
+@dataclass
 class AgentsRoutingConfig:
     """Agent routing (AGENT-ROUTING) — suggest-first specialist routing. Deterministic
     classification (keyword + embedding, no LLM); a non-blocking chip proposes, the
@@ -2991,6 +3010,10 @@ class AppConfig:
         default_factory=AgentsRoutingConfig,
         metadata=_meta("Agent Routing", "Suggest-first specialist routing."),
     )
+    planning: PlanningConfig = field(
+        default_factory=PlanningConfig,
+        metadata=_meta("Planning", "Planner entry surfaces — the watched scratchpad."),
+    )
 
     dashboard: DashboardConfig = field(
         default_factory=DashboardConfig,
@@ -3143,6 +3166,9 @@ class AppConfig:
         agents_routing_data = data.get("agents_routing", {})
         if not isinstance(agents_routing_data, dict):
             agents_routing_data = {}
+        planning_data = data.get("planning", {})
+        if not isinstance(planning_data, dict):
+            planning_data = {}
         skills_data = data.get("skills", {})
         if not isinstance(skills_data, dict):
             skills_data = {}
@@ -3485,6 +3511,9 @@ class AppConfig:
                 min_confidence=float(agents_routing_data.get("min_confidence", 0.62)),
                 cooldown_hours=float(agents_routing_data.get("cooldown_hours", 24.0)),
             ),
+            planning=PlanningConfig(
+                scratchpad_path=str(planning_data.get("scratchpad_path", "") or ""),
+            ),
             skills=SkillsConfig(
                 max_triggered=int(skills_data.get("max_triggered", 3)),
                 auto_create_from_sessions=bool(skills_data.get("auto_create_from_sessions", False)),
@@ -3812,6 +3841,7 @@ class AppConfig:
             "feedback": asdict(self.feedback),
             "inbound": asdict(self.inbound),
             "agents_routing": asdict(self.agents_routing),
+            "planning": asdict(self.planning),
             "loops": asdict(self.loops),
             "skills": asdict(self.skills),
             "workflows": asdict(self.workflows),

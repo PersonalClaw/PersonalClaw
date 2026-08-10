@@ -20,6 +20,9 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # post the remediation comment on failure
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -32,12 +35,81 @@ jobs:
       # lints it under the same tools as core; CI used to skip it, so a harness-only
       # lint break went green here and red for a local contributor. Same scope as the
       # Makefile now (black/isort/flake8 over src+tests+harness, mypy over src+harness).
+      #
+      # Every tool runs even when an earlier one fails, and its output is captured, so
+      # the failure comment below names every violation at once. Otherwise a contributor
+      # fixes black, pushes, and only then discovers flake8.
       - name: lint (black --check · isort --check · flake8 · mypy)
+        id: lint
         run: |
-          uv run black --check src/personalclaw tests harness
-          uv run isort --check-only src/personalclaw tests harness
-          uv run flake8 src/personalclaw tests harness
-          uv run mypy src/personalclaw harness
+          status=0
+          : > /tmp/lint-out.txt
+          run_tool() {
+            label=$1
+            shift
+            if out=$("$@" 2>&1); then
+              printf '%s\n' "$out"
+            else
+              status=1
+              printf '%s\n' "$out"
+              { echo "**$label**"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> /tmp/lint-out.txt
+            fi
+          }
+          run_tool "black --check" uv run black --check src/personalclaw tests harness
+          run_tool "isort --check-only" uv run isort --check-only src/personalclaw tests harness
+          run_tool "flake8" uv run flake8 src/personalclaw tests harness
+          run_tool "mypy" uv run mypy src/personalclaw harness
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "violations<<LINTEOF"
+              cat /tmp/lint-out.txt
+              echo "LINTEOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+      # Post the fix into the PR conversation. The violations are otherwise only in the
+      # job log, which contributors miss; every lint red so far has needed a maintainer
+      # to translate it into `make format`.
+      - name: Explain how to fix lint
+        if: failure() && github.event_name == 'pull_request' && steps.lint.outputs.violations != ''
+        uses: actions/github-script@v7
+        env:
+          VIOLATIONS: ${{ steps.lint.outputs.violations }}
+        with:
+          script: |
+            const marker = '<!-- lint-help -->';
+            const body = [
+              marker,
+              "### `lint` is failing",
+              "",
+              "Most of this is auto-fixable. From the repo root:",
+              "```bash",
+              "source .venv/bin/activate   # or: uv sync --extra dev",
+              "make format                 # black + isort, rewrites the files",
+              "make lint                   # must print no errors before you push",
+              "```",
+              "Commit the reformatting and push. `make format` handles the `black` and",
+              "`isort` sections below. `flake8` and `mypy` findings (a too-long line, an",
+              "unused import, a type error) need an edit.",
+              "",
+              "Run `npm install` once in your clone and the `pre-commit` hook formats staged",
+              "Python at commit time, so this stops happening.",
+              "",
+              "<details><summary>What CI saw</summary>",
+              "",
+              process.env.VIOLATIONS.trim(),
+              "",
+              "</details>",
+            ].join("\n");
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
 
   test:
     runs-on: ubuntu-latest

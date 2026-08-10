@@ -117,7 +117,7 @@ export function PromptForm({ draft, onChange, compact, nameLocked, registerInser
       <Field label="Variables" hint="Typed inputs collected when the prompt is invoked.">
         <div className="flex flex-col gap-s">
           {draft.variables.map((v, i) => (
-            <VariableRow key={i} v={v} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} />
+            <VariableRow key={i} v={v} rowIndex={i} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} />
           ))}
           <AddItemButton className="self-start" onClick={() => addVar()}><Plus size={14} /> Add variable</AddItemButton>
         </div>

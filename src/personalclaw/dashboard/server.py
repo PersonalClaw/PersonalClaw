@@ -871,6 +871,18 @@ async def start_dashboard(
     app.router.add_delete("/api/chat/tags/{id}", chat.api_chat_tag_delete)
     app.router.add_put("/api/chat/sessions/{session}/tags", chat.api_chat_session_tags)
     app.router.add_post("/api/chat/sessions/{session}/drop", chat.api_chat_session_drop)
+    # Suggested organization (SM T2.1) — the GET is read-only; only /accept mutates.
+    from personalclaw.dashboard.handlers import session_organize as _sess_org
+
+    app.router.add_get(
+        "/api/chat/sessions/{session}/organize", _sess_org.api_session_organize_suggest
+    )
+    app.router.add_post(
+        "/api/chat/sessions/{session}/organize/accept", _sess_org.api_session_organize_accept
+    )
+    app.router.add_post(
+        "/api/chat/sessions/{session}/organize/decline", _sess_org.api_session_organize_decline
+    )
     # Magic re-tag — batch AI re-evaluation of every session's tags (board's
     # sparkle button). Progress streams over /api/ws (retag_progress/retag_done).
     from personalclaw.dashboard import chat_retag

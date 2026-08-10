@@ -881,6 +881,12 @@
     "type": "list[SkillCatalogConfig]"
   },
   {
+    "default": "",
+    "path": "planning.scratchpad_path",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 2.0,
     "path": "resilience.cancel_replace_min_interval_secs",
     "sensitive": false,

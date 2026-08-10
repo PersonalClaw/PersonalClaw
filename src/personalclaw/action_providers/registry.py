@@ -134,3 +134,25 @@ def _ensure_default_providers_registered() -> None:
         register_action_provider(KnowledgeHealthActionProvider())
         register_action_provider(KnowledgeConsolidateActionProvider())
         register_action_provider(KnowledgeGapsActionProvider())
+    if "render-report" not in _providers:
+        # KNOWLEDGE-SYNTHESIS §6.2 (KNOW-R15): a declarative spec into a sanitized, self-contained
+        # export, so a periodic synthesizer regenerates visuals with no model call. Added to
+        # ALLOWED_HOOK_PROVIDERS in the SAME commit — a provider in one set but not the other is
+        # the mismatch that makes a trigger save and then fail to run.
+        from personalclaw.action_providers.knowledge_render_provider import (
+            KnowledgeRenderReportActionProvider,
+        )
+
+        register_action_provider(KnowledgeRenderReportActionProvider())
+    if "knowledge-propose" not in _providers:
+        # The PROPOSE half of the maintenance tier —
+        # a gap-healing or schema-edit draft into the review queue instead of
+        # into the store. Before it, `proposals.enqueue` had no workflow-reachable caller at all,
+        # so a template that wanted to propose could only write. Added to ALLOWED_HOOK_PROVIDERS
+        # in the SAME commit — a provider in one set but not the other is the mismatch that makes
+        # a trigger save and then fail to run.
+        from personalclaw.action_providers.knowledge_propose_provider import (
+            KnowledgeProposeActionProvider,
+        )
+
+        register_action_provider(KnowledgeProposeActionProvider())

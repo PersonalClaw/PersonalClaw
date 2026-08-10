@@ -364,9 +364,14 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 {creating && (
                   <div className="flex items-center gap-1.5 px-m py-1.5">
                     {creating === 'dir' ? <FolderPlus size={14} className="text-primary" /> : <FilePlus2 size={14} className="text-primary" />}
+                    {/* No Field here — an inline create row with only a decorative icon beside it, so
+                        the accessible name must be explicit. It tracks the MODE: "New folder name" and
+                        "New file name" are different questions, and the icon that distinguishes them is
+                        aria-hidden by default. A placeholder is not an accessible name. */}
                     <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') { setCreating(null); setNewName('') } }}
                       onBlur={submitCreate} placeholder={creating === 'dir' ? 'folder name' : 'file name'}
+                      aria-label={creating === 'dir' ? 'New folder name' : 'New file name'}
                       className="h-7 flex-1 rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
                   </div>
                 )}

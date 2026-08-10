@@ -786,6 +786,62 @@ Find a skill by capability across your ENTIRE skill library — not just the ski
 }
 ```
 
+### `suggest_template`
+
+Offer to save a recurring task shape as a reusable workflow template. LOCAL-ONLY: it decides whether the offer is welcome and returns the wording, it never saves anything — workflow_plan then workflow_author do that. Call it when you notice the user has asked for the same SHAPE of work several times (the shape, not the exact words: 'summarize my new issues' and 'summarize today's issues' are one shape). Anti-nag rules are enforced here and the state persists, so a shape the user declined stays declined across restarts and a recently-offered one is in cooldown. When it answers no, do not mention templates in that turn.
+
+**Response type:** `template.nudge.decision`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `decision` (string, optional) — 'observe' (default) counts one more occurrence and asks whether to offer. Report the user's answer to a previous offer with 'accepted' or 'declined' — a decline is permanent for this shape.
+- `shape` (string, required) — A short stable name for the recurring shape, e.g. 'summarize new issues'. The SAME shape must produce the same string each time or the recurrence count never accumulates.
+
+**Example — Count a recurring shape and ask whether to offer a template:**
+
+```json
+{
+  "shape": "summarize new issues"
+}
+```
+
+**Example — Record that the user refused — permanent for this shape:**
+
+```json
+{
+  "decision": "declined",
+  "shape": "summarize new issues"
+}
+```
+
+### `template_save_from_session`
+
+Propose saving the multi-step procedure just carried out in this session as a reusable workflow template. Files a DRAFT proposal for the user to accept or reject — it never writes a definition, so use it freely when the work looks repeatable (use workflow_author instead when the user asks to SAVE a workflow outright). A deterministic gate scores the steps first and may decline (one-step plans, no reusable placeholders, a template that already exists); the decline and its reason come back to you. Put {{placeholders}} wherever a value would differ on the next run — steps with nothing parameterizable are a recording of one run, not a template, and get declined.
+
+**Response type:** `template.save.proposal.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `description` (string, optional) — One line on what the procedure accomplishes.
+- `name` (string, required) — Proposed template name: lowercase, digits, hyphens.
+- `steps` (array, required) — The procedure, one step per entry, in order. Use {{placeholders}} for values that change between runs.
+
+**Example — Propose the session's procedure as a reusable template (draft only):**
+
+```json
+{
+  "description": "Build and publish the nightly report",
+  "name": "nightly-report",
+  "steps": [
+    "fetch {{source_url}} and validate the payload",
+    "transform the result into {{format}}",
+    "publish it to {{target}} and verify the output"
+  ]
+}
+```
+
 ### `wait`
 
 Pause execution for a specified duration while preserving full session context. Use when waiting for external systems (code review, CI pipeline, deployment). Max 1800s (30 min).
@@ -1728,16 +1784,17 @@ Pause a running workflow: in-flight nodes finish, nothing new launches. Resume w
 
 ### `workflow_plan`
 
-Turn a natural-language goal into a workflow spec for review BEFORE anything runs. Returns a draft spec plus its validation issues; nothing is saved or started, so the user approves first. Use for 'set up a workflow that…' requests. To save the result, pass it to workflow_author.
+Turn a natural-language goal into a workflow spec for review BEFORE anything runs. Returns a draft spec plus its validation issues; nothing is saved or started, so the user approves first. Use for 'set up a workflow that…' requests. To save the result, pass it to workflow_author. To turn a conversation you just had into a workflow, pass source_session_id and the plan is mined from that transcript's real tool use.
 
 **Response type:** `workflow.plan.draft`
 
 **Safety:** requires approval
 
 **Parameters:**
-- `goal` (string, required) — What the workflow should accomplish, in plain language.
+- `goal` (string, optional) — What the workflow should accomplish, in plain language. Optional when source_session_id is given — the session's first user turn is then the goal.
 - `project_id` (string, optional) — Optional: a project this plan targets. When it binds an existing codebase, the plan is grounded in that project's real layout, README and stack so generated stages assume the right conventions.
 - `rigor` (string, optional) — How much structure to propose (default standard).
+- `source_session_id` (string, optional) — Optional: mine an existing chat session. The plan then reports the tools that session actually ran and the ones the user DENIED there, so the workflow declares a pre-validated permission set instead of a guessed one.
 - `template` (string, optional) — Optional: a template name to base the plan on.
 
 **Example — Draft a plan from a goal:**
@@ -1751,7 +1808,7 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 ### `workflow_resume`
 
-Answer a workflow that is waiting on a human, or clear a pause. For an approval gate pass answer=true/false; for a choice or form pass the value or object. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
+Answer a workflow that is waiting on a human, or clear a pause. For an approval gate pass answer=true/false; for a choice or form pass the value or object. To change ONE step instead of accepting or rejecting the whole plan, pass answer={"revise": {"step_ref": "<step id>", "comment": "what to change"}} — that step's instruction is amended and the gate re-asks, leaving every other step exactly as it was. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
 
 **Response type:** `workflow.gate.resolved`
 
@@ -1759,7 +1816,7 @@ Answer a workflow that is waiting on a human, or clear a pause. For an approval 
 
 **Parameters:**
 - `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
-- `answer` (any, optional) — true/false for an approval; a value or object otherwise.
+- `answer` (any, optional) — true/false for an approval; a value or object otherwise; or {"revise": {"step_ref", "comment"}} to amend one step and re-ask.
 - `resume_token` (string, optional) — Which gate to answer (required if several are pending).
 - `run_id` (string, required) — The run id (from workflow_start).
 

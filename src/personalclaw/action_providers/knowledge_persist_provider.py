@@ -652,15 +652,37 @@ def _stored_claims(store, item_id: str) -> list[dict]:
     return [c for c in claims if isinstance(c, dict)] if isinstance(claims, list) else []
 
 
+def _relation_for(conflict: dict) -> str:
+    """The typed verb this conflict implies — not always `contradicts`.
+
+    `RELATION_VERBS` has five entries but only `contradicts` was ever written, which threw away
+    a distinction the conflict already carried: `prefer` names which side the source-precedence
+    ladder favours (`user > compiled > timeline > external`). A conflict whose NEW side wins is
+    not two claims disagreeing as equals — it is the newer claim **superseding** the older one,
+    and a graph query for "what replaced this?" cannot recover that from a `contradicts` edge.
+
+    So: the incoming side winning ⇒ `supersedes`; anything else — the stored side winning, or a
+    ladder that honestly cannot decide between two same-tier sources — stays `contradicts`,
+    because asserting supersession in the reader's face when we do not know it would manufacture
+    authority out of arrival order. (`derived_from`/`depends_on`/`part_of` are structural
+    relations the conflict tier cannot observe; the model tier proposes those.)
+    """
+    return "supersedes" if str(conflict.get("prefer", "") or "") == "left" else "contradicts"
+
+
 def _write_conflict_edges(store, conflicts: list[dict], *, source_item: str) -> int:
-    """`contradicts` edges for already-recorded conflicts, once the source row exists."""
+    """Typed edges for already-recorded conflicts, once the source row exists.
+
+    `left` is the incoming claim throughout the conflict tier, so `prefer == "left"` means the
+    claim being persisted is the one the ladder favours.
+    """
     from personalclaw.knowledge import contradiction
 
     edges = [
         contradiction.Edge(
             source=source_item,
             target=str(c.get("right_item", "") or ""),
-            relation="contradicts",
+            relation=_relation_for(c),
             confidence=float(c.get("confidence", 1.0) or 1.0),
             provenance="extracted" if c.get("basis") == "deterministic" else "inferred",
             justification=str(c.get("detail", "") or ""),

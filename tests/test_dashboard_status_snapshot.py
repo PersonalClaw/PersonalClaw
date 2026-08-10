@@ -81,7 +81,6 @@ class TestStatusSnapshot:
             "uptime",
             "start_time",
             "sessions",
-            "messages",
             "cron_jobs",
             "lessons",
             "subagents",
@@ -89,6 +88,17 @@ class TestStatusSnapshot:
             "no_crons",
         }
         assert required.issubset(snap.keys())
+
+    def test_the_snapshot_makes_no_unmeasured_claim(self, state: DashboardState) -> None:
+        """`messages` was in the required set above, and was always 0.
+
+        It read `DashboardState.messages_received`, which was initialized to 0 and incremented
+        nowhere — so every SSE/WS/API consumer received a confident "0 messages" regardless of
+        activity, and nothing in the frontend read it. Requiring the key made the field look
+        load-bearing; it is removed rather than surfaced, because rendering an unmeasured 0 is
+        indistinguishable from a genuinely idle gateway.
+        """
+        assert "messages" not in state.status_snapshot()
 
     def test_update_available_passthrough(self, state: DashboardState) -> None:
         assert state.status_snapshot()["update_available"] is False

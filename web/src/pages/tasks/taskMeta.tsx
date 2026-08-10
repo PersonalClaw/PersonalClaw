@@ -30,6 +30,39 @@ const STATUS_MAP = Object.fromEntries(STATUSES.map((s) => [s.key, s]))
 export const statusMeta = (k?: string): StatusMeta => STATUS_MAP[k ?? ''] ?? { key: k ?? '', label: k ?? 'Unknown', icon: Circle, tone: 'var(--color-on-surface-low)' }
 export const TERMINAL = new Set(['done', 'cancelled'])
 
+/** Why a blocked task is blocked, from the backend's `blocked_reason_kind` ("" | "auto" | "manual").
+ *
+ *  The two kinds are NOT cosmetic variants — they behave differently and imply different next steps:
+ *
+ *    auto    an unfinished prerequisite the reconciler tracks. It clears ITSELF the moment the
+ *            prerequisite reaches a terminal status; the user does nothing.
+ *    manual  a person blocked this for a reason outside the graph. `reconcile_blocked_status`
+ *            explicitly `continue`s on it ("never auto-touch a manual block"), so it will sit there
+ *            until someone unblocks it by hand.
+ *
+ *  And the surfaces had no way to tell them apart, because `block_reason` is derived purely from
+ *  prerequisites: a MANUAL block has none, so it reports `is_blocked: false` with an empty
+ *  `message`, and every panel gated on that flag rendered nothing at all. A task read "Blocked" with
+ *  no explanation anywhere and no hint that only a human could clear it.
+ *
+ *  Returns null for a task that is not blocked, or whose kind the backend left empty — the caller
+ *  then falls back to `block_reason`, which is right for a legacy payload with no kind stamped. */
+export function blockKindMeta(kind?: string): { label: string; hint: string } | null {
+  if (kind === 'auto') {
+    return {
+      label: 'Waiting on a prerequisite',
+      hint: 'Unblocks itself when the task it depends on is done or cancelled.',
+    }
+  }
+  if (kind === 'manual') {
+    return {
+      label: 'Blocked by you',
+      hint: 'Not waiting on any tracked task — it stays blocked until you unblock it.',
+    }
+  }
+  return null
+}
+
 export interface PriorityMeta { key: string; label: string; tone: string }
 export const PRIORITIES: PriorityMeta[] = [
   { key: 'critical', label: 'Critical', tone: 'var(--color-danger)' },

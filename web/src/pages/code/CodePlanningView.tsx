@@ -6,26 +6,32 @@ import type { CommentTarget } from '../../ui/content/commentTarget'
 
 /** The Code SDLC planning walkthrough — the shared PlanningWalkthrough wired to the
  *  unified loop plan API + a per-kind SDLC artifact renderer (requirements/design/
- *  context_map/decomposition). The walkthrough shell + gate live in ui/. */
-const CFG: WalkthroughConfig = {
-  // The unified planner session is keyed loop-plan-<id> (the WS feed filter).
-  planSessionKey: (id) => `loop-plan-${id}`,
-  api: {
-    getSession: (id) => api.uLoopPlanSession(id),
-    start: (id) => api.uLoopPlanStart(id),
-    retry: (id) => api.uLoopPlanRetry(id),
-    approve: (id, sid) => api.uLoopPlanApprove(id, sid),
-    comment: (id, sid, text) => api.uLoopPlanComment(id, sid, text),
-    edit: (id, sid, md) => api.uLoopPlanEdit(id, sid, md),
-    isReady: (id) => api.uLoop(id).then((p) => p.status === 'review').catch(() => false),
-  },
-  copy: {
-    subtitle: 'walking the SDLC steps — approve or comment on each',
-    activityLabel: 'Investigation',
-    activityEmpty: 'Starting the planner… it reads the workspace, fetches relevant docs, and searches as needed before drafting each step.',
-    cancel: 'Cancel and edit the task',
-  },
-  renderArtifact: (kind, artifact, commentTarget) => <ArtifactView kind={kind} artifact={artifact} commentTarget={commentTarget} />,
+ *  context_map/decomposition). The walkthrough shell + gate live in ui/.
+ *
+ *  Built as a FACTORY so the renderer closes over the projectId, mirroring
+ *  LoopPlanningView's makeCfg. As a module-level constant it had no way to reach the id,
+ *  which is precisely how the comment docId below lost its project scope. */
+function makeCfg(projectId: string): WalkthroughConfig {
+  return {
+    // The unified planner session is keyed loop-plan-<id> (the WS feed filter).
+    planSessionKey: (id) => `loop-plan-${id}`,
+    api: {
+      getSession: (id) => api.uLoopPlanSession(id),
+      start: (id) => api.uLoopPlanStart(id),
+      retry: (id) => api.uLoopPlanRetry(id),
+      approve: (id, sid) => api.uLoopPlanApprove(id, sid),
+      comment: (id, sid, text) => api.uLoopPlanComment(id, sid, text),
+      edit: (id, sid, md) => api.uLoopPlanEdit(id, sid, md),
+      isReady: (id) => api.uLoop(id).then((p) => p.status === 'review').catch(() => false),
+    },
+    copy: {
+      subtitle: 'walking the SDLC steps — approve or comment on each',
+      activityLabel: 'Investigation',
+      activityEmpty: 'Starting the planner… it reads the workspace, fetches relevant docs, and searches as needed before drafting each step.',
+      cancel: 'Cancel and edit the task',
+    },
+    renderArtifact: (kind, artifact, commentTarget) => <ArtifactView kind={kind} artifact={artifact} projectId={projectId} commentTarget={commentTarget} />,
+  }
 }
 
 export function CodePlanningView({ projectId, onReady, onBack }: {
@@ -34,7 +40,7 @@ export function CodePlanningView({ projectId, onReady, onBack }: {
   onBack: () => void
 }) {
   return (
-    <PlanningWalkthrough id={projectId} cfg={CFG} onBack={onBack}
+    <PlanningWalkthrough id={projectId} cfg={makeCfg(projectId)} onBack={onBack}
       onReady={() => { api.uLoop(projectId).then(onReady).catch(() => {}) }} />
   )
 }
@@ -43,7 +49,7 @@ export function CodePlanningView({ projectId, onReady, onBack }: {
  *  real markdown, plus kind-specific structured views — requirements → user
  *  stories, design → decisions, context_map → entities, decomposition → the
  *  phase/task breakdown with dependencies. */
-function ArtifactView({ kind, artifact, commentTarget }: { kind: string; artifact: Record<string, unknown>; commentTarget?: CommentTarget }) {
+function ArtifactView({ kind, artifact, projectId, commentTarget }: { kind: string; artifact: Record<string, unknown>; projectId: string; commentTarget?: CommentTarget }) {
   const md = typeof artifact.markdown === 'string' ? artifact.markdown : ''
   const keyPoints = artifactStrings(artifact.key_points)
   const stories = artifactStrings(artifact.stories)
@@ -54,7 +60,12 @@ function ArtifactView({ kind, artifact, commentTarget }: { kind: string; artifac
 
   return (
     <div className="flex flex-col gap-3 rounded-lg bg-surface-high/40 p-3 text-[0.8125rem]">
-      {md && <PlanningArtifactDoc markdown={md} docId={`code-plan-${kind}`} label={`${kind} plan`} commentTarget={commentTarget} />}
+      {/* docId is the comment store's DOCUMENT IDENTITY, and the store is one global
+          localStorage key. `code-plan-<kind>` carried no project scope, so every Code
+          project's "requirements" step was the SAME document: comments left on one
+          project surfaced on the next, un-muted, because CommentLayer passes docId as
+          activeDocId. Scoped per project, matching LoopPlanningView's plan-<id>-<kind>. */}
+      {md && <PlanningArtifactDoc markdown={md} docId={`code-plan-${projectId}-${kind}`} label={`${kind} plan`} commentTarget={commentTarget} />}
 
       {(kind === 'requirements' && stories.length > 0) && (
         <ArtifactSection icon={<ListChecks size={13} className="text-primary" />} label={`User stories (${stories.length})`}>

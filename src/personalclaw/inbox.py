@@ -132,7 +132,8 @@ class InboxItem:
     status: str = ItemStatus.PENDING
     created_at: float = 0.0
     context_summary: str = ""  # what context the LLM used for drafting
-    # Which source provider produced this item (native / filesystem / slack / …).
+    # Which source provider produced this item — its ``source_name`` (native /
+    # filesystem / an app-contributed channel source / …).
     source: str = "native"
     # Whether this item's source supports a user reply (drives the UI Send gate).
     # Native agent-posted questions route the reply back to the posting agent's

@@ -42,7 +42,7 @@ export function DesignSystemPreview({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         {err
-          ? <div className="text-on-surface-low text-sm">Could not load the default token set.</div>
+          ? <div className="text-on-surface-low text-[0.8125rem]">Could not load the default token set.</div>
           : tab === 'tokens'
             ? <TokensView tokens={tokens} scheme={scheme} readOnly />
             : <div className="flex flex-col gap-2"><div className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide"><Contrast size={12} /> WCAG contrast</div><ContrastView tokens={tokens} scheme={scheme} /></div>}

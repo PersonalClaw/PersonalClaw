@@ -1491,10 +1491,35 @@ class GatewayOrchestrator:
                     continue
                 for payload in file_poll.poll_all(store):
                     await self._fire_file_trigger(payload)
+                # The watched scratchpad (UP-R18 / universal-planning crit 9). It rides THIS loop
+                # rather than adding a third poll task: it is the same "a local file changed" clock
+                # at the same cadence, and its own fingerprint check makes an unchanged file one
+                # `stat`. Deliberately NOT a store trigger — a scratchpad line never starts a run,
+                # so there is no action to dispatch and nothing for the capability fence to guard;
+                # it raises an inbox PROPOSAL and stops. Incident mode already suspended above,
+                # which is right: proposing work is still unattended background activity.
+                await asyncio.to_thread(self._scan_scratchpad)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    def _scan_scratchpad(self) -> None:
+        """Scan the configured scratchpad and raise proposals for its new actionable lines.
+
+        Off unless `planning.scratchpad_path` is set — `scan_and_propose` returns immediately on an
+        empty path, so an unconfigured install reads no files at all. Runs in a worker thread
+        because a parse plus one injection screen per line is blocking work, and never raises: a
+        failed scan must not stop the file-watch fires that share this loop.
+        """
+        try:
+            from personalclaw.planning.scratchpad import scan_and_propose
+
+            raised = scan_and_propose(self.dashboard_state)
+            if raised:
+                logger.info("scratchpad intake raised %d proposal(s)", len(raised))
+        except Exception:  # noqa: BLE001 - intake is additive; it must never break the poll loop
+            logger.warning("scratchpad intake failed", exc_info=True)
 
     async def _web_watch_poll_loop(self) -> None:
         """Poll every `web_watch` trigger and fire the ones with NEW items (§7 item 8 — S121).
@@ -2147,7 +2172,7 @@ class GatewayOrchestrator:
     async def _init_inbox(self) -> None:
         """Construct the Inbox service (state + store + on-demand AI triage).
 
-        Slack-independent: draft/classify/digest run over STORED items (populated by
+        Source-independent: draft/classify/digest run over STORED items (populated by
         the native push source + any configured poll provider) through the bound chat
         model, so they work with no external provider connected. A message-source
         provider is attached when one is configured, enabling poll/history; otherwise
@@ -2167,9 +2192,13 @@ class GatewayOrchestrator:
             try:
                 # The inbox's poll source is the in-process filesystem source. (The
                 # inbox is also fed by the always-on native push source regardless.)
-                # Channel providers like Slack are NOT inbox sources today — a channel
-                # is for interactive chat, not inbox polling; if a Slack-as-inbox-source
-                # is ever wanted it'd be a dedicated inbox-provider app, not assumed here.
+                # Sources are selected BY NAME through the vendor-neutral seam below,
+                # so this names no vendor: any other source — including one an app
+                # contributes — is resolved by its own ``source_name``, not assumed
+                # here. NOTE: ``get_default_provider`` resolves only names present in
+                # the ``personalclaw.message_source_providers`` entry-point group, so
+                # an app that declares an ``inbox`` provider in its manifest is not
+                # reachable from here yet (see the seam's docstring).
                 from personalclaw.inbox_providers import get_default_provider
 
                 provider = get_default_provider("filesystem")

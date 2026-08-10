@@ -47,7 +47,7 @@ from personalclaw.workflows import attention
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import gate_policy
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, store
+from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, revision, store
 from personalclaw.workflows.bindings import BindingContext, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
@@ -899,6 +899,17 @@ class RunController:
             self._publish("workflow_needs_input", item)
             return {"ok": False, "code": "WF_RESUME_EXPIRED", "item": item}
 
+        # The `revise` verb (UP): "change step 3, then carry on" — neither an approval nor a
+        # rejection. Recognised HERE, alongside `validate_answer` and for the same reason: a revise
+        # naming a step that does not exist must leave the token intact so the reviewer can correct
+        # the name, and a check placed after the claim would have destroyed it already.
+        revise = _parse_revise(answer)
+        if revise is not None:
+            step_ref, comment = revise
+            return self._resume_revise(
+                cont, token, step_ref, comment, responder=responder, channel=channel
+            )
+
         ask = Ask.from_dict(cont.ask)
         problem = ask.validate_answer(answer)
         if problem:
@@ -992,6 +1003,151 @@ class RunController:
         # called `run_to_completion` by hand afterwards and so never saw it.
         self._resume_loop()
         return {"ok": True, "approved": approved, "node_id": cont.node_id}
+
+    def _resume_revise(
+        self,
+        cont: Any,
+        token: str,
+        step_ref: str,
+        comment: str,
+        *,
+        responder: str = "",
+        channel: str = "",
+    ) -> dict[str, Any]:
+        """Apply `revise{step_ref, comment}` to exactly one node, then let the run carry on.
+
+        This is the third answer to a waiting gate, and the reason it has to exist: a reviewer who
+        wants ONE step changed could previously only reject the whole plan and re-run it, which
+        re-rolls the twelve stages nobody complained about (the same argument `revision.py` makes
+        about regeneration).
+
+        Mirrors `planning.session.comment_step`'s awaiting_review → running semantics (a comment
+        sends the step back for a re-draft rather than accepting the artifact), with the engine's
+        own state names: the gate instance goes back to PENDING at the current epoch, not DONE, so
+        it re-asks against the revised step. It is deliberately NOT an approval — nothing is marked
+        approved, no `always_allow` is remembered, and no `gate_resolved` is journaled, because the
+        gate has not been answered yet.
+
+        EVERY refusal here happens before the token is consumed. The whole point of a revise is that
+        the reviewer is still deciding, so a rejected revise must leave them able to answer.
+        """
+        from personalclaw.workflows.human_input import consume_continuation
+
+        allowed, why = _revise_allowed(self.run)
+        if not allowed:
+            return {"ok": False, "code": "WF_REVISE_NOT_ALLOWED", "message": why}
+
+        root = self.spec.get("root")
+        if not isinstance(root, dict):
+            return {
+                "ok": False,
+                "code": "WF_REVISE_NO_SPEC",
+                "message": "this run has no readable spec to revise",
+            }
+        node_id, code, message = revision.resolve_step_ref(root, step_ref)
+        if code:
+            return {"ok": False, "code": code, "message": message}
+        text = str(comment or "").strip()
+        if not text:
+            return {
+                "ok": False,
+                "code": "WF_REVISE_NO_COMMENT",
+                "message": "a revise must say what to change (`comment`)",
+            }
+
+        patch = revision.comment_patch(
+            root, node_id, text, requested_by=responder or channel or "user"
+        )
+        if patch is None:
+            return {
+                "ok": False,
+                "code": "WF_REVISE_NOT_APPLICABLE",
+                "message": f"{node_id!r} cannot carry a revision comment",
+            }
+        merged = revision.merge_patches(self.spec, [patch])
+        if not merged.applied:
+            return {
+                "ok": False,
+                "code": "WF_REVISE_REJECTED",
+                "message": "; ".join(merged.rejected) or "the revision did not apply",
+            }
+
+        # The token is consumed only once the revision is certain to land. A revise answers the
+        # gate as surely as an approval does — leaving the token live would let the same reviewer
+        # revise twice off one ask, and the second would land on an already-revised step.
+        claimed = consume_continuation(self.run.id, token)
+        if claimed is None:
+            return {"ok": False, "code": "WF_RESUME_ALREADY_USED"}
+        inst = self._instance(cont.instance_path)
+        if inst.epoch != cont.epoch:
+            return {"ok": False, "code": "WF_RESUME_STALE_EPOCH"}
+
+        # ONE spec, written once, journaled with the ops that produced it. `_commit_mutation` is the
+        # single writer of `spec.json` + `spec_history/` + `user_edited_mid_flight`, so routing the
+        # revision through it is what makes the recorded edit and the executing spec the same
+        # document rather than two that agree by convention.
+        result = mutations.BatchResult(
+            ok=True,
+            ops=[
+                mutations.Op(
+                    kind=mutations.OpKind.UPDATE_NODE,
+                    node_id=node_id,
+                    node=patch.node,
+                    note=f"revise: {text}",
+                    raw={"op": "revise", "step_ref": node_id, "comment": text},
+                )
+            ],
+            preview=mutations.CascadePreview(rerun=[node_id]),
+            spec=merged.spec,
+        )
+        self._commit_mutation(result, responder or channel or "user")
+
+        # The revised step re-asks. PENDING at the SAME epoch, matching `_apply_reentry`'s
+        # no-force behaviour — and the cache cannot serve the old answer anyway, because the
+        # cache key hashes the node's own spec region and the prompt just changed.
+        inst.state = InstanceState.PENDING
+        inst.output_ref = ""
+        inst.failure = None
+        inst.completed_at = None
+        inst.wake_at = 0.0
+        inst.attempt = 0
+        if cont.node_id:
+            self._outputs.pop(cont.node_id, None)
+        self.journal.write(
+            journal_mod.GATE_REVISED,
+            instance_path=cont.instance_path,
+            node_id=cont.node_id,
+            epoch=cont.epoch,
+            step_ref=node_id,
+            comment=text,
+            revised_by=responder or channel or "dashboard",
+        )
+        self.run.attention = None
+        if self.run.status == RunStatus.NEEDS_INPUT:
+            self.run.status = RunStatus.RUNNING
+        self._persist_state()
+        self._save_run()
+        self._publish(
+            "workflow_gate_revised",
+            {
+                "node_id": cont.node_id,
+                "instance_path": cont.instance_path,
+                "step_ref": node_id,
+            },
+        )
+        # Same reasoning as the approval path: the gate's inbox row must not outlive the ask it
+        # raised. The revised step raises its own row when it re-asks.
+        attention.resolve_gate_item(self.services.attention_state, self.run.id, cont.node_id)
+        self._publish("workflow_run_update", {"status": self.run.status.value})
+        self._resume_loop()
+        return {
+            "ok": True,
+            "revised": True,
+            "approved": False,
+            "node_id": cont.node_id,
+            "step_ref": node_id,
+            "spec_version": self.run.spec_version,
+        }
 
     def _resume_loop(self) -> None:
         """Relaunch the tick loop if it has exited and the run is not terminal.
@@ -3631,6 +3787,47 @@ def _preview(value: Any, limit: int = 500) -> Any:
             return str(value)[:limit]
         return text[:limit]
     return value
+
+
+def _parse_revise(answer: Any) -> tuple[str, str] | None:
+    """Read `revise{step_ref, comment}` out of a gate answer. Returns `(step_ref, comment)` or None.
+
+    Recognised STRUCTURALLY, by the `revise` key rather than by a free-text prefix. A gate whose
+    ask is a `text` legitimately receives prose, and sniffing for the word "revise" in it would
+    hijack an answer that merely mentioned revising something.
+
+    `answer` is untyped by contract (`WORKFLOW_RESUME_SCHEMA`), so both spellings a caller
+    naturally reaches for are accepted: the nested `{"revise": {...}}` a tool emits, and the flat
+    `{"revise": true, "step_ref": ..., "comment": ...}` a form posts. An `answer` with no `revise`
+    key is None, which is what routes every existing answer down the unchanged approval path.
+    """
+    if not isinstance(answer, dict) or "revise" not in answer:
+        return None
+    body = answer.get("revise")
+    if isinstance(body, dict):
+        source: dict[str, Any] = body
+    else:
+        # A truthy flag alongside sibling keys. A falsy flag is NOT a revise — `{"revise": false}`
+        # against an approval gate is a rejection expressed clumsily, and the approval path's own
+        # `validate_answer` is the right thing to tell the caller so.
+        if not body:
+            return None
+        source = answer
+    step_ref = str(source.get("step_ref", "") or source.get("step", "") or "").strip()
+    comment = str(source.get("comment", "") or source.get("text", "") or "").strip()
+    return step_ref, comment
+
+
+def _revise_allowed(run: Any) -> tuple[bool, str]:
+    """Whether this run can take a revision at all.
+
+    A terminal run cannot: there is nothing left to re-run, so a revision would edit a spec that
+    will never execute again — which would break the one promise the verb makes, that the recorded
+    plan is the plan that runs.
+    """
+    if getattr(run, "is_terminal", False):
+        return False, f"run is already {getattr(getattr(run, 'status', None), 'value', 'finished')}"
+    return True, ""
 
 
 def _is_approved(ask: Any, answer: Any) -> bool:

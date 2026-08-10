@@ -30,7 +30,7 @@ describe('kind labels', () => {
   it('names every kind the backend serves', () => {
     for (const kind of [
       'skill', 'lesson_batch', 'template', 'template_diff', 'retirement', 'tier_migration',
-      'project_instruction', 'project_file', 'project_skill',
+      'project_instruction', 'project_file', 'project_skill', 'knowledge_draft',
     ]) {
       expect(kindLabel(kind)).not.toBe(kind)
     }

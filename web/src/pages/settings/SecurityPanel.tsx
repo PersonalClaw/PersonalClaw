@@ -127,7 +127,12 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
           </div>
         ))}
         <div className="flex items-center gap-2">
+          {/* Named from `label`, not a constant: this component renders TWICE ("Allowed hosts" and
+              "Denied hosts") and a placeholder is not an accessible name — so both inputs announced
+              nothing, and a shared constant would have announced them IDENTICALLY. Confusing the
+              allow box for the deny box is a security-relevant mistake. */}
           <input value={draft} disabled={disabled}
+            aria-label={`Add a host to ${label.toLowerCase()}`}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') add() }}
             placeholder="e.g. nas.local"
@@ -197,8 +202,11 @@ function DeniedCommandsEditor({ builtin, user, onChange }: { builtin: string[]; 
               </div>
             ))}
             <div className="flex items-center gap-2">
+              {/* "Shell denylist" (the Section title) is the context a screen reader needs here — a
+                  bare "pattern" box gives no hint that typing in it BLOCKS a command. */}
               <input
                 value={draft}
+                aria-label="Add a shell denylist pattern (regex)"
                 onChange={(e) => { setDraft(e.target.value); setErr('') }}
                 onKeyDown={(e) => { if (e.key === 'Enter') add() }}
                 placeholder="e.g. my-secret-tool .*"

@@ -69,8 +69,12 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
       <Field label="Description"><TextInput value={draft.description} onChange={(v) => set('description', v)} placeholder="One line: what this fragment is" /></Field>
 
       <Field label="Content" hint="The fragment body. {{variable}} placeholders, logic, functions, and nested {{> snippet}} includes.">
+        {/* Stays a RAW textarea rather than `ui/forms`' TextArea, which would claim the Field's
+            published label automatically: `taRef` drives cursor-position insertion for the snippet
+            picker (registerInsert), and TextArea does not forward a ref. Adding ref forwarding to the
+            primitive is a wider change than this pass — so it self-names instead. */}
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={8}
-          spellCheck={false} placeholder={'— {{author}}, {{role}}'}
+          aria-label="Snippet content" spellCheck={false} placeholder={'— {{author}}, {{role}}'}
           className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-y" />
       </Field>
 
@@ -100,7 +104,7 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
       <Field label="Variables" hint="Typed inputs — they merge into any prompt that includes this snippet.">
         <div className="flex flex-col gap-s">
           {draft.variables.map((v, i) => (
-            <VariableRow key={i} v={v} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} descriptionPlaceholder="Description" />
+            <VariableRow key={i} v={v} rowIndex={i} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} descriptionPlaceholder="Description" />
           ))}
           <AddItemButton className="self-start" onClick={() => addVar()}><Plus size={14} /> Add variable</AddItemButton>
         </div>

@@ -4,7 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 import { spring, bounce } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
-import { NumberField } from '../../ui/forms'
+import { FieldLabelProvider, NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -40,14 +40,28 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
   )
 }
 
-/** Stacked variant for controls that need full width under their label. */
+/** Stacked variant for controls that need full width under their label.
+ *
+ *  Publishes its label id through `FieldLabelProvider` exactly as `ui/forms`' `Field` does. That is
+ *  not decoration: a form-family control (`TextInput`/`TextArea`/`Select`) gets its accessible name by
+ *  claiming the surrounding Field's label via `aria-labelledby`, and with no provider it claims
+ *  nothing. Measured before this change — six inputs on `#/settings/account`, including "New password"
+ *  and "Confirm password", had NO accessible name, because this Field owned the visible label and
+ *  published nothing.
+ *
+ *  This is the same defect the ToolsPage local `Field` had, in a second place: the label is on screen,
+ *  so it looks correct, and only assistive tech sees the gap. Publishing here fixes every consumer of
+ *  this Field at once rather than asking each call site to remember an `ariaLabel`. */
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const labelId = useId()
   return (
-    <div className="border-b border-outline-variant/30 py-3 last:border-0">
-      <div className="text-on-surface text-[0.8125rem]">{label}</div>
-      {hint && <div className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
-      <div className="mt-2">{children}</div>
-    </div>
+    <FieldLabelProvider value={labelId}>
+      <div className="border-b border-outline-variant/30 py-3 last:border-0">
+        <div id={labelId} className="text-on-surface text-[0.8125rem]">{label}</div>
+        {hint && <div className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+        <div className="mt-2">{children}</div>
+      </div>
+    </FieldLabelProvider>
   )
 }
 

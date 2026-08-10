@@ -70,6 +70,19 @@ _RESIDUAL_CORE_TOOLS = {
     # than owning either, so like get_context it is a cross-cutting core tool, not an
     # artifacts-category tool.
     "dashboard_tile_propose",
+    # template_save_from_session reads the SESSION's just-carried-out steps,
+    # checks the WORKFLOW library for an already-surfaced definition, and files into the
+    # LEARNING proposal queue — three categories, owning none of them. Same reason
+    # get_context and project_context_review sit here: a tool that spans categories in
+    # a category module would make that module the owner of things it does not own.
+    "template_save_from_session",
+    # suggest_template offers to turn a recurring CONVERSATIONAL
+    # shape into a workflow template. It is a conversation-level affordance, not a workflow
+    # entity operation: it creates nothing, reads no run or def, and its state is the
+    # per-shape anti-nag record. Naming it `workflow_*` would put it in the workflows
+    # category alongside 19 tools that all act on a def or a run, and a model reaching for
+    # "how do I start a workflow" would find a nudge helper.
+    "suggest_template",
 }
 
 

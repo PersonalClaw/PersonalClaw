@@ -487,7 +487,11 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
   }
   return (
     <div className="flex flex-col gap-2">
+      {/* In a modal with no Field and no visible label — the placeholder was the only cue, and a
+          placeholder is not an accessible name. Measured unnamed on the live DOM after clicking
+          "Lesson"; a route-only probe never opens this. */}
       <textarea value={rule} onChange={(e) => setRule(e.target.value)} rows={4} autoFocus
+        aria-label="Lesson rule"
         placeholder="e.g. Always run the test suite before saying a fix works."
         className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       <div className="flex items-center gap-2">
@@ -518,9 +522,13 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
 
   return (
     <div className="mb-3 rounded-lg border border-outline-variant/40 bg-surface p-3">
-      <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="key (e.g. pref.theme, user.timezone)"
+      {/* Same shape as the Lesson modal: no Field, no label, placeholder-only. Both controls here
+          need DISTINCT names — "key" and "value" are meaningless apart from each other. */}
+      <input value={key} onChange={(e) => setKey(e.target.value)} aria-label="Fact key"
+        placeholder="key (e.g. pref.theme, user.timezone)"
         className="mb-2 h-9 w-full rounded-md bg-surface-high px-3 font-mono text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      <textarea value={value} onChange={(e) => setValue(e.target.value)} placeholder="value" rows={2}
+      <textarea value={value} onChange={(e) => setValue(e.target.value)} aria-label="Fact value"
+        placeholder="value" rows={2}
         className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}>{saving ? 'Saving…' : 'Save'}</Button>
@@ -992,7 +1000,12 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
       {links.map((l) => (
         <div key={l.id} className="text-[0.75rem]">
           <span className="rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
-          <span className="ml-2 font-mono text-on-surface-var">{l.from_ref}</span>
+          {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
+              keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
+              `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and
+              there was no way to tell which store to look in. */}
+          <span className="ml-2 text-on-surface-low">{l.from_kind}</span>
+          <span className="ml-1.5 font-mono text-on-surface-var">{l.from_ref}</span>
           {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
         </div>
       ))}

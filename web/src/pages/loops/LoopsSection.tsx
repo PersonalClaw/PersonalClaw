@@ -133,13 +133,13 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
 
   if (missing) {
     return (
-      <div className="grid h-full place-items-center text-on-surface-low text-sm">
+      <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">
         This loop no longer exists.
       </div>
     )
   }
   if (kind === null) {
-    return <div className="grid h-full place-items-center text-on-surface-low text-sm">Loading…</div>
+    return <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">Loading…</div>
   }
   if (kind === 'design') {
     return <DesignCockpitPage id={id}

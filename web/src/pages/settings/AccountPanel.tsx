@@ -209,8 +209,11 @@ function LoginSection() {
       <Field label={state.credential_configured ? 'Change password' : 'Set a password'}
         hint="At least 12 characters — length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.">
         <div className="flex flex-col gap-s" style={{ maxWidth: 280 }}>
-          <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" />
-          <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" />
+          {/* TWO controls in ONE Field, so each needs its own name: claiming the Field's label would
+              make both announce "Set a password" and leave them indistinguishable — exactly the
+              multi-control case ui/forms' comment carves out for an explicit ariaLabel. */}
+          <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" ariaLabel="New password" />
+          <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" ariaLabel="Confirm password" />
           <div className="flex items-center gap-s">
             <Button size="sm" variant={canSavePw ? 'primary' : 'secondary'} disabled={!canSavePw} onClick={savePassword}>
               {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save password'}

@@ -134,6 +134,24 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "template_save_from_session": {
+        "response_type": "template.save.proposal.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose the session's procedure as a reusable template (draft only)",
+                "args": {
+                    "name": "nightly-report",
+                    "description": "Build and publish the nightly report",
+                    "steps": [
+                        "fetch {{source_url}} and validate the payload",
+                        "transform the result into {{format}}",
+                        "publish it to {{target}} and verify the output",
+                    ],
+                },
+            },
+        ],
+    },
     "project_context_review": {
         "response_type": "project.context.review.result",
         "error_codes": [],
@@ -212,6 +230,23 @@ TOOL_META: dict[str, dict[str, Any]] = {
             {
                 "summary": "Stop the autonomous nudge loop for this session",
                 "args": {"reason": "goal reached"},
+            },
+        ],
+    },
+    "suggest_template": {
+        "response_type": "template.nudge.decision",
+        # Empty like every sibling planning tool: its refusals are readable text carrying a
+        # bracketed code, not `errors.ERROR_CODES` entries (that registry is `ERR_*` and
+        # append-only — a text code does not belong in it).
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Count a recurring shape and ask whether to offer a template",
+                "args": {"shape": "summarize new issues"},
+            },
+            {
+                "summary": "Record that the user refused — permanent for this shape",
+                "args": {"shape": "summarize new issues", "decision": "declined"},
             },
         ],
     },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -16,6 +16,7 @@ import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
+import { FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard } from '../../lib/api'
@@ -342,16 +343,21 @@ function NewProjectModal({ busy, onClose, onCreate }: {
   return (
     <Modal title="New project" icon={<FolderKanban size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-l">
+        {/* Both were hand-rolled elements inside the local Field, so neither could claim an accessible
+            name — TWO independent breaks: a raw element does not read FieldLabelCtx, and the Field
+            published nothing to read. Measured on the live DOM; these were the only unnamed controls
+            left on #/projects. Fixing one alone would have changed nothing, which is why both move
+            here. The primitives also carry the chrome (radius, focus ring, tones, surface) that the
+            deleted class strings hand-copied. */}
         <Field label="Name">
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+          <TextInput autoFocus value={name} onChange={setName}
             onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
             placeholder="Project name (or let the system name it later)…"
-            className="w-full rounded-md bg-surface-high px-3 py-2 text-[0.9375rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 placeholder:text-on-surface-low" />
+            surface="high" />
         </Field>
         <Field label="Brief" hint="The goal, scope, and background — shared as context with every agent working on this project's sessions and loops.">
-          <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={4}
-            placeholder="What is this project for? What does success look like?"
-            className="w-full resize-y rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 placeholder:text-on-surface-low" />
+          <TextArea value={brief} onChange={setBrief} rows={4} size="md"
+            placeholder="What is this project for? What does success look like?" />
         </Field>
         <Field label="Workspace" hint="Optional — the directory loops + code work in. You can bind or change it later.">
           <div className="flex items-center gap-2">
@@ -383,14 +389,28 @@ function NewProjectModal({ busy, onClose, onCreate }: {
   )
 }
 
-/** A labelled form field for the New-project modal. */
+/** A labelled form field for the New-project modal.
+ *
+ *  KEPT, not replaced by `ui/forms`' Field, and the reason is a visible one: this layout puts the hint
+ *  ABOVE the control in sentence case, while the shared Field puts it BELOW in uppercase. Swapping
+ *  them here moved 27.9% of the modal's pixels — that is a visual-language decision the owner has
+ *  already been asked about (the hint-placement taste call), and converging it inside an a11y fix
+ *  would decide it by accident.
+ *
+ *  What WAS broken is the label CONTRACT, not the layout: this Field rendered a label but published no
+ *  id, so no control inside it could claim one via aria-labelledby, and every child was unnamed. Same
+ *  defect as ToolsPage's and settingsUI's local Fields. The fix is to publish — a second layout is
+ *  allowed, a second layout that breaks the contract is not. */
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  const labelId = useId()
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</span>
-      {hint && <span className="text-on-surface-low text-[0.75rem] leading-snug">{hint}</span>}
-      {children}
-    </div>
+    <FieldLabelProvider value={labelId}>
+      <div className="flex flex-col gap-1.5">
+        <span id={labelId} className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</span>
+        {hint && <span className="text-on-surface-low text-[0.75rem] leading-snug">{hint}</span>}
+        {children}
+      </div>
+    </FieldLabelProvider>
   )
 }
 

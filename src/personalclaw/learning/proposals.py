@@ -93,6 +93,13 @@ class Kind(str, Enum):
     project context that PROPOSES rather than writes, so a run's learnings reach the
     project's overview/ledger/inlined-file/skill only through the same human gate every
     other kind clears.
+
+    ``KNOWLEDGE_DRAFT`` (KNOWLEDGE-SYNTHESIS §3.3/§3.4, WF2KNO-8) is the same bargain for
+    the knowledge store: a gap-healing or schema-edit draft reaches
+    ``workspace/knowledge`` only after a human accepts it. Before this kind existed the
+    gap-healing template had no way to file one — ``enqueue`` SKIPS an unlisted kind and
+    logs at debug — so the template wrote a TTL'd probe straight into the store instead,
+    which is the self-citation anti-pattern the template's own doctrine warns about.
     """
 
     SKILL = "skill"
@@ -104,6 +111,7 @@ class Kind(str, Enum):
     PROJECT_INSTRUCTION = "project_instruction"
     PROJECT_FILE = "project_file"
     PROJECT_SKILL = "project_skill"
+    KNOWLEDGE_DRAFT = "knowledge_draft"
 
 
 class Status(str, Enum):
@@ -749,6 +757,7 @@ _KIND_LABELS = {
     Kind.PROJECT_INSTRUCTION.value: "Project instruction proposed",
     Kind.PROJECT_FILE.value: "Project context update proposed",
     Kind.PROJECT_SKILL.value: "Project skill proposed",
+    Kind.KNOWLEDGE_DRAFT.value: "Knowledge entry drafted for review",
 }
 
 

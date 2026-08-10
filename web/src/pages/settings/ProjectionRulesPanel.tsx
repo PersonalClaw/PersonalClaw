@@ -73,12 +73,24 @@ export function ProjectionRulesPanel() {
  *  projection this month + the top compressor. Renders nothing until there's a saving
  *  (a fresh install has no data; showing "0 saved" would be noise). Tokens are estimated
  *  (chars/4) — this is the counterfactual savings ledger, not authoritative spend. */
-function SavingsCard() {
+/** Exported for test: the breakdown's derivations (zero filter, savings ordering, the
+ *  more-than-one gate, chars→tokens conversion) are only observable by rendering the card against a
+ *  stubbed summary — jsdom reports every box as 0, so none of it is measurable from layout. */
+export function SavingsCard() {
   const { data } = useCachedData<ToolsSavings>(
     'settings:tools-savings', () => api.toolsSavings(), { persist: true },
   )
   if (!data || data.saved_chars <= 0) return null
   const fmt = (n: number) => n.toLocaleString()
+  // `by_compressor` is the per-compressor savings the summary already aggregates; the card named
+  // only `top_compressor`, so "which of my compressors is actually earning its keep" had no answer
+  // — and with one compressor dominating, the others were indistinguishable from unused.
+  //
+  // Sorted by savings and shown ONLY when more than one compressor contributed: with a single
+  // entry the breakdown just restates `top_compressor` above it, which is noise rather than detail.
+  const breakdown = Object.entries(data.by_compressor ?? {})
+    .filter(([, chars]) => chars > 0)
+    .sort((a, b) => b[1] - a[1])
   return (
     <div className="mb-4 flex items-start gap-3 rounded-lg bg-surface-container px-3 py-3">
       <Gauge size={16} className="mt-0.5 shrink-0 text-primary" />
@@ -88,6 +100,19 @@ function SavingsCard() {
           {' '}across {fmt(data.projection_count)} projected result{data.projection_count === 1 ? '' : 's'}
           {data.top_compressor ? <> — top compressor: <span className="font-mono">{data.top_compressor}</span></> : null}.
         </div>
+        {breakdown.length > 1 && (
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-on-surface-var">
+            {breakdown.map(([name, chars]) => (
+              // Tokens, not chars: the headline above is in tokens, and two units in one card
+              // invites the reader to compare numbers that are not comparable. Same ~4 chars/token
+              // estimate the backend uses for `saved_tokens_estimated`.
+              <span key={name}>
+                <span className="font-mono">{name}</span>{' '}
+                <span className="tabular-nums">~{fmt(Math.round(chars / 4))}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="mt-0.5 text-on-surface-low">
           Estimated ({fmt(data.saved_chars)} chars, ~4 chars/token). The full raw of every projected result stays recoverable via <span className="font-mono">tool_result_get</span>.
         </div>
@@ -96,11 +121,15 @@ function SavingsCard() {
   )
 }
 
-function StrategyPicker({ value, disabled, onChange }: {
+function StrategyPicker({ value, disabled, onChange, forRule }: {
   value: ProjectionStrategy; disabled?: boolean; onChange: (s: ProjectionStrategy) => void
+  /** Which rule this picker belongs to — the rule's name, or '' for the new-rule row. Two pickers
+   *  render on this panel, so a constant name would announce both identically. */
+  forRule?: string
 }) {
   return (
     <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as ProjectionStrategy)}
+      aria-label={forRule ? `Strategy for ${forRule}` : 'Strategy for the new rule'}
       className="h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
       {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.label} — {s.blurb}</option>)}
     </select>
@@ -118,13 +147,19 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
       <div className="flex items-center gap-2">
         <Scissors size={13} className="shrink-0 text-on-surface-low" />
         <input value={rule.name} disabled={disabled} placeholder="rule name"
+          aria-label="Rule name"
           onChange={(e) => onChange({ ...rule, name: e.target.value })}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <StrategyPicker value={rule.strategy} disabled={disabled} onChange={(s) => onChange({ ...rule, strategy: s })} />
-        <button type="button" disabled={disabled} onClick={onRemove} aria-label="Remove rule"
+        <StrategyPicker value={rule.strategy} disabled={disabled} forRule={rule.name}
+          onChange={(s) => onChange({ ...rule, strategy: s })} />
+        {/* One button per rule row, so a constant "Remove rule" announces identically N times.
+            Matches the sibling pattern in SecurityPanel (`Remove ${h}`). */}
+        <button type="button" disabled={disabled} onClick={onRemove}
+          aria-label={rule.name ? `Remove rule ${rule.name}` : 'Remove rule'}
           className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={15} /></button>
       </div>
       <input value={rule.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
+        aria-label={rule.name ? `Match regex for ${rule.name}` : 'Match regex'}
         onChange={(e) => onChange({ ...rule, match_regex: e.target.value })}
         className={inputCls} />
       {/* Rule ops v2: declarative line operations. When any is set they replace the
@@ -177,12 +212,14 @@ function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: Projectio
       <div className="flex items-center gap-2">
         <Plus size={13} className="shrink-0 text-on-surface-low" />
         <input value={name} disabled={disabled} placeholder="new rule name"
+          aria-label="New rule name"
           onChange={(e) => setName(e.target.value)}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <StrategyPicker value={strat} disabled={disabled} onChange={setStrat} />
       </div>
       <div className="flex items-center gap-2">
         <input value={rx} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
+          aria-label="Match regex for the new rule"
           onChange={(e) => setRx(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add() }}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <button type="button" disabled={disabled || !rx.trim()} onClick={add}

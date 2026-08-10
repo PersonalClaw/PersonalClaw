@@ -217,6 +217,42 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "template_save_from_session",
+            "description": (
+                "Propose saving the multi-step procedure just carried out in this session as a "
+                "reusable workflow template. Files a DRAFT proposal for the user to accept or "
+                "reject — it never writes a definition, so use it freely when the work looks "
+                "repeatable (use workflow_author instead when the user asks to SAVE a workflow "
+                "outright). A deterministic gate scores the steps first and may decline "
+                "(one-step plans, no reusable placeholders, a template that already exists); the "
+                "decline and its reason come back to you. Put {{placeholders}} wherever a value "
+                "would differ on the next run — steps with nothing parameterizable are a "
+                "recording of one run, not a template, and get declined."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Proposed template name: lowercase, digits, hyphens.",
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "The procedure, one step per entry, in order. Use {{placeholders}} "
+                            "for values that change between runs."
+                        ),
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One line on what the procedure accomplishes.",
+                    },
+                },
+                "required": ["name", "steps"],
+            },
+        },
+        {
             "name": "project_context_review",
             "description": (
                 "Review THIS conversation and propose updates to the current project's context — "
@@ -494,6 +530,43 @@ def _list_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "name": "suggest_template",
+            "description": (
+                "Offer to save a recurring task shape as a reusable workflow template. "
+                "LOCAL-ONLY: it decides whether the offer is welcome and returns the wording, "
+                "it never saves anything — workflow_plan then workflow_author do that. Call it "
+                "when you notice the user has asked for the same SHAPE of work several times "
+                "(the shape, not the exact words: 'summarize my new issues' and 'summarize "
+                "today's issues' are one shape). Anti-nag rules are enforced here and the "
+                "state persists, so a shape the user declined stays declined across restarts "
+                "and a recently-offered one is in cooldown. When it answers no, do not "
+                "mention templates in that turn."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "shape": {
+                        "type": "string",
+                        "description": (
+                            "A short stable name for the recurring shape, e.g. "
+                            "'summarize new issues'. The SAME shape must produce the same "
+                            "string each time or the recurrence count never accumulates."
+                        ),
+                    },
+                    "decision": {
+                        "type": "string",
+                        "enum": ["observe", "accepted", "declined"],
+                        "description": (
+                            "'observe' (default) counts one more occurrence and asks whether "
+                            "to offer. Report the user's answer to a previous offer with "
+                            "'accepted' or 'declined' — a decline is permanent for this shape."
+                        ),
+                    },
+                },
+                "required": ["shape"],
+            },
+        },
     ]
 
 
@@ -700,6 +773,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             "this chat now; when the chat ends you'll be asked whether to keep it "
             "(this agent / all agents) or forget it."
         )
+
+    if name == "template_save_from_session":
+        return _save_template_from_session(args)
 
     if name == "skill_search":
         query = (args.get("query") or "").strip()
@@ -1074,7 +1150,73 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             + ". No further nudges will fire."
         )
 
+    if name == "suggest_template":
+        return _suggest_template(args)
+
     return f"Unknown tool: {name}"
+
+
+def _suggest_template(args: dict[str, Any]) -> str:
+    """Decide whether the "save as template" offer is welcome, and return its wording (UP-R9).
+
+    The DECISION is `template_pipeline.should_nudge`'s and the wording is `nudge_text`'s — both
+    already implement the anti-nag rules, and re-deciding here would give the feature two ideas of
+    when it may speak. What this adds is the persistence those rules need to be rules at all: the
+    occurrence count, the decline, and the cooldown are read from and written back to disk, so a
+    restart cannot re-offer a shape the user just refused.
+
+    Returns the refusal REASON when it declines, because a model that is told only "no" will ask
+    again next turn; one told "declined for this shape" will not.
+    """
+    from personalclaw.validation import SUGGEST_TEMPLATE_SCHEMA, validate_tool_args
+    from personalclaw.workflows import template_pipeline, template_store
+
+    args = validate_tool_args(args, SUGGEST_TEMPLATE_SCHEMA)
+    shape = str(args.get("shape", "") or "").strip()
+    if not shape:
+        return "Error [SUGGEST_TEMPLATE_SHAPE_REQUIRED]: 'shape' is required."
+    decision = str(args.get("decision", "") or "observe").strip().lower()
+
+    state = template_store.load_nudge(shape)
+
+    if decision == "accepted":
+        # Terminal for the shape: an accepted shape has a template, and `should_nudge` will not
+        # offer again. Recorded rather than inferred from a later save, because the save happens in
+        # a different tool and a signal that depended on it would be lost when the user saves
+        # manually.
+        state.accepted = True
+        template_store.save_nudge(state)
+        return (
+            f"Recorded: “{shape}” is saved as a template. Call workflow_plan (optionally with "
+            "source_session_id to mine this conversation), then workflow_author to write it."
+        )
+    if decision == "declined":
+        state.declined = True
+        template_store.save_nudge(state)
+        return (
+            f"Recorded: no template for “{shape}”. This shape will not be suggested again — "
+            "do not raise it in a later turn."
+        )
+
+    # `observe`: one more sighting, then ask the rules.
+    state.occurrences += 1
+    turn = template_store.bump_turn()
+    offer, reason = template_pipeline.should_nudge(state, turn=turn)
+    if not offer:
+        # The count is still saved. A sighting that went unrecorded because it did not yet clear
+        # the threshold is a shape that never reaches the threshold.
+        template_store.save_nudge(state)
+        return f"Do not suggest a template for “{shape}” right now: {reason}."
+
+    state.last_offered_turn = turn
+    template_store.save_nudge(state)
+    return (
+        f"Suggest a template ({reason}). Say this to the user, in your own voice:\n\n"
+        f"{template_pipeline.nudge_text(state)}\n\n"
+        "If they say yes, call suggest_template again with decision='accepted' and then "
+        "workflow_plan. If they say no, call it with decision='declined' so this shape is "
+        "never raised again."
+    )
 
 
 def _resolve_review_project_id(explicit: str) -> str:
@@ -1107,6 +1249,90 @@ def _review_transcript(session_key: str) -> list[dict]:
     except Exception:
         logger.debug("project_context_review: transcript read skipped", exc_info=True)
         return []
+
+
+def _save_template_from_session(args: dict[str, Any]) -> str:
+    """Route a session's procedure through the ad-hoc→template gate as a DRAFT proposal.
+
+    Files, never installs: the gate's accepted branch enqueues a PENDING proposal the user accepts
+    or rejects, so this tool cannot add a definition to the workflow library. That is what makes it
+    safe to expose at all — the worst outcome of an over-eager call is one reviewable row.
+
+    A DECLINE is reported with its typed reason rather than swallowed. The model that proposed the
+    steps is the one that can fix them (add a placeholder, list the real steps), and a silent no
+    teaches it nothing.
+    """
+    from personalclaw.learning.detectors import Candidate
+    from personalclaw.learning.template_gate import evaluate
+
+    slug = str(args.get("name") or "").strip()
+    raw_steps = args.get("steps")
+    steps = (
+        [str(s).strip() for s in raw_steps if str(s).strip()] if isinstance(raw_steps, list) else []
+    )
+    description = str(args.get("description") or "").strip()
+    if not slug:
+        return "Error: name is required (the proposed template name)."
+    if not steps:
+        return "Error: steps is required — a non-empty list of the procedure's steps, in order."
+
+    # `template_surfaced` resolved against the real def registry, not left at its dataclass
+    # default: the TEMPLATE_EXISTS pre-gate depends on library state, and defaulting it False
+    # would make that branch unreachable in production.
+    surfaced = False
+    try:
+        from personalclaw.workflows import defs as defs_mod
+
+        for provider_name in defs_mod.list_providers():
+            provider = defs_mod.get_provider(provider_name)
+            if provider is None:
+                continue
+            found, _n = _run_coro(provider.list_defs(limit=500))
+            for item in found:
+                d = item if isinstance(item, dict) else getattr(item, "to_dict", lambda: {})()
+                if str((d or {}).get("name", "")).strip().lower() == slug.lower():
+                    surfaced = True
+                    break
+            if surfaced:
+                break
+    except Exception:
+        logger.debug("template_save_from_session: def lookup unavailable", exc_info=True)
+
+    outcome = evaluate(
+        Candidate(run_id=slug, steps=steps, template_surfaced=surfaced, intent=description),
+        session_key=_resolve_session_key(),
+        title=description or f"Template: {slug}",
+        body="\n".join(f"- {s}" for s in steps),
+    )
+    if outcome.filed:
+        return (
+            f"Filed a DRAFT template proposal for '{slug}' — nothing was written to the workflow "
+            "library. Accept it in the Learning review queue to create the definition."
+        )
+    if outcome.decision.action == "consult":
+        return (
+            f"'{slug}' scored {outcome.decision.score.total:.2f}, in the inconclusive middle band, "
+            "so nothing was filed. Sharpen the steps (clearer step-to-step dependencies, more "
+            "{{placeholders}}) and call again."
+        )
+    return (
+        f"Declined '{slug}' ({outcome.decision.skip_reason}): {outcome.decision.reason}. "
+        "Recorded for threshold tuning; nothing was filed."
+    )
+
+
+def _run_coro(coro: Any) -> Any:
+    """Run a coroutine from this sync tool boundary, whether or not a loop is already running."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _project_context_review(args: dict[str, Any]) -> str:

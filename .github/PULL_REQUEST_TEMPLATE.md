@@ -1,4 +1,11 @@
 > [!IMPORTANT]
+> **Run `npm install` once in your clone.** It installs the git hooks, which sign off
+> your commits for DCO and format staged Python with `black`/`isort` before it becomes
+> a commit. That clears the two checks contributors hit most.
+>
+> **Before pushing:** `make format && make lint` (Python) and, if you touched `web/`,
+> `npm run typecheck:web && npm run test:web`.
+>
 > **Every commit must be signed off** (DCO) or CI fails. Commit with `git commit -s`.
 > Forgot on commits you already pushed? Fix and re-push:
 > ```bash

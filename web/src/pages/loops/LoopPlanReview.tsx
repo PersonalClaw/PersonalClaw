@@ -898,11 +898,16 @@ function SubGoalsEdit({ value, onChange }: { value: string[]; onChange: (v: stri
         <div key={i} className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2">
           <span className="mt-0.5 size-1 shrink-0 rounded-pill bg-primary" />
           <span className="flex-1 min-w-0 text-on-surface text-[0.8125rem]">{s}</span>
-          <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-on-surface-low hover:text-on-surface"><X size={14} /></button>
+          {/* One per sub-goal, icon-only: measured as SIX buttons announcing nothing at all (no text,
+              no aria-label) on a plan with six sub-goals — and this one DELETES. Named from the
+              sub-goal it removes, truncated because a sub-goal is a full sentence. The sibling
+              IconButton below already carried `label="Add sub-goal"`; this row never got the same. */}
+          <button type="button" aria-label={`Remove sub-goal: ${s.length > 60 ? `${s.slice(0, 60)}…` : s}`}
+            onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-on-surface-low hover:text-on-surface"><X size={14} /></button>
         </div>
       ))}
       <div className="flex items-center gap-s">
-        <input value={draft} onChange={(e) => setDraft(e.target.value)}
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="New sub-goal"
           onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }}
           placeholder="Add a sub-goal…"
           className="flex-1 h-9 rounded-lg bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />

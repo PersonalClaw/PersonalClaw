@@ -31,7 +31,11 @@ class TestDashboard:
             start_time=0.0,
         )
         assert state.sessions.count == 3
-        assert state.messages_received == 0
+        # `messages_received` used to be asserted here as `== 0`. It was initialized to 0 and never
+        # incremented anywhere, so this line pinned the DEFECT: it could only ever pass, and it
+        # made a writerless counter look covered. The attribute is gone; the session count above is
+        # the state field that is actually populated.
+        assert not hasattr(state, "messages_received")
 
     def test_state_init_with_channel_delivery(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)

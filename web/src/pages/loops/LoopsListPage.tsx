@@ -16,6 +16,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Spark } from '../../ui/Spark'
+import { ProgressRing } from '../../ui/ProgressRing'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -39,16 +40,9 @@ const GOAL_GLYPH: Record<string, string> = {
   verifiable: '✓ verifiable', open_ended: '◐ open-ended', monitor: '∞ monitor',
 }
 
-function ProgressRing({ pct, tone, size = 28 }: { pct: number; tone: string; size?: number }) {
-  const r = size / 2 - 2.5, c = 2 * Math.PI * r
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-surface-high)" strokeWidth={2.5} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tone} strokeWidth={2.5} strokeLinecap="round"
-        strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
-    </svg>
-  )
-}
+// `ProgressRing` moved to ui/ProgressRing. This copy matched the dashboard's on every number and
+// differed only in setting strokeDashoffset directly — so the ring JUMPED here while the row around
+// it animated. Adopting the primitive is what gives these rows the spring the dashboard already had.
 
 // running first, then by recency
 function order(a: GoalLoop, b: GoalLoop) {

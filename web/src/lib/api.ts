@@ -416,6 +416,13 @@ export interface KnowledgeCollection {
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
+// A PROPOSED organization for an untagged chat (SM T2.1). `tags` are NAMES, not ids — a
+// proposed tag may not exist yet and is created (via the shared tag helper) only on accept.
+// Holding one of these changes nothing about the session; only organizeAccept applies it.
+export interface OrganizeProposal {
+  session: string; folder_id: string; folder_name: string; tags: string[]
+  source: 'title' | 'workspace' | 'channel' | 'llm' | string; reason: string; dedup_key?: string
+}
 // Magic re-tag batch job (POST/GET /api/sessions/retag-all). status 'idle' only
 // appears on the GET before any job has run.
 export interface RetagJob { id?: string; status: 'idle' | 'running' | 'done' | 'error' | 'cancelled'; done?: number; total?: number; updated?: number; skipped?: number; errors?: number; current?: string; error?: string }
@@ -609,7 +616,23 @@ export interface WorkflowDef {
     // How the template is driven — surfaced in the picker so a user choosing a
     // template can see a concrete example rather than inferring one from the node tree.
     steering_examples?: Array<{ event?: string; description?: string }>
+    /** Declared template-to-template transitions (`DefMetadata.hands_off_to`). The def
+     *  payload has always carried these — `DefMetadata.from_dict` parses them on the bundled-def
+     *  load path — but this type declared only 3 of the backend's 20 metadata keys, so the field
+     *  was invisible to TypeScript and no surface could read it. `handoffs_from_def` drops entries
+     *  with no `target_def`, so the FE applies the same filter rather than rendering an edge that
+     *  points nowhere. */
+    hands_off_to?: WorkflowHandoff[]
   }
+}
+/** One declared transition out of a template. `condition` is prose (when to take the edge);
+ *  `context_fields` name what carries over; `requires_user_request` marks an edge the system must
+ *  never take on its own. */
+export interface WorkflowHandoff {
+  target_def: string
+  condition?: string
+  context_fields?: string[]
+  requires_user_request?: boolean
 }
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
@@ -1306,11 +1329,15 @@ export interface ToolGroupsData {
   surfaceDefaults: Record<string, string[]>
 }
 
+/** Process-lifetime runtime counters (`/api/system`.stats, `/api/status`.stats) — the Stats
+ *  singleton's snapshot, reset on gateway restart. Every field here has a writer on a real
+ *  runtime path AND a reader in UsagePanel; the six message/tool-approval counters and `timeouts`
+ *  that used to be declared here had neither and were removed from the backend. */
 export interface SystemAgentStats {
-  messages_received: number; messages_success: number; messages_failed: number
-  tool_approvals: number; tool_denials: number; tool_auto_approved: number
-  sessions_created: number; subagents_spawned: number; subagents_completed: number
-  input_tokens: number; output_tokens: number; cache_read_tokens?: number
+  sessions_created: number; sessions_cleaned: number
+  subagents_spawned: number; subagents_completed: number; subagents_failed: number
+  input_tokens: number; output_tokens: number
+  cache_creation_tokens: number; cache_read_tokens: number
   total_turns: number; total_duration_ms: number
 }
 export interface SystemInfo {
@@ -2187,6 +2214,14 @@ export const api = {
   updateChatTag: (id: string, body: Partial<ChatTag>) => patch<ChatTag>(`/api/chat/tags/${encodeURIComponent(id)}`, body),
   deleteChatTag: (id: string) => del(`/api/chat/tags/${encodeURIComponent(id)}`),
   setSessionTags: (session: string, tags: string[]) => put(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, { tags }),
+  // Suggested organization (SM T2.1). The GET only READS — a suggestion never applies
+  // itself; organizeAccept is the sole path that writes folder/tags from a proposal.
+  organizeSuggestion: (session: string, opts: { llm?: boolean } = {}) =>
+    get<{ proposal: OrganizeProposal | null }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize${opts.llm === false ? '?llm=0' : ''}`),
+  organizeAccept: (session: string, p: OrganizeProposal) =>
+    post<{ ok: boolean; folder_id: string; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize/accept`, { folder_id: p.folder_id, folder_name: p.folder_name, tags: p.tags, source: p.source }),
+  organizeDecline: (session: string, p: OrganizeProposal) =>
+    post<{ ok: boolean; declined: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize/decline`, { folder_id: p.folder_id, folder_name: p.folder_name, tags: p.tags, source: p.source }),
   // Magic re-tag: batch AI re-evaluation of every session's tags (board's
   // sparkle button). Progress arrives over /api/ws as retag_progress/retag_done.
   retagAllSessions: () => post<RetagJob>('/api/sessions/retag-all', {}),

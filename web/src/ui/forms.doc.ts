@@ -19,7 +19,7 @@ const docs: UiDoc[] = [
     ],
     bestPractices: [
       { guidance: true, description: 'Wrap standard controls in Field rather than hand-rolling a <label> — the control gets its accessible name from the published label id automatically.' },
-      { guidance: true, description: "Only the FIRST control in a Field claims its label; multi-control Fields (e.g. Variables) keep their own per-input aria-labels." },
+      { guidance: true, description: "A control claims the Field label only when it passes no ariaLabel of its own — an explicit ariaLabel always WINS, which is how a multi-control Field (two password inputs under one 'Set a password' label) names each member distinctly instead of both announcing the Field label." },
       { guidance: false, description: 'Do not hardcode colors or px — the label tone and spacing route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
     anatomy: ['FieldLabelCtx provider', 'label row (uppercase label id + right slot)', 'wrapped control', 'optional hint paragraph'],
@@ -166,6 +166,22 @@ const docs: UiDoc[] = [
       { guidance: false, description: 'Do not re-add onClick={e => e.stopPropagation()} at the call site — the primitive owns it, and duplicating it hides the contract.' },
     ],
     anatomy: ['native <input type="checkbox"> (accent-primary, focus-visible ring, propagation-guarded)'],
+  },
+  {
+    name: 'FieldLabelProvider',
+    keywords: ['field', 'label', 'accessibility', 'labelledby', 'context', 'provider', 'a11y'],
+    description:
+      "The context provider behind Field's accessible-name contract, exported so a DIFFERENT label+control layout can publish a label id too. A form control claims its surrounding label via aria-labelledby; anything that owns a visible label but publishes nothing leaves its controls unnamed. Settings' own row-style Field had exactly that defect — six inputs on the account page, including both password fields, had no accessible name — so the provider is exported rather than the second layout reimplementing (and re-breaking) the wiring. Usage: `<FieldLabelProvider value={labelId}>` where `labelId` is the id of the element that renders the LABEL text (generate it with useId()); every form control in the subtree then claims it via aria-labelledby. A dangling id reports NO name while the markup still looks correct.",
+    // Empty by CONTRACT, not by omission: this is React's own context Provider, so it declares no
+    // props of its own and the extractor derives none. Documenting `value`/`children` here would be
+    // "documented-but-gone" drift. Their meaning lives in the description instead.
+    props: [],
+    bestPractices: [
+      { guidance: true, description: 'Prefer Field. Reach for the raw provider only when a surface needs its own label layout (a bordered settings row, a compact inline row) and still wants real accessible names.' },
+      { guidance: true, description: 'Generate the id with useId() and put it on the element that renders the LABEL — not the hint, or the control announces a paragraph as its name.' },
+      { guidance: false, description: 'Do not wrap a subtree whose controls already pass their own ariaLabel expecting the provider to win: an explicit ariaLabel takes precedence, by design.' },
+    ],
+    anatomy: ['React context provider carrying one label id (no DOM of its own)'],
   },
 ]
 

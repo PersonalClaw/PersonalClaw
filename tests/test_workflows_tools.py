@@ -187,6 +187,30 @@ class TestToolSurface:
         for key, schema in MCP_WORKFLOW_SCHEMAS.items():
             assert schema.tool_name == key
 
+    def test_every_advertised_field_is_a_validated_field(self) -> None:
+        """Advertised ⊆ validated, and the direction matters.
+
+        `validate_tool_args` REJECTS an argument it has no `FieldSpec` for, so a property
+        advertised in `inputSchema` with no spec behind it is a tool that refuses the exact
+        argument its own description told the model to send. The two existing parity tests
+        check that a schema EXISTS and that its key matches; neither reads inside it, and
+        two tools had drifted this way — `workflow_resume`'s `answer` and `workflow_plan`'s
+        `project_id`, both advertised, both consumed by their handlers, neither declared.
+
+        The other direction is deliberately NOT asserted: a validated-but-unadvertised field
+        is an internal argument a handler accepts without inviting a model to send it.
+        """
+        from personalclaw.validation import MCP_WORKFLOW_SCHEMAS
+
+        for tool in T._list_tools():
+            advertised = set((tool.get("inputSchema") or {}).get("properties") or {})
+            validated = {f.name for f in MCP_WORKFLOW_SCHEMAS[tool["name"]].fields}
+            missing = advertised - validated
+            assert not missing, (
+                f"{tool['name']} advertises {sorted(missing)} with no FieldSpec — "
+                "a schema-validated call carrying it would be REJECTED"
+            )
+
 
 class TestRegistration:
     def test_the_module_is_in_the_aggregator(self) -> None:

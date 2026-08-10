@@ -227,28 +227,33 @@ function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name:
 
 function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
   const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
-  // Stable id/name per variable so each Try-it field is identifiable to screen
-  // readers + browser autofill (fixes the "form field should have an id or name"
-  // a11y advisory).
+  // Stable id/name per variable, for browser autofill and as a stable test/automation handle.
+  //
+  // The id alone does NOT name the field: nothing renders a `<label htmlFor={fid}>`, so it was a
+  // dangling id — it reads in source like a naming mechanism while announcing nothing. Measured on
+  // the live DOM: every Try-it control resolved NO accessible name. The wrapping `Field` (ui/forms)
+  // does publish a label id, but these are RAW elements and only the form-family components read
+  // FieldLabelCtx — so each one names itself from the variable it fills.
   const fid = `prompt-var-${v.name}`
+  const label = `${v.name} value`
   if (v.type === 'boolean') {
     return <Toggle on={!!value} onChange={onChange} size="sm" />
   }
   if (v.type === 'select') {
     return (
-      <select id={fid} name={v.name} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base} [color-scheme:dark]`}>
+      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base} [color-scheme:dark]`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     )
   }
   if (v.type === 'textarea') {
-    return <textarea id={fid} name={v.name} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={v.description} className={`${base} resize-y`} />
+    return <textarea id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={v.description} className={`${base} resize-y`} />
   }
   if (v.type === 'number') {
-    return <input id={fid} name={v.name} type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} placeholder={v.description} className={base} />
+    return <input id={fid} name={v.name} aria-label={label} type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} placeholder={v.description} className={base} />
   }
-  return <input id={fid} name={v.name} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={v.description} className={base} />
+  return <input id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={v.description} className={base} />
 }
 
 /** The template body — rendered (defaults substituted, Markdown) by default,
