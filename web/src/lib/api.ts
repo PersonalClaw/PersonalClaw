@@ -486,7 +486,7 @@ export interface TaskDependency { task_id?: string; depends_on_task_id?: string;
 export interface ExitCriterion { description: string; status?: 'incomplete' | 'complete'; comment?: string; met?: boolean }
 export interface ActionPlanItem { content?: string; description?: string; sequence?: number; completed?: boolean }
 export interface TaskNote { content: string; timestamp?: string; created_at?: string; phase?: 'research' | 'execution' | 'general' }
-export interface ProjectItem { id: string; name: string; is_default?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string }
+export interface ProjectItem { id: string; name: string; is_builtin?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string }
 export interface ProjectLinkedItem { id: string; name: string; status: string; error_message?: string | null }
 // Work board (WORK-CONTAINERS §1/§5.2/§6.1). `WorkRow` mirrors `containers.BoardRow.to_dict()`;
 // `WorkSection` is one heterogeneous source's own status (per-section isolation — a failed

@@ -436,7 +436,7 @@ class Project:
 
     id: str
     name: str
-    is_default: bool = False
+    is_builtin: bool = False
     status: str = "active"  # active | archived
     workspace_dir: str = ""  # bound codebase dir; "" = context dir is the workspace
     name_locked: bool = False  # user renamed manually → LLM stops auto-renaming
@@ -449,12 +449,12 @@ class Project:
     created_at: str = ""
     updated_at: str = ""
 
-    def is_default_project(self) -> bool:
-        return self.is_default or self.name in DEFAULT_PROJECTS
+    def is_builtin_project(self) -> bool:
+        return self.is_builtin or self.name in DEFAULT_PROJECTS
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        d["is_default"] = self.is_default_project()
+        d["is_builtin"] = self.is_builtin_project()
         return d
 
     @classmethod
@@ -463,7 +463,7 @@ class Project:
         return cls(
             id=d.get("id", ""),
             name=name,
-            is_default=bool(d.get("is_default", False)) or name in DEFAULT_PROJECTS,
+            is_builtin=bool(d.get("is_builtin", d.get("is_default", False))) or name in DEFAULT_PROJECTS,
             status=str(d.get("status") or "active"),
             workspace_dir=str(d.get("workspace_dir") or ""),
             name_locked=bool(d.get("name_locked", False)),

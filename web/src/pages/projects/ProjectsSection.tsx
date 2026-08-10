@@ -154,7 +154,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                 const menuItems: ContextMenuItem[] = [
                   { icon: <FolderKanban size={15} />, label: peekId === p.id ? 'Close peek' : 'Peek', onSelect: togglePeek },
                   { icon: <FolderOpen size={15} />, label: 'Open full page', onSelect: () => onOpen(p.id) },
-                  ...(!p.is_default ? [{ icon: <Trash2 size={15} />, label: 'Delete', onSelect: () => del(p), danger: true }] : []),
+                  ...(!p.is_builtin ? [{ icon: <Trash2 size={15} />, label: 'Delete', onSelect: () => del(p), danger: true }] : []),
                 ]
                 return (
                 <ContextMenu key={p.id} items={menuItems}>
@@ -167,7 +167,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                     <div className="flex items-center gap-1.5">
                       {p.id === activeId && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'var(--color-primary)' }} aria-label="Active project" />}
                       <span className="truncate text-on-surface text-[0.9375rem]">{p.name}</span>
-                      {p.is_default && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">default</span>}
+                      {p.is_builtin && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">builtin</span>}
                       {p.status === 'archived' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low">archived</span>}
                     </div>
                     <div className="truncate text-on-surface-low text-[0.75rem]">
@@ -175,7 +175,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                       {typeof p.task_list_count === 'number' ? ` · ${p.task_list_count} list${p.task_list_count === 1 ? '' : 's'}` : ''}
                     </div>
                   </div>
-                  {!p.is_default && (
+                  {!p.is_builtin && (
                     <SquareIconButton icon={Trash2} tone="danger" label="Delete project"
                       onClick={(e) => { e.stopPropagation(); del(p) }}
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
@@ -513,7 +513,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       <FolderKanban size={18} className="shrink-0 text-primary" />
       <span data-type="title-l" className="truncate text-on-surface">{project.name}</span>
       {project.name_locked && <Lock size={12} className="shrink-0 text-on-surface-low" aria-label="Name locked" />}
-      {!project.is_default && (
+      {!project.is_builtin && (
         <button type="button" onClick={() => { setNameDraft(project.name); setRenaming(true) }} aria-label="Rename"
           className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><Pencil size={13} /></button>
       )}

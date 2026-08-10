@@ -24,7 +24,7 @@ _CLAIM_TTL_SECS = 300
 # would have to be edited in lockstep with the model to stay correct. An allowlist fails
 # closed instead. Both sets are the fields the matching ``HierarchyStore.update_*`` method
 # actually reads, minus the ones no client should name: ``id`` (identity — the URL path
-# carries it), ``is_default`` (a delete-protection flag recomputed from the project name),
+# carries it), ``is_builtin`` (a delete-protection flag recomputed from the project name),
 # and ``created_at``/``updated_at`` (store-owned; ``update_*`` stamps them itself).
 _PROJECT_UPDATABLE = frozenset(
     {
