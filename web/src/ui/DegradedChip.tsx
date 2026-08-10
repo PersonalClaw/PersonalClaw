@@ -10,6 +10,24 @@ function label(surface: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+/** Use-case slugs the registry can name, in the SAME words ModelsPanel's `USE_CASE_META` uses —
+ *  so "no model for Speech-to-text" here and the "Speech-to-text" row you go bind it in agree.
+ *
+ *  Not imported from that map: it is a page-local const carrying icons, descriptions and chain
+ *  flags for 14 use cases, and a shell chip pulling in a settings page would be a far worse
+ *  dependency than three labels. Kept minimal on purpose — only the slugs `degraded.py`'s registry
+ *  actually declares (`chat`, `embedding`, `stt`), with `label()` as the fallback so a new
+ *  contract still reads sensibly instead of rendering a raw slug. */
+const USE_CASE_LABEL: Record<string, string> = {
+  chat: 'Chat',
+  embedding: 'Embedding',
+  stt: 'Speech-to-text',
+}
+
+function useCaseLabel(uc: string): string {
+  return USE_CASE_LABEL[uc] ?? label(uc)
+}
+
 /** A compact shell chip shown when any model-dependent surface is running on its
  *  no-model floor (PLATFORM-RESILIENCE §5). Self-polls the degraded endpoint on a
  *  slow cadence (the state changes rarely — a provider comes/goes), exactly like
@@ -80,6 +98,24 @@ export function DegradedChip() {
                       <span className="shrink-0 text-on-surface-low text-[0.6875rem]">{s.backlog} queued</span>
                     )}
                   </div>
+                  {/* WHAT IS MISSING, beside what still works. `floor` is the reassurance ("these
+                      parts keep running"); `use_cases` is the diagnosis — which model binding is
+                      absent, and therefore what to go bind. The panel showed only the floor, so it
+                      told a user their surface was degraded and nothing about the cause, on a chip
+                      whose entire job is "a provider went away".
+
+                      The backend already treats this as the headline: its own degradation notice
+                      reads `No model for {', '.join(contract.use_cases)} — {contract.floor}`. The
+                      popover was the one surface stating the second half without the first. */}
+                  {/* Defaulted read, not `s.use_cases.length`: an older/partial payload can omit
+                      the key entirely (the chip's own pre-existing test fixture does), and a chip
+                      that crashes the shell corner because a field is absent is a worse failure
+                      than the one being fixed. */}
+                  {(s.use_cases ?? []).length > 0 && (
+                    <div className="mt-0.5 text-on-surface-var text-[0.75rem]">
+                      No model for {(s.use_cases ?? []).map(useCaseLabel).join(', ')}
+                    </div>
+                  )}
                   <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{s.floor}</div>
                 </div>
               ))}
