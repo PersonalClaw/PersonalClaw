@@ -181,9 +181,24 @@ Store, add your API key under **Settings → Providers**, and bind a chat model 
 **Settings → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
 
 > **Tech stack:** Python 3.12 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
-> **Platforms:** local process · Docker Compose · systemd/launchd service. (A macOS-only
+> **Run modes:** local process · Docker Compose · systemd/launchd service. (A macOS-only
 > Electron desktop shell exists but is experimental — not built, signed, or released by CI,
 > and has no auto-update channel.)
+
+**Platform support.** Every row names what proves it — `CI:<job>` is a workflow job,
+`checklist:<section>` is a documented manual walkthrough, `community` is user-reported
+and not verified by us. Details and the `[models]`-extra per-arch reality:
+[Platforms](docs/guides/platforms.md).
+
+| Platform | Support | Proof |
+|---|---|---|
+| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-latest)` + release smoke |
+| Linux arm64 | first-class | `CI:full/matrix (ubuntu-24.04-arm)` + release smoke |
+| macOS Apple silicon | first-class | `CI:full/matrix (macos-14)` |
+| macOS Intel | best-effort | `community` |
+| Windows via WSL2 | supported | `checklist:Windows via WSL2` — [Platforms](docs/guides/platforms.md) |
+| Windows via Docker Desktop | unverified | no guide yet — see [Platforms](docs/guides/platforms.md) |
+| Windows native | not supported | — |
 
 ## <a name="privacy"></a>Privacy
 
