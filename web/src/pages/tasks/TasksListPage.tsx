@@ -396,7 +396,14 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto">
+        // The DAG renders an SVG canvas whose nodes are not focusable, so in that view this
+        // scroll container holds NOTHING a keyboard can reach: 2785px of graph unreachable
+        // (axe scrollable-region-focusable). List and Cards each expose 38 focusable rows, so
+        // they need no tab stop and must not get a redundant one. Hence the per-view scope.
+        <div className="flex-1 overflow-y-auto"
+          tabIndex={view === 'dag' ? 0 : undefined}
+          role={view === 'dag' ? 'group' : undefined}
+          aria-label={view === 'dag' ? 'Dependency graph' : undefined}>
           {/* every view (incl. DAG) honors the shell content-width preset */}
           <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}

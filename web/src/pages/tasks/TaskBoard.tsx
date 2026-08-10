@@ -79,7 +79,13 @@ export function TaskBoard({ tasks, onOpen, onMove }: {
                 className="flex-1 text-on-surface-low text-[0.75rem] tabular-nums">{items.length}</motion.span>
               <CollapseColumnButton onCollapse={() => collapse.toggle(s.key, items.length)} />
             </div>
-            <div className="flex flex-1 min-h-0 flex-col gap-s overflow-y-auto pr-0.5">
+            {/* A scroll container whose cards are divs (drag-and-drop, not buttons) has NOTHING
+                focusable inside, so a keyboard user could neither reach it nor scroll it — axe
+                `scrollable-region-focusable`, and 729px of hidden cards on a real board. A tab
+                stop + the column's own name makes the region reachable and arrow-scrollable.
+                `role="group"` keeps it announced as a labelled container, not a widget. */}
+            <div className="flex flex-1 min-h-0 flex-col gap-s overflow-y-auto pr-0.5"
+              tabIndex={0} role="group" aria-label={`${s.label} — ${items.length} task${items.length === 1 ? '' : 's'}`}>
               {items.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-outline-variant/30 py-6 text-on-surface-low text-[0.75rem]">{isOver ? 'Drop here' : '—'}</div>
               ) : (
