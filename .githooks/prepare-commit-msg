@@ -1,0 +1,39 @@
+#!/bin/sh
+# Auto-append the DCO Signed-off-by trailer (invoked by git at commit time).
+#
+# Every commit must carry a `Signed-off-by: <committer>` trailer (CONTRIBUTING.md
+# → DCO); CI's `dco` job fails without it. The trailer is easy to forget at
+# commit time, and the fix after the fact is a history rewrite (rebase --signoff)
+# — the single most common wall first-time contributors hit here. This hook adds
+# it for you, exactly as `git commit -s` would, using your committer identity.
+#
+# Idempotent: skips if a matching Signed-off-by is already present (so an explicit
+# `git commit -s`, an amend, or a rebase --signoff is never doubled). Does nothing
+# on merges/squashes or `--amend` where a message template is already resolved and
+# a trailer would be redundant or wrong.
+#
+# Installed via `npm run hooks:install` (core.hooksPath=.githooks), same as the
+# pre-commit and pre-push hooks. It changes only YOUR local commits; it is a
+# convenience, not the enforcement boundary — CI still verifies every commit.
+set -eu
+
+commit_msg_file=$1
+commit_source=${2:-}
+
+# Only act on a normal commit (no source) or a message/template commit. Skip
+# merge/squash/commit (-c/-C/--amend reuse), where re-appending is wrong.
+case "$commit_source" in
+  merge|squash|commit) exit 0 ;;
+esac
+
+sob="Signed-off-by: $(git config user.name) <$(git config user.email)>"
+
+# Already signed off with this exact identity? Leave it alone (idempotent).
+if grep -qxF "$sob" "$commit_msg_file"; then
+  exit 0
+fi
+
+# Append as a trailer. `git interpret-trailers` places it in the trailer block
+# and de-duplicates against an existing Signed-off-by, matching `git commit -s`.
+git interpret-trailers --if-exists doNothing --trailer "$sob" \
+  --in-place "$commit_msg_file"
