@@ -10,6 +10,14 @@ import { FormSkeleton } from '../../ui/ListScaffold'
 export function InboxSettingsPanel() {
   const [s, setS] = useState<InboxSettings | null>(null)
   const [saved, setSaved] = useState(false)
+  // `inbox.enabled` and `inbox.engagement_ranking_enabled` live in config.json (InboxConfig),
+  // NOT the inbox entity-settings store the rest of this panel uses — so they go through the
+  // config PATCH, the ONE place the runtime reads them. Writing them to the entity store would
+  // be a silent no-op toggle. (Same reasoning, same code, as the Inbox side panel: these two
+  // controls existed ONLY there, so Settings → Inbox — the canonical home — could not reach
+  // them at all.)
+  const [engagementOn, setEngagementOn] = useState<boolean | null>(null)
+  const [sourcesOn, setSourcesOn] = useState<boolean | null>(null)
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload. The
   // editable form state `s` is seeded/rehydrated from this read-only `data`;
@@ -17,9 +25,35 @@ export function InboxSettingsPanel() {
   const { data } = useCachedData('settings:inbox', () => api.inboxSettings().catch(() => null), { persist: true })
   useEffect(() => { if (data) setS(data) }, [data])
 
+  useEffect(() => {
+    api.personalclawConfig()
+      .then((c) => {
+        setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
+        setSourcesOn(Boolean(c?.inbox?.enabled))
+      })
+      .catch(() => { setEngagementOn(false); setSourcesOn(false) })
+  }, [])
+
   const patch = (p: Partial<InboxSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
     api.saveInboxSettings(p).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+  }
+
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }
+
+  const setSources = (v: boolean) => {
+    setSourcesOn(v)
+    api.patchConfig('inbox.enabled', v)
+      .then(() => api.restartInbox())  // re-attach/detach the poll provider live
+      .then(flash)
+      .catch(() => setSourcesOn(!v))   // revert the optimistic flip on failure
+  }
+
+  const setEngagement = (v: boolean) => {
+    setEngagementOn(v)
+    api.patchConfig('inbox.engagement_ranking_enabled', v)
+      .then(flash)
+      .catch(() => setEngagementOn(!v))
   }
 
   if (!data || !s) return <FormSkeleton sections={2} />
@@ -34,6 +68,20 @@ export function InboxSettingsPanel() {
       <Section title="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind.">
         <Row label="Where to configure" hint="One place for every kind of notification, not just inbox items.">
           <a href="#/settings/notifications" className="text-primary text-[0.8125rem] hover:underline">Open notification rules</a>
+        </Row>
+      </Section>
+
+      {/* Collection + ordering. These two were reachable ONLY from the Inbox side panel, so a
+          user who went to Settings → Inbox (the canonical home for every other inbox setting)
+          could not turn poll sources on, and could not find the ranking switch at all. */}
+      <Section title="Collection" hint="What the inbox gathers, and how it is ordered.">
+        <Row label="Poll message sources"
+          hint="Collect messages from connected poll sources (filesystem drops; channel apps). Agents can always post here directly.">
+          <Toggle on={!!sourcesOn} onChange={setSources} label="Poll message sources" disabled={sourcesOn === null} />
+        </Row>
+        <Row label="Engagement ranking"
+          hint="Rank the inbox by how much you engage with each channel/sender (favorites, opens, replies boost; dismisses lower) on top of recency. Off = pure newest-first.">
+          <Toggle on={!!engagementOn} onChange={setEngagement} label="Engagement ranking" disabled={engagementOn === null} />
         </Row>
       </Section>
 
