@@ -124,7 +124,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [] }: {
               id={fieldId} name={fieldId}
               type={meta.sensitive ? 'password' : isNum ? 'number' : 'text'}
               placeholder={secretAlreadySet ? 'saved — leave blank to keep' : undefined}
-              className="w-full rounded-m border border-outline-variant bg-surface-high px-m py-s text-sm text-on-surface"
+              className="w-full rounded-m border border-outline-variant bg-surface-high px-m py-s text-[0.8125rem] text-on-surface"
               value={v === undefined || v === null ? '' : String(v)}
               onChange={(e) => {
                 const raw = e.target.value
