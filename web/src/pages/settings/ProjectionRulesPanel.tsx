@@ -73,12 +73,24 @@ export function ProjectionRulesPanel() {
  *  projection this month + the top compressor. Renders nothing until there's a saving
  *  (a fresh install has no data; showing "0 saved" would be noise). Tokens are estimated
  *  (chars/4) — this is the counterfactual savings ledger, not authoritative spend. */
-function SavingsCard() {
+/** Exported for test: the breakdown's derivations (zero filter, savings ordering, the
+ *  more-than-one gate, chars→tokens conversion) are only observable by rendering the card against a
+ *  stubbed summary — jsdom reports every box as 0, so none of it is measurable from layout. */
+export function SavingsCard() {
   const { data } = useCachedData<ToolsSavings>(
     'settings:tools-savings', () => api.toolsSavings(), { persist: true },
   )
   if (!data || data.saved_chars <= 0) return null
   const fmt = (n: number) => n.toLocaleString()
+  // `by_compressor` is the per-compressor savings the summary already aggregates; the card named
+  // only `top_compressor`, so "which of my compressors is actually earning its keep" had no answer
+  // — and with one compressor dominating, the others were indistinguishable from unused.
+  //
+  // Sorted by savings and shown ONLY when more than one compressor contributed: with a single
+  // entry the breakdown just restates `top_compressor` above it, which is noise rather than detail.
+  const breakdown = Object.entries(data.by_compressor ?? {})
+    .filter(([, chars]) => chars > 0)
+    .sort((a, b) => b[1] - a[1])
   return (
     <div className="mb-4 flex items-start gap-3 rounded-lg bg-surface-container px-3 py-3">
       <Gauge size={16} className="mt-0.5 shrink-0 text-primary" />
@@ -88,6 +100,19 @@ function SavingsCard() {
           {' '}across {fmt(data.projection_count)} projected result{data.projection_count === 1 ? '' : 's'}
           {data.top_compressor ? <> — top compressor: <span className="font-mono">{data.top_compressor}</span></> : null}.
         </div>
+        {breakdown.length > 1 && (
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-on-surface-var">
+            {breakdown.map(([name, chars]) => (
+              // Tokens, not chars: the headline above is in tokens, and two units in one card
+              // invites the reader to compare numbers that are not comparable. Same ~4 chars/token
+              // estimate the backend uses for `saved_tokens_estimated`.
+              <span key={name}>
+                <span className="font-mono">{name}</span>{' '}
+                <span className="tabular-nums">~{fmt(Math.round(chars / 4))}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="mt-0.5 text-on-surface-low">
           Estimated ({fmt(data.saved_chars)} chars, ~4 chars/token). The full raw of every projected result stays recoverable via <span className="font-mono">tool_result_get</span>.
         </div>
