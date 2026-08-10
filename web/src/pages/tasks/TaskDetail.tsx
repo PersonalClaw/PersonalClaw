@@ -9,7 +9,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/api'
-import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount } from './taskMeta'
+import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount, blockKindMeta } from './taskMeta'
 import { prereqIds } from './dag'
 import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
 
@@ -88,6 +88,9 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
   const due = dueMeta(task.due)
   const exit = task.exit_criteria ?? []
   const exitDone = exitDoneCount(exit)
+  // Only meaningful while the task IS blocked — a stale kind on a reopened task would otherwise
+  // keep explaining a block that no longer exists.
+  const blockKind = task.status === 'blocked' ? blockKindMeta(task.blocked_reason_kind) : null
 
   return (
     <div className="flex flex-col gap-l">
@@ -126,10 +129,30 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         </div>
       )}
 
-      {task.block_reason?.is_blocked && (
+      {/* The blocked panel was gated on `block_reason.is_blocked`, which is derived PURELY from
+          unfinished prerequisites. A MANUAL block has none — so it reported `is_blocked: false`
+          with an empty `message`, this panel rendered nothing, and the task showed status "Blocked"
+          with no explanation on any surface. Measured on a real store: 2 blocked tasks, one `auto`
+          (explained itself) and one `manual` (explained nowhere).
+
+          So the gate is now "is this task blocked", with `blocked_reason_kind` supplying the reason.
+          The kind matters because the two behave differently: `auto` clears itself when its
+          prerequisite finishes; `manual` is skipped by the reconciler entirely and waits for a
+          person. `block_reason` remains the source for WHICH tasks are being waited on. */}
+      {(blockKind || task.block_reason?.is_blocked) && (
         <div className="rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
-          <div className="flex items-center gap-1.5 text-warn mb-1" style={fvs(500)}><AlertTriangle size={14} /> Blocked</div>
-          <div className="text-on-surface">{task.block_reason.message || `Waiting on ${task.block_reason.blocking_task_titles?.join(', ')}`}</div>
+          <div className="flex items-center gap-1.5 text-warn mb-1" style={fvs(500)}>
+            <AlertTriangle size={14} /> {blockKind?.label ?? 'Blocked'}
+          </div>
+          {/* Prerequisite titles when there are any; otherwise the kind's hint, which is the only
+              thing that can explain a manual block. Never the old bare "Waiting on " with an empty
+              list after it. */}
+          <div className="text-on-surface">
+            {task.block_reason?.message
+              || (task.block_reason?.blocking_task_titles?.length
+                ? `Waiting on ${task.block_reason.blocking_task_titles.join(', ')}`
+                : blockKind?.hint)}
+          </div>
         </div>
       )}
 
