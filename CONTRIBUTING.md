@@ -44,6 +44,12 @@ submit it under the project's license. A CI check enforces it on every PR; an
 unsigned commit fails. If you forget, `git commit --amend -s` (or `git rebase
 --signoff`) fixes it.
 
+**So you never forget:** run `npm run hooks:install` once (also installs the
+pre-commit lint and pre-push gates). It adds a `prepare-commit-msg` hook that
+appends the `Signed-off-by` trailer automatically at commit time — you won't
+need `-s`. The sign-off must match your commit author, so set a real
+`git config user.name`/`user.email` first (not the git default placeholder).
+
 ## Doctrine for all new work
 
 These principles have governed every feature in the codebase; new work is held

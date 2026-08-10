@@ -5,14 +5,75 @@ paths (`uv tool`, the bootstrap one-liner, Docker Compose) are the same
 everywhere — see [Getting started](getting-started.md). This page covers only
 the platform-specific gotchas.
 
+## Support matrix
+
+Every row names the mechanism that **proves** it. No row claims "supported" without
+one, and the token points at something you can go read or re-run:
+
+- `CI:<job>` — a job in `.github/workflows/` that runs the suite (or a release
+  smoke) on that platform. Green on `main`/nightly is the evidence.
+- `checklist:<section>` — a documented manual walkthrough; evidence is a recorded
+  run, not a CI job.
+- `community` — reported working by users; **not** verified by us.
+
 | Platform | Support | Proof |
 |---|---|---|
-| Linux x86-64 | first-class | CI test + release smoke |
-| Linux arm64 | first-class | CI test + release smoke |
-| macOS (Apple silicon / Intel) | first-class | CI test |
-| Windows via WSL2 | supported | this guide + release checklist |
-| Windows via Docker Desktop | supported | this guide |
-| Windows native | not supported | — |
+| Linux x86-64 | first-class | `CI:full/matrix (ubuntu-latest)` + `CI:release/images smoke (linux/amd64)` |
+| Linux arm64 | first-class | `CI:full/matrix (ubuntu-24.04-arm)` + `CI:release/images smoke (linux/arm64)` |
+| macOS Apple silicon | first-class | `CI:full/matrix (macos-14, macos-latest)` |
+| macOS Intel | best-effort | `community` — no Intel runner in CI; the x86-64 Python/wheel path is the same as Linux x86-64 |
+| Windows via WSL2 | supported | `checklist:Windows via WSL2` (this page) |
+| Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` (this page) — written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run |
+| Windows native | not supported | — see [windows-native-audit](../roadmap/research/windows-native-audit.md) |
+
+The arm64 rows became CI-backed in PLATFORM-REACH A1.3 (arm jobs in `full.yml`) and
+A2.1 (per-arch release smoke); before that they were aspirational.
+
+---
+
+## The `[models]` extra, per architecture
+
+`pip install 'personalclaw[models]'` pulls the local-embedding stack. Wheel
+availability — not PersonalClaw — is what varies by arch. Read from the committed
+`uv.lock` (the resolver's own record, so it stays honest as versions move):
+
+| Package | x86-64 | arm64 (macOS) | arm64 (Linux) | Note |
+|---|---|---|---|---|
+| `faiss-cpu` | ✅ wheel | ✅ `macosx_14_0_arm64` | ✅ `manylinux_2_28_aarch64` + `musllinux_1_2_aarch64` | musllinux wheel means Alpine works too |
+| `torch` | ✅ wheel | ✅ `macosx_14_0_arm64` | ✅ `manylinux_2_28_aarch64` | CPU build; no CUDA on arm |
+| `sentence-transformers` | ✅ | ✅ | ✅ | `py3-none-any` — pure Python, arch-independent |
+
+**So `[models]` installs from wheels on every arch we claim** — no source build, no
+compiler needed. Verify it yourself without an arm box:
+
+```bash
+python3 - <<'PY'
+import re
+blk = re.search(r'\[\[package\]\]\nname = "torch"(.*?)(?=\n\[\[package\]\]|\Z)',
+                open("uv.lock").read(), re.S).group(1)
+print([w for w in re.findall(r'([\w.\-]+\.whl)', blk) if "aarch64" in w or "arm64" in w])
+PY
+```
+
+### RAM floor on Pi-class boards
+
+The embedding stack, not the gateway, is what strains small boards. The gateway
+itself is light; `torch` + a loaded embedding model is the heavy part.
+
+- **< 2 GB RAM** — skip the extra. Install plain `personalclaw` and use a remote
+  provider for embeddings. Everything except local embedding works unchanged.
+- **2–4 GB (Pi 4/5 class)** — `[models]` can work, but add swap before first use;
+  the model load is the spike, not steady state:
+  ```bash
+  sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+  sudo mkswap /swapfile && sudo swapon /swapfile
+  # persist: echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+  ```
+  Prefer a small model, and expect the first ingest to be slow.
+- **≥ 4 GB** — no special handling.
+
+If you hit an OOM kill during ingest rather than at startup, it is the model load —
+add swap or drop the extra; it is not a database or gateway problem.
 
 ---
 
@@ -23,11 +84,10 @@ for Linux, version 2): a real Linux kernel inside Windows where PersonalClaw
 runs as an ordinary Linux install. The Windows-side browser reaches the
 dashboard through WSL2's automatic localhost forwarding.
 
-If you would rather not run a Linux shell at all, use the
-[Docker Compose path](getting-started.md#docker-compose) on Docker Desktop
-instead (Docker Desktop itself uses a WSL2 backend, but you never touch the
-Linux shell). The rest of this section is for running PersonalClaw directly in
-WSL2.
+If you would rather not run a Linux shell at all, use
+[Windows via Docker Desktop](#windows-via-docker-desktop) below — Docker Desktop
+itself uses a WSL2 backend, but you never touch the Linux shell. The rest of
+this section is for running PersonalClaw directly in WSL2.
 
 ### 1. Install in WSL2
 
@@ -97,3 +157,99 @@ Without systemd the background service will not persist. In that case, either
 run the gateway in a foreground shell (`personalclaw gateway`) whenever you need
 it, or start it on Windows login via **Task Scheduler** with a
 `wsl -d <distro> -- personalclaw gateway` action.
+
+---
+
+## Windows via Docker Desktop
+
+The no-Linux-shell path: Docker Desktop runs the published multi-arch images, so
+you never install Python or open a WSL prompt. You do need Docker Desktop with
+its **WSL2 backend** (its default; the legacy Hyper-V backend is not tested).
+
+### 1. Get the compose file and a `.env`
+
+From a checkout, or by downloading just these two files:
+
+```powershell
+git clone https://github.com/PersonalClaw/PersonalClaw.git
+cd PersonalClaw
+copy .env.example .env
+```
+
+Open `.env` and set at least one provider key. **Paths in `.env` must be
+container paths, not Windows paths** — the gateway runs inside Linux, so
+`C:\Users\you\...` means nothing to it. Leave `PERSONALCLAW_HOME` alone; compose
+already sets it to `/data`, backed by a named volume.
+
+> **Why the `.env` must sit at the repo root:** `compose.yaml` declares
+> `env_file: ../../.env`, i.e. two levels up from `deploy/compose/`. If you copy
+> the compose file somewhere else on its own, that relative path breaks and your
+> keys silently do not load.
+
+### 2. Start it
+
+```powershell
+docker compose -f deploy/compose/compose.yaml up -d
+```
+
+First run pulls both images (`personalclaw-gateway`, `personalclaw-web`). Pin a
+release instead of `latest` by setting `PERSONALCLAW_IMAGE_TAG` in `.env`.
+
+### 3. Open the dashboard
+
+Ports are published on **loopback only** (`127.0.0.1`), which is what you want on
+a laptop:
+
+| URL | What |
+|---|---|
+| `https://localhost:3443` | the dashboard (HTTP/2; SSE + WebSocket streams) |
+| `http://localhost:3000` | 308-redirects to the HTTPS port above |
+| `http://localhost:10000` | the gateway API directly |
+
+The HTTPS certificate is **self-signed** out of the box, so the browser shows a
+warning on first visit — expected; click through. (Mount a real cert over
+`/etc/nginx/certs/personalclaw.{crt,key}` to replace it.)
+
+Docker Desktop forwards published ports to Windows `localhost` automatically, so
+no port-proxy or firewall rule is needed for loopback access.
+
+### 4. Volume semantics — use the named volume, not a bind mount
+
+State lives in the `personalclaw_home` **named volume** mounted at `/data`. Keep
+it that way on Windows. A bind mount from an NTFS path (`-v C:\...:/data`) crosses
+the Windows↔Linux filesystem boundary, and PersonalClaw's SQLite databases do
+small random I/O plus file locking across it — which is both much slower and a
+known source of locking oddities. The named volume lives inside the WSL2 VM's
+ext4 disk and behaves like native Linux storage.
+
+Useful volume operations:
+
+```powershell
+docker volume inspect compose_personalclaw_home     # where it lives
+docker compose -f deploy/compose/compose.yaml down  # stop, KEEP the volume
+docker compose -f deploy/compose/compose.yaml down -v  # stop and DELETE state
+```
+
+Prefer `personalclaw snapshot` (run inside the gateway container) over copying
+the volume by hand:
+
+```powershell
+docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personalclaw snapshot
+```
+
+### 5. Updating
+
+```powershell
+docker compose -f deploy/compose/compose.yaml pull
+docker compose -f deploy/compose/compose.yaml up -d
+```
+
+The named volume survives, so your state carries across the upgrade.
+
+### Known limits on this path
+
+- **No `personalclaw service install`.** Container restart policy replaces it —
+  `restart: unless-stopped` already brings the stack back when Docker Desktop
+  starts. Enable *Start Docker Desktop when you log in* for boot behaviour.
+- **The desktop shell is macOS-only** and unrelated to this path.
+- **Docker Desktop's Hyper-V backend is untested**; use WSL2.
