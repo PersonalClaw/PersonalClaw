@@ -774,8 +774,15 @@ export type EventPattern =
 // helpers project it onto ScheduleJob; the lifecycle helpers onto HookItem.
 export interface TriggerAction { provider: string; config: Record<string, unknown> }
 export interface Trigger {
-  kind: 'schedule' | 'lifecycle' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
+  // `GET /api/triggers` serves FOUR kinds (handlers/triggers.py `api_triggers_list`); `event` was
+  // missing from this union while `_serialize_event` was already emitting it, so a data-event row
+  // was untypeable on the wire and the list page fetched only three of the four sources.
+  kind: 'schedule' | 'lifecycle' | 'event' | 'store'; id: string; raw_id: string; name: string; enabled: boolean
   action: TriggerAction
+  // event fields (kind=event) — the data-event trigger's pattern + the ONE matcher its pattern
+  // reads (`eventPatternMeta().matcher` names which), plus its fire budget.
+  pattern?: string; sender_glob?: string; address_glob?: string; key_glob?: string; content_re?: string
+  event_glob?: string; fire_count?: number; max_fires?: number
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
   // (file/web_watch/idle/run_completed/view/webhook). Created via the automation_* chat tools.
   store_kind?: string; created_by?: string; spec?: Record<string, unknown>

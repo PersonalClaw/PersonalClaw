@@ -17,13 +17,19 @@ import { api, type ScheduleJob, type HookItem, type ActionProvider, type Trigger
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, relPast, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, type Trigger } from './triggerMeta'
 import { statusMeta, triggerHealthMeta } from '../schedule/scheduleMeta'
 
+// One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
+// `Data events` was missing, so an event trigger — creatable from this page's own form — had no
+// chip AND was absent from every count.
+// The plural wording is deliberate and differs from `TRIGGER_KINDS`' singular labels: these name
+// a CATEGORY OF ROWS you are filtering to, not the kind of the one thing you are creating.
 const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'schedule', label: 'Schedules' },
   { key: 'lifecycle', label: 'Lifecycle' },
+  { key: 'event', label: 'Data events' },
   { key: 'store', label: 'Automations' },
 ]
 
@@ -57,6 +63,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
   // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
   // schedules: instant in-app revisit but never stale across a hard reload.
   const { data: stores, refresh: refreshStores } = useCachedData('triggers:store', () => api.storeTriggers().catch(() => [] as WireTrigger[]), { persist: false })
+  // Data-event triggers (EIAT). `GET /api/triggers` serves FOUR kinds — schedule, lifecycle,
+  // event, store — and this page fetched only three, so an event trigger created through the
+  // create form (`trigger_type: 'event'`) existed, fired, and was never listed anywhere. It
+  // carries live enabled/fire-count state → persist:false, like schedules and stores.
+  const { data: events } = useCachedData('triggers:events', () => api.eventTriggers().catch(() => [] as WireTrigger[]), { persist: false })
   const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
 
   const loadSchedules = () => { invalidateCache('triggers:schedules'); refreshSchedules() }
@@ -68,20 +79,22 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
   }, [refreshSchedules])
 
   const triggers = useMemo<Trigger[] | null>(() => {
-    if (schedules === undefined || hooks === undefined || stores === undefined) return null
-    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger)]
+    if (schedules === undefined || hooks === undefined || stores === undefined || events === undefined) return null
+    // Every kind needs its converter: the wire carries no `whenLabel`/`whenIcon`/`actionLabel`,
+    // so a raw row would render `undefined` for the icon the list draws per row.
+    const all = [...schedules.map(scheduleToTrigger), ...hooks.map(hookToTrigger), ...stores.map(storeToTrigger), ...events.map(eventToTrigger)]
     const n = q.trim().toLowerCase()
     return all
       .filter((t) => filter === 'all' || t.kind === filter)
       .filter((t) => !n || `${t.name} ${t.whenLabel} ${t.actionLabel}`.toLowerCase().includes(n))
-  }, [schedules, hooks, stores, filter, q])
+  }, [schedules, hooks, stores, events, filter, q])
 
   const open = useMemo(() => triggers?.find((t) => t.id === openId) ?? null, [triggers, openId])
 
   const counts = useMemo(() => {
-    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0
-    return { all: s + h + st, schedule: s, lifecycle: h, store: st }
-  }, [schedules, hooks, stores])
+    const s = schedules?.length ?? 0, h = hooks?.length ?? 0, st = stores?.length ?? 0, e = events?.length ?? 0
+    return { all: s + h + st + e, schedule: s, lifecycle: h, store: st, event: e }
+  }, [schedules, hooks, stores, events])
 
   return (
     <WorkbenchLayout
@@ -122,6 +135,11 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
               ? <ScheduleDetail job={open.schedule} editing={editing} onEditingChange={setEditing} onSaved={loadSchedules} onChanged={loadSchedules} onDeleted={() => { setOpenId(""); loadSchedules() }} />
               : open.kind === 'store' && open.store
               ? <StoreTriggerDetail trigger={open.store} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
+              : open.kind === 'event' && open.event
+              // Read-only for now: a data-event trigger has no editor yet, and an empty panel
+              // (what a fell-through event row rendered) is worse than an honest summary. Edit +
+              // delete land with its own inspector — tracked, not silently skipped.
+              ? <EventTriggerSummary t={open} />
               : open.hook
               ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
               : null}
@@ -169,6 +187,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
                           <span className="inline-flex items-center gap-1"><t.actionIcon size={11} /> {t.actionLabel}</span>
                           {t.kind === 'schedule' && t.enabled && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
                           {t.kind === 'lifecycle' && t.runCount != null && <span>ran {t.runCount}×</span>}
+                          {/* An event trigger has no clock, so `fired N×` is its one live number. */}
+                          {t.kind === 'event' && t.runCount != null && <span>fired {t.runCount}×</span>}
                         </div>
                       </div>
                       <div className="hidden sm:flex shrink-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">
@@ -184,6 +204,37 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
       </div>
       )}
     </WorkbenchLayout>
+  )
+}
+
+/** Read-only inspector for a data-event trigger. Mirrors `StoreTriggerDetail`'s section rhythm
+ *  (uppercase caption over a value) so the two inspectors read as one family; it stays local
+ *  rather than exporting that file's private `Section` for a single caller.
+ *
+ *  Shows only the matcher the row's pattern actually reads — `eventPatternMeta().matcher` names
+ *  it, and the other glob fields are inert for that pattern, so rendering them would claim a
+ *  constraint that is not applied. */
+function EventTriggerSummary({ t }: { t: Trigger }) {
+  const pm = eventPatternMeta(t.eventPattern)
+  const rows: Array<[string, string]> = [
+    ['Fires on', pm.label],
+    ...(pm.matcher ? [[pm.matcherLabel, t.eventMatcher || 'anything'] as [string, string]] : []),
+    ['Then', t.actionLabel],
+    ['Fired', t.runCount != null ? `${t.runCount}×` : '—'],
+  ]
+  return (
+    <div className="flex flex-col gap-l p-l">
+      <p className="text-on-surface-var text-[0.8125rem]">{pm.desc}</p>
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
+          <div className="text-on-surface text-[0.875rem] break-words">{value}</div>
+        </div>
+      ))}
+      <p className="text-on-surface-low text-[0.8125rem]">
+        Editing a data-event trigger isn’t available here yet — recreate it to change its pattern.
+      </p>
+    </div>
   )
 }
 

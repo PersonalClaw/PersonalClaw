@@ -193,6 +193,12 @@ export interface Trigger {
   schedule?: ScheduleJob
   hook?: HookItem
   store?: WireTrigger        // store only: the raw wire row for the inspector
+  /** event only: the pattern key + the ONE matcher value that pattern reads, for the inspector.
+   *  Deliberately NOT reusing the lifecycle `hook` field — the panel's dispatch falls through to
+   *  `open.hook`, so an event row carrying one would open the wrong inspector. */
+  eventPattern?: string
+  eventMatcher?: string
+  event?: WireTrigger        // event only: the raw wire row
 }
 
 export function scheduleToTrigger(j: ScheduleJob): Trigger {
@@ -250,6 +256,40 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], store: t,
   }
+}
+
+/** Project a wire data-event trigger onto the list's `Trigger` shape.
+ *
+ *  The list renders `whenLabel` / `whenIcon` / `whenTone` / `actionLabel` / `actionIcon`, and the
+ *  unified endpoint sends NONE of them — every kind gets its presentation from a converter here.
+ *  Event rows had no converter, which is the other half of why they never appeared: even once
+ *  fetched, `open.whenIcon` on a raw row would be `undefined` at render.
+ *
+ *  `whenLabel` comes from `eventPatternMeta()` — the same owner the create form and the pattern
+ *  option list read, so a pattern cannot be called one thing on the form and another in the list. */
+export function eventToTrigger(t: WireTrigger): Trigger {
+  const pm = eventPatternMeta(t.pattern)
+  const provider = t.action?.provider
+  return {
+    kind: 'event', id: t.id, rawId: t.raw_id || t.id.replace(/^event:/, ''), name: t.name || t.id, enabled: t.enabled,
+    whenLabel: pm.label, whenIcon: eventSourceIcon(pm.source), whenTone: 'var(--color-secondary)',
+    actionLabel: provider ? actionLabel(provider) : 'Action',
+    actionIcon: provider ? actionIcon(provider) : Zap,
+    // A data event has no clock, so there is no next run and no duration to show. `runCount` is
+    // the fire count — the one live number an event row can honestly report.
+    lastRunTs: null, lastStatus: null, state: null,
+    runCount: t.fire_count ?? null, usedBy: [],
+    // Carried so the inspector can show the pattern + matcher without refetching.
+    eventPattern: t.pattern, eventMatcher: eventMatcherValue(t, pm.matcher), event: t,
+  }
+}
+
+/** The ONE matcher value this pattern reads, as a display string. `eventPatternMeta().matcher`
+ *  names the field; anything else on the row is inert for this pattern, so showing it would
+ *  claim a constraint that does not apply. */
+export function eventMatcherValue(t: WireTrigger, field: EventMatcherField): string {
+  if (!field) return ''
+  return String((t as unknown as Record<string, unknown>)[field] ?? '')
 }
 
 export function relPast(ts?: number | null): string {
