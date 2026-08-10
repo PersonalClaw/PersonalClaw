@@ -10,7 +10,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
-import { TextInput } from '../../ui/forms'
+import { Field, TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
@@ -630,12 +630,10 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-on-surface text-[0.8125rem]">{label}</div>
-      {hint && <div className="mb-1.5 mt-0.5 text-on-surface-low text-[0.75rem]">{hint}</div>}
-      {children}
-    </div>
-  )
-}
+// The local `Field` was DELETED here (it reimplemented ui/forms' Field with a plain label div).
+// That was not a style divergence — it was an ACCESSIBILITY defect. `TextInput` reads
+// `useFieldLabelId()` and claims its Field's published label via `aria-labelledby`; the shared
+// Field is what publishes that id through `FieldLabelCtx`. A local Field provides no context, so
+// `claimsFieldLabel` was false and no `ariaLabel` was passed either — measured on the live DOM,
+// all seven inputs in this modal had `aria-label: null`, `aria-labelledby: null`, `name: null`.
+// A placeholder is not an accessible name.
