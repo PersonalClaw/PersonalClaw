@@ -238,3 +238,42 @@ class LearningGate:
         # RUN_END: a terminal run is itself the signal — there is no cheaper
         # proxy to threshold on, and skipping one loses the outcome permanently.
         return True
+
+
+def record_denial(decision: GateDecision, *, detail: str = "") -> bool:
+    """Persist a gate DENIAL so "nothing was captured" is explained, not silent.
+
+    ``GateReason``'s own contract says the reason is "recorded, not just
+    returned", and ``staging.FlushOutcome.FLUSH_SKIPPED`` exists precisely for
+    "the gate denied it — recorded so a config-off period is legible". Neither
+    half was wired: nothing in production wrote ``FLUSH_SKIPPED``, so a denial
+    left no trace and a permanently-off gate looked identical to a healthy pass
+    that simply found nothing. This closes that loop (LEARNING-FLYWHEEL §3.2 —
+    every negative decision writes a row carrying its typed reason).
+
+    Deliberately a SEPARATE function rather than a write inside
+    :meth:`LearningGate.decide`: ``decide`` is documented as pure with respect to
+    config and the restrictions registry, and two reviews in one turn must be
+    able to consult it without double-recording. The call site that acts on a
+    denial is the one that records it.
+
+    Returns True iff a row was written. Best-effort by design — recording is
+    observability, so a staging-store failure must never break a capture path.
+    """
+    if decision.allowed and decision.worthwhile:
+        return False  # not a denial; nothing to explain
+    try:
+        from personalclaw.learning.staging import FlushOutcome, get_store
+
+        get_store().record_flush(
+            cadence=str(getattr(decision.cadence, "value", decision.cadence)),
+            outcome=FlushOutcome.FLUSH_SKIPPED,
+            detail=(
+                f"{getattr(decision.reason, 'value', decision.reason)}"
+                f"{': ' + detail if detail else ''}"
+            ),
+        )
+        return True
+    except Exception:
+        logger.debug("record_denial failed for %s", decision.reason, exc_info=True)
+        return False

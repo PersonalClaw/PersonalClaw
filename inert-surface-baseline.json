@@ -9,12 +9,6 @@
         "enum:ItemStatus.SENT"
       ]
     },
-    "src/personalclaw/learning/staging.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:FlushOutcome.FLUSH_SKIPPED"
-      ]
-    },
     "src/personalclaw/llm/capabilities.py": {
       "inert": 2,
       "surfaces": [
@@ -376,10 +370,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 28,
+      "enum": 27,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 155
+    "inert": 154
   }
 }

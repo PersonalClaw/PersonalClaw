@@ -174,6 +174,12 @@ def _maybe_after_turn_review(
     if decision is None:
         decision = learning_decision_for_turn(session, user_message, tool_calls, cfg)
     if not decision.permitted:
+        # §3.2: every negative decision leaves a row. A permission denial means
+        # NOTHING below this line runs, so without a record an owner cannot tell
+        # a config-off session from a broken capture path.
+        from personalclaw.learning import record_denial
+
+        record_denial(decision)
         return
     correction = atr.is_correction_signal(user_message)
     from personalclaw.memory_service import service_for
@@ -198,6 +204,12 @@ def _maybe_after_turn_review(
     # answer — `worthwhile`, not just `permitted`. Same decision object as the
     # cheap path above, so the two cannot disagree about this turn.
     if not decision.worthwhile:
+        # Permitted but below this cadence's cost threshold. Recorded too: the
+        # cheap facet path above already ran, so "no expensive review happened"
+        # is a real, explainable outcome rather than silence.
+        from personalclaw.learning import record_denial
+
+        record_denial(decision)
         return
     # Procedural memory (M5d): drain this turn's tool outcomes (native runtime
     # only — ACP providers don't accumulate them) into how-to-work priors. The
