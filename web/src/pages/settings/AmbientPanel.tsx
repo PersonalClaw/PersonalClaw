@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, Field, SavedToast, ToggleRow } from './settingsUI'
-import { NumberField } from '../../ui/forms'
+import { PanelHeader, Section, ToggleRow, NumberRow } from './settingsUI'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
 // The editable ambient.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -75,24 +74,4 @@ export function AmbientPanel() {
 
 // ── field renderers ─────────────────────────────────────────────────────────
 
-function NumberRow({ label, hint, cfg, field, min, max, patch }: {
-  label: string; hint?: string; cfg: AmbientCfg; field: string; min: number; max: number
-  patch: (k: string, v: unknown, cb?: () => void) => void
-}) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
-  const value = num(cfg[field], min)
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex items-center gap-2">
-        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n, flash)} ariaLabel={label} />
-        <SavedToast show={saved} />
-      </div>
-    </Field>
-  )
-}
 
-function num(v: unknown, fallback: number): number {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : fallback
-}

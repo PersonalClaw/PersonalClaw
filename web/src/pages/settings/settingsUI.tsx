@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 import { spring, bounce } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
+import { NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -128,5 +129,46 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
         <Toggle on={on} onChange={(v) => patch(field, v as never, flash)} label={label} />
       </div>
     </Row>
+  )
+}
+
+/** A labelled numeric config field that patches one key and flashes its own "Saved ✓" — the
+ *  `ToggleRow` sibling for a clamped number.
+ *
+ *  Sources and Ambient had declared this privately, BYTE-IDENTICAL, each alongside its own copy of
+ *  the same `num()` coercion helper. Both are folded in here.
+ *
+ *  SCOPE — this is the `cfg`/`field`/`patch` contract only, NOT every `NumberRow` in settings.
+ *  Three other panels declare a `NumberRow` on a genuinely different contract: Guardrails,
+ *  Durability and Chat take `{value, onCommit}` and are TOLD what to save, with the flash state
+ *  owned by the panel (and Guardrails' `onSave` returns a Promise it flashes off). Those are told
+ *  a value; this one patches by key. Picking a winner between the two shapes is a judgement about
+ *  which contract the settings panels should standardise on, so it stays an open question rather
+ *  than something a dedup decides quietly. AgentDefaults' `NumberRow` is cfg-driven too but adds
+ *  `suffix` + optional min/max/step and uses `Row` rather than `Field`; it is left alone here for
+ *  the same reason — its shape is a superset, and folding it in would mean changing its layout. */
+export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  min: number
+  max: number
+  /** `(key, value, onSaved)` — the panel's own config PATCH, typed at its widest shape. */
+  patch: (k: string, v: never, cb: () => void) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  // A key the backend has not written yet reads as NaN through Number(); fall back to `min` so the
+  // stepper starts at a legal value instead of showing NaN.
+  const raw = Number(cfg[field])
+  const value = Number.isFinite(raw) ? raw : min
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n as never, flash)} ariaLabel={label} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
   )
 }
