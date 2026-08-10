@@ -1,13 +1,14 @@
 """Native inbox source — the always-on, push-based agent→inbox sink (seam S4).
 
-Unlike the poll-based providers (filesystem, slack), the native source is a
+Unlike the poll-based providers (filesystem, plus any channel app's source), the
+native source is a
 **push** sink: an agent calls :func:`post_to_inbox` and the item is written
 straight into the shared :class:`~personalclaw.inbox.InboxStore` (the same
 ``inbox.json`` every other source feeds) and broadcast live over the dashboard
 WS. It is **always available** — independent of ``cfg.inbox.enabled`` and any
 external provider — so the Inbox is useful out-of-the-box: any agent (chat,
 goal loop, scheduled run, space member) can surface "I finished X", "I need a
-decision on Y", "heads up about Z" with no Slack/email connected.
+decision on Y", "heads up about Z" with no external channel connected.
 
 S4 pattern (shared, not a common base class): a native-always-on provider +
 external pluggable providers + per-item ``source`` attribution + per-provider

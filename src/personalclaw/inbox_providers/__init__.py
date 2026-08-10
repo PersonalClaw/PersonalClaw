@@ -19,7 +19,9 @@ def get_default_provider(name: str = "native") -> "MessageSourceProvider":
 
     Falls back through: requested name → native → filesystem.
     The default is "native" (always-present in-process source); channel-specific
-    sources (e.g. "slack") are contributed by their app bundle at enable-time.
+    sources are contributed by their app bundle at enable-time, each registering
+    its own ``source_name`` through the ``personalclaw.message_source_providers``
+    entry-point group.
     """
     providers = get_message_providers()
     cls = providers.get(name) or providers.get("native") or providers.get("filesystem")
