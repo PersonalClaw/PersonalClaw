@@ -154,7 +154,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && artifacts.length === 0
               ? <Loading />
-              : <ArtifactGrid artifacts={filtered} activeSlug={null} onOpen={open} />}
+              // `narrowed` lets the grid distinguish an empty library from a filtered-to-nothing
+              // one — it only ever sees the post-filter list.
+              : <ArtifactGrid artifacts={filtered} activeSlug={null} onOpen={open}
+                  narrowed={!!(q.trim() || kind || src || col)} />}
           </div>
         </div>
       )}
