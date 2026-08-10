@@ -220,3 +220,72 @@ Extends **Sessions 7-8** (the ramp — the guide/kit are being written there any
 | T7.4 | Slack to full pattern: add the `inbox` provider registration (`MessageSourceProvider` over the existing runtime client) to `providers[]`; move any non-seam Slack-specific surface behind the app's own `ui` block; scrub vendor-name residue from core seam comments | apps repo `slack-channel/app.json` + `slack_runtime/`, core `inbox_providers/` docstrings | Slack messages flow through the generic inbox source seam (no core slack string); manifest registers ≥2 providers; boundary tests green |
 | T7.5 | Guide + kit: vendor-completeness section in `build-a-channel-app.md` (the seam checklist: channel + inbox + trigger-source-when-available + contributed UI; rule 2's "your UI, not core's" doctrine) + a conformance-kit check that a channel app also registers an inbox source (or declares why not) | `docs/guides/build-a-channel-app.md`, `tests/channel_conformance.py` | the checklist is explicit in the guide; telegram/discord/email tasks (S2-6) cite it; kit flags a channel-only app with a warning |
 | T7.6 | Trigger-source forward note: coordination line into WORKFLOWS-V2-AUTOMATION-SUBSTRATE (app-registered trigger source types) so each vendor app adds its trigger-source provider when that seam lands — no early hand-rolled event glue | this plan + substrate plan cross-refs | both plans reference one seam; no vendor app ships bespoke trigger machinery before it exists |
+
+## Execution log
+
+- **2026-08-09 — DONE: CE-3** (Telegram channel app, Sessions 2-3 T2.1–T2.5, apps#26).
+  Recorded retroactively — this plan had no Execution log section when CE-3 landed, so the entry
+  lived only in the atomic mirror. Shipped `PersonalClawApps/telegram-channel/`: a
+  `ChannelTransportProvider` (`getUpdates` long-poll, offset persisted and advanced before dispatch)
+  + `ChannelDelivery` over the raw Bot API on `httpx`, no vendor SDK, core imported only via
+  `personalclaw.sdk.*`. 108 bundle tests green, SDK-only boundary lint clean. **V2 pending:** the
+  owner real-phone walkthrough (Owner tasks 1-2) is a real-world step outside automated execution.
+
+- **2026-08-09 — DONE: CE-4** (Discord channel app, Sessions 4-5 T4.1–T4.4, apps#29).
+  Shipped `PersonalClawApps/discord-channel/` — the second channel onto the CE-1 trust seam, built
+  to the same shape as Telegram. Both wire protocols are implemented directly against libraries core
+  already depends on (`websockets`, `httpx`), so the bundle contains no vendor SDK anywhere (tests
+  included) and declares no `pythonDependencies`; core is imported only via `personalclaw.sdk.*`.
+  - **T4.1 gateway (`gateway.py`)** — the full WS lifecycle: HELLO-driven heartbeat with ACK
+    tracking, IDENTIFY with the intents bitfield summed from NAMED bits (guilds | guild_messages |
+    direct_messages | message_content = **37377**), READY → `session_id`/`resume_gateway_url`,
+    RESUME (op 6) with the last *processed* seq, INVALID_SESSION (honoring the resumable boolean),
+    RECONNECT (op 7). Two traps contained: the **zombied connection** (a beat unacked when the next
+    is due means the gateway stopped processing us while the socket still looks open → close
+    **4000**, never 1000, which would make the session unresumable, then resume), and the
+    **silent-bitfield failure** (a wrong intents int connects fine and the events you didn't ask for
+    simply never arrive — so the value is pinned three ways plus a dedicated `DIRECT_MESSAGES` guard,
+    since dropping bit 12 yields 33281 and a bot that can never be paired by DM).
+  - **T4.2 REST + delivery (`api.py`, `delivery.py`)** — Discord's real difference from a flat
+    `retry_after` API is that rate limits are **per-bucket**: bucket state is folded from the
+    response headers and an exhausted bucket is waited off *pre-emptively* rather than spending a 429
+    to learn it, a global limit is tracked separately from a per-route one, and buckets key on
+    method + concrete path so one busy channel cannot stall another. Approvals are message
+    **components**: an Approve/Deny action row whose `custom_id` carries the request id, resolved by
+    the `INTERACTION_CREATE` press and *always* acknowledged inside Discord's three-second window
+    even for a stale id, after which the prompt is edited to its outcome with `components` stripped
+    so no clickable Approve survives a decision. Streaming is throttled edits with an exact final
+    flush; text splits at 2000.
+  - **T4.3 transport + trust (`transport.py`)** — runs the REAL core seam (`guard_inbound`, provider
+    `"discord"`): DMs pair, guild channels are tracked-only, non-owner content is fenced before it
+    enters a session. `is_dm` is derived from the **absence of `guild_id`** (Discord's actual signal,
+    not a channel-type guess). Self-authored and other-bot messages are dropped — `MESSAGE_CREATE`
+    fires for the bot's own sends, and without that filter the bot answers itself forever; the trap
+    does not exist for Telegram's `getUpdates`. Capabilities are honest: every `True` has an
+    implementation behind it (reactions, typing_indicator included), `max_text_len=2000`.
+  - **T4.4 setup/doctor** — app-owned `dm_activation` + `application_id` in the app's own store, bot
+    token in the shared credential store under the app's own `DISCORD_BOT_TOKEN` key. The
+    application id is deliberately NOT a credential: Discord prints it publicly and it rides in every
+    invite URL, so storing it as a secret would claim a secrecy it lacks and hide it from the
+    Configure form. Setup prints the OAuth2 invite URL with exactly the six permission bits the code
+    exercises (274878008384 — no ADMINISTRATOR, test-guarded); doctor points at the Channels-page
+    Test for the live `GET /gateway/bot` hello probe, which is T4.4's named probe.
+  - **Gate:** 198 bundle tests green with no network and no wall-clock sleeps (`httpx.MockTransport`,
+    a scripted fake WebSocket, injected heartbeat/throttle clocks; trust exercised against the real
+    core seam in an isolated `PERSONALCLAW_HOME`). Manifest round-trip stable + `validate()` clean;
+    SDK-only boundary lint clean under CI's repo-wide logic including `conftest.py`;
+    `telegram-channel` 108 still green. The zombie check, the 4000-not-1000 close code, the
+    `DIRECT_MESSAGES` bit, the `is_dm` derivation, the self-message filter and the global-429 gate
+    were each **falsified by breaking them** — every break reds a specific test.
+  - **DISCOVERY (two defects the tests surfaced):** `_handle_dispatch` coerced a bogus non-dict `d`
+    to `{}` via `frame.get("d") or {}` and handed handlers a silently-empty event (now: `None` → `{}`
+    is legitimate for RESUMED, any other non-dict is dropped with a warning). And a tmp
+    `PERSONALCLAW_HOME` alone is **not** test isolation — core's `save_credential` mirrors values
+    into `os.environ` and `load_credentials` reads them back, so one test's owner id stayed visible
+    to the next and a missing-owner assertion passed on stale state.
+  - **V4 pending (owner):** validating against a real Discord application, bot and test server
+    (Owner tasks 3) needs a human in the Developer Portal — create the application, **enable the
+    MESSAGE CONTENT privileged intent** (without it every message arrives with empty `content`, the
+    single most common reason a Discord bot looks broken), and invite the bot. The automated suite
+    covers the protocol; it cannot cover "Discord accepted this token."
+  - **Unblocks:** CE-6 (the conformance kit) now needs only CE-5; CE-7 follows it.
