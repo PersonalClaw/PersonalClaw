@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
 import { Loading } from '../../ui/ListScaffold'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
+import { NumberField } from '../../ui/forms'
 
 /** Inbox settings → GET/PUT /api/inbox/settings (alert keywords, name-mention
  *  alerts, auto-cleanup, retention). Lives in the Inbox SidePanel. */
@@ -76,16 +77,9 @@ export function InboxSettingsPanel() {
 
       {s.auto_cleanup_enabled && (
         <Field label="Retention (days)" hint="How long to keep inbox items (all sources).">
-          <NumInput value={s.retention_days} onChange={(v) => patch({ retention_days: v })} />
+          <NumberField value={s.retention_days} min={1} max={3650} step={1} onChange={(v) => patch({ retention_days: v })} width="w-28" ariaLabel="Retention (days)" />
         </Field>
       )}
     </div>
-  )
-}
-
-function NumInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  return (
-    <input type="number" min={1} value={value} onChange={(e) => onChange(Number(e.target.value))}
-      className="h-9 w-28 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
   )
 }
