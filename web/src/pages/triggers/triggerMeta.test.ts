@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger,
   EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon, eventSourceLabel,
-  appEventOptions, actionIsSendCapable,
+  appEventOptions, actionIsSendCapable, eventToTrigger,
 } from './triggerMeta'
 import type { TriggerVariables, Trigger as WireTrigger } from '../../lib/api'
 
@@ -318,5 +318,59 @@ describe('actionIsSendCapable', () => {
   it('is false for an absent provider', () => {
     expect(actionIsSendCapable(undefined)).toBe(false)
     expect(actionIsSendCapable('')).toBe(false)
+  })
+})
+
+// ── Data-event rows must be listable (EIAT) ─────────────────────────────────
+//
+// `GET /api/triggers` serves FOUR kinds — schedule, lifecycle, event, store — and the list page
+// fetched only three. An event trigger created from this page's own form existed on the wire,
+// fired on a real memory write, and appeared nowhere: no row, no filter chip, no count.
+//
+// The list renders `whenIcon`/`whenLabel`/`actionLabel` off every row, and the wire sends NONE of
+// them — so simply fetching the fourth source is not enough; an unconverted row renders
+// `undefined` for the icon. These lock both halves.
+describe('eventToTrigger', () => {
+  const wire = {
+    kind: 'event', id: 'event:memo', raw_id: 'memo', name: 'On a memory write', enabled: true,
+    pattern: 'MemoryKeyPattern', key_glob: 'project.acme.*', fire_count: 3,
+    action: { provider: 'create-task', config: {} },
+  } as unknown as WireTrigger
+
+  it('supplies every presentation field the list row renders', () => {
+    const t = eventToTrigger(wire)
+    // A missing whenIcon is not a cosmetic gap: `<t.whenIcon />` throws on undefined.
+    expect(t.whenIcon).toBeTruthy()
+    expect(t.actionIcon).toBeTruthy()
+    expect(t.whenTone).toMatch(/^var\(--color-/)
+    expect(t.whenLabel).toBe(eventPatternMeta('MemoryKeyPattern').label)
+    expect(t.actionLabel).toBeTruthy()
+    expect(t.kind).toBe('event')
+    expect(t.rawId).toBe('memo')
+  })
+
+  it('reports the fire count as runCount, and no clock state', () => {
+    const t = eventToTrigger(wire)
+    expect(t.runCount).toBe(3)
+    // A data event has no schedule, so claiming a next run or a last status would be a lie.
+    expect(t.lastRunTs).toBeNull()
+    expect(t.lastStatus).toBeNull()
+  })
+
+  it('carries only the ONE matcher its pattern reads', () => {
+    // MemoryKeyPattern reads key_glob; a sender_glob on the same row is inert for it, so
+    // surfacing it would claim a constraint the backend never applies.
+    expect(eventToTrigger(wire).eventMatcher).toBe('project.acme.*')
+    const anyWrite = eventToTrigger({ ...wire, pattern: 'MemoryUpdate' } as unknown as WireTrigger)
+    expect(eventPatternMeta('MemoryUpdate').matcher).toBeNull()
+    expect(anyWrite.eventMatcher).toBe('')
+  })
+
+  it('does NOT set `hook`, which would open the wrong inspector', () => {
+    // The panel's dispatch chain ends in an `open.hook` fallback to LifecycleDetail.
+    const t = eventToTrigger(wire)
+    expect(t.hook).toBeUndefined()
+    expect(t.store).toBeUndefined()
+    expect(t.event).toBeTruthy()
   })
 })
