@@ -5136,7 +5136,7 @@
         {
           "id": "PR-4",
           "title": "Make multi-arch images release-blocking: per-arch smoke gate (personalclaw --version) in release.yml",
-          "status": "todo",
+          "status": "done",
           "scope": "Task A2.1; Design Track A",
           "done_when": "release.yml gate requires both amd64+arm64 to build AND smoke 'personalclaw --version' in each; a failed arm64 build/smoke fails the release (multi-arch BUILD already present in release.yml images job; this adds the blocking smoke gate)",
           "deps": [
@@ -7296,11 +7296,6 @@
         "id": "PHF-9",
         "title": "Suite flake root-cause fixes + xdist scheduler decision",
         "plan": "PHF"
-      },
-      {
-        "id": "PR-4",
-        "title": "Make multi-arch images release-blocking: per-arch smoke gate (personalclaw --version) in release.yml",
-        "plan": "PR"
       },
       {
         "id": "PR-5",
