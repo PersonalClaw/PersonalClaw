@@ -19,6 +19,15 @@ import { cx } from './cx'
 // Fields like Variables keep their own per-input aria-labels).
 const FieldLabelCtx = createContext<string | undefined>(undefined)
 export function useFieldLabelId() { return useContext(FieldLabelCtx) }
+/** Publish a label id to the controls inside, so a NON-`Field` wrapper can still give them an
+ *  accessible name.
+ *
+ *  Only the reader (`useFieldLabelId`) was exported before, which made this contract one-directional:
+ *  any other label+control wrapper — `settingsUI`'s settings-row `Field`, for one — silently produced
+ *  unnamed controls, because a control claims its name via `aria-labelledby` and there was nothing to
+ *  claim. Exporting the provider is what lets a second layout own the label without owning the a11y
+ *  bug. */
+export const FieldLabelProvider = FieldLabelCtx.Provider
 
 /** Field wrapper — label row (optional right slot for a SoonTag) + control.
  *  The label carries a stable id and is exposed via context so the wrapped
@@ -113,7 +122,12 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   // its own name — a multi-control Field member or an autofill-suppressed picker —
   // or one outside any Field) an explicit ariaLabel provides the name. A `name`
   // attribute is NOT an accessible name, so it must never suppress ariaLabel.
-  const claimsFieldLabel = !!labelId && !name
+  // An explicit ariaLabel WINS over the Field's published label. The comment above always promised
+  // this ("a multi-control Field member … an explicit ariaLabel provides the name") but the condition
+  // did not honour it, so a caller could not override: two password inputs in one "Set a password"
+  // Field both announced "Set a password" and were indistinguishable. `ariaLabel` is the caller
+  // saying "this control is not the Field", which only the caller can know.
+  const claimsFieldLabel = !!labelId && !name && !ariaLabel
   const input = (
     <input value={value} type={type} autoFocus={autoFocus} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
@@ -156,8 +170,11 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // The mono branch is unchanged — it still appends `font-mono text-[0.8125rem]`
   // after the size text, so every existing (default-size) mono adopter renders
   // byte-for-byte as before.
+  // Same precedence as TextInput: an explicit ariaLabel WINS, so a multi-control Field can name each
+  // member. `aria-labelledby={labelId}` used to be unconditional, silently ignoring a caller's
+  // ariaLabel.
   return (
-    <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-labelledby={labelId} aria-label={!labelId ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+    <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
       className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50 ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
   )
 }
