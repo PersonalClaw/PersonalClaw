@@ -107,7 +107,6 @@ async def api_status(request: web.Request) -> web.Response:
     data.update(
         {
             "uptime_secs": int(uptime),
-            "messages_received": state.messages_received,
             # The unified store's counts (S107), not `ScheduleService.status()`. That reported
             # `{"running": false, "jobs": 0, "enabled": 0}` on a healthy machine with automations:
             # the counts came from a service the cutover emptied, and `running` was False BY DESIGN

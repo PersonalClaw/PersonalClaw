@@ -1306,11 +1306,15 @@ export interface ToolGroupsData {
   surfaceDefaults: Record<string, string[]>
 }
 
+/** Process-lifetime runtime counters (`/api/system`.stats, `/api/status`.stats) — the Stats
+ *  singleton's snapshot, reset on gateway restart. Every field here has a writer on a real
+ *  runtime path AND a reader in UsagePanel; the six message/tool-approval counters and `timeouts`
+ *  that used to be declared here had neither and were removed from the backend. */
 export interface SystemAgentStats {
-  messages_received: number; messages_success: number; messages_failed: number
-  tool_approvals: number; tool_denials: number; tool_auto_approved: number
-  sessions_created: number; subagents_spawned: number; subagents_completed: number
-  input_tokens: number; output_tokens: number; cache_read_tokens?: number
+  sessions_created: number; sessions_cleaned: number
+  subagents_spawned: number; subagents_completed: number; subagents_failed: number
+  input_tokens: number; output_tokens: number
+  cache_creation_tokens: number; cache_read_tokens: number
   total_turns: number; total_duration_ms: number
 }
 export interface SystemInfo {

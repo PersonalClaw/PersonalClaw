@@ -5,7 +5,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
 import { PanelHeader, Section } from './settingsUI'
-import { BigStat } from './bento'
+import { BigStat, KVList } from './bento'
 
 /** Account-level cost/token usage (COST-AND-TOKEN-OBSERVABILITY S2c).
  *
@@ -38,6 +38,16 @@ function fmtTokens(n: number): string {
 
 function fmtUsd(n: number): string {
   return n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`
+}
+
+/** Cumulative model wall-clock. Kept panel-local beside its sibling formatters: this is the only
+ *  duration on this surface, and one call site does not justify a shared primitive. */
+function fmtDuration(ms: number): string {
+  const secs = Math.round(ms / 1000)
+  if (secs < 60) return `${secs}s`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m ${secs % 60}s`
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`
 }
 
 export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
@@ -82,6 +92,15 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
 
   const t: UsageAgg | null = totals ?? null
   const cacheTokens = (t?.cache_read_tokens ?? 0) + (t?.cache_creation_tokens ?? 0)
+  // Prompt-cache row is conditional: an install whose provider never reports cached tokens should
+  // not carry a permanent "0 read / 0 written" line.
+  const cacheLive = (sys?.cache_read_tokens ?? 0) + (sys?.cache_creation_tokens ?? 0)
+  // The section used to appear only when tokens were non-zero, so a gateway that had created
+  // sessions or spawned subagents WITHOUT a chat turn hid all of it. Any counter moving is enough.
+  const hasActivity = !!sys && (
+    sys.input_tokens > 0 || sys.output_tokens > 0 || sys.total_turns > 0
+    || sys.sessions_created > 0 || sys.subagents_spawned > 0 || cacheLive > 0
+  )
   const unpricedModels = (byModel ?? []).filter((r) => !r.priced)
   const dayCap = Number(cfg?.max_dollars_per_day ?? 0) || 0
 
@@ -146,14 +165,43 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
         </div>
       </Section>
 
-      {/* In-memory counters since the gateway started (SystemInfo.stats) — a live
-          cross-check on the durable ledger, and the reader the orphaned typed field
-          never had. Reset on restart, unlike the ledger above. */}
-      {sys && (sys.input_tokens > 0 || sys.output_tokens > 0) && (
+      {/* In-memory counters since the gateway started (SystemInfo.stats) — a live cross-check on
+          the durable ledger, reset on restart unlike the ledger above.
+
+          This block used to read 3 of the 14 typed fields (tokens in/out + turns), leaving 8
+          counters that the backend increments on real runtime paths with no reader anywhere: the
+          session and subagent lifecycles, prompt-cache tokens, and cumulative duration. They are
+          surfaced here rather than in a new panel because this is already the "what has this
+          gateway done" surface, and a second one would split the answer. */}
+      {sys && hasActivity && (
         <Section title="Since gateway start" hint="Live in-memory counters — reset on restart, unlike the ledger above.">
-          <div className="rounded-lg bg-surface-container px-3 py-2.5 text-[0.8125rem] text-on-surface-var tabular-nums">
-            {fmtTokens(sys.input_tokens)} in / {fmtTokens(sys.output_tokens)} out
-            {' · '}{sys.total_turns.toLocaleString()} turns
+          <div className="rounded-lg bg-surface-container px-3 py-2.5">
+            <KVList rows={[
+              { k: 'Tokens', v: `${fmtTokens(sys.input_tokens)} in / ${fmtTokens(sys.output_tokens)} out` },
+              // Prompt-cache tokens are counted separately from input/output by every provider that
+              // reports them, so folding them into "in" would double-count the cached prefix.
+              ...(cacheLive > 0
+                ? [{ k: 'Prompt cache', v: `${fmtTokens(sys.cache_read_tokens)} read / ${fmtTokens(sys.cache_creation_tokens)} written` }]
+                : []),
+              { k: 'Turns', v: sys.total_turns.toLocaleString() },
+              // Cumulative wall-clock across turns — the one counter that is a duration, not a
+              // count, so it gets the same humanized format the rest of the app uses for spans.
+              ...(sys.total_duration_ms > 0 ? [{ k: 'Model time', v: fmtDuration(sys.total_duration_ms) }] : []),
+              { k: 'Sessions', v: `${sys.sessions_created.toLocaleString()} created / ${sys.sessions_cleaned.toLocaleString()} cleaned` },
+              // Subagent failures are the only counter here that can indicate a problem, so it
+              // reads as plain text when zero and takes the warn ink only when it is not.
+              {
+                k: 'Subagents',
+                v: (
+                  <>
+                    {sys.subagents_spawned.toLocaleString()} spawned / {sys.subagents_completed.toLocaleString()} completed
+                    {sys.subagents_failed > 0 && (
+                      <> / <span className="text-warn">{sys.subagents_failed.toLocaleString()} failed</span></>
+                    )}
+                  </>
+                ),
+              },
+            ]} />
           </div>
         </Section>
       )}
