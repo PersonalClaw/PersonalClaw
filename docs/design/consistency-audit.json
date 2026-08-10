@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-10T15:09:28.637Z",
+  "generatedAt": "2026-08-10T23:24:13.162Z",
   "totals": {
     "driftHits": 7,
     "filesScanned": 429,
@@ -25,8 +25,8 @@
     },
     {
       "file": "pages/projects/ProjectsSection.tsx",
-      "score": 39,
-      "detail": "17 raw-button, 5 raw-input"
+      "score": 37,
+      "detail": "17 raw-button, 3 raw-input"
     },
     {
       "file": "pages/loops/LoopPlanReview.tsx",
@@ -215,11 +215,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 132,
-    "outlineNoneFiles": 58,
+    "outlineNoneCount": 129,
+    "outlineNoneFiles": 57,
     "localFocusVisibleFiles": 15,
     "reducedMotionFiles": 8,
-    "animatedFiles": 160,
+    "animatedFiles": 159,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -505,7 +505,7 @@
     },
     "pages/projects/ProjectsSection.tsx": {
       "raw-button": 17,
-      "raw-input": 5,
+      "raw-input": 3,
       "raw-dialog": 0
     },
     "pages/prompts/PromptDetail.tsx": {
@@ -659,11 +659,6 @@
       "raw-dialog": 0
     },
     "pages/settings/SettingsPage.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/settings/UpdatesPanel.tsx": {
       "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
