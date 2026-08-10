@@ -133,10 +133,17 @@ jobs:
     strategy:
       matrix:
         include:
+          # `smoke` is the per-image liveness command run INSIDE the container on
+          # BOTH arches (PLATFORM-REACH A2.1). It differs per image because the
+          # images differ: gateway ships the `personalclaw` CLI; web is nginx and
+          # has no such binary, so it proves its own server binary instead. A
+          # single hardcoded `personalclaw --version` would fail on web.
           - name: gateway
             dockerfile: deploy/docker/Dockerfile.backend
+            smoke: personalclaw --version
           - name: web
             dockerfile: deploy/docker/Dockerfile.web
+            smoke: nginx -v
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -155,6 +162,28 @@ jobs:
           tags: |
             ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
             ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:latest
+      # RELEASE-BLOCKING per-arch smoke (A2.1). The build above publishes a
+      # multi-arch manifest; a manifest that merely *builds* can still ship an
+      # arch that cannot start. So pull each arch explicitly and run the image's
+      # own liveness command inside it — arm64 executes under the QEMU emulation
+      # already set up above. This step failing fails the `images` job, and
+      # `notes` (the GitHub Release) `needs: images` — so a broken arm64 blocks
+      # the release rather than shipping silently.
+      - name: Smoke both arches (release-blocking)
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
+          SMOKE: ${{ matrix.smoke }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            echo "::group::smoke linux/$arch — $IMAGE — $SMOKE"
+            docker pull --quiet --platform "linux/$arch" "$IMAGE"
+            # --entrypoint '' bypasses the image ENTRYPOINT (tini/nginx-entrypoint)
+            # so the smoke command runs directly instead of starting the service.
+            docker run --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
+              sh -lc "$SMOKE"
+            echo "::endgroup::"
+          done
 
   notes:
     # GitHub Release with notes drawn from CHANGELOG.md for this version.
