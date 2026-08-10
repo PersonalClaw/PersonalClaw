@@ -5147,7 +5147,7 @@
         {
           "id": "PR-5",
           "title": "docs/guides/platforms.md + README support matrix (C2): [models] arm64 wheel/dep audit, Pi-class note, proof-token matrix",
-          "status": "todo",
+          "status": "done",
           "scope": "Contracts C2; Tasks A2.2, A2.3, A2.4",
           "done_when": "docs/guides/platforms.md created with [models]-extra per-arch reality (faiss-cpu/torch/sentence-transformers, verified by recorded install attempts) + Pi-class RAM floor/skip-extras/swap note; README + platforms.md carry the support matrix where every row names its proof token (CI:<job> | checklist:<section> | community), no unproven 'supported'",
           "deps": [
@@ -7296,11 +7296,6 @@
         "id": "PHF-9",
         "title": "Suite flake root-cause fixes + xdist scheduler decision",
         "plan": "PHF"
-      },
-      {
-        "id": "PR-5",
-        "title": "docs/guides/platforms.md + README support matrix (C2): [models] arm64 wheel/dep audit, Pi-class note, proof-token matrix",
-        "plan": "PR"
       },
       {
         "id": "PR-6",
