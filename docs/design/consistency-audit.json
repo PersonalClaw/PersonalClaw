@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-10T13:54:38.322Z",
+  "generatedAt": "2026-08-10T15:09:28.637Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 431,
+    "filesScanned": 429,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -394,16 +394,6 @@
       "raw-dialog": 0
     },
     "pages/dashboard/widgets/HeroPulse.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/dashboard/widgets/KnowledgeWidget.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
-    "pages/dashboard/widgets/MemoryWidget.tsx": {
       "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, X, Plus } from 'lucide-react'
+import { X, Plus } from 'lucide-react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -153,22 +153,6 @@ function EnumRow({ label, hint, cfg, field, patch, options }: {
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         <SegPills value={value} onChange={(v) => patch(field, v, flash)} options={opts} />
-      </div>
-    </Row>
-  )
-}
-
-function ToggleRow({ label, hint, cfg, field, patch, danger }: {
-  label: string; hint?: string; cfg: AgentCfg; field: string; patch: (k: string, v: unknown, cb: () => void) => void; danger?: boolean
-}) {
-  const [saved, flash] = useSavedFlash()
-  const on = Boolean(cfg[field])
-  return (
-    <Row label={label} hint={hint}>
-      <div className="flex items-center gap-2">
-        <SavedToast show={saved} />
-        {danger && on && <AlertTriangle size={14} className="text-warn" />}
-        <Toggle on={on} onChange={(v) => patch(field, v, flash)} label={label} />
       </div>
     </Row>
   )
