@@ -6,7 +6,8 @@ import type { LearningRow, StagingDay } from '../../lib/api'
 // Every kind the backend serves. Labelled here because names like "lesson_batch", "tier_migration"
 // and "project_file" are internal ones a reviewer should never have to decode, and an unknown kind
 // falls back to its raw id rather than an empty chip — a row whose kind cannot be named is still a
-// row that needs deciding. The three project_* kinds are the project-context review's output.
+// row that needs deciding. The three project_* kinds are the project-context review's output;
+// knowledge_draft is a gap-healing or schema-edit draft awaiting review (KNOWLEDGE-SYNTHESIS §3.4).
 const KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
   skill: { label: 'Skill', icon: Sparkles },
   lesson_batch: { label: 'Lessons', icon: BookOpen },
@@ -17,6 +18,7 @@ const KIND_META: Record<string, { label: string; icon: LucideIcon }> = {
   project_instruction: { label: 'Project instruction', icon: BookOpen },
   project_file: { label: 'Project file', icon: FileText },
   project_skill: { label: 'Project skill', icon: Sparkles },
+  knowledge_draft: { label: 'Knowledge draft', icon: BookOpen },
 }
 
 export function kindLabel(kind: string): string {

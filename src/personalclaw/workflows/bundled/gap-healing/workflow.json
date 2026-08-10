@@ -95,17 +95,14 @@
         "id": "file",
         "label": "File as proposals",
         "config": {
-          "provider": "knowledge-persist",
+          "provider": "knowledge-propose",
           "with": {
-            "kind": "probe",
-            "title": "Knowledge gaps — {{nodes.gaps.output.count}} referenced but unwritten",
-            "content": "{{nodes.draft.output.drafts | json}}",
-            "summary": "Drafted entries for referenced-but-missing entities, pending review.",
+            "drafts": "{{nodes.draft.output.drafts | json}}",
+            "evidence": "{{nodes.gaps.output.excerpts | json}}",
+            "source_cadence": "gap-healing",
             "tags": [
-              "gap-healing",
-              "proposal"
-            ],
-            "ttl": "30d"
+              "gap-healing"
+            ]
           }
         }
       }

@@ -144,3 +144,15 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeRenderReportActionProvider())
+    if "knowledge-propose" not in _providers:
+        # KNOWLEDGE-SYNTHESIS §3.3/§3.4 (WF2KNO-8): the PROPOSE half of the maintenance tier —
+        # a gap-healing or schema-edit draft into the LEARNING-FLYWHEEL review queue instead of
+        # into the store. Before it, `proposals.enqueue` had no workflow-reachable caller at all,
+        # so a template that wanted to propose could only write. Added to ALLOWED_HOOK_PROVIDERS
+        # in the SAME commit — a provider in one set but not the other is the mismatch that makes
+        # a trigger save and then fail to run.
+        from personalclaw.action_providers.knowledge_propose_provider import (
+            KnowledgeProposeActionProvider,
+        )
+
+        register_action_provider(KnowledgeProposeActionProvider())

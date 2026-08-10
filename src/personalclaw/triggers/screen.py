@@ -441,6 +441,12 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "artifact-update",  # mutates an artifact
         "render-report",  # writes the spec artifact + its derived export
         "notification-digest",  # writes an inbox item
+        # Propose-don't-write is about the KNOWLEDGE store, not about this fence: filing still
+        # writes a durable proposal row and raises an inbox item, exactly like
+        # `notification-digest` above. A path that puts things in front of the user unattended
+        # needs the opt-in — an unbounded one turns the review queue into the noise it exists
+        # to prevent.
+        "knowledge-propose",
     }
 )
 

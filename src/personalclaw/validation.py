@@ -769,6 +769,10 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # self-contained artifact export. Registered in the action-provider registry in the same
         # commit as this line, for the reason stated above.
         "render-report",
+        # KNOWLEDGE-SYNTHESIS §3.3/§3.4 (WF2KNO-8): files a knowledge draft into the
+        # LEARNING-FLYWHEEL proposal queue rather than writing it. Registered in the
+        # action-provider registry in the same commit as this line, for the reason stated above.
+        "knowledge-propose",
         # WORKFLOWS-V2 WV-11: the read half of output-offloading — pulls a `{{nodes.x.artifact}}`
         # body on demand, confined to the run's own `artifacts/`. Registered in the action-provider
         # registry in the same commit as this line; a provider in one set but not the other
