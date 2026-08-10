@@ -1,6 +1,7 @@
-"""Tests for batch-spawn compilation and its hardening contract (WORK-CONTAINERS §3, S48).
+"""Batch-spawn compilation and its hardening contract (WORK-CONTAINERS §3, S48 + WF2WOR-9).
 
-Two properties carry this module, and both were measured against the engine rather than assumed.
+Four properties carry this module, and every one of them was measured against the engine rather than
+assumed.
 
 **Per-leaf error isolation is not free.** A `parallel` with the default `join: all` goes FAILED the
 moment one child fails, so one bad leaf would sink a five-way fan-out — the exact opposite of "four
@@ -12,31 +13,64 @@ them, and `on_error: "continue"` is not a value it recognizes either. In a modul
 whole subject
 is least-privilege, four keys that look like enforcement and enforce nothing is the worst possible
 failure — so unenforced declarations now travel under a name that says so.
+
+**The leaf contract is refused at compile AND carried into the prompt.** A declared output format
+the worker never saw is a gate that fails 100% of the time, so the compile that requires the
+declaration is also the thing that delivers it — and `check_output_contract` (the engine's existing
+validator, not a second one) is what catches off-format output.
+
+**Mutating leaves serialize through a `needs` chain, driven not assumed.** `frontier` never makes
+two of them ready at once, research leaves stay fully parallel, and a FAILED mutator hands the lane
+on rather than stranding the chain — because `_visit_parallel` satisfies a `needs` edge on any
+TERMINAL
+predecessor. If it stalled instead, serialization would have become a second way for one bad leaf to
+sink a batch, which is what `join: quorum` exists to prevent.
 """
 
 import pytest
 
 from personalclaw.workflows.batch_compile import (
     COMPILE_THRESHOLD,
+    FORBIDDEN_LEAF_FIELDS,
     MAX_LEAVES,
+    MIN_DECLARATION_CHARS,
     ORCHESTRATION_TOOLS,
     Capability,
     LeafTask,
+    boundary_lint,
     compile_batch,
+    contract_lint,
+    forbidden_declarations,
     is_write_tool,
     leaf_tool_posture,
     lineage_env,
+    mutating_chain,
     recall_view,
     schema_to_contract,
     single_writer_lint,
 )
+from personalclaw.workflows.engine import check_output_contract
 from personalclaw.workflows.models import InstanceState, Node
-from personalclaw.workflows.tick import derive_state
+from personalclaw.workflows.tick import Limits, derive_state, frontier
 from personalclaw.workflows.validator import validate_node_tree
+
+#: A satisfied leaf contract, spelled out once. Every field is REQUIRED at compile (C2.1), so a test
+#: fixture that omitted one would be testing the refusal rather than the thing it meant to test —
+#: and a dataclass default would have hidden that, which is why the fields carry none.
+CONTRACT = {
+    "objective": "establish whether the retry ceiling is honoured",
+    "output_format": "JSON object with keys findings and confidence",
+    "boundary": "read only under config/; touch no source file",
+}
+
+
+def leaf(task: str, **kw) -> LeafTask:
+    """One contract-complete leaf. `kw` overrides any contract field under test."""
+    return LeafTask(task=task, **{**CONTRACT, **kw})
 
 
 def leaves(n: int, **kw) -> list[LeafTask]:
-    return [LeafTask(task=f"task number {i}", **kw) for i in range(n)]
+    return [leaf(f"task number {i}", **kw) for i in range(n)]
 
 
 def codes(result) -> set[str]:
@@ -123,7 +157,7 @@ def test_the_node_config_carries_ONLY_keys_the_engine_reads():
     (it checks `fail_run` and defaults to `null_continue`). Four keys that look like controls and
     enforce nothing — in a module about least-privilege, that is the worst kind of bug."""
     config = compile_batch(leaves(2)).spec["root"]["children"][0]["config"]
-    assert set(config) <= {"prompt", "model_tier", "agent", "output_contract"}
+    assert set(config) <= {"prompt", "model_tier", "agent", "model", "output_contract"}
 
 
 def test_the_unenforced_posture_travels_under_a_name_that_SAYS_SO():
@@ -139,7 +173,7 @@ def test_the_unenforced_posture_travels_under_a_name_that_SAYS_SO():
 
 
 def test_the_posture_is_per_node_so_a_caller_can_apply_it():
-    result = compile_batch([LeafTask(task="a"), LeafTask(task="b", capability=Capability.MUTATING)])
+    result = compile_batch([leaf("a"), leaf("b", capability=Capability.MUTATING)])
     ids = [c["id"] for c in result.spec["root"]["children"]]
     assert set(result.postures) == set(ids)
     assert result.postures[ids[0]]["read_only"] is True
@@ -153,7 +187,7 @@ def test_research_is_the_DEFAULT_capability():
     """The safe direction to be wrong in: a research leaf that needed to write fails visibly and is
     re-declared, while a mutating leaf that only needed to read has write access nobody asked for.
     """
-    assert LeafTask(task="x").capability is Capability.RESEARCH
+    assert leaf("x").capability is Capability.RESEARCH
 
 
 def test_a_research_leaf_is_read_only():
@@ -200,7 +234,7 @@ def test_the_write_marker_list_is_over_inclusive_ON_PURPOSE():
 def test_a_research_leaf_declaring_WRITES_is_an_error():
     """A contradiction the author has to resolve: either the leaf mutates (declare it) or the paths
     are wrong. Compiling it either way would silently pick one of the two meanings."""
-    result = compile_batch([LeafTask(task="a", writes=["out.md"]), LeafTask(task="b")])
+    result = compile_batch([leaf("a", writes=["out.md"]), leaf("b")])
     assert result.ok is False
     assert "research_leaf_writes" in codes(result)
 
@@ -208,11 +242,337 @@ def test_a_research_leaf_declaring_WRITES_is_an_error():
 def test_a_mutating_leaf_may_declare_writes():
     result = compile_batch(
         [
-            LeafTask(task="a", capability=Capability.MUTATING, writes=["out.md"]),
-            LeafTask(task="b"),
+            leaf("a", capability=Capability.MUTATING, writes=["out.md"]),
+            leaf("b"),
         ]
     )
     assert result.ok is True
+
+
+# ── C2.1: the leaf contract is load-bearing (amendment (b)) ──
+
+
+@pytest.mark.parametrize("field_name", ["objective", "output_format", "boundary"])
+def test_a_leaf_missing_ANY_contract_field_fails_COMPILATION(field_name):
+    """An ERROR, not a warning. The measured failure budget of multi-agent systems goes to
+    specification drift (11.8%) and verification (~23.5%), not role confusion (1.5%) — so the
+    under-specified leaf IS the failure mode, and compiling it would make the contract a
+    suggestion."""
+    result = compile_batch([leaf("a", **{field_name: ""}), leaf("b")])
+    assert result.ok is False
+    assert "leaf_contract_missing" in codes(result)
+    assert field_name in " ".join(f.message for f in result.findings)
+
+
+def test_the_contract_fields_have_NO_dataclass_DEFAULT():
+    """A defaulted field is an unsupplied input that satisfies the gate nobody supplied. If
+    `objective` defaulted to `""`, every existing caller would keep compiling and C2.1 would be a
+    docstring."""
+    with pytest.raises(TypeError):
+        LeafTask(task="a")  # type: ignore[call-arg]
+
+
+def test_a_WHITESPACE_declaration_is_treated_as_missing():
+    """The field exists to carry specification, and whitespace carries none. Accepting it would make
+    the requirement satisfiable by pressing space."""
+    result = compile_batch([leaf("a", objective="   "), leaf("b")])
+    assert result.ok is False
+    assert "leaf_contract_missing" in codes(result)
+
+
+def test_a_TOO_SHORT_declaration_is_also_refused():
+    """ "check it" carries no more specification than "". A floor that admitted a two-word objective
+    would let the requirement be satisfied without being satisfied."""
+    result = compile_batch([leaf("a", objective="check it"), leaf("b")])
+    assert result.ok is False
+    assert "leaf_contract_thin" in codes(result)
+    assert len("check it") < MIN_DECLARATION_CHARS
+
+
+def test_a_complete_contract_compiles_clean():
+    assert compile_batch(leaves(2)).ok is True
+    assert contract_lint(leaves(2)) == []
+
+
+def test_all_THREE_declarations_reach_the_leaf_PROMPT():
+    """A declared output format the worker never saw is a gate that fails 100% of the time — the
+    engine's `output_contract` rejects off-format output BEFORE any binding resolves, so the compile
+    that requires the declaration has to be the thing that delivers it. Same for the boundary: an
+    unstated boundary is not a boundary."""
+    prompt = compile_batch(leaves(2)).spec["root"]["children"][0]["config"]["prompt"]
+    assert CONTRACT["objective"] in prompt
+    assert CONTRACT["output_format"] in prompt
+    assert CONTRACT["boundary"] in prompt
+    assert "task number 0" in prompt
+
+
+def test_the_declared_SCHEMA_is_shown_to_the_worker_VERBATIM():
+    """A paraphrase would let the prompt and `check_output_contract` drift, and the worker would
+    satisfy the paraphrase and fail the check."""
+    schema = {"type": "object", "required": ["findings"]}
+    prompt = compile_batch([leaf("a", output_schema=schema), leaf("b")]).spec["root"]["children"][
+        0
+    ]["config"]["prompt"]
+    assert '"required": ["findings"]' in prompt
+
+
+def test_OFF_FORMAT_leaf_output_is_CAUGHT_by_the_engines_own_validator():
+    """The C2.1 done_when's second half, driven end-to-end: the declared format compiles into
+    `output_contract`, and `check_output_contract` — the EXISTING validator the engine already runs
+    before any `{{nodes.x.output}}` binding resolves — is what refuses the off-format value. No
+    second checker: two validators over one field would disagree eventually, and the one that ran
+    last would win silently."""
+    contract = compile_batch(
+        [
+            leaf("a", output_schema={"type": "object", "required": ["findings", "confidence"]}),
+            leaf("b"),
+        ]
+    ).spec["root"]["children"][0]["config"]["output_contract"]
+
+    assert check_output_contract("just some prose, no JSON at all", contract)
+    assert check_output_contract({"findings": ["x"]}, contract)  # missing `confidence`
+    assert check_output_contract({"findings": ["x"], "confidence": 0.8}, contract) == ""
+
+
+def test_a_leaf_writing_INSIDE_its_own_boundary_is_refused():
+    """The one place `writes` and `boundary` meet. A leaf saying "I will write db/schema.sql" and
+    "do not touch db/" has declared it will do the thing it declared it must not do, and compiling
+    it picks one of the two meanings silently."""
+    result = compile_batch(
+        [
+            leaf(
+                "a",
+                capability=Capability.MUTATING,
+                writes=["db/schema.sql"],
+                boundary="anything under db/ is off limits",
+            ),
+            leaf("b"),
+        ]
+    )
+    assert result.ok is False
+    assert "boundary_contradicts_writes" in codes(result)
+
+
+def test_writes_OUTSIDE_the_boundary_are_fine():
+    """`boundary` and `writes` are DUALS, not complements — a positive declaration for the compiler
+    and a negative one for the worker. Most leaves therefore trip nothing here."""
+    findings = boundary_lint(
+        [
+            leaf(
+                "a",
+                capability=Capability.MUTATING,
+                writes=["out/report.md"],
+                boundary="anything under db/ is off limits",
+            )
+        ]
+    )
+    assert findings == []
+
+
+def test_the_boundary_check_is_PATH_shaped_not_a_substring_match():
+    """`writes=["reports/x.md"]` against a boundary mentioning the word "report" is a DIFFERENT
+    directory, and a naive `in` would call it a contradiction. A gate that cries wolf on a
+    legitimate fan-out is a gate that gets switched off."""
+    findings = boundary_lint(
+        [
+            leaf(
+                "a",
+                capability=Capability.MUTATING,
+                writes=["reports/x.md"],
+                boundary="do not touch the production report pipeline",
+            )
+        ]
+    )
+    assert findings == []
+
+
+def test_a_boundary_naming_a_PARENT_directory_still_catches_the_write():
+    findings = boundary_lint(
+        [
+            leaf(
+                "a",
+                capability=Capability.MUTATING,
+                writes=["src/personalclaw/engine.py"],
+                boundary="never write under src/",
+            )
+        ]
+    )
+    assert [f.code for f in findings] == ["boundary_contradicts_writes"]
+
+
+# ── C2.2: capability enforcement, homogeneity, and the model pin (amendment (a)/(c)) ──
+
+
+def _mut_leaves(n: int, mutating: set[int]) -> list[LeafTask]:
+    return [
+        leaf(
+            f"task number {i}",
+            capability=Capability.MUTATING if i in mutating else Capability.RESEARCH,
+        )
+        for i in range(n)
+    ]
+
+
+def _drive(node: Node, *, fail: set[str] | None = None) -> list[list[str]]:
+    """Drive the REAL frontier tick by tick, returning what launched on each tick.
+
+    The engine's own scheduler, not a model of it: the S48 comment in `compile_batch` records what
+    assuming join semantics cost when nobody drove them. Lane caps are lifted so the caps are not
+    what serializes the leaves — otherwise a passing test would prove the LANE works, not the
+    contract.
+    """
+    limits = Limits(lanes={"llm": MAX_LEAVES, "io": MAX_LEAVES, "compute": MAX_LEAVES})
+    states: dict[str, InstanceState] = {}
+    ticks: list[list[str]] = []
+    failed = fail or set()
+    for _ in range(MAX_LEAVES + 2):
+        fr = frontier(node, states, limits=limits)
+        if fr.complete or not fr.ready:
+            break
+        launched = [r.path for r in fr.ready]
+        ticks.append(launched)
+        for path in launched:
+            states[path] = InstanceState.FAILED if path in failed else InstanceState.DONE
+    return ticks
+
+
+def test_two_MUTATING_leaves_never_become_ready_TOGETHER():
+    """The C2.2 done_when, driven through `tick.frontier` rather than asserted about the spec.
+    Writes stay single-threaded (amendment (c)); the `needs` chain makes the engine honour it."""
+    result = compile_batch(_mut_leaves(8, {2, 5, 7}))
+    node = Node.from_dict(result.spec["root"])
+    mutating = {"root.children[2]", "root.children[5]", "root.children[7]"}
+    for launched in _drive(node):
+        assert len(set(launched) & mutating) <= 1
+
+
+def test_RESEARCH_leaves_stay_fully_PARALLEL():
+    """Serializing writes must not serialize reads. "Parallelize reads/analysis, single-thread
+    writes" is the whole synthesis — a fan-out that ran its five investigations one at a time would
+    have kept the cost and thrown away the reason."""
+    result = compile_batch(_mut_leaves(8, {2, 5, 7}))
+    ticks = _drive(Node.from_dict(result.spec["root"]))
+    research = {f"root.children[{i}]" for i in (0, 1, 3, 4, 6)}
+    assert research <= set(ticks[0])
+
+
+def test_an_ALL_MUTATING_batch_runs_strictly_ONE_AT_A_TIME():
+    result = compile_batch(_mut_leaves(4, {0, 1, 2, 3}))
+    ticks = _drive(Node.from_dict(result.spec["root"]))
+    assert [len(t) for t in ticks] == [1, 1, 1, 1]
+
+
+def test_a_FAILED_mutating_leaf_HANDS_THE_LANE_ON_rather_than_stranding_the_chain():
+    """MEASURED against `_visit_parallel`: a `needs` edge is satisfied by any TERMINAL predecessor —
+    done, degraded, skipped or FAILED alike. Had it required success, serialization would have
+    become a second way for one bad leaf to sink a batch, which is what `join: quorum` prevents."""
+    result = compile_batch(_mut_leaves(4, {0, 1, 2, 3}))
+    node = Node.from_dict(result.spec["root"])
+    ticks = _drive(node, fail={"root.children[0]"})
+    launched = [p for tick in ticks for p in tick]
+    assert launched == [f"root.children[{i}]" for i in range(4)]
+
+
+def test_serialization_does_not_break_the_error_ISOLATION_the_batch_already_had():
+    """The pre-existing guarantee, re-driven with a chain in the tree: one failed leaf still yields
+    a DONE run. A new control that quietly regressed an old one would be a net loss."""
+    result = compile_batch(_mut_leaves(4, {1, 3}))
+    node = Node.from_dict(result.spec["root"])
+    states = {
+        "root.children[0]": InstanceState.FAILED,
+        "root.children[1]": InstanceState.DONE,
+        "root.children[2]": InstanceState.DONE,
+        "root.children[3]": InstanceState.DONE,
+    }
+    assert derive_state(node, "root", states) is InstanceState.DONE
+
+
+def test_the_serialized_chain_VALIDATES_against_the_engines_own_validator():
+    """`needs` may only name SIBLINGS in a parallel block (validator.py) — a chain that referenced
+    anything else would be a spec the engine rejects at start."""
+    result = compile_batch(_mut_leaves(6, {1, 3, 5}))
+    issues = validate_node_tree(Node.from_dict(result.spec["root"])).issues
+    assert [i for i in issues if i.severity == "error"] == []
+
+
+def test_the_chain_is_in_DECLARATION_order():
+    """The only order the author gave us. Alphabetical or dependency-derived ordering would both be
+    inventions, and an invented order on write-bearing work makes a fan-out unreproducible."""
+    leaves_ = _mut_leaves(5, {3, 0, 4})
+    assert mutating_chain(leaves_) == [
+        "task_number_0_0",
+        "task_number_3_3",
+        "task_number_4_4",
+    ]
+
+
+def test_a_SINGLE_mutating_leaf_emits_no_needs_edge():
+    """Nothing to serialize against. An edge to itself would be a cycle, and an edge to a research
+    leaf would serialize a read behind a write for no reason."""
+    result = compile_batch(_mut_leaves(3, {1}))
+    assert all("needs" not in c for c in result.spec["root"]["children"])
+
+
+def test_serialization_is_reported_as_ENFORCED_not_as_pending():
+    """`unenforced()` names what has no seam; anything actually enforced must come OUT of it or the
+    honest list stops being honest. The chain IS enforced — by the frontier."""
+    result = compile_batch(_mut_leaves(4, {0, 2}))
+    assert any("mutating serialization" in e for e in result.enforced())
+    assert not any("mutating serialization" in u for u in result.unenforced())
+
+
+def test_ONE_mutator_does_not_CLAIM_serialization():
+    """With one mutator there is no `needs` edge in the spec, so claiming serialization would claim
+    a control the compile did not emit — true outcome, absent mechanism."""
+    result = compile_batch(_mut_leaves(3, {1}))
+    assert not any("mutating serialization" in e for e in result.enforced())
+
+
+def test_the_leaf_contract_is_reported_as_ENFORCED():
+    """It is: the compile refuses an incomplete one and the declarations ride into the prompt. A
+    control this real belongs on the enforced list, or a reader cannot tell it apart from the
+    posture items that are still waiting for a seam."""
+    result = compile_batch(leaves(2))
+    assert any("leaf contract" in e for e in result.enforced())
+    assert any("output_contract" in e for e in result.enforced())
+
+
+def test_NO_PERSONA_field_exists_on_the_leaf_contract():
+    """An explicit `done_when` clause, and a standing prohibition rather than a one-time decision.
+    The best-powered direct test of personas (162 roles, 4 model families, 2,410 questions) found NO
+    improvement with per-persona effects "largely random", and persona churn is bidirectional — one
+    measured case fixed 4% while breaking 18%, which is strictly worse than a uniform loss for an
+    autonomous system because it destroys reproducibility."""
+    assert forbidden_declarations() == []
+    assert "persona" in FORBIDDEN_LEAF_FIELDS
+    assert "role" in FORBIDDEN_LEAF_FIELDS
+
+
+def test_a_leaf_is_HOMOGENEOUS_by_default():
+    """It inherits the parent's binding, which is what makes homogeneity the default rather than a
+    thing every caller must remember to ask for. An always-present `model: ""` would read in a spec
+    as though every leaf were pinned to nothing in particular."""
+    config = compile_batch(leaves(2)).spec["root"]["children"][0]["config"]
+    assert "model" not in config
+
+
+def test_a_leaf_may_PIN_a_different_model():
+    """Heterogeneity by MODEL is the one measured win in the literature — up to 44% accuracy at
+    matched cost, or matching the best homogeneous team at 12x lower cost."""
+    result = compile_batch([leaf("a", model_ref="Bedrock:some-model-id"), leaf("b")])
+    assert result.spec["root"]["children"][0]["config"]["model"] == "Bedrock:some-model-id"
+    assert "model" not in result.spec["root"]["children"][1]["config"]
+    assert any("model pin" in e for e in result.enforced())
+
+
+def test_the_pin_field_is_NOT_named_model_on_the_leaf():
+    """`mutations._FIELD_ALIASES` already maps the author-facing `model` onto `model_tier`
+    (WF2-R20d), so a `workflow_edit` op saying `fields: {model: ...}` on a compiled leaf rewrites
+    the TIER and leaves the pin untouched — the author would then debug a key never written."""
+    from personalclaw.workflows.mutations import normalize_fields
+
+    assert normalize_fields({"model": "x"}) == {"model_tier": "x"}
+    assert not hasattr(leaf("a"), "model")
 
 
 # ── the single-writer lint ──
@@ -223,8 +583,8 @@ def test_two_leaves_writing_ONE_path_is_warned():
     success."""
     findings = single_writer_lint(
         [
-            LeafTask(task="a", capability=Capability.MUTATING, writes=["report.md"]),
-            LeafTask(task="b", capability=Capability.MUTATING, writes=["report.md"]),
+            leaf("a", capability=Capability.MUTATING, writes=["report.md"]),
+            leaf("b", capability=Capability.MUTATING, writes=["report.md"]),
         ]
     )
     assert [f.code for f in findings] == ["multi_writer"]
@@ -234,8 +594,8 @@ def test_two_leaves_writing_ONE_path_is_warned():
 def test_the_multi_writer_finding_NAMES_the_leaves():
     findings = single_writer_lint(
         [
-            LeafTask(task="alpha work", capability=Capability.MUTATING, writes=["r.md"]),
-            LeafTask(task="beta work", capability=Capability.MUTATING, writes=["r.md"]),
+            leaf("alpha work", capability=Capability.MUTATING, writes=["r.md"]),
+            leaf("beta work", capability=Capability.MUTATING, writes=["r.md"]),
         ]
     )
     assert "alpha_work_0" in findings[0].message
@@ -247,8 +607,8 @@ def test_a_multi_writer_collision_WARNS_rather_than_refusing():
     block a legitimate fan-out. But it must be SAID."""
     result = compile_batch(
         [
-            LeafTask(task="a", capability=Capability.MUTATING, writes=["r.md"]),
-            LeafTask(task="b", capability=Capability.MUTATING, writes=["r.md"]),
+            leaf("a", capability=Capability.MUTATING, writes=["r.md"]),
+            leaf("b", capability=Capability.MUTATING, writes=["r.md"]),
         ]
     )
     assert result.ok is True
@@ -258,8 +618,8 @@ def test_a_multi_writer_collision_WARNS_rather_than_refusing():
 def test_disjoint_writes_are_not_warned():
     findings = single_writer_lint(
         [
-            LeafTask(task="a", capability=Capability.MUTATING, writes=["a.md"]),
-            LeafTask(task="b", capability=Capability.MUTATING, writes=["b.md"]),
+            leaf("a", capability=Capability.MUTATING, writes=["a.md"]),
+            leaf("b", capability=Capability.MUTATING, writes=["b.md"]),
         ]
     )
     assert findings == []
@@ -318,8 +678,8 @@ def test_a_schema_compiles_into_the_engines_own_output_contract():
 def test_the_contract_reaches_the_compiled_node():
     result = compile_batch(
         [
-            LeafTask(task="a", output_schema={"type": "object", "required": ["x"]}),
-            LeafTask(task="b"),
+            leaf("a", output_schema={"type": "object", "required": ["x"]}),
+            leaf("b"),
         ]
     )
     assert result.spec["root"]["children"][0]["config"]["output_contract"]["required_keys"] == ["x"]
@@ -413,18 +773,49 @@ def test_a_FAILED_redactor_withholds_the_view_rather_than_showing_it_raw(monkeyp
 def test_node_ids_are_readable_AND_unique():
     """The text makes the progress widget legible; the index guarantees uniqueness when two tasks
     start with the same words."""
-    result = compile_batch(
-        [LeafTask(task="check the retry config"), LeafTask(task="check the retry config")]
-    )
+    result = compile_batch([leaf("check the retry config"), leaf("check the retry config")])
     ids = [c["id"] for c in result.spec["root"]["children"]]
     assert ids == ["check_the_retry_config_0", "check_the_retry_config_1"]
 
 
 def test_an_unpunctuated_task_still_yields_an_id():
-    assert LeafTask(task="!!!").node_id(0) == "task_0"
+    assert leaf("!!!").node_id(0) == "task_0"
 
 
 def test_the_batch_carries_the_subagent_tool_ORIGIN():
     """It is what collapses these rows on the Work board (S46) and puts them on the subagent prune
     cadence rather than the workflow one."""
     assert compile_batch(leaves(2)).spec["origin"]["kind"] == "subagent-tool"
+
+
+# ── VC: an 8-wide fan-out with mutating leaves, driven through the real engine ──
+
+
+def test_an_EIGHT_WIDE_fanout_with_three_mutators_delivers_all_eight():
+    """The VC row's provable half, in ONE test so the three properties are asserted about the SAME
+    driven run rather than three runs that each held one of them.
+
+    Two VC clauses are NOT proved here and are not claimed to be: per-child cost visibility and the
+    one-click kill belong to rows C1.4/C1.5, and the production `subagent_run` call site does not
+    exist yet (WF2WOR-5 owns the cutover and depends on this atom). The plan's execution log records
+    that split explicitly — an over-claimed VC is worse than a deferred one.
+    """
+    result = compile_batch(_mut_leaves(8, {2, 5, 7}), run_name="vc-eight-wide")
+    assert result.ok is True
+    assert len(result.spec["root"]["children"]) == 8
+
+    node = Node.from_dict(result.spec["root"])
+    assert [i for i in validate_node_tree(node).issues if i.severity == "error"] == []
+
+    # (a) all eight leaves are delivered, and (b) no two mutators overlap.
+    mutating = {"root.children[2]", "root.children[5]", "root.children[7]"}
+    ticks = _drive(node)
+    launched = [path for tick in ticks for path in tick]
+    assert sorted(launched) == sorted(f"root.children[{i}]" for i in range(8))
+    for tick in ticks:
+        assert len(set(tick) & mutating) <= 1
+
+    # (c) one failed leaf still yields a DONE run.
+    states = {f"root.children[{i}]": InstanceState.DONE for i in range(8)}
+    states["root.children[4]"] = InstanceState.FAILED
+    assert derive_state(node, "root", states) is InstanceState.DONE

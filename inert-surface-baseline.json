@@ -325,12 +325,6 @@
         "enum:Interrupt.UNINFERABLE"
       ]
     },
-    "src/personalclaw/workflows/batch_compile.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:Capability.MUTATING"
-      ]
-    },
     "src/personalclaw/workflows/confirmation.py": {
       "inert": 1,
       "surfaces": [
@@ -382,10 +376,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 29,
+      "enum": 28,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 156
+    "inert": 155
   }
 }

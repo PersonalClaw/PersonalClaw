@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2WOR-6` | ✅ (##947) | Session-ownership run-start wiring + incognito enforcement at run start | `WF2WOR-1` | Success Criterion 5: at run start the controller performs the session_restrictions mark and the JSONL memory_mode write, and mirrors a completion summary into the launching session; a blocking run launched from an incognito session writes nothing to knowledge/learning stores, verified durable after a gateway restart |
 | `WF2WOR-7` | 🟡 (##192) | Run cockpit + introspection/RunStats FE + live-adoption plumbing | `WF2WOR-1`, `WF2WOR-3` | Success Criteria 6 & 8: from the hub + cockpit alone an evaluator answers all nine introspection questions (node tree, journal timeline, attempt ledger, RunStats cost/latency strip, template p50/p95 cards, said-no fake-check badge, Proof section); the session-key equivalence helper adopts in-flight runs live; run-id-keyed streaming + useRunStream event-union additions land; live touched-items feed + PinnedArtifacts widget render |
 | `WF2WOR-8` | ✅ | Fan-out subagent-path defect fixes (C1: injection wall, queue, agent-validate, control, budget) | `EXT:COST-AND-TOKEN-OBSERVABILITY:per-child cost ledger (T1.3)`, `EXT:AUTONOMY-GUARDRAILS:SpendMeter run scope` | 8 near-simultaneous sub-agent completions deliver without loss and without resetting the parent session; queued spawns carry the full parameter set and get real cancellable ids; _validate_agent returns a typed error (no silent downgrade); a run-scoped concurrency lane + one-click 'kill this fan-out' + record_failure breaker work; the run-scoped budget re-checks mid-flight and stops a fan-out that would exceed it |
-| `WF2WOR-9` | ⬜ | Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC) | `WF2WOR-8` | C2.1: a leaf without an explicit objective/output-format/boundary fails compilation and off-format output is caught; C2.2: capability research\|mutating is enforced (two mutating leaves never run concurrently), leaves are homogeneous-by-default with optional per-leaf model pinning and no persona field; C2.3: the token-matched measurement harness reports a sub-5-point delta as inconclusive; VC: an 8-wide fan-out on real work passes and the verdict is logged |
+| `WF2WOR-9` | ✅ (#961) | Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC) | `WF2WOR-8` | C2.1: a leaf without an explicit objective/output-format/boundary fails compilation and off-format output is caught; C2.2: capability research\|mutating is enforced (two mutating leaves never run concurrently), leaves are homogeneous-by-default with optional per-leaf model pinning and no persona field; C2.3: the token-matched measurement harness reports a sub-5-point delta as inconclusive; VC: an 8-wide fan-out on real work passes and the verdict is logged |
 | `WF2WOR-10` | 🟡 (##193) | Project export/import archive I/O + snapshot/portability registration + CLI/REST/FE | — | Success Criterion 9: archive I/O writes the manifest ZIP and extracts to a unique tmp with janitor cleanup and extraction-time path-safety; optional client-side AES-GCM encryption works; a 'projects' component is registered in snapshot.VALID_COMPONENTS and portability; exporting then importing on a clean home yields brief/overview/ledgers/templates/artifact-metadata/run-digests intact (sha256-verified) with zero secrets in the ZIP; CLI/REST surface + FE export button work |
 | `WF2WOR-11` | ⬜ | Project-scoped memory locality + knowledge project tagging | `WF2WOR-6` | project-owned sessions run with cwd = project context_dir so their memory lands in the project partition; recall searches the partition first then global with cross-partition hits explicitly source-labeled and fenced (ordering-only, never admission); run-written knowledge items carry project_id + run_id metadata and a sharing_policy:private\|shared filter, and the project Artifacts/Knowledge views filter on it |
 | `WF2WOR-12` | ⬜ | Container workspace mode + snapshot-anchored fork (deferred, opt-in) | `WF2WOR-4` | mode:container joins the workspace enum with a typed environment manifest (image XOR build, user, mounts, capabilities) on Docker/containerd or Apple Virtualization (no hard Docker dependency); container snapshots between stages anchor fork-from-checkpoint to workspace state; strictly opt-in with in_place/worktree staying default and no remote/cloud deploy modes |
@@ -91,9 +91,32 @@ Amendment §'Audit findings that must be fixed before any width increase' + Amen
 
 ### `WF2WOR-9` — Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC)
 
-**Status:** todo
+**Status:** done (PR #961)
 
 Amendment §'Contract changes to §3' (a-e) + §'The synthesis this plan adopts' + Amendment task table C2.1-C2.3, VC
+
+`batch_compile.LeafTask` carries three REQUIRED, default-less contract fields — `objective`,
+`output_format`, `boundary` — and `contract_lint`/`boundary_lint` refuse an under-specified or
+self-contradictory leaf at compile; all three ride into the leaf's own prompt beside the verbatim
+`output_schema`, because the engine's existing `output_contract` rejects off-format output before any
+binding resolves and a format the worker never saw would fail every attempt. `boundary` is the dual of
+`writes` (negative declaration for the worker vs positive declaration for the compiler), and only their
+contradiction — a write inside its own boundary — is an error, compared on path-shaped tokens so prose
+boundaries cannot cry wolf. Amendment (c) is enforced by a `needs` chain over the `mutating` leaves,
+measured against the real `tick.frontier`: research leaves still launch together, one mutator advances
+per tick, and a FAILED mutator hands the lane on (so serialization never became a second way for one bad
+leaf to sink a batch). Heterogeneity is by MODEL only — `model_ref`, named around the
+`mutations._FIELD_ALIASES` `model`→`model_tier` collision — and `forbidden_declarations()` asserts no
+persona-shaped field exists, making amendment (a) a standing check rather than a comment. C2.3 ships
+`harness/fanout_measure.py` + `python -m harness fanout-measure` + the documented procedure, reporting
+`inconclusive` for a sub-5-point delta (and for a delta under the arms' own within-arm spread),
+`not_token_matched`, and `insufficient_trials` — exit 0 for every honest verdict. **DISCOVERY:**
+`Capability.MUTATING` was a declared-but-inert enum member until this atom (nothing in `src/` branched on
+it); the chain is its first reader, and `inert-surface-baseline.json` shrank 156→155 in the same commit.
+**VC partially proved:** all 8 leaves terminal, no two mutators concurrent on any tick, one FAILED leaf
+still derives DONE. Per-child cost + one-click kill (C1.4/C1.5), parent-context preservation (C1.1) and
+the live end-to-end 8-wide `subagent_run` drive plus its real-work harness verdict are deferred to
+**WF2WOR-5**, which owns the production call site and depends on this atom.
 
 **Done when:** C2.1: a leaf without an explicit objective/output-format/boundary fails compilation and off-format output is caught; C2.2: capability research|mutating is enforced (two mutating leaves never run concurrently), leaves are homogeneous-by-default with optional per-leaf model pinning and no persona field; C2.3: the token-matched measurement harness reports a sub-5-point delta as inconclusive; VC: an 8-wide fan-out on real work passes and the verdict is logged
 

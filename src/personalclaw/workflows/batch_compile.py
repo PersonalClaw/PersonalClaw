@@ -24,14 +24,55 @@ What the compiled run ships with (R2):
 * **Per-leaf error isolation.** One leaf failing never rejects the batch: the whole point of five
   parallel investigations is that four still return.
 
-Pure compilation. `compile_batch` takes task descriptions and returns a spec plus lint findings; the
+**The leaf CONTRACT is the load-bearing artifact, not the leaf's identity (amendment (b), C2.1).**
+Every leaf declares three things and none of them are optional: an **objective**, a declared
+**output format**, and a **boundary** — what it must not touch. The evidence review behind the
+amendment is why: across 1,642 annotated traces, "disobey role specification" is the 2nd-RAREST of
+14 failure modes (1.5%) while specification drift is 11.8% and verification ~23.5%, and the one
+place a "roles help" result survived scrutiny it was the differing INSTRUCTIONS doing the work
+(ChatEval's identical-role arm scored exactly the single-agent number). So the compile refuses an
+under-specified leaf and spends nothing on who the leaf is pretending to be.
+
+All three declarations ride into the leaf's own PROMPT. That is not decoration: the engine's
+`output_contract` REJECTS off-format output, and a contract the worker was never shown is a gate
+that fails every single time. Same for the boundary — a boundary nobody told the worker about is a
+compile-time comment.
+
+**`boundary` is not `writes`, and conflating them would lose both.** `writes` is a POSITIVE
+declaration (the paths this leaf will write) and exists for the compiler to detect SIBLING
+collisions — it is coordination data between leaves. `boundary` is a NEGATIVE declaration (what
+this leaf must not touch) and exists for the WORKER — it is instruction content, the active
+ingredient the evidence points at. They are duals, not complements: an empty `writes` does not mean
+"the boundary is everything", and a boundary says nothing about what the rest of the tree may
+receive. They meet in exactly one place — a leaf that declares a write INSIDE its own boundary has
+declared it will do the thing it declared it must not do, which is a contradiction only the author
+can resolve, so the compile refuses it (`boundary_contradicts_writes`).
+
+**Homogeneous by default, heterogeneous by MODEL only (amendment (a)).** A leaf inherits the
+parent's agent binding unless it pins one, and may pin a different `model` — the single measured
+heterogeneity win in the literature (up to 44% accuracy at matched cost). There is deliberately NO
+persona/role field on `LeafTask`: the best-powered direct test of personas (162 roles, 4 model
+families, 2,410 questions) found no improvement with per-persona effects "largely random", and
+persona churn is bidirectional (one measured case fixed 4% while breaking 18%), which is strictly
+worse than a uniform loss for an autonomous system because it destroys reproducibility.
+
+**Writes stay single-threaded (amendment (c), C2.2).** `mutating` leaves are serialized against each
+other WITHIN the run by a `needs` chain, so two of them can never be in flight together, while
+research leaves stay fully parallel. Measured against the real frontier rather than assumed: a
+`needs` predecessor satisfies its edge once it is TERMINAL (done, failed or skipped alike), so a
+failed mutating leaf hands the lane to the next one instead of stranding the chain — which is what
+keeps serialization from quietly becoming a second way for one bad leaf to sink the batch.
+
+Pure compilation. `compile_batch` takes leaf contracts and returns a spec plus lint findings; the
 caller starts the run.
 """
 
 from __future__ import annotations
 
+import json
+import posixpath
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any
 
@@ -144,17 +185,56 @@ def leaf_tool_posture(capability: Capability, declared: list[str] | None = None)
     }
 
 
+#: Minimum length for a declared objective/boundary. Not style policing — a two-word objective
+#: ("check things") carries no more specification than an empty one, and the whole reason C2.1
+#: exists is that specification drift is 11.8% of measured multi-agent failures while role confusion
+#: is
+#: 1.5%. A floor that admits "x" would make the requirement satisfiable without satisfying it.
+MIN_DECLARATION_CHARS = 12
+
+
 @dataclass
 class LeafTask:
-    """One task in a batch, with everything the compile needs to harden it."""
+    """One leaf's CONTRACT — the load-bearing artifact of a fan-out (amendment (b)).
+
+    `objective`, `output_format` and `boundary` are REQUIRED positionally-declarable fields with no
+    defaults, deliberately: a dataclass default is an unsupplied input that satisfies a gate nobody
+    supplied, and this contract exists precisely to refuse the under-specified leaf. A caller that
+    cannot say what a leaf is for, what shape its answer takes, and what it must not touch has not
+    yet decided what to delegate.
+
+    There is NO persona/role field, and adding one would contradict the evidence this contract is
+    built on (see the module docstring). Heterogeneity is `model`, which is the one measured win.
+    """
 
     task: str
+    #: What this leaf is FOR, in the author's words. Rides into the prompt: an objective the worker
+    #: never saw is a compile-time comment.
+    objective: str
+    #: The shape the answer must take, as prose the worker reads (`output_schema` is the mechanical
+    #: half the ENGINE checks). Both are required together because they fail differently: prose
+    #: without a schema is unenforced, and a schema the worker never saw rejects every attempt.
+    output_format: str
+    #: What this leaf must NOT touch. A NEGATIVE declaration for the worker — the dual of `writes`,
+    #: not a restatement of it (module docstring). Rides into the prompt for the same reason.
+    boundary: str
     agent: str = ""
+    #: Per-leaf model pin (amendment (a)): homogeneous by default, heterogeneous by MODEL. Empty
+    #: means "inherit the parent's binding", which is what makes homogeneity the default rather
+    #: than a thing every caller has to remember to ask for.
+    #:
+    #: Named `model_ref` and NOT `model` on purpose: `mutations._FIELD_ALIASES` already maps the
+    #: author-facing name `model` onto `model_tier` (WF2-R20d), so a `workflow_edit` op saying
+    #: `fields: {model: "..."}` on a compiled leaf would silently rewrite the TIER and leave the pin
+    #: untouched — the author would then debug why their pin "did not apply" while looking at a key
+    #: that was never written.
+    model_ref: str = ""
     capability: Capability = Capability.RESEARCH
     #: Paths this leaf will write. Declared, not inferred — the single-writer lint can only catch a
     #: : collision it was told about, and an inferred path list would produce confident
     #: false warnings.
     writes: list[str] = field(default_factory=list)
+    #: The MECHANICAL half of `output_format`, compiled into the engine's `output_contract`.
     output_schema: dict[str, Any] | None = None
     timeout_secs: int = DEFAULT_LEAF_TIMEOUT_SECS
 
@@ -168,6 +248,28 @@ class LeafTask:
         words = re.findall(r"[a-z0-9]+", (self.task or "").lower())[:4]
         stem = "_".join(words) or "task"
         return f"{stem}_{index}"[:48]
+
+    def prompt(self) -> str:
+        """The leaf's task with its contract attached, in the order a worker reads it.
+
+        The contract is IN THE PROMPT because the engine's `output_contract` rejects off-format
+        output before any binding resolves — and a format requirement the worker was never told
+        about is a gate that fails 100% of the time, which reads as a broken fan-out rather than as
+        a missing declaration. Same argument for the boundary: an unstated boundary is not a
+        boundary.
+        """
+        parts = [
+            f"Objective: {self.objective.strip()}",
+            self.task.strip(),
+            f"Required output format: {self.output_format.strip()}",
+            f"Boundary — do NOT touch: {self.boundary.strip()}",
+        ]
+        if self.output_schema:
+            # The literal schema, so the worker is held to the SAME shape `check_output_contract`
+            # will hold it to. A paraphrase would let the two drift, and the worker would satisfy
+            # the paraphrase and fail the check.
+            parts.append(f"Output must satisfy this JSON schema: {json.dumps(self.output_schema)}")
+        return "\n\n".join(parts)
 
 
 @dataclass
@@ -264,6 +366,111 @@ def capability_lint(leaves: list[LeafTask]) -> list[LintFinding]:
     return findings
 
 
+#: The contract fields a leaf may not leave blank, in the order a reader wants them named.
+_REQUIRED_DECLARATIONS = ("objective", "output_format", "boundary")
+
+#: A persona field would look like any of these. Asserted ABSENT rather than merely not-added:
+#: "we did not add one" is a fact about one commit, while a check is a fact about every future one,
+#: and amendment (a) is a standing prohibition rather than a one-time decision.
+FORBIDDEN_LEAF_FIELDS = frozenset({"persona", "role", "character", "personality", "style", "voice"})
+
+
+def contract_lint(leaves: list[LeafTask]) -> list[LintFinding]:
+    """Refuse a leaf that has not declared what it is for, what it returns, and what it must
+    not touch (amendment (b), C2.1).
+
+    An ERROR, not a warning, and that is the whole point of the row. The measured failure budget of
+    multi-agent systems goes to specification drift (11.8%) and verification (~23.5%), not to role
+    confusion (1.5%) — so an under-specified leaf is the failure mode, and compiling it anyway would
+    make the contract a suggestion. A blank-but-present declaration is treated identically to a
+    missing one: the field exists to carry specification, and whitespace carries none.
+    """
+    findings: list[LintFinding] = []
+    for index, leaf in enumerate(leaves):
+        node_id = leaf.node_id(index)
+        for name in _REQUIRED_DECLARATIONS:
+            value = str(getattr(leaf, name, "") or "").strip()
+            if not value:
+                findings.append(
+                    LintFinding(
+                        code="leaf_contract_missing",
+                        severity="error",
+                        message=(
+                            f"leaf {node_id!r} declares no {name} — every fan-out leaf needs an "
+                            "explicit objective, output format and boundary, because "
+                            "specification drift is the measured failure mode a fan-out actually "
+                            "dies of"
+                        ),
+                    )
+                )
+            elif len(value) < MIN_DECLARATION_CHARS:
+                findings.append(
+                    LintFinding(
+                        code="leaf_contract_thin",
+                        severity="error",
+                        message=(
+                            f"leaf {node_id!r} declares {name}={value!r}, under "
+                            f"{MIN_DECLARATION_CHARS} chars — a declaration this short carries no "
+                            "more specification than an empty one, so the requirement would be "
+                            "satisfiable without being satisfied"
+                        ),
+                    )
+                )
+    return findings
+
+
+def _within_boundary(path: str, boundary: str) -> bool:
+    """Whether a declared write path falls inside a declared boundary.
+
+    Path-shaped comparison, not substring: `writes=["reports/x.md"]` against
+    `boundary="report"` is NOT a contradiction (different directory), and a naive `in` would call it
+    one — a false error on a legitimate fan-out is how a gate gets disabled. Only tokens that LOOK
+    like paths are compared, because a boundary is usually prose ("the production database") and
+    prose has no path semantics to match against.
+    """
+    target = posixpath.normpath(path.strip().strip("/")) if path.strip() else ""
+    if not target or target == ".":
+        return False
+    for token in re.split(r"[\s,;]+", boundary):
+        candidate = token.strip().strip("'\"`()[]").rstrip(".")
+        if "/" not in candidate and "." not in candidate:
+            # Not path-shaped: a prose word. Comparing it would match on coincidence.
+            continue
+        fence = posixpath.normpath(candidate.strip("/")) if candidate else ""
+        if not fence or fence == ".":
+            continue
+        if target == fence or target.startswith(f"{fence}/"):
+            return True
+    return False
+
+
+def boundary_lint(leaves: list[LeafTask]) -> list[LintFinding]:
+    """Refuse a leaf that declares a write INSIDE its own boundary.
+
+    The one place `writes` and `boundary` meet (module docstring): they are duals, so most leaves
+    trip nothing here. But a leaf saying "I will write `db/schema.sql`" and "do not touch `db/`" has
+    declared it will do the thing it declared it must not do, and compiling it picks one of the two
+    meanings silently — the author is the only one who knows which.
+    """
+    findings: list[LintFinding] = []
+    for index, leaf in enumerate(leaves):
+        inside = [p for p in leaf.writes if _within_boundary(str(p), leaf.boundary)]
+        if inside:
+            findings.append(
+                LintFinding(
+                    code="boundary_contradicts_writes",
+                    severity="error",
+                    message=(
+                        f"leaf {leaf.node_id(index)!r} declares writes to "
+                        f"{', '.join(sorted(inside))} but its boundary excludes them "
+                        "— narrow the boundary or drop the writes; compiling it would pick one "
+                        "of the two meanings silently"
+                    ),
+                )
+            )
+    return findings
+
+
 def depth_lint(depth: int) -> list[LintFinding]:
     """Static half of dual depth enforcement.
 
@@ -286,6 +493,29 @@ def depth_lint(depth: int) -> list[LintFinding]:
     return []
 
 
+def forbidden_declarations() -> list[str]:
+    """Persona-shaped fields present on the leaf contract. Empty is the invariant (amendment (a)).
+
+    A function rather than a comment saying "we did not add one": the prohibition is standing, so it
+    has to be checkable by the gate on every future commit rather than true of the commit that wrote
+    it down. `FORBIDDEN_LEAF_FIELDS` names the shapes a persona would arrive under — a future author
+    reaching for `role` or `style` trips the same check as one reaching for `persona`.
+    """
+    return sorted(f.name for f in fields(LeafTask) if f.name in FORBIDDEN_LEAF_FIELDS)
+
+
+def mutating_chain(leaves: list[LeafTask]) -> list[str]:
+    """The node ids of the `mutating` leaves, in the order they will be forced to run.
+
+    Declaration order, which is the only order the author gave us. Alphabetical or
+    dependency-derived ordering would both be inventions, and an invented order on write-bearing
+    work is the kind of surprise that makes a fan-out unreproducible.
+    """
+    return [
+        leaf.node_id(i) for i, leaf in enumerate(leaves) if leaf.capability is Capability.MUTATING
+    ]
+
+
 @dataclass
 class CompileResult:
     """The compiled run, its findings, and whether it may start.
@@ -305,10 +535,47 @@ class CompileResult:
     #: that looks like a control while enforcing nothing is worse than an honest external contract.
     #: `unenforced()` names exactly which parts still need a seam.
     postures: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: The `mutating` leaves, in the order the emitted `needs` chain serializes them. A projection
+    #: of the spec, surfaced so a review surface can SAY "these three run one at a time" without
+    #: re-deriving the chain from the node tree — two derivations of one rule drift.
+    serialized: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not any(f.severity == "error" for f in self.findings)
+
+    def enforced(self) -> list[str]:
+        """What this compile actually makes true, and the seam that makes it true.
+
+        The paired half of `unenforced()`, and it exists because the honest list is only readable
+        against its complement: a caller shown only what is pending cannot tell whether the rest was
+        enforced or merely unlisted.
+        """
+        active = []
+        if self.compiled:
+            active.append(
+                "leaf contract (objective + output format + boundary): refused at compile, and "
+                "carried into the leaf prompt so the worker is held to what the engine checks"
+            )
+            active.append(
+                "declared output format: compiled into the engine's `output_contract`, which "
+                "`check_output_contract` enforces before any binding resolves"
+            )
+            # Reported only from TWO mutators up. With one there is no `needs` edge in the spec, so
+            # claiming serialization would be claiming a control the compile did not emit — a single
+            # mutating leaf cannot overlap anything, but nothing here made that true.
+            if len(self.serialized) > 1:
+                active.append(
+                    "mutating serialization: a `needs` chain over "
+                    f"{', '.join(self.serialized)} — the frontier will not make two of them "
+                    "ready at once (measured against `tick.frontier`)"
+                )
+            if any(p.get("model_ref") for p in self.postures.values()):
+                active.append(
+                    "per-leaf model pin: `config.model` threaded by `dispatch_stage` into "
+                    "`SubagentManager.spawn(model=...)`"
+                )
+        return active
 
     def unenforced(self) -> list[str]:
         """The posture items no seam applies yet.
@@ -337,6 +604,8 @@ class CompileResult:
             "findings": [f.to_dict() for f in self.findings],
             "spec": self.spec,
             "postures": self.postures,
+            "serialized": list(self.serialized),
+            "enforced": self.enforced(),
             "unenforced": self.unenforced(),
         }
 
@@ -367,11 +636,23 @@ def compile_batch(
                 ),
             )
         )
+    findings.extend(contract_lint(leaves))
     findings.extend(capability_lint(leaves))
+    findings.extend(boundary_lint(leaves))
     findings.extend(single_writer_lint(leaves))
 
     children: list[dict[str, Any]] = []
     postures: dict[str, dict[str, Any]] = {}
+    #: Writes stay single-threaded (amendment (c)): each `mutating` leaf `needs` the previous one,
+    #: so the frontier makes at most one of them ready at a time while every research leaf stays
+    #: fully parallel. MEASURED against `tick.frontier`, not assumed — the S48 note records what
+    #: assuming join semantics cost last time. Three properties came out of driving it: research
+    #: leaves all launch on tick 0 alongside the first mutator; the chain advances one mutator per
+    #: tick; and a FAILED mutator still hands the lane on, because `_visit_parallel` satisfies a
+    #: `needs` edge on any TERMINAL predecessor. That last one matters most — a chain that stalled
+    #: on a failure would have turned serialization into a second way for one bad leaf to sink a
+    #: batch, which is exactly what `join: quorum` exists to prevent.
+    previous_mutator = ""
     for index, leaf in enumerate(leaves):
         node_id = leaf.node_id(index)
         # ONLY keys the engine actually reads. Measured: an earlier version also emitted
@@ -382,17 +663,32 @@ def compile_batch(
         # keys that look like controls and enforce nothing, in a module whose whole subject is
         # least-privilege. Unenforced declarations now travel in `postures` below, where their name
         # says what they are.
-        config: dict[str, Any] = {"prompt": leaf.task, "model_tier": "standard"}
+        config: dict[str, Any] = {"prompt": leaf.prompt(), "model_tier": "standard"}
         if leaf.agent:
             config["agent"] = leaf.agent
+        if leaf.model_ref:
+            # Read by `dispatch_stage`, which threads it into `spawn(model=...)`. Emitted ONLY when
+            # pinned: an always-present `model: ""` would read in a spec as though every leaf were
+            # pinned to nothing in particular, and homogeneous-by-default has to be visible as the
+            # ABSENCE of a pin to mean anything.
+            config["model"] = leaf.model_ref
         contract = schema_to_contract(leaf.output_schema)
         if contract:
             config["output_contract"] = contract
-        children.append({"kind": "stage", "id": node_id, "config": config})
+        child: dict[str, Any] = {"kind": "stage", "id": node_id, "config": config}
+        if leaf.capability is Capability.MUTATING:
+            if previous_mutator:
+                child["needs"] = [previous_mutator]
+            previous_mutator = node_id
+        children.append(child)
         postures[node_id] = {
             **leaf_tool_posture(leaf.capability),
             "workspace_mode": "scratch",
             "timeout_secs": int(leaf.timeout_secs),
+            # The pin is REPEATED in the posture, not moved there: `config.model` is what the engine
+            # reads, and this is what a review surface renders. A posture that omitted it would show
+            # a fan-out's economics with the one heterogeneity knob invisible.
+            "model_ref": leaf.model_ref,
         }
 
     spec = {
@@ -414,7 +710,13 @@ def compile_batch(
         "origin": {"kind": "subagent-tool"},
         "project_id": project_id,
     }
-    return CompileResult(spec=spec, findings=findings, compiled=True, postures=postures)
+    return CompileResult(
+        spec=spec,
+        findings=findings,
+        compiled=True,
+        postures=postures,
+        serialized=mutating_chain(leaves),
+    )
 
 
 def lineage_env(*, run_id: str, project_id: str, node_id: str, depth: int) -> dict[str, str]:

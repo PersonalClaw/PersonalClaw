@@ -25,6 +25,7 @@ harness/
   diff.py        # git diff introspection (changed files/lines, fix-shaped commits)
   replay.py      # event-trace replay + metrics (dup rate, order, fanout, latency)
   baselines.py   # baseline gating (hard thresholds + drift; missing-scenario-fails)
+  fanout_measure.py # token-matched fan-out vs single-agent verdict (sub-5pt == inconclusive)
   cli.py         # python -m harness  validate | explain | run [--diff] | scan [--diff] | replay
   traces/        # recorded NDJSON event traces + baselines.json
   exemplars/     # (Session 4) per-slice runnable exemplars
@@ -68,6 +69,61 @@ kind, a dropped guard, a changed terminal state) changes the fold and fails the 
 (Success Criterion #4). No engine change was needed to record these — the workflow SSE tap at
 `SseRegistry.publish` already covers the `workflow:<run_id>` key.
 
+## Token-matched fan-out measurement (WF2WOR-9)
+
+`harness/fanout_measure.py` implements WORK-CONTAINERS amendment (e): **before any widening of the
+fan-out concurrency ceiling, a token-matched local comparison against the single-agent path on the
+same work, with a sub-5-point delta reported as `inconclusive`.**
+
+Why the tooling exists at all rather than an eyeballed A/B: the largest published fan-out win
+(+90.2%) came with **~3.75x the tokens**, and that paper's own regression says token usage alone
+explains **80%** of the outcome variance. An unmatched comparison measures the budget and credits
+the topology. Meanwhile the field's noise floor exceeds most of its reported architecture deltas
+(run-to-run variance 1-3 points; one scorer swap moved a result 79.0 -> 25.6; benchmarks run
+n=24-100). So the module's job is to **decline**, and it has five verdicts, three of which are
+refusals:
+
+| verdict | meaning |
+|---|---|
+| `fanout_wins` / `single_wins` | \|delta\| ≥ 5 points, token-matched, above the within-arm spread |
+| `inconclusive` | \|delta\| < 5 points, **or** a delta smaller than the arms' own spread |
+| `not_token_matched` | spends differ by more than 5% (or an arm spent nothing) |
+| `insufficient_trials` | fewer than 3 trials in an arm — n=1 cannot beat 1-3 point variance |
+
+### The procedure
+
+1. **Pick work both arms can do identically.** Read/analysis breadth is where fan-out has a measured
+   case; coupled work is where it measured **+0.9 points for +44% cost**, so record which you chose.
+2. **Run the fan-out arm** (a `compile_batch` batch — the leaf contract makes each leaf's objective,
+   output format and boundary explicit, which removes format error as a confound). Record each
+   trial's score in points and its **token spend**.
+3. **Run the single-agent arm on the SAME work**, adding samples until its spend lands within 5% of
+   the fan-out arm's. That is the token match: equal spend, not equal task count.
+4. **Three trials minimum per arm.** Fewer is not a measurement.
+5. Write the observations file and run it:
+
+```bash
+.venv/bin/python -m harness fanout-measure path/to/observations.json [--json]
+```
+
+```json
+{
+  "work": "rank 8 config files by risk (read-only analysis)",
+  "arms": {
+    "fanout": {"trials": [{"score": 62.0, "tokens": 41000}, ...]},
+    "single": {"trials": [{"score": 60.0, "tokens": 40500}, ...]}
+  }
+}
+```
+
+6. **Record the verdict in the plan's execution log verbatim, `inconclusive` included.** The exit
+   code is **0 for every honest verdict** — a non-zero on `inconclusive` would make the honest answer
+   look like a broken run, and amendment (e)'s risk register names "a plan that only ever reports
+   wins is not measuring" as the failure mode. Only a malformed observation file exits non-zero (2).
+
+Do not lower `INCONCLUSIVE_BAND_POINTS` to make a result presentable. The band is the literature's
+noise floor, not a preference.
+
 ## The scanner (Session 2)
 
 Seven pure-static checks, each with a stable check-id a rule spec references via its
@@ -106,6 +162,7 @@ Run on the repo venv, from the repo root:
 .venv/bin/python -m harness run T1.foo         # execute the task's required profiles
 .venv/bin/python -m harness run --diff         # diff-aware selection (Session 2)
 .venv/bin/python -m harness scan               # boundary scanner (Session 2)
+.venv/bin/python -m harness fanout-measure obs.json  # token-matched fan-out verdict (WF2WOR-9)
 ```
 
 ## The three spec kinds

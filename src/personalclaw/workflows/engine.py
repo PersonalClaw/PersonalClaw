@@ -519,6 +519,12 @@ async def dispatch_stage(
         # a wide run cannot starve other runs (WF2WOR-8 C1.4/C1.5).
         parent_run=(f"{ownership.OWNED_PREFIX}{run_id}" if run_id else ""),
         agent=str(cfg.get("agent", "") or ""),
+        # Per-leaf model pin (WORK-CONTAINERS amendment (a), WF2WOR-9). Homogeneous by DEFAULT: an
+        # absent `model` sends `None`, which is what makes `spawn` resolve the `orchestration` chain
+        # and inherit the parent's binding. Only a declared pin overrides it, because the one
+        # measured heterogeneity win in the fan-out literature is by MODEL, and passing `""` here
+        # would look like a pin to nothing rather than like no pin.
+        model=str(cfg.get("model", "") or "") or None,
         max_turns=int(cfg.get("max_turns", 0) or 0),
         cwd=cwd,
         silent=True,

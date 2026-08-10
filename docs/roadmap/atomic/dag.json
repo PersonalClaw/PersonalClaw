@@ -6425,13 +6425,13 @@
         {
           "id": "WF2WOR-9",
           "title": "Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment §'Contract changes to §3' (a-e) + §'The synthesis this plan adopts' + Amendment task table C2.1-C2.3, VC",
           "done_when": "C2.1: a leaf without an explicit objective/output-format/boundary fails compilation and off-format output is caught; C2.2: capability research|mutating is enforced (two mutating leaves never run concurrently), leaves are homogeneous-by-default with optional per-leaf model pinning and no persona field; C2.3: the token-matched measurement harness reports a sub-5-point delta as inconclusive; VC: an 8-wide fan-out on real work passes and the verdict is logged",
           "deps": [
             "WF2WOR-8"
           ],
-          "pr": ""
+          "pr": "#961"
         },
         {
           "id": "WF2WOR-10",
