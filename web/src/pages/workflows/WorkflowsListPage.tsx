@@ -196,7 +196,10 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     <div className="flex h-full flex-col">
       <TopBar
         left={<div className="flex min-w-0 items-center gap-m">
-          <span data-type="title-l" className="shrink-0 text-on-surface">Workflows</span>
+          {/* NOT `shrink-0`: that opted the title out of the slot's truncation and it ran 56px
+              under the control row at 390px. The "waiting on you" badge keeps its own
+              `shrink-0`, so the title is what yields — which is the right order anyway. */}
+          <span data-type="title-l" className="text-on-surface">Workflows</span>
           {needingInput > 0 && (
             <span className="shrink-0 text-warning text-[0.75rem]">{needingInput} waiting on you</span>
           )}

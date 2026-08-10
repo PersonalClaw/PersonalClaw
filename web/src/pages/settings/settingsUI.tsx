@@ -1,7 +1,10 @@
-import { useId, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { AlertTriangle } from 'lucide-react'
 import { spring, bounce } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
+import { Toggle } from '../../ui/Toggle'
+import { NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -86,5 +89,86 @@ export function SavedToast({ show }: { show: boolean }) {
           transition={bounce.playful} className="text-[0.75rem]" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
       )}
     </AnimatePresence>
+  )
+}
+
+/** A labelled config switch that patches one key and flashes its own "Saved ✓".
+ *
+ *  Five panels had declared this privately — Sources, Legibility, Ambient, Packs and
+ *  AgentDefaults — and four of the five were BYTE-IDENTICAL across all 12 lines, down to the
+ *  1500ms flash timeout. Their `cfg` prop wore five different names (`SourcesCfg`, `LegibilityCfg`,
+ *  `AmbientCfg`, `PacksCfg`, `AgentCfg`) that are each literally `Record<string, unknown>`, so even
+ *  the apparent type variation was five aliases for one type.
+ *
+ *  The fifth (AgentDefaults) adds `danger`: a warning glyph shown only while the switch is ON, for
+ *  a setting that loosens a safety default. That is a real distinction, so it lives here as an
+ *  opt-in prop rather than being flattened away — every other panel simply omits it.
+ *
+ *  Owning the flash state here is the point: five copies of "toggle, patch, flash for 1500ms" is
+ *  five places for that timing to drift, on rows that sit in the same settings tree and are read
+ *  as one family. */
+export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  /** `(key, value, onSaved)` — the panel's own config PATCH. Typed at its widest shape so a
+   *  panel whose callback declares `v: boolean` or a required `cb` still satisfies it. */
+  patch: (k: string, v: never, cb: () => void) => void
+  /** Show a warning glyph while ON — for a switch that relaxes a safety default. */
+  danger?: boolean
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const on = Boolean(cfg[field])
+  return (
+    <Row label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <SavedToast show={saved} />
+        {danger && on && <AlertTriangle size={14} className="text-warn" />}
+        <Toggle on={on} onChange={(v) => patch(field, v as never, flash)} label={label} />
+      </div>
+    </Row>
+  )
+}
+
+/** A labelled numeric config field that patches one key and flashes its own "Saved ✓" — the
+ *  `ToggleRow` sibling for a clamped number.
+ *
+ *  Sources and Ambient had declared this privately, BYTE-IDENTICAL, each alongside its own copy of
+ *  the same `num()` coercion helper. Both are folded in here.
+ *
+ *  SCOPE — this is the `cfg`/`field`/`patch` contract only, NOT every `NumberRow` in settings.
+ *  Three other panels declare a `NumberRow` on a genuinely different contract: Guardrails,
+ *  Durability and Chat take `{value, onCommit}` and are TOLD what to save, with the flash state
+ *  owned by the panel (and Guardrails' `onSave` returns a Promise it flashes off). Those are told
+ *  a value; this one patches by key. Picking a winner between the two shapes is a judgement about
+ *  which contract the settings panels should standardise on, so it stays an open question rather
+ *  than something a dedup decides quietly. AgentDefaults' `NumberRow` is cfg-driven too but adds
+ *  `suffix` + optional min/max/step and uses `Row` rather than `Field`; it is left alone here for
+ *  the same reason — its shape is a superset, and folding it in would mean changing its layout. */
+export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  min: number
+  max: number
+  /** `(key, value, onSaved)` — the panel's own config PATCH, typed at its widest shape. */
+  patch: (k: string, v: never, cb: () => void) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  // A key the backend has not written yet reads as NaN through Number(); fall back to `min` so the
+  // stepper starts at a legal value instead of showing NaN.
+  const raw = Number(cfg[field])
+  const value = Number.isFinite(raw) ? raw : min
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n as never, flash)} ariaLabel={label} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
   )
 }

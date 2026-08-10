@@ -161,7 +161,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
     <div ref={wrapRef} className="relative min-w-0">
       <div ref={probeRef} aria-hidden className="pointer-events-none invisible absolute -z-10 whitespace-nowrap">{strip}</div>
       {collapsed ? (
-        <CollapsedSegmented options={options} value={value} onChange={onChange} sm={sm} disabled={disabled} ariaLabel={ariaLabel} />
+        <CollapsedSegmented options={options} value={value} onChange={onChange} sm={sm} disabled={disabled} ariaLabel={ariaLabel} iconOnly={iconOnly} />
       ) : strip}
     </div>
   )
@@ -171,22 +171,35 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
  *  active option, opening the full option list in a Popover. Used only below the
  *  fit threshold; the expanded strip (with its liquid layoutId indicator) is the
  *  normal presentation. */
-function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel }: {
+function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel, iconOnly = false }: {
   options: SegOption[]; value: string; onChange: (k: string) => void
   sm: boolean; disabled: boolean; ariaLabel?: string
+  /** Drop the pill's own label + chevron too, leaving just the active option's glyph.
+   *  The collapsed pill is the LAST rung of the ladder, so when the caller is already
+   *  at its icon-only density this has to shrink with it: labelled, the pill is ~119px,
+   *  which still overflowed a phone header's ~42px control rail and rendered as a
+   *  clipped "☰ Li…". Icon-only it is ~32-40px and fits. The name survives on
+   *  `aria-label` (already set) and the popover still lists every option with its
+   *  full label, so nothing becomes unnameable. */
+  iconOnly?: boolean
 }) {
   const active = options.find((o) => o.key === value) ?? options[0]
   const ActiveIcon = active?.icon
+  // Without a glyph there would be nothing left to render, so keep the label as the
+  // fallback even when the caller asked for icon-only.
+  const bare = iconOnly && !!ActiveIcon
   return (
     <Popover
       placement="bottom"
       trigger={(open, toggle) => (
-        <button type="button" onClick={toggle} disabled={disabled} aria-label={ariaLabel} aria-expanded={open}
-          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]'}`}
+        <button type="button" onClick={toggle} disabled={disabled}
+          aria-label={ariaLabel ?? active?.label ?? active?.key} aria-expanded={open}
+          title={bare ? `${ariaLabel ? `${ariaLabel}: ` : ''}${active?.label ?? active?.key}` : undefined}
+          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
           style={fvs(550)}>
           {ActiveIcon && <ActiveIcon size={sm ? 12 : 15} className="shrink-0" />}
-          <span className="truncate">{active?.label ?? active?.key}</span>
-          <ChevronDown size={sm ? 12 : 14} className="shrink-0 text-on-surface-low" />
+          {!bare && <span className="truncate">{active?.label ?? active?.key}</span>}
+          {!bare && <ChevronDown size={sm ? 12 : 14} className="shrink-0 text-on-surface-low" />}
         </button>
       )}
     >

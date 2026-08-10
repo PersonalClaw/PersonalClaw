@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, ToggleRow } from './settingsUI'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
 // The editable legibility.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -62,19 +62,3 @@ export function LegibilityPanel() {
 }
 
 // ── field renderer ────────────────────────────────────────────────────────────
-function ToggleRow({ label, hint, cfg, field, patch }: {
-  label: string; hint?: string; cfg: LegibilityCfg; field: string
-  patch: (k: string, v: boolean, cb: () => void) => void
-}) {
-  const [saved, setSaved] = useState(false)
-  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
-  const on = Boolean(cfg[field])
-  return (
-    <Row label={label} hint={hint}>
-      <div className="flex items-center gap-2">
-        <SavedToast show={saved} />
-        <Toggle on={on} onChange={(v) => patch(field, v, flash)} label={label} />
-      </div>
-    </Row>
-  )
-}

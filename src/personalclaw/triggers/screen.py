@@ -437,7 +437,6 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "invoke-agent",  # same, with an agent persona
         "run-workflow",  # a whole workflow run
         "knowledge-persist",  # writes the knowledge store
-        "knowledge-maintain",  # rewrites/merges knowledge items
         "knowledge-consolidate",  # `apply: true` writes the consolidation
         "artifact-update",  # mutates an artifact
         "notification-digest",  # writes an inbox item

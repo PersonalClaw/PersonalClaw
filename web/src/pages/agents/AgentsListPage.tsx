@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
+import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -124,7 +124,12 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                 {native && (
                   <GroupSection title="Native" icon={Users} tone="var(--color-primary)" subtitle="Your PersonalClaw agent definitions — fully editable." count={native.agents.length}>
                     {native.agents.filter((a) => match(`${a.name} ${a.description ?? ''}`)).length === 0 ? (
-                      <EmptyState icon={Users} title="No native agents" hint="Create an agent to define its model, system prompt, skills, tools, triggers, and workflows." action={{ label: 'New agent', onClick: onCreate, icon: Plus }} />
+                      // The group is filtered by `match(q)` first, so without the `n` branch a
+                      // mistyped search reported "No native agents" — and offered to create one —
+                      // to a user whose list is full. Same shape the other list pages use.
+                      n
+                        ? <EmptyState icon={Search} title="No matching agents" hint="Try a different term." />
+                        : <EmptyState icon={Users} title="No native agents" hint="Create an agent to define its model, system prompt, skills, tools, triggers, and workflows." action={{ label: 'New agent', onClick: onCreate, icon: Plus }} />
                     ) : (
                       <div className="flex flex-col gap-s">
                         {native.agents.filter((a) => match(`${a.name} ${a.description ?? ''}`)).map((a, i) => (

@@ -798,7 +798,18 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
 
 /** Render one intent-outcome field's value by its declared type (mirrors the intents-tab
  *  OutcomeCard): booleans as Yes/No, numbers right-aligned, urls as links, tags as pills. */
-function OutcomeFieldValue({ field }: { field: IntentOutcomeField }) {
+/** Render one extracted outcome field by its declared `type`.
+ *
+ *  Exported because `KnowledgeListPage` renders the same fields in its outcome cards and had a
+ *  byte-identical copy — all 8 lines, every branch, differing only in that it re-declared the prop
+ *  as an inline `{ type: string; value: unknown }` instead of naming `IntentOutcomeField`. Two
+ *  copies of a type-dispatch table is the shape that rots quietly: adding a `date` or `currency`
+ *  case to one leaves the other rendering `String(value)`, and nothing fails.
+ *
+ *  Lives here rather than in `knowledgeMeta.ts` because that module is a `.ts` file of pure
+ *  helpers and this is JSX; the import already runs one-way (ListPage → Detail), so exporting it
+ *  adds no cycle. */
+export function OutcomeFieldValue({ field }: { field: IntentOutcomeField }) {
   const { type, value } = field
   if (value === null || value === undefined || value === '') return <span className="text-on-surface-low">—</span>
   if (type === 'boolean') return <span className="text-on-surface">{value ? 'Yes' : 'No'}</span>

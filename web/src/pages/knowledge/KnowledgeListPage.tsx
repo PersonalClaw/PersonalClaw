@@ -10,13 +10,12 @@ import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
-import { IconButton } from '../../ui/IconButton'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { Segmented } from '../../ui/forms'
 import { api, type KnowledgeIntent, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
 import { resolveType, relTime, fmtBytes, typeLabel } from './knowledgeMeta'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
-import { KnowledgeDetail } from './KnowledgeDetail'
+import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -366,19 +365,30 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
         <TopBar
           keepCornerPadding
           left={<span data-type="title-l" className="text-on-surface">Knowledge</span>}
+          // The ONE responsive header cluster (`HeaderActions`), like the other 26 header
+          // right-slots in the app. This page was hand-rolling a plain `flex` div with a bare
+          // `Segmented` + `IconButton` + `Button`, so nothing degraded: the slot measured
+          // **651px inside a 155px content box** at 390px — 496px of overflow, with Conflicts,
+          // Regenerate and "Add knowledge" off-screen and the "Knowledge" title squeezed to
+          // zero width. Still 364px over at 834px. Through the cluster the row sheds
+          // label → icon → `…` menu and the 5-option strip collapses to a single pill.
           right={
-            <div className="flex items-center gap-s">
-              <Segmented options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }]} value={view} onChange={(v) => setView(v as View)} />
+            <HeaderActions>
+              <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
+                options={[{ key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }]} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
-                <IconButton icon={Sparkles} size={40}
-                  label="Regenerate intelligence (items missing insights)"
-                  onClick={regenning ? undefined : regenerate}
-                  className={regenning ? 'animate-pulse pointer-events-none opacity-50' : ''} />
+                // `priority="low"` so this sheds into the `…` menu before the primary action —
+                // it is a maintenance nicety, not the reason anyone opens the page.
+                <HeaderControl icon={Sparkles} label="Regenerate intelligence" priority="low"
+                  hint="Re-derive insights for items missing them"
+                  disabled={regenning} onClick={regenning ? undefined : regenerate} />
               )}
               {view === 'intents'
-                ? <Button size="sm" className="h-10" onClick={() => setSelectedIntent({ id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false })}><Plus size={16} /> New intent</Button>
-                : <Button size="sm" className="h-10" onClick={onCreate}><Plus size={16} /> Add knowledge</Button>}
-            </div>
+                ? <HeaderControl icon={Plus} label="New intent" variant="primary" priority="primary"
+                    onClick={() => setSelectedIntent({ id: '', goal: '', enabled: true, enabled_for: [], propose_skill: false })} />
+                : <HeaderControl icon={Plus} label="Add knowledge" variant="primary" priority="primary"
+                    onClick={onCreate} />}
+            </HeaderActions>
           }
         />
       }
@@ -715,16 +725,6 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
 }
 
 /** Render one outcome's typed fields type-aware (number/date/url/boolean/tags/string). */
-function OutcomeFieldValue({ field }: { field: { type: string; value: unknown } }) {
-  const { type, value } = field
-  if (value === null || value === undefined || value === '') return <span className="text-on-surface-low">—</span>
-  if (type === 'boolean') return <span className="text-on-surface">{value ? 'Yes' : 'No'}</span>
-  if (type === 'number') return <span className="text-on-surface tabular-nums">{String(value)}</span>
-  if (type === 'url') return <a href={String(value)} target="_blank" rel="noreferrer" className="text-primary underline decoration-primary/40 break-all">{String(value)}</a>
-  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{String(t)}</span>)}</span>
-  return <span className="text-on-surface break-words">{String(value)}</span>
-}
-
 function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: string) => void }) {
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-container p-m flex flex-col gap-s">

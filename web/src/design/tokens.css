@@ -51,8 +51,14 @@
   --color-success: var(--color-ok);
   --color-warning: var(--color-warn);
   --color-error: var(--color-danger);
-  /* Ink for text/icons ON a solid danger surface (destructive buttons/badges). */
-  --color-on-danger: #ffffff;
+  /* Ink for text/icons ON a solid danger surface (destructive buttons/badges).
+     DARK's `--color-danger` is a LIGHT red (#f66c66), so white on it is only 2.89:1 — well
+     under AA. The deep-ember ink is 5.63:1 and is the same value `--color-on-primary-container`
+     already uses for dark-on-warm, so this stays inside the existing palette rather than
+     inventing a shade. Light overrides it back to white (its danger is a DEEP red, #af2f29,
+     where white measures 6.44:1) — the two themes genuinely need opposite inks, which is why a
+     single value could never satisfy both. */
+  --color-on-danger: #3f1008;
 
   /* ── brand gradient stops (coral-weighted spectrum) ── */
   --grad-1: #c85a48;
@@ -165,6 +171,9 @@
   --color-warn: #954c19;
   --color-danger: #af2f29;
   --color-info: #145cbf;
+  /* Light's danger is a DEEP red, so the ink flips back to white (6.44:1). See the dark
+     block's note: the two themes need opposite inks on this fill. */
+  --color-on-danger: #ffffff;
   --shadow-composer: 0 2px 8px -2px rgb(96 110 130 / 0.18);
   --shadow-menu: 0 0 20px rgb(96 110 130 / 0.16);
   --shadow-sheet: 0 16px 40px rgb(96 110 130 / 0.22);
