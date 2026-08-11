@@ -559,3 +559,45 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   that `skills` is vestigial (apps seed skills via `apps/skill_seed.py`), but the implementer must
   re-confirm and must check no shipped app declares a type before removing it.
   Deps `[]` — every file it touches is already shipped, so it is READY now.
+
+- **DONE `INU-8`** (inbox provider-seam resolution) — app-contributed inbox sources now resolve, and the
+  #47 guard can finally see the class it was written for.
+  **The atom's own premise was wrong, and the correction is the durable lesson.** It claimed "18
+  declarable types vs 14 handlers → `agent`/`inbox`/`notification`/`skills` unhandled." That came from
+  measuring the gap with the guard's OWN single-line regex, which silently skips multi-line
+  `register_type_handler(` calls — and the skipped ones were exactly those types. Multiline-aware, all
+  18 had a registration. Do not measure a gap with the instrument you suspect of under-reporting.
+  **The real defect was subtler and worse-hiding:** `inbox` mapped to `EntitySeamHandler`, whose
+  `create()` RUNS the manifest factory while `register()` is a deliberate no-op — so an app's provider
+  was built at enable-time and thrown away, and `get_default_provider` still read only the entry-point
+  group. Declarable → installs clean → silently dead: same #47 class via a different mechanism.
+  `KnowledgeTypeHandler` (WS-1) and `ChannelTypeHandler` are the precedent for graduating a type off the
+  seam no-op once a registry has a real consumer, so the atom's design steps 2/3/4/6 applied unchanged.
+  **Shipped:** `inbox_providers/registry.py` (instances keyed by `source_name` — the manifest factory
+  already ran and may close over app config, so it cannot be re-instantiated; the lambda-wrapper
+  "normalise to a class" alternative is rejected in the docstring with the reason); `InboxTypeHandler`
+  on the standard `load_factory` + `ProviderSettings` path; `get_default_provider` precedence
+  app-instance → entry-point `cls()` → native → filesystem, with the stale `SEAM LIMIT` paragraph
+  replaced by the real contract; real deregistration.
+  **`agent`/`notification`/`skills` KEPT — the atom's "vestigial → remove" hypothesis was refuted by
+  census:** `native-skills` declares `skills`, `native-agents` declares `agent`, `filesystem-inbox`
+  declares `inbox`; removing any would have broken shipped native apps. The guard now enforces that each
+  seam registration carries a non-empty `source_of_truth`, so the allowlist lives in code at the
+  registration rather than a drifting test-side list.
+  **Not inert:** bundled `filesystem-inbox` declares `type: inbox`, so the gateway's
+  `get_default_provider("filesystem")` now resolves the app-registered instance today (verified
+  `FilesystemSourceProvider` carries zero instance state, so behaviour is equivalent; falls back to the
+  entry-point class when disabled). Pinned by a test.
+  **Verified by removal, not assertion:** temporarily restoring the `inbox` → `EntitySeamHandler`
+  registration turned the e2e suite red (`3 failed, 4 passed`, failing at `assert [] ==
+  ['fixture-inbox']`), then the file was restored byte-identically.
+  **Gate (re-run independently by the driving session):** `make lint` clean (mypy 798 files);
+  inbox/app-manifest/entity-seam/agent-reference/inert-surface **94 passed**; `-k "inbox or provider or
+  manifest"` **942 passed / 4 skipped / 1 xfailed**; `reference/providers.md` regenerated with **no
+  drift**. No test or baseline weakened.
+  **Hand-off:** CE-8 part 1 and EIAT-2 are now unblocked — their app-side adapters were already written
+  and inert, waiting on exactly this seam.
+  **Residual, deliberately out of scope:** the gateway still asks for `"filesystem"` by name; nothing
+  lets a user SELECT a source (no `InboxConfig.source` field). Adding one pulls in the full config
+  round-trip plus a frontend control, which this atom's done_when does not list and whose consumer is
+  CE-8/EIAT-2 — a follow-up row for whoever lands CE-8 part 1.
