@@ -8,7 +8,8 @@
     "typecheck:web": "npm run typecheck --workspace=web",
     "test:web": "npm run test --workspace=web",
     "smoke:render": "node scripts/render_smoke.mjs",
-    "hooks:install": "sh scripts/install_git_hooks.sh"
+    "hooks:install": "sh scripts/install_git_hooks.sh",
+    "postinstall": "sh scripts/install_git_hooks.sh"
   },
   "devDependencies": {
     "playwright": "^1.62.1"

@@ -44,10 +44,11 @@ submit it under the project's license. A CI check enforces it on every PR; an
 unsigned commit fails. If you forget, `git commit --amend -s` (or `git rebase
 --signoff`) fixes it.
 
-**So you never forget:** run `npm run hooks:install` once (also installs the
-pre-commit lint and pre-push gates). It adds a `prepare-commit-msg` hook that
-appends the `Signed-off-by` trailer automatically at commit time — you won't
-need `-s`. The sign-off must match your commit author, so set a real
+**So you never forget:** `npm install` in your clone installs the git hooks for
+you (its `postinstall` runs `hooks:install`; run that directly if you skipped
+it). One of them is a `prepare-commit-msg` hook that appends the
+`Signed-off-by` trailer automatically at commit time, so you won't need `-s`.
+The sign-off must match your commit author, so set a real
 `git config user.name`/`user.email` first (not the git default placeholder).
 
 ## Doctrine for all new work
@@ -193,7 +194,8 @@ make web-build
 # run an isolated dev gateway (state under ./.dev-home, never ~/.personalclaw)
 make serve
 
-# one-time: repository-owned git hooks (pre-commit lint + pre-push render-smoke) + browser
+# git hooks (DCO sign-off, pre-commit lint, pre-push gates) install with npm install;
+# this re-runs it explicitly. Then the browser the render smoke needs.
 npm run hooks:install
 npx playwright install chromium
 ```
@@ -235,6 +237,13 @@ lockfile skew), typecheck, vitest, build, render smoke — automatically wheneve
 outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and CI's
 `web` job repeats it on every PR. To smoke a live dev gateway instead of the
 static server: `PC_SMOKE_URL=http://127.0.0.1:10000 npm run smoke:render`.
+
+The same pre-push hook also checks **Python lint** (black, isort, flake8 over
+`src/personalclaw`, `tests`, `harness`, the same scope as CI) whenever outgoing
+commits touch those paths. pre-commit only formats what a commit *stages*, so
+commits made before the hooks were installed, or with `--no-verify`, would
+otherwise reach CI unformatted. If it fails, run `make format` then `make lint`
+and commit the result.
 
 The same bar applies to dependency updates: a Dependabot or manual bump of
 React or the build toolchain merges only after this gate is green — reviewing
