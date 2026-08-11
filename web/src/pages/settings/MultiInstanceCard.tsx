@@ -166,7 +166,8 @@ function AddInstanceForm({ ext, schema, onDone }: {
         </div>
       )}
       <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={saving || !name.trim()}>{saving ? 'Creating…' : 'Create'}</Button>
+        <Button size="sm" onClick={submit} disabled={saving || !name.trim()}
+          disabledReason={!name.trim() ? 'Enter a name first' : undefined}>{saving ? 'Creating…' : 'Create'}</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {error && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>

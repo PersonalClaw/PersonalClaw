@@ -82,7 +82,8 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}
+            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
         </FormFooter>
       </div>
     )

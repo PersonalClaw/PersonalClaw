@@ -241,7 +241,8 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
           </div>
           <div className="flex items-end gap-s">
             <div className="flex-1"><TextInput value={name} onChange={setName} placeholder="My theme" /></div>
-            <Button size="sm" onClick={save} disabled={!name.trim() || !!busy}><Plus size={15} /> {busy === 'save' ? 'Saving…' : 'Save theme'}</Button>
+            <Button size="sm" onClick={save} disabled={!name.trim() || !!busy}
+              disabledReason={!name.trim() ? 'Name the theme first' : undefined}><Plus size={15} /> {busy === 'save' ? 'Saving…' : 'Save theme'}</Button>
           </div>
         </Field>
         {err && <p className="mt-s text-danger text-[0.8125rem]">{err}</p>}

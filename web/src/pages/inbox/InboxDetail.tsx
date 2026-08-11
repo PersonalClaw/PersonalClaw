@@ -175,7 +175,8 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
               <Button size="sm" variant="secondary" onClick={generate} disabled={busy === 'draft'}>{busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
               {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} disabled={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
               {canReply ? (
-                <Button size="sm" onClick={send} disabled={busy === 'send' || !draft.trim()}>{busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply</Button>
+                <Button size="sm" onClick={send} disabled={busy === 'send' || !draft.trim()}
+                  disabledReason={!draft.trim() ? 'Write a reply first' : undefined}>{busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply</Button>
               ) : (
                 <span title="This item's source doesn't support replies (notifications are read-only)." className="inline-flex"><Button size="sm" variant="ghost" disabled><Send size={14} /> Send reply</Button></span>
               )}
