@@ -228,36 +228,86 @@ def parse_exec_state() -> dict:
         return {}
 
 
-# ── autonomous driver state (launchd headless ticks — the headless window) ──
+# ── autonomous execution state (in-session scheduled ticks) ──
 
 DRIVER_DIR = WORKSPACE / "roadmap-driver"
-DRIVER_LOG = DRIVER_DIR / "tick.log"
+DRIVER_LOG = DRIVER_DIR / "tick.log"  # launchd-era; kept only for provenance, no longer read
+#: This session's implementation-subagent transcripts — the live "is an atom being
+#: built right now" signal, since in-session execution has no lock file.
+SUBAGENT_DIR = (
+    Path("~/.claude/projects/-Users-golani-PersonalProjects-PersonalClaw").expanduser()
+    / "2c96fd5d-a253-48ed-8c32-ff5c3e4330df"
+    / "subagents"
+)
 DRIVER_LABEL = "com.keyurgolani.roadmap-driver"
 
 
 def parse_driver_state() -> dict:
-    """Make the background driver legible: whether launchd has it loaded, the recent
-    tick decisions (FIRE/NOOP/STALL/DONE), and OUR open PR stack in base→tip order.
-    All best-effort — a missing file / unloaded job degrades to a clear off/unknown."""
-    loaded = False
+    """Make autonomous execution legible: which driver is actually running the loop, the
+    recent tick outcomes, and OUR open PR stack in base→tip order.
+
+    **The driver is the live agent session, not launchd.** The launchd jobs were
+    deliberately UNLOADED (owner decision, 2026-08-10) after a guard bug in the headless
+    tick killed 37 healthy runs; the loop now runs as scheduled ticks inside a live
+    session. So the truth about ticks comes from ``.roadmap-exec-state.json`` — one
+    ``tick_<UTC>`` key written per completed tick — and NOT from ``roadmap-driver/tick.log``,
+    which froze the moment launchd was unloaded. Reading the stale log here is what made
+    this panel report a driver that had not run in hours as though it were live.
+
+    launchd is still probed, but only to assert it is OFF: if a job ever comes back while
+    a session is also ticking, two drivers would race for the same lock, and saying so is
+    more useful than silently preferring one.
+    """
+    launchd_loaded = False
     try:
         uid = os.getuid()
         out = sh(f"launchctl print gui/{uid}/{DRIVER_LABEL} 2>/dev/null", timeout=8)
-        loaded = bool(out.strip())
+        launchd_loaded = bool(out.strip())
     except Exception:
-        loaded = False
+        launchd_loaded = False
 
+    # Ticks come from exec-state: one key per COMPLETED tick, newest last. Each carries
+    # the atom, the outcome, and (for a health fix) what it repaired.
     ticks: list[dict] = []
-    if DRIVER_LOG.exists():
-        try:
-            lines = [ln for ln in DRIVER_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
-            for ln in lines[-60:]:
-                parts = ln.split(" ", 2)
-                if len(parts) >= 2:
-                    msg = parts[2] if len(parts) > 2 else ""
-                    ticks.append({"ts": parts[0], "verb": parts[1], "msg": msg})
-        except OSError:
-            pass
+    try:
+        st = parse_exec_state() or {}
+        for key in sorted(k for k in st if k.startswith("tick_")):
+            v = st[key] if isinstance(st[key], dict) else {}
+            stamp = key[len("tick_") :]
+            # TWO key shapes live in this file: the current `YYYYMMDDTHHMMSSZ`, and 36
+            # legacy `YYYY-MM-DD<letter>` keys from earlier sessions that carry a DAY but
+            # no clock. Slicing the legacy shape as if it had a time produced garbage like
+            # `0T:05:-3`, so each shape is parsed as what it actually is.
+            if len(stamp) >= 15 and stamp[8:9] == "T":
+                iso = (
+                    f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T"
+                    f"{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}Z"
+                )
+            elif len(stamp) >= 10 and stamp[4] == "-":
+                iso = f"{stamp[0:10]} (no clock)"  # legacy day-only key
+            else:
+                iso = stamp
+            outcome = str(v.get("outcome") or "")
+            atom = str(v.get("atom") or "")
+            # The verb is derived from the outcome text the tick recorded about itself.
+            up = outcome.upper()
+            if up.startswith("DONE") or " DONE" in up[:12]:
+                verb = "DONE"
+            elif "FIXED" in up:
+                verb = "FIX"
+            elif "BLOCKED" in up:
+                verb = "BLOCKED"
+            elif "PARTIAL" in up:
+                verb = "PARTIAL"
+            else:
+                verb = "TICK"
+            ticks.append({"ts": iso, "verb": verb, "msg": f"{atom} — {outcome}"[:200]})
+    except Exception as exc:  # noqa: BLE001 — narrow enough: this block only reads JSON
+        # Loudly, because a silent [] here is indistinguishable from "the loop never ran"
+        # — which is exactly how a typo'd loader name made this panel claim no ticks
+        # existed while exec-state held 62 of them.
+        logger_warn(f"driver ticks unreadable ({type(exc).__name__}: {exc})")
+        ticks = []
 
     # OUR open PRs (--author @me), ordered base→tip; a chain only if a PR bases on
     # another of ours (not main). Drops any head==base==main corruptor.
@@ -299,35 +349,56 @@ def parse_driver_state() -> dict:
     #   * the last FIRE line — when the running tick started
     #   * the newest per-run log — its sink, growing as it works
     #   * the repo's current branch + dirty files — what it is actually building
+    # In-session execution has no lock dir and no run log — those were launchd's. What
+    # DOES mean "an atom is being built right now" is an implementation subagent whose
+    # transcript is still growing, so that is what this measures. A transcript touched
+    # within IDLE_SECS is live; anything older is a finished agent.
     live: dict = {"running": False}
-    lock = DRIVER_DIR / ".tick.lock"
+    IDLE_SECS = 300
     try:
-        if lock.is_dir():
-            started = lock.stat().st_mtime
-            live["running"] = True
-            live["elapsed_min"] = max(0, int((time.time() - started) // 60))
-            runs = sorted(
-                DRIVER_DIR.glob("tick-*.run.log"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if runs:
-                live["run_log"] = runs[0].name
-                live["run_log_bytes"] = runs[0].stat().st_size
-        for t in reversed(ticks):
-            if t.get("verb") == "FIRE":
-                live["last_fire"] = t.get("ts", "")
+        agents = sorted(
+            SUBAGENT_DIR.glob("agent-*.jsonl"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        now = time.time()
+        for f in agents:
+            age = now - f.stat().st_mtime
+            if age <= IDLE_SECS:
+                live["running"] = True
+                live["agent_idle_secs"] = int(age)
+                live["agent_bytes"] = f.stat().st_size
+                # started ≈ the transcript's creation; birthtime where the FS has it
+                started = getattr(f.stat(), "st_birthtime", f.stat().st_ctime)
+                live["elapsed_min"] = max(0, int((now - started) // 60))
                 break
+        if not live["running"] and agents:
+            live["last_agent_min_ago"] = int((now - agents[0].stat().st_mtime) // 60)
     except OSError:
         pass
+
+    # A worktree holding commits with no PR is also in-flight work, and it survives a
+    # subagent exiting — so it is the second, slower signal.
+    try:
+        wts = [
+            ln.split()[0]
+            for ln in (sh("git worktree list 2>/dev/null") or "").splitlines()
+            if ln.strip() and "/private/tmp/" in ln
+        ]
+        live["worktrees"] = len(wts)
+    except Exception:
+        pass
+
     live["branch"] = sh("git branch --show-current") or ""
     dirty = sh("git status --porcelain 2>/dev/null")
     dirty_lines = [ln for ln in dirty.splitlines() if ln.strip()]
     live["dirty_files"] = [ln[3:] for ln in dirty_lines][:6]
     live["dirty_count"] = len(dirty_lines)
+    if ticks:
+        live["last_tick"] = ticks[-1].get("ts", "")
 
     return {
-        "loaded": loaded,
+        "launchd_loaded": launchd_loaded,
         "ticks": ticks,
         "stack": stack,
         "stack_is_chain": is_chain,
@@ -775,20 +846,25 @@ def _render_working(exec_state: dict, git: dict, ready: list) -> str:
 def _render_driver(driver: dict) -> str:
     """The headless-operation window: is the launchd driver live, when did it last
     act and to what effect, and what open PR stack is it building."""
-    loaded = driver.get("loaded")
+    launchd_loaded = driver.get("launchd_loaded")
     ticks = driver.get("ticks") or []
     stack = driver.get("stack") or []
+    live = driver.get("live") or {}
 
-    # headline = last real OUTCOME, not the DASH/regen bookkeeping the tick emits
-    _DECISIONS = {"FIRE", "NOOP", "STALL", "DONE", "RECLAIM"}
-    last = next((t for t in reversed(ticks) if t.get("verb") in _DECISIONS), None)
+    # The headline is the LAST COMPLETED TICK, because that is what the session records.
+    last = ticks[-1] if ticks else None
     last_verb = last.get("verb") if last else ""
-    if not loaded:
-        dot, hdr = "off", "Driver NOT loaded"
-    elif last_verb == "STALL":
-        dot, hdr = "warn", "Driver loaded — STALLED (see last tick)"
+    # Health is about the LOOP, not about launchd: an in-session driver with a live
+    # subagent or a fresh tick is healthy. launchd being loaded is now a WARNING —
+    # two drivers would race for the same atom.
+    if launchd_loaded:
+        dot, hdr = "warn", "launchd job is loaded TOO — two drivers would race"
+    elif live.get("running"):
+        dot, hdr = "ok", "Session driver — building an atom now"
+    elif ticks:
+        dot, hdr = "ok", "Session driver — idle between ticks"
     else:
-        dot, hdr = "ok", "Driver loaded"
+        dot, hdr = "off", "No ticks recorded yet"
 
     last_html = ""
     if last:
@@ -799,15 +875,14 @@ def _render_driver(driver: dict) -> str:
         )
 
     verb_class = {
-        "FIRE": "fire",
         "DONE": "done",
-        "NOOP": "noop",
-        "STALL": "stall",
-        "WARN": "warn",
-        "RECLAIM": "warn",
+        "FIX": "fire",
+        "PARTIAL": "warn",
+        "BLOCKED": "stall",
+        "TICK": "noop",
     }
     # collapse consecutive identical (verb,msg) ticks into one ×N row (kills NOOP walls)
-    decisions = [t for t in ticks if t.get("verb") != "DASH"]
+    decisions = list(ticks)
     runs: list[dict] = []
     for t in decisions:
         key = (t.get("verb"), t.get("msg", ""))
@@ -833,14 +908,17 @@ def _render_driver(driver: dict) -> str:
         since = (
             f' <span class="drv-since">since {esc(r["first_ts"][11:19])}</span>' if cnt > 1 else ""
         )
+        ts = r["last_ts"]
+        # A current key renders as its clock; a legacy day-only key renders as the day.
+        shown = ts[11:19] if (len(ts) >= 19 and ts[10:11] == "T") else ts[:10]
         return (
             f'<li><span class="drv-verb {vc}">{esc(r["verb"])}</span>'
-            f'{span}<span class="drv-ts">{esc(r["last_ts"][11:19])}</span>'
+            f'{span}<span class="drv-ts">{esc(shown)}</span>'
             f'<span class="drv-msg">{esc((r["msg"] or "")[:110])}</span>{since}</li>'
         )
 
     tick_rows = "".join(_run_row(r) for r in reversed(runs[-10:])) or (
-        '<li class="muted">No tick log yet — driver has not run.</li>'
+        '<li class="muted">No ticks recorded in exec-state yet.</li>'
     )
 
     def pr_row(p: dict, i: int) -> str:
@@ -877,20 +955,15 @@ def _render_driver(driver: dict) -> str:
         stack_label = f"Open PRs ({len(stack)}) — independent, any merge order"
 
     # ── "Processing now" strip: LIVE truth, not exec-state's after-the-fact text ──
-    live = driver.get("live") or {}
     if live.get("running"):
-        mins = live.get("elapsed_min", 0)
-        bits = [f"<b>running {mins}m</b>"]
-        if live.get("last_fire"):
-            bits.append(f'started {esc(live["last_fire"][11:19])}Z')
-        if live.get("branch"):
-            bits.append(f'on <code class="br">{esc(live["branch"])}</code>')
-        if live.get("dirty_count"):
-            files = ", ".join(esc(f) for f in (live.get("dirty_files") or [])[:3])
-            more = f" +{live['dirty_count'] - 3} more" if live["dirty_count"] > 3 else ""
-            bits.append(f'editing {live["dirty_count"]} file(s): {files}{more}')
-        if live.get("run_log"):
-            bits.append(f'log {esc(live["run_log"])} ({live.get("run_log_bytes", 0)}B)')
+        bits = [f'<b>implementation agent live {live.get("elapsed_min", 0)}m</b>']
+        idle = live.get("agent_idle_secs")
+        if idle is not None:
+            bits.append(f"last wrote {idle}s ago")
+        if live.get("agent_bytes"):
+            bits.append(f'transcript {live["agent_bytes"] // 1024}KB')
+        if live.get("worktrees"):
+            bits.append(f'{live["worktrees"]} worktree(s) in flight')
         now_html = (
             '<div class="drv-now live"><span class="drv-pulse"></span>'
             '<span class="drv-nowlbl">Processing now</span>'
@@ -898,21 +971,24 @@ def _render_driver(driver: dict) -> str:
         )
     else:
         idle_bits = []
-        if live.get("last_fire"):
-            idle_bits.append(f'last tick fired {esc(live["last_fire"][11:19])}Z')
-        if live.get("branch"):
-            idle_bits.append(f'tree on <code class="br">{esc(live["branch"])}</code>')
-        idle_bits.append("next wakeup within 5 min")
+        if live.get("last_tick"):
+            idle_bits.append(f'last tick completed {esc(live["last_tick"][11:19])}Z')
+        last_ag = live.get("last_agent_min_ago")
+        if last_ag is not None:
+            idle_bits.append(f"no agent for {last_ag}m")
+        if live.get("worktrees"):
+            idle_bits.append(f'{live["worktrees"]} worktree(s) still on disk')
+        idle_bits.append("next tick on the session's schedule")
         now_html = (
             '<div class="drv-now idle"><span class="drv-pulse idle"></span>'
-            '<span class="drv-nowlbl">Idle between ticks</span>'
+            '<span class="drv-nowlbl">Between ticks</span>'
             f'<span class="drv-nowbody">{" · ".join(idle_bits)}</span></div>'
         )
 
     return (
         f'<section class="box drv"><h2 class="section">'
-        f'<span class="valdot {dot}"></span>Autonomous driver '
-        f'<span class="wn-meta">{esc(hdr)} · every-5-min launchd tick · one atom/run '
+        f'<span class="valdot {dot}"></span>Autonomous execution '
+        f'<span class="wn-meta">{esc(hdr)} · in-session scheduled ticks · one atom/tick '
         f'· PRs stack on the prior open one{(" · " if last_html else "")}</span>{last_html}</h2>'
         f"{now_html}"
         f'<div class="drv-cols">'
