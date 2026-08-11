@@ -252,7 +252,10 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
   const label = h.breaker_state === 'open'
     ? `${provider}: circuit open (${h.consecutive_failures} consecutive failures) — chain entries on this provider are skipped until it recovers`
     : h.breaker_state === 'half_open' ? `${provider}: recovering — next call probes it` : `${provider}: healthy`
-  return <span className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
+  // role="img": the dot is the ONLY carrier of the breaker state (no text equivalent
+  // beside it), and on a role-less span `aria-label` is a PROHIBITED attribute — the name
+  // is discarded, so a screen-reader user gets a coloured dot and nothing else.
+  return <span role="img" className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
 }
 
 function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {

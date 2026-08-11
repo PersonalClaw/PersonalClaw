@@ -154,7 +154,7 @@ export function Skeleton({ className = '' }: { className?: string }) {
  *  pages. Matches ListRow's padding/leading-icon so the swap to real data is calm. */
 export function ListSkeleton({ rows = 6 }: { rows?: number }) {
   return (
-    <div className="flex flex-col gap-s" aria-busy="true" aria-label="Loading">
+    <div className="flex flex-col gap-s" role="status" aria-busy="true" aria-label="Loading">
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="flex items-center gap-l rounded-lg bg-surface-container px-l py-l">
           <Skeleton className="size-10 shrink-0 rounded-lg" />
@@ -174,7 +174,7 @@ export function ListSkeleton({ rows = 6 }: { rows?: number }) {
  *  fetched via useCachedData (Chat, Voice, Inbox, Notifications, Agent defaults…). */
 export function FormSkeleton({ sections = 2, rows = 3, title = true }: { sections?: number; rows?: number; title?: boolean }) {
   return (
-    <div aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true" aria-label="Loading">
       {title && (
         <div className="mb-l space-y-2">
           <Skeleton className="h-5 w-40" />
@@ -202,7 +202,7 @@ export function FormSkeleton({ sections = 2, rows = 3, title = true }: { section
  *  cards. Use on the read-only dashboard-style panels (Overview, Security). */
 export function CardGridSkeleton({ cards = 4, cols = 2, title = true }: { cards?: number; cols?: number; title?: boolean }) {
   return (
-    <div aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true" aria-label="Loading">
       {title && (
         <div className="mb-l space-y-2">
           <Skeleton className="h-5 w-40" />

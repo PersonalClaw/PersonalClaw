@@ -66,7 +66,7 @@ export function NodeInspectorDrawer({ runId, nodeId, onClose }: {
     >
       <div data-testid="node-inspector-body" className="flex flex-col gap-l">
         {loading ? (
-          <div aria-busy="true" aria-label="Loading node detail" className="flex flex-col gap-l">
+          <div role="status" aria-busy="true" aria-label="Loading node detail" className="flex flex-col gap-l">
             <Skeleton className="h-5 w-24" />
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-16 w-full" />

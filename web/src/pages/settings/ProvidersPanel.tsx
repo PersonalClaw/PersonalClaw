@@ -186,7 +186,7 @@ function ProvidersSkeleton() {
     <div>
       <PanelHeader title="Providers" hint="Everything pluggable in the system, organized by the entity each provider plugs into. Enable a provider and configure it inline; a provider that serves two entities appears under each." />
       {Array.from({ length: 4 }).map((_, s) => (
-        <section key={s} className="mb-2xl" aria-busy="true" aria-label="Loading providers">
+        <section key={s} className="mb-2xl" role="status" aria-busy="true" aria-label="Loading providers">
           <div className="mb-1 flex items-center gap-2">
             <Skeleton className="size-4 rounded" />
             <Skeleton className="h-4 w-40" />
