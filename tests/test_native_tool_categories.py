@@ -70,6 +70,12 @@ _RESIDUAL_CORE_TOOLS = {
     # than owning either, so like get_context it is a cross-cutting core tool, not an
     # artifacts-category tool.
     "dashboard_tile_propose",
+    # template_save_from_session (WF2LEA-7) reads the SESSION's just-carried-out steps,
+    # checks the WORKFLOW library for an already-surfaced definition, and files into the
+    # LEARNING proposal queue — three categories, owning none of them. Same reason
+    # get_context and project_context_review sit here: a tool that spans categories in
+    # a category module would make that module the owner of things it does not own.
+    "template_save_from_session",
 }
 
 

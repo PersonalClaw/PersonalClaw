@@ -786,6 +786,33 @@ Find a skill by capability across your ENTIRE skill library — not just the ski
 }
 ```
 
+### `template_save_from_session`
+
+Propose saving the multi-step procedure just carried out in this session as a reusable workflow template. Files a DRAFT proposal for the user to accept or reject — it never writes a definition, so use it freely when the work looks repeatable (use workflow_author instead when the user asks to SAVE a workflow outright). A deterministic gate scores the steps first and may decline (one-step plans, no reusable placeholders, a template that already exists); the decline and its reason come back to you. Put {{placeholders}} wherever a value would differ on the next run — steps with nothing parameterizable are a recording of one run, not a template, and get declined.
+
+**Response type:** `template.save.proposal.result`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- `description` (string, optional) — One line on what the procedure accomplishes.
+- `name` (string, required) — Proposed template name: lowercase, digits, hyphens.
+- `steps` (array, required) — The procedure, one step per entry, in order. Use {{placeholders}} for values that change between runs.
+
+**Example — Propose the session's procedure as a reusable template (draft only):**
+
+```json
+{
+  "description": "Build and publish the nightly report",
+  "name": "nightly-report",
+  "steps": [
+    "fetch {{source_url}} and validate the payload",
+    "transform the result into {{format}}",
+    "publish it to {{target}} and verify the output"
+  ]
+}
+```
+
 ### `wait`
 
 Pause execution for a specified duration while preserving full session context. Use when waiting for external systems (code review, CI pipeline, deployment). Max 1800s (30 min).
