@@ -689,7 +689,7 @@ class TestGrillTree:
         # clarifying-assess pass OFF (the phases ARE the questions) + no save at gen time.
         assert seen["shape"] == "tree" and seen["assess"] is False and seen["save"] is None
         assert "meetup" in seen["goal"]
-        assert seen["recall_result"] == "PRIOR"  # recall wired to the memory seam
+        assert "PRIOR" in seen["recall_result"]  # recall wired to the memory seam
 
     def test_grill_tree_404_for_nonexistent_loop(self, state):
         r = _run(
@@ -1549,3 +1549,232 @@ class TestLifecycle:
             )
         )
         assert ok.status == 200
+
+
+class TestGrillSaveSeam:
+    """The grill SAVE seam (WF2LEA-7 clause D), driven through the REAL handler.
+
+    `grill.SaveFn` was declared (`grill.py:38`) and every call site passed None, so a
+    memory-checked decomposition never fed the memory it checked. The settle point is the launch
+    write that persists `phase_answers` — this is that write, exercised end to end.
+    """
+
+    def _make(self, state, **body):
+        base = {"kind": "goal", "task": "investigate the latency regression"}
+        base.update(body)
+        return _body(_run(H.api_loop_create(_req("POST", "/api/loops", state, body=base))))["id"]
+
+    def test_launch_persists_settled_grill_answers_as_lessons(self, state, monkeypatch):
+        """The wiring test: a PUT carrying answered phases must WRITE decisions.
+
+        Asserts on the rules reaching `write_lesson`, not on the call happening — a seam that calls
+        the store with nothing in it is the inert shape this whole atom is about.
+        """
+        written: list[tuple[str, str]] = []
+
+        class _Svc:
+            has_vector = True
+
+            def write_lesson(self, rule, category="knowledge", source="user_explicit", **kw):
+                written.append((rule, category))
+                return True
+
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.memory._get_provider", lambda state: object()
+        )
+        monkeypatch.setattr(
+            "personalclaw.memory_service.MemoryService.over_vector_store",
+            classmethod(lambda cls, vs: _Svc()),
+        )
+
+        cid = self._make(state)
+        r = _run(
+            H.api_loop_update(
+                _req(
+                    "PUT",
+                    f"/api/loops/{cid}",
+                    state,
+                    body={
+                        "kind_config": {
+                            "grill_phases": [
+                                {
+                                    "title": "Scope",
+                                    "steps": [
+                                        {"title": "Which store?", "prompt": ""},
+                                        {"title": "Which UI?", "prompt": ""},
+                                    ],
+                                }
+                            ],
+                            "phase_answers": {"p0s0": "sqlite", "p0s1": "the dashboard"},
+                        }
+                    },
+                    match_info={"id": cid},
+                )
+            )
+        )
+        assert r.status == 200
+        assert written, "the launch settled answers but persisted no decision — the seam is inert"
+        assert all(cat == "decision" for _rule, cat in written), written
+        assert any("sqlite" in rule for rule, _cat in written), written
+
+    def test_a_launch_with_no_grill_answers_writes_nothing(self, state, monkeypatch):
+        """The refusal path. An ordinary spec edit must not manufacture decisions."""
+        written: list[str] = []
+
+        class _Svc:
+            has_vector = True
+
+            def write_lesson(self, rule, **kw):
+                written.append(rule)
+                return True
+
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.memory._get_provider", lambda state: object()
+        )
+        monkeypatch.setattr(
+            "personalclaw.memory_service.MemoryService.over_vector_store",
+            classmethod(lambda cls, vs: _Svc()),
+        )
+        cid = self._make(state)
+        r = _run(
+            H.api_loop_update(
+                _req(
+                    "PUT",
+                    f"/api/loops/{cid}",
+                    state,
+                    body={"task": "investigate the latency regression deeply"},
+                    match_info={"id": cid},
+                )
+            )
+        )
+        assert r.status == 200
+        assert written == []
+
+    def test_an_unanswered_phase_settles_nothing(self, state, monkeypatch):
+        """Phases present but every answer deferred: an assumption must not become a lesson."""
+        written: list[str] = []
+
+        class _Svc:
+            has_vector = True
+
+            def write_lesson(self, rule, **kw):
+                written.append(rule)
+                return True
+
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.memory._get_provider", lambda state: object()
+        )
+        monkeypatch.setattr(
+            "personalclaw.memory_service.MemoryService.over_vector_store",
+            classmethod(lambda cls, vs: _Svc()),
+        )
+        cid = self._make(state)
+        _run(
+            H.api_loop_update(
+                _req(
+                    "PUT",
+                    f"/api/loops/{cid}",
+                    state,
+                    body={
+                        "kind_config": {
+                            "grill_phases": [
+                                {"title": "Scope", "steps": [{"title": "Which store?"}]}
+                            ],
+                            "phase_answers": {"p0s0": "you decide"},
+                        }
+                    },
+                    match_info={"id": cid},
+                )
+            )
+        )
+        assert written == []
+
+
+class TestGrillRecallReadsWhatSaveWrites:
+    """The reader half of the grill SAVE seam (WF2LEA-7 clause D).
+
+    The unwritten-key shape, caught by reading the reader: `write_lesson` stores `lesson.<hash>`
+    keys, and `get_semantic_context` EXCLUDES `lesson.%` by design
+    (`vector_memory._NON_FACT_KEY_CLAUSE` — a lesson is not a fact about the user). So a save wired
+    only to the fact block would persist decisions the recall could never see: the seam would look
+    complete and the pipeline would keep re-asking what the user had settled.
+    """
+
+    def _make(self, state, **body):
+        base = {"kind": "goal", "task": "plan the team meetup for next quarter"}
+        base.update(body)
+        return _body(_run(H.api_loop_create(_req("POST", "/api/loops", state, body=base))))["id"]
+
+    def test_recall_includes_the_lessons_block(self, state, monkeypatch):
+        seen = {}
+
+        async def _fake_grill(goal, *, shape, ask, recall=None, save=None, assess=True):
+            seen["recall_result"] = await recall("q") if recall else None
+            from personalclaw.grill import GrillResult
+
+            return GrillResult(shape="tree", memory_hits=1, phases=[])
+
+        monkeypatch.setattr("personalclaw.grill.grill", _fake_grill)
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.memory._get_provider", lambda _s: object()
+        )
+        monkeypatch.setattr(
+            "personalclaw.memory_service.MemoryService.over_vector_store",
+            classmethod(
+                lambda cls, vs: type(
+                    "S",
+                    (),
+                    {
+                        "semantic_context": lambda self, q, cap=1500: "FACTS",
+                        "lessons_context": lambda self: "SETTLED-DECISION",
+                    },
+                )()
+            ),
+        )
+        lid = self._make(state)
+        _run(
+            H.api_loop_grill_tree(
+                _req("POST", f"/api/loops/{lid}/grill-tree", state, body={}, match_info={"id": lid})
+            )
+        )
+        assert "SETTLED-DECISION" in seen["recall_result"], seen["recall_result"]
+        assert "FACTS" in seen["recall_result"], seen["recall_result"]
+
+    def test_a_lessons_failure_does_not_discard_the_facts(self, state, monkeypatch):
+        """Each half degrades on its own. Sharing one `try` meant a lessons error threw away facts
+        that had already been fetched — a partial degradation turned into total silence."""
+        seen = {}
+
+        async def _fake_grill(goal, *, shape, ask, recall=None, save=None, assess=True):
+            seen["recall_result"] = await recall("q") if recall else None
+            from personalclaw.grill import GrillResult
+
+            return GrillResult(shape="tree", memory_hits=1, phases=[])
+
+        def _boom(self):
+            raise RuntimeError("lessons store unavailable")
+
+        monkeypatch.setattr("personalclaw.grill.grill", _fake_grill)
+        monkeypatch.setattr(
+            "personalclaw.dashboard.handlers.memory._get_provider", lambda _s: object()
+        )
+        monkeypatch.setattr(
+            "personalclaw.memory_service.MemoryService.over_vector_store",
+            classmethod(
+                lambda cls, vs: type(
+                    "S",
+                    (),
+                    {
+                        "semantic_context": lambda self, q, cap=1500: "FACTS",
+                        "lessons_context": _boom,
+                    },
+                )()
+            ),
+        )
+        lid = self._make(state)
+        _run(
+            H.api_loop_grill_tree(
+                _req("POST", f"/api/loops/{lid}/grill-tree", state, body={}, match_info={"id": lid})
+            )
+        )
+        assert seen["recall_result"] == "FACTS"

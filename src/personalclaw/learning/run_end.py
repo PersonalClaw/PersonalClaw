@@ -34,6 +34,7 @@ What a terminal run contributes (§3.3):
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +49,12 @@ _MAX_EVIDENCE = 3
 #: Clip length for one evidence sample. Long enough to carry the failing assertion, short enough
 #: that a handful of them still fit a reviewable body.
 _EVIDENCE_CLIP = 400
+
+#: How many mined positive-path traces one terminal run may file. Bounded because the scan is over
+#: recent runs, not this run: without a cap, every terminal run would re-file the same standing set
+#: of recurring traces and bury the review queue. The dedup in `proposals.enqueue` collapses
+#: repeats, but filing work it then discards is waste worth not doing.
+_MAX_TRACE_DRAFTS = 2
 
 
 @dataclass
@@ -119,6 +126,112 @@ def _repro_command(run: Any) -> str:
     return f'workflow_start(name="diagnose-run", inputs={{"run_id": "{run.id}"}})'
 
 
+def _mine_positive_signals(run: Any, service: Any, *, journal: Any) -> int:
+    """Run the §3.2 PRODUCER passes for one terminal run. Returns how many drafts were filed.
+
+    Three producers whose detectors existed with nothing feeding them (`learning.mining`):
+
+    1. **Index this run's spec** so future runs have priors to match against. Without the write half
+       the similarity search queries an index nothing populates, and reports "no priors" forever.
+    2. **Similarity verdict on real matches** — the producer builds the
+       ``(run_id, cosine, age_days)`` triples ``detectors.similarity_verdict`` consumes. A BLIND
+       result (no embedder, nothing indexed) is a typed, recorded miss and files nothing:
+       proposing on an unmeasured signal is worse than not proposing.
+    3. **Intent inversion + positive-path traces** — the inverted intent feeds the index (step 1),
+       and a recurring successful sequence files its own draft.
+
+    Best-effort throughout: `capture` is called from `_finish`, the single terminal writer that must
+    not fail, so a mining error costs a draft and never the run's status.
+    """
+    filed = 0
+    try:
+        from personalclaw.learning import mining
+        from personalclaw.learning.detectors import Action, similarity_verdict
+    except Exception:
+        logger.debug("run-end: mining unavailable", exc_info=True)
+        return 0
+
+    # The inversion is computed BEFORE indexing because `spec_text` embeds the synthesized intent:
+    # logging the drift here is what makes "the run did something other than what was asked"
+    # observable rather than an internal detail of the vector we happen to store.
+    try:
+        inversion = mining.invert_intent(run, journal=journal)
+        if inversion.inverted:
+            logger.info(
+                "run %s: intent inversion — drift %.2f, unaddressed %s",
+                inversion.run_id,
+                inversion.drift,
+                ", ".join(inversion.unaddressed[:5]) or "(none)",
+            )
+    except Exception:
+        logger.debug("run-end: intent inversion failed", exc_info=True)
+
+    try:
+        mining.index_run_spec(run, service, journal=journal)
+    except Exception:
+        logger.debug("run-end: spec indexing failed", exc_info=True)
+
+    try:
+        found = mining.similar_run_matches(run, service, journal=journal)
+        if found.blind:
+            # Already recorded as a typed miss by the producer. Logged too, because a permanently
+            # blind detector must be visible in the logs of the box it is blind on.
+            logger.debug("run %s: similarity detector blind (%s)", run.id, found.miss)
+        else:
+            verdict = similarity_verdict(matches=found.matches, now=time.time())
+            if verdict.action == Action.AUTO_FILE.value:
+                if _file_similarity_draft(run, found, verdict):
+                    filed += 1
+            else:
+                logger.debug(
+                    "run %s: similarity declined (%s)", run.id, verdict.skip_reason or "n/a"
+                )
+    except Exception:
+        logger.debug("run-end: similarity pass failed", exc_info=True)
+
+    try:
+        traces, _miss = mining.positive_path_candidates(
+            workflow_name=str(getattr(run, "workflow_name", "") or "")
+        )
+        for trace in traces[:_MAX_TRACE_DRAFTS]:
+            if mining.file_positive_trace(
+                trace,
+                session_key=str(getattr(getattr(run, "origin", None), "session_key", "") or ""),
+            ):
+                filed += 1
+    except Exception:
+        logger.debug("run-end: positive-path mining failed", exc_info=True)
+    return filed
+
+
+def _file_similarity_draft(run: Any, found: Any, verdict: Any) -> bool:
+    """File the "you have built this N times" draft as a PENDING template proposal."""
+    from personalclaw.learning import proposals
+
+    name = str(getattr(run, "workflow_name", "") or "ad-hoc work")
+    priors = ", ".join(m[0] for m in found.matches[:8])
+    body = (
+        f"{len(found.matches)} recent run(s) match this plan's shape closely enough to be the same "
+        f"procedure.\n\n{verdict.reason}\n\nPrior runs: {priors}\n\n"
+        "Naming it as a template makes the next one a single call instead of a re-plan."
+    )
+    _v, prop = proposals.enqueue(
+        kind=proposals.Kind.TEMPLATE.value,
+        title=f"Repeated plan shape in {name}"[:120],
+        body=body,
+        target=f"similar:{name}",
+        provenance="inferred",
+        source_cadence="run_end",
+        run_id=str(getattr(run, "id", "") or ""),
+        evidence_strength="correlated",
+        confidence=0.55,
+        tags=["plan_similarity", "run_end"],
+        occurrences=len(found.matches),
+        min_evidence=1,
+    )
+    return prop is not None
+
+
 def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
     """Mine a terminal run's ledger into lesson proposals + procedural priors. Returns a report.
 
@@ -129,13 +242,19 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
     ``filtered`` (failures the env/unknown deny-filter dropped), ``skipped`` (failures the quota
     or a prior decision suppressed).
     """
-    report = {"proposed": 0, "procedural": 0, "filtered": 0, "skipped": 0}
+    report = {"proposed": 0, "procedural": 0, "filtered": 0, "skipped": 0, "mined": 0}
     if service is None or not getattr(service, "has_vector", False):
         return report
     if journal is None:
         from personalclaw.workflows import journal as journal_mod
 
         journal = journal_mod
+    # The POSITIVE half runs first and unconditionally, because it does not depend on a failure:
+    # §3.2's positive-path signals mine what WORKED, and gating them behind `if not events` (below)
+    # would mean a clean run — the only kind that can carry a successful trace — contributed
+    # nothing. This is the producer side of the similarity/inversion/trace detectors, which had no
+    # caller at all before now.
+    report["mined"] = _mine_positive_signals(run, service, journal=journal)
     try:
         events = journal.ledger(run.id, kinds={journal.STEP_FAILED})
     except Exception:

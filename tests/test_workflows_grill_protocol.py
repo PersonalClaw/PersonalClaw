@@ -463,3 +463,65 @@ def test_a_RISK_hit_grills_a_plan_the_classifier_called_standard():
     triggered, why = deep_triggered(Intent(rigor=Rigor.STANDARD), hits)
     assert triggered
     assert "destructive_op" in why
+
+
+# ── the SAVE seam (WF2LEA-7 clause D): a settled decision must persist ──
+
+
+def test_only_confirmed_answers_count_as_settled():
+    """`grill.SaveFn` was declared and every caller passed None, so a grill could settle a question
+    and forget the answer — the next pass re-asked what the user had already decided.
+
+    What counts as settled is the load-bearing distinction. An ASSUMPTION is the planner's guess,
+    and persisting it as a lesson would harden a guess into a standing instruction; an OPEN
+    QUESTION is by definition unsettled. Only the user's own answers, plus prohibitions,
+    may persist.
+    """
+    from personalclaw.workflows.grill_protocol import settled_decisions
+
+    questions = [
+        Question(key="q1", text="Which database?"),
+        Question(key="q2", text="Retry limit?", recommended="3"),
+        Question(key="q3", text="Deploy target?"),
+    ]
+    step = fold_answers(questions, {"q1": "postgres", "q2": "", "q3": ""})
+    settled = settled_decisions(step)
+
+    assert any("postgres" in s for s in settled), settled
+    # q2 fell to an ASSUMPTION (it had a recommendation) and q3 to an OPEN QUESTION.
+    assert not any("Retry limit" in s for s in settled), settled
+    assert not any("Deploy target" in s for s in settled), settled
+
+
+def test_a_deferral_is_never_settled():
+    """ "You decide" is the guess-as-requirement failure. It must not persist as a decision."""
+    from personalclaw.workflows.grill_protocol import settled_decisions
+
+    step = fold_answers([Question(key="q1", text="Which region?")], {"q1": "you decide"})
+    assert settled_decisions(step) == []
+
+
+def test_prohibitions_are_settled_and_labelled():
+    """A stated boundary is the most durable decision a grill produces, and it must be
+    distinguishable from a choice when a reviewer reads it back."""
+    from personalclaw.workflows.grill_protocol import settled_decisions
+
+    step = fold_answers(
+        [Question(key="prohibitions", text=BOUNDARY_QUESTION)],
+        {"prohibitions": "never touch production"},
+    )
+    settled = settled_decisions(step)
+    assert any(s.startswith("Prohibition:") and "production" in s for s in settled), settled
+
+
+def test_the_frontend_question_key_format_actually_folds():
+    """The inert-wiring trap, pinned: `_persist_grill_decisions` rebuilds the FE's questions
+    using `p<phase>s<step>` (LoopPlanReview.tsx:178). If that spelling drifts from the key the
+    answers dict uses, `fold_answers` sees every question as UNANSWERED and settles nothing — the
+    seam would be fully wired and silently persist zero decisions."""
+    from personalclaw.workflows.grill_protocol import settled_decisions
+
+    questions = [Question(key="p0s0", text="Which store?"), Question(key="p0s1", text="Which UI?")]
+    answers = {"p0s0": "sqlite", "p0s1": "the dashboard"}
+    settled = settled_decisions(fold_answers(questions, answers))
+    assert len(settled) == 2, settled
