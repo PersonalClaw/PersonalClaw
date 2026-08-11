@@ -545,6 +545,7 @@ WORKFLOW_PLAN_SCHEMA = ToolSchema(
         FieldSpec("goal", str, required=True, max_len=MAX_LONG_STRING),
         FieldSpec("rigor", str, max_len=16, allowed=_WF_RIGOR),
         FieldSpec("template", str, max_len=63, pattern=_WF_DEF_NAME_RE),
+        FieldSpec("project_id", str, max_len=MAX_SHORT_STRING),
     ],
 )
 
@@ -660,9 +661,13 @@ WORKFLOW_RESUME_SCHEMA = ToolSchema(
     tool_name="workflow_resume",
     fields=[
         FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
-        # `answer` is deliberately UNTYPED: an approval is a bool, a choice a string, a
-        # form an object. Constraining it here would reject a legitimate form answer, and
-        # the ask's own `validate_answer` already checks it against the gate's real shape.
+        # `answer` is deliberately UNTYPED -- but it must still be DECLARED. An approval
+        # is a bool, a choice a string, a form or a `revise` an object; `object` accepts
+        # all of them (`isinstance(x, object)` is always true) while keeping the field in
+        # `known_fields`, because `validate_tool_args` rejects any arg it has no FieldSpec
+        # for. The ask's own `validate_answer` checks the value against the gate's real
+        # shape, and `controller.resume` parses the `revise` verb.
+        FieldSpec("answer", object),
         FieldSpec("resume_token", str, max_len=64),
         FieldSpec("always_allow", bool, default=False),
     ],

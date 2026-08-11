@@ -1751,7 +1751,7 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
 
 ### `workflow_resume`
 
-Answer a workflow that is waiting on a human, or clear a pause. For an approval gate pass answer=true/false; for a choice or form pass the value or object. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
+Answer a workflow that is waiting on a human, or clear a pause. For an approval gate pass answer=true/false; for a choice or form pass the value or object. To change ONE step instead of accepting or rejecting the whole plan, pass answer={"revise": {"step_ref": "<step id>", "comment": "what to change"}} — that step's instruction is amended and the gate re-asks, leaving every other step exactly as it was. With no answer this just lifts a pause. Each answer is consumed once — calling twice will not approve twice. If several gates are pending you must name one with resume_token.
 
 **Response type:** `workflow.gate.resolved`
 
@@ -1759,7 +1759,7 @@ Answer a workflow that is waiting on a human, or clear a pause. For an approval 
 
 **Parameters:**
 - `always_allow` (boolean, optional) — Auto-approve this same operation for the rest of THIS run (cleared if the run is rewound).
-- `answer` (any, optional) — true/false for an approval; a value or object otherwise.
+- `answer` (any, optional) — true/false for an approval; a value or object otherwise; or {"revise": {"step_ref", "comment"}} to amend one step and re-ask.
 - `resume_token` (string, optional) — Which gate to answer (required if several are pending).
 - `run_id` (string, required) — The run id (from workflow_start).
 

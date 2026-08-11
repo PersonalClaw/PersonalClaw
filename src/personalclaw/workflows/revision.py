@@ -221,6 +221,120 @@ def merge_patches(spec: dict[str, Any], patches: list[Patch]) -> MergeResult:
     return result
 
 
+#: How a reviewer's comment is introduced into the step it revises. A marked block rather than a
+#: bare append: the worker re-running the step has to be able to tell the instruction it was given
+#: from the correction a human added to it, and an unlabelled sentence reads as part of the
+#: original.
+REVISE_MARKER = "Reviewer revision"
+
+
+def resolve_step_ref(root: dict[str, Any], step_ref: str) -> tuple[str, str, str]:
+    """Resolve a reviewer's `step_ref` to EXACTLY one node. Returns `(node_id, code, message)`.
+
+    Exactly one, or nothing. A `step_ref` that matches two nodes cannot be patched safely: the
+    merge addresses by id, so patching an ambiguous ref would edit whichever copy the walk reached
+    first and leave the other running the text the reviewer rejected — a half-applied revision,
+    which is worse than a refused one because the run carries on looking revised.
+    """
+    ref = str(step_ref or "").strip()
+    if not ref:
+        return "", "WF_REVISE_NO_STEP_REF", "a revise must name the step to change (`step_ref`)"
+    matches = _count_id(root, ref)
+    if matches == 0:
+        known = ", ".join(sorted(_ids_in(root))) or "none"
+        return (
+            "",
+            "WF_REVISE_UNKNOWN_STEP",
+            f"{ref!r} is not a step in this run (steps: {known})",
+        )
+    if matches > 1:
+        return (
+            "",
+            "WF_REVISE_AMBIGUOUS_STEP",
+            f"{ref!r} matches {matches} steps — a revise must name exactly one",
+        )
+    return ref, "", ""
+
+
+def comment_patch(
+    root: dict[str, Any], node_id: str, comment: str, *, requested_by: str = "user"
+) -> Patch | None:
+    """One `replace` patch carrying a reviewer's comment INTO the step that runs.
+
+    A `replace` rather than an `annotate`, and that is the whole point: an annotation records the
+    comment where only a reviewer reads it, so the step re-runs on the text the reviewer just
+    rejected. The comment has to reach the PROMPT for the revision to change anything, and the
+    prompt is in the spec the engine executes — which is what makes "what was approved is what
+    runs" a property of one document rather than an agreement between two.
+
+    The note is kept as well, so the revised step still says who asked for the change and why.
+    A step with no prompt (most actions and transforms) takes the note alone: there is no
+    instruction to amend, and inventing a `prompt` key on a node whose kind does not read one would
+    be a silent no-op dressed as an edit.
+
+    A GATE's prompt is deliberately left alone even though it has one. That string is the QUESTION
+    put to a human, not an instruction a worker follows — appending "be terser" to "Ship it?" would
+    corrupt the very ask the reviewer is answering.
+    """
+    import copy
+
+    found = _node_by_id(root, node_id)
+    if found is None:
+        return None
+    text = str(comment or "").strip()
+    if not text:
+        return None
+    node = copy.deepcopy(found)
+    config = dict(node.get("config") or {})
+    prompt = config.get("prompt")
+    if str(node.get("kind", "")) != "gate" and isinstance(prompt, str) and prompt.strip():
+        config["prompt"] = f"{prompt}\n\n---\n\n{REVISE_MARKER} ({requested_by}): {text}"
+        node["config"] = config
+    notes = list(node.setdefault("extra", {}).get("review_notes") or [])
+    notes.append({"comment": text, "by": requested_by})
+    node["extra"]["review_notes"] = notes
+    return Patch(op="replace", node_id=node_id, node=node, reason=text, requested_by=requested_by)
+
+
+def _node_by_id(node: Any, node_id: str) -> dict[str, Any] | None:
+    """The node dict with this id, or None. Same traversal as `_ids_in`, so a ref that
+    `resolve_step_ref` accepted is a ref this finds."""
+    if not isinstance(node, dict):
+        return None
+    if str(node.get("id", "")) == node_id:
+        return node
+    for child in node.get("children") or []:
+        found = _node_by_id(child, node_id)
+        if found is not None:
+            return found
+    for nested in (node.get("body"), node.get("default")):
+        if isinstance(nested, dict):
+            found = _node_by_id(nested, node_id)
+            if found is not None:
+                return found
+    for case in (node.get("cases") or {}).values():
+        found = _node_by_id(case, node_id)
+        if found is not None:
+            return found
+    return None
+
+
+def _count_id(node: Any, node_id: str) -> int:
+    """How many nodes carry this id. A COUNT, not a membership test: `_ids_in` returns a set, so
+    the duplicate that makes a ref unpatchable is exactly the fact a set discards."""
+    if not isinstance(node, dict):
+        return 0
+    total = 1 if str(node.get("id", "")) == node_id else 0
+    for child in node.get("children") or []:
+        total += _count_id(child, node_id)
+    for nested in (node.get("body"), node.get("default")):
+        if isinstance(nested, dict):
+            total += _count_id(nested, node_id)
+    for case in (node.get("cases") or {}).values():
+        total += _count_id(case, node_id)
+    return total
+
+
 def _ids_in(node: Any, out: set[str] | None = None) -> set[str]:
     out = set() if out is None else out
     if not isinstance(node, dict):

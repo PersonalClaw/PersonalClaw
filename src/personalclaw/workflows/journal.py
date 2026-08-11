@@ -75,6 +75,12 @@ GATE_CRITERION = "gate_criterion"
 #: A human answered a waiting gate (WF2-R7). Journaled with the answer so a later reader
 #: knows WHO decided what, not merely that the run continued.
 GATE_RESOLVED = "gate_resolved"
+#: A reviewer answered a gate with `revise{step_ref, comment}` (UP): one step was patched and the
+#: gate re-asks. A DISTINCT kind from `gate_resolved` on purpose — a revise is neither an approval
+#: nor a rejection, and folding it into the resolved event would make `introspection.gate_stats`
+#: count it as a said-no, reporting a reviewer who asked for a wording change as one who declined
+#: the work.
+GATE_REVISED = "gate_revised"
 EFFECT = "effect"
 #: A node wrote outside its declared `allowed_write_paths` (WF2-R19). Ledgered whether
 #: the mode was warn or reject — an escape a `warn` run continued past still has to be
@@ -164,6 +170,7 @@ LEDGER_KINDS = frozenset(
         GATE_REJECTED,
         GATE_CRITERION,
         GATE_RESOLVED,
+        GATE_REVISED,
         EFFECT,
         STEP_SCOPE,
         MUTATION_REJECTED,

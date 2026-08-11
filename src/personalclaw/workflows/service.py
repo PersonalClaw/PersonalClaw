@@ -1203,6 +1203,10 @@ def resume_run(
     When no token is given the newest pending continuation is used — a chat user says
     "approve it", not a 32-character token. If several gates are pending, the token becomes
     required rather than guessed: approving the wrong gate is worse than asking.
+
+    `answer` also carries the `revise{step_ref, comment}` verb, which `controller.resume`
+    recognises: one step is amended and the gate re-asks, instead of the reviewer having to
+    reject the whole plan and re-run it to get one sentence changed.
     """
     from personalclaw.workflows.human_input import list_continuations
 

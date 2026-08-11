@@ -144,6 +144,7 @@ describe('WORKFLOW_LIFECYCLE', () => {
       'workflow_attention',
       'workflow_needs_input',
       'workflow_gate_resolved',
+      'workflow_gate_revised',
       'workflow_spec_updated',
       'workflow_mutation_rejected',
       'workflow_forked',
