@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.workflows import store
+from personalclaw.workflows import provisioning, store
 from personalclaw.workflows.defs import WorkflowDefProvider
 from personalclaw.workflows.models import SPEC_SEMVER, Node, WorkflowDef, valid_name
 
@@ -107,6 +107,14 @@ class NativeWorkflowDefProvider(WorkflowDefProvider):
             payload["defaults"] = fields["defaults"]
         if "on_overlap" in fields:
             payload["on_overlap"] = str(fields["on_overlap"])
+        if isinstance(fields.get(provisioning.WORKSPACE_KEY), dict):
+            # The §4.1 `workspace:` block has to SURVIVE the save, because the applier reads it at
+            # RUN start — from the persisted def, not from whatever object authored it. This payload
+            # is an allowlist, so an unlisted key is dropped silently: measured, a compiled batch
+            # declaring `workspace: {mode: scratch}` round-tripped to a def with no block at all,
+            # and `declares_workspace` then answered False for every run. The declaration was
+            # correct at both ends and erased in the middle.
+            payload[provisioning.WORKSPACE_KEY] = dict(fields[provisioning.WORKSPACE_KEY])
 
         path = _def_path(name)
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -8,11 +8,17 @@ moment one child fails, so one bad leaf would sink a five-way fan-out — the ex
 still return". `join: quorum` with `quorum: 1` is what actually delivers it.
 
 **A config key the engine does not read is not a control.** An earlier version emitted `workspace`,
-`capability`, `tool_posture` and `timeout_secs` into node config; nothing in the engine reads any of
+`capability`, `tool_posture` and `timeout_secs` into node config; nothing in the engine read any of
 them, and `on_error: "continue"` is not a value it recognizes either. In a module whose
 whole subject
 is least-privilege, four keys that look like enforcement and enforce nothing is the worst possible
-failure — so unenforced declarations now travel under a name that says so.
+failure — so unenforced declarations travel under a name that says so.
+
+`capability` is the ONE that has since earned its place in node config (WF2WOR-5 C2): it is read by
+`engine.leaf_spawn_env`, which writes the leaf's read-only flag into the per-session spawn env, and
+`mcp_shared.leaf_tool_denial` refuses a denied tool at the handler on every call. The same rule
+decided both directions — the key was withheld while nothing read it, and is emitted now that
+something enforces it. `workspace` and `timeout_secs` remain out, and `unenforced()` still says so.
 
 **The leaf contract is refused at compile AND carried into the prompt.** A declared output format
 the worker never saw is a gate that fails 100% of the time, so the compile that requires the
@@ -152,24 +158,47 @@ def test_the_isolation_comes_from_a_join_policy_the_engine_READS():
 
 
 def test_the_node_config_carries_ONLY_keys_the_engine_reads():
-    """Measured: `workspace`, `capability`, `tool_posture` and `timeout_secs` were emitted into node
-    config and read by NOTHING; `on_error: "continue"` is not a value the engine recognizes either
-    (it checks `fail_run` and defaults to `null_continue`). Four keys that look like controls and
-    enforce nothing — in a module about least-privilege, that is the worst kind of bug."""
+    """Measured: `workspace`, `tool_posture` and `timeout_secs` were emitted into node config and
+    read by NOTHING; `on_error: "continue"` is not a value the engine recognizes either (it checks
+    `fail_run` and defaults to `null_continue`). Keys that look like controls and enforce nothing —
+    in a module about least-privilege, that is the worst kind of bug.
+
+    The rule is "only keys something READS", not a frozen list. `capability` joined the set in
+    WF2WOR-5 because it acquired a reader — `engine.leaf_spawn_env` turns it into the leaf's
+    read-only flag and `mcp_shared.leaf_tool_denial` enforces it per tool call. The other three are
+    still absent, and `unenforced()` still names them."""
     config = compile_batch(leaves(2)).spec["root"]["children"][0]["config"]
-    assert set(config) <= {"prompt", "model_tier", "agent", "model", "output_contract"}
+    assert set(config) <= {
+        "prompt",
+        "model_tier",
+        "agent",
+        "model",
+        "output_contract",
+        "capability",
+    }
+    for unread in ("workspace", "tool_posture", "timeout_secs", "on_error"):
+        assert unread not in config
 
 
 def test_the_unenforced_posture_travels_under_a_name_that_SAYS_SO():
     """A batch compiled with a read-only posture that nothing enforces is a batch running
     with ambient
-    write access and a reassuring payload. Naming it is what stops the caller believing it."""
+    write access and a reassuring payload. Naming it is what stops the caller believing it.
+
+    Both directions matter, so this holds the honest complement too: the tool-handler AND
+    workspace_mode lines both LEFT `unenforced()` in WF2WOR-5 when their seams were actually built,
+    and claiming a pending control that now exists understates the system exactly as badly as
+    claiming an absent one. `timeout_secs` stays pending because it is a real absence — the engine's
+    node timeout is per-RUN and there is no per-node override to bind to."""
     result = compile_batch(leaves(2))
     assert result.postures
     pending = result.unenforced()
-    assert any("tool-handler" in p for p in pending)
-    assert any("workspace" in p for p in pending)
     assert any("per-node override" in p for p in pending)
+    assert not any("tool-handler" in p for p in pending)
+    assert not any("workspace_mode" in p for p in pending)
+    enforced = result.enforced()
+    assert any("leaf_tool_denial" in e for e in enforced)
+    assert any("isolated workspace" in e for e in enforced)
 
 
 def test_the_posture_is_per_node_so_a_caller_can_apply_it():

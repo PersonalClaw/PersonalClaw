@@ -76,6 +76,11 @@ from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any
 
+# The spec key the run-start applier reads, imported rather than spelled again — a second spelling
+# of a provisioning key is exactly how this clause broke the first time.
+from personalclaw.workflows.provisioning import WORKSPACE_KEY
+from personalclaw.workflows.workspace import Mode
+
 #: Below this, a batch is not a batch. One task compiles to nothing — the caller spawns it directly,
 #: which is what keeps a one-off delegation free of a run record it does not need.
 COMPILE_THRESHOLD = 2
@@ -88,6 +93,13 @@ MAX_LEAVES = 24
 #: Per-leaf timeout. A batch where one leaf can hang forever is a batch that never reports, so the
 #: bound is per-leaf rather than per-run: four leaves that finished should not wait on the fifth.
 DEFAULT_LEAF_TIMEOUT_SECS = 900
+
+#: The isolation mode a compiled batch declares. `scratch` and not `worktree`: an ad-hoc fan-out has
+#: no repository to branch and no build to prepare, and `scratch` is in `ISOLATED_MODES` — so the
+#: run still never touches the user's real tree AND `stamp_run` still records a recoverable
+#: substrate path. Taken from the `Mode` enum rather than the literal string so a rename of the mode
+#: cannot leave this declaring a mode `parse_workspace` would refuse as unknown.
+BATCH_WORKSPACE_MODE = Mode.SCRATCH.value
 
 
 class Capability(str, Enum):
@@ -375,6 +387,59 @@ _REQUIRED_DECLARATIONS = ("objective", "output_format", "boundary")
 FORBIDDEN_LEAF_FIELDS = frozenset({"persona", "role", "character", "personality", "style", "voice"})
 
 
+def agent_lint(leaves: list[LeafTask]) -> tuple[dict[int, str], list[LintFinding]]:
+    """Resolve each leaf's declared agent through the roster; refuse one that does not exist.
+
+    Returns `({leaf_index: config_key}, findings)`.
+
+    Two decisions, both load-bearing and both measured against the runtime rather than assumed:
+
+    **Resolution goes THROUGH the roster, so a display-name reference works.** `roster.resolve`
+    slug-matches, which is what makes `"Deep Auditor"` find the config agent `"Deep Auditor"` and
+    survive a later rename to a different display spelling.
+
+    **What lands in `config["agent"]` is the roster entry's `name` — the CONFIG KEY — and NOT the
+    slug.** This is the whole reason resolution belongs here instead of writing the slug through:
+    `engine.dispatch_stage` reads `config["agent"]` and hands it to `SubagentManager.spawn`, whose
+    `_validate_agent` checks membership in `AppConfig.agents` — a dict keyed by the config key. A
+    slug like `my-researcher` is NOT a key of `{"My Researcher": ...}`, so persisting the slug would
+    make every batch naming a multi-word agent fail at spawn with "unknown agent" — turning a
+    rename-proofing measure into a runtime break. Slugs are the MATCHING key; the config key is the
+    BINDING value.
+
+    An unresolvable agent is an ERROR because `_validate_agent` would fail the spawn anyway (C1.3
+    made it a typed error rather than a silent downgrade). Catching it at compile costs nothing;
+    catching it at spawn has already minted a run whose branches all fail on a typo.
+    """
+    from personalclaw.workflows import roster
+
+    resolved: dict[int, str] = {}
+    findings: list[LintFinding] = []
+    for index, leaf in enumerate(leaves):
+        requested = (leaf.agent or "").strip()
+        if not requested:
+            # No pin: the leaf inherits the parent's binding, which is what homogeneous-by-default
+            # means. `spawn` treats an empty agent as "the default", so nothing is emitted.
+            continue
+        entry = roster.resolve(requested)
+        if entry is None:
+            findings.append(
+                LintFinding(
+                    code="unknown_agent",
+                    severity="error",
+                    message=(
+                        f"leaf {leaf.node_id(index)!r} names agent {requested!r}, which does not "
+                        "resolve to a configured agent — the spawn would fail with a typed "
+                        "'unknown agent' error once the run had already started, so it is refused "
+                        "here instead"
+                    ),
+                )
+            )
+            continue
+        resolved[index] = entry.name
+    return resolved, findings
+
+
 def contract_lint(leaves: list[LeafTask]) -> list[LintFinding]:
     """Refuse a leaf that has not declared what it is for, what it returns, and what it must
     not touch (amendment (b), C2.1).
@@ -575,6 +640,26 @@ class CompileResult:
                     "per-leaf model pin: `config.model` threaded by `dispatch_stage` into "
                     "`SubagentManager.spawn(model=...)`"
                 )
+            active.append(
+                "tool denials + read-only posture: `config.capability` → "
+                "`engine.leaf_spawn_env` → the per-session leaf env, enforced for every tool "
+                "call by `mcp_shared.leaf_tool_denial` (orchestration tools denied at every "
+                "depth; write tools denied to a research leaf)"
+            )
+            active.append(
+                "secret-filtered leaf env: `mcp_shared.leaf_env` strips credential-shaped keys "
+                "via `workspace.looks_secret` before the branch's session is created"
+            )
+            active.append(
+                "no double-execution: `dispatch_stage` takes a `leases.acquire_claim` on "
+                "`<run_id>:<node_id>` BEFORE spawning, so a second worker is refused"
+            )
+            active.append(
+                f"isolated workspace ({BATCH_WORKSPACE_MODE}): declared in the spec's top-level "
+                "`workspace:` block, which `provisioning.declares_workspace` reads and "
+                "`controller._provision_workspace` provisions at run start — RUN-scoped, so the "
+                "whole fan-out shares one isolated substrate and no branch touches the real tree"
+            )
         return active
 
     def unenforced(self) -> list[str]:
@@ -586,11 +671,6 @@ class CompileResult:
         """
         pending = []
         if self.postures:
-            pending.append(
-                "tool denials + read-only posture: needs the tool-handler depth-flag seam "
-                "(no per-context tool filtering exists today)"
-            )
-            pending.append("workspace_mode: needs the §4.1 workspace provisioning block (S49)")
             pending.append(
                 "timeout_secs: the engine's node timeout is per-RUN "
                 "(`services.node_timeout_total`); there is no per-node override to bind to"
@@ -640,6 +720,10 @@ def compile_batch(
     findings.extend(capability_lint(leaves))
     findings.extend(boundary_lint(leaves))
     findings.extend(single_writer_lint(leaves))
+    # Agent resolution is part of COMPILING, not a later concern: the resolved config key is what
+    # gets persisted into the spec, so it has to be decided before the spec exists.
+    resolved_agents, agent_findings = agent_lint(leaves)
+    findings.extend(agent_findings)
 
     children: list[dict[str, Any]] = []
     postures: dict[str, dict[str, Any]] = {}
@@ -663,9 +747,23 @@ def compile_batch(
         # keys that look like controls and enforce nothing, in a module whose whole subject is
         # least-privilege. Unenforced declarations now travel in `postures` below, where their name
         # says what they are.
-        config: dict[str, Any] = {"prompt": leaf.prompt(), "model_tier": "standard"}
-        if leaf.agent:
-            config["agent"] = leaf.agent
+        config: dict[str, Any] = {
+            "prompt": leaf.prompt(),
+            "model_tier": "standard",
+            # Emitted because `engine.leaf_spawn_env` NOW READS IT to set the leaf's read-only
+            # flag, which `mcp_shared.leaf_tool_denial` enforces at the tool handler (WF2WOR-5 C2).
+            # Before that seam existed this key was deliberately withheld — an unread config key
+            # that looks like a control is worse than an honest external contract. It has a reader
+            # now, so withholding it would leave every compiled leaf's capability unenforced.
+            "capability": leaf.capability.value,
+        }
+        if index in resolved_agents:
+            # The ROSTER-RESOLVED config key, not the raw string the caller typed. `dispatch_stage`
+            # reads this key (engine.py) and hands it to `spawn`, whose `_validate_agent` checks
+            # membership in `AppConfig.agents` — so what is persisted has to be a real config key.
+            # Writing the caller's raw text meant a display-name reference reached `_validate_agent`
+            # unresolved; writing the SLUG would fail the same check for any multi-word agent name.
+            config["agent"] = resolved_agents[index]
         if leaf.model_ref:
             # Read by `dispatch_stage`, which threads it into `spawn(model=...)`. Emitted ONLY when
             # pinned: an always-present `model: ""` would read in a spec as though every leaf were
@@ -683,7 +781,13 @@ def compile_batch(
         children.append(child)
         postures[node_id] = {
             **leaf_tool_posture(leaf.capability),
-            "workspace_mode": "scratch",
+            # RENDERED here, but no longer the ONLY place it appears — the authoritative
+            # declaration is the spec's top-level `workspace:` block below, which is the key
+            # `provisioning.declares_workspace` actually reads. While this was the only spelling,
+            # provisioning silently no-opped for every compiled batch: a live applier reading a key
+            # nothing wrote, which is the same defect `worktree_path` is the standing precedent for
+            # (provisioning.py's `workspace_state` note).
+            "workspace_mode": BATCH_WORKSPACE_MODE,
             "timeout_secs": int(leaf.timeout_secs),
             # The pin is REPEATED in the posture, not moved there: `config.model` is what the engine
             # reads, and this is what a review surface renders. A posture that omitted it would show
@@ -709,6 +813,19 @@ def compile_batch(
         # on the subagent prune cadence rather than the workflow one.
         "origin": {"kind": "subagent-tool"},
         "project_id": project_id,
+        # The TOP-LEVEL block, which is the one `provisioning.declares_workspace` reads and the
+        # run-start applier (`controller._provision_workspace` → `provisioning.provision`) acts on.
+        # Provisioning is RUN-scoped by design — there is no per-node provisioning anywhere in the
+        # engine — so a compiled batch gets ONE isolated workspace for the whole fan-out, which is
+        # what "each branch runs in an isolated workspace" means on this architecture: no branch
+        # touches the user's real tree.
+        #
+        # `scratch` is in `ISOLATED_MODES`, so `stamp_run` records `worktree_path` and §5.2's boot
+        # sweep can recognise the substrate after a kill. No `setup`/`teardown`/`preserve_patterns`
+        # are emitted: a compiled batch is an ad-hoc fan-out with no build to prepare, and inventing
+        # a preserve list would copy files nobody declared into the isolation they were copied to
+        # avoid.
+        WORKSPACE_KEY: {"mode": BATCH_WORKSPACE_MODE},
     }
     return CompileResult(
         spec=spec,

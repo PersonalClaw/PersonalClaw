@@ -236,6 +236,10 @@ async def api_def_save(request: web.Request) -> web.Response:
         # agent-provenance dry run, which exists for specs a model generated.
         provenance="user",
         strict=bool(body.get("strict", True)),
+        # The §4.1 `workspace:` block. Threaded so a caller that declares isolation actually gets
+        # it: without this the key is dropped before the save and the run-start applier finds
+        # nothing to provision.
+        workspace=body.get("workspace") if isinstance(body.get("workspace"), dict) else None,
     )
     _audit(
         request,
