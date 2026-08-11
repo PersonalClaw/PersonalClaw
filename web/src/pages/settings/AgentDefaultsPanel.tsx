@@ -193,7 +193,11 @@ function StrListField({ label, hint, cfg, field, patch }: {
             <button type="button" onClick={() => commit(list.filter((x) => x !== v))} aria-label={`Remove ${v}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
           </span>
         ))}
+        {/* A RAW input inside settingsUI's Field cannot claim the Field's published label — only the
+            form-family components read FieldLabelCtx. So it names itself, from `label`, which keeps
+            it correct if this component gains a second call site. */}
         <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Add path…"
+          aria-label={`Add to ${label.toLowerCase()}`}
           onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { commit([...list, adding.trim()]); setAdding('') } }}
           className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         {adding.trim() && (
