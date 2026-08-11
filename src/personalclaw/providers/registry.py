@@ -717,6 +717,56 @@ class KnowledgeTypeHandler(_TypeHandler):
             unregister_provider(name)
 
 
+class InboxTypeHandler(_TypeHandler):
+    """Handler for ``provider.type == 'inbox'`` extensions (INU-8).
+
+    Builds a :class:`~personalclaw.inbox_providers.base.MessageSourceProvider` via
+    the manifest factory and registers it in ``inbox_providers.registry`` so
+    ``inbox_providers.get_default_provider`` resolves the app's ``source_name`` —
+    the same ``load_factory`` + ``ProviderSettings`` path every other app provider
+    type uses. This graduates ``inbox`` from an :class:`EntitySeamHandler` no-op to
+    a real handler, exactly as ``knowledge`` and ``channel`` graduated before it:
+    the seam now has a consumer, so the instance must be kept, not dropped.
+
+    Before this handler the type was declarable-but-dead — the factory ran at
+    enable-time and its result was discarded, so an app's source could never be
+    resolved (resolution read only the ``personalclaw.message_source_providers``
+    entry-point group, which an installed app cannot contribute to). That is the
+    #47 class the manifest-vs-handler guard exists to prevent.
+
+    **Deregistration is load-bearing.** An unregistered source is a PHANTOM: a
+    disabled or uninstalled app whose ``source_name`` still answers
+    ``get_default_provider``, so the inbox appears to poll a source that is gone
+    (compare ``DutyGateTypeHandler``, where the analogous failure is a gate that
+    fails open). ``deregister`` therefore removes it by the same key ``register``
+    used — the provider's own ``source_name``.
+    """
+
+    def create(self, ext: RegisteredProvider) -> Any:
+        from personalclaw.providers.loader import load_factory
+        from personalclaw.providers.settings import ProviderSettings
+
+        config = ProviderSettings.load(ext.name)
+        factory = load_factory(ext)
+        return factory(config)
+
+    def register(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.inbox_providers.registry import register_source
+
+        register_source(instance)
+
+    def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
+        from personalclaw.inbox_providers.registry import unregister_source
+
+        # Key by the provider's own source_name (what register_source used), falling
+        # back to the extension name. Computed without a getattr default so ``ext`` is
+        # not dereferenced when the instance already carries a name (ext may be absent
+        # in direct handler tests) — the KnowledgeTypeHandler pattern.
+        name = getattr(instance, "source_name", None) or (getattr(ext, "name", "") if ext else "")
+        if name:
+            unregister_source(str(name))
+
+
 class EntitySeamHandler(_TypeHandler):
     """Handler for provider types that are *enable/disable + Settings* seams only.
 
@@ -950,13 +1000,12 @@ def get_provider_registry() -> ProviderRegistry:
         # _enable_one skips register() for a None instance, so there is still ONE source
         # of truth for the native provider.
         _registry.register_type_handler("knowledge", KnowledgeTypeHandler())
-        _registry.register_type_handler(
-            "inbox",
-            EntitySeamHandler(
-                source_of_truth="entry-point discovery (personalclaw.message_source_"
-                "providers) read by inbox.py / handlers_inbox; no in-memory registry.",
-            ),
-        )
+        # Real handler (INU-8): an app-contributed message source registers into
+        # inbox_providers.registry, which get_default_provider reads FIRST (ahead of
+        # the personalclaw.message_source_providers entry-point group an installed app
+        # cannot contribute to). Graduated from an EntitySeamHandler no-op — the seam
+        # now has a consumer, so dropping the instance would be the #47 dead end.
+        _registry.register_type_handler("inbox", InboxTypeHandler())
         _registry.register_type_handler(
             "notification",
             EntitySeamHandler(

@@ -740,34 +740,96 @@ class TestProviderConfigEntity:
         assert ProviderConfig.from_dict({"type": "model", "implementation": "mod:f"}).entity == ""
 
 
+def _handler_type_gaps(provider_types: set[str], handlers: set[str]) -> dict[str, list[str]]:
+    """Both #47 directions at once, over injectable inputs so each can be proven.
+
+    - ``handler_not_declarable``: a live handler whose type PROVIDER_TYPES omits —
+      install-BLOCKED (``ProviderConfig.validate`` rejects the manifest). Loud.
+    - ``declarable_no_handler``: a declarable type the runtime registers no handler
+      for — installs clean, then does nothing. SILENT, and the direction the guard
+      could not see before INU-8.
+    """
+    return {
+        "handler_not_declarable": sorted(handlers - provider_types),
+        "declarable_no_handler": sorted(provider_types - handlers),
+    }
+
+
+def _live_handler_types() -> set[str]:
+    """The types the runtime ACTUALLY registers, read from the built registry.
+
+    Not scraped from the source with a regex: ``register_type_handler("x", H())``
+    is often written across several lines, and a single-line regex silently saw only
+    14 of the 18 registrations — under-reporting the very thing this guard measures.
+    """
+    from personalclaw.providers.registry import get_provider_registry
+
+    # _type_handlers is the registry's internal map; reading it IS the measurement
+    # (mirrors tests/test_entity_seam_handlers.py), so the private access is the point.
+    return set(get_provider_registry()._type_handlers)
+
+
 class TestProviderTypesMatchHandlers:
     """#47: PROVIDER_TYPES (the manifest validator's allowlist) MUST equal the set of
-    provider types the runtime actually registers a handler for. A type with a live
-    handler but missing from PROVIDER_TYPES is install-blocked (ProviderConfig.validate
-    rejects it) — the split-era #1 'action rejected' class. 'prompt' regressed this
-    way (PromptTypeHandler existed; PROVIDER_TYPES omitted it)."""
+    provider types the runtime actually registers a handler for — in BOTH directions.
+    A type with a live handler but missing from PROVIDER_TYPES is install-blocked
+    (ProviderConfig.validate rejects it) — the split-era #1 'action rejected' class.
+    'prompt' regressed this way (PromptTypeHandler existed; PROVIDER_TYPES omitted it).
+    The reverse — declarable with no handler — installs clean and then silently does
+    nothing; ``inbox`` sat in a weaker form of that state until INU-8 (a handler that
+    ran the factory and discarded the instance), which is why this now asserts both
+    directions and why every seam-served type must NAME the mechanism serving it."""
 
     def test_provider_types_equal_registered_handlers(self):
-        import re
-        from pathlib import Path
-
         from personalclaw.apps.manifest import PROVIDER_TYPES
 
-        registry_py = (
-            Path(__file__).resolve().parent.parent
-            / "src"
-            / "personalclaw"
-            / "providers"
-            / "registry.py"
-        )
-        src = registry_py.read_text()
-        handlers = set(re.findall(r'register_type_handler\("([a-z_]+)"', src))
-        assert handlers, "no register_type_handler calls found — test needs updating"
-        missing = handlers - set(PROVIDER_TYPES)
-        assert not missing, (
+        handlers = _live_handler_types()
+        assert handlers, "no type handlers registered — test needs updating"
+        gaps = _handler_type_gaps(set(PROVIDER_TYPES), handlers)
+        assert not gaps["handler_not_declarable"], (
             f"provider types with a live handler but MISSING from PROVIDER_TYPES "
-            f"(install-blocked, #47/#1 class): {sorted(missing)}"
+            f"(install-blocked, #47/#1 class): {gaps['handler_not_declarable']}"
         )
+        assert not gaps["declarable_no_handler"], (
+            f"provider types declarable in a manifest with NO runtime handler "
+            f"(installs clean, then silently dead — the #47 class): "
+            f"{gaps['declarable_no_handler']}. Give it a handler, remove it from "
+            f"PROVIDER_TYPES, or register an EntitySeamHandler whose source_of_truth "
+            f"names the mechanism that really serves it."
+        )
+
+    def test_guard_sees_a_declarable_type_with_no_handler(self):
+        """The reverse direction must actually be able to fail: a synthetic declarable
+        type with no handler is reported (the old one-directional assertion could not
+        see this class at all)."""
+        gaps = _handler_type_gaps({"model", "ghost_type"}, {"model"})
+        assert gaps["declarable_no_handler"] == ["ghost_type"]
+        assert gaps["handler_not_declarable"] == []
+        # ...and the forward direction still fails on its own class.
+        forward = _handler_type_gaps({"model"}, {"model", "orphan_handler"})
+        assert forward["handler_not_declarable"] == ["orphan_handler"]
+
+    def test_seam_served_types_name_the_real_mechanism(self):
+        """A type served by a no-op EntitySeamHandler is 'allowlisted' only because it
+        carries the mechanism that really serves it in ``source_of_truth``. That reason
+        lives in CODE at the registration, not in a test-side allowlist that can drift
+        from it — so no type is left silently declarable-and-dead."""
+        from personalclaw.apps.manifest import PROVIDER_TYPES
+        from personalclaw.providers.registry import EntitySeamHandler, get_provider_registry
+
+        handlers = dict(get_provider_registry()._type_handlers)
+        seam_types = {
+            t
+            for t, h in handlers.items()
+            if isinstance(h, EntitySeamHandler) and t in PROVIDER_TYPES
+        }
+        assert seam_types, "expected at least one seam-served type (agent/notification/skills)"
+        for t in sorted(seam_types):
+            reason = getattr(handlers[t], "source_of_truth", "")
+            assert reason and reason.strip(), (
+                f"{t!r} is declarable and served by a no-op seam handler with no reason: "
+                f"it must name where the entity really lives, or leave PROVIDER_TYPES"
+            )
 
     def test_prompt_provider_manifest_validates(self):
         """Direct regression: a prompt-type provider manifest must pass validation."""
