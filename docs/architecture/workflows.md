@@ -79,6 +79,7 @@ while not terminal:
 | `grill_protocol.py` | the structured `rigor: deep` protocol: recommendation-bearing questions, the facts-vs-decisions channel split, adaptive pacing, stress probes, the Step-0 schema, frozen prohibitions |
 | `rigor.py` | the cheap end of the axis: `rigor: fast` + its auto-scheduled refinement gate, Specify's one-stage rewrite, the append-only acceptance ratchet, revise-spec-from-artifact |
 | `template_pipeline.py` | chat-session mining, discover-then-freeze candidates on the scope ladder, the `suggest_template` nudge with its anti-nag rules, entity scrubbing |
+| `template_store.py` | the state writer behind that pipeline (which stays pure): file-backed per-shape `NudgeState` so a cooldown or a permanent DECLINE outlives the process, and frozen `Candidate` templates so the same intent resolves to one graph across runs |
 | `eval_specs.py` | per-template eval specs derived from the template artifact — fixtures, structural and parameterization checks, and the named-not-graded judge surface |
 | `containers.py` | the Work board projection (state grouping, claim leases, per-section `/work` isolation), the substrate-checked boot sweep, and the project context block + wayfinder ledger contract |
 | `leases.py` | the flock-backed claim files behind `containers.claim`/`release`: `single_flight`-guarded read-modify-write over a per-target lease file whose `expires_at` outlives the process, so a claim stays truthful across a gateway kill |
