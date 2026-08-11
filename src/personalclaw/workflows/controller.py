@@ -253,6 +253,16 @@ class RunController:
         #: judge gate must avoid (WF2LOO-11). The active selection does not change mid-run, so
         #: re-resolving per gate would re-read the model store for an answer that cannot change.
         self._worker_model_cache: str | None = None
+        #: node id -> the fraction each of that node's prompt compactions freed (WV-12). Read by
+        #: `context_compaction.should_compact`: two consecutive compactions that each freed <10%
+        #: mean compaction has stopped helping this node, and it stops paying a summarizer for it.
+        #:
+        #: Keyed by node ID, not by instance PATH, on purpose. A loop body's iteration 40 is a
+        #: different path than iteration 39, so a path key would hand every iteration a fresh
+        #: empty history — and a long-horizon loop is exactly the shape whose prompt grows the
+        #: same way every cycle. Keying by id is what makes the rule able to observe repetition
+        #: at all.
+        self._compaction_saves: dict[str, list[float]] = {}
         #: Long-run watcher state (KNOWLEDGE-SYNTHESIS §4.1), keyed by the loop's path. Journaled
         #: on every cycle and replayed on resume: held only in memory it would reset on every
         #: gateway restart, which is precisely when a months-long watcher is most likely to be
@@ -1857,6 +1867,11 @@ class RunController:
             # from the run's worker axis; only the JUDGE branch reads it, so a run with no
             # cross_model gate pays nothing.
             worker_model=self._worker_model(),
+            # This node's compaction history (WV-12). `setdefault` so the list IDENTITY is stable
+            # across iterations — the ladder appends to it in place, and handing out a fresh copy
+            # each call would record saves nobody ever reads, leaving the anti-thrashing rule
+            # permanently looking at an empty history.
+            compaction_saves=self._compaction_saves.setdefault(node.id, []),
         )
         if total and total > 0:
             try:

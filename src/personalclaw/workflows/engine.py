@@ -35,6 +35,7 @@ from typing import Any
 
 from personalclaw.workflows import longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
+from personalclaw.workflows.compaction import complete_with_compaction
 from personalclaw.workflows.models import (
     Failure,
     FailureClass,
@@ -349,11 +350,17 @@ async def dispatch_infer(
     *,
     tiers: dict[str, str] | None = None,
     completion: Any = None,
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     """ONE bounded model call — no tools, no session, no spawn.
 
     `completion` is injected so tests can drive this without a provider; production
     passes `llm_helpers.one_shot_completion`.
+
+    The call goes through the compaction ladder (WV-12): a long-horizon prompt is
+    compacted proactively at ~80% of the bound model's window, and a length rejection
+    triggers one aggressive re-compaction + retry before the node fails. `compaction_saves`
+    is this node's compaction history, which the anti-thrashing rule reads.
     """
     cfg, failure = resolve_config(node, ctx)
     if failure:
@@ -375,7 +382,13 @@ async def dispatch_infer(
 
     want_json = bool(cfg.get("schema")) or str(cfg.get("output", "")) == "json"
     try:
-        text = await fn(prompt, use_case=use_case, output_type=dict if want_json else None)
+        text = await complete_with_compaction(
+            fn,
+            prompt,
+            use_case=use_case,
+            output_type=dict if want_json else None,
+            saves=compaction_saves,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # provider/transport/contract failures
@@ -1008,6 +1021,7 @@ async def dispatch_gate(
     mode: str = "background",
     worker_model: str = "",
     judge_model_resolver: Any = None,
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     """A checkpoint the engine — never the worker — resolves (WF2-R3).
 
@@ -1237,7 +1251,23 @@ async def dispatch_gate(
         pin = {"model": judge_model} if judge_model else {}
         for _ in range(samples):
             try:
-                text = await fn(instruction, use_case=use_case, output_type=None, **pin)
+                # Through the compaction ladder (WV-12), same as `infer`. A judge on a
+                # long-horizon loop reads the accumulated evidence, so its instruction is one
+                # of the two prompts that actually grows toward the window. The `model` pin is
+                # forwarded, not bypassed: the ladder must measure against the model that will
+                # RUN — a cross-family judge can have a different window than the worker axis,
+                # and budgeting against the wrong one is how the check silently stops applying.
+                text = await complete_with_compaction(
+                    fn,
+                    instruction,
+                    use_case=use_case,
+                    output_type=None,
+                    saves=compaction_saves,
+                    # Named, not `**pin`: the ladder types `model` as `str`, and the pin dict
+                    # is only ever that one key. Splatting it would erase the type here and
+                    # would hide a future key rename behind a runtime TypeError.
+                    model=str(pin.get("model", "")),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1757,6 +1787,12 @@ async def dispatch(
     #: only the JUDGE branch of `dispatch_gate` reads it, so a run with no cross_model gate is
     #: unaffected.
     worker_model: str = "",
+    #: This node's compaction-save history, for the anti-thrashing rule (WV-12). Owned by the
+    #: controller and keyed per node id, so it survives a retry and a loop body's iterations —
+    #: which is the repetition `should_compact` exists to stop. A None here (a direct dispatcher
+    #: call in a test) simply means no history: the ladder still compacts, it just cannot notice
+    #: that it has stopped helping.
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -1782,6 +1818,7 @@ async def dispatch(
         supervisor=supervisor,
         on_progress=on_progress,
         worker_model=worker_model,
+        compaction_saves=compaction_saves,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     result = apply_artifact_gate(node, result, cwd or None)
@@ -1810,13 +1847,16 @@ async def _dispatch_inner(
     supervisor: Any = None,
     on_progress: Any = None,
     worker_model: str = "",
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
     if kind == NodeKind.TRANSFORM:
         return await dispatch_transform(node, ctx)
     if kind == NodeKind.INFER:
-        return await dispatch_infer(node, ctx, tiers=tiers, completion=completion)
+        return await dispatch_infer(
+            node, ctx, tiers=tiers, completion=completion, compaction_saves=compaction_saves
+        )
     if kind == NodeKind.VISUALIZE:
         return await dispatch_visualize(node, ctx, completion=completion)
     if kind == NodeKind.STAGE:
@@ -1841,6 +1881,7 @@ async def _dispatch_inner(
             tiers=tiers,
             mode=mode,
             worker_model=worker_model,
+            compaction_saves=compaction_saves,
         )
     if kind == NodeKind.SUBWORKFLOW:
         return await dispatch_subworkflow(

@@ -21,7 +21,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WV-9` | ⬜ | WF2-A2 — node inspection endpoint returning resolved prompt/inputs/output/attempts/ledger slice | `WV-6`, `WV-7` | GET /api/workflows/runs/{id}/nodes/{node_id}/inspect returns the §5 reconstructability set (resolved_prompt\|ref, resolved_inputs, output\|artifact_ref, attempts, ledger_events, cached) for any terminal node with secrets absent (RedactingSink fixture); api.ts method added |
 | `WV-10` | ⬜ | WF2-A3 — FE inspector drawer (run detail + widget node rows) + cached-badge rendering | `WV-9`, `WV-7` | a user can open any node in WorkflowRunDetail + WorkflowProgressCard and read its exact resolved prompt/inputs/output; cached nodes render a visually distinct badge (workflowFold.ts cached? finally read) |
 | `WV-11` | ⬜ | Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider | `WV-3`, `WV-8` | node outputs over threshold keep head/tail in journal and write body to runs/<id>/artifacts/, populating bindings.node_artifacts so {{nodes.x.artifact}} resolves to a live pointer; artifact_inspect action provider registered (registry + ALLOWED_HOOK_PROVIDERS + validation schema) pulls artifact content on demand |
-| `WV-12` | ⬜ | Two-layer context-compaction ladder for LLM-backed nodes | `WV-3`, `WV-8`, `EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)` | proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template |
+| `WV-12` | ✅ | Two-layer context-compaction ladder for LLM-backed nodes | `WV-3`, `WV-8`, `EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)` | proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template |
 
 ## Atom scopes
 
@@ -115,7 +115,7 @@ Amendment (2026-07-26) WF2-A3
 
 ### `WV-12` — Two-layer context-compaction ladder for LLM-backed nodes
 
-**Status:** todo
+**Status:** done
 
 §2 Context Lifecycle (two-layer context ladder)
 
