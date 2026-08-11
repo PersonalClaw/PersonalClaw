@@ -161,7 +161,14 @@ export function DiagnosticsPanel() {
         </div>
 
         <Surface tone="container" radius="lg" className="p-0 overflow-hidden">
+          {/* The log lines are plain text, so this region has NO focusable descendant: a
+              keyboard user could not scroll it at all (WCAG 2.1.1; axe
+              scrollable-region-focusable, serious). Measured 1743px of output hidden below
+              the fold. A tab stop hands scrolling to the browser; role+label keep it
+              announced as a named container. Same resolution as the kanban columns, the
+              shell denylist and the inbox procedure. */}
           <div ref={scrollRef} className="max-h-[60vh] min-h-[240px] overflow-y-auto p-3 font-mono text-[0.75rem] leading-relaxed"
+            tabIndex={0} role="group" aria-label="Log output"
             style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
             {visible.length === 0 ? (
               <div className="py-8 text-center text-on-surface-low text-[0.8125rem]" style={{ fontFamily: 'var(--font-sans)' }}>

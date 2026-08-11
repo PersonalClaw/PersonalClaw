@@ -12,6 +12,7 @@ import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
 import { ListSkeleton, EmptyState } from '../../ui/ListScaffold'
+import { RowHitTarget } from '../../ui/RowHitTarget'
 import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
@@ -160,9 +161,17 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                 return (
                 <ContextMenu key={p.id} items={menuItems}>
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-                  role="button" tabIndex={0} onClick={togglePeek}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePeek() } }}
-                  className="group flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high">
+                  // No role/tabIndex/onKeyDown here: the row carries its own Delete control,
+                  // so a role="button" wrapper is `nested-interactive` (axe, serious). The tab
+                  // stop is the empty overlay below — same resolution ui/ListScaffold's ListRow
+                  // took, and the same reason: an overlay owning no descendants needs no
+                  // per-control pointer-events scheme. `whileTap` still marks the wrapper
+                  // focusable, hence tabIndex={-1} rather than dropping the attribute.
+                  tabIndex={-1}
+                  onClick={togglePeek}
+                  className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50">
+                  {/* The row had NO accessible name before — measured `(none)` on all 5. */}
+                  <RowHitTarget label={p.name} />
                   <FolderKanban size={16} className="shrink-0 text-on-surface-low" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
