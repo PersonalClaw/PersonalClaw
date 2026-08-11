@@ -776,3 +776,150 @@ class TestWorkspaceRoute:
         source = inspect.getsource(H.api_run_delete)
         assert 'request.query.get("keep_open"' in source
         assert "keep_open=keep_open" in source
+
+
+# ── introspection: the nine questions (WORK-CONTAINERS §6.4, R6 — WF2WOR-7) ──
+
+
+class TestIntrospectRoute:
+    """The route that makes `workflows/introspection.py` reachable.
+
+    Every test here drives a REAL run through the real start handler and then reads the real
+    journal, because the gap this closes was not an arithmetic gap — the module's arithmetic was
+    already tested against hand-built ledgers. The gap was that nothing ever CALLED it with a
+    real run's events. A test that hand-built the event list would reproduce the coverage that
+    already existed and still not prove the route is wired.
+    """
+
+    async def _started(self, provider, name: str) -> str:
+        await provider.save_def(name=name, root=SPEC_ROOT)
+        started = _body(
+            await H.api_run_start(
+                _req(
+                    "POST",
+                    "/api/workflows/runs",
+                    state=_State(_Sup()),
+                    body={
+                        "name": name,
+                        "mode": "blocking",
+                        "blocking_timeout": 20,
+                        "skip_preflight": True,
+                    },
+                )
+            )
+        )
+        return str(started["run_id"])
+
+    async def _introspect(self, run_id: str) -> dict:
+        req = _req("GET", f"/api/workflows/runs/{run_id}/introspect")
+        req.match_info["run_id"] = run_id  # type: ignore[index]
+        resp = await H.api_run_introspect(req)
+        assert resp.status == 200, _body(resp)
+        return _body(resp)
+
+    async def test_an_unknown_run_is_a_404(self) -> None:
+        req = _req("GET", "/api/workflows/runs/nope/introspect")
+        req.match_info["run_id"] = "nope"  # type: ignore[index]
+        resp = await H.api_run_introspect(req)
+        assert resp.status == 404 and _body(resp)["error"]["code"] == "not_found"
+
+    async def test_a_real_run_yields_REAL_stats_not_zeros(self, provider) -> None:
+        """The wired-vs-inert test. A projection that returned a zeroed RunStats for a run that
+        genuinely executed two nodes would satisfy every schema assertion and answer nothing —
+        which is exactly the failure mode of a module nothing calls."""
+        run_id = await self._started(provider, "intro-real")
+        body = await self._introspect(run_id)
+        assert body["run_id"] == run_id
+        # The run really ran, so the projection must SEE that. Zeros here mean the route read a
+        # different run's journal, or none.
+        assert body["stats"]["steps_completed"] >= 2, body["stats"]
+        assert body["timeline"], "the journal timeline is empty for a run that executed"
+        kinds = {row["kind"] for row in body["timeline"]}
+        assert "step_completed" in kinds, kinds
+
+    async def test_the_projection_agrees_with_the_engines_own_totals(self, provider) -> None:
+        """Two aggregates over one journal that disagreed would put different numbers for the same
+        run on the cockpit strip and the run row, with no way to tell which lied."""
+        from personalclaw.workflows import journal as J
+
+        run_id = await self._started(provider, "intro-agree")
+        body = await self._introspect(run_id)
+        totals = J.run_totals(run_id)
+        assert body["stats"]["steps_completed"] == totals["steps_completed"]
+        assert body["stats"]["steps_failed"] == totals["steps_failed"]
+        assert body["stats"]["tokens"] == totals["tokens"]
+
+    async def test_all_nine_checklist_questions_are_answered(self, provider) -> None:
+        """The atom's actual criterion. `checklist_gaps` is the contract: a non-empty list names a
+        question this payload cannot answer, and an evaluator would hit that hole in the UI."""
+        from personalclaw.workflows.introspection import CHECKLIST
+
+        run_id = await self._started(provider, "intro-nine")
+        body = await self._introspect(run_id)
+        assert body["checklist_gaps"] == [], body["checklist_gaps"]
+        for key, _question in CHECKLIST:
+            assert key in body["answers"], key
+
+    async def test_an_empty_answer_is_still_an_answer(self, provider) -> None:
+        """ "Nothing is blocked" is an answer. A surface treating empty as a gap would make an
+        idle instance look broken — the module's own documented rule, asserted at the route."""
+        run_id = await self._started(provider, "intro-empty")
+        body = await self._introspect(run_id)
+        assert body["answers"]["blocked"] == []
+        assert body["checklist_gaps"] == []
+
+    async def test_the_next_if_silent_answer_distinguishes_its_three_cases(self, provider) -> None:
+        """The one question no other surface answers, and the one that decides whether a user can
+        walk away. A completed run must say it has stopped, not that it 'proceeds'."""
+        run_id = await self._started(provider, "intro-next")
+        body = await self._introspect(run_id)
+        assert body["answers"]["next"]["action"] in ("nothing", "proceeds", "waits")
+        run = store.get(run_id)
+        assert run is not None
+        if run.status in (RunStatus.COMPLETE, RunStatus.FAILED, RunStatus.CANCELLED):
+            assert body["answers"]["next"]["action"] == "nothing", body["answers"]["next"]
+
+    async def test_the_proof_section_states_its_own_caveat(self, provider) -> None:
+        """A Proof section with no evidence and no warning is the worst possible surface: it looks
+        like proof. Either there is evidence, or the absence is stated."""
+        run_id = await self._started(provider, "intro-proof")
+        body = await self._introspect(run_id)
+        proof = body["proof"]
+        assert proof["honest"] is True
+        assert proof["evidence_files"] or proof["warnings"]
+
+    async def test_the_template_card_aggregates_ACROSS_runs(self, provider) -> None:
+        """p50/p95 over one run would just restate that run. The card is a claim about the
+        TEMPLATE, so a second run of the same template must raise its run count."""
+        first = await self._started(provider, "intro-card")
+        one = await self._introspect(first)
+        assert one["template_card"]["template"] == "intro-card"
+        assert one["template_card"]["runs"] >= 1
+        second = await self._started(provider, "intro-card")
+        two = await self._introspect(second)
+        assert two["template_card"]["runs"] > one["template_card"]["runs"], two["template_card"]
+
+    async def test_the_timeline_is_redacted_through_the_journals_own_redactor(self) -> None:
+        """The ledger records failure detail and model verbatim, and a failure message is exactly
+        where a credential surfaces in a screenshot. Reusing `journal.redact` rather than a local
+        scrubber is what keeps the two from drifting."""
+        import inspect
+
+        from personalclaw.workflows import service as S
+
+        source = inspect.getsource(S.introspection_timeline)
+        assert "journal_mod.redact" in source
+
+    async def test_the_route_is_a_GET_it_mutates_nothing(self) -> None:
+        """Forensics is a read. A POST here would invite a surface to 'refresh' stats by writing."""
+        app = web.Application()
+        H.register_workflow_routes(app)
+        matched = [
+            r
+            for r in app.router.routes()
+            if "introspect" in (r.resource.canonical if r.resource else "")
+        ]
+        assert matched, "the introspect route is not registered"
+        # HEAD rides along with `add_get` and is equally a read. What must not appear is a
+        # mutating verb: a POST here would invite a surface to "refresh" stats by writing.
+        assert all(r.method in ("GET", "HEAD") for r in matched), [r.method for r in matched]

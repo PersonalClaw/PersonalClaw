@@ -391,6 +391,104 @@ class TestPublisher:
         await wd.stop()
 
 
+class TestLoopHubAdoption:
+    """`keys_equivalent` at its adoption call site (WORK-CONTAINERS §6.3 R10c — WF2WOR-7).
+
+    The helper existed with ZERO callers, so nothing adopted anything. During coexistence a
+    legacy loop can run as a template: the cockpit subscribes on `loop:<id>` while the engine
+    publishes on `workflow:<run_id>`. Those name the same container, and the frontend already
+    matches all three key forms — but nothing published to the loop hub, so the match had
+    nothing to match. The stream connects, the cockpit renders, no update ever arrives, and
+    there is no error to see. Absence IS the failure.
+    """
+
+    async def test_a_watching_loop_cockpit_receives_the_runs_events(self) -> None:
+        from personalclaw.dashboard.sse import SseRegistry
+
+        loop_registry = SseRegistry()
+
+        class _State:
+            def workflow_sse(self):
+                class R:
+                    def publish(self, *a):
+                        pass
+
+                return R()
+
+            def loop_sse(self):
+                return loop_registry
+
+        run = _run()
+        # A cockpit is ALREADY watching this container as a loop — `hub()` creates and
+        # subscribes, which is what a live cockpit's SSE connection does.
+        hub = loop_registry.hub(f"loop:{run.id}")
+        received: list[str] = []
+        hub.publish = lambda event, data: received.append(event)  # type: ignore[method-assign]
+
+        wd = WorkflowWatchdog(_State(), EngineServices())
+        controller = await wd.launch(run, SPEC)
+        await controller.run_to_completion(timeout=20)
+        await wd.stop()
+        assert received, "a watching loop cockpit received nothing — the adoption is inert"
+
+    async def test_the_mirror_does_NOT_resurrect_an_unwatched_loop_hub(self) -> None:
+        """`peek`, never `hub`. Creating one would leak a hub per workflow run and resurrect a
+        stream for a container nobody is watching."""
+        from personalclaw.dashboard.sse import SseRegistry
+
+        loop_registry = SseRegistry()
+
+        class _State:
+            def workflow_sse(self):
+                class R:
+                    def publish(self, *a):
+                        pass
+
+                return R()
+
+            def loop_sse(self):
+                return loop_registry
+
+        run = _run()
+        wd = WorkflowWatchdog(_State(), EngineServices())
+        controller = await wd.launch(run, SPEC)
+        await controller.run_to_completion(timeout=20)
+        await wd.stop()
+        assert loop_registry.peek(f"loop:{run.id}") is None
+
+    async def test_the_mirror_is_gated_by_keys_equivalent(self) -> None:
+        """The guard is the helper itself, in ONE place, so a future change to either key scheme
+        cannot silently start mirroring onto an unrelated hub."""
+        import inspect
+
+        from personalclaw.workflows.watchdog import WorkflowWatchdog as W
+
+        source = inspect.getsource(W._publish_to_equivalent_loop_hub)
+        assert "keys_equivalent" in source
+        assert ".peek(" in source and ".hub(" not in source
+
+    async def test_a_broken_loop_registry_cannot_kill_a_run(self) -> None:
+        """The mirror is a convenience for a surface that may not be open. Losing a run to it
+        would be strictly worse than losing the mirror."""
+
+        class _State:
+            def workflow_sse(self):
+                class R:
+                    def publish(self, *a):
+                        pass
+
+                return R()
+
+            def loop_sse(self):
+                raise RuntimeError("loop sse is down")
+
+        run = _run()
+        wd = WorkflowWatchdog(_State(), EngineServices())
+        controller = await wd.launch(run, SPEC)
+        assert await controller.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        await wd.stop()
+
+
 class TestRetention:
     async def test_old_terminal_runs_are_pruned_oldest_first(self) -> None:
         for i in range(5):

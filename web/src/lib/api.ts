@@ -735,6 +735,123 @@ export interface WorkflowOutboxEntry {
   // an artifact that only LOOKS self-contained breaks silently when the workspace goes away.
   self_contained: boolean
 }
+// The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6). Every field is
+// a projection over the run's own journal — there is no metrics store behind this, so a number here
+// is always traceable to a ledger event.
+export interface WorkflowRunStats {
+  run_id: string
+  tokens: number
+  cached_tokens: number
+  cost_usd: number
+  steps_completed: number
+  steps_failed: number
+  steps_cached: number
+  duration_secs: number
+  // Latency to FIRST output, kept separate from total duration: one is what a watching user feels,
+  // the other is what a scheduler budgets, and a single "duration" would conflate them.
+  first_byte_ms: number
+  models: string[]
+  unverified_steps: number
+  verification_debt: number
+  cache_hit_rate: number
+}
+export interface WorkflowGateStats {
+  node_id: string
+  passes: number
+  rejects: number
+  retries_consumed: number
+  total: number
+  pass_rate: number
+  // Non-empty ONLY when there is a real sample behind it: "0 rejections in 0 runs" and "0 in 40"
+  // are different claims and only the second is evidence. The badge renders this string verbatim.
+  fake_check_warning: string
+}
+export interface WorkflowTemplateCard {
+  template: string
+  runs: number
+  cost_p50: number
+  cost_p95: number
+  duration_p50: number
+  duration_p95: number
+  failure_rate: number
+  warnings: string[]
+}
+export interface WorkflowProofSection {
+  summary: string
+  verified_steps: number
+  total_steps: number
+  coverage: number
+  evidence_files: string[]
+  warnings: string[]
+  // False would mean a Proof section with neither evidence nor a caveat — the worst possible
+  // surface, because it looks like proof. The backend guarantees one or the other.
+  honest: boolean
+}
+export interface WorkflowTimelineRow {
+  kind: string
+  ts: string
+  node_id: string
+  instance_path: string
+  attempt?: number | null
+  state: string
+  duration_secs?: number | null
+  tokens?: number | null
+  cost_usd?: number | null
+  model: string
+  approved?: boolean | null
+  detail: string
+}
+export interface WorkflowNextIfSilent {
+  action: 'nothing' | 'waits' | 'proceeds'
+  detail: string
+  queued: string[]
+}
+export interface WorkflowIntrospection {
+  run_id: string
+  workflow: string
+  stats: WorkflowRunStats
+  gates: Record<string, WorkflowGateStats>
+  template_card: WorkflowTemplateCard
+  proof: WorkflowProofSection
+  timeline: WorkflowTimelineRow[]
+  // What the run TOUCHED — published artifacts and files handed in. Answers "what changed" for
+  // THINGS where the timeline answers it for STEPS, which is why they arrive together.
+  touched: WorkflowTouchedItem[]
+  answers: {
+    running: { status: string; workflow: string; nodes: unknown[] }
+    changed: WorkflowTimelineRow[]
+    blocked: unknown[]
+    approval: Array<{ resume_token: string; node_id: string; ask: unknown }>
+    failed: unknown[]
+    cost: WorkflowRunStats
+    risky: { degraded: unknown[]; gates: WorkflowGateStats[]; verification_debt: number }
+    next: WorkflowNextIfSilent
+    proof: WorkflowProofSection
+  }
+  // Empty is the healthy answer. A non-empty entry NAMES a checklist question the payload cannot
+  // answer — a backend gap the FE cannot close by rendering harder, so it is shown, not hidden.
+  checklist_gaps: string[]
+}
+// One dashboard pin (WORK-CONTAINERS §6.5d). A REFERENCE, never a copy: no name and no content,
+// because a denormalized title goes stale on the next rename and a card that is confidently wrong
+// is worse than one that is absent.
+export interface PinnedArtifact {
+  slug: string
+  pinned_at: string
+  // The run that produced it, when a run did — so a pin can deep-link back to its cockpit.
+  run_id: string
+}
+// One thing a run touched: an artifact it published, or a file handed into it. Both sources are
+// run-scoped on the backend, which is what makes the attribution trustworthy.
+export interface WorkflowTouchedItem {
+  kind: 'artifact' | 'file'
+  ref: string
+  label: string
+  action: string
+  detail: string
+  node_id: string
+  ts: string
+}
 export interface WorkflowDroppedFile {
   filename: string
   size: number
@@ -3206,6 +3323,13 @@ export const api = {
     get<WorkflowWorkspaceReview>(`/api/workflows/runs/${encodeURIComponent(id)}/workspace`),
   workflowRunOutbox: (id: string) =>
     get<{ files: WorkflowOutboxEntry[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/outbox`),
+  /** The §6.4 nine-question introspection projection (WORK-CONTAINERS R6).
+   *
+   *  ONE call rather than five, because the checklist is a property of the whole surface: the
+   *  backend's `checklist_gaps` can only name a hole in a payload it sees in full, and five
+   *  routes would let this panel render eight answers and never learn the ninth was missing. */
+  workflowRunIntrospect: (id: string) =>
+    get<WorkflowIntrospection>(`/api/workflows/runs/${encodeURIComponent(id)}/introspect`),
   workflowRunDropStatus: (id: string) =>
     get<WorkflowDropStatus>(`/api/workflows/runs/${encodeURIComponent(id)}/drop`),
   /** Drop files into a run (WORK-CONTAINERS §2.5). `confirm` ANSWERS the approval gate — the first
@@ -3264,6 +3388,17 @@ export const api = {
     return get<{ artifacts: Artifact[] }>(`/api/artifacts${qs ? `?${qs}` : ''}`).then((d) => d.artifacts)
   },
   artifact: (slug: string) => get<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}`),
+  /** The dashboard pin list (WORK-CONTAINERS §6.5d). REFERENCES only — a slug plus when it was
+   *  pinned. The widget resolves each slug against the artifact list, which is also how a DELETED
+   *  artifact self-heals off the surface rather than leaving a broken card. */
+  pinnedArtifacts: () => get<{ pins: PinnedArtifact[] }>('/api/artifacts/pinned'),
+  /** Pin or unpin. ONE route for both directions: it is one piece of state with two values, and
+   *  two endpoints would be two places to keep the cap and dedup rules right. */
+  pinArtifact: (slug: string, pinned: boolean, runId = '') =>
+    post<{ ok: boolean; pinned: boolean; pins: PinnedArtifact[] }>(
+      `/api/artifacts/${encodeURIComponent(slug)}/pin`,
+      { pinned, run_id: runId },
+    ),
   // Existence check that returns 200 {exists} (no 404) — for "is this saved?"
   // probes that shouldn't spam the console with expected not-founds.
   artifactExists: (slug: string) =>
