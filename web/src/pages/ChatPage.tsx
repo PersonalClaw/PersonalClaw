@@ -2237,7 +2237,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           undefined
         ) : (
           renaming ? (
-            <input autoFocus value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
+            <input autoFocus aria-label="Rename this chat" value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
               onBlur={commitRename}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') setRenaming(false) }}
               className="h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none" />

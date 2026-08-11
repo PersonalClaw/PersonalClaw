@@ -299,7 +299,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         <div className="flex items-center gap-s min-w-0">
           <IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />
           {editingTitle ? (
-            <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
+            <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
               className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           ) : (

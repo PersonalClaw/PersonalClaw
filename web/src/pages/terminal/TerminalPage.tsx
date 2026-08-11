@@ -187,7 +187,7 @@ function TermTabChip({ tab, active, inSplit, onSelect, onClose, onRename }: {
       style={on ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' } : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }}>
       <TermIcon size={13} className={inSplit && !active ? 'text-primary' : 'opacity-70'} />
       {editing ? (
-        <input autoFocus value={v} onChange={(e) => setV(e.target.value)}
+        <input autoFocus aria-label="Rename this terminal tab" value={v} onChange={(e) => setV(e.target.value)}
           onClick={(e) => e.stopPropagation()}
           onBlur={() => { setEditing(false); if (v.trim()) onRename(v.trim()) }}
           onKeyDown={(e) => { if (e.key === 'Enter') { setEditing(false); if (v.trim()) onRename(v.trim()) } if (e.key === 'Escape') { setEditing(false); setV(tab.label) } }}
