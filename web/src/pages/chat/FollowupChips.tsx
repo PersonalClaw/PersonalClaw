@@ -17,8 +17,11 @@ export function FollowupChips({ items, onPick, onSend }: {
   onSend: (text: string) => void
 }) {
   if (!items.length) return null
+  // role="group": a bare <div> cannot take aria-label (prohibited — the name is
+  // discarded), so the chips announced as loose buttons with no indication of what they
+  // were. A named group says "Suggested follow-ups" before its contents.
   return (
-    <div className="mt-m flex flex-wrap items-center gap-1.5" aria-label="Suggested follow-ups">
+    <div role="group" className="mt-m flex flex-wrap items-center gap-1.5" aria-label="Suggested follow-ups">
       {items.map((s, i) => (
         <motion.span key={`${i}-${s}`}
           initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialFast, delay: 0.04 * i }}
