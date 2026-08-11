@@ -83,22 +83,57 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
       // clickable rows — static rows stay put.
       whileHover={interactive ? { y: -expr(3, 0.3), boxShadow: 'var(--shadow-lift)' } : undefined}
       whileTap={interactive ? { scale: 1 - expr(0.01, 0.3) } : undefined}
+      // The row still HANDLES the click, because every nested control already calls
+      // stopPropagation for itself (`ui/forms.tsx`'s Checkbox does it on both onClick and
+      // onChange; the tag/run/delete buttons do it inline). Keeping the handler here is
+      // what lets the button below stay a zero-content overlay instead of a wrapper that
+      // has to re-expose its own descendants.
       onClick={onClick}
-      // A clickable row is a div, so nothing about it is operable for free — and
-      // worse, whileTap makes motion mark it focusable, so Tab LANDS on a row that
-      // Enter/Space can't fire. Naming the button role, owning the tab stop, and
-      // keying Enter/Space (Space scrolls the page unless prevented) closes that
-      // trap. The inset ring is TileButton's — the kit's other whole-card target.
-      role={interactive ? 'button' : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      // Name the row after the entity, not after everything inside it. See `label`.
-      aria-label={interactive ? label : undefined}
-      onKeyDown={interactive ? (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick!() }
-      } : undefined}
-      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50' : ''}`}
+      // NO role/aria-label/onKeyDown on the wrapper. A `role="button"` that contains
+      // focusable children is `nested-interactive` (axe, serious): AT is told "one button"
+      // and then finds a checkbox and three tag filters inside it. 60 nodes across
+      // knowledge (26) and workflows (34).
+      //
+      // tabIndex={-1} is REQUIRED, not leftover: `whileTap` makes Framer Motion set
+      // tabindex="0" on the wrapper itself, so dropping the attribute entirely left TWO tab
+      // stops per row (measured — Tab went bare-div, then overlay button). -1 keeps the
+      // wrapper clickable and hoverable while the overlay owns the single tab stop.
+      tabIndex={interactive ? -1 : undefined}
+      //
+      // The RING IS DRAWN ON THE ROW, keyed off the overlay's focus via `:has()`. Two
+      // reasons it cannot live on the overlay itself: the overlay sits at `-z-10` so its
+      // own ring paints BEHIND this element's background (measured — `boxShadow: none`
+      // reached the screen), and the ring belongs on the row's rounded silhouette anyway.
+      // `:has(> button:focus-visible)` is deliberately narrower than `focus-within`, which
+      // would also light the row when the checkbox or a tag filter inside it takes focus
+      // and double-ring with that control's own indicator.
+      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
+      {/* The row's tab stop and accessible name, as a real <button> SIBLING of the
+          content rather than an ancestor of it.
+
+          It is EMPTY and stretched over the row (`absolute inset-0`), which is what makes
+          this safe: it owns no descendants, so nothing inside the row needs re-exposing.
+          The alternative — keeping the wrapper interactive and marking children
+          `pointer-events-auto` — has to enumerate every control type, and silently misses
+          the CONDITIONAL ones (workflows' delete button exists only in its `armed` state;
+          knowledge's tag filters are `hidden md:flex` and gated on `tags?.length`).
+          Enumerating descendants is the part that breaks; owning none is the fix.
+
+          `-z-10` puts it UNDER the row's content in paint order (the motion wrapper's
+          transform makes it a stacking context, so a negative z-index child still paints
+          above the row's own background). It therefore never covers the checkbox or the
+          tag filters, and needs no z-index on any child. It does not have to receive the
+          click either: Enter/Space on a real <button> fires a click that BUBBLES to the
+          wrapper's onClick, and a pointer click anywhere in the row bubbles the same way. */}
+      {interactive && (
+        <button
+          type="button"
+          aria-label={label}
+          className="absolute inset-0 -z-10 cursor-pointer outline-none"
+        />
+      )}
       {children}
     </motion.div>
   )
