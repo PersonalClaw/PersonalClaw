@@ -20,7 +20,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2AUT-8` | ✅ | trigger_source provider seam (AUTO-A4): PROVIDER_TYPES + handler, manifest declaration, namespaced app:<name>:<event> bus sources | `WF2AUT-4`, `EXT:APP-PLATFORM-EVOLUTION:events-emit install-consent grant surfacing` | a fixture app's declared trigger_source fires an event trigger end-to-end with fenced+provenanced payload and frozen capabilities honored; disabling the app parks its bound triggers with a typed reason; test_manifest_types_match_handlers green; core contains no vendor names |
 | `WF2AUT-9` | ⬜ | §3.5 skip_if_active liveness guard + acting_on resource claim on mutating triggers | `WF2AUT-3` | skip_if_active declared on the Trigger entity and evaluated at fire time via cheap liveness heuristics (dirty worktree/lockfiles/recent mtime); acting_on resource claim serializes two trigger-fired runs targeting the same resource; a busy target yields a typed deferred ledger row |
 | `WF2AUT-10` | ⬜ | §5 did/suppressed fold affordance FE consumer | `WF2AUT-5` | the Automations runs-inbox surfaces the did-vs-suppressed fold control so archived/inert rows can be revealed on demand; backend archive split already present, this wires the FE toggle |
-| `WF2AUT-11` | 🟡 | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) | `WF2AUT-3`, `EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion` | kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4) |
+| `WF2AUT-11` | 🔴 | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) | `WF2AUT-3`, `EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion` | kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4) |
 | `WF2AUT-12` | ⬜ | webhook kind fire endpoint + scoped token verification (E4-blocked) | `WF2AUT-5`, `EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate`, `EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision` | owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard |
 
 ## Atom scopes
@@ -109,7 +109,17 @@ Status REMAINING (no FE consumer); §5.2 runs inbox (no-op/suppressed rows auto-
 
 ### `WF2AUT-11` — idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption)
 
-**Status:** in_progress (idle runtime shipped; autonudge deletion gated on LOOPS-EVOLUTION Phase 4)
+**Status:** BLOCKED — half 1 (`kind:idle` for user automations) shipped; half 2 (autonudge deletion)
+is NOT startable. Verified against code 2026-08-11: `autonudge.py` is still the tick engine for the
+live legacy Loops engine — `LoopWatchdog` takes the service as a constructor argument
+(`gateway.py:2110`), `loop/watchdog.py:445` reads `NudgeLoop.active`/`.cycle_count` as loop
+lifecycle truth, and `loop/manager.py:211,458` arms every cycle through `svc.add`. Nothing in
+`triggers/` replaces that: `triggers/loop.py` has ZERO references to `NudgeLoop`/`loop.manager`, and
+`idle_poll`/`wakeup`/`executor` have ZERO occurrences of `_run_chat`/`record_turn_outcome`/
+`stop_sentinel`. `triggers/loop.py:103 tick_once` shipping the idle TRIGGER runtime is not the
+loop-ticker this atom's EXT names. Deleting the module today would break every live loop at import.
+Unblock by porting the loop-cycle driver off autonudge first, per LOOPS-EVOLUTION Phase 4's own
+3-step endgame. See the AUTOMATION-SUBSTRATE Execution log.
 
 §2 autonudge.py ABSORBED as kind:idle (LAST); §7 step 9; §1.2 idle kind; Risks (Loops coupling)
 
