@@ -267,7 +267,11 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
       {values.map((v) => (
         <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.8125rem]">
           {v}
-          <button type="button" onClick={() => onChange(values.filter((x) => x !== v))} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
+          {/* One per chip, icon-only: without a name every remove button is announced as bare
+              "button" — N identical ones, each destructive. Named from the chip's own text, which is
+              also what makes them distinct. The input below already resolves a name carefully; this
+              row never did. */}
+          <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
         </span>
       ))}
       <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
