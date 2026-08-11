@@ -298,3 +298,36 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
   - **Gate green:** `make lint` (771 files); `npm run typecheck`; `npm test` **887 passed** (incl. the
     new triggerMeta cases); `npm run build`. Ran under lockfile-pinned deps (`npm ci`) — a stale local
     `node_modules` (lucide 0.469 vs pinned 1.30) had reded an unrelated chat-icon test; syncing fixed it.
+
+- **DONE `EIAT-4`** (prompt-bound receiving addresses + settings page) — shipped as **apps#34**; apps-repo
+  only, no core change required. `fence_untrusted` was already on `personalclaw.sdk.security`, and
+  the mail-inbox app's MIME module (apps repo) had explicitly reserved this work in a comment ("`fence_untrusted` in
+  EIAT-4, never here — so text is never double-fenced").
+  **The load-bearing finding: an app cannot fire run-prompt/invoke-agent itself, and core says so.**
+  core's `src/personalclaw/sdk/__init__.py` records that the ambiguous action providers (run-prompt / invoke-agent / …) "need a
+  `personalclaw.sdk.runtime` … intentionally not published yet". So rather than invent an endpoint, the
+  app composes into the chain that already exists: `inbox_service._ingest` emits one `message_received`
+  event per accepted item → `EventTriggerEngine` matches an `InboxAddress` trigger on `meta.address` →
+  `execute_event_action` → `invoke-agent`. core's `src/personalclaw/event_triggers.py` (the `is_fenced(value)` branch) does and passes
+  already-fenced text THROUGH instead of re-wrapping, so the app's fence attribution survives intact.
+  The user supplies the one `Data event → InboxAddress → invoke-agent ($value)` trigger (EIAT-5 shipped
+  that UI); the app cannot create it without reaching past the SDK, and that boundary was respected.
+  **Two decisions worth carrying forward.** (1) The schema went into `provider.settingsSchema`, NOT a new
+  `setup.configSchema`, because core's `_effective_config_schema` treats the latter as an *override* —
+  adding one would have hidden the 7 existing IMAP fields unless duplicated, the two-schemas-one-file
+  drift core's own comments warn about. (2) **No secret field is declared, deliberately**: `x-meta.sensitive`
+  masking is wire-only, so a password field would still persist the password into `data/config.json`,
+  breaking EIAT-2's guardrail. The IMAP password stays credential-store-only and a test asserts zero
+  sensitive fields are declared.
+  **Would have shipped inert without one line:** `channel_id` now carries the bound address rather than
+  the mailbox login — an `InboxAddress` trigger for `travel@…` could never have matched otherwise.
+  **Gate (re-verified independently by the driving session):** repo CI is manifest-validate · tests ·
+  boundary · dco — 45 manifests valid, the app's own pytest suite **51 passed** (32 pre-existing + 19 new),
+  boundary clean (every core import via `personalclaw.sdk.*`), DCO signed with no other trailers.
+
+- **BLOCKED `EIAT-3`** (send_reply over SMTP, draft-by-default) — **owner-gated by its own done_when**,
+  which ends "Owner-gated on the draft-by-default confirmation (Owner task 4)". Whether a reply defaults
+  to *draft* or to *send* is a product/safety decision about sending mail as the user, not an engineering
+  call, so it is not something a tick may pick. Everything else in the atom (SMTP `send_reply`,
+  `In-Reply-To` threading, `supports_dry_run` honouring the platform's live-writes posture) is
+  implementable the moment that posture is confirmed. Unblock = owner confirms the default.
