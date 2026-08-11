@@ -133,7 +133,14 @@ function Preview() {
       <div className="flex gap-m" style={{ minHeight: 150 }}>
         <div className="w-32 shrink-0 rounded-lg p-2 flex flex-col gap-1" style={{ background: 'var(--color-rail)' }}>
           {['Chat', 'Tasks', 'Triggers', 'Knowledge'].map((it, i) => (
-            <div key={it} className="flex items-center gap-1.5 rounded-md px-2 h-7 text-[0.75rem]" style={i === 0 ? { background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' } : { color: 'var(--color-on-surface-low)' }}>
+            // The active row mirrors the REAL rail: `--color-on-surface` text on a
+            // `--color-surface-low` pill (see ui/NavRail.tsx — `text-on-surface` +
+            // `bg-surface-low`). It used to paint primary text on an 18% tint of primary,
+            // which was both a misrepresentation of the thing this preview depicts and
+            // 4.47:1 — under AA (axe color-contrast, serious, #ff6b5b on #472d2a). Taking
+            // the real treatment fixes the accuracy and the contrast in one move, with no
+            // new colour invented.
+            <div key={it} className="flex items-center gap-1.5 rounded-md px-2 h-7 text-[0.75rem]" style={i === 0 ? { background: 'var(--color-surface-low)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
               <span className="size-1.5 rounded-pill" style={{ background: i === 0 ? 'var(--color-primary)' : 'var(--color-outline)' }} />{it}
             </div>
           ))}

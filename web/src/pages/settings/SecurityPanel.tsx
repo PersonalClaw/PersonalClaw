@@ -183,7 +183,15 @@ function DeniedCommandsEditor({ builtin, user, onChange }: { builtin: string[]; 
           <div className="mb-2 flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]">
             <Lock size={13} /> Built-in ({builtin.length}) — always enforced
           </div>
-          <div className="max-h-44 overflow-y-auto rounded-lg bg-surface-container p-2">
+          {/* Every child is a read-only <code>, so this region has NO focusable descendant:
+              a keyboard user could not scroll it at all (WCAG 2.1.1; axe
+              scrollable-region-focusable, serious). Same resolution the kanban columns
+              took — a tab stop makes the browser's own arrow/PageUp/PageDown scrolling
+              work, and role+label keep it announced as a named container rather than an
+              unnamed widget. Named with its count so the announcement says how much is
+              in there. */}
+          <div className="max-h-44 overflow-y-auto rounded-lg bg-surface-container p-2"
+            tabIndex={0} role="group" aria-label={`Built-in shell denylist patterns (${builtin.length})`}>
             {builtin.map((p) => (
               <code key={p} className="block px-2 py-1 text-on-surface-low text-[0.75rem] tabular-nums">{p}</code>
             ))}

@@ -65,7 +65,9 @@ export function AuditPanel() {
           <TextInput value={q} onChange={setQ} placeholder="Filter by operation, caller, resource" ariaLabel="Filter audit log"
             size="md" surface="high" leadingIcon={<Search size={14} />} />
         </div>
-        <Button variant="secondary" size="sm" onClick={reload} disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={14} />}</Button>
+        {/* Icon-only, so it needs its own name — its two neighbours carry text and this
+            one does not. `title` is the kit's convention for a bare-glyph control. */}
+        <Button variant="secondary" size="sm" onClick={reload} disabled={busy} title={busy ? 'Refreshing the audit log' : 'Refresh the audit log'}>{busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={14} />}</Button>
         <Button variant="secondary" size="sm" onClick={runVerify}><ShieldCheck size={14} /> Verify</Button>
         <Button variant="ghost" size="sm" onClick={rotate}><KeyRound size={14} /> Rotate</Button>
       </div>
