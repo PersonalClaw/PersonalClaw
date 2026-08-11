@@ -4797,7 +4797,7 @@
         {
           "id": "CE-6",
           "title": "Channel conformance kit in core, wired into slack/telegram/discord/email test suites",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 7-8 — Ramp: T7.1; Design §S7-8; Contracts C4 (assert_channel_contract)",
           "done_when": "tests/channel_conformance.py::assert_channel_contract asserts connect/send/receive echo shapes, capabilities() completeness, health/test shapes, unknown-sender flow (canned reply + attention item), fence_channel_content applied to non-owner content, streaming throttle where declared; export-path decision recorded; all four apps pass the kit in apps-repo CI",
           "deps": [
