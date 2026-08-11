@@ -121,11 +121,15 @@ export function SavingsCard() {
   )
 }
 
-function StrategyPicker({ value, disabled, onChange }: {
+function StrategyPicker({ value, disabled, onChange, forRule }: {
   value: ProjectionStrategy; disabled?: boolean; onChange: (s: ProjectionStrategy) => void
+  /** Which rule this picker belongs to — the rule's name, or '' for the new-rule row. Two pickers
+   *  render on this panel, so a constant name would announce both identically. */
+  forRule?: string
 }) {
   return (
     <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as ProjectionStrategy)}
+      aria-label={forRule ? `Strategy for ${forRule}` : 'Strategy for the new rule'}
       className="h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
       {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.label} — {s.blurb}</option>)}
     </select>
@@ -143,13 +147,19 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
       <div className="flex items-center gap-2">
         <Scissors size={13} className="shrink-0 text-on-surface-low" />
         <input value={rule.name} disabled={disabled} placeholder="rule name"
+          aria-label="Rule name"
           onChange={(e) => onChange({ ...rule, name: e.target.value })}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <StrategyPicker value={rule.strategy} disabled={disabled} onChange={(s) => onChange({ ...rule, strategy: s })} />
-        <button type="button" disabled={disabled} onClick={onRemove} aria-label="Remove rule"
+        <StrategyPicker value={rule.strategy} disabled={disabled} forRule={rule.name}
+          onChange={(s) => onChange({ ...rule, strategy: s })} />
+        {/* One button per rule row, so a constant "Remove rule" announces identically N times.
+            Matches the sibling pattern in SecurityPanel (`Remove ${h}`). */}
+        <button type="button" disabled={disabled} onClick={onRemove}
+          aria-label={rule.name ? `Remove rule ${rule.name}` : 'Remove rule'}
           className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={15} /></button>
       </div>
       <input value={rule.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
+        aria-label={rule.name ? `Match regex for ${rule.name}` : 'Match regex'}
         onChange={(e) => onChange({ ...rule, match_regex: e.target.value })}
         className={inputCls} />
       {/* Rule ops v2: declarative line operations. When any is set they replace the
@@ -202,12 +212,14 @@ function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: Projectio
       <div className="flex items-center gap-2">
         <Plus size={13} className="shrink-0 text-on-surface-low" />
         <input value={name} disabled={disabled} placeholder="new rule name"
+          aria-label="New rule name"
           onChange={(e) => setName(e.target.value)}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <StrategyPicker value={strat} disabled={disabled} onChange={setStrat} />
       </div>
       <div className="flex items-center gap-2">
         <input value={rx} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
+          aria-label="Match regex for the new rule"
           onChange={(e) => setRx(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add() }}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <button type="button" disabled={disabled || !rx.trim()} onClick={add}

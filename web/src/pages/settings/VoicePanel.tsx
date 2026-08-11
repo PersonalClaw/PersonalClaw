@@ -237,6 +237,7 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
             <div className="mb-3 flex items-center gap-2">
               <input
                 value={adding} onChange={(e) => setAdding(e.target.value)}
+                aria-label="Add a vocabulary term"
                 onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }}
                 placeholder="Add a term (e.g. Kubernetes, K8s)…"
                 className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 text-[0.8125rem] outline-none focus:border-primary" />
