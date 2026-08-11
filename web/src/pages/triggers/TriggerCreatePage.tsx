@@ -246,7 +246,15 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
         <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
-          <Button onClick={create} disabled={saving || !canSave}><Check size={16} /> {saving ? 'Creating…' : 'Create trigger'}</Button>
+          {/* `canSave` ANDs four requirements; the reason names the FIRST one outstanding, in the
+              order the form presents them, rather than reciting all four. Omitted while `saving`,
+              where the label already reads "Creating…". */}
+          <Button onClick={create} disabled={saving || !canSave}
+            disabledReason={saving ? undefined
+              : !name.trim() ? 'Name the trigger first'
+                : !provider ? 'Pick a provider'
+                  : !requiredConfigMet ? 'Complete the required settings'
+                    : 'Set the event to match'}><Check size={16} /> {saving ? 'Creating…' : 'Create trigger'}</Button>
         </div>
       </div>
     </div>
