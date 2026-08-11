@@ -4840,12 +4840,14 @@
         {
           "id": "CE-8",
           "title": "Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue",
-          "status": "in_progress",
+          "status": "done",
           "scope": "Amendment 2026-07-26 — T7.4 (apps slack-channel + core inbox_providers docstrings)",
           "done_when": "slack-channel app.json registers >=2 providers incl. an inbox MessageSourceProvider over the existing runtime client; Slack messages flow through the generic inbox source seam with no core slack string (inbox_providers docstring + native_source.py comment residue scrubbed); non-seam Slack surface lives behind the app's own ui block; boundary tests green",
           "deps": [
             "CE-2"
-          ]
+          ],
+          "pr": "#1009,#1032 (parts 2-4) + apps main (part 1 adapter) + unblocked by INU-8 #1090",
+          "evidence": "All four done_when clauses verified by OUTCOME, not source grep. Parts 2-4 shipped earlier (#1009/#1032: grep -i slack over the inbox seam is empty; non-seam UI behind the app's ui block). Part 1 was BLOCKED-E1 twice because core's inbox seam could not resolve app-declared providers; INU-8 (#1090) fixed that. DRIVEN PROOF with the REAL app (not a fixture): installed slack-channel from apps main into a temp PERSONALCLAW_HOME against INU-8's core -> install ok, enable ok, list_source_names()==['slack'], get_default_provider('slack') returns SlackInboxSource with source_name 'slack'. app.json declares TWO providers (canonical singular provider=channel transport + providers array carrying the inbox source over the EXISTING RealSlackClient, an adapter not a second client)."
         },
         {
           "id": "CE-9",
