@@ -84,8 +84,9 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
 
   return (
     // rootRef spans the whole control so outside-click / focus-leave are measured
-    // against the ONE morphing surface below it.
-    <div ref={rootRef} onBlurCapture={onBlurCapture}>
+    // against the ONE morphing surface below it. `relative` anchors the Clear button,
+    // which overlays the collapsed field from OUTSIDE the surface's overflow clip.
+    <div ref={rootRef} onBlurCapture={onBlurCapture} className="relative">
       {/* THE surface. A single motion.div with `layout` that IS the field when
           collapsed and the menu when open — it grows in place (pushing siblings
           down) and its corner radius eases field→menu during the size morph.
@@ -146,13 +147,36 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           <motion.button layout="position" type="button" onClick={() => setOpen(true)} data-type="title-m"
             className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50">
             <span className={`flex-1 truncate ${selected ? 'text-on-surface' : 'text-on-surface-low'}`}>{selected ? selected.label : placeholder}</span>
-            {selected && <span role="button" tabIndex={-1} aria-label="Clear selection" className="shrink-0 text-on-surface-low hover:text-on-surface" onClick={(e) => { e.stopPropagation(); onChange('') }}><X size={14} /></span>}
             <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={bounce.subtle}>
               <ChevronDown size={16} />
             </motion.span>
           </motion.button>
         )}
       </motion.div>
+      {/* Clear is a SIBLING of the morphing surface, not a child of the field button.
+          It used to be a `role="button" tabIndex={-1}` span nested inside that button,
+          which promised assistive tech a control no keyboard could reach: the negative
+          tabindex hid it from Tab and it carried no key handler, so Enter/Space did
+          nothing. A real <button> is operable by every input, and the field stops
+          being an interactive-in-interactive.
+          It overlays rather than sitting in the flex row because the surface owns a
+          container-transform (`layout` + `overflow: hidden`): a new flex child would
+          be measured by the morph and clipped during it. As a sibling of that surface
+          it is outside the clip, and being outside the field button also means its
+          click cannot bubble into "open the menu" — no stopPropagation needed. */}
+      {/* `value` — not `selected`. Several callers ship an explicit empty-valued
+          option ("Auto — provider default"), so `options.find(o => o.value === value)`
+          MATCHES on an empty value and the old code offered Clear on a field with
+          nothing to clear. Harmless while the control was unreachable; a dead button
+          once it became operable. Gating on the raw value ties the affordance to
+          "something is set", which is what Clear actually means. */}
+      {!open && value !== '' && (
+        <button type="button" aria-label="Clear selection" title="Clear selection"
+          onClick={() => onChange('')}
+          className="absolute right-8 top-5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+          <X size={14} />
+        </button>
+      )}
     </div>
   )
 }
