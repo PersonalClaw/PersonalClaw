@@ -541,7 +541,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             <IconButton icon={ArrowLeft} label="Back to loops" size={40} onClick={onBack} />
             <div className="min-w-0 flex flex-col">
               {editingTitle ? (
-                <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
+                <input autoFocus aria-label="Rename this loop" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
                   onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
                   className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
               ) : (
