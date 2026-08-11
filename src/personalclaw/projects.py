@@ -110,7 +110,7 @@ def maybe_rename_from(project_id: str, title: str) -> None:
         return
     store = _store()
     project = store.get_project(project_id)
-    if project is None or project.is_default_project() or project.name_locked:
+    if project is None or project.is_builtin_project() or project.name_locked:
         return
     if project.name == title:
         return

@@ -63,7 +63,7 @@ class TestProjectSubtreeTombstones:
         import pytest
 
         store = _store(tmp_path, monkeypatch)
-        default = next(p for p in store.list_projects() if p.is_default_project())
+        default = next(p for p in store.list_projects() if p.is_builtin_project())
         with pytest.raises(ValueError):
             store.delete_project(default.id)
         # And no tombstone was written for a delete that didn't happen.

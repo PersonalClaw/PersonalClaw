@@ -117,7 +117,7 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
       const activeOk = active && ps.some((p) => p.id === active) ? active : ''
       // `||` (not `??`): the intermediate fallbacks are empty STRINGS, not null, so
       // each must fall through to the next when blank.
-      const derived = cur?.project_id || activeOk || ps.find((p) => p.is_default)?.id || ps[0]?.id || ''
+      const derived = cur?.project_id || activeOk || ps.find((p) => p.is_builtin)?.id || ps[0]?.id || ''
       setProjectId(derived)
       onProjectChange?.(derived)
     }).catch(() => {})
@@ -171,7 +171,7 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
         <Select value={projectId}
           onChange={(id) => { if (id === NEW) { setCreating('project'); setNewName('') } else { setProjectId(id); onChange(''); onProjectChange?.(id) } }}
           options={[
-            ...projects.map((p) => ({ value: p.id, label: p.is_default ? `${p.name} (default)` : p.name })),
+            ...projects.map((p) => ({ value: p.id, label: p.is_builtin ? `${p.name} (builtin)` : p.name })),
             { value: NEW, label: '＋ New project…' },
           ]} />
       </Field>

@@ -241,7 +241,7 @@ def _engaged_projects(_state: Any) -> bool:
 
     # A fresh instance always has the default project; "engaged" means the user
     # created one of their own beyond it.
-    return any(not p.is_default_project() for p in HierarchyStore().list_projects())
+    return any(not p.is_builtin_project() for p in HierarchyStore().list_projects())
 
 
 def _engaged_inbox(_state: Any) -> bool:
