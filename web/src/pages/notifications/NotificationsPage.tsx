@@ -94,7 +94,9 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         />
       }
       controls={(items === undefined || items.length > 0)
-        ? <ListControls><FilterMenu sections={[filterSection]} /></ListControls>
+        ? <ListControls results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }}>
+            <FilterMenu sections={[filterSection]} />
+          </ListControls>
         : undefined}
       panel={open && (
         <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = kindMeta(open.kind); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>

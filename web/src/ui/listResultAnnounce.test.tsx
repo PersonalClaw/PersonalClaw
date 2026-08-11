@@ -131,17 +131,42 @@ describe('the migrated list surfaces pass a result count', () => {
     'pages/knowledge/KnowledgeListPage.tsx',
     'pages/skills/SkillsPage.tsx',
     'pages/prompts/PromptsListPage.tsx',
+    // cycle 58 — the tail, each with its own post-filter array and noun
+    'pages/triggers/TriggersListPage.tsx',
+    'pages/workflows/WorkflowsListPage.tsx',
+    'pages/notifications/NotificationsPage.tsx',
+    'pages/loops/LoopsListPage.tsx',
+    'pages/inbox/InboxPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {
     it(`${rel} passes results to ListControls`, () => {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, 'must pass a results prop').toMatch(/results=\{\{/)
-      // `active` must be derived from the query, not hardcoded true — otherwise the list
-      // announces its length on every mount.
-      expect(src, 'active must be conditional on the query').toMatch(/active:\s*!!/)
+      // `active` must be DERIVED from the query/filter, never hardcoded `true` — otherwise the
+      // list announces its length on every mount. Search-driven surfaces derive it from the
+      // query (`!!q.trim()`); filter-only ones compare against their own default value.
+      const line = src.split('\n').find((l) => l.includes('results={{'))!
+      expect(line, 'active must be derived, not hardcoded').not.toMatch(/active:\s*true/)
+      expect(line, 'active must reference the query or the filter').toMatch(/active:\s*(!!|\w+\s*!==)/)
     })
   }
+
+  it('never compares `active` to a filter default it does not use', () => {
+    // 🪤 `filter !== 'all'` is WRONG on a surface whose filter DEFAULTS to something else:
+    // inbox opens on 'open' and loops on 'active', so the comparison was true on mount and
+    // the list announced its length before the user did anything (measured: inbox said
+    // "39 items" at idle). `active` must compare against that surface's OWN default.
+    const defaults: Record<string, string> = {
+      'pages/inbox/InboxPage.tsx': 'open',
+      'pages/loops/LoopsListPage.tsx': 'active',
+    }
+    for (const [rel, dflt] of Object.entries(defaults)) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      const line = src.split('\n').find((l) => l.includes('results={{'))!
+      expect(line, `${rel} defaults its filter to '${dflt}'`).toContain(`!== '${dflt}'`)
+    }
+  })
 
   it('scans real files (not vacuously green)', () => {
     expect(walk(SRC).length).toBeGreaterThan(200)

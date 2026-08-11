@@ -133,7 +133,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
       controls={
         // Active / Ongoing (forever + monitor) / Done filters (§10.4) — on the page,
         // not the header.
-        <ListControls>
+        <ListControls results={{ count: (loops ?? []).filter(matches).length, noun: 'loops', active: filter !== 'active' }}>
           <FilterMenu sections={[filterSection]} />
         </ListControls>
       }
