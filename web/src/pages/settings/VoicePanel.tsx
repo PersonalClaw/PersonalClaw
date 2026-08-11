@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -241,8 +242,9 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }}
                 placeholder="Add a term (e.g. Kubernetes, K8s)…"
                 className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 text-[0.8125rem] outline-none focus:border-primary" />
-              <button type="button" onClick={addTerm} disabled={busy || !adding.trim()}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40">
+              <button type="button" onClick={addTerm}
+                {...unavailableWhen(!adding.trim(), 'Enter a term first', { busy })}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                 <Plus size={15} /> Add
               </button>
               <button type="button" onClick={rebuild} disabled={busy} title="Resync from the knowledge graph"

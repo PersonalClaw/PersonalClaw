@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { unavailableWhen } from '../../ui/unavailable'
 import { Scissors, Plus, X, AlertTriangle, Gauge } from 'lucide-react'
 import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
@@ -222,8 +223,9 @@ function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: Projectio
           aria-label="Match regex for the new rule"
           onChange={(e) => setRx(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add() }}
           className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        <button type="button" disabled={disabled || !rx.trim()} onClick={add}
-          className="shrink-0 h-9 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40">Add rule</button>
+        <button type="button" onClick={add}
+          {...unavailableWhen(!rx.trim(), 'Enter a pattern first', { busy: disabled })}
+          className="shrink-0 h-9 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">Add rule</button>
       </div>
     </div>
   )

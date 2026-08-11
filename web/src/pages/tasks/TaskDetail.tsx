@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -320,7 +321,8 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
             className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           {/* Icon-only send, one per comment composer — a constant name is correct. */}
-          <button type="button" aria-label="Post comment" onClick={send} disabled={sending || !draft.trim()} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40"><Send size={15} /></button>
+          <button type="button" aria-label="Post comment" onClick={send}
+            {...unavailableWhen(!draft.trim(), 'Write a comment first', { busy: sending })} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"><Send size={15} /></button>
         </div>
       </div>
     </SectionLabel>
