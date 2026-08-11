@@ -372,7 +372,7 @@ function resolveSwatch(raw: unknown, scheme: Scheme): string {
 // ── Tokens view — live swatches + scales from the resolved token set ──
 
 export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverride, readOnly }: { tokens: ResolvedTokens | null; scheme: Scheme; overrideCount?: number; onRefresh?: () => void; onOverride?: (path: string, value: string) => void; readOnly?: boolean }) {
-  if (!tokens) return <div className="text-on-surface-low text-sm">Loading tokens…</div>
+  if (!tokens) return <div className="text-on-surface-low text-[0.8125rem]">Loading tokens…</div>
   const t = tokens.resolved
   // Token files carry `comment` keys for human context — strip them from any map we
   // render as data (otherwise a "comment" pseudo-scale/size shows up in the UI).
@@ -637,7 +637,7 @@ function CanvasView({ artifacts, loopId }: { artifacts: Artifact[]; loopId: stri
   }
 
   if (artifacts.length === 0) return (
-    <div className="grid place-items-center h-full text-on-surface-low text-sm text-center">
+    <div className="grid place-items-center h-full text-on-surface-low text-[0.8125rem] text-center">
       <div className="flex flex-col items-center gap-2 max-w-md">
         <Box size={28} className="opacity-50" />
         <p>No components yet. As the design loop generates React components (kind:react artifacts tagged to this loop), they render here live on the canvas.</p>
@@ -696,9 +696,9 @@ function CanvasComponent({ a, draggable, onDragStart, onDragEnd }: {
         <span className="text-on-surface-low text-[0.75rem]">v{a.version}</span>
       </div>
       {a.description && <p className="text-on-surface-low text-[0.75rem]">{a.description}</p>}
-      {jsx === null ? <div className="text-on-surface-low text-xs">Loading…</div>
+      {jsx === null ? <div className="text-on-surface-low text-[0.75rem]">Loading…</div>
         : jsx ? <ReactWidgetFrame jsx={jsx} title={a.name} />
-        : <div className="text-on-surface-low text-xs">(no content)</div>}
+        : <div className="text-on-surface-low text-[0.75rem]">(no content)</div>}
     </div>
   )
 }
@@ -723,7 +723,7 @@ const CONTRAST_PAIRS: [string, string, string][] = [
 ]
 
 export function ContrastView({ tokens, scheme }: { tokens: ResolvedTokens | null; scheme: Scheme }) {
-  if (!tokens) return <div className="text-on-surface-low text-sm">Loading tokens…</div>
+  if (!tokens) return <div className="text-on-surface-low text-[0.8125rem]">Loading tokens…</div>
   const roles: Record<string, string> = flattenRoleLeaves(tokens.resolved?.color?.semantic?.[scheme])
   const rows = CONTRAST_PAIRS.map(([label, fgRole, bgRole]) => {
     const fg = toHex(roles[fgRole]); const bg = toHex(roles[bgRole])
@@ -813,7 +813,7 @@ function PaletteView({ onApply, readOnly }: { onApply: (scale: PaletteScale, hex
         <Button variant="secondary" onClick={() => fileRef.current?.click()}><Upload size={14} className="mr-1.5" />Upload screenshot</Button>
       </div>
       {imgUrl && <img src={imgUrl} alt="uploaded" className="max-h-48 rounded-lg border border-outline-variant/40 object-contain" />}
-      {busy && <div className="text-on-surface-low text-sm">Extracting palette…</div>}
+      {busy && <div className="text-on-surface-low text-[0.8125rem]">Extracting palette…</div>}
       {palette.length > 0 && (
         <div className="flex flex-col gap-2">
           <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Extracted palette</span>

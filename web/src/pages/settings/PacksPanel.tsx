@@ -74,7 +74,7 @@ export function PacksPanel() {
 // ── installed packs + finish-setup chip ──────────────────────────────────────
 function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
   if (packs.length === 0) {
-    return <div className="rounded-lg bg-surface-container px-4 py-3 text-sm text-on-surface-low">No packs installed yet.</div>
+    return <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">No packs installed yet.</div>
   }
   return (
     <div className="flex flex-col gap-2">
