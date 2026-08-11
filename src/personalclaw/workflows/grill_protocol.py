@@ -539,6 +539,25 @@ def fold_answers(
     return step
 
 
+def settled_decisions(step: StepZero) -> list[str]:
+    """The decisions a grill pass actually SETTLED — the input to ``grill.SaveFn``.
+
+    ``grill.py`` declares ``SaveFn = Callable[[str], None]`` and takes ``save=None``, and every
+    caller passed None, so a grill pass could settle a question and then forget the answer — the
+    next pass re-asked what the user had already decided, which is precisely the "memory-checked
+    decomposition" upgrade the pipeline exists to deliver.
+
+    What counts as settled is a real distinction, not a formality: only ``confirmed`` items are
+    returned. An ASSUMPTION is the planner's guess and persisting it as a lesson would harden a
+    guess into a standing instruction; an OPEN QUESTION is by definition unsettled. Prohibitions ARE
+    settled — the user stating a boundary is the most durable decision a grill produces — so they
+    are included, tagged so a reviewer can see they are constraints rather than choices.
+    """
+    out = [str(c).strip() for c in step.confirmed if str(c).strip()]
+    out += [f"Prohibition: {p}".strip() for p in step.prohibitions if str(p).strip()]
+    return out
+
+
 def _is_deferral(answer: str) -> bool:
     lowered = answer.lower().strip(" .!?")
     return any(lowered == phrase or lowered.startswith(phrase) for phrase in _DEFERRALS)

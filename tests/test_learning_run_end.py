@@ -95,6 +95,10 @@ def test_no_vector_store_is_a_noop(home):
         "procedural": 0,
         "filtered": 0,
         "skipped": 0,
+        # `mined` joins the report with the §3.2 producer passes (WF2LEA-7). Asserted here, in the
+        # EXACT-dict comparison, on purpose: this test's job is that a null-memory service writes
+        # nothing at all, and a new counter that could be nonzero on this path must fail here.
+        "mined": 0,
     }
     assert P.list_pending(kind=P.Kind.LESSON_BATCH.value) == []
 
