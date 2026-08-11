@@ -6376,7 +6376,7 @@
         {
           "id": "WF2WOR-5",
           "title": "Batch subagent_run compile-cutover + tool-handler posture seam + agent roster",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§3 (Subagent tools vs stages; batch-compile hardening R2/R16), Migration Order step 6",
           "done_when": "Success Criterion 2: mcp_subagents.subagent_run(tasks=[...]) routes through compile_batch (N>=2) producing a live widget that survives a gateway restart with individually-retryable branches; the __wf_depth tool-handler seam enforces capability classes, orchestration-tool denial and the secret-filtered leaf env; each branch runs in an isolated workspace, returns schema-validated typed output, and holds a lease (no double-execution); agent-roster slug-keyed catalog projection over config agents + drift check ship",
           "deps": [
@@ -6384,7 +6384,7 @@
             "WF2WOR-8",
             "WF2WOR-9"
           ],
-          "pr": "#187"
+          "pr": "#1075"
         },
         {
           "id": "WF2WOR-6",
