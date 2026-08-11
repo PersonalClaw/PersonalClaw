@@ -359,7 +359,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
     <WorkbenchLayout
       scroll={view !== 'graph'}
       controls={view === 'library'
-        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search knowledge', label: 'Search knowledge' }} />
+        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search knowledge', label: 'Search knowledge' }}
+            results={{ count: (items ?? []).length, noun: 'items', active: !!submitted }} />
         : undefined}
       topBar={
         <TopBar

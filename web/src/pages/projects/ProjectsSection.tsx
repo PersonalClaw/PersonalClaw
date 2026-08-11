@@ -121,7 +121,8 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
         right={<HeaderActions><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
 
       {!!projects?.length && (
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }} />
+        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
+          results={{ count: shown.length, noun: 'projects', active: !!needle }} />
       )}
 
       {err && (

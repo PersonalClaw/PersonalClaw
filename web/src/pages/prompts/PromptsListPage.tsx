@@ -137,7 +137,8 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       }
       controls={anyItems
         ? <ListControls
-            search={{ value: q, onChange: setQ, placeholder: isSnips ? 'Search snippets' : 'Search prompts', label: 'Search' }}>
+            search={{ value: q, onChange: setQ, placeholder: isSnips ? 'Search snippets' : 'Search prompts', label: 'Search' }}
+            results={{ count: (rows ?? []).length, noun: isSnips ? 'snippets' : 'prompts', active: !!q.trim() }}>
             <FilterMenu sections={filterSections} label="Sort & filter" />
           </ListControls>
         : undefined}
