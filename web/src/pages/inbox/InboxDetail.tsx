@@ -271,8 +271,14 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
             {detail.refine_target && <span className="text-on-surface-low">refines {detail.refine_target}</span>}
             {detail.triggers && <span className="text-on-surface-low">triggers: {detail.triggers}</span>}
           </div>
-          {/* The full procedure — the thing actually being approved. */}
-          <div className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem]">
+          {/* The full procedure — the thing actually being approved. Rendered markdown has
+              no focusable content of its own, so without a tab stop a keyboard user cannot
+              scroll it: measured 1285px of 1541px hidden below the fold on a real item
+              (WCAG 2.1.1; axe scrollable-region-focusable, serious). That is the text
+              someone is being asked to approve, so it has to be readable without a mouse.
+              Same resolution as the kanban columns and the shell-denylist list. */}
+          <div className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem]"
+            tabIndex={0} role="group" aria-label="Procedure">
             <Markdown>{detail.procedure_md}</Markdown>
           </div>
           {/* Provenance is a FENCED excerpt of the driving trace: untrusted text rendered

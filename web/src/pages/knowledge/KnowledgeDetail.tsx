@@ -3,6 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { investigate } from '../../lib/investigate'
+import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput } from '../../ui/forms'
 import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
@@ -721,34 +722,49 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
             "Insights" title with a count pill, a muted one-line summary preview, then the
             Regenerate action + a chevron chip. More breathing room than a bare eyebrow so
             it reads as a real section header, not a thin strip. */}
-        <button type="button" onClick={onToggle} disabled={!hasMore}
-          className="group/dock flex w-full items-center gap-2.5 py-3 text-left disabled:cursor-default">
-          <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10">
-            <Sparkles size={14} className={`text-primary ${genning || processing ? 'animate-pulse' : ''}`} />
-          </span>
-          <span className="shrink-0 text-on-surface text-[0.8125rem]" style={fvs(500)}>Insights</span>
-          {hasMore && (
-            <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem] tabular-nums">{insights.length + intents.length}</span>
-          )}
-          {/* Persistent flex-1 slot: a one-line summary preview when collapsed (so the bar
-              is informative at a glance), empty when open (the body shows the full text). */}
-          <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-on-surface-low">
-            {open ? '' : (summary || (processing ? 'Enriching…' : hasMore ? 'Key points, topics & more' : 'No insights yet'))}
-          </span>
+        {/* The disclosure and the Regenerate action are SIBLINGS in a flex row, not nested.
+            Regenerate used to be a `span role="button" tabIndex={0}` INSIDE the disclosure
+            button, which is `nested-interactive` (axe, serious): AT is told the header is
+            one button and then finds another control inside it.
+
+            The disclosure stays the bare element it already was (a full-width bar with a
+            flexible summary slot — the Button primitive is fixed-height, centred and
+            pill-padded, so forcing it here would distort the primitive rather than adopt
+            it). Regenerate becomes a real Button, which is a net ADOPTION: it was a
+            hand-rolled span before, so the bespoke-chrome count stays flat at the
+            primitive-adoption ratchet's baseline. */}
+        <div className="group/dock flex w-full items-center gap-2.5 py-3">
+          <button type="button" onClick={onToggle} disabled={!hasMore}
+            aria-expanded={hasMore ? open : undefined}
+            className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default">
+            <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10">
+              <Sparkles size={14} className={`text-primary ${genning || processing ? 'animate-pulse' : ''}`} />
+            </span>
+            <span className="shrink-0 text-on-surface text-[0.8125rem]" style={fvs(500)}>Insights</span>
+            {hasMore && (
+              <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem] tabular-nums">{insights.length + intents.length}</span>
+            )}
+            {/* Persistent flex-1 slot: a one-line summary preview when collapsed (so the bar
+                is informative at a glance), empty when open (the body shows the full text). */}
+            <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-on-surface-low">
+              {open ? '' : (summary || (processing ? 'Enriching…' : hasMore ? 'Key points, topics & more' : 'No insights yet'))}
+            </span>
+            {/* Decorative, and INSIDE the disclosure on purpose: it is the affordance for
+                this button's own action, so it must not be a second tab stop for one
+                toggle. A <span> keeps it out of the a11y tree entirely. */}
+            {hasMore && (
+              <span aria-hidden className="grid size-7 shrink-0 place-items-center rounded-lg text-on-surface-low transition-colors group-hover/dock:bg-surface-high group-hover/dock:text-on-surface">
+                <ChevronDown size={16} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+              </span>
+            )}
+          </button>
           {showGenerate && (
-            <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onGenerate() }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onGenerate() } }}
-              title="Reprocess this item — refreshes insights, entities, tags, and the embedding"
-              className="shrink-0 inline-flex items-center gap-1 rounded-pill px-2.5 h-7 text-[0.75rem] text-primary hover:bg-primary/10 disabled:opacity-50 transition-colors">
+            <Button variant="ghost" size="sm" onClick={onGenerate} className="shrink-0"
+              title="Reprocess this item — refreshes insights, entities, tags, and the embedding">
               <Sparkles size={12} className={genning ? 'animate-pulse' : ''} /> {genning ? 'Reprocessing…' : insights.length > 0 || summary ? 'Regenerate' : 'Generate'}
-            </span>
+            </Button>
           )}
-          {hasMore && (
-            <span className="grid size-7 shrink-0 place-items-center rounded-lg text-on-surface-low transition-colors group-hover/dock:bg-surface-high group-hover/dock:text-on-surface">
-              <ChevronDown size={16} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
-            </span>
-          )}
-        </button>
+        </div>
 
         {open && (
           <div className="flex max-h-[45vh] flex-col gap-l overflow-y-auto border-t border-outline-variant/40 pb-m pt-m">
