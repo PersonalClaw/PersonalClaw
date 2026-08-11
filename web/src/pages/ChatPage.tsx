@@ -22,6 +22,7 @@ import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoard
 import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
+import { OrganizeChip } from './chat/OrganizeChip'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, Skeleton } from '../ui/ListScaffold'
 import { MessageUser } from '../ui/chat/MessageUser'
@@ -2174,6 +2175,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </div>
           )}
         </AnimatePresence>
+        {/* Suggested organization (SM T2.1). Keyed on the message count so it re-asks once a
+            turn lands and the auto-titler has given the chat a title to reason from — an
+            untitled brand-new chat has no signal. Proposal only; nothing applies until
+            "File it" is clicked. */}
+        {started && sessionRef.current && (
+          <div className="mb-1 flex justify-center">
+            <OrganizeChip sessionKey={sessionRef.current} refreshKey={turns.length} />
+          </div>
+        )}
         <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}

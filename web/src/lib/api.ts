@@ -416,6 +416,13 @@ export interface KnowledgeCollection {
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
+// A PROPOSED organization for an untagged chat (SM T2.1). `tags` are NAMES, not ids — a
+// proposed tag may not exist yet and is created (via the shared tag helper) only on accept.
+// Holding one of these changes nothing about the session; only organizeAccept applies it.
+export interface OrganizeProposal {
+  session: string; folder_id: string; folder_name: string; tags: string[]
+  source: 'title' | 'workspace' | 'channel' | 'llm' | string; reason: string; dedup_key?: string
+}
 // Magic re-tag batch job (POST/GET /api/sessions/retag-all). status 'idle' only
 // appears on the GET before any job has run.
 export interface RetagJob { id?: string; status: 'idle' | 'running' | 'done' | 'error' | 'cancelled'; done?: number; total?: number; updated?: number; skipped?: number; errors?: number; current?: string; error?: string }
@@ -2207,6 +2214,14 @@ export const api = {
   updateChatTag: (id: string, body: Partial<ChatTag>) => patch<ChatTag>(`/api/chat/tags/${encodeURIComponent(id)}`, body),
   deleteChatTag: (id: string) => del(`/api/chat/tags/${encodeURIComponent(id)}`),
   setSessionTags: (session: string, tags: string[]) => put(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, { tags }),
+  // Suggested organization (SM T2.1). The GET only READS — a suggestion never applies
+  // itself; organizeAccept is the sole path that writes folder/tags from a proposal.
+  organizeSuggestion: (session: string, opts: { llm?: boolean } = {}) =>
+    get<{ proposal: OrganizeProposal | null }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize${opts.llm === false ? '?llm=0' : ''}`),
+  organizeAccept: (session: string, p: OrganizeProposal) =>
+    post<{ ok: boolean; folder_id: string; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize/accept`, { folder_id: p.folder_id, folder_name: p.folder_name, tags: p.tags, source: p.source }),
+  organizeDecline: (session: string, p: OrganizeProposal) =>
+    post<{ ok: boolean; declined: boolean }>(`/api/chat/sessions/${encodeURIComponent(session)}/organize/decline`, { folder_id: p.folder_id, folder_name: p.folder_name, tags: p.tags, source: p.source }),
   // Magic re-tag: batch AI re-evaluation of every session's tags (board's
   // sparkle button). Progress arrives over /api/ws as retag_progress/retag_done.
   retagAllSessions: () => post<RetagJob>('/api/sessions/retag-all', {}),
