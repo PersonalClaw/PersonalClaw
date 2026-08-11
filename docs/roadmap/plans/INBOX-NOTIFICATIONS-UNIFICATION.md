@@ -535,3 +535,27 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   rewritten to the inbox contract (`test_dashboard.py`, 27 in file — its old isolation patched
   only `state.config_dir`, so my inbox read hit the DEVELOPER'S real inbox and returned 39;
   both `config_dir` seams are now patched).
+
+- **[2026-08-11][INU-8] ATOM CREATED** — inbox provider-seam resolution. Authored (not implemented) after
+  CE-8 and EIAT-2 both dead-ended on the same seam and no atom owned the fix; CE-8's own log states it
+  "belongs to the INBOX/provider-seam contract owner", which is this plan.
+  **Evidence gathered against `main` a2e874a8, measured not inferred:** `PROVIDER_TYPES`
+  (`apps/manifest.py:613`) declares 18 types; `providers/registry.py` registers 14 handlers; the four
+  declarable-but-unhandled types are `agent`, `inbox`, `notification`, `skills` — each installs clean
+  and then does nothing (the #47 rule). The guard that exists to prevent this,
+  `TestProviderTypesMatchHandlers`, is documented as asserting EQUALITY but asserts only
+  `handlers - PROVIDER_TYPES`; it is structurally incapable of catching a declarable type with no
+  handler, which is why four of them accumulated unnoticed. `inbox_providers.get_default_provider`
+  already documents the dead end in its own `SEAM LIMIT` paragraph: resolution reads only the
+  `personalclaw.message_source_providers` entry-point group, an app can never contribute an entry point
+  (installs never make the app an installed distribution), and `discover_providers` binds a module-level
+  CLASS while a manifest declares a FACTORY — so both halves must change.
+  **Two consumers unblocked on completion,** with app-side work already written and inert: CE-8 part 1
+  (Slack inbox source, recorded BLOCKED-E1 twice by independent passes) and EIAT-2 (`mail-inbox`
+  declares the identical `{"type":"inbox","implementation":"…:create_provider"}` shape).
+  **Deliberately left to the implementing tick:** whether `agent`/`notification`/`skills` get handlers,
+  get removed from `PROVIDER_TYPES`, or get allowlisted with the real mechanism named — the atom
+  requires each to be resolved and forbids leaving any silently declarable-and-dead. Early reading is
+  that `skills` is vestigial (apps seed skills via `apps/skill_seed.py`), but the implementer must
+  re-confirm and must check no shipped app declares a type before removing it.
+  Deps `[]` — every file it touches is already shipped, so it is READY now.

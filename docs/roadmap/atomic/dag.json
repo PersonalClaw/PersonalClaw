@@ -128,7 +128,7 @@
       "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
       "code": "INU",
       "status": "in_progress",
-      "summary": "7 atoms: 5 done (S1-S5, PRs #111-#115), 2 todo (S6 verification gate, S7 Proposals contract). No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.",
+      "summary": "8 atoms: 5 done (S1-S5, PRs #111-#115), 3 todo (S6 verification gate, S7 Proposals contract, S8 inbox provider-seam resolution). No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers. INU-8 is a provider-seam contract change this plan owns; CE-8 part 1 and EIAT-2 are blocked on it.",
       "atoms": [
         {
           "id": "INU-1",
@@ -207,6 +207,14 @@
             "INU-4",
             "INU-6"
           ]
+        },
+        {
+          "id": "INU-8",
+          "title": "Resolve app-contributed inbox sources through the app registry's manifest factory (InboxTypeHandler) + make the PROVIDER_TYPES/handler guard bidirectional",
+          "status": "todo",
+          "scope": "Provider-seam contract change owned by this plan (the inbox source seam). Closes the declarable-but-unhandled gap for `inbox` and repairs the one-directional #47 guard. Unblocks CE-8 part 1 (Slack inbox source) and EIAT-2 (mail-inbox provider), whose app-side adapters are already written and inert.",
+          "done_when": "An app declaring {\"type\":\"inbox\",\"implementation\":\"mod:factory\"} in app.json has its provider resolved and registered at enable-time by a real InboxTypeHandler (registered via register_type_handler(\"inbox\", ...), the same load_factory path every other app provider type uses) and DEREGISTERED on disable/uninstall so no phantom source survives; inbox_providers.get_default_provider(name) resolves app-contributed sources with a documented precedence (app-registry factory -> entry-point group -> native -> filesystem) and its SEAM LIMIT docstring is replaced by the real contract; the class-vs-instance shape mismatch is handled explicitly (entry points yield a CLASS, a manifest factory yields an INSTANCE) rather than by duck-typing at the call site; a fixture app's inbox source is driven end-to-end (declare -> enable -> messages flow through the generic seam -> disable -> source gone); test_provider_types_equal_registered_handlers asserts BOTH directions with an explicit reason-carrying allowlist, and each of the three remaining unhandled types (agent, notification, skills) is resolved per type: given a handler, or removed from PROVIDER_TYPES, or allowlisted with the mechanism that actually serves it named in the reason (skills ship via apps/skill_seed.py, not a provider) — no type is left silently declarable-and-dead",
+          "deps": []
         }
       ]
     },
