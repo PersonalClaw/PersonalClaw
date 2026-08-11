@@ -95,6 +95,11 @@ export function Button({
       title={title}
       aria-expanded={ariaExpanded}
       aria-pressed={ariaPressed}
+      // `loading` cross-fades the label to opacity 0 and swaps in an aria-hidden spinner, so
+      // sighted users see the action is in flight and everyone else got NO signal at all —
+      // the button just went quiet and disabled while keeping its original name. `aria-busy`
+      // is the state that says "working"; measured 0 buttons in the app carrying it before.
+      aria-busy={loading || undefined}
       onClick={onClick}
       disabled={off}
       onPointerMove={onMove}
