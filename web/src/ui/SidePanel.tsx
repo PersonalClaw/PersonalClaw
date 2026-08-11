@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useFocusReturn } from './useFocusReturn'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { X, Maximize2, Minimize2 } from 'lucide-react'
@@ -72,6 +73,11 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (expanded) setExpanded(false); else close() } }
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
   }, [expanded, close])
+  // Escape closed the panel but dropped focus to <body>, throwing a keyboard user back to the top of
+  // the page. `useFocusReturn` restores the row that opened it — the RESTORE half of `useFocusTrap`
+  // without the trap, because a dock is a non-modal SIBLING of the list and Tab must flow through it.
+  // Measured before: focusing Close and pressing Escape left `document.activeElement === body`.
+  const focusReturnRef = useFocusReturn<HTMLDivElement>()
 
   const onHandleDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
@@ -136,7 +142,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // INNER (left) corners — the edge facing the content — to read as a floating
     // panel rather than a full-bleed column. Radius via a token (--radius-xl); the
     // outer (right) edge stays flush to the browser edge (square).
-    <motion.div className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
+    <motion.div ref={focusReturnRef} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
       style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
       initial={{ width: 0, opacity: 0 }} animate={{ width, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
       {/* left-edge resize handle — the visible seam springs thicker + brighter on
