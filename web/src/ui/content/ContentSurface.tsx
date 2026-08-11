@@ -166,6 +166,14 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   const copy = () => { navigator.clipboard?.writeText(draft).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
 
   const [exportOpen, setExportOpen] = useState(false)
+  // The export menu's click-away scrim is a MOUSE-only exit; Escape closes it for the keyboard,
+  // scoped to the open state so it does not swallow Escape for the rest of the app.
+  useEffect(() => {
+    if (!exportOpen) return
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setExportOpen(false) } }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [exportOpen])
   const exports = type.exports ?? []
 
   const commentsOn = !!commentTarget && isCommentable(type)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CloudOff } from 'lucide-react'
 import { api, type DegradedSurface } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
@@ -37,6 +37,29 @@ function useCaseLabel(uc: string): string {
 export function DegradedChip() {
   const [surfaces, setSurfaces] = useState<DegradedSurface[] | null>(null)
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+
+  // Escape closes the popover and returns focus to the chip — the same contract `ui/Popover`
+  // documents and `NotificationBell` already honours. Without it the ONLY way to dismiss this was
+  // the click-away scrim: a keyboard user was stranded, and because that scrim is a full-viewport
+  // `fixed inset-0` layer it also swallowed pointer events for the whole app until a mouse click
+  // landed on it. Measured before the fix: after Escape the panel was still open and the scrim was
+  // still up.
+  //
+  // `stopPropagation` keeps Escape SINGLE-LAYER, as Popover explains: without it the same keydown
+  // bubbles to other document-level Escape handlers (a docked SidePanel), so one press would close
+  // two layers.
+  useEffect(() => {
+    if (!open) return
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [open])
   // The shell corner is FIXED-WIDTH chrome that floats over every page header, and the
   // header pads itself by the corner's measured width. So a wide corner does not merely
   // look wide — it starves every page's title/control row. This chip's text label was
@@ -58,7 +81,7 @@ export function DegradedChip() {
   const summary = down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)}
+      <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
         className={`flex items-center gap-1.5 rounded-pill py-1 text-[0.75rem] transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
         // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
         // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put

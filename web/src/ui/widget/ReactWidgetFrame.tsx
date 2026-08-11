@@ -26,6 +26,14 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
   const { mode } = useMode()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [expanded, setExpanded] = useState(false)
+  // Expanding dims the page behind a click-away scrim — a MOUSE-only collapse. Escape gives the
+  // keyboard the same exit, scoped to `expanded` so a collapsed widget does not consume Escape.
+  useEffect(() => {
+    if (!expanded) return
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setExpanded(false) } }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [expanded])
   const [height, setHeight] = useState(240)
   const [error, setError] = useState<string | null>(null)
 
