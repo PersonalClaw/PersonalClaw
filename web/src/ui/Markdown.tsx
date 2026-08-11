@@ -38,7 +38,7 @@ function DiffBlock({ code }: { code: string }) {
       <div className="flex items-center gap-2 px-m pt-2">
         <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">diff</span>
         <button type="button" onClick={copy} aria-label="Copy diff" title={copied ? 'Copied' : 'Copy'}
-          className="ml-auto inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100"
+          className="ml-auto inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100 focus-within:opacity-100"
           style={copied ? { color: 'var(--color-success)' } : undefined}>
           <AnimatePresence mode="wait" initial={false}>
             <motion.span key={copied ? 'ok' : 'copy'} initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={bounce.playful} className="grid place-items-center">

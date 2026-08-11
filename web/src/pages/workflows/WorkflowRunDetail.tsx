@@ -396,7 +396,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                     </div>
                     <span className={`shrink-0 text-[0.75rem] ${nl.tone}`}>{nl.label}</span>
                     {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
-                      <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100">
+                      <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                         {/* Inspect: the §5 reconstructability drawer (WV-10). Offered ONLY for a
                             terminal node — the endpoint 409s otherwise, so a button on a running
                             node would teach the user the UI lies. Available on a terminal run too,

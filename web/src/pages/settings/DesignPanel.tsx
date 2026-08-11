@@ -121,7 +121,7 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
       </button>
       {onDelete && (
         <button type="button" onClick={onDelete} title="Delete saved theme"
-          className="absolute top-1 right-1 size-6 grid place-items-center rounded-pill bg-surface-high text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity hover:text-danger"><Trash2 size={12} /></button>
+          className="absolute top-1 right-1 size-6 grid place-items-center rounded-pill bg-surface-high text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity hover:text-danger"><Trash2 size={12} /></button>
       )}
     </div>
   )
