@@ -10,7 +10,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
-import { Field, TextInput } from '../../ui/forms'
+import { Field, TextArea, TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle as SharedToggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
@@ -520,7 +520,8 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
   )
 }
 
-const mcpInputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+// `mcpInputCls` was DELETED with its last consumer: the raw <textarea> above migrated to the
+// shared TextArea, and it had been the only remaining user of this hand-copied field chrome.
 
 /** Add a tool server — either a stdio MCP server (→ PUT /api/mcp/servers/{name},
  *  writes ~/.personalclaw/mcp.json) OR an OpenAI-compatible REST tool server
@@ -603,7 +604,12 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
             <TextInput value={args} onChange={setArgs} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
           </Field>
           <Field label="Environment" hint="One KEY=value per line (optional).">
-            <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={2} placeholder="API_KEY=sk-…" className={mcpInputCls.replace('h-9', 'min-h-16 py-2') + ' font-mono'} />
+            {/* The one raw control left in this modal after the Field migration. A raw element
+                cannot read FieldLabelCtx, so it stayed unnamed while its seven TextInput siblings
+                were fixed. `TextArea` claims the Field label the same way they do — and this also
+                retires the `mcpInputCls.replace('h-9', …)` string surgery, which reached into a
+                class string to undo a height the primitive never sets. */}
+            <TextArea value={env} onChange={setEnv} rows={2} placeholder="API_KEY=sk-…" mono size="md" />
           </Field>
         </>) : (<>
           <Field label="Name" hint="A label for this tool server (optional — defaults to the endpoint).">

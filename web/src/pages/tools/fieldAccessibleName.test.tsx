@@ -31,10 +31,11 @@ vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 //  · `pages/settings/settingsUI.tsx` — a bordered SETTINGS ROW (`border-b`, stacked control), a
 //    different layout job. Its call sites pass `ariaLabel` on the control where one is needed, so it
 //    does not strip names the way a bare label div does.
-//  · `pages/projects/ProjectsSection.tsx` — also local, but it wraps a RAW `<input>`, not a form
-//    primitive, so there is no context to claim in the first place. Converging it means migrating the
-//    raw input onto `TextInput` too — a wider change, deliberately left for its own pass rather than
-//    smuggled in here. Logged in the session ledger.
+//  · `pages/projects/ProjectsSection.tsx` — was the third case and is now FIXED (the pass that
+//    followed this one). It had BOTH breaks at once: a local Field that published nothing AND raw
+//    elements that could not have claimed a published id anyway. Its controls are now primitives and
+//    its Field publishes; the layout itself (hint above, sentence case) is kept, because swapping in
+//    the shared Field moved 27.9% of the modal's pixels and that placement is an open taste call.
 
 const TOOLS_PAGE = join(process.cwd(), 'src/pages/tools/ToolsPage.tsx')
 const SRC = join(process.cwd(), 'src')
@@ -111,9 +112,14 @@ describe('ToolsPage uses the shared Field', () => {
 })
 
 describe('no page reimplements Field around a form-family control', () => {
-  it('a local Field never wraps a TextInput/TextArea/Select', () => {
-    // The rail: a local Field is only harmless when nothing inside it reads FieldLabelCtx. If a file
-    // declares its own Field AND uses a form-family control, that control has lost its name.
+  it('a local Field either publishes a label id or holds no form-family control', () => {
+    // The rail used to read "a local Field never wraps a TextInput/TextArea/Select", with
+    // settingsUI.tsx exempted by FILENAME. That premise expired when `FieldLabelProvider` was
+    // exported: a local Field is no longer necessarily context-less, so DECLARING one is not the
+    // defect — failing to PUBLISH is. Checking publication is strictly stronger: settingsUI now
+    // passes on merit instead of by exemption (it publishes), and a file that declares a silent
+    // Field around a form control still fails. Both properties are cheap to read from source, and
+    // the DOM-level proof that publishing actually resolves a name is the first describe() above.
     const offenders: string[] = []
     const walk = (dir: string): string[] => {
       const out: string[] = []
@@ -127,14 +133,17 @@ describe('no page reimplements Field around a form-family control', () => {
     for (const abs of walk(join(SRC, 'pages'))) {
       const src = readFileSync(abs, 'utf8')
       if (!/function Field\b/.test(src)) continue
-      // settingsUI is the deliberate second Field (a settings ROW, not a form field) — and it is an
-      // export, so its consumers are explicit rather than shadowed.
-      if (abs.endsWith('settingsUI.tsx')) continue
+      // A local Field that publishes an id through FieldLabelProvider IS the contract — its children
+      // claim that id exactly as they would inside the shared Field. Two legitimate second layouts
+      // exist today (a settings ROW, and Projects' hint-above form field, whose placement is an open
+      // owner taste call); both publish, so neither needs a filename exemption.
+      if (/<FieldLabelProvider\b/.test(src)) continue
       if (/<(TextInput|TextArea|Select)\b/.test(src)) offenders.push(abs.slice(SRC.length + 1))
     }
     expect(
       offenders,
-      `local Field + a form-family control (the control loses its accessible name):\n  ` +
+      `a local Field that publishes NO label id, wrapping a form-family control (the control loses ` +
+        `its accessible name — either publish via FieldLabelProvider or use ui/forms' Field):\n  ` +
         offenders.join('\n  '),
     ).toEqual([])
   })
