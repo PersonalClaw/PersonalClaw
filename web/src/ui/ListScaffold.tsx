@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import type { LucideIcon } from 'lucide-react'
+import { AlertTriangle, RotateCcw, type LucideIcon } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
@@ -24,6 +24,50 @@ export function ListScaffold({ title, right, children, bodyClassName }: {
           {children}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** First-load FAILURE for a list/collection surface — the sibling of `EmptyState`.
+ *
+ *  A failed fetch and a genuinely empty collection are different facts, and every surface
+ *  that renders `EmptyState` on `data === undefined` conflates them: the user is told "you
+ *  have none" when the truth is "we could not load it", with no way to retry and nothing
+ *  announced. `useCachedData` returns an `error` for exactly this — measured: **3 of 106
+ *  call sites read it.**
+ *
+ *  `role="alert"` because a load failure is unrequested bad news that changes what the
+ *  screen means; `EmptyState` deliberately has no live region, since "you have none" is a
+ *  normal answer.
+ *
+ *  Pair with the ONE condition that distinguishes the two states:
+ *
+ *      {data === undefined && error ? <LoadError what="projects" error={error} onRetry={load} />
+ *       : data === undefined      ? <ListSkeleton />
+ *       : data.length === 0       ? <EmptyState … />
+ *       : …rows}
+ */
+export function LoadError({ what, error, onRetry }: {
+  /** The thing that failed to load, lowercase, for "Couldn't load your <what>". */
+  what: string
+  /** The rejection from `useCachedData`; its `message` is shown when present. */
+  error?: unknown
+  /** Re-runs the fetch. Omit only if the surface genuinely cannot retry. */
+  onRetry?: () => void
+}) {
+  return (
+    <div role="alert" className="flex flex-col items-center gap-l py-2xl text-center">
+      <AlertTriangle size={32} className="text-danger opacity-70" aria-hidden />
+      <div>
+        <h2 data-type="headline-s" className="text-on-surface">Couldn't load your {what}</h2>
+        <p className="mt-1 max-w-[420px] text-on-surface-low text-[0.9375rem]">
+          {(error as Error)?.message
+            || `The server didn't respond. Your ${what} are safe — this is just a load error.`}
+        </p>
+      </div>
+      {onRetry && (
+        <Button size="sm" onClick={onRetry}><RotateCcw size={15} /> Retry</Button>
+      )}
     </div>
   )
 }

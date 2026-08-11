@@ -11,7 +11,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
-import { ListSkeleton, EmptyState } from '../../ui/ListScaffold'
+import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
@@ -37,7 +37,7 @@ export function ProjectsSection({ sub, navigate, query, setQuery }: RouteProps) 
 }
 
 function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: projects, loading, refresh } = useCachedData('projects:list', () => api.projects(), { persist: true })
+  const { data: projects, loading, error: loadErr, refresh } = useCachedData('projects:list', () => api.projects(), { persist: true })
   // List search is URL-backed (?q, replace) — shareable + refresh-stable, no
   // per-keystroke history. (Was local useState.)
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -136,7 +136,12 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
           a flex sibling that pushes the list narrower (standard SidePanel dock). */}
       <div className="flex min-h-0 flex-1">
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-l py-l">
-        {loading && !projects ? <ListSkeleton rows={5} />
+        {/* A failed first load is NOT an empty list. Without this branch a 500 rendered
+            "No projects yet" — measured: the API returned 500 and the page said the user had
+            none, with no retry and nothing announced. The error branch must come FIRST,
+            because `projects === undefined` also satisfies the skeleton and empty conditions. */}
+        {projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateCache('projects:list'); refresh() }} />
+          : loading && !projects ? <ListSkeleton rows={5} />
           : !shown.length ? (
             needle
               // Through the primitive, like every other list's no-match state — a bare centered
