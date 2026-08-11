@@ -6401,7 +6401,7 @@
         {
           "id": "WF2WOR-7",
           "title": "Run cockpit + introspection/RunStats FE + live-adoption plumbing",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§6.2 (run cockpit), §6.3 (live adoption + streaming honesty R7 FE), §6.4 (introspection checklist), §6.5 (compact affordances)",
           "done_when": "Success Criteria 6 & 8: from the hub + cockpit alone an evaluator answers all nine introspection questions (node tree, journal timeline, attempt ledger, RunStats cost/latency strip, template p50/p95 cards, said-no fake-check badge, Proof section); the session-key equivalence helper adopts in-flight runs live; run-id-keyed streaming + useRunStream event-union additions land; live touched-items feed + PinnedArtifacts widget render",
           "deps": [

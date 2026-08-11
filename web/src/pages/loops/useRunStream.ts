@@ -38,9 +38,49 @@ export const RUN_LIFECYCLE = [
   // the engine emit seam lands (WORKFLOWS-V2 §"New SSE events"); listed ahead of that emitter
   // deliberately, because the drop is invisible and the union is the only place to prevent it.
   'plan_streaming', 'revision', 'confirmation', 'demotion',
+  // WORK-CONTAINERS §6.3 R10c (WF2WOR-7): the coexistence mirror. A legacy loop can now RUN as a
+  // template, and `workflows/watchdog._publish_to_equivalent_loop_hub` mirrors that run's events
+  // onto the equivalent `loop:<id>` hub — the backend half of `keys_equivalent`, which had no
+  // caller before. So this hub now carries `workflow_*` events, and they MUST be registered here
+  // for the same reason as every event above: EventSource silently drops an unregistered type, so
+  // the mirror would connect, deliver, and be discarded with no error anywhere. The mirror only
+  // fires when a loop cockpit is ALREADY subscribed (`peek`, never `hub`), so these arrive
+  // precisely when something is listening.
+  'workflow_run_update', 'workflow_node_started', 'workflow_node_done', 'workflow_attention',
+  'workflow_needs_input', 'workflow_gate_resolved', 'workflow_gate_revised',
+  'workflow_spec_updated', 'workflow_mutation_rejected', 'workflow_forked', 'workflow_progress',
+  'workflow_task_materialized', 'workflow_confirmation_pending', 'workflow_confirmation_resolved',
+  'workflow_task_verified', 'workflow_cascade_blocked', 'workflow_steering_consumed',
 ] as const
 
 export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]
+
+/** The coalesced frame the workflow engine batches high-frequency node chatter into
+ *  (`coalescer.BATCH_EVENT`). It is NOT a lifecycle event — it is an envelope AROUND them.
+ *
+ *  Registered on THIS hook because the R10c mirror forwards whatever the engine published,
+ *  batches included. Without an unwrapper here, a mirrored run's node events would arrive inside
+ *  an envelope nobody opened — delivered, then discarded, which is indistinguishable from never
+ *  arriving. Matches `useWorkflowStream`'s handling so a mirrored cockpit sees the same sequence
+ *  an unbatched one would. */
+export const RUN_BATCH_EVENT = 'workflow_batch'
+
+interface BatchMember { event: string; payload: unknown }
+
+/** Unwrap a batch frame into its ordered members, dropping anything unrecognized.
+ *
+ *  Exported for the test: the property worth pinning is that unwrapping yields the same event
+ *  sequence the cockpit would have received as individual frames. An unknown member is dropped
+ *  rather than cast — the switch would ignore it anyway, and a cast would lie about the type. */
+export function unwrapRunBatch(data: unknown): Array<{ event: RunLifecycleEvent; data: unknown }> {
+  const raw = (data as { events?: unknown })?.events
+  if (!Array.isArray(raw)) return []
+  const known = new Set<string>(RUN_LIFECYCLE)
+  return raw
+    .filter((m): m is BatchMember => !!m && typeof (m as BatchMember).event === 'string')
+    .filter((m) => known.has(m.event))
+    .map((m) => ({ event: m.event as RunLifecycleEvent, data: m.payload }))
+}
 
 /** Subscribe to a run's per-resource SSE (/api/loops/{id}/stream) — the ONE stream
  *  hook for every loop kind (goal/general/research/design/code). `onSnapshot` fires
@@ -71,6 +111,14 @@ export function useRunStream(id: string | null, enabled: boolean, handlers: {
         ref.current.onLifecycle(ev, data)
       })
     }
+    // The coalesced frame, replayed member-by-member in order, so a cockpit's fold is identical
+    // whether the transport batched or not — and whether the events came from a loop or from a
+    // mirrored template run.
+    es.addEventListener(RUN_BATCH_EVENT, (e) => {
+      let data: unknown = null
+      try { data = JSON.parse((e as MessageEvent).data) } catch { return }
+      for (const m of unwrapRunBatch(data)) ref.current.onLifecycle(m.event, m.data)
+    })
     es.onerror = () => { /* transient — EventSource retries automatically */ }
     return () => { es?.close() }
   }, [id, enabled])

@@ -496,6 +496,21 @@ async def api_run_outbox(request: web.Request) -> web.Response:
     return _reply(service.outbox(request.match_info.get("run_id", "")))
 
 
+async def api_run_introspect(request: web.Request) -> web.Response:
+    """The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
+
+    A pure read over the journal the run already wrote — the cost/latency strip, the template
+    p50/p95 card, the said-no gate table with its fake-check warnings, the journal timeline and
+    attempt ledger, and the Proof section, in ONE response.
+
+    One response rather than five routes on purpose: the checklist is a property of the whole
+    surface, not of any single number, and `checklist_gaps` can only report a hole in a payload
+    it can see in full. Five routes would let the cockpit render eight answers and never learn
+    that the ninth was missing.
+    """
+    return _reply(service.introspect(request.match_info.get("run_id", "")))
+
+
 async def api_run_output(request: web.Request) -> web.Response:
     return _reply(
         service.output(request.match_info.get("run_id", ""), request.match_info.get("node_id", ""))
@@ -846,6 +861,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/drop", api_run_drop_status)
     app.router.add_post("/api/workflows/runs/{run_id}/drop", api_run_drop)
     app.router.add_get("/api/workflows/runs/{run_id}/outbox", api_run_outbox)
+    app.router.add_get("/api/workflows/runs/{run_id}/introspect", api_run_introspect)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)
