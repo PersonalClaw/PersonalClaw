@@ -92,6 +92,13 @@ export function NavRail({
         <motion.button
           type="button" onClick={() => onSelect(item.id)} whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
           title={collapsed ? item.label : undefined} aria-label={item.label}
+          // The active item was distinguished ONLY visually — weight 470 vs 400 and a tinted
+          // background. Measured on #/tasks: 18 nav buttons, 1 visually distinct, 0 announcing
+          // anything, so a screen-reader user heard eighteen identical buttons with no sense of
+          // where they were. `aria-current="page"` is the navigation token (NOT aria-selected,
+          // which belongs to listbox/tab options — the app already uses that correctly in
+          // Segmented, ProjectPicker, SlashMenu, MentionMenu and ChatActivityPanel).
+          aria-current={active ? 'page' : undefined}
           className={cx(
             'group relative flex items-center gap-s w-full rounded-pill text-left transition-colors duration-100',
             collapsed ? 'justify-center px-0' : 'px-s',
