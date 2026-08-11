@@ -734,6 +734,14 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
             hand-rolled span before, so the bespoke-chrome count stays flat at the
             primitive-adoption ratchet's baseline. */}
         <div className="group/dock flex w-full items-center gap-2.5 py-3">
+          {/* `disabled={!hasMore}` stays NATIVE on purpose — ruled a distinction, not the
+              boundary-gate drift that `boundaryReason.test.tsx` converts. That rail moves a
+              control off the native attribute when it clamps at one END OF A SEQUENCE, because
+              the arrow the user is pressing must not vanish from the tab order under them. This
+              is not that: there is nothing behind the control at all. The bar's own label
+              already reads "No insights yet" (below), and `aria-expanded` is dropped when
+              `!hasMore` so it stops claiming to be a disclosure. A tab stop here would be a dead
+              stop announcing a fact the visible text carries. */}
           <button type="button" onClick={onToggle} disabled={!hasMore}
             aria-expanded={hasMore ? open : undefined}
             className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default">

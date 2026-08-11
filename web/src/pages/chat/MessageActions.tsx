@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft, ChevronRight, Rewind } from 'lucide-react'
+import { unavailableWhen } from '../../ui/unavailable'
 
 /** Action bar below an ASSISTANT turn. Copy + Speak always; Regenerate only on
  *  the last turn (it replaces the latest reply); Fork from any turn (branches a
@@ -37,22 +38,31 @@ export function AssistantActions({ text, isLast, speaking, canFork = true, varia
 }
 
 /** ‹ 2/3 › pager over an assistant turn's regenerated answer variants. Prev/next
- *  wrap-clamp at the ends (disabled, not looping) and call onSwitch with the new
- *  index; the backend swaps the active answer and echoes it over the WS. */
+ *  wrap-clamp at the ends (unavailable, not looping) and call onSwitch with the new
+ *  index; the backend swaps the active answer and echoes it over the WS.
+ *
+ *  The end arrows stay REACHABLE (`aria-disabled`, not the native attribute) and name
+ *  the limit. A native `disabled` arrow is removed from the tab order, so paging to the
+ *  last answer with the keyboard destroys the user's own focus: the button they just
+ *  pressed vanishes from the order and focus falls to <body>, leaving them to tab in
+ *  from the top of the document to reach anything. */
 function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number; onSwitch: (index: number) => void }) {
   const atStart = idx <= 0
   const atEnd = idx >= count - 1
+  // `disabled:` variants no longer fire once the native attribute is gone — the dim and the
+  // suppressed hover have to be restated on `aria-disabled:` or the clamped arrow reads as live.
+  const arrow = 'inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-on-surface-low aria-disabled:cursor-default'
   return (
     <div className="inline-flex items-center gap-0.5 rounded-md pr-1 text-on-surface-low" title={`Answer ${idx + 1} of ${count}`}>
-      <button type="button" onClick={() => !atStart && onSwitch(idx - 1)} disabled={atStart}
-        aria-label="Previous answer" title="Previous answer"
-        className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-default">
+      <button type="button" onClick={() => !atStart && onSwitch(idx - 1)}
+        aria-label="Previous answer" className={arrow}
+        {...unavailableWhen(atStart, 'Already at the first answer', { title: 'Previous answer' })}>
         <ChevronLeft size={14} />
       </button>
       <span className="min-w-[2.1rem] select-none text-center text-[0.75rem] tabular-nums" aria-live="polite">{idx + 1}/{count}</span>
-      <button type="button" onClick={() => !atEnd && onSwitch(idx + 1)} disabled={atEnd}
-        aria-label="Next answer" title="Next answer"
-        className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-default">
+      <button type="button" onClick={() => !atEnd && onSwitch(idx + 1)}
+        aria-label="Next answer" className={arrow}
+        {...unavailableWhen(atEnd, 'Already at the last answer', { title: 'Next answer' })}>
         <ChevronRight size={14} />
       </button>
     </div>
