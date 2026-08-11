@@ -107,11 +107,29 @@ const walk = (d: string): string[] =>
 
 describe('the migrated submits pass a reason', () => {
   const ADOPTERS = [
+    // cycle 56 — the five create-submits that proved the primitive
     'pages/projects/ProjectsSection.tsx',
     'pages/tasks/TaskForm.tsx',
     'pages/tasks/TaskCreatePage.tsx',
     'pages/agents/AgentCreatePage.tsx',
     'pages/prompts/PromptCreatePage.tsx',
+    // cycle 59 — the rest of the Button-primitive tail, per-form copy read from each form
+    'pages/settings/MemoryPanel.tsx',
+    'pages/settings/MultiInstanceCard.tsx',
+    'pages/settings/DesignPanel.tsx',
+    'pages/prompts/PromptDetail.tsx',
+    'pages/prompts/SnippetDetail.tsx',
+    'pages/tasks/TaskDetail.tsx',
+    'pages/inbox/InboxDetail.tsx',
+    'pages/triggers/LifecycleDetail.tsx',
+    'pages/schedule/ScheduleDetail.tsx',
+    'pages/code/WorkspacePicker.tsx',
+    'pages/workflows/WorkflowAsk.tsx',
+    'pages/workflows/SteeringPanel.tsx',
+    'pages/files/comments/CommentLayer.tsx',
+    'pages/loops/LoopCockpitPage.tsx',
+    'pages/apps/AppsSection.tsx',
+    'pages/ChatPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -119,12 +137,79 @@ describe('the migrated submits pass a reason', () => {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, 'must pass disabledReason').toMatch(/disabledReason=\{/)
       // Conditional on purpose: an unconditional reason would announce "enter a name" on a
-      // button disabled because a save is in flight.
-      expect(src, 'the reason must be conditional on the missing input').toMatch(/disabledReason=\{!/)
+      // button disabled because a save is in flight. The condition need not START with `!` —
+      // WorkflowAsk gates on `kind === 'text' && !text.trim()`, and the apps installer leads
+      // with a security verdict — so assert it is a TERNARY yielding undefined when satisfied,
+      // not a bare string.
+      expect(src, 'the reason must be conditional, not a constant').toMatch(/disabledReason=\{[^}]*\?/)
+      expect(src, 'the reason must fall back to undefined when nothing is missing').toMatch(/disabledReason=\{[^}]*undefined/)
     })
   }
 
   it('scans real files (not vacuously green)', () => {
     expect(walk(SRC).length).toBeGreaterThan(200)
+  })
+})
+
+// ── The raw-<button> tail, ratcheted ──────────────────────────────────────────────────
+// 29 of 37 validity-gated submits now explain themselves. The remaining 8 are RAW `<button>`s,
+// not the `Button` primitive, so they cannot inherit the prop — each needs `aria-disabled` +
+// a click guard + a title written by hand, which is a different change from passing a prop.
+// This ratchets the count so the tail can only shrink.
+
+/** Complete opening tags for a validity-gated submit, tracking {} depth so a `>` inside an
+ *  attribute value cannot truncate the match. */
+function gatedSubmits(): Array<{ file: string; line: number; tag: string }> {
+  const out: Array<{ file: string; line: number; tag: string }> = []
+  for (const abs of walk(SRC)) {
+    const text = readFileSync(abs, 'utf8')
+    for (const m of text.matchAll(/<(?:Button|button|motion\.button)\b/g)) {
+      let depth = 0
+      for (let i = m.index! + m[0].length; i < text.length; i++) {
+        const ch = text[i]
+        if (ch === '{') depth++
+        else if (ch === '}') depth--
+        else if (ch === '>' && depth === 0) {
+          const tag = text.slice(m.index!, i + 1)
+          if (/disabled=\{[^}]*!\w+[\w.]*\.trim\(\)|disabled=\{[^}]*length === 0/.test(tag)) {
+            out.push({ file: abs.slice(SRC.length + 1), line: text.slice(0, m.index).split('\n').length, tag })
+          }
+          break
+        }
+      }
+    }
+  }
+  return out
+}
+
+describe('the unexplained-submit tail only shrinks', () => {
+  const gated = gatedSubmits()
+  const unexplained = gated.filter((t) => !/disabledReason/.test(t.tag))
+
+  it('finds the gated submits (not vacuously green)', () => {
+    expect(gated.length, 'the matcher must find validity-gated submits').toBeGreaterThan(30)
+  })
+
+  it('has at most the 10 raw-<button> holdouts left', () => {
+    // 10, not 8: an earlier census walked only `pages/` and missed `app/Onboarding.tsx` and
+    // `ui/PlanningWalkthrough.tsx`. The rail walks the whole tree, which is why its number is
+    // the one to trust.
+    expect(
+      unexplained.length,
+      `${unexplained.length} validity-gated submits still cannot say why they are unavailable ` +
+        '(was 10, all raw <button>). A NEW one should pass disabledReason via the Button primitive:\n  ' +
+        unexplained.map((t) => `${t.file}:${t.line}`).join('\n  '),
+    ).toBeLessThanOrEqual(10)
+  })
+
+  it('every holdout is a RAW button, not the primitive', () => {
+    // If a `<Button>` shows up here, someone added a gated submit without the prop — the
+    // one-line fix is available and the ratchet should not absorb it.
+    const primitives = unexplained.filter((t) => /^<Button\b/.test(t.tag)).map((t) => `${t.file}:${t.line}`)
+    expect(
+      primitives,
+      'a Button-primitive submit can pass disabledReason directly — do not leave it silent:\n  ' +
+        primitives.join('\n  '),
+    ).toEqual([])
   })
 })

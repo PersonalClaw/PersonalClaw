@@ -691,7 +691,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                   <div className="flex items-center justify-end gap-s mt-2">
                     <span className="mr-auto text-on-surface-low text-[0.75rem]">⌘↵ to send · Esc to cancel</span>
                     <Button variant="ghost" size="sm" onClick={() => { setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }}>Cancel</Button>
-                    <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
+                    <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}
+                      disabledReason={!nudgeText.trim() ? 'Write a nudge first' : undefined}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
                   </div>
                 </div>
               </motion.div>

@@ -147,7 +147,8 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}
+            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
         </FormFooter>
       </div>
     )

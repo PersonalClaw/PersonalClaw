@@ -2978,7 +2978,8 @@ function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit
         style={{ maxWidth: 452 }} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
-        <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4">Resend</Button>
+        <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4"
+          disabledReason={!v.trim() ? 'The message cannot be empty' : undefined}>Resend</Button>
       </div>
     </div>
   )
@@ -4095,7 +4096,8 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
               {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle(s) fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">
                 {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy}><X size={14} /> Stop</Button>}
-                <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
+                <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}
+                  disabledReason={!msg.trim() ? 'Write the message first' : undefined}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
               </div>
             </>)}
           </div>

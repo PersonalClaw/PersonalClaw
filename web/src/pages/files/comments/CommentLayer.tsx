@@ -108,7 +108,8 @@ export function CommentLayer({ scrollRef, docId, docLabel, docPath, content, onS
             className="w-full resize-none rounded-md bg-surface-container px-2.5 py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           <div className="mt-2 flex justify-end gap-s">
             <Button variant="ghost" size="sm" onClick={() => setComposing(null)}>Cancel</Button>
-            <Button size="sm" onClick={saveComposer} disabled={!draft.trim()}>Comment</Button>
+            <Button size="sm" onClick={saveComposer} disabled={!draft.trim()}
+              disabledReason={!draft.trim() ? 'Write a comment first' : undefined}>Comment</Button>
           </div>
         </div>
       )}

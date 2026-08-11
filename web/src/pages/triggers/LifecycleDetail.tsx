@@ -82,7 +82,8 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
         {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} disabled={saving || !name.trim()}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} disabled={saving || !name.trim()}
+            disabledReason={!name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
         </FormFooter>
       </div>
     )

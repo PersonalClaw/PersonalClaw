@@ -768,7 +768,8 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newSource} onChange={setNewSource} name="app-git-source"
             placeholder="https://github.com/owner/app.git" />
-          <Button variant="secondary" size="sm" disabled={busy === 'add-source' || !newSource.trim()} onClick={addSource}>
+          <Button variant="secondary" size="sm" disabled={busy === 'add-source' || !newSource.trim()} onClick={addSource}
+            disabledReason={!newSource.trim() ? 'Enter a source URL first' : undefined}>
             <Plus size={15} /> Add
           </Button>
         </div>
@@ -799,7 +800,8 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newLocal} onChange={setNewLocal} name="app-local-source"
             placeholder="/path/to/apps  (a directory of app subdirs)" />
-          <Button variant="secondary" size="sm" disabled={busy === 'add-local' || !newLocal.trim()} onClick={addLocalSource}>
+          <Button variant="secondary" size="sm" disabled={busy === 'add-local' || !newLocal.trim()} onClick={addLocalSource}
+            disabledReason={!newLocal.trim() ? 'Enter a folder path first' : undefined}>
             <Plus size={15} /> Add
           </Button>
         </div>
@@ -1024,7 +1026,9 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doInstall(false)}>
+            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doInstall(false)}
+              // `dangerous` is a SECURITY verdict, not a missing field — it needs its own sentence.
+              disabledReason={dangerous ? 'The security scan flagged this app as dangerous' : !source.trim() ? 'Enter a source first' : undefined}>
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Install
             </Button>
           )}
@@ -1069,7 +1073,8 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Update anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doUpdate(false)}>
+            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doUpdate(false)}
+              disabledReason={dangerous ? 'The security scan flagged this update as dangerous' : !source.trim() ? 'Enter a source first' : undefined}>
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Update
             </Button>
           )}
