@@ -130,6 +130,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/interrupt` — stop the turn, KEEP the queue.
 - `PATCH /api/chat/sessions/{session}/lifecycle` — archive/restore one session.
 - `POST /api/chat/sessions/{session}/model` — set model for a chat session.
+- `GET /api/chat/sessions/{session}/organize` — the proposal, or ``{"proposal": null}``.
+- `POST /api/chat/sessions/{session}/organize/accept` — apply the proposal.
+- `POST /api/chat/sessions/{session}/organize/decline` — remember the refusal.
 - `PATCH /api/chat/sessions/{session}/pin` — toggle pinned state.
 - `DELETE /api/chat/sessions/{session}/queue/{queue_id}` — cancel a queued message.
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.

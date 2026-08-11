@@ -2475,7 +2475,7 @@
         {
           "id": "SM-5",
           "title": "T2.1 Suggested organization: deterministic→LLM folder/tag proposals via inbox proposal contract",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 (T2.1); Design §S2 (suggested organization), Integration points (emit_attention_item kind=proposal)",
           "done_when": "An untagged session gets a sensible folder/tag proposal from deterministic heuristics (title keywords, workspace dir, channel origin) with an LLM suggestion only when ambiguous, surfaced as an inbox proposal item (ItemKind.PROPOSAL) or an inline accept chip; accept applies, ignore leaves it; never auto-applies. New session_organize.py + frontend chip.",
           "deps": [
@@ -7386,11 +7386,6 @@
         "id": "SH-9",
         "title": "External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan",
         "plan": "SH"
-      },
-      {
-        "id": "SM-5",
-        "title": "T2.1 Suggested organization: deterministic→LLM folder/tag proposals via inbox proposal contract",
-        "plan": "SM"
       },
       {
         "id": "SV-9",
