@@ -134,6 +134,24 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "template_save_from_session": {
+        "response_type": "template.save.proposal.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose the session's procedure as a reusable template (draft only)",
+                "args": {
+                    "name": "nightly-report",
+                    "description": "Build and publish the nightly report",
+                    "steps": [
+                        "fetch {{source_url}} and validate the payload",
+                        "transform the result into {{format}}",
+                        "publish it to {{target}} and verify the output",
+                    ],
+                },
+            },
+        ],
+    },
     "project_context_review": {
         "response_type": "project.context.review.result",
         "error_codes": [],

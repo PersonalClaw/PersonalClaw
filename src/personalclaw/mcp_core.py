@@ -217,6 +217,42 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "template_save_from_session",
+            "description": (
+                "Propose saving the multi-step procedure just carried out in this session as a "
+                "reusable workflow template. Files a DRAFT proposal for the user to accept or "
+                "reject — it never writes a definition, so use it freely when the work looks "
+                "repeatable (use workflow_author instead when the user asks to SAVE a workflow "
+                "outright). A deterministic gate scores the steps first and may decline "
+                "(one-step plans, no reusable placeholders, a template that already exists); the "
+                "decline and its reason come back to you. Put {{placeholders}} wherever a value "
+                "would differ on the next run — steps with nothing parameterizable are a "
+                "recording of one run, not a template, and get declined."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Proposed template name: lowercase, digits, hyphens.",
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "The procedure, one step per entry, in order. Use {{placeholders}} "
+                            "for values that change between runs."
+                        ),
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One line on what the procedure accomplishes.",
+                    },
+                },
+                "required": ["name", "steps"],
+            },
+        },
+        {
             "name": "project_context_review",
             "description": (
                 "Review THIS conversation and propose updates to the current project's context — "
@@ -701,6 +737,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             "(this agent / all agents) or forget it."
         )
 
+    if name == "template_save_from_session":
+        return _save_template_from_session(args)
+
     if name == "skill_search":
         query = (args.get("query") or "").strip()
         if not query:
@@ -1107,6 +1146,90 @@ def _review_transcript(session_key: str) -> list[dict]:
     except Exception:
         logger.debug("project_context_review: transcript read skipped", exc_info=True)
         return []
+
+
+def _save_template_from_session(args: dict[str, Any]) -> str:
+    """Route a session's procedure through the ad-hoc→template gate as a DRAFT proposal.
+
+    Files, never installs: the gate's accepted branch enqueues a PENDING proposal the user accepts
+    or rejects, so this tool cannot add a definition to the workflow library. That is what makes it
+    safe to expose at all — the worst outcome of an over-eager call is one reviewable row.
+
+    A DECLINE is reported with its typed reason rather than swallowed. The model that proposed the
+    steps is the one that can fix them (add a placeholder, list the real steps), and a silent no
+    teaches it nothing.
+    """
+    from personalclaw.learning.detectors import Candidate
+    from personalclaw.learning.template_gate import evaluate
+
+    slug = str(args.get("name") or "").strip()
+    raw_steps = args.get("steps")
+    steps = (
+        [str(s).strip() for s in raw_steps if str(s).strip()] if isinstance(raw_steps, list) else []
+    )
+    description = str(args.get("description") or "").strip()
+    if not slug:
+        return "Error: name is required (the proposed template name)."
+    if not steps:
+        return "Error: steps is required — a non-empty list of the procedure's steps, in order."
+
+    # `template_surfaced` resolved against the real def registry, not left at its dataclass
+    # default: the TEMPLATE_EXISTS pre-gate depends on library state, and defaulting it False
+    # would make that branch unreachable in production.
+    surfaced = False
+    try:
+        from personalclaw.workflows import defs as defs_mod
+
+        for provider_name in defs_mod.list_providers():
+            provider = defs_mod.get_provider(provider_name)
+            if provider is None:
+                continue
+            found, _n = _run_coro(provider.list_defs(limit=500))
+            for item in found:
+                d = item if isinstance(item, dict) else getattr(item, "to_dict", lambda: {})()
+                if str((d or {}).get("name", "")).strip().lower() == slug.lower():
+                    surfaced = True
+                    break
+            if surfaced:
+                break
+    except Exception:
+        logger.debug("template_save_from_session: def lookup unavailable", exc_info=True)
+
+    outcome = evaluate(
+        Candidate(run_id=slug, steps=steps, template_surfaced=surfaced, intent=description),
+        session_key=_resolve_session_key(),
+        title=description or f"Template: {slug}",
+        body="\n".join(f"- {s}" for s in steps),
+    )
+    if outcome.filed:
+        return (
+            f"Filed a DRAFT template proposal for '{slug}' — nothing was written to the workflow "
+            "library. Accept it in the Learning review queue to create the definition."
+        )
+    if outcome.decision.action == "consult":
+        return (
+            f"'{slug}' scored {outcome.decision.score.total:.2f}, in the inconclusive middle band, "
+            "so nothing was filed. Sharpen the steps (clearer step-to-step dependencies, more "
+            "{{placeholders}}) and call again."
+        )
+    return (
+        f"Declined '{slug}' ({outcome.decision.skip_reason}): {outcome.decision.reason}. "
+        "Recorded for threshold tuning; nothing was filed."
+    )
+
+
+def _run_coro(coro: Any) -> Any:
+    """Run a coroutine from this sync tool boundary, whether or not a loop is already running."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _project_context_review(args: dict[str, Any]) -> str:

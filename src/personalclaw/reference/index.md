@@ -6,7 +6,7 @@ Offline API/tool reference for PersonalClaw (manifest apiVersion 1). Generated f
 
 1. Read this index to locate the surface you need — don't read every file.
 2. Drill into the one relevant section:
-   - **[tools.md](tools.md)** — 83 registered tools across 13 providers, with exact input schemas + examples.
+   - **[tools.md](tools.md)** — 84 registered tools across 13 providers, with exact input schemas + examples.
    - **[routes.md](routes.md)** — 623 agent-callable HTTP routes (of 627 total), with summaries.
    - **[providers.md](providers.md)** — the provider-type taxonomy + 27 registered providers.
 3. Copy the exact signature — never guess a parameter name.
@@ -16,7 +16,7 @@ Offline API/tool reference for PersonalClaw (manifest apiVersion 1). Generated f
 
 - `personalclaw-artifacts` — 13 tools
 - `personalclaw-automation` — 9 tools
-- `personalclaw-core` — 11 tools
+- `personalclaw-core` — 12 tools
 - `personalclaw-inbox-tools` — 1 tools
 - `personalclaw-knowledge-tools` — 5 tools
 - `personalclaw-memory` — 4 tools

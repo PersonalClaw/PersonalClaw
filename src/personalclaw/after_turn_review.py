@@ -238,9 +238,10 @@ def run_after_turn_review(
 # "autonomous synthesis proposes, humans install" invariant.
 
 _LADDER_SCHEMA_HINT = (
-    '{"action": "none|refine|support_file|create", '
+    '{"action": "none|refine|support_file|create|template", '
     '"slug": "kebab-case-skill-name", "description": "one line", '
     '"triggers": "comma, separated", "procedure_md": "the steps", '
+    '"steps": ["one step per entry (template only)"], '
     '"target": "existing skill name (refine/support_file only)", '
     '"rationale": "why, one line"}'
 )
@@ -258,7 +259,11 @@ def _build_ladder_prompt(
         "  1. refine — improve a currently-loaded skill.\n"
         "  2. refine — improve an existing umbrella skill (name it in 'target').\n"
         "  3. support_file — add a reference/template to an existing skill.\n"
-        "  4. create — mint a NEW skill (last resort, only for a genuinely new class).\n\n"
+        "  4. create — mint a NEW skill (last resort, only for a genuinely new class).\n"
+        "  5. template — the turn ran a repeatable multi-step PROCEDURE (a plan someone "
+        "would run again with different inputs) rather than teaching a how-to. Put one "
+        "step per entry in 'steps'. A deterministic gate scores these, so list the real "
+        "steps and use {{placeholders}} wherever a value would change between runs.\n\n"
         "Return STRICT JSON, no prose:\n" + _LADDER_SCHEMA_HINT + "\n\n"
         "Rules: action='none' unless the turn genuinely taught a reusable procedure "
         "(most turns are 'none'). NEVER capture environment-specific failures, tool "
@@ -297,6 +302,84 @@ def _parse_ladder_json(raw: str) -> dict | None:
         return None
 
 
+async def _template_already_surfaced(slug: str) -> bool:
+    """Whether a workflow definition for ``slug`` already exists.
+
+    Resolved against the real def registry rather than left at the dataclass default. The gate's
+    ``TEMPLATE_EXISTS`` branch is the one pre-gate that depends on library state, so leaving it
+    False would make that branch unreachable in production — a skip reason that can never fire is
+    indistinguishable from a gate that does not work.
+    """
+    if not slug:
+        return False
+    try:
+        from personalclaw.workflows.service import list_defs
+
+        result = await list_defs()
+    except Exception:
+        logger.debug("template gate: def listing unavailable", exc_info=True)
+        return False
+    wanted = slug.strip().lower()
+    return any(str(d.get("name", "")).strip().lower() == wanted for d in result.get("defs") or [])
+
+
+async def _review_template_candidate(decision: dict, *, session_key: str) -> str | None:
+    """The ladder's fifth branch: route a procedure-shaped turn through the ad-hoc→template gate.
+
+    The other four branches enqueue a SKILL proposal directly. This one does not decide anything
+    itself — it hands the candidate to ``learning.template_gate``, which owns the chain and its
+    typed refusal ledger. A refusal is a real result here: it returns None (no chip) but the reason
+    is recorded, which is the whole point of §3.2's negative space.
+    """
+    from personalclaw.learning.detectors import Candidate
+    from personalclaw.learning.template_gate import evaluate
+
+    raw_steps = decision.get("steps")
+    steps = (
+        [str(s).strip() for s in raw_steps if str(s).strip()] if isinstance(raw_steps, list) else []
+    )
+    slug = str(decision.get("slug", "")).strip()
+    description = str(decision.get("description", "")).strip()
+    if not steps or not slug:
+        return None
+    # Redact before the steps reach the gate: an accepted candidate becomes a proposal body, and the
+    # same posture the skill branches use applies to a template's text.
+    try:
+        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+        cleaned: list[str] = []
+        for step in steps:
+            step, _ = redact_exfiltration_urls(step)
+            step, _ = redact_credentials(step)
+            cleaned.append(step)
+        steps = cleaned
+    except Exception:
+        pass
+
+    candidate = Candidate(
+        run_id=session_key,
+        steps=steps,
+        template_surfaced=await _template_already_surfaced(slug),
+        intent=description,
+    )
+    outcome = evaluate(
+        candidate,
+        session_key=session_key,
+        title=description or f"Template: {slug}",
+        body="\n".join(f"- {s}" for s in steps),
+    )
+    logger.info(
+        "template gate: %s for %s (score %.2f, recorded=%s)",
+        outcome.decision.skip_reason or outcome.decision.action,
+        slug,
+        outcome.decision.score.total,
+        outcome.recorded,
+    )
+    if not outcome.filed:
+        return None
+    return f"Proposed template: {slug}"
+
+
 async def run_skill_ladder_review(
     *,
     session_key: str,
@@ -305,8 +388,12 @@ async def run_skill_ladder_review(
     loaded_skills: list[str],
     completion=None,
 ) -> str | None:
-    """Forked-LLM skill-axis review (4-tier ladder). Enqueues at most one skill
-    PROPOSAL (never writes live) and returns a short summary for the chip, or None.
+    """Forked-LLM skill-axis review (5-tier ladder). Enqueues at most one skill or
+    template PROPOSAL (never writes live) and returns a short summary for the chip, or None.
+
+    The fifth tier is the ad-hoc→template branch: it routes a procedure-shaped turn through
+    ``learning.template_gate`` instead of the skill queue, because a repeatable plan and a how-to
+    are different artifacts and the gate that judges plans is deterministic.
 
     ``completion`` is an injectable ``async (prompt)->str`` (defaults to
     ``one_shot_completion``) so tests drive it without a real model. Best-effort;
@@ -334,6 +421,8 @@ async def run_skill_ladder_review(
     if not decision:
         return None
     action = str(decision.get("action", "none")).strip().lower()
+    if action == "template":
+        return await _review_template_candidate(decision, session_key=session_key)
     if action not in ("refine", "support_file", "create"):
         return None  # 'none' or garbage → nothing to learn
 
