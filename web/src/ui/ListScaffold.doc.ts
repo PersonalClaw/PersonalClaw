@@ -24,6 +24,23 @@ const docs: UiDoc[] = [
     anatomy: ['flex-col full-height container', 'TopBar (title left • right action slot)', 'scrolling region', 'centered content-width body'],
   },
   {
+    name: 'LoadError',
+    keywords: ['error', 'load', 'failed', 'fetch', 'retry', 'alert', 'empty', 'first-load'],
+    description:
+      "First-load FAILURE for a list/collection surface — the sibling of EmptyState. A failed fetch and a genuinely empty collection are different facts, and a surface that branches only on `data === undefined` conflates them: the user is told \"you have none\" when the truth is \"we could not load it\", with no way to retry and nothing announced. `useCachedData` returns an `error` for exactly this (measured: 3 of 106 call sites read it). Renders as role=alert, so a load failure interrupts — EmptyState deliberately does not, because \"you have none\" is a normal answer.",
+    props: [
+      { name: 'what', description: 'The thing that failed to load, lowercase — fills "Couldn\'t load your <what>" and the fallback body copy.' },
+      { name: 'error', description: "The rejection from useCachedData; its `message` is shown when present, so the server's own words reach the user instead of a generic apology." },
+      { name: 'onRetry', description: 'Re-runs the fetch (typically `invalidateCache(key); refresh()`). Omit only if the surface genuinely cannot retry — the button disappears.' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Branch on the error FIRST: `data === undefined` is also true for the loading and empty branches, so an error test placed after them never runs.' },
+      { guidance: true, description: 'Pass `onRetry` wherever the fetch can be re-run — an error with no recovery leaves the user stuck on a dead surface.' },
+      { guidance: false, description: 'Do not use it for a form-submit or action failure — that is InlineError, which sits inline near the control rather than replacing the whole surface.' },
+    ],
+    anatomy: ['role=alert centered column', 'aria-hidden AlertTriangle', 'headline-s "Couldn\'t load your <what>"', "error message or reassurance line", 'optional Retry Button'],
+  },
+  {
     name: 'ListRow',
     keywords: ['list', 'row', 'card', 'item', 'clickable', 'hover', 'accent', 'motion'],
     description:
