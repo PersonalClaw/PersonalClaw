@@ -2145,7 +2145,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 lists = store.list_task_lists(project_id=p.id)
                 tail = f" — lists: {', '.join(tl.name for tl in lists)}" if lists else ""
                 lines.append(
-                    f"- {p.name} (id={p.id}){' [default]' if p.is_default_project() else ''}{tail}"
+                    f"- {p.name} (id={p.id}){' [default]' if p.is_builtin_project() else ''}{tail}"
                 )
             return "\n".join(lines)
 

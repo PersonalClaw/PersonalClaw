@@ -129,7 +129,7 @@ class HierarchyStore:
                 # rename — find_or_create_project will route to the existing Personal).
                 if not any(q.name == "Personal" for q in self._all_projects_raw()):
                     p.name = "Personal"
-                    p.is_default = True
+                    p.is_builtin = True
                     self._write_project(p)
 
     def ensure_defaults(self) -> None:
@@ -143,7 +143,7 @@ class HierarchyStore:
                     Project(
                         id=f"p-{uuid.uuid4().hex[:8]}",
                         name=name,
-                        is_default=True,
+                        is_builtin=True,
                         created_at=now,
                         updated_at=now,
                     )
@@ -163,7 +163,7 @@ class HierarchyStore:
     def list_projects(self) -> list[Project]:
         self.ensure_defaults()
         return sorted(
-            self._all_projects_raw(), key=lambda p: (not p.is_default_project(), p.name.lower())
+            self._all_projects_raw(), key=lambda p: (not p.is_builtin_project(), p.name.lower())
         )
 
     def get_project(self, project_id: str) -> Project | None:
@@ -186,7 +186,7 @@ class HierarchyStore:
         project = Project(
             id=f"p-{uuid.uuid4().hex[:8]}",
             name=name,
-            is_default=name in DEFAULT_PROJECTS,
+            is_builtin=name in DEFAULT_PROJECTS,
             created_at=now,
             updated_at=now,
         )
@@ -211,7 +211,7 @@ class HierarchyStore:
         project = Project(
             id=f"p-{uuid.uuid4().hex[:8]}",
             name=name,
-            is_default=name in DEFAULT_PROJECTS,
+            is_builtin=name in DEFAULT_PROJECTS,
             workspace_dir=str(workspace_dir or "").strip(),
             name_locked=bool(name_locked),
             agent_instructions_template=agent_instructions_template,
@@ -230,7 +230,7 @@ class HierarchyStore:
             new_name = str(fields["name"]).strip()
             if not new_name:
                 raise ValueError("project name cannot be empty")
-            if project.is_default_project() and new_name != project.name:
+            if project.is_builtin_project() and new_name != project.name:
                 # A default's identity IS its name (task routing keys on the literal
                 # "Personal"/"Repeatable", and ensure_defaults re-seeds any missing name).
                 # Renaming it away would strand its task lists and spawn a duplicate default.
@@ -262,8 +262,8 @@ class HierarchyStore:
         project = self.get_project(project_id)
         if not project:
             return False
-        # Guard on the LIVE protected names, not project.is_default_project() — the stored
-        # is_default bit is sticky (from_dict keeps it, and it never clears on rename), which
+        # Guard on the LIVE protected names, not project.is_builtin_project() — the stored
+        # is_builtin bit is sticky (from_dict keeps it, and it never clears on rename), which
         # would leave a stray duplicate carrying it permanently undeletable. Keying on the
         # current name still fully protects a genuine "Personal"/"Repeatable" while letting a
         # duplicate that no longer holds a protected name be cleaned up.

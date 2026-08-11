@@ -261,7 +261,7 @@ async def test_project_update_rejects_unknown_and_reserved_keys(tmp_path):
         pid = (await (await client.post("/api/projects", json={"name": "Strict"})).json())["id"]
         for key, value in (
             ("id", "p-hijack"),
-            ("is_default", True),
+            ("is_builtin", True),
             ("created_at", "1999-01-01T00:00:00Z"),
             ("nope", "x"),
             ("self", "x"),

@@ -20,7 +20,7 @@ class TestDefaults:
         names = {p.name for p in projects}
         assert "Personal" in names
         assert "Repeatable" in names
-        assert all(p.is_default_project() for p in projects if p.name in DEFAULT_PROJECTS)
+        assert all(p.is_builtin_project() for p in projects if p.name in DEFAULT_PROJECTS)
 
     def test_defaults_idempotent(self, store):
         store.ensure_defaults()
@@ -64,9 +64,9 @@ class TestDefaults:
         # the delete guard keys on the live protected names, not the stored flag.
         store.ensure_defaults()
         p = store.create_project("Leftover")
-        p.is_default = True
+        p.is_builtin = True
         store._write_project(p)
-        assert store.get_project(p.id).is_default_project() is True
+        assert store.get_project(p.id).is_builtin_project() is True
         assert store.delete_project(p.id) is True
         assert store.get_project(p.id) is None
         # A project literally named Personal stays undeletable even so.
@@ -79,7 +79,7 @@ class TestProjectCrud:
     def test_create_and_get(self, store):
         p = store.create_project("Website")
         assert p.name == "Website"
-        assert not p.is_default
+        assert not p.is_builtin
         assert store.get_project(p.id).name == "Website"
 
     def test_create_duplicate_name_rejected(self, store):
@@ -172,7 +172,7 @@ class TestMigration:
         )
         (tmp_path / "tasks" / "projects").mkdir(parents=True)
         (tmp_path / "tasks" / "projects" / "chore.json").write_text(
-            json.dumps({"id": "chore", "name": "Chore", "is_default": True})
+            json.dumps({"id": "chore", "name": "Chore", "is_builtin": True})
         )
         (tmp_path / "tasks" / "projects" / "p-keep0001.json").write_text(
             json.dumps({"id": "p-keep0001", "name": "Real Work"})
@@ -262,7 +262,7 @@ class TestModelSerialization:
 
     def test_default_name_implies_default_flag(self):
         p = Project.from_dict({"id": "p1", "name": "Personal"})
-        assert p.is_default_project() is True
+        assert p.is_builtin_project() is True
 
     def test_tasklist_roundtrip(self):
         tl = TaskList(id="tl1", name="L", project_id="p1")
