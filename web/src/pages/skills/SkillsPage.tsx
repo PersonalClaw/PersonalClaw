@@ -138,7 +138,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                 ]
                 return (
                   <ContextMenu key={s.key} items={menuItems}>
-                  <ListRow index={i} onClick={() => setOpenKey(s.key)}>
+                  <ListRow index={i} onClick={() => setOpenKey(s.key)} label={s.name}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Sparkles size={19} style={{ color: tone }} /></span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-s">
@@ -265,7 +265,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
                 ]
                 return (
                   <ContextMenu key={r.id} items={menuItems}>
-                  <ListRow index={i} onClick={() => setOpenId(r.id)}>
+                  <ListRow index={i} onClick={() => setOpenId(r.id)} label={r.name || r.id}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)' }}><Sparkles size={19} className="text-warn" /></span>
                     <div className="flex-1 min-w-0">
                       <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{r.name || r.id}</span>

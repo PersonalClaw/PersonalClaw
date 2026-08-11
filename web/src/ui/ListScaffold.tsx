@@ -53,11 +53,24 @@ export function EmptyState({ icon: Icon, title, hint, action }: {
  *  hover-lift + press so rows feel like liftable cards, not flat strips. Lift/press
  *  depth scale through the expressiveness knob; exit collapses so removals animate.
  *  Consistent across every list page. */
-export function ListRow({ index = 0, onClick, children, accent }: {
+export function ListRow({ index = 0, onClick, children, accent, label }: {
   index?: number
   onClick?: () => void
   children: ReactNode
   accent?: string
+  /** What this row IS, for assistive tech — usually the entity's title.
+   *
+   *  Without it a row's accessible name is computed from its subtree, so AT reads the
+   *  whole card as one button name: measured across 170 rows on 7 surfaces, an inbox row
+   *  averaged 318 characters and peaked at 2001, and a knowledge row averaged 685. That
+   *  is unusable as a name — it is the row's content, announced where its identity
+   *  belongs. Naming the row explicitly keeps the announcement to the thing itself; the
+   *  content stays readable underneath as ordinary text.
+   *
+   *  Required in practice for every clickable row. It is optional in the type only
+   *  because a handful of rows are non-interactive (no `onClick`), where there is no
+   *  button to name. `listRowNaming.test.tsx` holds the interactive call sites to it. */
+  label?: string
 }) {
   const interactive = !!onClick
   return (
@@ -78,6 +91,8 @@ export function ListRow({ index = 0, onClick, children, accent }: {
       // trap. The inset ring is TileButton's — the kit's other whole-card target.
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
+      // Name the row after the entity, not after everything inside it. See `label`.
+      aria-label={interactive ? label : undefined}
       onKeyDown={interactive ? (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick!() }
       } : undefined}

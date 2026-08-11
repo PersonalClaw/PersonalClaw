@@ -604,7 +604,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                       ]
                       return (
                         <ContextMenu key={it.id} items={menuItems}>
-                        <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)}>
+                        <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)} label={it.title || it.url_title || '(untitled)'}>
                           {/* Selection tick. Hidden until hover or an active selection so
                               the list stays calm when nobody is curating; a wrapper stops
                               the click from also opening the item. */}
@@ -702,7 +702,7 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
       <p className="text-on-surface-low text-[0.8125rem]">Tell PersonalClaw what to watch for in plain language. As you save items, it gathers what matches — with the specifics extracted as structured fields. Click an intent to see everything it found, or add one with “New intent”.</p>
       {intents.length === 0 && <EmptyState icon={Target} title="No intents yet" hint='e.g. "anything that could improve my homelab", "ideas that help me learn agentic engineering", or "hints on how I should invest".' />}
       {intents.map((it) => (
-        <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)}>
+        <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)} label={it.goal || it.id}>
           <Target size={15} className="shrink-0 text-primary/80" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -843,7 +843,7 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
           : items.map((it, i) => {
               const tm = resolveType(it)
               return (
-                <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)}>
+                <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)} label={it.title || it.url_title || '(untitled)'}>
                   <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-on-surface text-[0.8125rem]">{it.title || it.url_title || '(untitled)'}</div>

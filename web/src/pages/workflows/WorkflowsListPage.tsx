@@ -228,7 +228,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
           ) : (
             <div className="flex flex-col gap-xs">
               {filteredDefs.map((d, i) => (
-                <ListRow key={d.name} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)}>
+                <ListRow key={d.name} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)} label={d.name}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Workflow size={15} className="shrink-0 text-on-surface-low" />
                     <div className="min-w-0 flex-1">
@@ -313,7 +313,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               const Icon = look.icon
               const elapsed = fmtElapsed(r.elapsed_seconds)
               return (
-                <ListRow key={r.id} index={i} onClick={() => navigate(`workflows/runs/${r.id}`)}>
+                <ListRow key={r.id} index={i} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Icon size={15} className={`shrink-0 ${look.tone}${look.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">

@@ -288,7 +288,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
               const accentTone = channelBacked ? cm.tone : km.tone
               return (
                 <ContextMenu key={it.id} items={menuItems}>
-                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}>
+                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)} label={channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
                   </span>
