@@ -83,6 +83,10 @@ _RESIDUAL_CORE_TOOLS = {
     # category alongside 19 tools that all act on a def or a run, and a model reaching for
     # "how do I start a workflow" would find a nudge helper.
     "suggest_template",
+    # skill_promote (WF2LEA-11) is the retroactive half of skill_remember: it reads a completed
+    # WORKFLOW run, files into the LEARNING proposal queue, and installs (once accepted) into the
+    # SKILL library — the same three-category span that put template_save_from_session here.
+    "skill_promote",
 }
 
 

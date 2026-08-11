@@ -78,13 +78,17 @@ def _installer_for(request: web.Request):
     * a project-context change (kind in `PROJECT_KINDS`, E1.4) → `install_accepted_project_context`,
       which writes EXACTLY the accepted item (one instruction append, one context file, or one
       skill) and nothing pending or rejected beside it;
+    * a promoted run/conversation (kind `skill`, E1.3) → `install_accepted_skill`, which writes the
+      `auto/` skill through the existing auto-skill rail. This is the ONLY path that installs a
+      promotion: the agent files the proposal, the human here writes it;
     * an ordinary `lesson_batch` from a correction already lives in the lesson store, so there is
       nothing further to install for it.
 
     A missing store means accept still records the decision — the self-model projection is deferred
-    (best-effort), while a project-context install needs no memory service and runs regardless.
+    (best-effort), while a project-context or skill install needs no memory service and runs
+    regardless.
     """
-    from personalclaw.learning import project_context_review, self_model_observer
+    from personalclaw.learning import project_context_review, self_model_observer, skill_promotion
 
     try:
         from personalclaw.dashboard.handlers.memory import _get_service
@@ -98,6 +102,8 @@ def _installer_for(request: web.Request):
         data = prop.to_dict()
         if project_context_review.is_project_context_proposal(data):
             project_context_review.install_accepted_project_context(data)
+        elif skill_promotion.is_skill_promotion_proposal(data):
+            skill_promotion.install_accepted_skill(data)
         elif svc is not None and self_model_observer.is_self_model_proposal(data):
             self_model_observer.install_accepted_principle(svc, data)
 
