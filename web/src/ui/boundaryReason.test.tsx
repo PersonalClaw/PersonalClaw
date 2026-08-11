@@ -37,9 +37,12 @@ import { AssistantActions } from '../pages/chat/MessageActions'
 // visible text already carries. Emptiness gates are out of this rail's population on purpose;
 // widening it to cover them would be a different ruling, not a stricter version of this one.
 //
-// ⚠️ `SquareIconButton` is NOT in this population either — it maps its `disabled` prop to
-// `aria-disabled` internally, so its six boundary-gated reorder controls never lose their tab
-// stop. They fail the *first* cost (no reason) but not the second; that is the next cycle.
+// The two ICON-BUTTON primitives are a separate population, covered by its own rail at the
+// bottom of this file. `IconButton` and `SquareIconButton` map `disabled` to `aria-disabled`
+// internally and never set the native attribute, so their boundary-gated reorder controls never
+// lose their tab stop — they fail cost 1 but not cost 2. Both gained `disabledReason` so the
+// keyboard user who DOES land on them hears the limit; being icon-only, they have no visible
+// text to carry it either.
 
 describe('a pager arrow at its limit keeps its tab stop', () => {
   const props = {
@@ -188,5 +191,69 @@ describe('no control goes silently dead at its limit', () => {
       'converted control(s) never restate their dim on `aria-disabled:`, so they render as live:\n  ' +
         missing.map((t) => `${t.file}:${t.line}`).join('\n  '),
     ).toBe(0)
+  })
+})
+
+// ── The icon-button population ────────────────────────────────────────────────────────
+//
+// `IconButton` and `SquareIconButton` both map `disabled` → `aria-disabled` and never set the
+// native attribute, so a boundary-gated one keeps its tab stop: a keyboard user lands on it. What
+// they had was nothing to say on arrival. Measured live at `#/settings/models` → Chat role (a
+// 3-model chain), before this change:
+//
+//   { name: "Move global.anthropic.claude-fable-5 up", native: false, aria: true,
+//     focusable: true, title: "Move global.anthropic.claude-fable-5 up" }
+//
+// Focusable, announced unavailable, and mute about why — and an icon-only button has no visible
+// text to carry the reason either, so the user has no way at all to learn it. Both primitives
+// gained `disabledReason`, appended to `title` (the accessible DESCRIPTION, since the name comes
+// from `aria-label`).
+
+describe('a boundary-gated icon button names its limit', () => {
+  const REORDER = [
+    'pages/settings/ModelsPanel.tsx',
+    'pages/code/CodePlanReview.tsx',
+    'pages/loops/LoopPlanReview.tsx',
+  ]
+
+  /** Complete opening tags for the two icon-button primitives, brace-depth tracked. */
+  const iconButtonTags = (text: string) => {
+    const out: string[] = []
+    for (const m of text.matchAll(/<(?:IconButton|SquareIconButton)\b/g)) {
+      let depth = 0
+      for (let i = m.index! + m[0].length; i < text.length; i++) {
+        const ch = text[i]
+        if (ch === '{') depth++
+        else if (ch === '}') depth--
+        else if (ch === '>' && depth === 0) { out.push(text.slice(m.index!, i + 1)); break }
+      }
+    }
+    return out
+  }
+
+  it.each(REORDER)('%s explains every boundary-gated reorder control', (rel) => {
+    const src = readFileSync(join(SRC, rel), 'utf8')
+    const gated = iconButtonTags(src).filter((t) => {
+      const g = /(?<!aria-)disabled=\{([\s\S]*?)\}/.exec(t)
+      return g && BOUNDARY.test(g[1])
+    })
+    // Two per file: the up and the down of one reorder pair.
+    expect(gated.length, `${rel} must still have its reorder pair`).toBe(2)
+    for (const tag of gated) {
+      expect(tag, `a boundary-gated icon button in ${rel} says nothing on arrival`).toMatch(/disabledReason/)
+    }
+  })
+
+  it('keeps the reason on the BOUNDARY branch of a compound gate', () => {
+    // `ModelsPanel` gates on `saving || i === 0`. A flat `disabledReason` there would explain the
+    // wrong cause while a save is in flight — the row's own save state carries that one. So the
+    // reason must be conditional on the boundary term, not passed unconditionally.
+    const src = readFileSync(join(SRC, 'pages/settings/ModelsPanel.tsx'), 'utf8')
+    for (const m of src.matchAll(/disabledReason=\{([^}]*)\}/g)) {
+      expect(
+        m[1],
+        'a compound gate must condition the reason on its boundary term, not state it flatly',
+      ).toMatch(/\?/)
+    }
   })
 })

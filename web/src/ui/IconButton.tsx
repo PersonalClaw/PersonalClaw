@@ -9,7 +9,7 @@ import { spring, bounce, expr, exprHeavy } from '../design/motion'
  *  and success `bloom` moments. Yields to reduced-motion; halo drops below the
  *  heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, onClick, active, filled, size = 40, iconSize = 20, className, disabled, iconKey, bloom,
+  icon: Icon, label, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, iconKey, bloom,
 }: {
   icon: LucideIcon
   label: string
@@ -26,6 +26,18 @@ export function IconButton({
   // currently unavailable — so a gated icon button reads as inert instead of a
   // silent dead-click. onClick is suppressed regardless of what's passed.
   disabled?: boolean
+  // WHY it is unavailable, when `disabled` is true. This primitive already keeps its tab
+  // stop (it maps `disabled` to `aria-disabled`, never the native attribute), so a keyboard
+  // user CAN land on it — and until now heard only the label. An icon-only button has no
+  // visible text to carry the reason either, so without this a gated one is doubly mute.
+  //
+  // Rides `title`, appended after an em dash — matching `Button.disabledReason`. `title` is
+  // the accessible DESCRIPTION here (the name comes from `aria-label`), so the reason is
+  // announced without polluting the name the action is findable by.
+  //
+  // Omit it when the gate is self-evident or transient (an in-flight save already reads as
+  // busy); a compound gate should pass it only for the branch it actually describes.
+  disabledReason?: string
   // When set, the icon cross-fades/scales in whenever iconKey changes (a shape
   // morph, e.g. send arrow → success check). Without it the icon swaps instantly.
   iconKey?: string
@@ -45,7 +57,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       aria-disabled={disabled || undefined}
-      title={label}
+      title={disabled && disabledReason ? `${label} — ${disabledReason}` : label}
       onClick={disabled ? undefined : onClick}
       whileTap={disabled ? undefined : { scale: pressScale }}
       whileHover={disabled ? undefined : { scale: hoverScale }}
