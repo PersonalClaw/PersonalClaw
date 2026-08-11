@@ -146,9 +146,22 @@ async def tick_once(
     spooled = _drain_spool(now=now)
     retried = _retry_pending_resumes(sessions, pending_resumes)
 
+    # 🔴 THE THIRD WAKE SOURCE: `kind:idle` (§1.2 / §7 step 9 — WF2AUT-11). Same placement, same
+    # reason as the two above — an idle trigger is due EXACTLY when the clock's due-set is empty, so
+    # putting this below `if not result.fires` would skip it precisely when it should fire. And it
+    # cannot ride the due-set itself: `service.due_ids` only surfaces triggers with a
+    # `next_fire_at`, and an idle trigger has none because its due-ness is a predicate over session
+    # activity rather than a schedule. That is why the kind was declared-and-inert until now.
+    idle_fired = await _poll_idle(store, sessions, runner, now=now, base_dir=base_dir)
+
     if not result.fires:
-        if spooled or retried:
-            logger.debug("idle tick drained %d spooled, retried %d resumes", spooled, retried)
+        if spooled or retried or idle_fired:
+            logger.debug(
+                "idle tick drained %d spooled, retried %d resumes, fired %d idle",
+                spooled,
+                retried,
+                idle_fired,
+            )
         return result
 
     if sessions is None:
@@ -181,6 +194,41 @@ async def tick_once(
         except Exception:  # noqa: BLE001 - one trigger's drain must not strand the others
             logger.warning("drain failed for %s", fire.trigger.id, exc_info=True)
     return result
+
+
+async def _poll_idle(
+    store: Any,
+    sessions: Any,
+    runner: Callable[[dict[str, Any]], Awaitable[Any]],
+    *,
+    now: float = 0.0,
+    base_dir: Any = None,
+) -> int:
+    """Fire the due `kind:idle` triggers. Returns how many were DELIVERED.
+
+    A thin driver, like the rest of this file: `idle_poll` owns every decision (quiet-period
+    elapsed, autonudge ownership, delivered-only counting), and this only calls it and survives it.
+
+    Never raises: an idle poll that threw would take the whole tick with it, and one bad idle
+    trigger must not stop the clock for every automation on the machine.
+
+    The skipped rows are LOGGED rather than dropped (§7 crit 8) — "the session was mid-turn" is
+    exactly the decision a user needs to find when they ask why a nudge went quiet.
+    """
+    from personalclaw.triggers import idle_poll
+
+    try:
+        delivered, skipped = await idle_poll.poll(
+            store, sessions, runner, now=now, base_dir=base_dir
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - the tick must outlive one idle poll's failure
+        logger.warning("idle poll failed; continuing the tick", exc_info=True)
+        return 0
+    for row in skipped:
+        logger.debug("idle %s did not fire: %s", row.get("trigger_id"), row.get("reason"))
+    return delivered
 
 
 def _drain_spool(*, now: float = 0.0) -> int:
