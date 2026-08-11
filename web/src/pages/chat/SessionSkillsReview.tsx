@@ -60,6 +60,13 @@ function SessionSkillsModal({ sessionKey, agent, drafts, onClose, onChanged }: {
   onClose: () => void
   onChanged: () => void
 }) {
+  // The scrim closes this on click, which is a MOUSE-only exit. Escape gives the keyboard the same
+  // way out — the convention 39 sites in this app already follow (`ui/Popover` documents it).
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [onClose])
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>

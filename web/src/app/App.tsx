@@ -162,6 +162,24 @@ function AppInner() {
   const onNavSelect = (id: string) => { navigate(id); if (isMobile) setMobileNavOpen(false) }
   // Close the drawer if the viewport grows back to desktop while it was open.
   useEffect(() => { if (!isMobile) setMobileNavOpen(false) }, [isMobile])
+  // Escape closes the overlay drawer. The scrim tap was its ONLY dismissal, which reads as
+  // touch-only-so-no-keyboard — but `useIsMobile` is a `max-width: 768px` MEDIA QUERY, so a narrow
+  // DESKTOP window gets the drawer and a real keyboard. Measured at 700px before this: the drawer
+  // stayed open (`aria-hidden="false"`) after Escape, with no keyboard way out.
+  //
+  // `stopPropagation` keeps Escape single-layer, matching `ui/Popover`'s documented contract — the
+  // drawer is the outermost layer here, so consuming the key stops one press also closing a panel
+  // underneath it.
+  useEffect(() => {
+    if (!mobileNavOpen) return
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setMobileNavOpen(false)
+    }
+    document.addEventListener('keydown', onEsc)
+    return () => document.removeEventListener('keydown', onEsc)
+  }, [mobileNavOpen])
 
   // Ambient count of loops actively working in the background — surfaced as a badge
   // on the one Loop nav tile so autonomous runs are visible from any page (the whole
