@@ -5,6 +5,7 @@ import { api, type Loop } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
 import { loopStatusMeta } from '../../loops/loopStatusMeta'
 import { SlotEmptyState, RowAction, StatusDot } from './kit'
+import { ProgressRing } from '../../../ui/ProgressRing'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 
@@ -122,16 +123,5 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
   )
 }
 
-function ProgressRing({ pct, tone, size = 28 }: { pct: number; tone: string; size?: number }) {
-  const r = size / 2 - 2.5, c = 2 * Math.PI * r
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-surface-high)" strokeWidth={2.5} />
-      <motion.circle
-        cx={size / 2} cy={size / 2} r={r} fill="none" stroke={tone} strokeWidth={2.5} strokeLinecap="round"
-        strokeDasharray={c} initial={false} animate={{ strokeDashoffset: c * (1 - pct) }} transition={spring.spatialSlow}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-    </svg>
-  )
-}
+// `ProgressRing` moved to ui/ProgressRing. This copy and LoopsListPage's were byte-identical
+// except that this one animated the arc and that one jumped — see the primitive's own comment.
