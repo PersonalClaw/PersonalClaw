@@ -107,6 +107,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
       }
       controls={(triggers === null || counts.all > 0)
         ? <ListControls
+            results={{ count: (triggers ?? []).length, noun: 'triggers', active: !!q.trim() || filter !== 'all' }}
             // Search and the type filter belong to the LIST. The week grid plots every enabled clock
             // trigger by construction, so a search box over it would be a control that changes
             // nothing — worse than an absent one.

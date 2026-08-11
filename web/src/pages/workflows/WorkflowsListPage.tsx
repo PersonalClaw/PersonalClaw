@@ -214,7 +214,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             onClick={startFromTemplate} hint="Describe what you want to do; we'll pick the template" />
         </HeaderActions>}
       />
-      <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }} />
+      <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }}
+        results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading /> : tab === 'defs' ? (
           filteredDefs.length === 0 ? (

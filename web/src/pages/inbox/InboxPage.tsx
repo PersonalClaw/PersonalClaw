@@ -192,7 +192,11 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       controls={
         <ListControls search={(items === undefined || items.length > 0)
           ? { value: q, onChange: setQ, placeholder: 'Search inbox', label: 'Search inbox' }
-          : undefined}>
+          : undefined}
+          // `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
+          // `filter !== 'all'` was true on mount and the list announced "39 items" before the user
+          // did anything. The announcement is for a query the USER made.
+          results={{ count: (filtered ?? []).length, noun: 'items', active: !!q.trim() || filter !== 'open' || !!kind }}>
           <FilterMenu sections={filterSections} label="Show" />
         </ListControls>
       }
