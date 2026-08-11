@@ -2166,7 +2166,7 @@
         {
           "id": "WF2UNI-8",
           "title": "revise{step_ref, comment} as a workflow_resume answer verb (span-scoped re-plan re-invoking the planner on one node)",
-          "status": "todo",
+          "status": "done",
           "scope": "Plan Revision Gate (UP-R7); Changes to WORKFLOWS-V2.md item 4; Execution log carried-forward 3x (S43/S44/S45 NOT DONE)",
           "done_when": "workflow_resume's answer grammar accepts revise{step_ref, comment} and routes to revision.py's merge-by-id patch scoped to exactly one node (comment_step's awaiting_review->running semantics); the approved prose artifact on disk matches what runs; carried-forward-three-times item retired.",
           "deps": [
@@ -7440,11 +7440,6 @@
       {
         "id": "WF2UNI-7",
         "title": "Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer",
-        "plan": "WF2UNI"
-      },
-      {
-        "id": "WF2UNI-8",
-        "title": "revise{step_ref, comment} as a workflow_resume answer verb (span-scoped re-plan re-invoking the planner on one node)",
         "plan": "WF2UNI"
       },
       {

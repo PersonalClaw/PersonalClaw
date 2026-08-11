@@ -174,6 +174,16 @@ export function foldEvent(
       if (env.instance_path) next = patchNode(next, env, 'done')
       break
 
+    case 'workflow_gate_revised':
+      // A revise is NOT an approval: the ask is answered (clear it, same as above) but the
+      // revised step goes back to WORK rather than being done, because the engine patched it
+      // and re-runs it. Marking it 'done' here would show a finished step the engine is still
+      // executing. `patchNode` keys on `instance_path` like every other arm here; the
+      // payload's `step_ref` names the patched node for a reader, it is not the key.
+      next.attention = null
+      if (env.instance_path) next = patchNode(next, env, 'running')
+      break
+
     case 'workflow_spec_updated':
       if (typeof env.spec_version === 'number') next.specVersion = env.spec_version
       break

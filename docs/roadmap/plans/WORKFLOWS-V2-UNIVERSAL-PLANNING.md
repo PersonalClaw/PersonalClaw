@@ -973,3 +973,77 @@ the nudge, entity scrubbing), `eval_specs.py` (per-template benchmarks derived f
   harness (UP-R13.2) needs the judge LEARNING-FLYWHEEL owns. `revise{step_ref, comment}` as a
   `workflow_resume` answer verb remains carried forward — twice now — because it is an engine-surface
   change and every planning session has correctly declined to reach into the resume grammar.
+  **CLOSED 2026-08-10 by WF2UNI-8** — see the entry below.
+
+### 2026-08-10 — WF2UNI-8 (the `revise` answer verb) DONE — carried-forward item RETIRED
+
+`revise{step_ref, comment}` is now a real answer verb on `workflow_resume`, and the item carried
+forward through sessions 43, 44 and 45 is closed. What made it carryable that long was correct
+caution: it IS an engine-surface change, so it belongs in `controller.resume`, not in a planning
+session. It lands there now.
+
+- **Validated where the token still exists.** `_parse_revise` runs alongside `Ask.validate_answer`,
+  BEFORE `consume_continuation` — the ordering that method's own docstring justifies. Every
+  refusal (`WF_REVISE_UNKNOWN_STEP`, `WF_REVISE_AMBIGUOUS_STEP`, `WF_REVISE_NO_STEP_REF`,
+  `WF_REVISE_NO_COMMENT`, `WF_REVISE_NOT_APPLICABLE`, `WF_REVISE_REJECTED`) leaves the reviewer
+  able to answer, because a rejected revision means they are still deciding.
+
+- **Exactly one node, enforced by a COUNT.** `resolve_step_ref` refuses a ref matching two nodes.
+  `_ids_in` returns a set, so the duplicate that makes a ref unpatchable is precisely the fact a
+  set discards — hence `_count_id`. An ambiguous ref would patch whichever copy the walk reached
+  first and leave the other running the text the reviewer rejected: a half-applied revision, worse
+  than a refused one because the run carries on looking revised.
+
+- **The comment reaches the PROMPT, not just a note.** `comment_patch` emits a `replace`, not an
+  `annotate`. An annotation lives where only a reviewer reads it, so the step would re-run on the
+  text the reviewer just objected to — the mechanism would exist and change nothing. A GATE's
+  prompt is deliberately exempt: that string is the QUESTION put to a human, and appending "be
+  terser" to "Ship it?" would corrupt the ask being answered.
+
+- **awaiting_review → running, in the engine's own state names.** Mirroring
+  `planning.session.comment_step`: the gate instance goes back to PENDING at the current epoch
+  rather than DONE, so it re-asks against the revised step. Nothing is marked approved, no
+  `always_allow` is remembered, and `gate_resolved` is NOT written — a revise folded into that
+  event would make `introspection.gate_stats` count a wording request as a said-no. It gets its
+  own `journal.GATE_REVISED` kind instead.
+
+- **One writer, so "what runs is what was recorded" is structural.** The revision is routed through
+  `_commit_mutation` as an `UPDATE_NODE` op carrying `raw={"op": "revise", ...}`. That is the single
+  writer of `spec.json` + `spec_history/` + `user_edited_mid_flight`, so the executing spec, the
+  persisted spec and the audit record are one document rather than three that agree by convention.
+  A test asserts `store.read_spec(run) == controller.spec` after a revise, and that the recorded
+  `spec_hash` hashes the file on disk. It also gives the refiner the hand-fix signal for free.
+
+- **DEVIATION — "the approved PROSE artifact on disk matches what runs" is satisfied against the
+  spec, not a prose file, because no prose-artifact writer exists.** `revision.plan_markdown`
+  (`workflows/revision.py:587`) has exactly one caller, `mcp_workflows.py:1018`, which returns it
+  as a `plan_markdown` STRING in the `workflow_plan` response body. Nothing writes it to disk: the
+  only per-run files are `spec.json`, `state.json`, `spec_history/`, outputs/artifacts and the
+  journal (`workflows/store.py:319-510`), and no path under `artifacts/` receives a plan. The
+  plan-as-artifact clause at line 338 of this plan is therefore still NOT DONE and remains open
+  work. Inventing an artifact-writing surface to satisfy the wording would have shipped a new
+  persistence seam under cover of an answer-verb atom. The clause's real content — the approved
+  document and the executed document cannot diverge — is enforced above on `spec.json`, which is
+  the document that actually runs.
+
+- **DISCOVERY — two workflow tools advertised an argument nothing validated.**
+  `WORKFLOW_RESUME_SCHEMA` declared no `answer` FieldSpec (despite a comment saying `answer` is
+  "deliberately UNTYPED") and `WORKFLOW_PLAN_SCHEMA` none for `project_id`, while both are
+  advertised in `_list_tools()` and read by their handlers. `validate_tool_args`
+  (`validation.py:248-259`) REJECTS an unknown field, so a schema-validated call carrying either
+  would fail outright. LATENT, not live: `_validate_args` looks up `MCP_CORE_SCHEMAS` only
+  (`mcp_core.py:615`), and `_aggregated_call_tool` (`mcp_core.py:1217`) routes a `workflow_*` call
+  straight to `mcp_workflows._call_tool` with no validation hop, so `MCP_WORKFLOW_SCHEMAS` has no
+  non-test consumer today. Both FieldSpecs are added anyway — this atom adds a third shape to that
+  schema, and the drift becomes a live rejection the moment the surface is wired.
+  `test_every_advertised_field_is_a_validated_field` is the ratchet that would have caught both;
+  it asserts advertised ⊆ validated, and deliberately not the reverse (a validated-but-unadvertised
+  field is an internal argument, not a bug).
+- **VERIFY PASS (independent re-run, same day).** Gate re-run from scratch rather than trusting the report: lint clean (1484 files), `mypy src/personalclaw harness` clean on 782 files, and 170 passed across `test_workflows_gate_revise` + `test_workflows_tools` + `test_workflows_revision` + the two full-suite-only ratchets (`test_agent_reference`, `test_inert_surface_baseline`). The eight assertions that carry the atom's correctness were run individually and named: five `TestARejectedReviseKeepsTheToken` cases (unknown step_ref, missing comment, missing step_ref, stale epoch, unknown token refused before any spec write) and three `TestWhatRunsMatchesWhatWasRecorded` cases (spec on disk equals the spec the engine runs, recorded ops hash the spec that landed, a revised step does not serve its cached output). Also read the code rather than the summary: all five `WF_REVISE_*` refusal returns in `_resume_revise` precede its `consume_continuation` call, so a rejected revise provably cannot destroy the token.
+  **The environment trap this atom nearly hid.** The venv is editable-installed against the MAIN tree, so a bare `pytest` inside the worktree imports `/…/PersonalClaw/src` and silently tests `main` instead of the branch. Every run here was prefixed `PYTHONPATH=/private/tmp/uni8-wt/src`, and the proof recorded before believing any number: `personalclaw.workflows.controller.__file__` resolving under the worktree and `hasattr(controller, "_parse_revise")` returning True. The same trap produced a false green twice earlier today in the apps repo; a green from the wrong tree is worse than a red, because nothing about it looks wrong.
+  **DEVIATION (upheld on review) — the done-when's "approved prose artifact on disk" has no writer.** `revision.plan_markdown` (revision.py:587) has exactly one caller, `mcp_workflows.py:1018`, which returns it as a STRING in the `workflow_plan` response body; per-run files are only `spec.json`, `state.json`, `spec_history/`, outputs and the journal. Rather than invent an artifact-writing surface to satisfy the wording, the clause's real content is enforced structurally against `spec.json`: the revision commits through `_commit_mutation`, the single writer of spec + history + `user_edited_mid_flight`, and the two tests above assert the on-disk spec equals both what the engine walks and what the history hash records. Plan line 338's plan-as-artifact clause remains NOT DONE and is the honest residual.
+  **LATENT, NOT LIVE — stated precisely because the distinction matters.** `MCP_WORKFLOW_SCHEMAS` has no non-test consumer: `_aggregated_call_tool` (mcp_core.py:1217) routes a `workflow_*` call straight to `mcp_workflows._call_tool`, `_validate_args` (mcp_core.py:615) reads `MCP_CORE_SCHEMAS` only, and `InProcessMcpToolProvider` wraps the raw `_call_tool` too. So the two field mismatches were not a live outage, and calling them one would have been the more dramatic and less true framing. They are fixed regardless — this atom adds a third field to that schema — and `test_every_advertised_field_is_a_validated_field` now asserts advertised ⊆ validated across all 19 tools, the check that would have caught `workflow_resume.answer` and `workflow_plan.project_id` when they drifted. The reverse direction stays deliberately unasserted: a validated-but-unadvertised field is an internal argument, not a defect.
+- **FOLLOW-UP (same PR) — the new event was published to nobody.** CI's `test_transport_doctrine::test_workflow_engine_sse_events_are_all_registered_in_the_frontend` caught `workflow_gate_revised` publishing with no frontend listener. That ratchet exists because **EventSource silently DROPS event types with no registered listener**, so an unlisted publish is a live update that never arrives and no other test would have shown it — the backend-truth/frontend-silence shape. Fixed in all THREE places the contract spans, since fixing one would leave it half-wired: the `WORKFLOW_LIFECYCLE` union in `useWorkflowStream.ts` (what actually subscribes), the mirror list in `workflowMeta.test.ts` (the FE-side parity assertion), and a real `case` arm in `workflowFold.ts`. The module docstring's publisher inventory was updated too — it is the map a reader trusts, and a stale one is how the next event goes missing.
+  **The fold arm is deliberately NOT a copy of `workflow_gate_resolved`.** Resolved marks the node `done`; a revise patches the step and RE-RUNS it, so it marks `running` — showing a finished step the engine is still executing would be a lie in the run view. Attention is cleared in both, because the ask was answered either way.
+  **A bug in my own first draft, caught by reading the helper instead of pattern-matching:** I keyed the patch on `{...env, node_id: env.step_ref}`, but `patchNode` keys on `instance_path` (workflowFold.ts:242) and ignores `node_id` entirely — so the override was inert decoration that would have silently patched nothing. Corrected to pass `env` unchanged, with a comment recording that `step_ref` is informational for a reader, not the key.
+  **Gate after the fix:** the failing ratchet plus `test_workflows_projection_events` — 29 passed; FULL `npm run test --workspace web` 1112 tests / 111 files; `tsc --noEmit` exit 0. (The worktree had no `node_modules`, so the first web run exited 127 and `npx tsc` resolved to an unrelated binary — `npm ci` first, then re-run. An exit 127 read as a pass is exactly the false green this session has already been bitten by twice.)

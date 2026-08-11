@@ -10,7 +10,8 @@ import { api, type WorkflowRunDetailData } from '../../lib/api'
 // Sources (keep in sync with their `_publish(...)` sites):
 //   • controller.py — workflow_run_update, workflow_node_started, workflow_node_done,
 //     workflow_attention, workflow_needs_input, workflow_gate_resolved,
-//     workflow_spec_updated, workflow_mutation_rejected, workflow_forked
+//     workflow_gate_revised, workflow_spec_updated, workflow_mutation_rejected,
+//     workflow_forked
 //   • service.py blocking mode — workflow_progress (periodic node-state ticks)
 //
 // A component that doesn't care about a given event simply no-ops in its switch; that is
@@ -22,6 +23,7 @@ export const WORKFLOW_LIFECYCLE = [
   'workflow_attention',
   'workflow_needs_input',
   'workflow_gate_resolved',
+  'workflow_gate_revised',
   'workflow_spec_updated',
   'workflow_mutation_rejected',
   'workflow_forked',
