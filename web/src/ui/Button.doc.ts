@@ -20,6 +20,7 @@ const doc: UiDoc = {
     { name: 'type', description: "'button' (default) or 'submit' inside a form." },
     { name: 'title', description: 'Native tooltip text.' },
     { name: 'ariaExpanded', description: 'Announce disclosure state to assistive tech — set only when the button folds content (e.g. a "Show N more" archive toggle); omit for plain actions.' },
+    { name: 'ariaPressed', description: 'Announce selected state — set when the button is a persistent choice (a selectable list row, a view toggle); omit for plain actions. Use instead of ariaExpanded when the button selects rather than reveals.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for Button for any labelled action — never hand-roll a <button> with bespoke classes; the missing xs tier is why pages used to.' },

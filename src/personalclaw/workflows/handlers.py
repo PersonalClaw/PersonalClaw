@@ -28,6 +28,7 @@ import time
 from typing import Any
 
 from aiohttp import web
+from aiohttp.multipart import BodyPartReader
 
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
@@ -86,6 +87,14 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # 500: the run and its recorded workspace both exist, so an unreadable one is OUR fault (a
     # git call that failed, a permission problem) — not a bad request the client can fix.
     "WF_WORKSPACE_UNREADABLE": (500, "workspace_unreadable"),
+    # 409, not 404: the RUN exists and the route exists — the workflow declared no file drop. A 404
+    # would tell the client the endpoint is wrong and send it looking for a different path.
+    "WF_DROP_DISABLED": (409, "drop_disabled"),
+    # 428 Precondition Required is the one status that says "resend this with the missing
+    # precondition", which is exactly the retry an approval gate wants: same request, plus confirm.
+    "WF_DROP_APPROVAL_REQUIRED": (428, "approval_required"),
+    "WF_DROP_LIMIT": (409, "drop_limit"),
+    "WF_DROP_WRITE_FAILED": (500, "drop_write_failed"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -350,6 +359,141 @@ async def api_run_workspace(request: web.Request) -> web.Response:
     changed-file list is paths.
     """
     return _reply(service.workspace_review(request.match_info.get("run_id", "")))
+
+
+#: Per-file ceiling on a run's inbound drop. The route buffers each part to enforce it, so the cap
+#: is also the memory bound — deliberately far below the resumable-upload ceiling, because a drop
+#: zone is for reference material and anything larger belongs in the workspace via `/api/uploads/*`.
+MAX_DROP_BYTES = 16 * 1024 * 1024
+
+
+async def api_run_drop_status(request: web.Request) -> web.Response:
+    """GET the run's file-drop policy + what has been dropped (WORK-CONTAINERS §2.5).
+
+    A read, so not `_guard`ed — the same rule `api_run_workspace` follows. The payload is filenames,
+    sizes and digests; no dropped CONTENT is served here, because a drop is untrusted input and the
+    one sanctioned read path fences it (`filedrop.read_dropped_text`).
+    """
+    return _reply(service.drop_status(request.match_info.get("run_id", "")))
+
+
+async def api_run_drop(request: web.Request) -> web.Response:
+    """POST multipart to the run's approval-gated file drop (WORK-CONTAINERS §2.5, R17).
+
+    Multipart with `file` parts, matching `/api/upload/file` — one ingestion convention, not a
+    second. Approval rides in the SAME request as `confirm=true` (the `body.get("confirm") is True`
+    shape the
+    destructive dashboard routes use) rather than in a pending-upload record: a two-phase drop would
+    have to hold unapproved bytes somewhere, and unapproved untrusted input parked on disk is the
+    thing the gate exists to prevent. So an unapproved drop is REFUSED with what it would have
+    accepted (name, size, MIME), the UI shows that, and the confirmed retry carries the file again.
+
+    `_guard`ed as a mutation and SEL-audited PER FILE (§2.5): ingesting untrusted content into a
+    run's
+    reference zone is exactly the event an operator reconstructing "where did this instruction come
+    from" needs to find.
+    """
+    denied = _guard(request, "workflow_run_drop")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    ctype = request.headers.get("Content-Type", "")
+    if not ctype.lower().startswith("multipart/"):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "multipart/form-data with one or more 'file' parts is required",
+                }
+            },
+            status=400,
+        )
+    try:
+        reader = await request.multipart()
+    except (ValueError, AssertionError, RuntimeError) as exc:
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": f"unreadable multipart body: {exc}"}},
+            status=400,
+        )
+    # `confirm` may arrive as a form field ahead of the files (a browser sends parts in order), so
+    # it is read as the stream advances rather than from a pre-parsed body — request.post() would
+    # buffer every file into memory to give the same answer.
+    confirmed = request.query.get("confirm", "").lower() == "true"
+    accepted: list[dict[str, Any]] = []
+    while True:
+        try:
+            part = await reader.next()
+        except (ValueError, AssertionError, RuntimeError) as exc:
+            return web.json_response(
+                {"error": {"code": "invalid_request", "message": f"malformed part: {exc}"}},
+                status=400,
+            )
+        if part is None:
+            break
+        # A nested multipart reader is not a body part — skipped rather than duck-typed, the same
+        # narrowing `api_upload_file` uses. Reading `.read_chunk` off it would be a runtime error.
+        if not isinstance(part, BodyPartReader):
+            continue
+        name = part.name or ""
+        if name == "confirm":
+            confirmed = confirmed or (await part.text()).strip().lower() == "true"
+            continue
+        if name != "file":
+            continue
+        data = bytearray()
+        over = False
+        while True:
+            chunk = await part.read_chunk(65536)
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > MAX_DROP_BYTES:
+                over = True
+                break
+        if over:
+            _audit(request, "workflow_run_drop", "rejected", f"{run_id}:oversize")
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "file_too_large",
+                        "message": f"a dropped file may not exceed {MAX_DROP_BYTES} bytes",
+                    }
+                },
+                status=413,
+            )
+        result = service.accept_dropped_file(
+            run_id,
+            filename=part.filename or "dropped",
+            data=bytes(data),
+            mime=part.headers.get("Content-Type", "") if part.headers else "",
+            confirmed=confirmed,
+        )
+        if not result.get("ok"):
+            _audit(
+                request,
+                "workflow_run_drop",
+                "denied",
+                f"{run_id}:{result.get('code', '')}",
+            )
+            return _fail(result)
+        _audit(
+            request,
+            "workflow_run_drop",
+            "success",
+            f"{run_id}:{(result.get('file') or {}).get('filename', '')}",
+        )
+        accepted.append(result.get("file") or {})
+    if not accepted:
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "no 'file' part in the request"}},
+            status=400,
+        )
+    return _reply(service.drop_status(run_id) | {"accepted": accepted})
+
+
+async def api_run_outbox(request: web.Request) -> web.Response:
+    """GET the run's published-artifact listing — the §2.5 outbox half of R17."""
+    return _reply(service.outbox(request.match_info.get("run_id", "")))
 
 
 async def api_run_output(request: web.Request) -> web.Response:
@@ -699,6 +843,9 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/events", api_run_events)
     app.router.add_get("/api/workflows/runs/{run_id}/continuations", api_run_continuations)
     app.router.add_get("/api/workflows/runs/{run_id}/workspace", api_run_workspace)
+    app.router.add_get("/api/workflows/runs/{run_id}/drop", api_run_drop_status)
+    app.router.add_post("/api/workflows/runs/{run_id}/drop", api_run_drop)
+    app.router.add_get("/api/workflows/runs/{run_id}/outbox", api_run_outbox)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)

@@ -720,6 +720,40 @@ export interface WorkflowWorkspaceReview {
     issues?: Array<{ code: string; message: string; fatal: boolean }>
   }
 }
+// One artifact this run published (WORK-CONTAINERS §2.5 outbox). `kind` is what the cockpit resolves
+// through the contentTypes registry — the route declares the TYPE and never the renderer, so a newly
+// registered kind previews here without touching the outbox.
+export interface WorkflowOutboxEntry {
+  slug: string
+  artifact: string
+  kind: string
+  action: string
+  change_note: string
+  node_id: string
+  updated_at: string
+  // False when a referenced local file could not be copied into the version dir — surfaced, because
+  // an artifact that only LOOKS self-contained breaks silently when the workspace goes away.
+  self_contained: boolean
+}
+export interface WorkflowDroppedFile {
+  filename: string
+  size: number
+  sha256: string
+  mime?: string
+  lifecycle?: string
+  accepted_at?: string
+  approved?: boolean
+}
+export interface WorkflowDropStatus {
+  enabled: boolean
+  // Why the drop is off, when it is off. Rendered as-is: "this workflow does not declare a file
+  // drop" is a configuration fact, and a generic "unavailable" would read as a bug.
+  reason: string
+  auto_accept_mimes: string[]
+  max_files: number
+  files: WorkflowDroppedFile[]
+  accepted?: WorkflowDroppedFile[]
+}
 export interface WorkflowManifest {
   spec_semver: string
   node_kinds: Array<{ kind: string; container: boolean; lane: string }>
@@ -3170,6 +3204,21 @@ export const api = {
    *  workspace answers with an empty `workspace`, which the panel renders as "no diff". */
   workflowRunWorkspace: (id: string) =>
     get<WorkflowWorkspaceReview>(`/api/workflows/runs/${encodeURIComponent(id)}/workspace`),
+  workflowRunOutbox: (id: string) =>
+    get<{ files: WorkflowOutboxEntry[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/outbox`),
+  workflowRunDropStatus: (id: string) =>
+    get<WorkflowDropStatus>(`/api/workflows/runs/${encodeURIComponent(id)}/drop`),
+  /** Drop files into a run (WORK-CONTAINERS §2.5). `confirm` ANSWERS the approval gate — the first
+   *  call is deliberately made WITHOUT it so the 428 comes back carrying what would be accepted
+   *  (name, size, MIME) for the operator to see before anything lands. */
+  workflowRunDrop: (id: string, files: File[], confirm = false) => {
+    const body = new FormData()
+    for (const f of files) body.append('file', f)
+    return fetch(
+      `/api/workflows/runs/${encodeURIComponent(id)}/drop${confirm ? '?confirm=true' : ''}`,
+      { method: 'POST', headers: { ...SK }, body },
+    ).then(j<WorkflowDropStatus>)
+  },
   // `preview_only` computes the cascade and queues NOTHING — the what-if a user sees
   // before accepting an edit that would re-run completed work.
   editWorkflowRun: (id: string, body: { ops: Array<Record<string, unknown>>; expect_version?: number; confirm_cascade?: boolean; preview_only?: boolean }) =>
