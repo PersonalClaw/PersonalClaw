@@ -364,7 +364,12 @@ function NewProjectModal({ busy, onClose, onCreate }: {
             {workspaceDir ? (
               <code className="min-w-0 flex-1 truncate rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-[0.8125rem] text-on-surface-var" title={workspaceDir}>{workspaceDir}</code>
             ) : (
-              <span className="flex-1 text-on-surface-low/70 text-[0.8125rem] italic">No workspace bound</span>
+              // `text-on-surface-low` is ALREADY the dimmest ink token (6.67:1 on this modal
+              // surface); the `/70` suffix multiplied it to 3.86:1 — below AA 1.4.3, measured by axe
+              // on this modal. Dropping the dimmer restores AA with no new colour, the same
+              // resolution `countChipContrast` reached for the identical shape. The italic still
+              // carries "this is a placeholder, not a value".
+              <span className="flex-1 text-on-surface-low text-[0.8125rem] italic">No workspace bound</span>
             )}
             <Button size="sm" variant="secondary" onClick={() => setPickWs(true)}><FolderOpen size={14} /> {workspaceDir ? 'Change' : 'Bind'}</Button>
             {workspaceDir && <IconButton icon={X} label="Clear workspace" size={32} onClick={() => setWorkspaceDir('')} />}
@@ -669,7 +674,7 @@ function WorkGroupLabel({ text, count, tone }: { text: string; count: number; to
     <div className="flex items-center gap-1.5 text-[0.75rem] uppercase tracking-wide">
       {tone === 'ok' && <span className="size-1.5 rounded-full" style={{ background: 'var(--color-ok)' }} />}
       <span className="text-on-surface-low">{text}</span>
-      <span className="text-on-surface-low/60">· {count}</span>
+      <span className="text-on-surface-low">· {count}</span>
     </div>
   )
 }
@@ -778,7 +783,7 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
               className="min-w-0 max-w-[22rem] truncate rounded bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-var hover:text-primary">{path}</button>
           : <code className="min-w-0 max-w-[22rem] truncate rounded bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-var" title={path}>{path}</code>
       ) : (
-        <span className="text-on-surface-low/70 italic">{emptyText}</span>
+        <span className="text-on-surface-low italic">{emptyText}</span>
       )}
       {path && onBrowse && (
         <button type="button" onClick={onBrowse} aria-label={`Open ${label} in Files`} title="Open in Files"
@@ -801,7 +806,7 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
       className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary/40' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>
       <ListChecks size={13} className="shrink-0 text-on-surface-low" />
       <span className="min-w-0 flex-1 truncate">{list.name}</span>
-      {typeof count === 'number' && <span className="shrink-0 text-on-surface-low/70 text-[0.75rem] tabular-nums">{count}</span>}
+      {typeof count === 'number' && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>}
       <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
@@ -919,7 +924,7 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
     <button type="button" onClick={() => setEditing(true)} title="Edit project brief"
       className="group flex items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-high/50">
       <FileText size={13} className="mt-0.5 shrink-0 text-on-surface-low" />
-      <span className={`min-w-0 flex-1 text-[0.8125rem] ${brief ? 'text-on-surface-var line-clamp-2' : 'text-on-surface-low/70 italic'}`}>
+      <span className={`min-w-0 flex-1 text-[0.8125rem] ${brief ? 'text-on-surface-var line-clamp-2' : 'text-on-surface-low italic'}`}>
         {brief || 'Add a project brief — shared as context with every agent working here.'}
       </span>
       <Pencil size={12} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
