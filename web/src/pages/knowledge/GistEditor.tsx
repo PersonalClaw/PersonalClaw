@@ -37,6 +37,12 @@ export function GistEditor({ value, onChange, language, readOnly = false }: {
         onChange={(v) => onChange(v ?? '')}
         theme={mode === 'light' ? 'light' : 'vs-dark'}
         options={{
+          // Monaco names its editing surface "Editor content" by default — identical to the Files
+          // editor's, so the announcement said nothing about WHAT was being edited. Naming it from
+          // the gist's language is the only thing that distinguishes one gist editor from another.
+          // No `ariaLabel` PROP: both call sites pass `language`, so the derived name serves them
+          // both, and an override nothing passes would be a declared-but-unused surface.
+          ariaLabel: language ? `Gist content (${language})` : 'Gist content',
           readOnly,
           fontSize: 13,
           minimap: { enabled: false },

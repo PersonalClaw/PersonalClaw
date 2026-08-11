@@ -185,7 +185,15 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
         <MonacoEditor height="100%" path={path} language={language || type.edit?.language || 'plaintext'} value={draft}
           onChange={(v) => setDraft(v ?? '')} theme={mode === 'light' ? 'light' : 'vs-dark'}
           onMount={split ? (ed: any) => { editorRef.current = ed; ed?.onDidScrollChange?.(syncFromEditor) } : undefined}
-          options={{ readOnly: !editable, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
+          options={{
+            // Monaco's editing surface DOES carry a name by default — but the same one everywhere:
+            // measured as "Editor content" on both of our mounts. So every open file, and every
+            // gist, announced identically, and a screen-reader user moving between two editors got
+            // no signal about which document they had landed in. `ariaLabel` is Monaco's own option
+            // (IEditorOptions.ariaLabel); naming it from the document makes the announcement
+            // specific. `title` is required here, so no fallback branch is needed.
+            ariaLabel: `${title} — editor`,
+            readOnly: !editable, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
       </Suspense>
     )
   }
