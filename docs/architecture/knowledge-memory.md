@@ -15,6 +15,17 @@ responses carry only a `has_embedding` flag. Deleting an item cleans vectors,
 mentions, and FTS rows — not just the item row. FTS values are kept in sync on
 update (delete-with-old-values, insert-with-new).
 
+### Project scoping
+
+Knowledge stays ONE global library — a project is a **tag plus item metadata**,
+never a second database. `knowledge/project_scope.py` owns that scoping for the
+items a workflow run writes: `project_id` (the producing container, first writer
+wins), `run_id`, and a closed `sharing_policy` (`private` | `shared`, default
+private). A project's Knowledge view shows its own items whatever their policy
+plus other projects' `shared` items labeled with their source project; another
+project's private items never appear. The project tag is the same one
+`knowledge/session_brief.py::project_tag` reads for a run's project brief.
+
 ### Ingestion pipeline (node graphs)
 
 `knowledge/pipeline/` is a node-graph executor:
@@ -83,6 +94,23 @@ cosine floor keeps weak vector hits from polluting precise keyword queries.
 - **`memory_vault.py`** — a human-readable markdown mirror of memory.
 - **`learn.py`** — lesson capture; `memory_lint.py` — hygiene checks;
   `engagement_signals.py`, `preference_facets.py` — derived preference data.
+
+### Partitions & project locality
+
+- Memory is partitioned by **working directory**: `config/loader.py`'s
+  `memory_dir_for_cwd(cwd)` maps a session's cwd onto
+  `~/.personalclaw/workspace/_ext/<slug(cwd)>`, and an empty cwd onto the shared
+  `_ext/_default` partition. `context.py::ContextBuilder.get_memory_for` resolves
+  and caches one store per partition (the gateway's own workspace is aliased
+  onto the main store, so a dashboard chat and the Memory UI share one).
+- **Project locality rides that seam** (`memory_locality.py`): a project-owned
+  run binds the project's `context_dir` as its cwd, so what it learns lands in
+  that project's partition instead of the shared pile.
+- Recall for a project-local session is **partition-first**: its own partition,
+  then the global partition, whose hits are source-labeled and fenced
+  (`security.py::fence_untrusted`). This affects **ordering only, never
+  admission** — a hit that exists only in the global partition is still
+  returned, on its own if need be.
 
 ### Recall & the privacy guard
 

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, Download, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -20,7 +20,7 @@ import { Button } from '../../ui/Button'
 import { FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
-import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard } from '../../lib/api'
+import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
@@ -228,12 +228,12 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
  *  (loops / code projects / chats / artifacts) — enough to decide whether to
  *  dive into the dedicated page. */
 function ProjectPeekBody({ id, project, onOpen }: { id: string; project: ProjectItem | null; onOpen: () => void }) {
-  const [linked, setLinked] = useState<{ loops: { id: string; name: string; status: string }[]; code: { id: string; name: string; status: string }[]; chats: { key: string; title: string; running: boolean }[]; artifacts: { slug: string; name: string; kind: string }[] } | null>(null)
+  const [linked, setLinked] = useState<{ loops: { id: string; name: string; status: string }[]; code: { id: string; name: string; status: string }[]; chats: { key: string; title: string; running: boolean }[]; artifacts: { slug: string; name: string; kind: string }[]; knowledge: ProjectKnowledgeItem[] } | null>(null)
   const [taskLists, setTaskLists] = useState<TaskListItem[]>([])
   useEffect(() => {
     let alive = true
     setLinked(null); setTaskLists([])
-    api.projectLinked(id).then((d) => { if (alive) setLinked(d) }).catch(() => { if (alive) setLinked({ loops: [], code: [], chats: [], artifacts: [] }) })
+    api.projectLinked(id).then((d) => { if (alive) setLinked({ ...d, knowledge: d.knowledge || [] }) }).catch(() => { if (alive) setLinked({ loops: [], code: [], chats: [], artifacts: [], knowledge: [] }) })
     api.taskLists(id).then((d) => { if (alive) setTaskLists(d) }).catch(() => {})
     return () => { alive = false }
   }, [id])
@@ -330,6 +330,11 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
                 </div>
               </Section>
             )}
+            {linked.knowledge.length > 0 && (
+              <Section label={`Knowledge · ${linked.knowledge.length}`}>
+                <ProjectKnowledgeList items={linked.knowledge} />
+              </Section>
+            )}
           </>
         )}
       </div>
@@ -338,6 +343,40 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
         style={fvs(470)}>
         Open project <ChevronRight size={13} className="shrink-0" />
       </button>
+    </div>
+  )
+}
+
+/** How a `sharing_policy` reads in the UI. The record is EXHAUSTIVE over the closed enum on
+ *  purpose: a `Record<SharingPolicy, …>` makes a new backend value a typecheck failure here
+ *  instead of a row that silently renders as whatever a default branch happened to say. */
+export const SHARING_POLICY_LABEL: Record<SharingPolicy, string> = {
+  private: 'Private',
+  shared: 'Shared',
+}
+
+/** A project's run-written knowledge (WORK-CONTAINERS §1.6).
+ *
+ *  Each row shows its sharing policy, and a row the backend surfaced from ANOTHER project
+ *  (only possible when that item is `shared`) says so with the owning project's name — a
+ *  shared item must never read as something this project produced. */
+export function ProjectKnowledgeList({ items }: { items: ProjectKnowledgeItem[] }) {
+  return (
+    <div className="flex flex-col gap-1">
+      {items.slice(0, 8).map((k) => (
+        <div key={k.id} className="flex items-center gap-2 rounded-md bg-surface-container px-m py-1.5">
+          <BookMarked size={13} className="shrink-0 text-on-surface-low" />
+          <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{k.title || k.kind || k.id}</span>
+          {k.source_project && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]" title={`Shared from ${k.source_project}`}>
+              <Users size={11} className="shrink-0" />{k.source_project}
+            </span>
+          )}
+          {/* No silent default: an unmapped policy is ANNOUNCED with its raw value rather
+              than rendering blank, so a wire/UI drift is visible instead of invisible. */}
+          <span className="shrink-0 text-on-surface-low text-[0.75rem]">{SHARING_POLICY_LABEL[k.sharing_policy] || `unmapped: ${k.sharing_policy}`}</span>
+        </div>
+      ))}
     </div>
   )
 }

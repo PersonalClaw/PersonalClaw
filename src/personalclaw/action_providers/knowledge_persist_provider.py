@@ -34,6 +34,7 @@ import uuid
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.knowledge import project_scope
 from personalclaw.knowledge.semantics import (
     Claim,
     Mention,
@@ -66,7 +67,8 @@ class KnowledgePersistActionProvider(ActionProvider):
             "source_ref": "…",               # auto-filled from the run when absent
             "read_when": ["…"],              # optional retrieval triggers (KNOW-R12)
             "ttl": "30d",                    # optional; becomes an absolute expires_at
-            "mode": "upsert"                 # create|upsert|append_evidence
+            "mode": "upsert",                # create|upsert|append_evidence
+            "sharing_policy": "private"      # optional; private|shared (§1.6, default private)
         }
     """
 
@@ -147,6 +149,13 @@ class KnowledgePersistActionProvider(ActionProvider):
 
         source_ref = str(cfg.get("source_ref", "") or _run_source_ref(ctx))
         metadata = dict(existing_meta)
+        metadata.update(_scope_metadata(cfg, ctx, existing=existing_meta))
+        # The tag files the item under its OWNING project — read back by the project brief
+        # (`session_brief.load_items`) and the project Knowledge view. Derived from the owner
+        # in metadata, not from this run's project: an item project A produced and project B
+        # merely reinforced must stay filed under A, or "private to its project" would leak
+        # every time a second container touched it.
+        scope_tags = project_scope.scope_tags(str(metadata.get(project_scope.PROJECT_ID_KEY, "")))
         appended = 0
 
         conflicts: list[dict] = []
@@ -185,6 +194,10 @@ class KnowledgePersistActionProvider(ActionProvider):
             # alone. Rewriting an identical body would bump `updated_at` and make a
             # freshness check think the article had changed.
             _write_metadata(store, decision.item_id, metadata, source_ref=source_ref)
+            # Reinforce leaves the body alone but must still file the item under its project:
+            # an item created before this run existed is otherwise invisible to the container
+            # that just corroborated it. Idempotent (`INSERT OR IGNORE`).
+            _write_tags(store, decision.item_id, scope_tags)
             return ActionResult(
                 success=True,
                 stdout=json.dumps(
@@ -235,7 +248,7 @@ class KnowledgePersistActionProvider(ActionProvider):
                 content_hash=check.content_hash,
                 expires_at=check.expires_at,
                 metadata=metadata,
-                tags=[str(t) for t in (cfg.get("tags") or [])],
+                tags=[*(str(t) for t in (cfg.get("tags") or [])), *scope_tags],
                 creating=decision.action == "create",
             )
         except Exception as exc:
@@ -773,6 +786,41 @@ def _enqueue_enrichment(item_id: str) -> None:
         enqueue_item(item_id)
     except Exception:
         logger.debug("knowledge enrichment enqueue unavailable for %s", item_id, exc_info=True)
+
+
+def _scope_metadata(
+    cfg: dict[str, Any], ctx: ActionContext, *, existing: dict[str, Any]
+) -> dict[str, str]:
+    """Container scope for this write (WORK-CONTAINERS §1.6), or `{}` outside a run.
+
+    Ownership is FIRST-WRITER-WINS: `project_id` / `run_id` describe who produced the item,
+    so a later run in a different project re-persisting the same content records its
+    corroboration (mentions, `source_ref`) without moving the item into its own container.
+
+    `sharing_policy` is the one field a later write may CHANGE, and only when it says so
+    explicitly — that is how an item gets promoted from private to shared. An absent
+    declaration never silently widens visibility.
+    """
+    payload = getattr(ctx, "payload", None) or {}
+    scope = project_scope.write_scope(
+        project_id=str(payload.get("project_id", "") or ""),
+        run_id=str(payload.get("run_id", "") or ""),
+        requested_policy=cfg.get("sharing_policy"),
+    )
+    if not scope:
+        return {}
+    out: dict[str, str] = {}
+    for key in (project_scope.PROJECT_ID_KEY, project_scope.RUN_ID_KEY):
+        value = existing.get(key) or scope.get(key)
+        if value:
+            out[key] = str(value)
+    declared = str(cfg.get("sharing_policy", "") or "").strip()
+    policy_key = project_scope.SHARING_POLICY_KEY
+    if declared or not existing.get(policy_key):
+        out[policy_key] = scope[policy_key]
+    else:
+        out[policy_key] = str(existing[policy_key])
+    return out
 
 
 def _run_source_ref(ctx: ActionContext) -> str:

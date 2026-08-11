@@ -540,6 +540,7 @@ class RunController:
         )
         self._enforce_inherited_mode()
         provisioned = await self._provision_workspace()
+        self._bind_project_memory_cwd()
         self._publish("workflow_run_update", {"status": self.run.status.value})
         return provisioned
 
@@ -657,6 +658,33 @@ class RunController:
         except Exception:
             logger.debug("run %s: project workspace lookup failed", self.run.id, exc_info=True)
             return self.services.cwd
+
+    def _bind_project_memory_cwd(self) -> None:
+        """Default a project-owned run's cwd to the project's `context_dir` (§1.6).
+
+        Memory is partitioned by cwd (`memory_dir_for_cwd`), so a project-owned run whose cwd
+        is empty writes everything it learns into the shared `_ext/_default` partition — one
+        pile every project's runs stir together. Binding the project's context dir (which §1.2
+        already calls "the default cwd fallback for stage nodes", and which the hierarchy store
+        documents as "the working area when no external workspace is bound") makes that memory
+        project-local for free: no second partitioning mechanism, just the seam that exists.
+
+        Runs LAST in `_prepare`, and only when nothing more specific has claimed the cwd:
+        an isolated workspace (`result.path`, set just above) and a caller-supplied
+        `services.cwd` are deliberate bindings, and a memory-locality default that overrode
+        them would move a code-kind run out of the worktree it was provisioned into.
+        """
+        if self.services.cwd:
+            return
+        from personalclaw.memory_locality import project_memory_cwd
+
+        cwd = project_memory_cwd(self.run.project_id)
+        if not cwd:
+            return
+        self.services.cwd = cwd
+        logger.info(
+            "run %s: cwd bound to project context dir for memory locality (%s)", self.run.id, cwd
+        )
 
     def _enforce_inherited_mode(self) -> None:
         """Apply a restricted origin's memory posture at run start (WORK-CONTAINERS §5.1).
@@ -1847,6 +1875,10 @@ class RunController:
             subagents=self.services.subagents,
             depth=self.depth,
             run_id=self.run.id,
+            # The owning project, for an ACTION node's provenance (WORK-CONTAINERS §1.6):
+            # `knowledge-persist` files its item under this container. Passed from the run
+            # record rather than resolved provider-side so one seam owns the attribution.
+            project_id=self.run.project_id,
             cwd=self.services.cwd,
             tiers=self.services.model_tiers,
             completion=self.services.completion,

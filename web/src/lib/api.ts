@@ -495,6 +495,22 @@ export interface ActionPlanItem { content?: string; description?: string; sequen
 export interface TaskNote { content: string; timestamp?: string; created_at?: string; phase?: 'research' | 'execution' | 'general' }
 export interface ProjectItem { id: string; name: string; is_builtin?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string }
 export interface ProjectLinkedItem { id: string; name: string; status: string; error_message?: string | null }
+/** How far a run-written knowledge item travels (WORK-CONTAINERS §1.6). CLOSED — the two
+ *  values the backend can send; a view that renders these must handle both explicitly. */
+export type SharingPolicy = 'private' | 'shared'
+/** A knowledge item surfaced in a project's view. `source_project` is "" for the project's
+ *  own items and the OWNING project's name for a `shared` item from another container. */
+export interface ProjectKnowledgeItem {
+  id: string
+  title: string
+  kind: string
+  summary: string
+  updated_at: string
+  project_id: string
+  run_id: string
+  sharing_policy: SharingPolicy
+  source_project: string
+}
 // Work board (WORK-CONTAINERS §1/§5.2/§6.1). `WorkRow` mirrors `containers.BoardRow.to_dict()`;
 // `WorkSection` is one heterogeneous source's own status (per-section isolation — a failed
 // source degrades ONE section, never the board); `board` is the state-grouped view with
@@ -2683,7 +2699,7 @@ export const api = {
   // projects + task lists (Project → TaskList → Task hierarchy)
   projects: () => get<{ projects: ProjectItem[] }>('/api/projects').then((d) => d.projects),
   project: (id: string) => get<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`),
-  projectLinked: (id: string) => get<{ loops: ProjectLinkedItem[]; code: ProjectLinkedItem[]; artifacts: { slug: string; name: string; kind: string }[]; chats: { key: string; title: string; running: boolean }[] }>(`/api/projects/${encodeURIComponent(id)}/linked`),
+  projectLinked: (id: string) => get<{ loops: ProjectLinkedItem[]; code: ProjectLinkedItem[]; artifacts: { slug: string; name: string; kind: string }[]; chats: { key: string; title: string; running: boolean }[]; knowledge: ProjectKnowledgeItem[] }>(`/api/projects/${encodeURIComponent(id)}/linked`),
   // The state-grouped Work board: runs + legacy loops + tasks in one board, per-section
   // isolated (a failed source degrades one section, the board still renders).
   projectWork: (id: string) => get<WorkBoard>(`/api/projects/${encodeURIComponent(id)}/work`),
