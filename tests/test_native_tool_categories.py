@@ -76,6 +76,13 @@ _RESIDUAL_CORE_TOOLS = {
     # get_context and project_context_review sit here: a tool that spans categories in
     # a category module would make that module the owner of things it does not own.
     "template_save_from_session",
+    # suggest_template (UNIVERSAL-PLANNING UP-R9) offers to turn a recurring CONVERSATIONAL
+    # shape into a workflow template. It is a conversation-level affordance, not a workflow
+    # entity operation: it creates nothing, reads no run or def, and its state is the
+    # per-shape anti-nag record. Naming it `workflow_*` would put it in the workflows
+    # category alongside 19 tools that all act on a def or a run, and a model reaching for
+    # "how do I start a workflow" would find a nudge helper.
+    "suggest_template",
 }
 
 

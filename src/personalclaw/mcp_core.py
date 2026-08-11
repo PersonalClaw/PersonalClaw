@@ -530,6 +530,43 @@ def _list_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "name": "suggest_template",
+            "description": (
+                "Offer to save a recurring task shape as a reusable workflow template. "
+                "LOCAL-ONLY: it decides whether the offer is welcome and returns the wording, "
+                "it never saves anything — workflow_plan then workflow_author do that. Call it "
+                "when you notice the user has asked for the same SHAPE of work several times "
+                "(the shape, not the exact words: 'summarize my new issues' and 'summarize "
+                "today's issues' are one shape). Anti-nag rules are enforced here and the "
+                "state persists, so a shape the user declined stays declined across restarts "
+                "and a recently-offered one is in cooldown. When it answers no, do not "
+                "mention templates in that turn."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "shape": {
+                        "type": "string",
+                        "description": (
+                            "A short stable name for the recurring shape, e.g. "
+                            "'summarize new issues'. The SAME shape must produce the same "
+                            "string each time or the recurrence count never accumulates."
+                        ),
+                    },
+                    "decision": {
+                        "type": "string",
+                        "enum": ["observe", "accepted", "declined"],
+                        "description": (
+                            "'observe' (default) counts one more occurrence and asks whether "
+                            "to offer. Report the user's answer to a previous offer with "
+                            "'accepted' or 'declined' — a decline is permanent for this shape."
+                        ),
+                    },
+                },
+                "required": ["shape"],
+            },
+        },
     ]
 
 
@@ -1113,7 +1150,73 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             + ". No further nudges will fire."
         )
 
+    if name == "suggest_template":
+        return _suggest_template(args)
+
     return f"Unknown tool: {name}"
+
+
+def _suggest_template(args: dict[str, Any]) -> str:
+    """Decide whether the "save as template" offer is welcome, and return its wording (UP-R9).
+
+    The DECISION is `template_pipeline.should_nudge`'s and the wording is `nudge_text`'s — both
+    already implement the anti-nag rules, and re-deciding here would give the feature two ideas of
+    when it may speak. What this adds is the persistence those rules need to be rules at all: the
+    occurrence count, the decline, and the cooldown are read from and written back to disk, so a
+    restart cannot re-offer a shape the user just refused.
+
+    Returns the refusal REASON when it declines, because a model that is told only "no" will ask
+    again next turn; one told "declined for this shape" will not.
+    """
+    from personalclaw.validation import SUGGEST_TEMPLATE_SCHEMA, validate_tool_args
+    from personalclaw.workflows import template_pipeline, template_store
+
+    args = validate_tool_args(args, SUGGEST_TEMPLATE_SCHEMA)
+    shape = str(args.get("shape", "") or "").strip()
+    if not shape:
+        return "Error [SUGGEST_TEMPLATE_SHAPE_REQUIRED]: 'shape' is required."
+    decision = str(args.get("decision", "") or "observe").strip().lower()
+
+    state = template_store.load_nudge(shape)
+
+    if decision == "accepted":
+        # Terminal for the shape: an accepted shape has a template, and `should_nudge` will not
+        # offer again. Recorded rather than inferred from a later save, because the save happens in
+        # a different tool and a signal that depended on it would be lost when the user saves
+        # manually.
+        state.accepted = True
+        template_store.save_nudge(state)
+        return (
+            f"Recorded: “{shape}” is saved as a template. Call workflow_plan (optionally with "
+            "source_session_id to mine this conversation), then workflow_author to write it."
+        )
+    if decision == "declined":
+        state.declined = True
+        template_store.save_nudge(state)
+        return (
+            f"Recorded: no template for “{shape}”. This shape will not be suggested again — "
+            "do not raise it in a later turn."
+        )
+
+    # `observe`: one more sighting, then ask the rules.
+    state.occurrences += 1
+    turn = template_store.bump_turn()
+    offer, reason = template_pipeline.should_nudge(state, turn=turn)
+    if not offer:
+        # The count is still saved. A sighting that went unrecorded because it did not yet clear
+        # the threshold is a shape that never reaches the threshold.
+        template_store.save_nudge(state)
+        return f"Do not suggest a template for “{shape}” right now: {reason}."
+
+    state.last_offered_turn = turn
+    template_store.save_nudge(state)
+    return (
+        f"Suggest a template ({reason}). Say this to the user, in your own voice:\n\n"
+        f"{template_pipeline.nudge_text(state)}\n\n"
+        "If they say yes, call suggest_template again with decision='accepted' and then "
+        "workflow_plan. If they say no, call it with decision='declined' so this shape is "
+        "never raised again."
+    )
 
 
 def _resolve_review_project_id(explicit: str) -> str:

@@ -233,6 +233,23 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "suggest_template": {
+        "response_type": "template.nudge.decision",
+        # Empty like every sibling planning tool: its refusals are readable text carrying a
+        # bracketed code, not `errors.ERROR_CODES` entries (that registry is `ERR_*` and
+        # append-only — a text code does not belong in it).
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Count a recurring shape and ask whether to offer a template",
+                "args": {"shape": "summarize new issues"},
+            },
+            {
+                "summary": "Record that the user refused — permanent for this shape",
+                "args": {"shape": "summarize new issues", "decision": "declined"},
+            },
+        ],
+    },
     # ── personalclaw-artifacts ───────────────────────────────────────────────
     "artifact_save": {
         "response_type": "artifact.detail",

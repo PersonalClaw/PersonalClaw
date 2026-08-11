@@ -31,7 +31,7 @@ from typing import Any
 from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import rigor as rigor_mod
-from personalclaw.workflows import service
+from personalclaw.workflows import service, template_pipeline
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 
 logger = logging.getLogger(__name__)
@@ -97,14 +97,29 @@ def _list_tools() -> list[dict[str, Any]]:
                 "Turn a natural-language goal into a workflow spec for review BEFORE "
                 "anything runs. Returns a draft spec plus its validation issues; nothing is "
                 "saved or started, so the user approves first. Use for 'set up a workflow "
-                "that…' requests. To save the result, pass it to workflow_author."
+                "that…' requests. To save the result, pass it to workflow_author. To turn a "
+                "conversation you just had into a workflow, pass source_session_id and the "
+                "plan is mined from that transcript's real tool use."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "goal": {
                         "type": "string",
-                        "description": "What the workflow should accomplish, in plain language.",
+                        "description": (
+                            "What the workflow should accomplish, in plain language. Optional "
+                            "when source_session_id is given — the session's first user turn "
+                            "is then the goal."
+                        ),
+                    },
+                    "source_session_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional: mine an existing chat session. The plan then reports the "
+                            "tools that session actually ran and the ones the user DENIED there, "
+                            "so the workflow declares a pre-validated permission set instead of "
+                            "a guessed one."
+                        ),
                     },
                     "rigor": {
                         "type": "string",
@@ -124,7 +139,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         ),
                     },
                 },
-                "required": ["goal"],
+                # Neither alone: a plan needs a goal OR a session to mine one from. Declaring
+                # `goal` required here would make the mining-only call unrepresentable to a
+                # schema-validating client, and the handler already names the both-absent case.
+                "required": [],
             },
         },
         {
@@ -548,18 +566,25 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         root = args.get("root")
         if not isinstance(root, dict):
             return "Error [WF_DEF_ROOT_REQUIRED]: 'root' must be the spec's root node object."
-        return _fmt(
-            _run(
-                service.author_def(
-                    name=str(args.get("name", "") or ""),
-                    root=root,
-                    description=str(args.get("description", "") or ""),
-                    inputs=args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
-                    tags=[str(t) for t in (args.get("tags") or [])],
-                    save=bool(args.get("save", True)),
-                )
+        save = bool(args.get("save", True))
+        result = _run(
+            service.author_def(
+                name=str(args.get("name", "") or ""),
+                root=root,
+                description=str(args.get("description", "") or ""),
+                inputs=args.get("inputs") if isinstance(args.get("inputs"), dict) else None,
+                tags=[str(t) for t in (args.get("tags") or [])],
+                save=save,
             )
         )
+        if not save and result.get("ok") and result.get("valid"):
+            # UP-R9 discover-then-freeze: a generated spec that VALIDATED but was not saved is
+            # exactly what used to be thrown away. Freezing it as a session-scoped candidate is
+            # what stops the next similar intent re-generating a different graph. Not saved to the
+            # library — SESSION scope, promoted by reuse, because a spec that parsed is not yet a
+            # spec that worked.
+            _freeze_authored_candidate(args)
+        return _fmt(result)
 
     if name == "workflow_plan":
         return _plan(args)
@@ -682,9 +707,28 @@ def _plan(args: dict[str, Any]) -> str:
     parameter not existing: it looks like the templates are useless. Now a named template
     returns that template's real (macro-expanded, block-resolved) tree, so "plan me a deep
     research workflow" starts from the shipped one instead of a three-node stub.
+
+    UP-R9 (WF2UNI-7): `source_session_id` mines a real transcript. "We just did this in chat" is
+    the highest-volume shape of a task worth repeating, and until now the transcript proving it
+    was thrown away. Mining reads the session's own record — the tools it actually ran and the
+    approvals it earned — so the plan carries a PRE-VALIDATED permission signature instead of a
+    guessed one, and never re-requests a tool the user denied in that very session.
     """
     goal = str(args.get("goal", "") or "").strip()
+    source_session_id = str(args.get("source_session_id", "") or "").strip()
+
+    mined = _mine_source_session(source_session_id) if source_session_id else None
+
+    if not goal and mined is not None:
+        # The transcript's own first user turn IS the goal. Requiring the caller to retype what
+        # the session already recorded would make mining strictly more work than not mining.
+        goal = template_pipeline.mined_goal(mined).strip()
     if not goal:
+        if source_session_id:
+            return (
+                f"Error [WF_PLAN_SESSION_NOT_MINEABLE]: no transcript with usable turns for "
+                f"session {source_session_id!r}; pass 'goal' explicitly."
+            )
         return "Error [WF_PLAN_GOAL_REQUIRED]: 'goal' is required."
 
     project_id = str(args.get("project_id", "") or "").strip()
@@ -693,7 +737,7 @@ def _plan(args: dict[str, Any]) -> str:
     if template:
         # An explicitly user-named template WINS. The router's job is choosing when nobody has
         # chosen; overriding a stated request would make the matcher an obstacle.
-        return _plan_from_template(goal, template)
+        return _plan_from_template(goal, template, mined=mined, source_session_id=source_session_id)
 
     # UNIVERSAL-PLANNING S1: classify, then match, before any generation. Both are zero-token and
     # offline-safe, so this runs on every plan rather than only when a model is reachable.
@@ -729,7 +773,11 @@ def _plan(args: dict[str, Any]) -> str:
         # turning a working scaffold into WF_PLAN_TEMPLATE_NOT_FOUND. A router that breaks the
         # fallback is worse than one that never matched.
         return _plan_from_template(
-            goal, match.primary, routing={"intent": classified.to_dict(), "match": match.to_dict()}
+            goal,
+            match.primary,
+            routing={"intent": classified.to_dict(), "match": match.to_dict()},
+            mined=mined,
+            source_session_id=source_session_id,
         )
 
     scaffold: dict[str, Any] = {
@@ -817,6 +865,9 @@ def _plan(args: dict[str, Any]) -> str:
         # S45: which rigor path ran and why. A user who got a thin plan needs to know it was the
         # fast path rather than the planner doing badly.
         "rigor_note": rigor_mod.rigor_note(classified, requested=requested),
+        # UP-R9: what the source session actually did, when one was named. Present only when
+        # mining produced something — an empty block would read as "that session did nothing".
+        **_mined_surface(mined, source_session_id),
         **({"grounding": grounded} if grounded else {}),
         **_grill_surface(goal, classified, {"root": proposed}, topics=_plan_topics(goal)),
         "next_step": (
@@ -832,6 +883,107 @@ def _plan(args: dict[str, Any]) -> str:
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
     return _fmt(body, summary=f"Draft plan for: {goal}")
+
+
+def _freeze_authored_candidate(args: dict[str, Any]) -> None:
+    """Freeze a validated-but-unsaved spec as a SESSION-scoped candidate (UP-R9).
+
+    Best-effort and silent: freezing is an optimization for the NEXT similar request, and a store
+    write that failed must not turn a successful dry-run validation into an error. The user asked to
+    validate a spec; they get that answer either way.
+
+    Parameterized before freezing, so the candidate the matcher later offers is a reusable shape
+    rather than one run's literal entities — a candidate carrying a concrete hostname would match a
+    similar goal and then plan against the wrong target.
+    """
+    try:
+        from personalclaw.workflows import template_store
+
+        goal = str(args.get("description", "") or "").strip() or str(args.get("name", "") or "")
+        if not goal:
+            return
+        spec = {
+            "name": str(args.get("name", "") or ""),
+            "description": str(args.get("description", "") or ""),
+            "root": args.get("root") or {},
+            "inputs": args.get("inputs") if isinstance(args.get("inputs"), dict) else {},
+        }
+        generalized, _slots = template_pipeline.parameterize(spec)
+        candidate = template_pipeline.freeze_candidate(
+            generalized, goal, session_id=_current_session_id()
+        )
+        template_store.save_candidate(candidate)
+    except Exception:
+        logger.debug("candidate freeze skipped", exc_info=True)
+
+
+def _current_session_id() -> str:
+    """This turn's session key, or '' — the SESSION scope's identity.
+
+    The session KEY (`dashboard:chat-1-…`), which is what a chat turn can actually know; the on-disk
+    session id belongs to `SessionMap` and is not reachable from a tool call. What matters for
+    scoping is only that the value is stable within a conversation and distinct between them, and
+    the key is both. '' when unresolvable, which makes the candidate visible to every session —
+    correct for a headless caller that has no session to be private to.
+    """
+    import os
+
+    return os.environ.get("PERSONALCLAW_SESSION_KEY", "")
+
+
+def _mine_source_session(session_id: str) -> Any:
+    """Mine a session transcript for what a template would need. None when unmineable.
+
+    None rather than an empty `MinedSession`, so the caller can say "that session had nothing to
+    mine" instead of reporting a confident empty mining it never actually performed — the two mean
+    different things to a user who just asked to reuse a conversation.
+
+    Resolution goes through `session_map.read_transcript`, which resolves the id to
+    `sessions/<sid>.jsonl` under the LIVE home. The id is the on-disk session id (the same one
+    `SessionMap.get` returns), not the session key.
+    """
+    if not session_id:
+        return None
+    try:
+        from personalclaw import session_map
+
+        records = session_map.read_transcript(session_id)
+    except Exception:
+        logger.debug("transcript read failed for %r", session_id, exc_info=True)
+        return None
+    if not records:
+        return None
+    mined = template_pipeline.mine_session(records)
+    if not mined.user_turns and not mined.tools and not mined.title:
+        # A file that parsed but yielded nothing is not a mining result. Reporting it as one would
+        # put an empty permission signature on the plan and call it pre-validated.
+        return None
+    return mined
+
+
+def _mined_surface(mined: Any, session_id: str) -> dict[str, Any]:
+    """The mined block, as the planner reports it. Empty dict when nothing was mined.
+
+    The DENIED list ships alongside the signature rather than being silently subtracted and
+    forgotten: "these tools ran and you may declare them, and these you refused" is the fact that
+    makes the signature trustworthy, and a reviewer who cannot see the refusals cannot check it.
+    """
+    if mined is None:
+        return {}
+    return {
+        "mined_session": {
+            "session_id": session_id,
+            "title": mined.title,
+            "user_turns": len(mined.user_turns),
+            "observed_tools": [t.to_dict() for t in mined.tools],
+            "permission_signature": mined.permission_signature,
+            "denied": list(mined.denied),
+            "note": (
+                "Declare at most these tools: they ran in the session with the user present. "
+                "Anything in `denied` was REFUSED there and must not be re-requested."
+            ),
+        }
+    }
 
 
 def _plan_topics(goal: str) -> list[str]:
@@ -1070,6 +1222,37 @@ def _contract_review(definition: dict) -> dict:
         return {}
 
 
+def _eval_surface(template: str, definition: dict) -> dict:
+    """This template's DERIVED benchmark (UP-R13.3), produced at plan time.
+
+    The eval is derived from the template artifact rather than maintained beside it, so it cannot
+    go stale: a routing suite that passes while the template it picked is subtly wrong is exactly
+    the false confidence this closes.
+
+    `graded_checks` is reported as a COUNT and a list of what a judge would have to grade, never as
+    a verdict — grading needs a judge and LEARNING-FLYWHEEL owns that harness. A spec whose quality
+    checks are un-gradeable here is the correct output, and saying so is the point: it separates
+    "this template validated" from "this template is good", which is what makes the number
+    actionable at all.
+
+    Best-effort, like every other review block: an eval derivation that failed must not cost the
+    user the plan.
+    """
+    try:
+        from personalclaw.workflows import eval_specs
+
+        spec = {
+            "inputs": definition.get("inputs") or {},
+            "root": definition.get("root") or {},
+        }
+        metadata = definition.get("metadata") or {}
+        derived = eval_specs.derive_eval_spec(template, spec, metadata)
+        return {"eval_spec": derived.to_dict()}
+    except Exception:
+        logger.debug("eval spec derivation unavailable for %r", template, exc_info=True)
+        return {}
+
+
 def _grounding_for(goal: str, classified: Any, project_id: str = "") -> dict | None:
     """The grounding bundle, the picked shape, and the generated prompt.
 
@@ -1149,14 +1332,59 @@ def _def_resolvable(name: str) -> bool:
 
     Asked BEFORE routing to it, because the matcher and the loader read different sources and a
     proposal the loader cannot honour replaces a usable scaffold with an error.
+
+    Candidates count as resolvable: `_plan_from_template` falls back to the candidate store when the
+    def registry has no such name. Without this a matched candidate would be rejected here and the
+    freeze would be write-only.
     """
     if not name:
         return False
     try:
-        return bool(_run(service.get_def(name)).get("ok"))
+        if bool(_run(service.get_def(name)).get("ok")):
+            return True
     except Exception:
         logger.debug("def resolvability check failed for %r", name, exc_info=True)
-        return False
+    return _candidate_definition(name) is not None
+
+
+def _candidate_definition(name: str) -> dict | None:
+    """A frozen candidate in the shape `_plan_from_template` reads, or None.
+
+    The candidate's stored spec IS a def-shaped dict (that is what `freeze_candidate` was handed),
+    so this normalizes rather than converts — and it marks the result so a reader can tell a
+    candidate from a shipped template. A plan that silently presented a one-off guess as a library
+    template would be claiming a provenance it does not have.
+    """
+    try:
+        from personalclaw.workflows import template_store
+
+        candidate = template_store.get_candidate(name)
+    except Exception:
+        logger.debug("candidate lookup failed for %r", name, exc_info=True)
+        return None
+    if candidate is None:
+        return None
+    spec = dict(candidate.spec or {})
+    metadata = dict(spec.get("metadata") or {})
+    metadata.setdefault("origin_goal", candidate.origin_goal)
+    return {
+        "name": candidate.name,
+        "description": spec.get("description") or candidate.origin_goal,
+        "root": spec.get("root") or {},
+        "inputs": spec.get("inputs") or {},
+        "metadata": metadata,
+        "candidate": {
+            "scope": candidate.scope,
+            "reuses": candidate.reuses,
+            "session_id": candidate.session_id,
+            "origin_goal": candidate.origin_goal,
+            "note": (
+                "A FROZEN CANDIDATE, not a shipped template: it was generated for a similar "
+                "request and kept so this one does not re-generate a different graph. It is "
+                "promoted by REUSE, never by having parsed successfully."
+            ),
+        },
+    }
 
 
 def _match_library(goal: str, classified: Any) -> Any:
@@ -1173,7 +1401,7 @@ def _match_library(goal: str, classified: Any) -> Any:
     try:
         from personalclaw.workflows.matcher import match_template
 
-        profiles = _library_profiles()
+        profiles = _library_profiles(session_id=_current_session_id())
         if not profiles:
             return None
         return match_template(
@@ -1189,17 +1417,60 @@ def _match_library(goal: str, classified: Any) -> Any:
         return None
 
 
-def _library_profiles() -> list[Any]:
-    """The bundled templates as matchable profiles. Empty on any read failure."""
+def _library_profiles(*, session_id: str = "") -> list[Any]:
+    """The matchable library: bundled templates PLUS frozen candidates. Empty on read failure.
+
+    UP-R9: candidates join the same tiered matcher as shipped templates, which is the whole point of
+    freezing them. A candidate stored where the matcher cannot see it would leave the next similar
+    intent re-generating a spec — and two runs of one request producing two different graphs is the
+    drift the freeze exists to stop.
+
+    Candidates come SECOND so a bundled template of the same name wins the tie: a shipped, tested
+    shape beats a one-off guess frozen from a single successful parse.
+    """
     from personalclaw.workflows import bundled_defs
     from personalclaw.workflows.matcher import TemplateProfile
 
     profiles: list[Any] = []
+    seen: set[str] = set()
     for name in bundled_defs.template_names():
         spec = bundled_defs.read_template(name)
         if spec is not None:
             profiles.append(TemplateProfile.from_def(spec))
+            seen.add(name)
+    for candidate in _candidate_profiles(session_id=session_id):
+        if candidate.name not in seen:
+            profiles.append(candidate)
+            seen.add(candidate.name)
     return profiles
+
+
+def _candidate_profiles(*, session_id: str = "") -> list[Any]:
+    """Frozen candidates as matchable profiles. Empty on any read failure.
+
+    A candidate has no author-written keywords, so its `origin_goal` becomes the match text: the
+    request that produced it is the best available description of what it serves, and it is what a
+    similar next intent will actually resemble.
+    """
+    try:
+        from personalclaw.workflows import template_store
+        from personalclaw.workflows.matcher import TemplateProfile
+
+        out: list[Any] = []
+        for candidate in template_store.load_candidates(session_id=session_id):
+            out.append(
+                TemplateProfile(
+                    name=candidate.name,
+                    description=candidate.origin_goal,
+                    tags=["candidate", f"scope:{candidate.scope}"],
+                    keywords=[],
+                    match_text=candidate.origin_goal,
+                )
+            )
+        return out
+    except Exception:
+        logger.debug("candidate profiles unavailable", exc_info=True)
+        return []
 
 
 def _match_threshold() -> float:
@@ -1292,7 +1563,14 @@ def _memory_service() -> Any:
         return None
 
 
-def _plan_from_template(goal: str, template: str, *, routing: dict | None = None) -> str:
+def _plan_from_template(
+    goal: str,
+    template: str,
+    *,
+    routing: dict | None = None,
+    mined: Any = None,
+    source_session_id: str = "",
+) -> str:
     """Plan by starting from a real template's tree rather than a generic scaffold.
 
     Returns the template's ALREADY-EXPANDED root (macros expanded, blocks resolved), because that
@@ -1303,7 +1581,12 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
     they are what turn "here is a tree" into "here is how this tree is used".
     """
     result = _run(service.get_def(template))
-    if not result.get("ok"):
+    definition = result.get("definition") or {} if result.get("ok") else {}
+    if not definition:
+        # UP-R9: a frozen candidate is a real plan source. Checked after the def registry so a
+        # shipped template of the same name always wins.
+        definition = _candidate_definition(template) or {}
+    if not definition:
         available = _run(service.list_defs())
         names = [d["name"] for d in available.get("defs", [])]
         return (
@@ -1311,7 +1594,6 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
             f"{template!r}. Available: {', '.join(names) or 'none'}."
         )
 
-    definition = result.get("definition") or {}
     meta = definition.get("metadata") or {}
     body = {
         "ok": True,
@@ -1322,10 +1604,20 @@ def _plan_from_template(goal: str, template: str, *, routing: dict | None = None
         # needs to know which happened: an auto-matched template is a decision to check, a named
         # one is a decision already made.
         **({"routing": routing} if routing else {}),
+        # UP-R9: mining travels with the template path too. A user who said "template this, from
+        # that conversation" needs the session's real permission signature on the plan they are
+        # about to adapt — dropping it here would make mining work only on the scaffold path.
+        **_mined_surface(mined, source_session_id),
+        # UP-R9: present ONLY for a frozen candidate. Its absence is what says "shipped template",
+        # so a reader is never left guessing which provenance they are looking at.
+        **({"candidate": definition["candidate"]} if definition.get("candidate") else {}),
         # UP-R3/R8/R16: the review surface. Derived from the tree rather than declared, so the
         # launch form and the spec cannot disagree — measured, three shipped templates offered an
         # input nothing read.
         **_contract_review(definition),
+        # UP-R13.3: this template's derived benchmark, produced here rather than in a separate
+        # script — an eval no live surface imports is an eval nobody runs.
+        **_eval_surface(template, definition),
         # UP-R4/R7: the announce block, the cost shape, and the markdown artifact. Veto-first
         # ordering — detection and risk decide whether to read on; the pipeline is what they read
         # if they do.

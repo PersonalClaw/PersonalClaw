@@ -408,6 +408,21 @@ AUTONUDGE_STOP_SCHEMA = ToolSchema(
     ],
 )
 
+#: The nudge decisions a caller may report. `observe` is the default and the only one that counts an
+#: occurrence; the other two are answers to an offer already made.
+_SUGGEST_TEMPLATE_DECISIONS = frozenset({"observe", "accepted", "declined"})
+
+SUGGEST_TEMPLATE_SCHEMA = ToolSchema(
+    tool_name="suggest_template",
+    fields=[
+        # The shape is the STORE KEY, so its length is capped short: an unbounded key would let one
+        # verbose call bloat the nudge file, and a shape long enough to be unique per phrasing never
+        # accumulates a recurrence count anyway.
+        FieldSpec("shape", str, required=True, max_len=MAX_SHORT_STRING),
+        FieldSpec("decision", str, max_len=16, allowed=_SUGGEST_TEMPLATE_DECISIONS),
+    ],
+)
+
 # ── Tool Schemas (MCP Artifacts) ──
 
 # Derive from the artifact model's own ALLOWED_KINDS so the tool validator can never
@@ -524,6 +539,10 @@ DASHBOARD_TILE_PROPOSE_SCHEMA = ToolSchema(
 # validated for real downstream.
 _WF_RUN_ID_RE = re.compile(r"^[a-f0-9]{8}$")
 _WF_DEF_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+#: An on-disk session id, which is a FILENAME COMPONENT (`sessions/<sid>.jsonl`). Word chars,
+#: hyphens and dots only, and it may not start with a dot — no separator and no `..` can reach the
+#: path join. Mirrors `history._safe_key`'s output alphabet, which is what writes those names.
+_SESSION_ID_RE = re.compile(r"^[\w\-][\w\-.]{0,127}$")
 _WF_MODES = frozenset({"blocking", "background"})
 _WF_RIGOR = frozenset({"minimal", "standard", "deep"})
 
@@ -542,10 +561,18 @@ WORKFLOW_AUTHOR_SCHEMA = ToolSchema(
 WORKFLOW_PLAN_SCHEMA = ToolSchema(
     tool_name="workflow_plan",
     fields=[
-        FieldSpec("goal", str, required=True, max_len=MAX_LONG_STRING),
+        # NOT required: `source_session_id` alone is a complete request — the transcript's own
+        # first user turn is the goal. The handler rejects the both-absent case with
+        # WF_PLAN_GOAL_REQUIRED, which is where that rule belongs: a schema-level `required`
+        # here would reject the mining-only call before the handler ever saw it.
+        FieldSpec("goal", str, max_len=MAX_LONG_STRING),
         FieldSpec("rigor", str, max_len=16, allowed=_WF_RIGOR),
         FieldSpec("template", str, max_len=63, pattern=_WF_DEF_NAME_RE),
         FieldSpec("project_id", str, max_len=MAX_SHORT_STRING),
+        # A session id is a filename component. The pattern is the fence: an id reaching
+        # `session_map.transcript_path` cannot traverse, and the resolver refuses again anyway —
+        # a path-building parameter gets checked at both ends.
+        FieldSpec("source_session_id", str, max_len=128, pattern=_SESSION_ID_RE),
     ],
 )
 
@@ -912,6 +939,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "hook_register": REGISTER_HOOK_SCHEMA,
     "notify_attachment": FILE_SEND_SCHEMA,
     "loop_nudge_stop": AUTONUDGE_STOP_SCHEMA,
+    "suggest_template": SUGGEST_TEMPLATE_SCHEMA,
     "artifact_save": ARTIFACT_SAVE_SCHEMA,
     "artifact_get": ARTIFACT_GET_SCHEMA,
     "artifact_update": ARTIFACT_UPDATE_SCHEMA,

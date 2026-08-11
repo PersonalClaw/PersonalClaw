@@ -2155,7 +2155,7 @@
         {
           "id": "WF2UNI-7",
           "title": "Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer",
-          "status": "todo",
+          "status": "done",
           "scope": "User-Created Templates (UP-R9); Planner Eval Harness (UP-R13.3); Changes to WORKFLOWS-V2.md items 1 & 3; Execution log S45 NOT DONE",
           "done_when": "workflow_plan accepts source_session_id and resolves a session id to sessions/<sid>.jsonl (via session_map.py) feeding mine_session; discover-then-freeze persists LLM-generated specs as SESSION-scoped candidate templates loaded back through the tiered matcher; suggest_template is registered as a local-only chat tool with a persisted anti-nag NudgeState; eval_specs is imported by a live surface so per-template benchmarks are produced (grading deferred to LEARNING-FLYWHEEL).",
           "deps": [
@@ -7430,11 +7430,6 @@
       {
         "id": "WF2UNI-12",
         "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
-        "plan": "WF2UNI"
-      },
-      {
-        "id": "WF2UNI-7",
-        "title": "Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer",
         "plan": "WF2UNI"
       },
       {
