@@ -33,7 +33,7 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
       {onPeek && (
         <button type="button" onClick={(e) => { e.stopPropagation(); onPeek() }} title="Preview — read the full skill"
           aria-label={`Preview ${name}`}
-          className="shrink-0 mt-0.5 rounded-md p-1 text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-on-surface group-hover:opacity-100 focus:opacity-100">
+          className="shrink-0 mt-0.5 rounded-md p-1 text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-on-surface group-hover:opacity-100 focus-within:opacity-100 focus:opacity-100">
           <Eye size={14} />
         </button>
       )}

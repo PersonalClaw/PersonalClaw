@@ -176,7 +176,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
         </div>
         <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{firstLine(n.body)}</p>
       </div>
-      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {/* Investigate (plan 60): a failure notification carries the link to what
             failed, so the chat opens with the run/job state already resolved. */}
         <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34} />

@@ -134,7 +134,7 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
         </div>
         <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{firstLine(n.body)}</p>
       </div>
-      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {!n.acked && (
           <button type="button" onClick={onAck} aria-label="Mark read" title="Mark read"
             className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><Check size={14} /></button>

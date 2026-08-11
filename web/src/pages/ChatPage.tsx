@@ -2249,7 +2249,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <button type="button" onClick={beginRename} title="Rename chat"
                 className="group inline-flex items-center gap-1.5 min-w-0 max-w-[420px] text-on-surface hover:text-on-surface-var transition-colors">
                 <span data-type="title-l" className="truncate">{title || 'Chat'}</span>
-                <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
               </button>
               {/* Regenerate title — a small magic-stars affordance hugging the title's
                   top-right edge, not a space-hungry header control. */}
@@ -2829,10 +2829,10 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
         <span className="flex shrink-0 items-center gap-0.5">
           {canInterrupt && onInterrupt && (
             <IconButton icon={PlayCircle} label="Interrupt now — stop the current turn and run this next" onClick={() => onInterrupt(q.id)} size={20} iconSize={13}
-              className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
+              className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           )}
           <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
-            className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
+            className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
             className="hover:text-danger" />
         </span>
@@ -3717,11 +3717,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       <SessionOrgMenu s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
       <SquareIconButton label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'} on={s.pinned}
         onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }}
-        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
         <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
       </SquareIconButton>
       <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
-        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100" />
+        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-within:opacity-100" />
     </div>
     </ContextMenu>
     )
@@ -3920,7 +3920,7 @@ function SessionOrgMenu({ s, folders, tags, onSetFolder, onToggleTag }: {
           the body portal escapes them (and closes on scroll, see Popover). */}
       <Popover width={240} align="right" placement="bottom" portal trigger={(open, toggle) => (
         <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" on={open} onClick={toggle}
-          className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+          className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`} />
       )}>
         {() => (
           <div className="max-h-[320px] overflow-y-auto py-1">

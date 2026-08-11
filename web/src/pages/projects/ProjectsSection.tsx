@@ -181,7 +181,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                       onClick={(e) => { e.stopPropagation(); del(p) }}
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
                   )}
-                  <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
+                  <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
                 </motion.div>
                 </ContextMenu>
                 )
@@ -802,7 +802,7 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
       <ListChecks size={13} className="shrink-0 text-on-surface-low" />
       <span className="min-w-0 flex-1 truncate">{list.name}</span>
       {typeof count === 'number' && <span className="shrink-0 text-on-surface-low/70 text-[0.75rem] tabular-nums">{count}</span>}
-      <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
+      <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
 }
@@ -825,7 +825,7 @@ function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (
               : t.status === 'blocked' ? <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
               : <Circle size={14} className="mt-0.5 shrink-0 text-on-surface-low/40" />}
             <span className={`min-w-0 flex-1 ${t.status === 'done' ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{t.title}</span>
-            <ChevronRight size={14} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
+            <ChevronRight size={14} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
           </button>
         </li>
       ))}
@@ -890,7 +890,7 @@ function DirEntryRow({ entry, onClick }: { entry: FsEntry; onClick: () => void }
         className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface">
         {entry.is_dir ? <Folder size={14} className="shrink-0 text-primary" /> : <FileIcon size={14} className="shrink-0 text-on-surface-low" />}
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {entry.is_dir && <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />}
+        {entry.is_dir && <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />}
       </button>
     </li>
   )
@@ -922,7 +922,7 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
       <span className={`min-w-0 flex-1 text-[0.8125rem] ${brief ? 'text-on-surface-var line-clamp-2' : 'text-on-surface-low/70 italic'}`}>
         {brief || 'Add a project brief — shared as context with every agent working here.'}
       </span>
-      <Pencil size={12} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
+      <Pencil size={12} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
 }

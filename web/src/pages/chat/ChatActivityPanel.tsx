@@ -139,7 +139,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                       <span className="block truncate text-on-surface text-[0.8125rem]">{l.label}</span>
                       <span className="block truncate text-on-surface-low text-[0.75rem]">{l.url}</span>
                     </span>
-                    <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
+                    <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
                   </motion.a>
                 ))}
               </div>
