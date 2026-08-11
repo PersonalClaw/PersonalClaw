@@ -102,7 +102,8 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
     <>
       <WorkbenchLayout
         controls={(items === undefined || items.length > 0)
-          ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search skills', label: 'Search skills' }} />
+          ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search skills', label: 'Search skills' }}
+              results={{ count: (filtered ?? []).length, noun: 'skills', active: !!q.trim() }} />
           : undefined}
         topBar={
           <TopBar
