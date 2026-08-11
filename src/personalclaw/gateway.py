@@ -2147,7 +2147,7 @@ class GatewayOrchestrator:
     async def _init_inbox(self) -> None:
         """Construct the Inbox service (state + store + on-demand AI triage).
 
-        Slack-independent: draft/classify/digest run over STORED items (populated by
+        Source-independent: draft/classify/digest run over STORED items (populated by
         the native push source + any configured poll provider) through the bound chat
         model, so they work with no external provider connected. A message-source
         provider is attached when one is configured, enabling poll/history; otherwise
@@ -2167,9 +2167,13 @@ class GatewayOrchestrator:
             try:
                 # The inbox's poll source is the in-process filesystem source. (The
                 # inbox is also fed by the always-on native push source regardless.)
-                # Channel providers like Slack are NOT inbox sources today — a channel
-                # is for interactive chat, not inbox polling; if a Slack-as-inbox-source
-                # is ever wanted it'd be a dedicated inbox-provider app, not assumed here.
+                # Sources are selected BY NAME through the vendor-neutral seam below,
+                # so this names no vendor: any other source — including one an app
+                # contributes — is resolved by its own ``source_name``, not assumed
+                # here. NOTE: ``get_default_provider`` resolves only names present in
+                # the ``personalclaw.message_source_providers`` entry-point group, so
+                # an app that declares an ``inbox`` provider in its manifest is not
+                # reachable from here yet (see the seam's docstring).
                 from personalclaw.inbox_providers import get_default_provider
 
                 provider = get_default_provider("filesystem")
