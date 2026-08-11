@@ -19,6 +19,7 @@ import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpe
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { PageTitle } from '../../ui/PageTitle'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
 // compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
@@ -150,7 +151,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `truncate` on this flex container does nothing (it has no text of its own), which
           // left the row 111px under the controls at 390px. Now "Inbox" holds its width and
           // the secondary count truncates — the same shape `notifications` uses.
-          left={<span data-type="title-l" className="text-on-surface flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span className="min-w-0 truncate text-on-surface-low text-[0.75rem] font-normal">{status.pending_count} pending · {status.total_count} total</span>}</span>}
+          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span className="min-w-0 truncate text-on-surface-low text-[0.75rem] font-normal">{status.pending_count} pending · {status.total_count} total</span>}</PageTitle>}
           right={
             // The header has room now (search/filter live on the page), so surface
             // the actions directly — the cluster collapses them (icon-only → …) if tight.
@@ -192,7 +193,11 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       controls={
         <ListControls search={(items === undefined || items.length > 0)
           ? { value: q, onChange: setQ, placeholder: 'Search inbox', label: 'Search inbox' }
-          : undefined}>
+          : undefined}
+          // `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
+          // `filter !== 'all'` was true on mount and the list announced "39 items" before the user
+          // did anything. The announcement is for a query the USER made.
+          results={{ count: (filtered ?? []).length, noun: 'items', active: !!q.trim() || filter !== 'open' || !!kind }}>
           <FilterMenu sections={filterSections} label="Show" />
         </ListControls>
       }
@@ -288,7 +293,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
               const accentTone = channelBacked ? cm.tone : km.tone
               return (
                 <ContextMenu key={it.id} items={menuItems}>
-                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}>
+                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)} label={channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
                   </span>

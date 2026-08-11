@@ -15,6 +15,7 @@ import { promptVars, sourceTone, sourceLabel } from './promptMeta'
 import { PromptDetail } from './PromptDetail'
 import { SnippetDetail } from './SnippetDetail'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 type Tab = 'system' | 'user' | 'snippets'
 const TABS: { key: Tab; label: string; icon: typeof User }[] = [
@@ -123,7 +124,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Prompts</span>}
+          left={<PageTitle>Prompts</PageTitle>}
           right={
             // Structural view switch + primary action in the 4-tier cluster (degrade
             // together, no clip on mobile). Search / sort / source-filter live on the
@@ -137,7 +138,8 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       }
       controls={anyItems
         ? <ListControls
-            search={{ value: q, onChange: setQ, placeholder: isSnips ? 'Search snippets' : 'Search prompts', label: 'Search' }}>
+            search={{ value: q, onChange: setQ, placeholder: isSnips ? 'Search snippets' : 'Search prompts', label: 'Search' }}
+            results={{ count: (rows ?? []).length, noun: isSnips ? 'snippets' : 'prompts', active: !!q.trim() }}>
             <FilterMenu sections={filterSections} label="Sort & filter" />
           </ListControls>
         : undefined}
@@ -180,7 +182,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
               return (
                 <Disintegrate key={r.name} active={deletingName === r.name} onDone={finishDelete}>
                 <ContextMenu items={menuItems}>
-                <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })}>
+                <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sourceTone(r.source)} 16%, transparent)` }}><Icon size={19} style={{ color: sourceTone(r.source) }} /></span>
                   <div className="flex-1 min-w-0">
                     <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{r.name}</span>

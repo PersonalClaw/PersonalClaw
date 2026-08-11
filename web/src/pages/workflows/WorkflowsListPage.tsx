@@ -13,6 +13,7 @@ import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
 import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
 import { suggestTemplate } from './templateSuggest'
 import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
+import { PageTitle } from '../../ui/PageTitle'
 
 const TABS = [
   { key: 'runs', label: 'Runs' },
@@ -199,7 +200,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
           {/* NOT `shrink-0`: that opted the title out of the slot's truncation and it ran 56px
               under the control row at 390px. The "waiting on you" badge keeps its own
               `shrink-0`, so the title is what yields — which is the right order anyway. */}
-          <span data-type="title-l" className="text-on-surface">Workflows</span>
+          <PageTitle>Workflows</PageTitle>
           {needingInput > 0 && (
             <span className="shrink-0 text-warning text-[0.75rem]">{needingInput} waiting on you</span>
           )}
@@ -214,7 +215,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             onClick={startFromTemplate} hint="Describe what you want to do; we'll pick the template" />
         </HeaderActions>}
       />
-      <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }} />
+      <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }}
+        results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading /> : tab === 'defs' ? (
           filteredDefs.length === 0 ? (
@@ -228,7 +230,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
           ) : (
             <div className="flex flex-col gap-xs">
               {filteredDefs.map((d, i) => (
-                <ListRow key={d.name} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)}>
+                <ListRow key={d.name} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)} label={d.name}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Workflow size={15} className="shrink-0 text-on-surface-low" />
                     <div className="min-w-0 flex-1">
@@ -313,7 +315,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               const Icon = look.icon
               const elapsed = fmtElapsed(r.elapsed_seconds)
               return (
-                <ListRow key={r.id} index={i} onClick={() => navigate(`workflows/runs/${r.id}`)}>
+                <ListRow key={r.id} index={i} onClick={() => navigate(`workflows/runs/${r.id}`)} label={`${r.workflow_name} — run ${r.id}`}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Icon size={15} className={`shrink-0 ${look.tone}${look.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">

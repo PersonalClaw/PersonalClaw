@@ -18,6 +18,7 @@ const doc: UiDoc = {
     { name: 'iconSize', description: 'Glyph size within the hit area (default 20); dense toolbars use 12–16 so those sites adopt the primitive instead of hand-rolling a <button>.' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },
     { name: 'disabled', description: 'Dim (40% opacity) + block interaction (not-allowed cursor); onClick is suppressed regardless of what is passed, so a gated button reads as inert instead of a silent dead-click.' },
+    { name: 'disabledReason', description: 'WHY it is unavailable, when disabled is true; appended to the tooltip after an em dash. This button keeps its tab stop (disabled maps to aria-disabled, never the native attribute), so a keyboard user lands on it and would otherwise hear only the label — and being icon-only, it has no visible text to carry the reason either. Omit it when the gate is self-evident or transient; pass it only for the branch it describes when the gate is compound.' },
     { name: 'iconKey', description: 'When set, the icon cross-fades/scales/rotates in whenever this key changes (a shape morph, e.g. send arrow → success check); without it the icon swaps instantly.' },
     { name: 'bloom', description: 'A one-shot success bloom — the button pops with a playful overshoot when it mounts in this state (e.g. the send→check confirmation), scaled by the bounce tier.' },
   ],

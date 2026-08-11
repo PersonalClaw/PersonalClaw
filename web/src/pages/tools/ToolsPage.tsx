@@ -21,6 +21,7 @@ import { api, type ToolItem, type McpServer, type ImportableMcpServer, type Tool
 import { schemaProps } from './schema'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Tools = the capability catalog agents invoke. Grouped by provider — native
  *  built-in providers plus connected MCP servers (shown with health + inline
@@ -213,7 +214,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Tools</span>}
+          left={<PageTitle>Tools</PageTitle>}
           right={
             <HeaderActions>
               <HeaderControl icon={Plus} label="Add tool server" priority="primary" onClick={() => setAddOpen(true)} />
@@ -627,7 +628,11 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
         </>)}
 
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} disabled={saving || !canSubmit}>{saving ? 'Adding…' : 'Add server'}</Button>
+          {/* `canSubmit` asks for different fields per kind, so the reason follows the kind;
+              omitted while `saving`, where the label already reads "Adding…". */}
+          <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} disabled={saving || !canSubmit}
+            disabledReason={saving ? undefined
+              : kind === 'mcp' ? 'Name the server and give it a command' : "Enter the server's endpoint URL"}>{saving ? 'Adding…' : 'Add server'}</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>

@@ -4,14 +4,15 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, Download, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
-import { ListSkeleton, EmptyState } from '../../ui/ListScaffold'
+import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
+import { RowHitTarget } from '../../ui/RowHitTarget'
 import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
@@ -23,6 +24,7 @@ import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -36,7 +38,7 @@ export function ProjectsSection({ sub, navigate, query, setQuery }: RouteProps) 
 }
 
 function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
-  const { data: projects, loading, refresh } = useCachedData('projects:list', () => api.projects(), { persist: true })
+  const { data: projects, loading, error: loadErr, refresh } = useCachedData('projects:list', () => api.projects(), { persist: true })
   // List search is URL-backed (?q, replace) — shareable + refresh-stable, no
   // per-keystroke history. (Was local useState.)
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -116,11 +118,12 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
         keepCornerPadding
-        left={<div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">Projects</span></div>}
+        left={<div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>Projects</PageTitle></div>}
         right={<HeaderActions><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
 
       {!!projects?.length && (
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }} />
+        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
+          results={{ count: shown.length, noun: 'projects', active: !!needle }} />
       )}
 
       {err && (
@@ -135,7 +138,12 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
           a flex sibling that pushes the list narrower (standard SidePanel dock). */}
       <div className="flex min-h-0 flex-1">
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-l py-l">
-        {loading && !projects ? <ListSkeleton rows={5} />
+        {/* A failed first load is NOT an empty list. Without this branch a 500 rendered
+            "No projects yet" — measured: the API returned 500 and the page said the user had
+            none, with no retry and nothing announced. The error branch must come FIRST,
+            because `projects === undefined` also satisfies the skeleton and empty conditions. */}
+        {projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateCache('projects:list'); refresh() }} />
+          : loading && !projects ? <ListSkeleton rows={5} />
           : !shown.length ? (
             needle
               // Through the primitive, like every other list's no-match state — a bare centered
@@ -160,9 +168,17 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                 return (
                 <ContextMenu key={p.id} items={menuItems}>
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-                  role="button" tabIndex={0} onClick={togglePeek}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePeek() } }}
-                  className="group flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high">
+                  // No role/tabIndex/onKeyDown here: the row carries its own Delete control,
+                  // so a role="button" wrapper is `nested-interactive` (axe, serious). The tab
+                  // stop is the empty overlay below — same resolution ui/ListScaffold's ListRow
+                  // took, and the same reason: an overlay owning no descendants needs no
+                  // per-control pointer-events scheme. `whileTap` still marks the wrapper
+                  // focusable, hence tabIndex={-1} rather than dropping the attribute.
+                  tabIndex={-1}
+                  onClick={togglePeek}
+                  className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50">
+                  {/* The row had NO accessible name before — measured `(none)` on all 5. */}
+                  <RowHitTarget label={p.name} />
                   <FolderKanban size={16} className="shrink-0 text-on-surface-low" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -181,7 +197,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                       onClick={(e) => { e.stopPropagation(); del(p) }}
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
                   )}
-                  <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
+                  <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
                 </motion.div>
                 </ContextMenu>
                 )
@@ -364,7 +380,12 @@ function NewProjectModal({ busy, onClose, onCreate }: {
             {workspaceDir ? (
               <code className="min-w-0 flex-1 truncate rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-[0.8125rem] text-on-surface-var" title={workspaceDir}>{workspaceDir}</code>
             ) : (
-              <span className="flex-1 text-on-surface-low/70 text-[0.8125rem] italic">No workspace bound</span>
+              // `text-on-surface-low` is ALREADY the dimmest ink token (6.67:1 on this modal
+              // surface); the `/70` suffix multiplied it to 3.86:1 — below AA 1.4.3, measured by axe
+              // on this modal. Dropping the dimmer restores AA with no new colour, the same
+              // resolution `countChipContrast` reached for the identical shape. The italic still
+              // carries "this is a placeholder, not a value".
+              <span className="flex-1 text-on-surface-low text-[0.8125rem] italic">No workspace bound</span>
             )}
             <Button size="sm" variant="secondary" onClick={() => setPickWs(true)}><FolderOpen size={14} /> {workspaceDir ? 'Change' : 'Bind'}</Button>
             {workspaceDir && <IconButton icon={X} label="Clear workspace" size={32} onClick={() => setWorkspaceDir('')} />}
@@ -376,7 +397,11 @@ function NewProjectModal({ busy, onClose, onCreate }: {
         </label>
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={!name.trim() || busy}>
+          {/* The reason keeps the button reachable and says what is missing — a bare
+              `disabled` submit is removed from the tab order, so a keyboard user tabs past
+              the action with no way to learn why (measured: title null, NOT focusable). */}
+          <Button onClick={submit} disabled={!name.trim() || busy}
+            disabledReason={!name.trim() ? 'Enter a project name first' : undefined}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Create project
           </Button>
         </div>
@@ -522,10 +547,11 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   // widgets) + Tasks — with task detail opening in a SidePanel.
   const titleNode = renaming ? (
     <div className="flex items-center gap-2">
-      <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+      <input autoFocus aria-label="Rename this project" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) } else if (e.key === 'Escape') setRenaming(false) }}
         className="min-w-0 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[1.0625rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      <Button size="sm" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}><Check size={14} /></Button>
+      <Button size="sm" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}
+        disabledReason={!nameDraft.trim() ? 'Enter a project name first' : undefined}><Check size={14} /></Button>
       <button type="button" onClick={() => setRenaming(false)} aria-label="Cancel" className="text-on-surface-low hover:text-on-surface"><X size={15} /></button>
     </div>
   ) : (
@@ -563,6 +589,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
         )}
       </Popover>
       <HeaderControl icon={MessageSquare} label="Chat" onClick={launchChat} />
+      {/* Export this project as a manifest ZIP — the brief, context ledgers, templates, artifact
+          metadata and run digests, each sha256'd. Credentials never travel; the archive names the
+          ones the far side must re-enter. A plain navigation rather than a fetch, so the browser's
+          own download machinery handles a multi-megabyte archive instead of buffering it in JS. */}
+      <HeaderControl icon={Download} label="Export" priority="low"
+        hint="Download this project as a portable archive (no credentials)"
+        onClick={() => { window.location.href = api.projectExportUrl(id) }} />
     </>
   )
   // The side panel: a task list's tasks, or a directory tree. Keyed so switching
@@ -669,7 +702,7 @@ function WorkGroupLabel({ text, count, tone }: { text: string; count: number; to
     <div className="flex items-center gap-1.5 text-[0.75rem] uppercase tracking-wide">
       {tone === 'ok' && <span className="size-1.5 rounded-full" style={{ background: 'var(--color-ok)' }} />}
       <span className="text-on-surface-low">{text}</span>
-      <span className="text-on-surface-low/60">· {count}</span>
+      <span className="text-on-surface-low">· {count}</span>
     </div>
   )
 }
@@ -778,7 +811,7 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
               className="min-w-0 max-w-[22rem] truncate rounded bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-var hover:text-primary">{path}</button>
           : <code className="min-w-0 max-w-[22rem] truncate rounded bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-var" title={path}>{path}</code>
       ) : (
-        <span className="text-on-surface-low/70 italic">{emptyText}</span>
+        <span className="text-on-surface-low italic">{emptyText}</span>
       )}
       {path && onBrowse && (
         <button type="button" onClick={onBrowse} aria-label={`Open ${label} in Files`} title="Open in Files"
@@ -801,8 +834,8 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
       className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary/40' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>
       <ListChecks size={13} className="shrink-0 text-on-surface-low" />
       <span className="min-w-0 flex-1 truncate">{list.name}</span>
-      {typeof count === 'number' && <span className="shrink-0 text-on-surface-low/70 text-[0.75rem] tabular-nums">{count}</span>}
-      <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
+      {typeof count === 'number' && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>}
+      <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
 }
@@ -825,7 +858,7 @@ function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (
               : t.status === 'blocked' ? <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
               : <Circle size={14} className="mt-0.5 shrink-0 text-on-surface-low/40" />}
             <span className={`min-w-0 flex-1 ${t.status === 'done' ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{t.title}</span>
-            <ChevronRight size={14} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
+            <ChevronRight size={14} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
           </button>
         </li>
       ))}
@@ -890,7 +923,7 @@ function DirEntryRow({ entry, onClick }: { entry: FsEntry; onClick: () => void }
         className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface">
         {entry.is_dir ? <Folder size={14} className="shrink-0 text-primary" /> : <FileIcon size={14} className="shrink-0 text-on-surface-low" />}
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {entry.is_dir && <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />}
+        {entry.is_dir && <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />}
       </button>
     </li>
   )
@@ -919,10 +952,10 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
     <button type="button" onClick={() => setEditing(true)} title="Edit project brief"
       className="group flex items-start gap-2 rounded-md px-1 py-0.5 text-left hover:bg-surface-high/50">
       <FileText size={13} className="mt-0.5 shrink-0 text-on-surface-low" />
-      <span className={`min-w-0 flex-1 text-[0.8125rem] ${brief ? 'text-on-surface-var line-clamp-2' : 'text-on-surface-low/70 italic'}`}>
+      <span className={`min-w-0 flex-1 text-[0.8125rem] ${brief ? 'text-on-surface-var line-clamp-2' : 'text-on-surface-low italic'}`}>
         {brief || 'Add a project brief — shared as context with every agent working here.'}
       </span>
-      <Pencil size={12} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100" />
+      <Pencil size={12} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
 }

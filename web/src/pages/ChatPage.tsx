@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { unavailableWhen } from '../ui/unavailable'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Coins, type LucideIcon } from 'lucide-react'
@@ -347,10 +348,11 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
             className="inline-flex items-center gap-1 rounded-pill px-m h-7 text-on-surface-low text-[0.75rem] transition-colors hover:bg-surface-high hover:text-on-surface">
             Continue in full chat <ArrowRight size={11} className="shrink-0" />
           </button>
-          <motion.button type="button" onClick={send} disabled={!input.trim() || busy}
+          <motion.button type="button" onClick={send}
+            {...unavailableWhen(!input.trim(), 'Type a message first', { busy })}
             whileTap={{ scale: 0.92 }} transition={spring.spatialFast}
             aria-label="Send"
-            className="ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill bg-primary text-on-primary transition-colors hover:bg-primary-emphasis disabled:opacity-40 disabled:pointer-events-none">
+            className="ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill bg-primary text-on-primary transition-colors hover:bg-primary-emphasis disabled:opacity-40 disabled:pointer-events-none aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
           </motion.button>
         </div>
@@ -2237,7 +2239,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           undefined
         ) : (
           renaming ? (
-            <input autoFocus value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
+            <input autoFocus aria-label="Rename this chat" value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
               onBlur={commitRename}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') setRenaming(false) }}
               className="h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none" />
@@ -2249,7 +2251,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <button type="button" onClick={beginRename} title="Rename chat"
                 className="group inline-flex items-center gap-1.5 min-w-0 max-w-[420px] text-on-surface hover:text-on-surface-var transition-colors">
                 <span data-type="title-l" className="truncate">{title || 'Chat'}</span>
-                <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
               </button>
               {/* Regenerate title — a small magic-stars affordance hugging the title's
                   top-right edge, not a space-hungry header control. */}
@@ -2829,10 +2831,10 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
         <span className="flex shrink-0 items-center gap-0.5">
           {canInterrupt && onInterrupt && (
             <IconButton icon={PlayCircle} label="Interrupt now — stop the current turn and run this next" onClick={() => onInterrupt(q.id)} size={20} iconSize={13}
-              className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
+              className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           )}
           <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
-            className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100" />
+            className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
             className="hover:text-danger" />
         </span>
@@ -2978,7 +2980,8 @@ function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit
         style={{ maxWidth: 452 }} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
-        <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4">Resend</Button>
+        <Button size="sm" onClick={() => onSubmit(v)} disabled={!v.trim()} className="px-4"
+          disabledReason={!v.trim() ? 'The message cannot be empty' : undefined}>Resend</Button>
       </div>
     </div>
   )
@@ -3696,13 +3699,31 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
             const kind = s.origin === 'code' ? 'code project' : s.origin === 'loop' ? 'loop' : s.origin === 'channel' ? 'channel' : 'campaign'
             const label = s.source_label || s.source_id || kind
             const canOpen = !!s.source_id && (s.origin === 'code' || s.origin === 'loop')
+            // A channel/campaign origin has no cockpit to open, so this chip is never actionable
+            // — it is provenance, not a control. It used to render as a permanently disabled
+            // button element: announced as a button that can never be pressed in ANY state, which
+            // no reason could ever unblock. A span is what it actually is; the tag now follows
+            // whether there is somewhere to go.
+            // (Comment deliberately spells no literal button tag — the primitive-adoption ratchet
+            // counts raw source, comments included, so prose markup reds CI.)
+            const chip = 'inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors'
+            const tint = { background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }
+            const glyph = s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />
+            if (!canOpen) {
+              return (
+                <span title={`From a ${kind}`} className={`${chip} cursor-default`} style={tint}>
+                  {glyph}
+                  {label}
+                </span>
+              )
+            }
             return (
-              <button type="button" disabled={!canOpen}
-                onClick={(e) => { e.stopPropagation(); if (canOpen) navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
-                title={canOpen ? `From ${kind} “${label}” — open its cockpit` : `From a ${kind}`}
-                className={`inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors ${canOpen ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}
-                style={{ background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }}>
-                {s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />}
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
+                title={`From ${kind} “${label}” — open its cockpit`}
+                className={`${chip} hover:brightness-125 cursor-pointer`}
+                style={tint}>
+                {glyph}
                 {label}
               </button>
             )
@@ -3717,11 +3738,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       <SessionOrgMenu s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
       <SquareIconButton label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'} on={s.pinned}
         onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }}
-        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
         <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
       </SquareIconButton>
       <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
-        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100" />
+        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-within:opacity-100" />
     </div>
     </ContextMenu>
     )
@@ -3920,7 +3941,7 @@ function SessionOrgMenu({ s, folders, tags, onSetFolder, onToggleTag }: {
           the body portal escapes them (and closes on scroll, see Popover). */}
       <Popover width={240} align="right" placement="bottom" portal trigger={(open, toggle) => (
         <SquareIconButton icon={TagIcon} label="Organize chat" title="Folder & tags" on={open} onClick={toggle}
-          className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} />
+          className={`shrink-0 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`} />
       )}>
         {() => (
           <div className="max-h-[320px] overflow-y-auto py-1">
@@ -4095,7 +4116,8 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
               {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle(s) fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">
                 {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy}><X size={14} /> Stop</Button>}
-                <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
+                <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}
+                  disabledReason={!msg.trim() ? 'Write the message first' : undefined}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
               </div>
             </>)}
           </div>

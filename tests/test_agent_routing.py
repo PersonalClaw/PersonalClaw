@@ -115,6 +115,22 @@ class TestSuppressionStore:
         assert "dba" not in routing.routing_status()["muted"]
         assert not routing.is_suppressed("dba", now=now, cooldown_hours=24.0)
 
+    def test_suppression_case_insensitive(self):
+        now = time.time()
+        assert not routing.is_suppressed("DBA", now=now, cooldown_hours=24.0)
+        routing.record_dismiss("DBA", now=now)
+        # Should be suppressed regardless of case
+        assert routing.is_suppressed("dba", now=now + 3600, cooldown_hours=24.0)
+        assert routing.is_suppressed("DbA", now=now + 3600, cooldown_hours=24.0)
+
+        # Unmuting should also be case-insensitive
+        for _ in range(2):
+            routing.record_dismiss("dBa", now=now)
+        assert "dba" in routing.routing_status()["muted"]
+        routing.unmute("DbA")
+        assert "dba" not in routing.routing_status()["muted"]
+        assert not routing.is_suppressed("dba", now=now, cooldown_hours=24.0)
+
 
 class TestSuggestForSend:
     @pytest.fixture(autouse=True)

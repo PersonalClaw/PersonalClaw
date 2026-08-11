@@ -55,7 +55,7 @@ export function WorkspacePanel({ runId, onClose }: { runId: string; onClose: () 
     >
       <div data-testid="workspace-panel-body" className="flex flex-col gap-l">
         {loading ? (
-          <div aria-busy="true" aria-label="Loading the run’s workspace" className="flex flex-col gap-l">
+          <div role="status" aria-busy="true" aria-label="Loading the run’s workspace" className="flex flex-col gap-l">
             <Skeleton className="h-5 w-32" />
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-16 w-full" />

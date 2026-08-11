@@ -24,6 +24,23 @@ const docs: UiDoc[] = [
     anatomy: ['flex-col full-height container', 'TopBar (title left • right action slot)', 'scrolling region', 'centered content-width body'],
   },
   {
+    name: 'LoadError',
+    keywords: ['error', 'load', 'failed', 'fetch', 'retry', 'alert', 'empty', 'first-load'],
+    description:
+      "First-load FAILURE for a list/collection surface — the sibling of EmptyState. A failed fetch and a genuinely empty collection are different facts, and a surface that branches only on `data === undefined` conflates them: the user is told \"you have none\" when the truth is \"we could not load it\", with no way to retry and nothing announced. `useCachedData` returns an `error` for exactly this (measured: 3 of 106 call sites read it). Renders as role=alert, so a load failure interrupts — EmptyState deliberately does not, because \"you have none\" is a normal answer.",
+    props: [
+      { name: 'what', description: 'The thing that failed to load, lowercase — fills "Couldn\'t load your <what>" and the fallback body copy.' },
+      { name: 'error', description: "The rejection from useCachedData; its `message` is shown when present, so the server's own words reach the user instead of a generic apology." },
+      { name: 'onRetry', description: 'Re-runs the fetch (typically `invalidateCache(key); refresh()`). Omit only if the surface genuinely cannot retry — the button disappears.' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Branch on the error FIRST: `data === undefined` is also true for the loading and empty branches, so an error test placed after them never runs.' },
+      { guidance: true, description: 'Pass `onRetry` wherever the fetch can be re-run — an error with no recovery leaves the user stuck on a dead surface.' },
+      { guidance: false, description: 'Do not use it for a form-submit or action failure — that is InlineError, which sits inline near the control rather than replacing the whole surface.' },
+    ],
+    anatomy: ['role=alert centered column', 'aria-hidden AlertTriangle', 'headline-s "Couldn\'t load your <what>"', "error message or reassurance line", 'optional Retry Button'],
+  },
+  {
     name: 'ListRow',
     keywords: ['list', 'row', 'card', 'item', 'clickable', 'hover', 'accent', 'motion'],
     description:
@@ -32,9 +49,11 @@ const docs: UiDoc[] = [
       { name: 'accent', description: 'Optional left-edge accent color bar (a 3px rule); pass a token-backed color.' },
       { name: 'children', description: 'The row content (leading icon, title, meta, trailing controls).' },
       { name: 'index', description: 'Row position — staggers the enter animation (capped) so a list cascades in.' },
+      { name: 'label', description: "What the row IS, for assistive tech — normally the entity's title. A clickable row is a button, and without this its accessible name is computed from the whole subtree (measured up to 2001 characters for one inbox row). Required in practice for every clickable row; ignored on a static one, which is not a button." },
       { name: 'onClick', description: 'Makes the row interactive — enables the hover-lift + press-scale and a pointer cursor. Omit for a static row.' },
     ],
     bestPractices: [
+      { guidance: true, description: 'Pass `label` whenever you pass `onClick` — the row announces that one short name instead of reading its entire content as the button name. The body stays readable underneath as ordinary text.' },
       { guidance: true, description: 'Pass `index` from the list map so rows cascade in on a staggered spring rather than popping in together.' },
       { guidance: true, description: 'Wrap the list in AnimatePresence so a removed ListRow plays its height-collapse exit instead of vanishing.' },
       { guidance: false, description: "Do not add hover/press styling by hand — pass onClick and the lift/press springs (expr-scaled) are applied automatically only for clickable rows." },

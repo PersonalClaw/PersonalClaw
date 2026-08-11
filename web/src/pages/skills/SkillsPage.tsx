@@ -20,6 +20,7 @@ import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
 import { SkillInspector } from './SkillInspector'
 import { MarketplaceDetail } from './MarketplaceDetail'
 import { SkillProposals } from './SkillProposals'
+import { PageTitle } from '../../ui/PageTitle'
 
 const SKILL_TEMPLATE = `---
 name: my-skill
@@ -54,7 +55,7 @@ function ProposalsView({ onBack }: { onBack: () => void }) {
       topBar={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><span data-type="title-l" className="text-on-surface shrink-0">Skill proposals</span></div>}
+          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skill proposals</PageTitle></div>}
           right={<HeaderActions><HeaderControl icon={Sparkles} label="Installed skills" variant="secondary" onClick={onBack} /></HeaderActions>}
         />
       }
@@ -102,12 +103,13 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
     <>
       <WorkbenchLayout
         controls={(items === undefined || items.length > 0)
-          ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search skills', label: 'Search skills' }} />
+          ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search skills', label: 'Search skills' }}
+              results={{ count: (filtered ?? []).length, noun: 'skills', active: !!q.trim() }} />
           : undefined}
         topBar={
           <TopBar
             keepCornerPadding
-            left={<div className="flex min-w-0 items-center gap-m"><span data-type="title-l" className="text-on-surface shrink-0">Skills</span><ModeToggle mode="installed" onChange={(m) => m === 'browse' && onBrowse()} /></div>}
+            left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle><ModeToggle mode="installed" onChange={(m) => m === 'browse' && onBrowse()} /></div>}
             right={
               <HeaderActions>
                 <HeaderControl icon={Lightbulb} label={proposalCount > 0 ? `Proposals (${proposalCount})` : 'Proposals'} variant="secondary" onClick={onProposals} />
@@ -138,7 +140,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                 ]
                 return (
                   <ContextMenu key={s.key} items={menuItems}>
-                  <ListRow index={i} onClick={() => setOpenKey(s.key)}>
+                  <ListRow index={i} onClick={() => setOpenKey(s.key)} label={s.name}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Sparkles size={19} style={{ color: tone }} /></span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-s">
@@ -265,7 +267,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
                 ]
                 return (
                   <ContextMenu key={r.id} items={menuItems}>
-                  <ListRow index={i} onClick={() => setOpenId(r.id)}>
+                  <ListRow index={i} onClick={() => setOpenId(r.id)} label={r.name || r.id}>
                     <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)' }}><Sparkles size={19} className="text-warn" /></span>
                     <div className="flex-1 min-w-0">
                       <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{r.name || r.id}</span>

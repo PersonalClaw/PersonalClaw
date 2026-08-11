@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import type { LucideIcon } from 'lucide-react'
+import { AlertTriangle, RotateCcw, type LucideIcon } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
+import { PageTitle } from './PageTitle'
 
 /** Shared shell for the workspace/build list PAGES (design Tenet 2: list as a
  *  destination page, not a cramped panel). Centered column at the customizable
@@ -18,12 +19,56 @@ export function ListScaffold({ title, right, children, bodyClassName }: {
 }) {
   return (
     <div className="flex h-full flex-col">
-      <TopBar left={<span data-type="title-l" className="text-on-surface">{title}</span>} right={right} />
+      <TopBar left={<PageTitle>{title}</PageTitle>} right={right} />
       <div className="flex-1 overflow-y-auto">
         <div className={bodyClassName ?? 'mx-auto px-l py-2xl'} style={{ maxWidth: 'var(--content-width)' }}>
           {children}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** First-load FAILURE for a list/collection surface — the sibling of `EmptyState`.
+ *
+ *  A failed fetch and a genuinely empty collection are different facts, and every surface
+ *  that renders `EmptyState` on `data === undefined` conflates them: the user is told "you
+ *  have none" when the truth is "we could not load it", with no way to retry and nothing
+ *  announced. `useCachedData` returns an `error` for exactly this — measured: **3 of 106
+ *  call sites read it.**
+ *
+ *  `role="alert"` because a load failure is unrequested bad news that changes what the
+ *  screen means; `EmptyState` deliberately has no live region, since "you have none" is a
+ *  normal answer.
+ *
+ *  Pair with the ONE condition that distinguishes the two states:
+ *
+ *      {data === undefined && error ? <LoadError what="projects" error={error} onRetry={load} />
+ *       : data === undefined      ? <ListSkeleton />
+ *       : data.length === 0       ? <EmptyState … />
+ *       : …rows}
+ */
+export function LoadError({ what, error, onRetry }: {
+  /** The thing that failed to load, lowercase, for "Couldn't load your <what>". */
+  what: string
+  /** The rejection from `useCachedData`; its `message` is shown when present. */
+  error?: unknown
+  /** Re-runs the fetch. Omit only if the surface genuinely cannot retry. */
+  onRetry?: () => void
+}) {
+  return (
+    <div role="alert" className="flex flex-col items-center gap-l py-2xl text-center">
+      <AlertTriangle size={32} className="text-danger opacity-70" aria-hidden />
+      <div>
+        <h2 data-type="headline-s" className="text-on-surface">Couldn't load your {what}</h2>
+        <p className="mt-1 max-w-[420px] text-on-surface-low text-[0.9375rem]">
+          {(error as Error)?.message
+            || `The server didn't respond. Your ${what} are safe — this is just a load error.`}
+        </p>
+      </div>
+      {onRetry && (
+        <Button size="sm" onClick={onRetry}><RotateCcw size={15} /> Retry</Button>
+      )}
     </div>
   )
 }
@@ -53,11 +98,24 @@ export function EmptyState({ icon: Icon, title, hint, action }: {
  *  hover-lift + press so rows feel like liftable cards, not flat strips. Lift/press
  *  depth scale through the expressiveness knob; exit collapses so removals animate.
  *  Consistent across every list page. */
-export function ListRow({ index = 0, onClick, children, accent }: {
+export function ListRow({ index = 0, onClick, children, accent, label }: {
   index?: number
   onClick?: () => void
   children: ReactNode
   accent?: string
+  /** What this row IS, for assistive tech — usually the entity's title.
+   *
+   *  Without it a row's accessible name is computed from its subtree, so AT reads the
+   *  whole card as one button name: measured across 170 rows on 7 surfaces, an inbox row
+   *  averaged 318 characters and peaked at 2001, and a knowledge row averaged 685. That
+   *  is unusable as a name — it is the row's content, announced where its identity
+   *  belongs. Naming the row explicitly keeps the announcement to the thing itself; the
+   *  content stays readable underneath as ordinary text.
+   *
+   *  Required in practice for every clickable row. It is optional in the type only
+   *  because a handful of rows are non-interactive (no `onClick`), where there is no
+   *  button to name. `listRowNaming.test.tsx` holds the interactive call sites to it. */
+  label?: string
 }) {
   const interactive = !!onClick
   return (
@@ -70,20 +128,57 @@ export function ListRow({ index = 0, onClick, children, accent }: {
       // clickable rows — static rows stay put.
       whileHover={interactive ? { y: -expr(3, 0.3), boxShadow: 'var(--shadow-lift)' } : undefined}
       whileTap={interactive ? { scale: 1 - expr(0.01, 0.3) } : undefined}
+      // The row still HANDLES the click, because every nested control already calls
+      // stopPropagation for itself (`ui/forms.tsx`'s Checkbox does it on both onClick and
+      // onChange; the tag/run/delete buttons do it inline). Keeping the handler here is
+      // what lets the button below stay a zero-content overlay instead of a wrapper that
+      // has to re-expose its own descendants.
       onClick={onClick}
-      // A clickable row is a div, so nothing about it is operable for free — and
-      // worse, whileTap makes motion mark it focusable, so Tab LANDS on a row that
-      // Enter/Space can't fire. Naming the button role, owning the tab stop, and
-      // keying Enter/Space (Space scrolls the page unless prevented) closes that
-      // trap. The inset ring is TileButton's — the kit's other whole-card target.
-      role={interactive ? 'button' : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      onKeyDown={interactive ? (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick!() }
-      } : undefined}
-      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50' : ''}`}
+      // NO role/aria-label/onKeyDown on the wrapper. A `role="button"` that contains
+      // focusable children is `nested-interactive` (axe, serious): AT is told "one button"
+      // and then finds a checkbox and three tag filters inside it. 60 nodes across
+      // knowledge (26) and workflows (34).
+      //
+      // tabIndex={-1} is REQUIRED, not leftover: `whileTap` makes Framer Motion set
+      // tabindex="0" on the wrapper itself, so dropping the attribute entirely left TWO tab
+      // stops per row (measured — Tab went bare-div, then overlay button). -1 keeps the
+      // wrapper clickable and hoverable while the overlay owns the single tab stop.
+      tabIndex={interactive ? -1 : undefined}
+      //
+      // The RING IS DRAWN ON THE ROW, keyed off the overlay's focus via `:has()`. Two
+      // reasons it cannot live on the overlay itself: the overlay sits at `-z-10` so its
+      // own ring paints BEHIND this element's background (measured — `boxShadow: none`
+      // reached the screen), and the ring belongs on the row's rounded silhouette anyway.
+      // `:has(> button:focus-visible)` is deliberately narrower than `focus-within`, which
+      // would also light the row when the checkbox or a tag filter inside it takes focus
+      // and double-ring with that control's own indicator.
+      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
+      {/* The row's tab stop and accessible name, as a real <button> SIBLING of the
+          content rather than an ancestor of it.
+
+          It is EMPTY and stretched over the row (`absolute inset-0`), which is what makes
+          this safe: it owns no descendants, so nothing inside the row needs re-exposing.
+          The alternative — keeping the wrapper interactive and marking children
+          `pointer-events-auto` — has to enumerate every control type, and silently misses
+          the CONDITIONAL ones (workflows' delete button exists only in its `armed` state;
+          knowledge's tag filters are `hidden md:flex` and gated on `tags?.length`).
+          Enumerating descendants is the part that breaks; owning none is the fix.
+
+          `-z-10` puts it UNDER the row's content in paint order (the motion wrapper's
+          transform makes it a stacking context, so a negative z-index child still paints
+          above the row's own background). It therefore never covers the checkbox or the
+          tag filters, and needs no z-index on any child. It does not have to receive the
+          click either: Enter/Space on a real <button> fires a click that BUBBLES to the
+          wrapper's onClick, and a pointer click anywhere in the row bubbles the same way. */}
+      {interactive && (
+        <button
+          type="button"
+          aria-label={label}
+          className="absolute inset-0 -z-10 cursor-pointer outline-none"
+        />
+      )}
       {children}
     </motion.div>
   )
@@ -104,7 +199,7 @@ export function Skeleton({ className = '' }: { className?: string }) {
  *  pages. Matches ListRow's padding/leading-icon so the swap to real data is calm. */
 export function ListSkeleton({ rows = 6 }: { rows?: number }) {
   return (
-    <div className="flex flex-col gap-s" aria-busy="true" aria-label="Loading">
+    <div className="flex flex-col gap-s" role="status" aria-busy="true" aria-label="Loading">
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="flex items-center gap-l rounded-lg bg-surface-container px-l py-l">
           <Skeleton className="size-10 shrink-0 rounded-lg" />
@@ -124,7 +219,7 @@ export function ListSkeleton({ rows = 6 }: { rows?: number }) {
  *  fetched via useCachedData (Chat, Voice, Inbox, Notifications, Agent defaults…). */
 export function FormSkeleton({ sections = 2, rows = 3, title = true }: { sections?: number; rows?: number; title?: boolean }) {
   return (
-    <div aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true" aria-label="Loading">
       {title && (
         <div className="mb-l space-y-2">
           <Skeleton className="h-5 w-40" />
@@ -152,7 +247,7 @@ export function FormSkeleton({ sections = 2, rows = 3, title = true }: { section
  *  cards. Use on the read-only dashboard-style panels (Overview, Security). */
 export function CardGridSkeleton({ cards = 4, cols = 2, title = true }: { cards?: number; cols?: number; title?: boolean }) {
   return (
-    <div aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true" aria-label="Loading">
       {title && (
         <div className="mb-l space-y-2">
           <Skeleton className="h-5 w-40" />

@@ -29,12 +29,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows import longrun, ownership
+from personalclaw.workflows import leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
+from personalclaw.workflows.compaction import complete_with_compaction
 from personalclaw.workflows.models import (
     Failure,
     FailureClass,
@@ -349,11 +352,17 @@ async def dispatch_infer(
     *,
     tiers: dict[str, str] | None = None,
     completion: Any = None,
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     """ONE bounded model call — no tools, no session, no spawn.
 
     `completion` is injected so tests can drive this without a provider; production
     passes `llm_helpers.one_shot_completion`.
+
+    The call goes through the compaction ladder (WV-12): a long-horizon prompt is
+    compacted proactively at ~80% of the bound model's window, and a length rejection
+    triggers one aggressive re-compaction + retry before the node fails. `compaction_saves`
+    is this node's compaction history, which the anti-thrashing rule reads.
     """
     cfg, failure = resolve_config(node, ctx)
     if failure:
@@ -375,7 +384,13 @@ async def dispatch_infer(
 
     want_json = bool(cfg.get("schema")) or str(cfg.get("output", "")) == "json"
     try:
-        text = await fn(prompt, use_case=use_case, output_type=dict if want_json else None)
+        text = await complete_with_compaction(
+            fn,
+            prompt,
+            use_case=use_case,
+            output_type=dict if want_json else None,
+            saves=compaction_saves,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # provider/transport/contract failures
@@ -456,6 +471,76 @@ async def dispatch_visualize(
     )
 
 
+def claim_key(run_id: str, node_id: str) -> str:
+    """The lease target for one branch.
+
+    Per-NODE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped claim
+    would serialize the fan-out the lease exists to protect.
+    """
+    return f"{run_id}:{node_id}" if run_id and node_id else ""
+
+
+def claim_holder(run_id: str, node_id: str) -> str:
+    """A fresh holder identity for ONE execution attempt of a branch.
+
+    Unique per attempt, and that uniqueness is the whole control — measured, not assumed.
+    `containers.claim` RENEWS a claim held by the same holder (so a worker that lost its in-memory
+    state is not locked out of its own work). A holder derived from stable data — `run_id:node_id`,
+    or even that plus the PID — therefore made every second attempt a renewal rather than a refusal,
+    and the guard passed both executions through while a lease file sat there looking like
+    protection. The PID version failed for the case that matters most: two concurrent co-tenant
+    sessions in ONE gateway share a PID, which is exactly the threat §1.5 names.
+
+    The cost of per-attempt identity is that a genuinely dead holder's branch waits out the TTL
+    instead of being re-claimed instantly. That is the correct direction to be wrong in: a stalled
+    branch is visible and self-healing, while a double execution is silent and can write twice.
+    """
+    return f"{ownership.owned_key(run_id, node_id or 'node')}#{uuid.uuid4().hex[:12]}"
+
+
+def _release_claim(claim_target: str, holder: str) -> None:
+    """Drop this worker's claim on a branch that did NOT start.
+
+    Never raises: a failed release costs one TTL of a stalled branch, while an exception here would
+    turn a recoverable no-spawn return into a crashed dispatch.
+    """
+    if not claim_target:
+        return
+    try:
+        leases.release_claim(claim_target, holder)
+    except Exception:
+        logger.debug("claim release failed for %s", claim_target, exc_info=True)
+
+
+def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) -> dict[str, str]:
+    """The env one stage leaf runs with: lineage + capability posture, secret-filtered.
+
+    Built here because this is where a leaf is actually spawned — the compiled `postures` block is
+    an external contract until something applies it, and `batch_compile.CompileResult.unenforced`
+    names this seam as the missing half. `leaf_env` does the credential filtering (reusing
+    `workspace.looks_secret`, not a second copy of that policy).
+
+    The child's depth is the parent's PLUS ONE: a leaf that inherited the parent's depth unchanged
+    would let each level re-spend the same budget, and `depth_lint`'s static refusal of a nested
+    batch would never trip.
+    """
+    from personalclaw.mcp_shared import LEAF_READ_ONLY_KEY, leaf_env
+    from personalclaw.workflows.batch_compile import lineage_env
+
+    lineage = lineage_env(
+        run_id=run_id,
+        project_id=str(cfg.get("project_id", "") or ""),
+        node_id=node.id or "",
+        depth=int(depth) + 1,
+    )
+    # Absent `capability` means research — the same safe default `Capability.RESEARCH` encodes, and
+    # for the same reason: a leaf wrongly restricted fails visibly, while one wrongly unrestricted
+    # has ambient write access nobody asked for.
+    if str(cfg.get("capability", "") or "research").strip().lower() != "mutating":
+        lineage[LEAF_READ_ONLY_KEY] = "1"
+    return leaf_env(dict(os.environ), lineage)
+
+
 async def dispatch_stage(
     node: Node,
     ctx: BindingContext,
@@ -508,6 +593,28 @@ async def dispatch_stage(
             "the gateway did not initialize the subagent service",
         )
 
+    # No double-execution. Taken BEFORE the spawn, because a lease acquired
+    # after the work started would record the claim without preventing the thing it exists to
+    # prevent — two co-tenant workers would both have spawned by the time either checked. The claim
+    # is per-NODE (`run_id:node_id`), not per-run: a run's leaves are meant to execute concurrently,
+    # so a run-scoped claim would serialize the fan-out it was written to protect.
+    claim_target = claim_key(run_id, node.id or "")
+    holder = claim_holder(run_id, node.id or "")
+    if claim_target:
+        granted, reason = leases.acquire_claim(claim_target, holder)
+        if granted is None:
+            # DEGRADED, not FAILED: another worker holding the claim means this leaf is already
+            # being executed, which is the lease working. Failing would turn a successful
+            # duplicate-suppression into a red branch on a run that is proceeding correctly.
+            return NodeResult(
+                state=InstanceState.DEGRADED,
+                output=None,
+                degraded_reason=(
+                    f"another worker holds the claim on this node ({reason}) — not executing twice"
+                ),
+                resolved_prompt=prompt,
+            )
+
     info = subagents.spawn(
         task=prompt,
         # The run OWNS this session: `workflow:<run_id>:<node_id>`. Passed as the parent key
@@ -529,15 +636,27 @@ async def dispatch_stage(
         cwd=cwd,
         silent=True,
         approval_mode=str(cfg.get("approval_mode", "") or "") or None,
+        # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
+        # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter and
+        # the read-only flag would never be set, and the handler seam would be a gate on a value
+        # nobody writes — the exact inert-control shape this clause exists to close.
+        extra_env=leaf_spawn_env(node, cfg, run_id=run_id, depth=depth),
     )
     if info is None:
-        # At capacity. Not a failure: the node stays ready and the next tick retries.
+        # At capacity. Not a failure: the node stays ready and the next tick retries — so the claim
+        # MUST be released. A claim held across a no-spawn return would make this node refuse its
+        # own retry for the whole TTL: the lease would block the work it exists to protect, which is
+        # the failure mode where a safety control becomes an outage.
+        _release_claim(claim_target, holder)
         return NodeResult(
             state=InstanceState.READY,
             degraded_reason="subagent capacity reached; will retry",
             resolved_prompt=prompt,
         )
     if getattr(info, "error", ""):
+        # A REJECTED spawn never executed, so the claim is released for the same reason as the
+        # capacity path: nothing is running, and holding the claim would only lock out the retry.
+        _release_claim(claim_target, holder)
         return NodeResult(
             state=InstanceState.FAILED,
             failure=Failure(
@@ -547,6 +666,10 @@ async def dispatch_stage(
             ),
             resolved_prompt=prompt,
         )
+    # The claim is deliberately RETAINED here: the spawn is live and the node stays RUNNING
+    # until its completion arrives, which is exactly the window a second worker must not
+    # execute in. It expires on its own TTL, so a killed gateway frees the branch without an
+    # admin step — the property `leases` was built for.
     return NodeResult(
         state=InstanceState.RUNNING,
         output={"subagent_id": info.id},
@@ -1008,6 +1131,7 @@ async def dispatch_gate(
     mode: str = "background",
     worker_model: str = "",
     judge_model_resolver: Any = None,
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     """A checkpoint the engine — never the worker — resolves (WF2-R3).
 
@@ -1237,7 +1361,23 @@ async def dispatch_gate(
         pin = {"model": judge_model} if judge_model else {}
         for _ in range(samples):
             try:
-                text = await fn(instruction, use_case=use_case, output_type=None, **pin)
+                # Through the compaction ladder, same as `infer`. A judge on a
+                # long-horizon loop reads the accumulated evidence, so its instruction is one
+                # of the two prompts that actually grows toward the window. The `model` pin is
+                # forwarded, not bypassed: the ladder must measure against the model that will
+                # RUN — a cross-family judge can have a different window than the worker axis,
+                # and budgeting against the wrong one is how the check silently stops applying.
+                text = await complete_with_compaction(
+                    fn,
+                    instruction,
+                    use_case=use_case,
+                    output_type=None,
+                    saves=compaction_saves,
+                    # Named, not `**pin`: the ladder types `model` as `str`, and the pin dict
+                    # is only ever that one key. Splatting it would erase the type here and
+                    # would hide a future key rename behind a runtime TypeError.
+                    model=str(pin.get("model", "")),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1431,7 +1571,47 @@ def _restriction_skip(cfg: dict[str, Any], run_id: str) -> tuple[bool, str]:
     return ownership.skips_node(cfg, mode)
 
 
-def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeResult:
+def _publish_media_resolver(cwd: str | None) -> Any:
+    """A `rewrite_media_refs` resolver reading files under the run's own cwd — and only there.
+
+    Containment is the whole security posture of the copy: `..` traversal and symlinks out of the
+    tree are refused, so a published body cannot pull `~/.ssh/id_rsa` into an artifact the dashboard
+    serves by writing `![](../../../.ssh/id_rsa)`. Returns None (never raises) for anything it will
+    not read, which `rewrite_media_refs` reports as unresolved rather than silently dropping.
+    """
+    import hashlib
+    from pathlib import Path
+
+    from personalclaw.security import is_sensitive_path
+
+    #: Companion copies ride inside the artifact's version dir, which the dashboard serves and the
+    #: 50-snapshot window holds. A large binary copied per version would blow both, so the cap is
+    #: deliberately far below the artifact body cap.
+    max_bytes = 8 * 1024 * 1024
+
+    def _resolve(reference: str) -> tuple[bytes, str] | None:
+        if not cwd:
+            return None
+        try:
+            root = Path(cwd).resolve()
+            target = (root / reference).resolve()
+            if not target.is_relative_to(root) or not target.is_file():
+                return None
+            if is_sensitive_path(str(target)):
+                return None
+            if target.stat().st_size > max_bytes:
+                return None
+            data = target.read_bytes()
+        except (OSError, ValueError):
+            return None
+        return data, hashlib.sha256(data).hexdigest()
+
+    return _resolve
+
+
+def apply_publish(
+    node: Node, result: NodeResult, *, run_id: str = "", cwd: str | None = None
+) -> NodeResult:
     """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2,
     S47).
 
@@ -1453,6 +1633,7 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
         PublishAction,
         flatten_lineage,
         parse_publish,
+        rewrite_media_refs,
         upsert_plan,
     )
 
@@ -1495,6 +1676,13 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
             return _with_publish(
                 result, {"action": "noop", "reason": "no writable artifact provider"}
             )
+        # Media self-containment BEFORE the material-change comparison:
+        # the rewritten body is what gets stored, so gating on the pre-rewrite text would compare a
+        # body the artifact never holds. A first publish would then look unchanged on its second run
+        # purely because the reference names differ.
+        content, media_copies, media_unresolved = rewrite_media_refs(
+            content, _publish_media_resolver(cwd)
+        )
         existing = provider.find_similar(spec.artifact)
         previous = None
         if existing is not None:
@@ -1540,10 +1728,92 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
             }
         else:
             payload = {**plan.to_dict(), "slug": existing.slug if existing else ""}
+        # Copies land AFTER the body, because the destination is keyed by the slug the write just
+        # settled. A copy failure does NOT fail the node for the same reason a registry failure does
+        # not: the work happened. It is REPORTED instead — a body whose image reference points at a
+        # copy that was never made must say so, or the artifact looks self-contained and isn't.
+        payload["media"] = _land_media_copies(
+            provider, str(payload.get("slug") or ""), media_copies, media_unresolved
+        )
+        _journal_publish(run_id, node.id or "", payload)
         return _with_publish(result, payload)
     except Exception as exc:
         logger.debug("publish failed for node %s", node.id, exc_info=True)
         return _with_publish(result, {"action": "error", "reason": f"{type(exc).__name__}: {exc}"})
+
+
+def _journal_publish(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
+    """Record one publish outcome in the run's own log — what the §2.5 outbox lists.
+
+    A run-scoped journal rather than a query over the artifact registry: the registry knows an
+    artifact exists, not which run published it, and reconstructing that from event metadata means
+    scanning every artifact's events to answer "what did THIS run produce". A NOOP is journalled
+    too,
+    because an outbox that hides a converged republish makes the artifact look abandoned by its
+    producer — the same reason `upsert_plan` attaches provenance to a no-op.
+    """
+    if not run_id or not payload.get("slug"):
+        return
+    from datetime import datetime, timezone
+
+    from personalclaw.workflows import store as _store
+
+    try:
+        _store.append_jsonl(
+            run_id,
+            "publishes.jsonl",
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "node_id": node_id,
+                "slug": payload.get("slug", ""),
+                "artifact": payload.get("artifact", ""),
+                "kind": payload.get("kind", ""),
+                "action": payload.get("action", ""),
+                "change_note": payload.get("change_note", ""),
+                "media": payload.get("media", {}),
+            },
+        )
+    except Exception:
+        # A journal write must never fail a completed stage — the artifact already landed.
+        logger.debug("publish journal write failed for run %s", run_id, exc_info=True)
+
+
+def _land_media_copies(
+    provider: Any, slug: str, copies: list[Any], unresolved: list[tuple[str, str]]
+) -> dict[str, Any]:
+    """Copy each referenced local file into the artifact's version dir. Reports what landed.
+
+    `unresolved` rides in the SAME record as the successes so one read answers "is this artifact
+    self-contained?". Split across two fields on two surfaces, the failures are the ones nobody
+    looks at.
+    """
+    stored: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = [{"reference": r, "reason": why} for r, why in unresolved]
+    for copy in copies:
+        ok = False
+        if slug:
+            try:
+                ok = provider.store_version_file(slug, copy.filename, copy.data)
+            except Exception:
+                logger.debug("media copy failed for %s/%s", slug, copy.filename, exc_info=True)
+                ok = False
+        if ok:
+            stored.append(
+                {
+                    "reference": copy.reference,
+                    "filename": copy.filename,
+                    "sha256": copy.sha256,
+                    "size": copy.size,
+                }
+            )
+        else:
+            failed.append(
+                {
+                    "reference": copy.reference,
+                    "reason": "the artifact store did not accept the copy",
+                }
+            )
+    return {"stored": stored, "unresolved": failed, "self_contained": not failed}
 
 
 def _with_publish(result: NodeResult, payload: dict[str, Any]) -> NodeResult:
@@ -1757,6 +2027,12 @@ async def dispatch(
     #: only the JUDGE branch of `dispatch_gate` reads it, so a run with no cross_model gate is
     #: unaffected.
     worker_model: str = "",
+    #: This node's compaction-save history, for the anti-thrashing rule. Owned by the
+    #: controller and keyed per node id, so it survives a retry and a loop body's iterations —
+    #: which is the repetition `should_compact` exists to stop. A None here (a direct dispatcher
+    #: call in a test) simply means no history: the ladder still compacts, it just cannot notice
+    #: that it has stopped helping.
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -1782,6 +2058,7 @@ async def dispatch(
         supervisor=supervisor,
         on_progress=on_progress,
         worker_model=worker_model,
+        compaction_saves=compaction_saves,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     result = apply_artifact_gate(node, result, cwd or None)
@@ -1789,7 +2066,7 @@ async def dispatch(
     # publish path instead of quietly dropping a declared output. Ordered after the gate
     # deliberately — publishing the output of a node that failed its own artifact gate would
     # store a deliverable the run does not stand behind.
-    return apply_publish(node, result, run_id=run_id)
+    return apply_publish(node, result, run_id=run_id, cwd=cwd or None)
 
 
 async def _dispatch_inner(
@@ -1810,13 +2087,16 @@ async def _dispatch_inner(
     supervisor: Any = None,
     on_progress: Any = None,
     worker_model: str = "",
+    compaction_saves: list[float] | None = None,
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
     if kind == NodeKind.TRANSFORM:
         return await dispatch_transform(node, ctx)
     if kind == NodeKind.INFER:
-        return await dispatch_infer(node, ctx, tiers=tiers, completion=completion)
+        return await dispatch_infer(
+            node, ctx, tiers=tiers, completion=completion, compaction_saves=compaction_saves
+        )
     if kind == NodeKind.VISUALIZE:
         return await dispatch_visualize(node, ctx, completion=completion)
     if kind == NodeKind.STAGE:
@@ -1841,6 +2121,7 @@ async def _dispatch_inner(
             tiers=tiers,
             mode=mode,
             worker_model=worker_model,
+            compaction_saves=compaction_saves,
         )
     if kind == NodeKind.SUBWORKFLOW:
         return await dispatch_subworkflow(

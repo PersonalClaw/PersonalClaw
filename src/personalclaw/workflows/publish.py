@@ -277,6 +277,115 @@ def upsert_plan(
     )
 
 
+#: Reference forms a published body may point a local file through. Markdown image/link syntax
+#: covers what a stage node actually emits; a bare path is NOT rewritten, because a body mentioning
+#: `logs/run.txt` in prose is discussing a path, not embedding a file, and copying every string that
+#: looks path-shaped would fill the version dir with the run's whole working tree.
+_MEDIA_REF_RE = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
+
+#: How many characters of the content hash ride in a copied file's name. Twelve is the same width
+#: the artifact registry's own short refs use, and full sixty-four-character names push a versions
+#: directory listing past what a terminal or a file picker shows without truncation.
+MEDIA_HASH_WIDTH = 12
+
+#: The reference prefix that means "leave this alone". `@` already means a live pointer elsewhere in
+#: the product (the artifact live-pointer, the chat `@file` mention), so honoring it here keeps ONE
+#: meaning for the sigil rather than inventing a second opt-out vocabulary.
+MEDIA_PASSTHROUGH_PREFIX = "@"
+
+
+def media_filename(reference: str, digest: str) -> str:
+    """The content-hash name a copied local file lands under: ``<stem>@<hash>.<ext>``.
+
+    The stem survives so a human reading the versions directory can still tell a chart from a
+    screenshot; the digest is what makes the name immutable. Two versions referencing the same
+    unchanged file therefore resolve to the SAME copy rather than to two byte-identical ones.
+    """
+    from pathlib import PurePosixPath
+
+    p = PurePosixPath(reference)
+    stem = re.sub(r"[^\w.\-]", "_", p.stem) or "file"
+    ext = p.suffix.lower()
+    return f"{stem}@{digest[:MEDIA_HASH_WIDTH]}{ext}"
+
+
+def is_local_media_ref(reference: str) -> bool:
+    """Whether a reference names a LOCAL file this publish should copy.
+
+    Remote URLs are already self-contained (the point of the copy is that a workspace file moves and
+    the version breaks; a URL does not move because the artifact was versioned). Absolute paths are
+    excluded too: a body pointing at `/etc/…` or a user's home is not describing run output, and
+    copying it would pull host files into an artifact the UI serves.
+    """
+    ref = (reference or "").strip()
+    if not ref or ref.startswith(MEDIA_PASSTHROUGH_PREFIX):
+        return False
+    if ref.startswith(("http://", "https://", "data:", "mailto:", "//", "#", "/")):
+        return False
+    if "://" in ref:
+        return False
+    return not ref.startswith("~")
+
+
+@dataclass
+class MediaCopy:
+    """One local file a publish must copy into the version dir, and its rewritten reference.
+
+    The BYTES ride along rather than being re-read by the writer. Re-reading would open a window in
+    which the file changed between the hash and the copy, so the artifact would carry a name
+    asserting a digest its content does not have — and a content-addressed name that lies is worse
+    than no copy at all.
+    """
+
+    reference: str
+    filename: str
+    sha256: str
+    size: int
+    data: bytes = b""
+
+
+def rewrite_media_refs(
+    content: str, resolve: Any
+) -> tuple[str, list[MediaCopy], list[tuple[str, str]]]:
+    """Rewrite local file references to content-hash names, returning the copies to make.
+
+    `resolve(reference)` is the caller's — it returns `(bytes, sha256)` for a readable local file or
+    None — so the rules stay testable without a filesystem, the same split the rest of this module
+    uses. Returns `(rewritten_content, copies, unresolved)`.
+
+    An UNRESOLVED reference is left EXACTLY as written and reported, never dropped or replaced with
+    a placeholder. A body whose broken image silently became `[missing]` would read as though the
+    run produced something it did not; leaving the original keeps the break diagnosable and keeps
+    the `unresolved` list as the honest record of what could not be self-contained.
+    """
+    copies: dict[str, MediaCopy] = {}
+    unresolved: list[tuple[str, str]] = []
+
+    def _sub(match: re.Match[str]) -> str:
+        bang, label, ref = match.group(1), match.group(2), match.group(3)
+        if not is_local_media_ref(ref):
+            return match.group(0)
+        if ref in copies:
+            return f"{bang}[{label}]({copies[ref].filename})"
+        resolved = resolve(ref)
+        if not resolved:
+            unresolved.append((ref, "could not read the referenced file"))
+            return match.group(0)
+        data, digest = resolved
+        copy = MediaCopy(
+            reference=ref,
+            filename=media_filename(ref, digest),
+            sha256=digest,
+            size=len(data),
+            data=data,
+        )
+        copies[ref] = copy
+        return f"{bang}[{label}]({copy.filename})"
+
+    rewritten = _MEDIA_REF_RE.sub(_sub, content or "")
+    return rewritten, list(copies.values()), unresolved
+
+
 @dataclass
 class EvidenceFile:
     """One file in an evidence bundle.

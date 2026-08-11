@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from aiohttp import web
 
@@ -304,10 +305,26 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
             from personalclaw.memory_service import MemoryService
 
             svc = MemoryService.over_vector_store(_get_provider(state))
-            return svc.semantic_context(query, cap=1500) or ""
+            facts = svc.semantic_context(query, cap=1500) or ""
         except Exception:
             logger.debug("grill-tree recall failed", exc_info=True)
             return ""
+        # The settled decisions this pipeline itself persists are written by `write_lesson` as
+        # `lesson.<hash>` keys, and `get_semantic_context` EXCLUDES `lesson.%` by design
+        # (vector_memory._NON_FACT_KEY_CLAUSE — a lesson is not a fact about the user). So the fact
+        # block alone can never surface a prior grill decision: the recall would read a different
+        # key space than the save writes, and the memory check would look wired while being blind to
+        # its own output. The lessons block is the matching reader.
+        #
+        # Guarded SEPARATELY from the facts read, and that separation is the point: sharing one
+        # `try` meant a lessons failure discarded the facts that had already been fetched, turning a
+        # partial degradation into total silence. Each half degrades on its own.
+        try:
+            lessons = svc.lessons_context() or ""
+        except Exception:
+            logger.debug("grill-tree lesson recall failed", exc_info=True)
+            lessons = ""
+        return "\n\n".join(p for p in (facts, lessons) if p.strip())
 
     # assess=False: the phases ARE the clarifying pass, so a separate assess step would
     # double-ask. save=None: nothing is settled at GENERATION time (the user hasn't
@@ -381,6 +398,69 @@ async def api_loop_report(request: web.Request) -> web.Response:
     return web.json_response({"report": store.read_deliverable(cid), "log": store.read_log(cid)})
 
 
+def _persist_grill_decisions(body: dict, state: Any) -> int:
+    """Persist a launched loop's settled grill answers as decision lessons. Returns how many.
+
+    Closes ``grill.SaveFn``, which was declared (``grill.py:38``) and defaulted to None at every
+    call site, so a memory-checked decomposition never fed the memory it checked.
+
+    Answers are folded through ``grill_protocol.fold_answers`` + ``settled_decisions`` rather than
+    written raw, because the protocol owns the settled/assumed/open distinction: an assumption is
+    the planner's guess, and hardening a guess into a standing lesson is how a scoping tool starts
+    lying to itself. Best-effort — a memory failure must never fail the launch the user just made.
+    """
+    kc = body.get("kind_config")
+    if not isinstance(kc, dict):
+        return 0
+    answers = kc.get("phase_answers")
+    phases = kc.get("grill_phases")
+    if not isinstance(answers, dict) or not answers or not isinstance(phases, list):
+        return 0
+    try:
+        from personalclaw.workflows.grill_protocol import Question, fold_answers, settled_decisions
+
+        # Rebuild the questions the FE asked, keyed the way it keyed them (`p<phase>s<step>` —
+        # LoopPlanReview.tsx:178). The key must match or `fold_answers` sees every question as
+        # unanswered and settles nothing: this is the exact dict-spelling mismatch that makes a
+        # wired value inert, so it is pinned by a test that drives the real FE id format.
+        questions: list[Question] = []
+        for pi, phase in enumerate(phases):
+            if not isinstance(phase, dict):
+                continue
+            for si, st in enumerate(phase.get("steps") or []):
+                text = str((st or {}).get("title") or (st or {}).get("prompt") or "").strip()
+                if text:
+                    questions.append(Question(key=f"p{pi}s{si}", text=text))
+        if not questions:
+            return 0
+        step = fold_answers(questions, {k: v for k, v in answers.items()})
+        decisions = settled_decisions(step)
+        if not decisions:
+            return 0
+
+        from personalclaw.dashboard.handlers.memory import _get_provider
+        from personalclaw.memory_service import MemoryService
+
+        # `_get_provider` reaches `state` for the wired store (and lazily builds a standalone one),
+        # so the real DashboardState must be threaded through — passing None here would raise inside
+        # the guard and the whole seam would silently swallow itself into the `except` below.
+        svc = MemoryService.over_vector_store(_get_provider(state))
+        if not svc.has_vector:
+            return 0
+        written = 0
+        for decision in decisions:
+            # category="decision" so these are filterable as scoping decisions rather than mixed
+            # into general knowledge. source="user_explicit": the user typed these answers, and a
+            # weaker source would let the write blocker drop them.
+            if svc.write_lesson(decision, category="decision", source="user_explicit"):
+                written += 1
+        logger.info("grill: persisted %d settled decision(s) from launch", written)
+        return written
+    except Exception:
+        logger.debug("grill: persisting settled decisions failed", exc_info=True)
+        return 0
+
+
 async def api_loop_update(request: web.Request) -> web.Response:
     """PUT /api/loops/{id} — edit a pre-launch spec, or a name-only rename in any
     state (frozen spec → 409 unless it's just a name)."""
@@ -403,6 +483,14 @@ async def api_loop_update(request: web.Request) -> web.Response:
                 {"error": " · ".join(edit_errs), "errors": edit_errs}, status=400
             )
     updated = store.update_spec(cid, body)
+    if updated is not None:
+        # The grill SAVE seam (`grill.SaveFn`). `api_loop_grill_tree` deliberately passes
+        # ``save=None`` because nothing is settled at GENERATION time — the user has not answered
+        # yet. THIS is the settle point: the launch write that persists ``phase_answers``. Wiring
+        # it here rather than in the generator is what makes the pipeline's memory-check real —
+        # `check_memory` recalls prior decisions, and until now no pass ever WROTE one, so the
+        # "don't re-ask what the user already settled" promise had nothing to read.
+        _persist_grill_decisions(body, request.app["state"])
     if updated is None:
         # spec frozen — allow a name-only patch via rename
         if set(body) <= {"name"}:

@@ -557,11 +557,57 @@ async def api_artifact_record_event(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "appended": appended})
 
 
+async def api_artifacts_pinned(request: web.Request) -> web.Response:
+    """GET /api/artifacts/pinned — the dashboard pin list (WORK-CONTAINERS §6.5d).
+
+    REFERENCES only. Each row is a slug plus when it was pinned; the widget resolves the artifact
+    itself through the list route. Returning denormalized names here would go stale on the next
+    rename, and a dashboard card showing a title the artifact no longer has is confidently wrong.
+    """
+    from personalclaw.workflows import pinned
+
+    return web.json_response({"pins": pinned.list_pins()})
+
+
+async def api_artifacts_pin(request: web.Request) -> web.Response:
+    """POST /api/artifacts/{slug}/pin — pin or unpin (``{"pinned": bool}``).
+
+    ONE route for both directions rather than a pin route and an unpin route: it is one piece of
+    state with two values, and two endpoints would be two places to keep the cap and the
+    dedup-by-slug rule right.
+
+    Gated like every other artifact mutation — a restricted (incognito/guest) session must not
+    write durable dashboard state, which is exactly what a pin is.
+    """
+    from personalclaw.workflows import pinned
+
+    state = request.app.get("state")
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.pin", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    slug = request.match_info.get("slug", "")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    # Default TRUE: the route is reached from a Pin control, so the common call carries no body.
+    # Defaulting to unpin would make the bodyless call silently do the opposite of its name.
+    want = bool(body.get("pinned", True))
+    pins = pinned.pin(slug, run_id=str(body.get("run_id") or "")) if want else pinned.unpin(slug)
+    _audit(request, "artifact.pin" if want else "artifact.unpin", "allowed", slug)
+    return web.json_response({"ok": True, "pinned": want, "pins": pins})
+
+
 def register_artifact_routes(app: web.Application) -> None:
     """Register /api/artifacts/* routes. The native provider self-registers
     lazily via the registry; no startup registration needed."""
     app.router.add_get("/api/artifacts", api_artifacts_list)
     app.router.add_post("/api/artifacts", api_artifacts_create)
+    # BEFORE `/{slug}`: aiohttp matches in registration order, so a dynamic `{slug}` registered
+    # first would swallow the literal `pinned` path and answer it as an artifact named "pinned".
+    app.router.add_get("/api/artifacts/pinned", api_artifacts_pinned)
     app.router.add_get("/api/artifacts/{slug}", api_artifact_detail)
     app.router.add_patch("/api/artifacts/{slug}", api_artifact_update)
     app.router.add_delete("/api/artifacts/{slug}", api_artifact_delete)
@@ -572,3 +618,4 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_get("/api/artifacts/{slug}/versions/{version}", api_artifact_version_detail)
     app.router.add_get("/api/artifacts/{slug}/events", api_artifact_events)
     app.router.add_post("/api/artifacts/{slug}/events", api_artifact_record_event)
+    app.router.add_post("/api/artifacts/{slug}/pin", api_artifacts_pin)

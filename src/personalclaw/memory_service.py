@@ -320,7 +320,16 @@ class MemoryService:
         query_embedding: list[float] | None = None,
         limit: int = 8,
         tag_filter: list[str] | None = None,
+        mmr: bool = True,
     ) -> list[dict]:
+        """Nearest-neighbour search over episodic memory.
+
+        ``mmr`` defaults True — for RECALL, diversity is the right bias: injecting five phrasings of
+        one memory wastes the window. A COUNTING caller must pass False, because MMR deliberately
+        suppresses near-duplicates and near-duplicates are exactly what a repetition detector is
+        looking for (see `learning.mining.similar_run_matches`: three runs of the same plan reranked
+        for diversity collapse to one, and the "you built this three times" verdict never fires).
+        """
         vs = self._vs
         if vs is None:
             return []
@@ -331,6 +340,7 @@ class MemoryService:
             query_text=query_text,
             limit=limit,
             tag_filter=tag_filter,
+            mmr=mmr,
         )
 
     def episodic_list(

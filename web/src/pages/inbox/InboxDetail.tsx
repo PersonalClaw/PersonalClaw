@@ -175,7 +175,8 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
               <Button size="sm" variant="secondary" onClick={generate} disabled={busy === 'draft'}>{busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
               {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} disabled={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
               {canReply ? (
-                <Button size="sm" onClick={send} disabled={busy === 'send' || !draft.trim()}>{busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply</Button>
+                <Button size="sm" onClick={send} disabled={busy === 'send' || !draft.trim()}
+                  disabledReason={!draft.trim() ? 'Write a reply first' : undefined}>{busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply</Button>
               ) : (
                 <span title="This item's source doesn't support replies (notifications are read-only)." className="inline-flex"><Button size="sm" variant="ghost" disabled><Send size={14} /> Send reply</Button></span>
               )}
@@ -271,8 +272,14 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
             {detail.refine_target && <span className="text-on-surface-low">refines {detail.refine_target}</span>}
             {detail.triggers && <span className="text-on-surface-low">triggers: {detail.triggers}</span>}
           </div>
-          {/* The full procedure — the thing actually being approved. */}
-          <div className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem]">
+          {/* The full procedure — the thing actually being approved. Rendered markdown has
+              no focusable content of its own, so without a tab stop a keyboard user cannot
+              scroll it: measured 1285px of 1541px hidden below the fold on a real item
+              (WCAG 2.1.1; axe scrollable-region-focusable, serious). That is the text
+              someone is being asked to approve, so it has to be readable without a mouse.
+              Same resolution as the kanban columns and the shell-denylist list. */}
+          <div className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem]"
+            tabIndex={0} role="group" aria-label="Procedure">
             <Markdown>{detail.procedure_md}</Markdown>
           </div>
           {/* Provenance is a FENCED excerpt of the driving trace: untrusted text rendered

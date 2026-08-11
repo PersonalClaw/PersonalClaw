@@ -1,0 +1,165 @@
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { PageTitle } from './PageTitle'
+
+// ── Every destination names itself with an h1 ──────────────────────────────────────────
+//
+// Measured across 20 nav destinations on the running app, before this primitive existed:
+//
+//   17 of 20 had NO h1 at all.
+//   13 of 20 rendered ZERO headings of any level.
+//   The 3 that had one got it from a greeting/headline (the dashboard's "Good afternoon",
+//   chat's and the loop composer's display-s), never from the page's own name.
+//   #/dashboard additionally skipped h1 -> h3 across all seven of its section headings.
+//
+// Heading navigation — the H key in NVDA/JAWS, the rotor in VoiceOver — is how a screen-reader
+// user skims an unfamiliar page. On 13 of 20 surfaces it landed on nothing, so there was no way
+// to orient beyond reading the whole DOM in order.
+//
+// The title was never missing; only its semantics were. Every page rendered
+// `<span data-type="title-l" className="text-on-surface">Tasks</span>` into the TopBar left
+// slot, hand-rolled at ~30 sites. `PageTitle` is that span with the tag it should have had.
+//
+// 🪤 THE INTERESTING PART IS WHAT IS *NOT* IN THIS LIST. Three exclusions, each deliberate:
+//
+//   · `ChatPage`'s "Chat history" — a DOCKED PANEL header. A side panel is not the page, and
+//     giving it an h1 would claim the document's title for a drawer.
+//   · `AppFrame` and the detail/create pages — their title is an ENTITY name
+//     (`{project.name}`, `{active.name}`, the installed app's title). Those are page titles
+//     too, but they are a different subset with their own judgment (does a detail view's h1
+//     name the entity or the section?), and taking half a family is worse than taking none.
+//   · `topBarTitleTruncates.test.tsx` — a fixture that must keep exercising the RAW idiom, or
+//     it stops testing what it claims to.
+
+describe('PageTitle', () => {
+  it('renders an h1', () => {
+    render(<PageTitle>Tasks</PageTitle>)
+    expect(screen.getByRole('heading', { level: 1, name: 'Tasks' })).toBeTruthy()
+  })
+
+  it('carries the title-l type role, not a per-component size', () => {
+    render(<PageTitle>Tasks</PageTitle>)
+    expect(screen.getByRole('heading', { level: 1 }).getAttribute('data-type')).toBe('title-l')
+  })
+
+  it('keeps the ink token and merges extra classes', () => {
+    render(<PageTitle className="flex items-center gap-s">Inbox</PageTitle>)
+    const h = screen.getByRole('heading', { level: 1 })
+    expect(h.className).toContain('text-on-surface')
+    expect(h.className).toContain('flex items-center gap-s')
+  })
+
+  it('lets the title own trailing chrome (a count badge reads as part of the name)', () => {
+    render(<PageTitle>Notifications <span>3</span></PageTitle>)
+    expect(screen.getByRole('heading', { level: 1, name: 'Notifications 3' })).toBeTruthy()
+  })
+})
+
+// ── The call-site half ────────────────────────────────────────────────────────────────
+
+const SRC = join(process.cwd(), 'src')
+const walk = (d: string): string[] =>
+  readdirSync(d).flatMap((n) => {
+    const p = join(d, n)
+    if (statSync(p).isDirectory()) return walk(p)
+    return /\.tsx$/.test(n) && !/\.doc\.tsx$/.test(n) ? [p] : []
+  })
+
+/** The destinations converged in this pass: a nav destination whose TopBar left slot is a
+ *  STATIC page name. Every one of these measured h1-less before the change. */
+const DESTINATIONS = [
+  'pages/tasks/TasksListPage.tsx',
+  'pages/tools/ToolsPage.tsx',
+  'pages/triggers/TriggersListPage.tsx',
+  'pages/terminal/TerminalPage.tsx',
+  'pages/agents/AgentsListPage.tsx',
+  'pages/knowledge/KnowledgeListPage.tsx',
+  'pages/prompts/PromptsListPage.tsx',
+  'pages/loops/LoopsListPage.tsx',
+  'pages/settings/SettingsPage.tsx',
+  'pages/inbox/InboxPage.tsx',
+  'pages/notifications/NotificationsPage.tsx',
+  'pages/projects/ProjectsSection.tsx',
+  'pages/skills/SkillsPage.tsx',
+  'pages/learning/LearningPage.tsx',
+  'pages/artifacts/ArtifactsSection.tsx',
+  'pages/apps/AppsSection.tsx',
+  'pages/files/FilesSection.tsx',
+  'pages/discover/DiscoverPage.tsx',
+  'pages/workflows/WorkflowsListPage.tsx',
+  'ui/ListScaffold.tsx',
+]
+
+describe('every converged destination names itself', () => {
+  for (const rel of DESTINATIONS) {
+    it(`${rel} titles itself with PageTitle`, () => {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      expect(src, 'must render the primitive').toMatch(/<PageTitle[\s>]/)
+      expect(src, 'must import it').toMatch(/import \{ PageTitle \}/)
+    })
+  }
+
+  it('none of them kept a bare title-l span in the TopBar left slot', () => {
+    // The specific idiom this pass replaces. A file that renders BOTH has been half-migrated,
+    // which is the state that looks converged in a diff and is not.
+    const holdouts: string[] = []
+    for (const rel of DESTINATIONS) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      if (/left=\{<span data-type="title-l"/.test(src)) holdouts.push(rel)
+    }
+    expect(holdouts, `still hand-rolling the page title:\n  ${holdouts.join('\n  ')}`).toEqual([])
+  })
+
+  it('renders exactly ONE PageTitle per destination (a page has one name)', () => {
+    // SkillsPage is the exception that proves the rule: it renders two, in mutually exclusive
+    // branches (the proposals view vs the installed view), never both at once. Asserted by
+    // branch count rather than waved through.
+    const offenders: string[] = []
+    for (const rel of DESTINATIONS) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      const n = [...src.matchAll(/<PageTitle[\s>]/g)].length
+      if (n > 1 && rel !== 'pages/skills/SkillsPage.tsx') offenders.push(`${rel} (${n})`)
+    }
+    expect(offenders, `more than one page title:\n  ${offenders.join('\n  ')}`).toEqual([])
+  })
+
+  it('does NOT give a docked panel header an h1', () => {
+    // ChatPage's "Chat history" is a SidePanel header. If a future pass converts it, heading
+    // navigation gets two competing document titles on one route.
+    const chat = readFileSync(join(SRC, 'pages/ChatPage.tsx'), 'utf8')
+    expect(
+      /left=\{<PageTitle[^>]*>Chat history/.test(chat),
+      'the Chat history panel header must stay a span — a drawer is not the page',
+    ).toBe(false)
+  })
+
+  it('scans real files (not vacuously green)', () => {
+    expect(walk(SRC).length).toBeGreaterThan(200)
+  })
+})
+
+// ── The level below the title ─────────────────────────────────────────────────────────
+//
+// An h1 fixes orientation only if what follows it is an h2. The dashboard rendered its page
+// greeting as h1 and then EVERY one of its seven sections as h3 — measured `h1 -> h3 "Needs you"`
+// — so a screen-reader user skipping by level fell straight past a missing tier. Both section
+// headers (the shared `Section` and the separately-authored `PinnedTiles`) are now h2.
+
+describe('the dashboard does not skip a heading level', () => {
+  const files = ['pages/dashboard/DashboardPage.tsx', 'pages/dashboard/PinnedTiles.tsx']
+
+  it.each(files)('%s renders its section header as h2', (rel) => {
+    const src = readFileSync(join(SRC, rel), 'utf8')
+    expect(src, 'section header must be an h2, directly under the page h1').toMatch(/<h2 data-type="label-l"/)
+    expect(src, 'no h3 section header left to skip a level').not.toMatch(/<h3 data-type="label-l"/)
+  })
+
+  it('finds the shared Section component (not vacuously green)', () => {
+    // If `Section` is ever renamed or inlined, this assertion is what notices before the
+    // heading level silently drifts back.
+    const src = readFileSync(join(SRC, 'pages/dashboard/DashboardPage.tsx'), 'utf8')
+    expect(src).toMatch(/function Section\(/)
+  })
+})

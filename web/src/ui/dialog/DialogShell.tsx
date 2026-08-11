@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { AlertTriangle } from 'lucide-react'
 import { spring, bounce, expr } from '../../design/motion'
 import { useFocusTrap } from '../useFocusTrap'
+import { unavailableWhen } from '../unavailable'
 import type { DialogField, DialogResult, DialogRequest } from './dialogStore'
 
 /** The single visual shell behind every imperative dialog (confirm / prompt /
@@ -137,9 +138,12 @@ export function DialogShell({ request, onClose }: {
               {cancelLabel ?? 'Cancel'}
             </button>
           )}
+          {/* The prompt dialog's confirm stays REACHABLE while its required fields are empty, so
+              a keyboard user in the dialog can find it and hear what is missing. The dim is
+              restated on `aria-disabled:` because `disabled:` no longer fires. */}
           <button type="button" onClick={confirmAction} autoFocus={!danger && !isPrompt}
-            disabled={isPrompt && !canSubmit}
-            className="rounded-pill px-4 h-9 text-[0.8125rem] transition-colors disabled:opacity-40"
+            {...unavailableWhen(isPrompt && !canSubmit, 'Fill in the required fields first')}
+            className="rounded-pill px-4 h-9 text-[0.8125rem] transition-colors disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
             style={danger
               ? { background: 'var(--color-danger)', color: 'var(--color-on-danger)' }
               : { background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>

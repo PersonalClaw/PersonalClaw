@@ -316,6 +316,53 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "skill_promote",
+            "description": (
+                "PROPOSE a finished piece of work as a reusable skill — the retroactive companion "
+                "to skill_remember. Use after a task or workflow run SUCCEEDED and the procedure "
+                "is worth having next time; you may call it unprompted if you notice you worked "
+                "something out that you (or the user) will need again. Nothing is written: this "
+                "files a PROPOSAL in the review queue, and the skill exists only once the user "
+                "accepts it there. A promotion the user already declined is not re-proposed. Args: "
+                "name (proposed skill name), description (when to use it — one line), procedure "
+                "(the steps, as markdown), rationale (why it is worth keeping — the line the user "
+                "reads before deciding), run_id (optional; a completed workflow run to promote — "
+                "it must have finished successfully)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Proposed skill name, e.g. 'publish the nightly report'.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One line on when this skill applies.",
+                    },
+                    "procedure": {
+                        "type": "string",
+                        "description": (
+                            "The steps as markdown — exactly what the skill will contain "
+                            "once accepted. Do not put the rationale here."
+                        ),
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Why keep this — shown in the review queue.",
+                    },
+                    "run_id": {
+                        "type": "string",
+                        "description": (
+                            "A completed workflow run to promote. Omit to promote this "
+                            "conversation instead."
+                        ),
+                    },
+                },
+                "required": ["name", "description", "procedure", "rationale"],
+            },
+        },
+        {
             "name": "dashboard_tile_propose",
             "description": (
                 "PROPOSE a saved artifact as a dashboard tile on the user's composable home. "
@@ -814,6 +861,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "project_context_review":
         return _project_context_review(args)
 
+    if name == "skill_promote":
+        return _skill_promote(args)
+
     if name == "dashboard_tile_propose":
         return _dashboard_tile_propose(args)
 
@@ -1239,7 +1289,12 @@ def _resolve_review_project_id(explicit: str) -> str:
 
 
 def _review_transcript(session_key: str) -> list[dict]:
-    """This session's user/assistant turns, for grounding the review's proposals. Best-effort."""
+    """This session's turns, for grounding a review's or promotion's proposals. Best-effort.
+
+    Shared by `project_context_review` and `skill_promote`: both file proposals that a human reads
+    against the conversation that motivated them, and both treat a failed read as "no evidence"
+    rather than an error — a proposal with a thinner excerpt still beats no proposal.
+    """
     if not session_key:
         return []
     try:
@@ -1247,7 +1302,7 @@ def _review_transcript(session_key: str) -> list[dict]:
 
         return ConversationLog().recent(session_key, max_messages=100)
     except Exception:
-        logger.debug("project_context_review: transcript read skipped", exc_info=True)
+        logger.debug("transcript read skipped for proposal grounding", exc_info=True)
         return []
 
 
@@ -1379,6 +1434,61 @@ def _project_context_review(args: dict[str, Any]) -> str:
     return (
         f"Filed {len(filed)} project-context proposal(s) for review — nothing is written until "
         "you accept them in the review queue:\n" + "\n".join(lines)
+    )
+
+
+#: How each typed refusal reads back to the agent. Every `Refusal` member is mapped, because the
+#: model that named a bad candidate is the one that can fix it — a bare "declined" teaches it
+#: nothing, which is the same reason `template_save_from_session` reports its skip_reason.
+_PROMOTE_REFUSALS = {
+    "needs_name": "name is required (the proposed skill name).",
+    "needs_description": "description is required (one line on when the skill applies).",
+    "needs_procedure": "procedure is required (the steps, as markdown).",
+    "needs_rationale": "rationale is required — it is what the user reads before deciding.",
+    "unusable_name": (
+        "that name cannot become a skill name. Use a short phrase of letters, digits and spaces."
+    ),
+    "procedure_too_long": "the procedure is too long for a skill. Condense it to the steps.",
+    "run_not_found": "no such run. Check the run_id, or omit it to promote this conversation.",
+    "run_not_successful": (
+        "that run did not finish successfully. Only a completed run is worth promoting."
+    ),
+    "already_decided": (
+        "the user already decided on this exact skill, so it was not re-proposed. "
+        "Nothing was filed and nothing is wrong."
+    ),
+    "queue_refused": "the review queue could not accept it. Nothing was filed.",
+}
+
+
+def _skill_promote(args: dict[str, Any]) -> str:
+    """Promote a completed run or conversation into a skill PROPOSAL. Writes NO skill (LEA-11).
+
+    Delegates to `learning.skill_promotion`, which verifies a named run actually completed and files
+    through the shared human-gated queue. Reports what reached the QUEUE — never what was installed
+    — so the agent tells the user what to review, and cannot claim a skill now exists.
+    """
+    from personalclaw.learning import skill_promotion
+
+    session_key = _resolve_session_key()
+    run_id = str(args.get("run_id") or "").strip()
+    result = skill_promotion.promote(
+        name=str(args.get("name") or ""),
+        description=str(args.get("description") or ""),
+        procedure=str(args.get("procedure") or ""),
+        rationale=str(args.get("rationale") or ""),
+        run_id=run_id,
+        session_key=session_key,
+        # A run carries its own evidence in the ledger; a conversation promotion is grounded in
+        # the turns that produced it.
+        transcript=None if run_id else _review_transcript(session_key),
+    )
+    if result.proposal is None:
+        detail = _PROMOTE_REFUSALS.get(result.refusal, "it was declined.")
+        return f"Nothing filed: {detail}"
+    return (
+        f"Filed a skill proposal — '{result.proposal.title}' — nothing was written to the skill "
+        "library. The skill is created only when the user accepts it in the Learning review queue."
     )
 
 

@@ -299,7 +299,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         <div className="flex items-center gap-s min-w-0">
           <IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />
           {editingTitle ? (
-            <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
+            <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
               className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           ) : (
@@ -691,8 +691,10 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
             user must be able to fix ordering without delete-and-recreate. */}
         {total > 1 && (
           <div className="shrink-0 flex flex-col -my-1">
-            <SquareIconButton icon={ChevronUp} label="Move phase up" disabled={index === 0} onClick={onMoveUp} />
-            <SquareIconButton icon={ChevronDown} label="Move phase down" disabled={index === total - 1} onClick={onMoveDown} />
+            <SquareIconButton icon={ChevronUp} label="Move phase up" disabled={index === 0} onClick={onMoveUp}
+              disabledReason="Already the first phase" />
+            <SquareIconButton icon={ChevronDown} label="Move phase down" disabled={index === total - 1} onClick={onMoveDown}
+              disabledReason="Already the last phase" />
           </div>
         )}
         <input value={phase.role} onChange={(e) => set({ role: e.target.value })} placeholder="role (e.g. researcher)"

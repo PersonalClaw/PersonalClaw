@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, Package, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -20,6 +20,8 @@ import { WorkflowAsk } from './WorkflowAsk'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
 import { WorkspacePanel } from './WorkspacePanel'
+import { OutboxPanel } from './OutboxPanel'
+import { IntrospectPanel } from './IntrospectPanel'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -46,6 +48,11 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // runs are never reviewed. Available on a TERMINAL run too, which is exactly when a user wants
   // to decide what to do with the work.
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const [outboxOpen, setOutboxOpen] = useState(false)
+  // The introspection drawer: the nine questions, the cost/latency strip, the template
+  // p50/p95 card, the said-no badges and the Proof section. Closed by default and fetched on
+  // open — answering costs a cross-run ledger read, and most runs are never audited.
+  const [introspectOpen, setIntrospectOpen] = useState(false)
   // Coalesce refetches: a fan-out completing fires many node_done events at once, and one
   // request per event would hammer the gateway for the same answer.
   const pending = useRef<number | null>(null)
@@ -261,6 +268,19 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             <QuietButton onClick={() => setWorkspaceOpen((v) => !v)} title="Workspace — changed files and how to take this work">
               <FolderGit2 size={13} /> Workspace
             </QuietButton>
+            {/* Artifacts, likewise on both sides of the terminal split: mid-run it answers "what has
+                it produced so far", and after, it is where the deliverable and its version diff
+                live. It is also the only surface that can hand a live run a file. */}
+            <QuietButton onClick={() => setOutboxOpen((v) => !v)} title="Artifacts — what this run published, version diffs, and handing it files">
+              <Package size={13} /> Artifacts
+            </QuietButton>
+            {/* Introspect, on both sides of the terminal split for the strongest reason of the
+                three: mid-run it answers "what will you do next if I say nothing", and after, it
+                is the Proof section that lets a user review unattended work without reading the
+                transcript (criteria 6 & 8). */}
+            <QuietButton onClick={() => setIntrospectOpen((v) => !v)} title="Introspect — cost, latency, gates, timeline and proof">
+              <ScanSearch size={13} /> Introspect
+            </QuietButton>
             {!isTerminal(run.status) ? (
               <>
                 <QuietButton onClick={() => setSteerOpen((v) => !v)} title="Steer this run — queue an instruction or accept a judge comment">
@@ -396,7 +416,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                     </div>
                     <span className={`shrink-0 text-[0.75rem] ${nl.tone}`}>{nl.label}</span>
                     {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
-                      <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100">
+                      <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                         {/* Inspect: the reconstructability drawer. Offered ONLY for a
                             terminal node — the endpoint 409s otherwise, so a button on a running
                             node would teach the user the UI lies. Available on a terminal run too,
@@ -443,6 +463,20 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           navigating between runs refetches rather than showing the previous run's diff. */}
       {workspaceOpen && (
         <WorkspacePanel runId={runId} onClose={() => setWorkspaceOpen(false)} />
+      )}
+
+      {/* The outbox / artifact drawer, docked right. Keyed on the run id for the same
+          reason as the workspace drawer: navigating between runs must refetch, not show the previous
+          run's artifacts. */}
+      {outboxOpen && (
+        <OutboxPanel runId={runId} onClose={() => setOutboxOpen(false)} />
+      )}
+
+      {/* The introspection drawer (§6.4 / criteria 6 & 8), docked right. Keyed on the run id like
+          its siblings, so navigating between runs refetches rather than showing the previous run's
+          economics — which on this surface would be a wrong number a user would act on. */}
+      {introspectOpen && (
+        <IntrospectPanel runId={runId} onClose={() => setIntrospectOpen(false)} />
       )}
 
       {/* The steering + judge-triage drawer (R14 / criterion 8), docked right. Mounted only for

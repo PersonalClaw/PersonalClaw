@@ -8,6 +8,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { api } from '../../lib/api'
 import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
+import { PageTitle } from '../../ui/PageTitle'
 
 export interface TermTab { id: string; label: string; cwd?: string; shell?: string; custom?: boolean }
 
@@ -120,7 +121,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   return (
     <div className="flex h-full flex-col">
       <TopBar
-        left={<span data-type="title-l" className="text-on-surface">Terminal</span>}
+        left={<PageTitle>Terminal</PageTitle>}
         right={<HeaderActions>
           {persist !== null && (
             <HeaderControl icon={Anchor}
@@ -187,7 +188,7 @@ function TermTabChip({ tab, active, inSplit, onSelect, onClose, onRename }: {
       style={on ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' } : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }}>
       <TermIcon size={13} className={inSplit && !active ? 'text-primary' : 'opacity-70'} />
       {editing ? (
-        <input autoFocus value={v} onChange={(e) => setV(e.target.value)}
+        <input autoFocus aria-label="Rename this terminal tab" value={v} onChange={(e) => setV(e.target.value)}
           onClick={(e) => e.stopPropagation()}
           onBlur={() => { setEditing(false); if (v.trim()) onRename(v.trim()) }}
           onKeyDown={(e) => { if (e.key === 'Enter') { setEditing(false); if (v.trim()) onRename(v.trim()) } if (e.key === 'Escape') { setEditing(false); setV(tab.label) } }}

@@ -61,12 +61,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
+- `GET /api/artifacts/pinned` — the dashboard pin list (WORK-CONTAINERS §6.5d).
 - `DELETE /api/artifacts/{slug}` — _(no summary)_
 - `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
 - `PATCH /api/artifacts/{slug}` — save (silent) or snapshot; or metadata-only.
 - `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).
 - `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
 - `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.
+- `POST /api/artifacts/{slug}/pin` — pin or unpin (``{"pinned": bool}``).
 - `GET /api/artifacts/{slug}/raw` — stream a binary artifact's bytes.
 - `POST /api/artifacts/{slug}/regenerate` — re-run image generation at this slug.
 - `GET /api/artifacts/{slug}/versions` — _(no summary)_
@@ -438,10 +440,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/portability/preview` — validate and preview a zip without applying.
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
+- `POST /api/projects/import` — import a project archive (multipart `file`).
 - `DELETE /api/projects/{project_id}` — _(no summary)_
 - `GET /api/projects/{project_id}` — _(no summary)_
 - `PUT /api/projects/{project_id}` — _(no summary)_
 - `POST /api/projects/{project_id}/context-adapters/regenerate` — _(no summary)_
+- `GET /api/projects/{project_id}/export` — download one project as a manifest ZIP.
 - `GET /api/projects/{project_id}/linked` — the work units scoped under this
 - `GET /api/projects/{project_id}/work` — the state-grouped Work board.
 - `POST /api/projects/{project_id}/work/claim` — take a TTL'd claim on one board row.
@@ -614,10 +618,14 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/cancel` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/confirm` — Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
 - `GET /api/workflows/runs/{run_id}/continuations` — The pending resume tokens for a run — what a needs-input inbox renders.
+- `GET /api/workflows/runs/{run_id}/drop` — GET the run's file-drop policy + what has been dropped (WORK-CONTAINERS §2.5).
+- `POST /api/workflows/runs/{run_id}/drop` — POST multipart to the run's approval-gated file drop (WORK-CONTAINERS §2.5, R17).
 - `POST /api/workflows/runs/{run_id}/edit` — _(no summary)_
 - `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
 - `POST /api/workflows/runs/{run_id}/fork` — _(no summary)_
+- `GET /api/workflows/runs/{run_id}/introspect` — The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
 - `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
+- `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.

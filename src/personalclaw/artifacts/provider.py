@@ -155,6 +155,21 @@ class ArtifactProvider(ABC):
         """Return ``(data, mime)`` for a binary artifact body, or None."""
         return None
 
+    def store_version_file(self, slug: str, filename: str, data: bytes) -> bool:
+        """Write a content-addressed companion file beside an artifact's versions.
+
+        A published body that references a workspace file breaks the moment that file moves, which
+        is the failure the version dir exists to prevent — so a publish copies what it references in
+        under a ``<stem>@<hash>.<ext>`` name (WORK-CONTAINERS §2.2c). Content-addressed, so the same
+        unchanged file re-referenced by a later version resolves to the SAME copy rather than
+        accumulating byte-identical duplicates.
+
+        Default returns False so a backend that cannot host companion files declares it rather than
+        silently accepting bytes it drops; the publish path then reports the references it could not
+        make self-contained instead of claiming it did.
+        """
+        return False
+
     @abstractmethod
     def delete(self, slug: str) -> bool: ...
 

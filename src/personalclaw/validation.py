@@ -117,13 +117,22 @@ class ValidationError(Exception):
 
 # ── Field Validators ──
 
+#: The builtin, aliased at module scope. `FieldSpec` has a FIELD named `type`, which shadows the
+#: builtin for every annotation later in the class body — so `item_type: type | ...` reads as "the
+#: field named type", which is not a valid type. The alias is the annotation-safe spelling.
+_Type = type
+
+#: What a list field's items may be: one class, or a tuple of them for a field accepting more than
+#: one item shape (`tasks` takes a plain string OR a leaf-contract object).
+ItemType = _Type | tuple[_Type, ...]
+
 
 @dataclass
 class FieldSpec:
     """Declarative field specification for validation."""
 
     name: str
-    type: type | tuple[type, ...]  # expected Python type(s)
+    type: ItemType  # expected Python type(s)
     required: bool = False
     max_len: int = 0  # 0 = no limit
     min_val: float | None = None  # for numeric fields
@@ -136,7 +145,8 @@ class FieldSpec:
     enum_error_code: str = "ERR_TOOL_ARG_INVALID"
     pattern: re.Pattern[str] | None = None  # regex pattern
     default: Any = None
-    item_type: type | None = None  # type: ignore[valid-type]  # for list fields: expected type of each element  # noqa: E501
+    # For list fields: the type(s) each element may be. A tuple accepts more than one item shape.
+    item_type: ItemType | None = None
     item_max_len: int = 0  # for list fields: max length of each string element
     item_pattern: re.Pattern[str] | None = None  # for list fields: regex for each string element
     max_items: int = 0  # for list fields: max number of items (0 = no limit)
@@ -228,9 +238,13 @@ def validate_field(value: Any, spec: FieldSpec) -> Any:
         if spec.item_type:
             for i, item in enumerate(value):
                 if not isinstance(item, spec.item_type):
+                    wanted = (
+                        spec.item_type if isinstance(spec.item_type, tuple) else (spec.item_type,)
+                    )
+                    names = " or ".join(t.__name__ for t in wanted)
                     raise ValidationError(
                         spec.name,
-                        f"item[{i}]: expected {spec.item_type.__name__}, got {type(item).__name__}",
+                        f"item[{i}]: expected {names}, got {type(item).__name__}",
                     )
                 if isinstance(item, str):
                     item = sanitize_string(item)
@@ -342,7 +356,17 @@ SPAWN_RUN_SCHEMA = ToolSchema(
     tool_name="subagent_run",
     fields=[
         FieldSpec("task", str, max_len=MAX_MEDIUM_STRING),
-        FieldSpec("tasks", list, item_type=str, item_max_len=MAX_MEDIUM_STRING),
+        # A batch item is a plain string OR a leaf-contract object (task + objective +
+        # output_format + boundary, which `batch_compile.contract_lint` requires of an N>=2
+        # batch). Both shapes are accepted here because the compiler — not the schema — owns
+        # which declarations a batch needs; rejecting objects here would make the contract
+        # unexpressible through the tool that needs it.
+        FieldSpec(
+            "tasks",
+            list,
+            item_type=(str, dict),
+            item_max_len=MAX_MEDIUM_STRING,
+        ),
         FieldSpec("agent", str, max_len=MAX_SHORT_STRING, pattern=_AGENT_NAME_RE),
         FieldSpec(
             "agents",

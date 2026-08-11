@@ -90,13 +90,18 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
 
       {/* Footer: Back / Skip / Next while walking; a single Submit on the last question. */}
       <div className="flex items-center justify-between border-t border-outline-variant/30 pt-m">
+        {/* Reachable at the first question rather than natively disabled: walking back with the
+            keyboard otherwise destroys focus on arrival: the button being pressed drops out of
+            the tab order and focus falls to <body>. */}
         <Button variant="ghost" size="sm"
           onClick={() => state.index === 0 ? onExit?.() : dispatch({ type: 'back' })}
-          disabled={state.index === 0 && !onExit}>
+          disabled={state.index === 0 && !onExit}
+          disabledReason="This is the first question">
           <ArrowLeft size={15} /> Back
         </Button>
         {onLast ? (
-          <Button size="sm" onClick={() => onSubmit(answerRecord(questions, state))} disabled={!canSubmit(questions, state)}>
+          <Button size="sm" onClick={() => onSubmit(answerRecord(questions, state))} disabled={!canSubmit(questions, state)}
+            disabledReason="Answer the required questions first">
             <Check size={15} /> {submitLabel} · {answeredCount}/{total}
           </Button>
         ) : (
@@ -104,7 +109,8 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
             {!q.required && (
               <Button variant="ghost" size="sm" onClick={() => dispatch({ type: 'next', total })}>Skip</Button>
             )}
-            <Button size="sm" onClick={() => dispatch({ type: 'next', total })} disabled={!canAdvance(q, state)}>
+            <Button size="sm" onClick={() => dispatch({ type: 'next', total })} disabled={!canAdvance(q, state)}
+              disabledReason="This question is required">
               Next <ArrowRight size={15} />
             </Button>
           </div>

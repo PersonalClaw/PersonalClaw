@@ -215,7 +215,11 @@ function LoginSection() {
           <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" ariaLabel="New password" />
           <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" ariaLabel="Confirm password" />
           <div className="flex items-center gap-s">
-            <Button size="sm" variant={canSavePw ? 'primary' : 'secondary'} disabled={!canSavePw} onClick={savePassword}>
+            {/* Names whichever requirement is outstanding. The sibling hint below only appears
+                once something has been typed, so the button was the sole affordance for an
+                untouched form and it said nothing. */}
+            <Button size="sm" variant={canSavePw ? 'primary' : 'secondary'} disabled={!canSavePw} onClick={savePassword}
+              disabledReason={busy ? undefined : !pwLongEnough ? 'Use at least 12 characters' : 'Both fields must match'}>
               {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save password'}
             </Button>
             {pwDraft.length > 0 && !pwLongEnough ? (

@@ -1693,7 +1693,7 @@ function TaskRow({ task, state, preview, active, onSelect }: {
       {/* `ready` is the actionable state — a quiet chip (matches the others' pattern)
           so it reads as available-to-queue, not just an unlabeled inert row. */}
       {state === 'ready' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70" title="Ready to queue">ready</span>}
-      <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
+      <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
 }
@@ -1710,7 +1710,7 @@ function BlockerList({ blockers, onOpenTask }: { blockers: { id: string; title: 
           className="group/bl inline-flex max-w-full items-center gap-1 self-start rounded px-1 text-on-surface-var hover:text-primary">
           <Circle size={9} className="shrink-0 opacity-60" />
           <span className="truncate">{b.title}</span>
-          <ChevronRight size={11} className="shrink-0 opacity-0 transition-opacity group-hover/bl:opacity-100" />
+          <ChevronRight size={11} className="shrink-0 opacity-0 transition-opacity group-hover/bl:opacity-100 focus-within:opacity-100" />
         </button>
       ))}
     </div>
@@ -2775,7 +2775,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
                   <X size={12} className="hidden group-hover:block" />
                 </button>
               ) : (
-                <button type="button" onClick={() => requestClose(t.path, t.name)} aria-label={`Close ${t.name}`} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"><X size={12} /></button>
+                <button type="button" onClick={() => requestClose(t.path, t.name)} aria-label={`Close ${t.name}`} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><X size={12} /></button>
               )}
             </div>
           ))}

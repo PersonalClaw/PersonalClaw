@@ -134,6 +134,7 @@ export function WorkflowAsk({ continuation, busy, onAnswer }: {
               alwaysAllow,
             )}
             disabled={busy || (kind === 'text' && !text.trim())}
+            disabledReason={kind === 'text' && !text.trim() ? 'Type an answer first' : undefined}
           >
             <Check size={14} /> Submit
           </Button>

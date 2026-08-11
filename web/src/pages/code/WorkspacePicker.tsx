@@ -3,6 +3,7 @@ import { Folder, FolderPlus, CornerLeftUp, Loader2, Check, GitBranch } from 'luc
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
+import { unavailableWhen } from '../../ui/unavailable'
 import { api } from '../../lib/api'
 
 /** Filesystem navigator for choosing a Code project's workspace directory.
@@ -112,9 +113,13 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
       <div className="flex min-h-[360px] flex-col gap-3">
         {/* current path + up */}
         <div className="flex items-center gap-2">
+          {/* Stays REACHABLE at the filesystem root (`aria-disabled`, not the native attribute)
+              and names the limit. Browsing upward with the keyboard otherwise destroys focus at
+              the top: the button being pressed leaves the tab order and focus falls to <body>. */}
           <button type="button" onClick={() => parent && parent !== path && browse(parent)}
-            disabled={!parent || parent === path} aria-label="Up one level"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface disabled:opacity-40">
+            aria-label="Up one level"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-on-surface-low aria-disabled:cursor-default"
+            {...unavailableWhen(!parent || parent === path, 'Already at the top level', { title: 'Up one level' })}>
             <CornerLeftUp size={16} />
           </button>
           {/* Editable: type/paste an absolute path + Enter to jump there. Blurring
@@ -200,7 +205,8 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setError(null) } }}
                 disabled={submitting} placeholder="new-project-folder"
                 className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-60" />
-              <Button size="sm" onClick={createFolder} disabled={!newName.trim() || submitting}>
+              <Button size="sm" onClick={createFolder} disabled={!newName.trim() || submitting}
+                disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}>
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Create + use
               </Button>
             </div>

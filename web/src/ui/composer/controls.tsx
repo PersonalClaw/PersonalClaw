@@ -24,10 +24,26 @@ const NATIVE_EFFORTS: { value: string; label: string }[] = [
 // v2: a spring press (whileTap, expr-scaled), an active tint while its popover is
 // open, and a spring chevron flip — one physical touch across all pills. The
 // popover itself opens via the (already-v2) Popover.
-function PillButton({ icon, label, open, toggle }: { icon: React.ReactNode; label: string; open: boolean; toggle: () => void }) {
+/** The composer's value-selector trigger: an icon, the CURRENT VALUE, a chevron.
+ *
+ *  `dimension` is what the pill controls ("Model", "Agent"), and it exists because the visible
+ *  label cannot carry it. These pills show a value and nothing else, so a screen-reader user
+ *  tabbing the composer heard four bare values — "Agent", "Auto", "Default", "Normal" — with no
+ *  indication that they were the agent, the model, the reasoning effort and the permission mode.
+ *  Measured before this: every one of the four announced its value alone.
+ *
+ *  The name is composed exactly as `HeaderModePill` already composes its own
+ *  (`aria-label={`${ariaLabel}: ${label}`}`, giving "Task mode: Agent"), so the two pill families
+ *  in the app agree instead of one being precise and the other mute. Sighted users see no change —
+ *  the dimension is already obvious from position and icon on screen, which is exactly why the
+ *  visible label spends its width on the value. */
+function PillButton({ icon, label, dimension, open, toggle }: { icon: React.ReactNode; label: string; dimension: string; open: boolean; toggle: () => void }) {
   return (
     <motion.button
       type="button" onClick={toggle} aria-expanded={open}
+      // A pill whose value IS its dimension ("Agent" when no specific agent is bound) would
+      // otherwise announce "Agent: Agent".
+      aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
       whileTap={{ scale: 1 - expr(0.04, 0.3) }} transition={spring.spatialFast}
       className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors text-[0.8125rem] max-w-[160px]',
         open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}
@@ -65,7 +81,7 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
     .filter(([, agents]) => agents.length > 0)
   const noMatches = nq && native.length === 0 && discovered.length === 0
   return (
-    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Bot size={16} strokeWidth={2} />} label={value || 'Agent'} open={open} toggle={toggle} />}>
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Bot size={16} strokeWidth={2} />} label={value || 'Agent'} dimension="Agent" open={open} toggle={toggle} />}>
       {(close) => (
         <div className="flex max-h-[340px] flex-col">
           {showSearch && (
@@ -129,7 +145,7 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
     ? 'Auto'
     : (data?.models ?? []).find((m) => m.name === value)?.model_name || value
   return (
-    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} open={open} toggle={toggle} />}>
+    <Popover portal width={280} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={dot} label={pillLabel} dimension="Model" open={open} toggle={toggle} />}>
       {(close) => (
         <div className="max-h-[320px] overflow-y-auto">
           <MenuRow icon={<Cpu size={16} />} label="Auto" hint="Use-case chain (Settings → Models)" selected={!value || value === 'Auto'} onClick={() => { onSelect('Auto'); close() }} />
@@ -154,7 +170,7 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
 export function ApprovalPill({ value, onSelect }: { value: ApprovalMode; onSelect: (m: ApprovalMode) => void }) {
   const cur = APPROVAL.find((a) => a.id === value) ?? APPROVAL[0]
   return (
-    <Popover portal width={240} trigger={(open, toggle) => <PillButton icon={<ShieldCheck size={16} strokeWidth={2} />} label={cur.label} open={open} toggle={toggle} />}>
+    <Popover portal width={240} trigger={(open, toggle) => <PillButton icon={<ShieldCheck size={16} strokeWidth={2} />} label={cur.label} dimension="Permission mode" open={open} toggle={toggle} />}>
       {(close) => APPROVAL.map((a) => (
         <MenuRow key={a.id} label={a.label} hint={a.hint} selected={a.id === value} onClick={() => { onSelect(a.id); close() }} />
       ))}
@@ -176,7 +192,7 @@ export function ReasoningPill({ value, efforts, onSelect, openSignal }: {
   const rows = [{ value: '', label: 'Default' }, ...efforts]
   const cur = rows.find((e) => e.value === value) ?? rows[0]
   return (
-    <Popover portal width={180} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Gauge size={16} strokeWidth={2} />} label={cur.label} open={open} toggle={toggle} />}>
+    <Popover portal width={180} openSignal={openSignal} trigger={(open, toggle) => <PillButton icon={<Gauge size={16} strokeWidth={2} />} label={cur.label} dimension="Reasoning effort" open={open} toggle={toggle} />}>
       {(close) => rows.map((e) => (
         <MenuRow key={e.value || 'default'} label={e.label} selected={e.value === value} onClick={() => { onSelect(e.value as ReasoningEffort); close() }} />
       ))}

@@ -277,13 +277,17 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
               <>
                 <button onClick={() => setDraft(content)} disabled={!dirty} type="button"
                   className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface disabled:opacity-40" title="Revert unsaved changes"><RotateCcw size={13} /></button>
-                <button onClick={save} disabled={!dirty || saving} type="button"
+                {/* aria-busy: these are raw <button>s, not the Button primitive, so they do not
+                    inherit its loading→aria-busy wiring. The spinner below is the only
+                    in-flight signal and it is decorative, so without this a save announces
+                    nothing while it runs. */}
+                <button onClick={save} disabled={!dirty || saving} type="button" aria-busy={saving || undefined}
                   className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 text-[0.75rem] disabled:opacity-40"
                   style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }} title="Save (⌘S)">
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {!compact && 'Save'}
                 </button>
                 {actions?.map((a) => (
-                  <button key={a.label} onClick={() => runAction(a)} disabled={saving} type="button"
+                  <button key={a.label} onClick={() => runAction(a)} disabled={saving} type="button" aria-busy={saving || undefined}
                     className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 text-[0.75rem] disabled:opacity-40"
                     style={a.primary ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { color: 'var(--color-on-surface-low)' }}
                     title={a.title || a.label}>
@@ -301,7 +305,13 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
       {/* body */}
       <div className="min-h-0 flex-1 overflow-hidden">
         {view === 'preview' && previewable ? (
-          <div ref={previewScrollRef} className="relative h-full overflow-auto">
+          // Rendered markdown has no focusable content of its own, so without a tab stop a
+          // keyboard user cannot scroll the preview at all: measured 790px of 1-artifact
+          // content hidden below the fold (WCAG 2.1.1; axe scrollable-region-focusable,
+          // serious). Same resolution as the kanban columns, the shell denylist, the inbox
+          // procedure and the diagnostics log.
+          <div ref={previewScrollRef} tabIndex={0} role="group" aria-label={`${title || 'Document'} preview`}
+            className="relative h-full overflow-auto">
             {renderPreview()}
             {commentsOn && (
               <CommentLayer scrollRef={previewScrollRef} docId={docId} docLabel={title} docPath={path}
@@ -311,7 +321,11 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
         ) : view === 'split' && previewable ? (
           <div className="grid h-full grid-cols-1 lg:grid-cols-2">
             <div className="min-h-0 border-b border-outline/40 lg:border-b-0 lg:border-r">{renderEditor(true)}</div>
-            <div ref={splitPreviewRef} onScroll={syncFromPreview} className="min-h-0 overflow-auto">{renderPreview()}</div>
+            {/* Same defect in the SPLIT view — its own scroller, equally unreachable. The
+                editor half is a CodeMirror textbox and owns its own tab stop already. */}
+            <div ref={splitPreviewRef} onScroll={syncFromPreview} tabIndex={0} role="group"
+              aria-label={`${title || 'Document'} preview`}
+              className="min-h-0 overflow-auto">{renderPreview()}</div>
           </div>
         ) : (
           <div className="h-full">{renderEditor()}</div>

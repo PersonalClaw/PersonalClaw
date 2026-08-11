@@ -18,7 +18,7 @@ import { spring, expr } from '../design/motion'
  *  destructive (delete/remove) variant: idle at ink-low, hover tints the glyph
  *  red with no fill — the restrained treatment those buttons already ship. */
 export function SquareIconButton({
-  icon: Icon, children, label, title, onClick, on, disabled, tone = 'neutral', iconSize = 14, className,
+  icon: Icon, children, label, title, onClick, on, disabled, disabledReason, tone = 'neutral', iconSize = 14, className,
 }: {
   icon?: LucideIcon
   children?: React.ReactNode
@@ -31,6 +31,18 @@ export function SquareIconButton({
   on?: boolean
   /** Action currently unavailable: 40% opacity, not-allowed, onClick suppressed. */
   disabled?: boolean
+  /** WHY it is unavailable, when `disabled` is true. This primitive already keeps its tab
+   *  stop (it maps `disabled` to `aria-disabled`, never the native attribute), so a keyboard
+   *  user CAN land on it — and until now heard only the label. An icon-only button has no
+   *  visible text to carry the reason either, so without this a gated one is doubly mute.
+   *
+   *  Rides `title` (appended after an em dash, after any `title` override), matching
+   *  `Button.disabledReason`: `title` is the accessible DESCRIPTION here since the name comes
+   *  from `aria-label`, so the reason is announced without polluting the name.
+   *
+   *  Omit it when the gate is self-evident or transient; a compound gate should pass it only
+   *  for the branch it actually describes. */
+  disabledReason?: string
   /** `danger` = destructive action: hover tints the glyph red (no fill). Ignored
    *  while `on` (a selected destructive button is not a pattern the app has). */
   tone?: 'neutral' | 'danger'
@@ -45,7 +57,7 @@ export function SquareIconButton({
       type="button"
       aria-label={label}
       aria-disabled={disabled || undefined}
-      title={title ?? label}
+      title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={disabled ? undefined : onClick}
       whileTap={disabled ? undefined : { scale: pressScale }}
       transition={spring.spatialFast}

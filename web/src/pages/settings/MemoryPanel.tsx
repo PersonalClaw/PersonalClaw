@@ -495,7 +495,8 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
         placeholder="e.g. Always run the test suite before saying a fix works."
         className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}>{saving ? 'Saving…' : 'Save lesson'}</Button>
+        <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}
+          disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>{saving ? 'Saving…' : 'Save lesson'}</Button>
         {err && <span className="text-danger text-[0.75rem]">{err}</span>}
       </div>
       <p className="text-on-surface-low text-[0.75rem]">Injected into future prompts. Prune anything wrong from the list.</p>
@@ -531,7 +532,8 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
         placeholder="value" rows={2}
         className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}
+          disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>
@@ -667,7 +669,8 @@ function RecallTab() {
           <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
             placeholder="e.g. what did I decide about the TicTacToe deploy?" ariaLabel="Question for deep memory recall" size="md" surface="high" />
         </div>
-        <Button size="sm" onClick={run} disabled={busy || !q.trim()}>{busy ? <Loader2 size={15} className="animate-spin" /> : 'Recall'}</Button>
+        <Button size="sm" onClick={run} disabled={busy || !q.trim()}
+          disabledReason={!q.trim() ? 'Type a question first' : undefined}>{busy ? <Loader2 size={15} className="animate-spin" /> : 'Recall'}</Button>
       </div>
       {result !== null && (result
         ? <pre className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{result}</pre>
@@ -965,7 +968,8 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
           <div className="flex flex-wrap items-center gap-2">
             <TextInput value={name} onChange={setName} placeholder="Name" size="sm" ariaLabel="Entity name" />
             <Select value={kind} onChange={(v) => setKind(v as MemoryEntityType)} options={ENTITY_TYPE_OPTIONS} />
-            <Button size="sm" onClick={add} disabled={!name.trim() || busy === 'add'}>
+            <Button size="sm" onClick={add} disabled={!name.trim() || busy === 'add'}
+              disabledReason={!name.trim() ? 'Enter an entity name first' : undefined}>
               {busy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
             </Button>
           </div>

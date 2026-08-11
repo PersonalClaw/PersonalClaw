@@ -464,6 +464,27 @@ Examples:
         "--list", action="store_true", dest="list_snapshots", help="List existing snapshots"
     )
 
+    # project — move ONE project between machines as a manifest ZIP. Distinct from `snapshot`, which
+    # is whole-home: a user who wants to hand a colleague one project has no business shipping their
+    # memory database, and the archive's secret-exclusion + per-entity digests are what make the
+    # narrower artifact safe to send.
+    project_parser = sub.add_parser("project", help="Export or import a single project archive")
+    project_sub = project_parser.add_subparsers(dest="project_command")
+    proj_export = project_sub.add_parser("export", help="Write one project to a manifest ZIP")
+    proj_export.add_argument("project", help="Project id or name")
+    proj_export.add_argument("-o", "--output", help="Archive path (default: ./<name>.zip)")
+    proj_export.add_argument(
+        "--passphrase",
+        default="",
+        help="Encrypt the archive (AES-GCM). Lose this and the archive is unreadable.",
+    )
+    proj_import = project_sub.add_parser("import", help="Import a project archive")
+    proj_import.add_argument("archive", help="Path to a project .zip")
+    proj_import.add_argument(
+        "--dry-run", action="store_true", help="Plan the import without writing anything"
+    )
+    proj_import.add_argument("--passphrase", default="", help="Passphrase for an encrypted archive")
+
     rest_parser = sub.add_parser("restore", help="Restore PersonalClaw state from a snapshot")
     rest_parser.add_argument("snapshot", nargs="?", help="Path to snapshot .tar.gz")
     rest_parser.add_argument("--mode", choices=("replace", "merge"))
@@ -948,6 +969,12 @@ Examples:
         from personalclaw.snapshot import snapshot_main
 
         rc = snapshot_main(parsed=args)
+        if rc:
+            raise SystemExit(rc)
+    elif args.command == "project":
+        from personalclaw.cli_project import project_main
+
+        rc = project_main(args)
         if rc:
             raise SystemExit(rc)
     elif args.command == "restore":

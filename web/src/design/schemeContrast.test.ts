@@ -91,3 +91,51 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
     })
   }
 })
+
+// ── The accent CONTAINER pair, across every scheme ─────────────────────────
+//
+// A selected chip / tinted accent surface is drawn with `--color-primary-container` as its
+// background and `--color-on-primary-container` as its ink. Nothing above covered that pair, so
+// it was guaranteed in exactly zero schemes — the same population gap the rest of this file exists
+// to close, one token pair over.
+//
+// It matters more than it looks, because the two halves come from DIFFERENT places:
+// every scheme supplies its own `primaryContainer`, but `--color-on-primary-container` is a single
+// fixed value per mode in `tokens.css`. So the ink does NOT track the scheme. Picking a new accent
+// changes the background under a constant foreground, and nothing was checking where that lands.
+//
+// (What sent me looking: a selected filter chip was drawing the accent as BOTH tint and ink —
+// coral on 20% coral, 3.33:1 in light, axe `[serious]`. The fix moves it onto this pair, so the
+// pair had better be sound in all 12 schemes rather than just the one I measured.)
+
+/** `--color-on-primary-container` for a mode — read from tokens.css, not restated, so a retint
+ *  cannot silently drift this guard. The FIRST occurrence is the default (dark) `:root` block; the
+ *  one inside `.light` is the light override. */
+function onPrimaryContainer(mode: 'dark' | 'light'): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const all = [...css.matchAll(/--color-on-primary-container:\s*(#[0-9a-fA-F]{3,8})/g)].map((m) => m[1])
+  if (all.length < 2) throw new Error(`expected a dark AND a light --color-on-primary-container, found ${all.length}`)
+  return mode === 'dark' ? all[0] : all[all.length - 1]
+}
+
+describe('accent container: ink on the tinted accent surface meets AA in every scheme', () => {
+  const INK = { dark: onPrimaryContainer('dark'), light: onPrimaryContainer('light') }
+
+  it('found both mode values in tokens.css (not vacuously green)', () => {
+    expect(INK.dark).toMatch(/^#[0-9a-fA-F]{6}$/)
+    expect(INK.light).toMatch(/^#[0-9a-fA-F]{6}$/)
+    expect(INK.dark).not.toBe(INK.light)
+  })
+
+  for (const s of SCHEMES) {
+    const container = s.colors['--color-primary-container']
+    describe(`scheme '${s.id}'`, () => {
+      it('light: on-primary-container over primary-container ≥ AA', () => {
+        expect(contrast(INK.light, container.light)).toBeGreaterThanOrEqual(AA)
+      })
+      it('dark: on-primary-container over primary-container ≥ AA', () => {
+        expect(contrast(INK.dark, container.dark)).toBeGreaterThanOrEqual(AA)
+      })
+    })
+  }
+})

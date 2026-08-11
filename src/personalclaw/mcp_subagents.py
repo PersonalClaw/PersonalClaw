@@ -11,9 +11,168 @@ so a spawn's completions inject back into the parent session — plus ``_get`` /
 is owned by ``mcp_core`` and reused here.
 """
 
+import os
+import re
+import time
 from typing import Any
 
 from personalclaw.mcp_core import _get, _post, _resolve_session_key
+from personalclaw.workflows import batch_compile
+from personalclaw.workflows.batch_compile import Capability, LeafTask
+
+
+def _wf_depth() -> int:
+    """This process's workflow depth, from the env `lineage_env` threads into a leaf.
+
+    Read from the environment rather than passed as a tool argument on purpose: a depth the
+    CALLER supplies is a depth a leaf can understate, and `depth_lint` refusing a nested batch
+    would then be advisory. The engine writes it (``engine.WF_DEPTH_KEY``); a leaf inherits it.
+    """
+    from personalclaw.workflows.engine import WF_DEPTH_KEY
+
+    try:
+        return int(os.environ.get(WF_DEPTH_KEY, "0") or "0")
+    except ValueError:
+        return 0
+
+
+def _leaf_specs(tasks: list[Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Normalize `tasks[]` items to `(task_text, contract)` pairs.
+
+    A batch item is either a plain string or a contract object carrying the declarations
+    `compile_batch` requires. Both are normalized here so the compile path sees ONE shape —
+    branching on the item type further down would mean two code paths over one input.
+    """
+    out: list[tuple[str, dict[str, Any]]] = []
+    for item in tasks:
+        if isinstance(item, dict):
+            text = str(item.get("task", "") or "").strip()
+            if text:
+                out.append((text, item))
+        elif isinstance(item, str) and item.strip():
+            out.append((item.strip(), {}))
+    return out
+
+
+def _to_leaf(text: str, spec: dict[str, Any], agent: str) -> LeafTask:
+    """One `tasks[]` item as a `LeafTask`.
+
+    Missing declarations are passed through EMPTY rather than defaulted: `contract_lint` exists
+    to refuse an under-specified leaf, and a synthesized objective would satisfy the gate without
+    satisfying the requirement — the exact failure the contract was written to prevent.
+    """
+    raw_capability = str(spec.get("capability", "") or "").strip().lower()
+    capability = Capability.MUTATING if raw_capability == "mutating" else Capability.RESEARCH
+    writes = [str(w) for w in (spec.get("writes") or []) if str(w).strip()]
+    schema = spec.get("output_schema")
+    return LeafTask(
+        task=text,
+        objective=str(spec.get("objective", "") or ""),
+        output_format=str(spec.get("output_format", "") or ""),
+        boundary=str(spec.get("boundary", "") or ""),
+        agent=str(spec.get("agent", "") or agent or ""),
+        model_ref=str(spec.get("model", "") or ""),
+        capability=capability,
+        writes=writes,
+        output_schema=schema if isinstance(schema, dict) else None,
+    )
+
+
+#: Compiled-batch def names are minted per call and must satisfy `models.valid_name` (lowercase,
+#: digits, hyphens — it becomes a directory).
+_NAME_UNSAFE = re.compile(r"[^a-z0-9-]+")
+
+
+def _batch_def_name() -> str:
+    return f"subagent-batch-{int(time.time() * 1000)}"
+
+
+def _findings_report(result: batch_compile.CompileResult) -> str:
+    """A refusal a model can act on: the findings, then what to do about them."""
+    lines = ["Error: the batch did not compile — each leaf needs an explicit contract."]
+    for finding in result.findings:
+        lines.append(f"  [{finding.severity}] {finding.code}: {finding.message}")
+    lines.append(
+        "\nPass each item of 'tasks' as an object with 'task', 'objective', 'output_format' "
+        "and 'boundary' (each declaration at least "
+        f"{batch_compile.MIN_DECLARATION_CHARS} characters), plus 'capability' and 'writes' "
+        "when the leaf mutates."
+    )
+    return "\n".join(lines)
+
+
+def _run_compiled_batch(
+    leaf_specs: list[tuple[str, dict[str, Any]]],
+    *,
+    agent: str,
+    agents_list: list[str],
+    parent_session: str,
+    depth: int,
+    cwd: str,
+) -> str:
+    """Compile `tasks[]` into one run and start it.
+
+    The persistence that makes the widget survive a restart is NOT a new store: the compiled spec
+    is saved as a workflow definition and the run row references it by `workflow_name`, so a
+    restarted gateway reloads both from disk and the widget rebuilds from the run record — the same
+    path every other workflow run already uses. Per-branch retry is likewise the existing
+    `run-from` route over the compiled node ids.
+    """
+    leaves = [
+        _to_leaf(text, spec, agents_list[i] if i < len(agents_list) else agent)
+        for i, (text, spec) in enumerate(leaf_specs)
+    ]
+    name = _batch_def_name()
+    result = batch_compile.compile_batch(leaves, depth=depth, run_name=name)
+    if not result.compiled or not result.ok:
+        return _findings_report(result)
+
+    root = result.spec.get("root")
+    if not isinstance(root, dict):
+        return "Error: the compiler produced no root node"
+    saved = _post(
+        "/api/workflows",
+        {
+            "name": name,
+            "root": root,
+            "description": f"Compiled batch of {len(leaves)} leaf task(s) from subagent_run.",
+            # The compiled tree is machine-generated and lint-clean by construction; `strict`
+            # would reject on a convention WARNING and refuse a batch the compiler approved.
+            "strict": False,
+            # The compiler's §4.1 isolation declaration, sent EXPLICITLY. `root` alone would leave
+            # it behind: the authoring path takes named fields, so a top-level key that is not
+            # passed is a key the persisted def never sees — and the applier reads the def.
+            "workspace": result.spec.get(batch_compile.WORKSPACE_KEY) or {},
+        },
+    )
+    if saved.get("error"):
+        return f"Error: could not persist the compiled batch: {saved['error']}"
+
+    body: dict[str, Any] = {"name": name, "mode": "background"}
+    if cwd:
+        body["inputs"] = {"cwd": cwd}
+    started = _post("/api/workflows/runs", body)
+    if started.get("error"):
+        return f"Error: could not start the compiled batch: {started['error']}"
+    run_id = str(started.get("run_id", "") or "")
+
+    lines = [
+        f"Compiled {len(leaves)} tasks into one batch run ({run_id or 'pending'}).",
+        "Progress is a live widget; each branch is individually retryable.",
+    ]
+    for index, leaf in enumerate(leaves):
+        node_id = leaf.node_id(index)
+        posture = result.postures.get(node_id, {})
+        mode = "read-only" if posture.get("read_only") else "mutating"
+        lines.append(f"  {node_id} [{mode}]: {leaf.task[:70]}")
+    if result.serialized:
+        lines.append(f"\nWrite-bearing leaves run one at a time: {', '.join(result.serialized)}")
+    warnings = [f for f in result.findings if f.severity == "warn"]
+    for finding in warnings:
+        lines.append(f"  [warn] {finding.code}: {finding.message}")
+    if parent_session:
+        lines.append("\nResults arrive as completion events in this session.")
+    return "\n".join(lines)
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -102,11 +261,15 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         tasks = args.get("tasks")
         task = args.get("task")
 
-        # Support both single task and batch tasks
+        # Support both single task and batch tasks. A batch item may be a plain string (the
+        # legacy shape) or a contract object — `_leaf_specs` normalizes both to (text, spec)
+        # so the compile path below sees one shape.
         if tasks and isinstance(tasks, list):
-            task_list = [t for t in tasks if isinstance(t, str) and t.strip()]
+            leaf_specs = _leaf_specs(tasks)
+            task_list = [text for text, _ in leaf_specs]
         elif task:
-            task_list = [task]
+            leaf_specs = [(str(task), {})]
+            task_list = [str(task)]
         else:
             return "Error: task or tasks is required"
 
@@ -121,6 +284,21 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         cwd = args.get("cwd") or ""
         if agents_list and len(agents_list) != len(task_list):
             return f"Error: agents length ({len(agents_list)}) must match tasks length ({len(task_list)})"  # noqa: E501
+
+        # N>=2 is a BATCH: compiled to one `parallel[stage...]` run rather than N independent
+        # fire-and-forget spawns. The difference is not cosmetic — N spawns have no run record, so
+        # they cannot be shown as one widget, cannot survive a restart, and cannot be retried per
+        # branch. `compile_batch` owns the threshold (COMPILE_THRESHOLD), the lints and the
+        # capability posture; this seam only routes into it and reports what it decided.
+        if len(task_list) >= batch_compile.COMPILE_THRESHOLD:
+            return _run_compiled_batch(
+                leaf_specs,
+                agent=agent,
+                agents_list=[str(a) for a in agents_list],
+                parent_session=parent_session,
+                depth=_wf_depth(),
+                cwd=cwd,
+            )
 
         agent_ids: list[str] = []
         agent_names: list[str] = []

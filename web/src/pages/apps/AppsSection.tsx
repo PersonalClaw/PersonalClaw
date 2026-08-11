@@ -20,6 +20,7 @@ import { FilterMenu, type FilterSectionDef, type FilterOption } from '../../ui/F
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { RowHitTarget } from '../../ui/RowHitTarget'
 import { TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Segmented } from '../../ui/Segmented'
@@ -33,6 +34,7 @@ import { useGuardedInstall, guardedFromApp, type GuardedResult } from '../../lib
 import { AppIcon } from './appIcon'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
+import { PageTitle } from '../../ui/PageTitle'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
@@ -475,7 +477,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           keepCornerPadding
           left={
             <div className="flex items-center gap-3 min-w-0">
-              <span data-type="title-l" className="text-on-surface">Apps</span>
+              <PageTitle>Apps</PageTitle>
               <Segmented ariaLabel="Native, Library, or Store" value={view} onChange={setView}
                 options={[{ key: 'native', label: 'Native' }, { key: 'library', label: 'Library' }, { key: 'store', label: 'Store' }]} />
             </div>
@@ -767,7 +769,8 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newSource} onChange={setNewSource} name="app-git-source"
             placeholder="https://github.com/owner/app.git" />
-          <Button variant="secondary" size="sm" disabled={busy === 'add-source' || !newSource.trim()} onClick={addSource}>
+          <Button variant="secondary" size="sm" disabled={busy === 'add-source' || !newSource.trim()} onClick={addSource}
+            disabledReason={!newSource.trim() ? 'Enter a source URL first' : undefined}>
             <Plus size={15} /> Add
           </Button>
         </div>
@@ -798,7 +801,8 @@ function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
         <div className="mb-2 flex items-center gap-2">
           <TextInput value={newLocal} onChange={setNewLocal} name="app-local-source"
             placeholder="/path/to/apps  (a directory of app subdirs)" />
-          <Button variant="secondary" size="sm" disabled={busy === 'add-local' || !newLocal.trim()} onClick={addLocalSource}>
+          <Button variant="secondary" size="sm" disabled={busy === 'add-local' || !newLocal.trim()} onClick={addLocalSource}
+            disabledReason={!newLocal.trim() ? 'Enter a folder path first' : undefined}>
             <Plus size={15} /> Add
           </Button>
         </div>
@@ -890,11 +894,16 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
       // expr), consistent with the ListRow/Surface/TaskCard treatment. The whole
       // card is a click target → the app detail panel.
       whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
-      onClick={onOpen} role="button" tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
-      title={`${item.displayName} — details`}
-      className="group flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container"
+      // No role/tabIndex/onKeyDown here: the card carries its own Actions menu button, so a
+      // role="button" wrapper is `nested-interactive` (axe, serious). The tab stop is the
+      // empty overlay below — the ListRow resolution. `whileHover`/`whileTap` still make
+      // Motion mark the wrapper focusable, hence tabIndex={-1} rather than no attribute.
+      tabIndex={-1}
+      onClick={onOpen}
+      className="group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
       style={{ borderRadius: 'var(--radius-lg)' }}>
+      {/* The name was carried by `title` on the wrapper before. */}
+      <RowHitTarget label={`${item.displayName} — details`} />
 
       {/* hero banner (optional) — full-bleed cap; a subtle scrim keeps any overlaid
           icon/edge legible over a busy image */}
@@ -1018,7 +1027,9 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doInstall(false)}>
+            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doInstall(false)}
+              // `dangerous` is a SECURITY verdict, not a missing field — it needs its own sentence.
+              disabledReason={dangerous ? 'The security scan flagged this app as dangerous' : !source.trim() ? 'Enter a source first' : undefined}>
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Install
             </Button>
           )}
@@ -1063,7 +1074,8 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Update anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doUpdate(false)}>
+            <Button variant="primary" disabled={guarded.busy || dangerous || !source.trim()} onClick={() => doUpdate(false)}
+              disabledReason={dangerous ? 'The security scan flagged this update as dangerous' : !source.trim() ? 'Enter a source first' : undefined}>
               {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Update
             </Button>
           )}

@@ -211,6 +211,7 @@ class WorkflowWatchdog:
                 registry().publish(key, event, payload)
         except Exception:
             logger.debug("workflow sse publish failed", exc_info=True)
+        self._publish_to_equivalent_loop_hub(state, key, event, payload)
         try:
             broadcast = getattr(state, "_broadcast", None)
             if callable(broadcast) and event == "workflow_run_update":
@@ -220,6 +221,51 @@ class WorkflowWatchdog:
                 broadcast({"type": "workflow_run_update", "run_id": run_id})
         except Exception:
             logger.debug("workflow ws broadcast failed", exc_info=True)
+
+    def _publish_to_equivalent_loop_hub(
+        self, state: Any, key: str, event: str, payload: Any
+    ) -> None:
+        """Mirror a run event onto the EQUIVALENT loop hub, so a loop cockpit adopts it live (R10c).
+
+        This is what `loop_aliases.keys_equivalent` exists for. During coexistence a legacy loop
+        can run as a template: the cockpit subscribes on `loop:<id>` (`loop/watchdog.registry_key`)
+        while the engine publishes on `workflow:<run_id>` (`registry_key` above). Those are the
+        SAME container, and the frontend already knows it — `containerKey.belongsToLoop` matches
+        `loop:`, `run:` and `workflow:run:` forms. But nothing published to the loop hub, so the
+        match had nothing to match: the stream connects, the cockpit renders, and no update ever
+        arrives, with no error anywhere. Absence is the whole failure mode.
+
+        `peek`, never `hub`: publishing through `hub()` would CREATE a loop hub for every workflow
+        run, resurrecting a stream for a container nobody is watching and leaking one per run. A
+        mirror is only worth writing when a subscriber is already there.
+
+        Equivalence is asserted rather than assumed. The mirror only happens when
+        `keys_equivalent` agrees the two keys name one container, so this cannot become a
+        broadcast to every open cockpit — the bug that would be louder than the one it fixes.
+        """
+        from personalclaw.workflows.loop_aliases import base_container, keys_equivalent
+
+        container = base_container(key)
+        if not container:
+            return
+        loop_key = f"loop:{container}"
+        # Guard the mirror with the helper itself. It is trivially true here by construction, and
+        # that is the point: a future change to either key scheme cannot silently start mirroring
+        # events onto an unrelated hub, because this is the one place that decides.
+        if not keys_equivalent(key, loop_key):
+            return
+        try:
+            registry = getattr(state, "loop_sse", None)
+            if not callable(registry):
+                return
+            hub = registry().peek(loop_key)
+            if hub is None:
+                # Nobody is watching this container as a loop. The workflow hub already got the
+                # event; there is nothing to adopt.
+                return
+            hub.publish(event, payload)
+        except Exception:
+            logger.debug("loop-hub mirror publish failed for %s", loop_key, exc_info=True)
 
     # ── poll ──
 

@@ -49,7 +49,7 @@ export function Suggestions({ navigate }: RouteProps) {
         >
           <Sparkles size={13} className="shrink-0 text-primary" />
           <span data-type="body-m" className="min-w-0 flex-1 text-on-surface-var group-hover:text-on-surface">{s}</span>
-          <ArrowUpRight size={14} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
+          <ArrowUpRight size={14} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
         </motion.button>
       ))}
       <button

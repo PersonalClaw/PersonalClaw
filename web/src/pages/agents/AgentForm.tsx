@@ -32,7 +32,7 @@ export function draftToPayload(d: AgentDraft): Record<string, unknown> {
   // an agent at THEIR creation (scope='agent', scope_ref=<agent>), not from the
   // agent side — eligibility is resolved by that scope_ref match at surfacing.
   return {
-    name: d.name.trim(), description: d.description.trim(), provider: 'native', model: d.model,
+    name: d.name.trim().replace(/^-+|-+$/g, ''), description: d.description.trim(), provider: 'native', model: d.model,
     system_prompt: d.system_prompt, voice: d.voice, approval_mode: d.approval_mode,
     skills: d.skills, tools: d.tools, triggers: d.triggers,
     default_dir: d.default_dir.trim(), memory_store: d.memory_store.trim(),
@@ -68,7 +68,7 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
   return (
     <div className={`flex flex-col ${compact ? 'gap-l' : 'gap-xl'}`}>
       <Field label="Name" hint="Lowercase, hyphenated — e.g. research-assistant">
-        <TextInput value={draft.name} onChange={(v) => set('name', nameLocked ? draft.name : v.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-'))} placeholder="research-assistant" autoFocus={!nameLocked} />
+        <TextInput value={draft.name} onChange={(v) => set('name', nameLocked ? draft.name : v.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-+/g, ''))} placeholder="research-assistant" autoFocus={!nameLocked} />
       </Field>
       <Field label="Description"><TextInput value={draft.description} onChange={(v) => set('description', v)} placeholder="One line: what this agent is for" /></Field>
 

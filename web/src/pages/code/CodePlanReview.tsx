@@ -528,9 +528,11 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
       <div className="flex items-start gap-2">
         <div className="mt-1 flex flex-col items-center gap-0.5 text-on-surface-low">
-          <SquareIconButton icon={ChevronUp} label="Move stage up" disabled={index === 0} onClick={() => onMove(-1)} />
+          <SquareIconButton icon={ChevronUp} label="Move stage up" disabled={index === 0} onClick={() => onMove(-1)}
+            disabledReason="Already the first stage" />
           <span className="text-[0.75rem] tabular-nums">{index + 1}</span>
-          <SquareIconButton icon={ChevronDown} label="Move stage down" disabled={index === count - 1} onClick={() => onMove(1)} />
+          <SquareIconButton icon={ChevronDown} label="Move stage down" disabled={index === count - 1} onClick={() => onMove(1)}
+            disabledReason="Already the last stage" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

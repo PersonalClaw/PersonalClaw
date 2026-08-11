@@ -20,6 +20,7 @@ import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm, promptInput } from '../../ui/dialog'
+import { PageTitle } from '../../ui/PageTitle'
 
 type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
 
@@ -359,12 +360,13 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
     <WorkbenchLayout
       scroll={view !== 'graph'}
       controls={view === 'library'
-        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search knowledge', label: 'Search knowledge' }} />
+        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search knowledge', label: 'Search knowledge' }}
+            results={{ count: (items ?? []).length, noun: 'items', active: !!submitted }} />
         : undefined}
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Knowledge</span>}
+          left={<PageTitle>Knowledge</PageTitle>}
           // The ONE responsive header cluster (`HeaderActions`), like the other 26 header
           // right-slots in the app. This page was hand-rolling a plain `flex` div with a bare
           // `Segmented` + `IconButton` + `Button`, so nothing degraded: the slot measured
@@ -604,7 +606,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                       ]
                       return (
                         <ContextMenu key={it.id} items={menuItems}>
-                        <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)}>
+                        <ListRow index={i} accent={tm.tone} onClick={() => setItemTok(peekId === it.id ? '' : it.id)} label={it.title || it.url_title || '(untitled)'}>
                           {/* Selection tick. Hidden until hover or an active selection so
                               the list stays calm when nobody is curating; a wrapper stops
                               the click from also opening the item. */}
@@ -702,7 +704,7 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
       <p className="text-on-surface-low text-[0.8125rem]">Tell PersonalClaw what to watch for in plain language. As you save items, it gathers what matches — with the specifics extracted as structured fields. Click an intent to see everything it found, or add one with “New intent”.</p>
       {intents.length === 0 && <EmptyState icon={Target} title="No intents yet" hint='e.g. "anything that could improve my homelab", "ideas that help me learn agentic engineering", or "hints on how I should invest".' />}
       {intents.map((it) => (
-        <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)}>
+        <ListRow key={it.id} index={0} accent={it.id === selectedId ? 'var(--color-primary)' : undefined} onClick={() => onSelect(it)} label={it.goal || it.id}>
           <Target size={15} className="shrink-0 text-primary/80" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -843,7 +845,7 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
           : items.map((it, i) => {
               const tm = resolveType(it)
               return (
-                <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)}>
+                <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)} label={it.title || it.url_title || '(untitled)'}>
                   <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-on-surface text-[0.8125rem]">{it.title || it.url_title || '(untitled)'}</div>
@@ -912,11 +914,33 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
   )
 }
 
+/** One filter/collection chip. Selected chips carry the accent; the rest are neutral.
+ *
+ *  🪤 A SELECTED CHIP PUT THE ACCENT IN BOTH THE TEXT AND THE BACKGROUND, which is what broke it:
+ *  coral text on a 20% coral tint measured **3.33:1** in light mode — below the 4.5 floor and
+ *  reported `[serious] color-contrast` by axe. The tint raises the backdrop's luminance toward the
+ *  text it sits under, so the two converge. Dark mode was never affected (6.99:1) because there the
+ *  tint darkens the backdrop *away* from the light accent.
+ *
+ *  The selected state now uses the token pair the design system provides for exactly this — an
+ *  accent-tinted container with ink chosen to sit on it (`--color-primary-container` /
+ *  `--color-on-primary-container`, 13.1:1 in light, 10.43:1 in dark) — instead of hand-rolling a
+ *  `color-mix` tint and reusing the accent as ink.
+ *
+ *  A per-type `tone` (the Note/Bookmark/Gist hues) is left EXACTLY as it was. There is no
+ *  `<tone>-container` sibling to pair it with, and putting a type's hue on the coral container
+ *  would be both a new contrast risk and visually wrong. Those chips do not render selected on this
+ *  surface in any state measured here; if one ever fails, it needs its own container value, not a
+ *  guess made from this one. */
 function FilterChip({ active, onClick, tone, children }: { active: boolean; onClick: () => void; tone?: string; children: React.ReactNode }) {
+  const selected = tone
+    // Untouched: a type-toned chip keeps its own tint + ink.
+    ? { background: `color-mix(in srgb, ${tone} 20%, transparent)`, color: tone }
+    : { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-container)' }
   return (
     <button type="button" onClick={onClick}
       className="inline-flex items-center gap-1 rounded-pill px-m h-8 text-[0.8125rem] transition-colors"
-      style={active ? { background: `color-mix(in srgb, ${tone ?? 'var(--color-primary)'} 20%, transparent)`, color: tone ?? 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
+      style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
       {children}
     </button>
   )

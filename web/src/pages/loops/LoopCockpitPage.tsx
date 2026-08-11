@@ -541,7 +541,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             <IconButton icon={ArrowLeft} label="Back to loops" size={40} onClick={onBack} />
             <div className="min-w-0 flex flex-col">
               {editingTitle ? (
-                <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
+                <input autoFocus aria-label="Rename this loop" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
                   onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
                   className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
               ) : (
@@ -691,7 +691,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                   <div className="flex items-center justify-end gap-s mt-2">
                     <span className="mr-auto text-on-surface-low text-[0.75rem]">⌘↵ to send · Esc to cancel</span>
                     <Button variant="ghost" size="sm" onClick={() => { setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }}>Cancel</Button>
-                    <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
+                    <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}
+                      disabledReason={!nudgeText.trim() ? 'Write a nudge first' : undefined}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
                   </div>
                 </div>
               </motion.div>
@@ -972,7 +973,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
                   className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left text-[0.8125rem] hover:bg-surface-2 transition-colors"
                   title="Open task">
                   {box}{label}{status}
-                  <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
                 </button>
               ) : (
                 <div key={t.id} className="flex items-center gap-s text-[0.8125rem]">
@@ -1079,7 +1080,7 @@ function RailRow({ icon, label, hint, onClick }: {
       <span className="shrink-0 text-primary">{icon}</span>
       <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{label}</span>
       {hint && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{hint}</span>}
-      <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />
+      <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
     </button>
   )
 }
@@ -1154,7 +1155,7 @@ function CycleNode({ f, verdict, dur, hasNudge, onClick, delay }: { f: LoopFindi
         <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{asText(f.key_insight) || asText(f.summary) || `Cycle ${f.cycle}`}</span>
         {hasNudge && <MessageSquarePlus size={13} className="text-info shrink-0" />}
         {typeof verdict?.marginal_value === 'number' && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums" title="judge's marginal value (return this cycle)">▲{verdict.marginal_value.toFixed(1)}</span>}
-        <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />
+        <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
       </div>
       {dur != null && dur > 0 && <div className="mt-1 pl-7 text-on-surface-low text-[0.75rem] tabular-nums">took {fmt(dur)}</div>}
     </motion.button>

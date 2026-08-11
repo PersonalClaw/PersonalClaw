@@ -39,7 +39,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
         <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
-          <Button onClick={create} disabled={saving || !draft.title.trim()}><Check size={16} /> {saving ? 'Creating…' : 'Create task'}</Button>
+          <Button onClick={create} disabled={saving || !draft.title.trim()} disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={16} /> {saving ? 'Creating…' : 'Create task'}</Button>
         </div>
       </div>
     </div>

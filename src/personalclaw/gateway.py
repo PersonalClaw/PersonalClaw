@@ -2195,10 +2195,10 @@ class GatewayOrchestrator:
                 # Sources are selected BY NAME through the vendor-neutral seam below,
                 # so this names no vendor: any other source — including one an app
                 # contributes — is resolved by its own ``source_name``, not assumed
-                # here. NOTE: ``get_default_provider`` resolves only names present in
-                # the ``personalclaw.message_source_providers`` entry-point group, so
-                # an app that declares an ``inbox`` provider in its manifest is not
-                # reachable from here yet (see the seam's docstring).
+                # here. Since INU-8 the seam resolves an app-declared source too
+                # (app-contributed instance → entry-point class → native →
+                # filesystem); which NAME the inbox polls is the caller's choice, and
+                # this default call site asks for the in-process filesystem source.
                 from personalclaw.inbox_providers import get_default_provider
 
                 provider = get_default_provider("filesystem")

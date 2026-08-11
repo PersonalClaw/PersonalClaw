@@ -2,8 +2,8 @@
 
 The extension ``ProviderRegistry`` has real type handlers for the types that own
 a consumed domain registry (model/task/workflow/memory/tool/hook/prompt/channel/
-knowledge) and ``EntitySeamHandler`` for the types whose real entity lives in a
-separate subsystem: agent, inbox, skills, notification.
+knowledge/inbox) and ``EntitySeamHandler`` for the types whose real entity lives
+in a separate subsystem: agent, skills, notification.
 
 These tests pin the seam invariant: the seam must NAME where each entity actually
 lives (so no future feature wires the Nth consumer of a no-op path), a genuine
@@ -27,10 +27,12 @@ from personalclaw.providers.registry import (
 # owned through this seam). Real-registry types are asserted separately.
 # ``channel`` graduated to a real handler (ChannelTypeHandler registers a
 # transport in channel_transports), so it is no longer a seam.
-SEAM_TYPES = {"agent", "inbox", "skills", "notification"}
+SEAM_TYPES = {"agent", "skills", "notification"}
 # ``knowledge`` graduated to a real handler (KnowledgeTypeHandler registers a
 # provider in knowledge_providers.registry, consumed by list_provider_info +
 # search_all — WATCHED-SOURCES §1.3), so it is no longer a seam.
+# ``inbox`` graduated the same way (InboxTypeHandler registers a source in
+# inbox_providers.registry, consumed by get_default_provider — INU-8).
 REAL_REGISTRY_TYPES = {
     "model",
     "task",
@@ -41,6 +43,7 @@ REAL_REGISTRY_TYPES = {
     "prompt",
     "channel",
     "knowledge",
+    "inbox",
 }
 # Types with a genuine factory↔registry contract mismatch flagged for an owner.
 MISMATCH_TYPES = {"skills"}

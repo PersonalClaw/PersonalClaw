@@ -16,6 +16,7 @@ const doc: UiDoc = {
     { name: 'onClick', description: 'Click handler; receives the mouse event. Suppressed while disabled.' },
     { name: 'on', description: 'Selected/toggled — carries the coral tint (primary bg-mix + text-primary).' },
     { name: 'disabled', description: 'Action currently unavailable: 40% opacity, not-allowed cursor, onClick suppressed — kept distinct from a busy state so it reads as inert rather than a dead-click.' },
+    { name: 'disabledReason', description: 'WHY it is unavailable, when disabled is true; appended to the tooltip after an em dash. This button keeps its tab stop (disabled maps to aria-disabled, never the native attribute), so a keyboard user lands on it and would otherwise hear only the label — and being icon-only, it has no visible text to carry the reason either. Omit it when the gate is self-evident or transient; pass it only for the branch it describes when the gate is compound.' },
     { name: 'tone', description: "'neutral' (default) or 'danger'; danger tints the glyph red on hover with no fill (the restrained destructive treatment). Ignored while on." },
     { name: 'iconSize', description: 'Glyph size for the icon form (default 14); the children form sizes itself.' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },

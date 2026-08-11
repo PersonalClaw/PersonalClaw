@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { ListTree, FileText, Link2, MessageSquare, ExternalLink, MessagesSquare, ArrowUp, Loader2, Bot, Check, AlertTriangle, OctagonX } from 'lucide-react'
@@ -139,7 +140,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                       <span className="block truncate text-on-surface text-[0.8125rem]">{l.label}</span>
                       <span className="block truncate text-on-surface-low text-[0.75rem]">{l.url}</span>
                     </span>
-                    <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100" />
+                    <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
                   </motion.a>
                 ))}
               </div>
@@ -256,8 +257,9 @@ function SideChat({ side }: { side: SidePanelData }) {
           <textarea value={q} onChange={(e) => setQ(e.target.value)} rows={1} placeholder="Ask the side…"
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
             className="max-h-24 min-h-0 flex-1 resize-none bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
-          <button type="button" onClick={ask} disabled={!q.trim() || side.busy} aria-label="Ask side"
-            className="grid size-7 shrink-0 place-items-center rounded-full disabled:opacity-40"
+          <button type="button" onClick={ask} aria-label="Ask side"
+            {...unavailableWhen(!q.trim(), 'Type a question first', { busy: side.busy })}
+            className="grid size-7 shrink-0 place-items-center rounded-full disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
             style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
             {side.busy ? <Loader2 size={13} className="animate-spin" /> : <ArrowUp size={14} />}
           </button>

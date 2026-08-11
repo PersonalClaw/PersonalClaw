@@ -18,17 +18,37 @@ def test_spawn_run_single_task():
 
 
 def test_spawn_run_batch_tasks():
-    """Test subagent_run with tasks array spawns all and returns immediately."""
+    """A contract-bearing batch compiles into ONE run rather than N loose spawns.
+
+    This asserted three independent `/api/spawn` calls before the compile cutover. N
+    fire-and-forget spawns have no run record, so they cannot render as one widget, survive a
+    gateway restart, or be retried per branch — which is why the batch path now goes through
+    `compile_batch`. The two POSTs are the compiled def and the run started against it.
+    """
+    declared = {
+        "objective": "determine how the subsystem behaves",
+        "output_format": "a markdown list of findings",
+        "boundary": "do not modify any source file",
+    }
     with patch("personalclaw.mcp_subagents._post") as mock_post:
-        mock_post.side_effect = [{"id": "a1"}, {"id": "b2"}, {"id": "c3"}]
+        mock_post.side_effect = [{"ok": True}, {"ok": True, "run_id": "run-7"}]
 
-        result = _call_tool("subagent_run", {"tasks": ["task1", "task2", "task3"]})
+        result = _call_tool(
+            "subagent_run",
+            {
+                "tasks": [
+                    {"task": "probe the first subsystem", **declared},
+                    {"task": "probe the second subsystem", **declared},
+                    {"task": "probe the third subsystem", **declared},
+                ]
+            },
+        )
 
-        assert "3 subagent" in result
-        assert "a1" in result
-        assert "b2" in result
-        assert "c3" in result
-        assert mock_post.call_count == 3
+        assert "run-7" in result
+        assert [c.args[0] for c in mock_post.call_args_list] == [
+            "/api/workflows",
+            "/api/workflows/runs",
+        ]
 
 
 def test_spawn_run_error():
@@ -72,10 +92,30 @@ def test_spawn_run_passes_parent_session():
 
 
 def test_spawn_run_batch_partial_failure():
-    """Test subagent_run stops on first spawn error in batch."""
+    """A failed persist REPORTS the error and never starts a run against a def that is not there.
+
+    Pre-cutover this asserted a partial success ("stops on first spawn error"), which a batch
+    compiled into one run cannot have: there is a single def to save, so the save either lands or
+    the batch does not exist. Asserting the run POST was never made is the load-bearing half — a
+    run row pointing at a missing def is a widget that survives as a broken row.
+    """
+    declared = {
+        "objective": "determine how the subsystem behaves",
+        "output_format": "a markdown list of findings",
+        "boundary": "do not modify any source file",
+    }
     with patch("personalclaw.mcp_subagents._post") as mock_post:
-        mock_post.side_effect = [{"id": "ok1"}, {"error": "capacity reached"}]
+        mock_post.side_effect = [{"error": "capacity reached"}]
 
-        result = _call_tool("subagent_run", {"tasks": ["task1", "task2"]})
+        result = _call_tool(
+            "subagent_run",
+            {
+                "tasks": [
+                    {"task": "probe the first subsystem", **declared},
+                    {"task": "probe the second subsystem", **declared},
+                ]
+            },
+        )
 
-        assert "Spawned" in result or "queued" in result
+        assert "capacity reached" in result
+        assert [c.args[0] for c in mock_post.call_args_list] == ["/api/workflows"]

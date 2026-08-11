@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { unavailableWhen } from '../../ui/unavailable'
 import { Download, Trash2, RefreshCw, Loader2, Check, AlertCircle, Info, X } from 'lucide-react'
 import { api, type OllamaLocalModel, type OllamaSearchResult, type OllamaModelInfo } from '../../lib/api'
 import { confirmDelete } from '../../ui/dialog'
@@ -138,8 +139,9 @@ function BrowseLibrary({ provider }: { provider: string }) {
             onKeyDown={(e) => { if (e.key === 'Enter') search() }}
             placeholder="Search ollama.com/library (e.g. llama, qwen, embed)" ariaLabel="Search Ollama model library" />
         </div>
-        <button onClick={search} disabled={searching || !q.trim()}
-          className="shrink-0 rounded-md bg-surface-container px-3 py-1 text-on-surface text-[0.75rem] hover:bg-surface-container-high disabled:opacity-50">
+        <button onClick={search}
+          {...unavailableWhen(!q.trim(), 'Type a model name first', { busy: searching })}
+          className="shrink-0 rounded-md bg-surface-container px-3 py-1 text-on-surface text-[0.75rem] hover:bg-surface-container-high disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
           {searching ? <Loader2 size={13} className="animate-spin" /> : 'Search'}
         </button>
       </div>

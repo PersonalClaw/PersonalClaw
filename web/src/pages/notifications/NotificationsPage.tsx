@@ -21,6 +21,7 @@ import { api, type NotificationItem } from '../../lib/api'
 import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, unreadRail, toneChipBg } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
@@ -82,7 +83,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}</span>}
+          left={<PageTitle className="flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}</PageTitle>}
           right={items && items.length > 0 ? (
             // Direct header actions (the header is otherwise empty now that the
             // filter lives on the page); each collapses to an icon when tight.
@@ -94,7 +95,9 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         />
       }
       controls={(items === undefined || items.length > 0)
-        ? <ListControls><FilterMenu sections={[filterSection]} /></ListControls>
+        ? <ListControls results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }}>
+            <FilterMenu sections={[filterSection]} />
+          </ListControls>
         : undefined}
       panel={open && (
         <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = kindMeta(open.kind); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>
@@ -176,7 +179,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
         </div>
         <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{firstLine(n.body)}</p>
       </div>
-      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+      <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {/* Investigate: a failure notification carries the link to what
             failed, so the chat opens with the run/job state already resolved. */}
         <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34} />

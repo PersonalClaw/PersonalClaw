@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Code2, Plus, Loader2, Trash2, FolderOpen, AlertTriangle, RotateCcw } from 'lucide-react'
+import { Code2, Plus, Loader2, Trash2, FolderOpen } from 'lucide-react'
 import type { CodeDraft } from './codeDraft'
 import { CodePlanReview } from './CodePlanReview'
 import { CodePlanningView } from './CodePlanningView'
 import { CodeCockpitPage } from './CodeCockpitPage'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InlineError } from '../../ui/InlineError'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { confirm } from '../../ui/dialog'
 import { WorkspacePicker } from './WorkspacePicker'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
@@ -301,16 +300,10 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
         <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
           {projects === undefined && loadErr ? (
-            // First-load failure — distinct from a genuine empty list. Offer a retry
-            // instead of an eternal skeleton or a misleading "no projects yet".
-            <div className="flex flex-col items-center gap-l py-2xl text-center">
-              <AlertTriangle size={32} className="text-danger opacity-70" />
-              <div>
-                <h2 data-type="headline-s" className="text-on-surface">Couldn't load your projects</h2>
-                <p className="mt-1 text-on-surface-low text-[0.9375rem] max-w-[400px]">{(loadErr as Error)?.message || 'The server didn’t respond. Your projects are safe — this is just a load error.'}</p>
-              </div>
-              <Button size="sm" onClick={load}><RotateCcw size={15} /> Retry</Button>
-            </div>
+            // First-load failure — distinct from a genuine empty list. This surface WROTE the
+            // pattern; it now uses the shared primitive so the other 100+ useCachedData
+            // consumers can adopt one form instead of re-deriving it.
+            <LoadError what="projects" error={loadErr} onRetry={load} />
           ) : projects === undefined ? (
             <ListSkeleton rows={6} />
           ) : projects.length === 0 ? (

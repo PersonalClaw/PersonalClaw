@@ -20,8 +20,12 @@ function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
   if (!m) return null
   const Icon = m.icon
   return (
+    // No aria-label: on a role-less span it is a PROHIBITED attribute (discarded, and axe
+    // reports aria-prohibited-attr), and it was redundant anyway — the chip renders
+    // `m.label` as visible text below, so the risk level is already in the a11y tree. The
+    // `title` stays as the hover affordance that spells out "Risk: …".
     <span className="inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] shrink-0"
-      title={`Risk: ${m.label}`} aria-label={`Risk level: ${m.label}`}
+      title={`Risk: ${m.label}`}
       style={withWeight({ background: `color-mix(in srgb, ${m.color} 16%, transparent)`, color: m.color }, 600)}>
       <Icon size={11} aria-hidden /> {m.label}
     </span>

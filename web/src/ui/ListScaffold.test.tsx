@@ -92,40 +92,62 @@ describe('EmptyState', () => {
 // list surfaces. These tests pin the button semantics on the interactive branch and,
 // just as importantly, pin that the STATIC branch stays inert: adding a role or a tab
 // stop to non-clickable rows would flood every list with phantom keyboard stops.
+//
+// The GUARANTEE is unchanged; the MECHANISM moved. The row's button used to be the
+// wrapper itself (`role="button"` + a hand-rolled Enter/Space handler), which made any
+// row carrying its own controls `nested-interactive` — 60 nodes across knowledge and
+// workflows. The tab stop is now a real <button> stretched over the row as a SIBLING of
+// the content, so these tests probe that element instead of the wrapper.
+//
+// That is strictly stronger than what they locked before: Enter/Space activation and the
+// no-page-scroll-on-Space behaviour come from the platform rather than from a keydown
+// branch we maintain, so they cannot regress by someone editing the handler.
 
 describe('ListRow', () => {
-  it('an interactive row carries the button role and owns its tab stop', () => {
-    const { getByRole } = render(<ListRow onClick={() => {}}>Row</ListRow>)
-    expect(getByRole('button')).toHaveAttribute('tabindex', '0')
+  it('an interactive row exposes ONE button-role tab stop', () => {
+    const { getByRole, container } = render(<ListRow onClick={() => {}} label="Row">Row</ListRow>)
+    const hit = getByRole('button', { name: 'Row' })
+    expect(hit.tagName).toBe('BUTTON')
+    // Natively focusable — no explicit tabindex needed, and none should be added.
+    expect(hit.getAttribute('tabindex')).toBeNull()
+    // Exactly one stop: the wrapper is pinned to -1 because `whileTap` sets tabindex="0"
+    // on it, which would otherwise give every row a second, nameless stop.
+    expect(container.querySelectorAll('[tabindex="0"]').length).toBe(0)
+    expect(container.firstElementChild!.getAttribute('tabindex')).toBe('-1')
   })
 
-  it('Enter activates an interactive row', () => {
+  it('activates on click — including the synthetic click Enter/Space produce', () => {
+    // A native <button> converts Enter and Space into a click event for us (and Space
+    // does not scroll the page). fireEvent.click is the same event those keys dispatch;
+    // jsdom does not synthesise it from keydown, so this asserts the path they take.
+    // Verified separately in the browser: Enter and Space both open the row, and Space
+    // leaves scrollY unchanged.
     const onClick = vi.fn()
-    const { getByRole } = render(<ListRow onClick={onClick}>Row</ListRow>)
-    fireEvent.keyDown(getByRole('button'), { key: 'Enter' })
-    expect(onClick).toHaveBeenCalledTimes(1)
-  })
-
-  it('Space activates an interactive row', () => {
-    const onClick = vi.fn()
-    const { getByRole } = render(<ListRow onClick={onClick}>Row</ListRow>)
-    fireEvent.keyDown(getByRole('button'), { key: ' ' })
+    const { getByRole } = render(<ListRow onClick={onClick} label="Row">Row</ListRow>)
+    fireEvent.click(getByRole('button', { name: 'Row' }))
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 
   it('ignores other keys so list-level shortcuts still pass through', () => {
     const onClick = vi.fn()
-    const { getByRole } = render(<ListRow onClick={onClick}>Row</ListRow>)
-    fireEvent.keyDown(getByRole('button'), { key: 'ArrowDown' })
-    fireEvent.keyDown(getByRole('button'), { key: 'Escape' })
+    const { getByRole } = render(<ListRow onClick={onClick} label="Row">Row</ListRow>)
+    const hit = getByRole('button', { name: 'Row' })
+    fireEvent.keyDown(hit, { key: 'ArrowDown' })
+    fireEvent.keyDown(hit, { key: 'Escape' })
     expect(onClick).not.toHaveBeenCalled()
   })
 
   it('interactive rows name their keyboard focus with the shared inset ring', () => {
-    const { getByRole } = render(<ListRow onClick={() => {}}>Row</ListRow>)
-    const have = classOf(getByRole('button'))
-    for (const t of ['focus-visible:ring-2', 'focus-visible:ring-inset',
-      'focus-visible:ring-primary/50']) {
+    // The ring is drawn on the ROW, keyed off the overlay's focus via `:has()`. It cannot
+    // live on the overlay: that sits at `-z-10`, so its own ring would paint behind this
+    // element's background (measured in the browser — nothing reached the screen). The
+    // `> button` scope is narrower than `focus-within` on purpose, so focusing a checkbox
+    // or tag filter INSIDE the row does not also ring the row and double up with that
+    // control's own indicator.
+    const { container } = render(<ListRow onClick={() => {}} label="Row">Row</ListRow>)
+    const have = classOf(container.firstElementChild)
+    for (const t of ['has-[>button:focus-visible]:ring-2', 'has-[>button:focus-visible]:ring-inset',
+      'has-[>button:focus-visible]:ring-primary/50']) {
       expect(have, `missing "${t}"`).toContain(t)
     }
   })

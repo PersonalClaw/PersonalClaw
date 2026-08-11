@@ -212,7 +212,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
           <div className="flex items-center gap-1.5 py-1.5 pr-2" style={{ paddingLeft: 10 + depth * 16 }}>
             <span className="w-[15px] shrink-0" />
             <Icon size={16} className="shrink-0" style={{ color: entry.is_dir ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
-            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
+            <input autoFocus aria-label="Rename this file or folder" value={draft} onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { cancelledRename.current = true; setRenaming(false) } }}
               onBlur={commitRename}
               className="h-6 min-w-0 flex-1 rounded-md bg-surface-high px-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />

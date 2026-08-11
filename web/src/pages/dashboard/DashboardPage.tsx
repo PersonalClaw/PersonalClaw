@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
   MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
+  Package,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
@@ -12,6 +13,7 @@ import { ActiveWork } from './widgets/ActiveWork'
 import { TasksWidget } from './widgets/TasksWidget'
 import { Suggestions } from './widgets/Suggestions'
 import { Discover } from './widgets/Discover'
+import { PinnedArtifacts } from './widgets/PinnedArtifacts'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -98,6 +100,14 @@ export function DashboardPage(route: RouteProps) {
                 dedicated Discover hub (the widget's "See all" jumps there). */}
             <Section label="Discover" icon={Compass}>
               <Discover {...route} />
+            </Section>
+
+            {/* Pinned artifacts — hard-imported, the established
+                widget pattern. There is no tile registry to register with: the bento grid and
+                per-user layout persistence were deliberately retired, so a pin is a slug in a
+                list that THIS component renders. */}
+            <Section label="Pinned artifacts" icon={Package}>
+              <PinnedArtifacts {...route} />
             </Section>
 
             <Section label="Recent activity" icon={History}>
@@ -244,7 +254,12 @@ function Section({ label, icon: Icon, children }: { label: string; icon: LucideI
     <section className="flex min-w-0 flex-col gap-s">
       <div className="flex items-center gap-s">
         <Icon size={14} className="shrink-0 text-on-surface-low" />
-        <h3 data-type="label-l" className="text-on-surface-var">{label}</h3>
+        {/* h2, not h3: this is a top-level section directly under the page's h1 greeting, and
+            every one of the dashboard's sections renders through here. As h3 the page read
+            h1 -> h3 seven times over, skipping a level for a screen-reader user navigating by
+            heading. `data-type="label-l"` carries the size and weight, so the level is purely
+            structural — the heading looks identical. */}
+        <h2 data-type="label-l" className="text-on-surface-var">{label}</h2>
         <span className="h-px flex-1 bg-outline-variant/40" />
       </div>
       {children}

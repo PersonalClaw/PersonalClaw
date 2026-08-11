@@ -14,6 +14,7 @@ import { NativeAgentDetail, DiscoveredAgentDetail } from './AgentDetail'
 import { api, type SavedAgent, type DiscoveredAgent } from '../../lib/api'
 import { useConfigFsWatch } from '../../lib/useConfigFsWatch'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 type Open =
   | { kind: 'native'; name: string }
@@ -93,7 +94,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Agents</span>}
+          left={<PageTitle>Agents</PageTitle>}
           right={<HeaderActions>
             <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} priority="low" onClick={syncAgents} />
             <HeaderControl icon={Plus} label="New agent" variant="primary" priority="primary" onClick={onCreate} />
@@ -192,7 +193,7 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
   ]
   return (
     <ContextMenu items={menuItems}>
-    <ListRow index={index} accent="var(--color-primary)" onClick={onClick}>
+    <ListRow index={index} accent="var(--color-primary)" onClick={onClick} label={agent.name}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}><Users size={19} className="text-primary" /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
@@ -224,7 +225,7 @@ function DiscoveredRow({ agent, index, tone, icon: Icon, onClick }: { agent: Dis
   ]
   return (
     <ContextMenu items={menuItems}>
-    <ListRow index={index} onClick={onClick}>
+    <ListRow index={index} onClick={onClick} label={agent.name}>
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)` }}><Icon size={19} style={{ color: tone }} /></span>
       <div className="flex-1 min-w-0">
         <span className="block truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{agent.name}</span>

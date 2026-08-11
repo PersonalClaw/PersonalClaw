@@ -253,6 +253,16 @@ class RunController:
         #: judge gate must avoid. The active selection does not change mid-run, so
         #: re-resolving per gate would re-read the model store for an answer that cannot change.
         self._worker_model_cache: str | None = None
+        #: node id -> the fraction each of that node's prompt compactions freed. Read by
+        #: `context_compaction.should_compact`: two consecutive compactions that each freed <10%
+        #: mean compaction has stopped helping this node, and it stops paying a summarizer for it.
+        #:
+        #: Keyed by node ID, not by instance PATH, on purpose. A loop body's iteration 40 is a
+        #: different path than iteration 39, so a path key would hand every iteration a fresh
+        #: empty history — and a long-horizon loop is exactly the shape whose prompt grows the
+        #: same way every cycle. Keying by id is what makes the rule able to observe repetition
+        #: at all.
+        self._compaction_saves: dict[str, list[float]] = {}
         #: Long-run watcher state, keyed by the loop's path. Journaled
         #: on every cycle and replayed on resume: held only in memory it would reset on every
         #: gateway restart, which is precisely when a months-long watcher is most likely to be
@@ -472,8 +482,30 @@ class RunController:
             raise
         except Exception as exc:  # a controller crash must not leave a silent zombie
             logger.exception("workflow run %s: controller crashed", self.run.id)
-            async with self._lock:
-                await self._finish(RunStatus.FAILED, error=f"engine error: {exc}"[:500])
+            if _is_engine_install_fault(exc):
+                # The ENGINE could not be imported, so this process never got far enough to
+                # learn anything about the run. Writing FAILED here would be a verdict on the
+                # run based on evidence about the installation — measured live: a gateway left
+                # running from a deleted worktree adopted a healthy run, threw
+                # `cannot import name 'provisioning' from 'personalclaw.workflows'`, and wrote
+                # `failed` over work that then completed successfully seconds later under a
+                # current process.
+                #
+                # Left untouched, the run stays RUNNING and is re-adopted on the next poll —
+                # by a process whose code can actually import, which is the outcome that
+                # matters. That is not an unbounded zombie: `audit.STALE_RUNNING_SECS` is the
+                # existing backstop for a RUNNING run nobody is driving, and it reports the
+                # run honestly instead of inventing a failure for it.
+                logger.error(
+                    "workflow run %s: left RUNNING — this process cannot import the engine "
+                    "(%s). It is stale relative to the run's own state; a current process "
+                    "will adopt it.",
+                    self.run.id,
+                    exc,
+                )
+            else:
+                async with self._lock:
+                    await self._finish(RunStatus.FAILED, error=f"engine error: {exc}"[:500])
         finally:
             self._terminal.set()
 
@@ -1835,6 +1867,11 @@ class RunController:
             # from the run's worker axis; only the JUDGE branch reads it, so a run with no
             # cross_model gate pays nothing.
             worker_model=self._worker_model(),
+            # This node's compaction history. `setdefault` so the list IDENTITY is stable
+            # across iterations — the ladder appends to it in place, and handing out a fresh copy
+            # each call would record saves nobody ever reads, leaving the anti-thrashing rule
+            # permanently looking at an empty history.
+            compaction_saves=self._compaction_saves.setdefault(node.id, []),
         )
         if total and total > 0:
             try:
@@ -3664,6 +3701,29 @@ def _item_label(item: Any) -> str:
 def _clip(text: str) -> str:
     text = " ".join(text.split())  # a newline inside a row breaks the layout
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
+
+
+def _is_engine_install_fault(exc: BaseException) -> bool:
+    """Whether `exc` says the ENGINE ITSELF could not be imported, not that a run failed.
+
+    The distinction is the whole point: an `ImportError` naming a `personalclaw` module means
+    this PROCESS is stale (its code was deleted or predates the run's state), so it knows
+    nothing about the run and must not render a verdict on it. Every other exception — a
+    provider error, a bad spec, a third-party import that a node genuinely needs — IS about
+    the run and still terminally fails it. Widening this to all `ImportError`s would silently
+    convert real run failures into runs that never finish.
+
+    Keyed on `ImportError.name` rather than the message: the attribute is populated for both
+    shapes that occur here (`from personalclaw.x import y` sets it to `personalclaw.x`, a
+    missing module sets it to the module), and matching message text would break the moment
+    CPython rewords it. `name` can be None for a hand-raised `ImportError`, which reads as
+    "not attributable to the engine" — the conservative answer, since it keeps the existing
+    fail-loudly behaviour for anything we cannot positively identify.
+    """
+    if not isinstance(exc, ImportError):
+        return False
+    name = getattr(exc, "name", None) or ""
+    return name == "personalclaw" or name.startswith("personalclaw.")
 
 
 def _now() -> str:

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { unavailableWhen } from './unavailable'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, Wrench, FileSearch, Check, MessageSquarePlus, CircleDot, Pencil, X, RefreshCw, AlertTriangle } from 'lucide-react'
 import { TopBar } from './TopBar'
@@ -433,8 +434,9 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                           className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary text-[0.8125rem] disabled:opacity-50">
                           <Check size={14} /> Approve & continue
                         </button>
-                        <button type="button" disabled={busy || !comment.trim()} onClick={() => sendComment(current)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var text-[0.8125rem] disabled:opacity-40">
+                        <button type="button" onClick={() => sendComment(current)}
+                          {...unavailableWhen(!comment.trim(), 'Write a comment first', { busy })}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                           <MessageSquarePlus size={14} /> Send comment & redraft
                         </button>
                       </div>
