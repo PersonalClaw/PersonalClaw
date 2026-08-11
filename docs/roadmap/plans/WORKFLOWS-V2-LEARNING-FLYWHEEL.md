@@ -1352,8 +1352,7 @@ alphabetic `foo/bar/baz/qux/quux` so five distinct signatures actually exercise 
   `make lint` clean (mypy 797 files); `test_skill_promotion` + `native_tool_categories` +
   `agent_reference` + `inert_surface_baseline` = 44 passed / 1 xfailed; `-k "proposals or skill or
   learning"` = 1143 passed / 2 skipped; added lines name-scrub clean; diff scoped to 8 files.
-  **NOT YET PUSHED — E-class environment blocker.** `git push` was DENIED three times in the driving
-  session (from the worktree path and twice from the repo dir), so the PR is not open. The work is
-  complete and gated on branch `feature-wf2lea11-retroactive-skill` (impl `6f135a45` + this tracking
-  commit), based on `origin/main` `a2e874a8`. It needs only: `git push -u origin
-  feature-wf2lea11-retroactive-skill` then `gh pr create --base main`. No code change is pending.
+  **Shipped as #1086** after an environment blocker delayed it: `git push` was declined repeatedly
+  across several ticks, so the atom sat complete-and-gated on `feature-wf2lea11-retroactive-skill`
+  (impl `6f135a45` + tracking) until the permission was restored. No code changed in the interval —
+  `origin/main` never moved off `a2e874a8`, so the gate result above still stood at push time.

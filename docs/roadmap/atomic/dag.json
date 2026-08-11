@@ -3048,7 +3048,7 @@
           "deps": [
             "WF2LEA-7"
           ],
-          "pr": "(pending push — see Execution log; git push denied in the driving session)",
+          "pr": "#1086",
           "evidence": "learning/skill_promotion.py promote() files a Kind.SKILL PROPOSAL through the existing §2.2 queue (no second queue); never writes — the only writer is install_accepted_skill, reachable only via accept() after require_human (agent accept refused, tested); re-surface suppression reuses enqueue fingerprint + _prior_decision_blocks; skill_promote native tool registered (TOOL_META + validation schema + _RESIDUAL_CORE_TOOLS + reference regen 85->86 tools). Also filled Kind.SKILL's missing accept-installer — without it the promotion would have shipped inert."
         },
         {
