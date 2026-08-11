@@ -1327,3 +1327,33 @@ alphabetic `foo/bar/baz/qux/quux` so five distinct signatures actually exercise 
   **Real home verified untouched by MTIME, not by absence:** `~/.personalclaw/workflows` and `runs.db` both unchanged across a test run, 22 run dirs. The home's own recent mtime is the two already-running dev gateways (PIDs 5827, 52350), not this work — an important distinction, since "the home changed" would otherwise read as test pollution.
   **Test-isolation hazard worth carrying forward:** `staging.get_store()` caches a process-global `_INSTANCE` (`staging.py:526`), so miss counts leak across tests in an xdist worker. The `home` fixture resets it around each test rather than masking the leak with looser assertions.
   **No docs row needed:** the `workflows.md` module ratchet (`test_workflows_hardening.py:528`) is scoped to `src/personalclaw/workflows/*.py`, and this atom added no module there — checked rather than assumed, since that same ratchet went red three times on the preceding stack.
+
+- **DONE `WF2LEA-11`** (Amendment E1.3 — retroactive completed-run/conversation → skill proposal).
+  **Audit first, as the atom demands.** What already existed and was NOT rebuilt: `skill_remember`
+  captures a *taught* skill as a session-live ephemeral draft (prompted, not retrospective, already
+  never writes live); `learning/proposals.py` is §2.2's unified queue with `content_fingerprint` +
+  `_prior_decision_blocks` + `record_decision` and a `require_human`-gated `accept`/`reject`; §3.2
+  already mines successful runs but only for **templates** (`mining.file_positive_trace` →
+  `Kind.TEMPLATE`). The gap: nothing promoted a run/conversation to a **skill**, and `Kind.SKILL` was
+  a declared kind with an inbox label, **zero producers and no accept-installer** — a reserved slot
+  with no writer.
+  **Built (add-only):** `learning/skill_promotion.py` `promote()` files a `Kind.SKILL` PROPOSAL via the
+  existing queue — no second queue, per the atom's "no second queue" clause. Deliberately NOT routed
+  through the legacy `skills/proposals.py`, which has no decision memory; routing there would have
+  meant reimplementing the suppression the atom says to reuse.
+  **Never writes (three layers):** promotion touches no skills path (a test asserts zero `SKILL.md`
+  appear); the only writer is `install_accepted_skill`, reachable solely through `accept()` after
+  `require_human`; and `accept(actor="agent")` raises. **Does not re-surface:** reject → re-promote
+  returns `already_decided` with zero rows and zero skills written.
+  **Deviation recorded:** the missing `Kind.SKILL` accept-installer was added even though it is not in
+  the atom's letter — without it accept would record a decision and write nothing, shipping the
+  promotion as an inert control (the failure mode this program keeps finding).
+  **Gate (independently re-run by the driving session, not taken from the subagent's report):**
+  `make lint` clean (mypy 797 files); `test_skill_promotion` + `native_tool_categories` +
+  `agent_reference` + `inert_surface_baseline` = 44 passed / 1 xfailed; `-k "proposals or skill or
+  learning"` = 1143 passed / 2 skipped; added lines name-scrub clean; diff scoped to 8 files.
+  **NOT YET PUSHED — E-class environment blocker.** `git push` was DENIED three times in the driving
+  session (from the worktree path and twice from the repo dir), so the PR is not open. The work is
+  complete and gated on branch `feature-wf2lea11-retroactive-skill` (impl `6f135a45` + this tracking
+  commit), based on `origin/main` `a2e874a8`. It needs only: `git push -u origin
+  feature-wf2lea11-retroactive-skill` then `gh pr create --base main`. No code change is pending.

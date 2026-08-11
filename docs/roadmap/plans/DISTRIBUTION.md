@@ -379,3 +379,16 @@ Fixed entry. Re-ran `python -m build` (no args) + `verify_wheel.py`: **PASS** �
 SPA (453 assets), installs Node-free into a scratch venv, boots `gateway --test-mode`, serves
 `/` (200 HTML) + `/api/healthz` (200). This doubles as the S1/V1 Node-absent evidence. **This
 bug must land before the first tag push** or the release job's verify-wheel step fails.
+
+- **BLOCKED `DIST-12`** (Homebrew tap + Nix flake) — **owner-only acceptance, with evidence.** The
+  atom's `done_when` is `brew install personalclaw/tap/personalclaw` working **on a clean mac** and
+  `nix run .#personalclaw -- --version` printing the version. Two hard stops for an autonomous tick:
+  (1) the brew half needs a **new `personalclaw/tap` repository** — creating and publishing an
+  outward-facing repo is an owner action, not a tick's; (2) `nix` is **absent on this machine**
+  (`command -v nix` → not found), so even a correctly authored `flake.nix` could not be verified here,
+  and shipping an unverifiable install path is exactly what the clean-machine walkthroughs exist to
+  prevent. `brew` IS present, so only the tap repo blocks that half. Deferring rather than guessing:
+  a flake committed blind would be a distribution claim nobody has run. Sibling area-1 atoms `DIST-11`
+  (clean-machine walkthroughs V1–V4) and `CRE-7` (real-world provisioning remainder) are owner
+  validation tasks for the same reason. Unblock = owner creates the tap repo and/or installs nix, or
+  rules that an unverified flake may land behind a documented "untested" note.
