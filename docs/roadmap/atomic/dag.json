@@ -519,7 +519,7 @@
         {
           "id": "WF2KNO-8",
           "title": "Route gap-healing drafts to the LEARNING-FLYWHEEL proposal queue",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.3 schema.md proposals / §3.4 gap-healing proposal routing (propose-don't-write to the flywheel queue)",
           "done_when": "gap-healing / schema-edit drafts enqueue via learning.proposals.enqueue under a knowledge-draft Kind; the session-37 workaround (persisting a TTL'd probe tagged 'proposal') is removed — blocked because learning.proposals.Kind is a closed 6-value enum with no knowledge-draft kind",
           "deps": [
@@ -7411,11 +7411,6 @@
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
-      },
-      {
-        "id": "WF2KNO-8",
-        "title": "Route gap-healing drafts to the LEARNING-FLYWHEEL proposal queue",
-        "plan": "WF2KNO"
       },
       {
         "id": "WF2KNO-9",
