@@ -395,7 +395,11 @@ function NewProjectModal({ busy, onClose, onCreate }: {
         </label>
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={!name.trim() || busy}>
+          {/* The reason keeps the button reachable and says what is missing — a bare
+              `disabled` submit is removed from the tab order, so a keyboard user tabs past
+              the action with no way to learn why (measured: title null, NOT focusable). */}
+          <Button onClick={submit} disabled={!name.trim() || busy}
+            disabledReason={!name.trim() ? 'Enter a project name first' : undefined}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Create project
           </Button>
         </div>

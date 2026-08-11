@@ -42,6 +42,7 @@ const sizes: Record<Size, string> = {
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
   loading = false, className, onClick, disabled, type = 'button', title, ariaExpanded, ariaPressed,
+  disabledReason,
 }: {
   children: ReactNode
   variant?: Variant
@@ -62,11 +63,28 @@ export function Button({
   // on and the row they are not. Separate from `ariaExpanded` on purpose: expanded means "reveals
   // content", pressed means "is the current selection", and one attribute cannot carry both.
   ariaPressed?: boolean
+  // WHY this button is unavailable, when `disabled` is true.
+  //
+  // A native `disabled` button is removed from the tab order entirely, so a keyboard user
+  // cannot reach it to hear anything — they tab straight past the action they are looking for
+  // with no way to learn what is missing. Measured on the New-project modal: the Create button
+  // was `disabled`, `title: null`, `aria-describedby: null`, and `NOT focusable`.
+  //
+  // Given a reason, the button stays REACHABLE and announces it: `aria-disabled` (semantically
+  // unavailable, still focusable) instead of the native attribute, with the click suppressed in
+  // the handler. That is the standard trade — the native attribute is stronger protection but
+  // silences the control, and a form submit that cannot explain itself is the worse failure.
+  //
+  // Omit it and nothing changes: `disabled` stays native, which is right for a button whose
+  // unavailability is self-evident from context (a Delete that needs a selection).
+  disabledReason?: string
 }) {
   const reduce = useReducedMotion()
   const ref = useRef<HTMLButtonElement>(null)
   const isSolid = variant === 'primary' || variant === 'danger'
   const off = !!disabled || loading
+  // Reachable-but-unavailable only when a reason exists to announce; otherwise stay native.
+  const softOff = off && !!disabledReason && !loading
 
   // Pointer-tracked sheen origin (0..100% within the button) — Motion values so
   // the highlight follows the cursor with no per-move React re-render.
@@ -92,7 +110,7 @@ export function Button({
     <motion.button
       ref={ref}
       type={type}
-      title={title}
+      title={softOff ? [title, disabledReason].filter(Boolean).join(' — ') : title}
       aria-expanded={ariaExpanded}
       aria-pressed={ariaPressed}
       // `loading` cross-fades the label to opacity 0 and swaps in an aria-hidden spinner, so
@@ -100,8 +118,17 @@ export function Button({
       // the button just went quiet and disabled while keeping its original name. `aria-busy`
       // is the state that says "working"; measured 0 buttons in the app carrying it before.
       aria-busy={loading || undefined}
-      onClick={onClick}
-      disabled={off}
+      // The reason rides `title`, NOT an aria-describedby target inside the button.
+      // Measured: an sr-only <span> in the button body is CONCATENATED into the accessible
+      // name — "Create project" became "Create projectEnter a name first", so the action
+      // stopped being findable by its own name. A describedby target outside the button would
+      // need a wrapper element at 100+ call sites. `title` is already the kit's convention
+      // (ruled cycle 37) and is both the sighted tooltip and the AT description.
+      // aria-disabled when there is a reason to announce (keeps the tab stop), native
+      // `disabled` otherwise. Both paths must refuse the click.
+      aria-disabled={softOff || undefined}
+      onClick={softOff ? (e) => e.preventDefault() : onClick}
+      disabled={softOff ? undefined : off}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
       whileTap={off ? undefined : { scale: pressScale, transition: spring.spatialFast }}
@@ -113,7 +140,9 @@ export function Button({
         'relative inline-flex shrink-0 items-center justify-center gap-s overflow-hidden whitespace-nowrap font-[450] select-none',
         shape === 'squircle' ? 'squircle' : 'rounded-pill',
         'transition-colors duration-100 ease-[cubic-bezier(0.2,0,0,1)]',
-        'disabled:opacity-40 disabled:pointer-events-none',
+        // aria-disabled needs the same dimming as the native attribute, and must not
+        // swallow pointer events (a hover has to reveal the title/tooltip).
+        'disabled:opacity-40 disabled:pointer-events-none aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
         variants[variant], sizes[size], className,
       )}
     >

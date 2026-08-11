@@ -31,7 +31,7 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
         <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
-          <Button onClick={create} disabled={saving || !draft.name.trim()}><Check size={16} /> {saving ? 'Creating…' : 'Create agent'}</Button>
+          <Button onClick={create} disabled={saving || !draft.name.trim()} disabledReason={!draft.name.trim() ? 'Enter an agent name first' : undefined}><Check size={16} /> {saving ? 'Creating…' : 'Create agent'}</Button>
         </div>
       </div>
     </div>

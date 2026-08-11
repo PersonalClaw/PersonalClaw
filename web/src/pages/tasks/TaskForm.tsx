@@ -157,7 +157,7 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
           <TextInput value={newName} onChange={setNewName} autoFocus
             placeholder={isProject ? 'Project name' : 'Task list name'}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); isProject ? createProject() : createList() } }} />
-          <Button variant="primary" size="md" disabled={busy || !newName.trim()} onClick={isProject ? createProject : createList}>{busy ? 'Adding…' : 'Add'}</Button>
+          <Button variant="primary" size="md" disabled={busy || !newName.trim()} disabledReason={!newName.trim() ? 'Enter a name first' : undefined} onClick={isProject ? createProject : createList}>{busy ? 'Adding…' : 'Add'}</Button>
           <Button variant="ghost" size="md" onClick={() => { setCreating(null); setNewName(''); setErr('') }}>Cancel</Button>
         </div>
         {err && <p className="mt-1 text-danger text-[0.75rem]">{err}</p>}

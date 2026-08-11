@@ -20,9 +20,11 @@ const doc: UiDoc = {
     { name: 'type', description: "'button' (default) or 'submit' inside a form." },
     { name: 'title', description: 'Native tooltip text.' },
     { name: 'ariaExpanded', description: 'Announce disclosure state to assistive tech — set only when the button folds content (e.g. a "Show N more" archive toggle); omit for plain actions.' },
+    { name: 'disabledReason', description: "WHY the button is unavailable, when `disabled` is true. A native disabled button is REMOVED FROM THE TAB ORDER, so a keyboard user cannot reach it to hear anything — measured: 37 of 37 validity-gated submits in the app were disabled with no title and no description. Given a reason, the button switches to aria-disabled (still focusable) with the click suppressed, and the reason rides `title` so AT and sighted users both get it. Omit it to keep the native attribute, which is right when the unavailability is self-evident. Ignored while `loading` — an in-flight button must not be re-clickable, and aria-busy already announces that state." },
     { name: 'ariaPressed', description: 'Announce selected state — set when the button is a persistent choice (a selectable list row, a view toggle); omit for plain actions. Use instead of ariaExpanded when the button selects rather than reveals.' },
   ],
   bestPractices: [
+    { guidance: true, description: 'Pass `disabledReason` whenever a submit is gated on unmet input — a bare `disabled` button leaves the tab order, so a keyboard user tabs past the action with no way to learn what is missing. Keep it CONDITIONAL on the missing input, or a button disabled by an in-flight save will announce "enter a name".' },
     { guidance: true, description: 'Reach for Button for any labelled action — never hand-roll a <button> with bespoke classes; the missing xs tier is why pages used to.' },
     { guidance: true, description: "Use variant='danger' for destructive actions and variant='primary' for exactly one main action per view." },
     { guidance: true, description: 'Set `loading` for async actions so the width stays stable and the user sees progress.' },
