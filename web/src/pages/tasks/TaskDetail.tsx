@@ -318,7 +318,8 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" rows={1}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
             className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-          <button type="button" onClick={send} disabled={sending || !draft.trim()} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40"><Send size={15} /></button>
+          {/* Icon-only send, one per comment composer — a constant name is correct. */}
+          <button type="button" aria-label="Post comment" onClick={send} disabled={sending || !draft.trim()} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40"><Send size={15} /></button>
         </div>
       </div>
     </SectionLabel>

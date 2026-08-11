@@ -886,7 +886,9 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
     <div className="p-l flex flex-col gap-m">
       <div className="flex items-center justify-between">
         <span className="text-on-surface text-[0.9375rem]">New intent</span>
-        <button type="button" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
+        {/* Icon-only close: with no name it announced as bare "button". A CONSTANT name is right
+            here (one per panel), unlike the per-item buttons this sweep also found. */}
+        <button type="button" aria-label="Close the intent editor" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
       </div>
       <div className="flex flex-col gap-1.5">
         <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">What do you want to track?</label>
