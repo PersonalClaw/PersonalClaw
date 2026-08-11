@@ -463,7 +463,8 @@ class Project:
         return cls(
             id=d.get("id", ""),
             name=name,
-            is_builtin=bool(d.get("is_builtin", d.get("is_default", False))) or name in DEFAULT_PROJECTS,
+            is_builtin=bool(d.get("is_builtin", d.get("is_default", False)))
+            or name in DEFAULT_PROJECTS,
             status=str(d.get("status") or "active"),
             workspace_dir=str(d.get("workspace_dir") or ""),
             name_locked=bool(d.get("name_locked", False)),
