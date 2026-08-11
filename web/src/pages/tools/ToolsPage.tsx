@@ -21,6 +21,7 @@ import { api, type ToolItem, type McpServer, type ImportableMcpServer, type Tool
 import { schemaProps } from './schema'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Tools = the capability catalog agents invoke. Grouped by provider — native
  *  built-in providers plus connected MCP servers (shown with health + inline
@@ -213,7 +214,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Tools</span>}
+          left={<PageTitle>Tools</PageTitle>}
           right={
             <HeaderActions>
               <HeaderControl icon={Plus} label="Add tool server" priority="primary" onClick={() => setAddOpen(true)} />

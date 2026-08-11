@@ -26,6 +26,7 @@ import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { LOOP_STATUS } from './loopStatusMeta'
+import { PageTitle } from '../../ui/PageTitle'
 
 // Keyed by LoopStatus PLUS the synthetic 'ended_early' (a non-genuine 'complete'),
 // so the type is the broader string map. Shared with the dashboard Active Work
@@ -122,7 +123,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Loops</span>}
+          left={<PageTitle>Loops</PageTitle>}
           right={
             <div className="flex items-center gap-s">
               <Button size="sm" className="h-10" onClick={onCreate}><Plus size={16} /> New loop</Button>

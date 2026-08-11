@@ -20,6 +20,7 @@ import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
 import { SkillInspector } from './SkillInspector'
 import { MarketplaceDetail } from './MarketplaceDetail'
 import { SkillProposals } from './SkillProposals'
+import { PageTitle } from '../../ui/PageTitle'
 
 const SKILL_TEMPLATE = `---
 name: my-skill
@@ -54,7 +55,7 @@ function ProposalsView({ onBack }: { onBack: () => void }) {
       topBar={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><span data-type="title-l" className="text-on-surface shrink-0">Skill proposals</span></div>}
+          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skill proposals</PageTitle></div>}
           right={<HeaderActions><HeaderControl icon={Sparkles} label="Installed skills" variant="secondary" onClick={onBack} /></HeaderActions>}
         />
       }
@@ -108,7 +109,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
         topBar={
           <TopBar
             keepCornerPadding
-            left={<div className="flex min-w-0 items-center gap-m"><span data-type="title-l" className="text-on-surface shrink-0">Skills</span><ModeToggle mode="installed" onChange={(m) => m === 'browse' && onBrowse()} /></div>}
+            left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle><ModeToggle mode="installed" onChange={(m) => m === 'browse' && onBrowse()} /></div>}
             right={
               <HeaderActions>
                 <HeaderControl icon={Lightbulb} label={proposalCount > 0 ? `Proposals (${proposalCount})` : 'Proposals'} variant="secondary" onClick={onProposals} />

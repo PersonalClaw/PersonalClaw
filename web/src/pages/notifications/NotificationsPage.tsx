@@ -21,6 +21,7 @@ import { api, type NotificationItem } from '../../lib/api'
 import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, unreadRail, toneChipBg } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
@@ -82,7 +83,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}</span>}
+          left={<PageTitle className="flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}</PageTitle>}
           right={items && items.length > 0 ? (
             // Direct header actions (the header is otherwise empty now that the
             // filter lives on the page); each collapses to an icon when tight.

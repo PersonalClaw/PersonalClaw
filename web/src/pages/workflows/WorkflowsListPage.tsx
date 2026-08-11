@@ -13,6 +13,7 @@ import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
 import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
 import { suggestTemplate } from './templateSuggest'
 import { cadenceLabel, findingsByDef, freshnessLook, modeLook, needsAttention, packChips } from './surfacingMeta'
+import { PageTitle } from '../../ui/PageTitle'
 
 const TABS = [
   { key: 'runs', label: 'Runs' },
@@ -199,7 +200,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
           {/* NOT `shrink-0`: that opted the title out of the slot's truncation and it ran 56px
               under the control row at 390px. The "waiting on you" badge keeps its own
               `shrink-0`, so the title is what yields — which is the right order anyway. */}
-          <span data-type="title-l" className="text-on-surface">Workflows</span>
+          <PageTitle>Workflows</PageTitle>
           {needingInput > 0 && (
             <span className="shrink-0 text-warning text-[0.75rem]">{needingInput} waiting on you</span>
           )}

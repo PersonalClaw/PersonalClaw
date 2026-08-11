@@ -14,6 +14,7 @@ import {
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
 import { WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
  *
@@ -73,7 +74,7 @@ export function LearningPage() {
         left={
           <div className="flex items-center gap-s">
             <Brain size={18} className="text-on-surface-var" />
-            <span data-type="title-l" className="text-on-surface">Learning</span>
+            <PageTitle>Learning</PageTitle>
           </div>
         }
         right={

@@ -51,7 +51,9 @@ export function PinnedTiles() {
     <section className="flex min-w-0 flex-col gap-s" data-testid="pinned-tiles">
       <div className="flex items-center gap-s">
         <Sparkles size={14} className="shrink-0 text-on-surface-low" />
-        <h3 data-type="label-l" className="text-on-surface-var">Pinned</h3>
+        {/* h2 to match the dashboard's other sections — see the note on DashboardPage's
+            `Section`. This one is its own component, so it has to be kept in step by hand. */}
+        <h2 data-type="label-l" className="text-on-surface-var">Pinned</h2>
         <span className="h-px flex-1 bg-outline-variant/40" />
       </div>
       <div className="grid grid-cols-1 gap-l lg:grid-cols-2">

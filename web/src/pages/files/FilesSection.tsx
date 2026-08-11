@@ -22,6 +22,7 @@ import { PathBar } from './browse/PathBar'
 import { useFileTabs } from './browse/useFileTabs'
 import { newSessionTarget } from '../../ui/content/commentTarget'
 import { baseName, fileIcon } from './fileMeta'
+import { PageTitle } from '../../ui/PageTitle'
 
 const TAB_KEY = 'files-tab'
 
@@ -243,7 +244,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
         // and overflowed under a docked panel.) Tab-strip overflow is its own concern
         // (plan) — separate from the action cluster, which holds only the toggle.
         left={<div className="flex min-w-0 items-center gap-m">
-          <span data-type="title-l" className="text-on-surface shrink-0">Files</span>
+          <PageTitle className="shrink-0">Files</PageTitle>
           {!rootsLoading && roots.length > 0 && <div className="min-w-0 overflow-x-auto"><Segmented value={tab} onChange={switchTab} options={tabOptions} /></div>}
         </div>}
         right={
