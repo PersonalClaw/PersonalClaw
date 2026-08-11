@@ -31,6 +31,53 @@ _SESSION_MAP_FILE = "session_map.json"
 _SESSIONS_DIR = _path_home_pclaw() / "sessions"
 
 
+def transcript_path(session_id: str):
+    """Resolve a session id to its ``sessions/<sid>.jsonl`` transcript, or None.
+
+    Resolves the home dir on EVERY call rather than reusing the module-level
+    ``_SESSIONS_DIR``, which is bound at import time: a caller that set
+    ``PERSONALCLAW_HOME`` after this module was first imported — every test, and any
+    process that boots the gateway lazily — would otherwise be handed a path under the
+    real home. Returns None for an empty/traversing id or a missing file, so a caller
+    reads "no transcript" rather than opening something it did not name.
+    """
+    sid = (session_id or "").strip()
+    if not sid or "/" in sid or "\\" in sid or sid.startswith("."):
+        return None
+    path = _path_home_pclaw() / "sessions" / f"{sid}.jsonl"
+    return path if path.exists() else None
+
+
+def read_transcript(session_id: str) -> list[dict]:
+    """Parsed transcript records for *session_id*, newest last. ``[]`` when unreadable.
+
+    Skips unparseable lines rather than raising: a transcript is append-only history
+    written by several code paths over time, and one bad line must not cost the whole
+    session. Metadata lines are KEPT — ``template_pipeline.mine_session`` reads the
+    ``_type == "metadata"`` line for the session title.
+    """
+    path = transcript_path(session_id)
+    if path is None:
+        return []
+    records: list[dict] = []
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        logger.debug("transcript unreadable for %s", session_id, exc_info=True)
+        return []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            records.append(parsed)
+    return records
+
+
 class SessionMap:
     """Persistent mapping of session_key → ACP agent session ID.
 
