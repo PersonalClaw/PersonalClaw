@@ -472,8 +472,30 @@ class RunController:
             raise
         except Exception as exc:  # a controller crash must not leave a silent zombie
             logger.exception("workflow run %s: controller crashed", self.run.id)
-            async with self._lock:
-                await self._finish(RunStatus.FAILED, error=f"engine error: {exc}"[:500])
+            if _is_engine_install_fault(exc):
+                # The ENGINE could not be imported, so this process never got far enough to
+                # learn anything about the run. Writing FAILED here would be a verdict on the
+                # run based on evidence about the installation — measured live: a gateway left
+                # running from a deleted worktree adopted a healthy run, threw
+                # `cannot import name 'provisioning' from 'personalclaw.workflows'`, and wrote
+                # `failed` over work that then completed successfully seconds later under a
+                # current process.
+                #
+                # Left untouched, the run stays RUNNING and is re-adopted on the next poll —
+                # by a process whose code can actually import, which is the outcome that
+                # matters. That is not an unbounded zombie: `audit.STALE_RUNNING_SECS` is the
+                # existing backstop for a RUNNING run nobody is driving, and it reports the
+                # run honestly instead of inventing a failure for it.
+                logger.error(
+                    "workflow run %s: left RUNNING — this process cannot import the engine "
+                    "(%s). It is stale relative to the run's own state; a current process "
+                    "will adopt it.",
+                    self.run.id,
+                    exc,
+                )
+            else:
+                async with self._lock:
+                    await self._finish(RunStatus.FAILED, error=f"engine error: {exc}"[:500])
         finally:
             self._terminal.set()
 
@@ -3664,6 +3686,29 @@ def _item_label(item: Any) -> str:
 def _clip(text: str) -> str:
     text = " ".join(text.split())  # a newline inside a row breaks the layout
     return text if len(text) <= _ITEM_LABEL_MAX else text[: _ITEM_LABEL_MAX - 1] + "…"
+
+
+def _is_engine_install_fault(exc: BaseException) -> bool:
+    """Whether `exc` says the ENGINE ITSELF could not be imported, not that a run failed.
+
+    The distinction is the whole point: an `ImportError` naming a `personalclaw` module means
+    this PROCESS is stale (its code was deleted or predates the run's state), so it knows
+    nothing about the run and must not render a verdict on it. Every other exception — a
+    provider error, a bad spec, a third-party import that a node genuinely needs — IS about
+    the run and still terminally fails it. Widening this to all `ImportError`s would silently
+    convert real run failures into runs that never finish.
+
+    Keyed on `ImportError.name` rather than the message: the attribute is populated for both
+    shapes that occur here (`from personalclaw.x import y` sets it to `personalclaw.x`, a
+    missing module sets it to the module), and matching message text would break the moment
+    CPython rewords it. `name` can be None for a hand-raised `ImportError`, which reads as
+    "not attributable to the engine" — the conservative answer, since it keeps the existing
+    fail-loudly behaviour for anything we cannot positively identify.
+    """
+    if not isinstance(exc, ImportError):
+        return False
+    name = getattr(exc, "name", None) or ""
+    return name == "personalclaw" or name.startswith("personalclaw.")
 
 
 def _now() -> str:

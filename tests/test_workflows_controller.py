@@ -66,6 +66,11 @@ def _make_run(spec: dict, inputs: dict | None = None, **kw) -> WorkflowRun:
     return run
 
 
+def _stamp() -> str:
+    """A UTC start stamp, for a run that a previous process already started."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def _echo(tag: str = ""):
     calls: list[str] = []
 
@@ -1449,3 +1454,106 @@ class TestWorkspaceProvisioningAtRunStart:
         c = RunController(run, spec, services=EngineServices(completion=_echo()))
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         assert "worktree_path" not in run.extra
+
+
+class TestStaleProcessAdoption:
+    """A process that cannot import the ENGINE must not render a verdict on a RUN.
+
+    The measured incident: a gateway left running from a deleted worktree adopted a healthy
+    run, raised `cannot import name 'provisioning' from 'personalclaw.workflows'` from the
+    tick path, and wrote `failed` over work that completed successfully seconds later under a
+    current process. The run's own journal showed the node finishing AFTER the recorded
+    failure — the terminal write was a claim about the installation, not about the run.
+    """
+
+    async def test_an_engine_ImportError_leaves_an_adopted_run_RUNNING(self, monkeypatch) -> None:
+        """Left RUNNING, the run is re-adopted by a process whose code can import. Written
+        FAILED, the work is lost and the UI lies. `audit.STALE_RUNNING_SECS` is the existing
+        backstop, so this is not an unbounded zombie.
+
+        The run starts out RUNNING because that is what adoption acts on: a stale gateway picks
+        up a run another process already started, which is exactly when it has no business
+        deciding the outcome.
+        """
+        run = _make_run(SEQ_SPEC, status=RunStatus.RUNNING, started_at=_stamp())
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+
+        async def stale_import(*a, **k):
+            raise ImportError(
+                "cannot import name 'provisioning' from 'personalclaw.workflows'",
+                name="personalclaw.workflows",
+            )
+
+        monkeypatch.setattr(c, "_prepare", stale_import)
+        await c.start()
+        await c.wait_for_terminal(timeout=20)
+
+        assert run.status is RunStatus.RUNNING, "a stale process must not decide the run"
+        assert not run.error_message, f"no failure may be recorded, got {run.error_message!r}"
+        assert store.get(run.id).status is RunStatus.RUNNING, "and it must not be persisted"
+        kinds = [e.get("kind") for e in J.ledger(run.id)]
+        assert J.RUN_FINISHED not in kinds, "no terminal record may enter the journal"
+
+    async def test_a_REAL_engine_crash_still_fails_the_run_loudly(self, monkeypatch) -> None:
+        """The guard must not become a blanket swallow: a controller crash that IS about the
+        run still terminally fails it, or a broken run waits forever looking busy."""
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+
+        async def boom(*a, **k):
+            raise RuntimeError("the tick loop is genuinely broken")
+
+        monkeypatch.setattr(c, "_prepare", boom)
+        await c.start()
+        await c.wait_for_terminal(timeout=20)
+
+        assert run.status is RunStatus.FAILED
+        assert "engine error" in run.error_message
+
+    async def test_a_THIRD_PARTY_ImportError_still_fails_the_run(self, monkeypatch) -> None:
+        """A dependency a node genuinely needs is a RUN failure, not an installation fault.
+        Treating every ImportError as stale would convert real failures into runs that never
+        finish — the discriminator is whose module is missing."""
+        run = _make_run(SEQ_SPEC)
+        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+
+        async def missing_dep(*a, **k):
+            raise ModuleNotFoundError("No module named 'some_scraper_lib'", name="some_scraper_lib")
+
+        monkeypatch.setattr(c, "_prepare", missing_dep)
+        await c.start()
+        await c.wait_for_terminal(timeout=20)
+
+        assert run.status is RunStatus.FAILED
+        assert "engine error" in run.error_message
+
+
+class TestEngineInstallFaultDiscriminator:
+    """The predicate itself, at every shape that reaches it."""
+
+    def test_it_recognizes_both_engine_import_shapes(self) -> None:
+        from personalclaw.workflows.controller import _is_engine_install_fault
+
+        # `from personalclaw.x import y` where y is gone — the measured incident's shape.
+        assert _is_engine_install_fault(
+            ImportError("cannot import name 'provisioning'", name="personalclaw.workflows")
+        )
+        # A whole engine module missing (a partially-deleted install).
+        assert _is_engine_install_fault(
+            ModuleNotFoundError("No module named 'personalclaw.workflows'", name="personalclaw")
+        )
+
+    def test_it_does_not_claim_anything_it_cannot_attribute(self) -> None:
+        from personalclaw.workflows.controller import _is_engine_install_fault
+
+        assert not _is_engine_install_fault(
+            ModuleNotFoundError("No module named 'httpx'", name="httpx")
+        )
+        # A hand-raised ImportError carries no `name`: unattributable reads as "not ours",
+        # keeping the fail-loudly default rather than silently parking a run.
+        assert not _is_engine_install_fault(ImportError("something went wrong"))
+        assert not _is_engine_install_fault(RuntimeError("not an import problem"))
+        # A package that merely starts with the same letters is not the engine.
+        assert not _is_engine_install_fault(
+            ModuleNotFoundError("No module named 'personalclawx'", name="personalclawx")
+        )
