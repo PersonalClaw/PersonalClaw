@@ -171,7 +171,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
                   ]
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
-                    <ListRow index={i} accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })}>
+                    <ListRow index={i} accent={t.enabled ? t.whenTone : undefined} onClick={() => setQuery({ open: t.id, edit: null })} label={t.name}>
                       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${t.whenTone} 16%, transparent)` }}><t.whenIcon size={19} style={{ color: t.whenTone }} /></span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-s">

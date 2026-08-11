@@ -180,7 +180,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
               return (
                 <Disintegrate key={r.name} active={deletingName === r.name} onDone={finishDelete}>
                 <ContextMenu items={menuItems}>
-                <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })}>
+                <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sourceTone(r.source)} 16%, transparent)` }}><Icon size={19} style={{ color: sourceTone(r.source) }} /></span>
                   <div className="flex-1 min-w-0">
                     <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{r.name}</span>
