@@ -170,6 +170,26 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "skill_promote": {
+        "response_type": "skill.promote.proposal.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Promote a completed run into a skill proposal (nothing written)",
+                "args": {
+                    "name": "publish the nightly report",
+                    "description": "Build and publish the nightly report end to end",
+                    "procedure": (
+                        "1. Fetch the source feed and validate the payload.\n"
+                        "2. Render the report.\n"
+                        "3. Publish it and verify the published copy."
+                    ),
+                    "rationale": "We worked this out from scratch and it will recur nightly",
+                    "run_id": "run-2f8a1c",
+                },
+            },
+        ],
+    },
     "dashboard_tile_propose": {
         "response_type": "dashboard.tile.propose.result",
         "error_codes": [],

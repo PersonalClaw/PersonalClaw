@@ -1985,7 +1985,8 @@
           "done_when": "`brew install personalclaw/tap/personalclaw` works on a clean mac; `nix run .#personalclaw -- --version` prints the version; per-release smoke checklists recorded; README matrix updated",
           "deps": [
             "DIST-10"
-          ]
+          ],
+          "blocked_reason": "BLOCKED-OWNER: acceptance requires `brew install personalclaw/tap/personalclaw` on a CLEAN MAC plus a new personalclaw/tap repository (outward-facing repo creation, owner-only), and `nix run .#personalclaw` — verified `nix` is ABSENT on this machine, so the nix half cannot be verified here either."
         }
       ]
     },
@@ -3041,12 +3042,14 @@
         {
           "id": "WF2LEA-11",
           "title": "Amendment E1.3: retroactive completed-run/conversation → skill proposal (verify-then-build, no second queue)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (b) agent-authored + retroactively-promoted skills; task row E1.3",
           "done_when": "After auditing skill_remember + proposals.py + §3.2 coverage, ONLY the missing retroactive path is added: a successful run/conversation can be promoted to a skill PROPOSAL feeding §3.2's existing queue; agent may propose unprompted but never writes; a rejected promotion is remembered in decision memory and does not re-surface",
           "deps": [
             "WF2LEA-7"
-          ]
+          ],
+          "pr": "#1086",
+          "evidence": "learning/skill_promotion.py promote() files a Kind.SKILL PROPOSAL through the existing §2.2 queue (no second queue); never writes — the only writer is install_accepted_skill, reachable only via accept() after require_human (agent accept refused, tested); re-surface suppression reuses enqueue fingerprint + _prior_decision_blocks; skill_promote native tool registered (TOOL_META + validation schema + _RESIDUAL_CORE_TOOLS + reference regen 85->86 tools). Also filled Kind.SKILL's missing accept-installer — without it the promotion would have shipped inert."
         },
         {
           "id": "WF2LEA-12",

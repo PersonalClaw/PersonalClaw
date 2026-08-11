@@ -744,6 +744,33 @@ Load a skill's full instructions by name. Your context carries only a compact IN
 }
 ```
 
+### `skill_promote`
+
+PROPOSE a finished piece of work as a reusable skill — the retroactive companion to skill_remember. Use after a task or workflow run SUCCEEDED and the procedure is worth having next time; you may call it unprompted if you notice you worked something out that you (or the user) will need again. Nothing is written: this files a PROPOSAL in the review queue, and the skill exists only once the user accepts it there. A promotion the user already declined is not re-proposed. Args: name (proposed skill name), description (when to use it — one line), procedure (the steps, as markdown), rationale (why it is worth keeping — the line the user reads before deciding), run_id (optional; a completed workflow run to promote — it must have finished successfully).
+
+**Response type:** `skill.promote.proposal.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `description` (string, required) — One line on when this skill applies.
+- `name` (string, required) — Proposed skill name, e.g. 'publish the nightly report'.
+- `procedure` (string, required) — The steps as markdown — exactly what the skill will contain once accepted. Do not put the rationale here.
+- `rationale` (string, required) — Why keep this — shown in the review queue.
+- `run_id` (string, optional) — A completed workflow run to promote. Omit to promote this conversation instead.
+
+**Example — Promote a completed run into a skill proposal (nothing written):**
+
+```json
+{
+  "description": "Build and publish the nightly report end to end",
+  "name": "publish the nightly report",
+  "procedure": "1. Fetch the source feed and validate the payload.\n2. Render the report.\n3. Publish it and verify the published copy.",
+  "rationale": "We worked this out from scratch and it will recur nightly",
+  "run_id": "run-2f8a1c"
+}
+```
+
 ### `skill_remember`
 
 Capture a skill the USER just taught you ("from now on…", "always do X", "remember this workflow"). Writes a SESSION-LIVE draft: it's active for the rest of THIS chat immediately, and at the chat's end the user is asked whether to save it permanently (to this agent or all agents) or forget it. Use ONLY for durable how-to the user explicitly wants kept — not for one-off facts (that's memory) or transient state. Args: title (short name), body (the steps/rule).
