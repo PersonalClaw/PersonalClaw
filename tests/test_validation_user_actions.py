@@ -33,15 +33,46 @@ class TestMcpCoreUserActions:
         assert "Spawned" in result
 
     def test_spawn_batch_tasks(self):
+        """A batch of N>=2 COMPILES (WF2WOR-5) instead of firing N independent spawns.
+
+        This test previously asserted the two-spawn shape, which is the behaviour the batch cutover
+        replaced: N fire-and-forget spawns have no run record, so they cannot be one widget, cannot
+        survive a restart and cannot be retried per branch. Bare strings carry no leaf contract, so
+        the compiler refuses them and SAYS which declaration is missing — the refusal is the
+        user-visible contract now, and it has to be actionable.
+        """
         with patch("personalclaw.mcp_subagents._post") as mock_post:
-            mock_post.side_effect = [{"id": "a1"}, {"id": "b2"}]
+            mock_post.return_value = {}
             result = self._simulate_tool_call(
                 "subagent_run",
                 {"tasks": ["search for SessionManager", "count test files"]},
             )
-        assert "2 subagent" in result
-        assert "a1" in result
-        assert "b2" in result
+        assert "leaf_contract_missing" in result
+        assert "objective" in result
+        # Nothing was spawned or persisted from an uncompiled batch.
+        assert mock_post.call_count == 0
+
+    def test_spawn_batch_with_contracts_compiles_one_run(self):
+        """The positive half: contract-bearing tasks compile into ONE run with a live widget."""
+        declared = {
+            "objective": "determine how the subsystem behaves",
+            "output_format": "a markdown list of findings",
+            "boundary": "do not modify any source file",
+        }
+        with patch("personalclaw.mcp_subagents._post") as mock_post:
+            mock_post.side_effect = [{"ok": True}, {"ok": True, "run_id": "run-9"}]
+            result = self._simulate_tool_call(
+                "subagent_run",
+                {
+                    "tasks": [
+                        {"task": "search for the session manager uses", **declared},
+                        {"task": "count the test files in the tree", **declared},
+                    ]
+                },
+            )
+        assert "run-9" in result
+        paths = [c.args[0] for c in mock_post.call_args_list]
+        assert paths == ["/api/workflows", "/api/workflows/runs"]
 
     def test_spawn_default_returns_immediately(self):
         """subagent_run always returns immediately — fire-and-forget."""

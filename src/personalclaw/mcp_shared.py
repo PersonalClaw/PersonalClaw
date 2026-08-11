@@ -257,6 +257,81 @@ def respond(req_id: Any, result: Any, error: dict | None = None) -> None:
         sys.stdout.flush()
 
 
+#: Env keys carrying the leaf's own lineage. Readable by a leaf (it needs its run/node id to
+#: announce), unlike the credential material `leaf_env` strips.
+_LINEAGE_KEYS = ("__wf_depth", "__wf_run_id", "__wf_project_id", "__wf_node_id")
+
+
+def leaf_env(parent_env: dict[str, str], lineage: dict[str, str]) -> dict[str, str]:
+    """The env a compiled batch leaf runs with: the parent's, minus credentials, plus lineage.
+
+    A leaf processes content the parent fetched — the untrusted direction — so the parent's
+    credential material is exactly what must not travel with it.
+
+    The secret TEST is `workspace.looks_secret` (over `secrets.SECRET_KEY_HINTS`), reused rather
+    than restated: a second list of credential-ish name fragments would drift from the first, and
+    the copy that drifted would be the one letting a token through. Filtered by NAME rather than by
+    an allowlist of known-safe vars because the parent env is open-ended — an allowlist would drop
+    the PATH-shaped vars a subprocess needs and the failure would look like a broken leaf.
+    """
+    from personalclaw.workflows.workspace import looks_secret
+
+    filtered = {k: v for k, v in parent_env.items() if not looks_secret(k)}
+    filtered.update({k: str(v) for k, v in lineage.items()})
+    return filtered
+
+
+def leaf_tool_denial(name: str) -> str:
+    """Why this tool call is refused for a leaf, or "" when it is allowed.
+
+    Two rules, both from `batch_compile` rather than restated here — a second copy of a policy is a
+    policy that drifts:
+
+    * ORCHESTRATION tools are denied at EVERY depth. A leaf that can spawn fans out without a
+      budget, and the depth counter alone would let it happen once per level.
+    * WRITE tools are denied to a research-class leaf. `leaf_tool_posture` decides the posture; this
+      is the handler seam that makes it true.
+
+    Depth 0 is the parent: it is not a leaf and is not restricted, so the parent's own
+    `subagent_run` still works.
+    """
+    from personalclaw.workflows import batch_compile
+
+    depth = _leaf_depth()
+    if depth <= 0:
+        return ""
+    if name in batch_compile.ORCHESTRATION_TOOLS:
+        return (
+            f"{name!r} is an orchestration tool and is denied to a batch leaf at every depth "
+            "— a leaf that can fan out again spawns without a budget"
+        )
+    if _leaf_is_read_only() and batch_compile.is_write_tool(name):
+        return (
+            f"{name!r} is a write tool and this leaf is capability=research (read-only) "
+            "— declare capability=mutating on the leaf if it must write"
+        )
+    return ""
+
+
+def _leaf_depth() -> int:
+    from personalclaw.workflows.engine import WF_DEPTH_KEY
+
+    try:
+        return int(os.environ.get(WF_DEPTH_KEY, "0") or "0")
+    except ValueError:
+        return 0
+
+
+#: Env flag a compiled leaf carries when its posture is read-only. Written from the compiled
+#: `postures` block, so the handler enforces the capability the COMPILER assigned rather than a
+#: second guess at it.
+LEAF_READ_ONLY_KEY = "__wf_read_only"
+
+
+def _leaf_is_read_only() -> bool:
+    return os.environ.get(LEAF_READ_ONLY_KEY, "") == "1"
+
+
 def call_tool_with_logging(
     name: str,
     raw_args: dict[str, Any],
@@ -268,6 +343,25 @@ def call_tool_with_logging(
     """Validate args, call inner tool function, and log the invocation."""
     from personalclaw.sel import sel
     from personalclaw.validation import ValidationError
+
+    # The `__wf_depth` tool-handler seam. EVERY in-process MCP tool call funnels through this
+    # function, which is why the capability posture is enforced here and nowhere else: a filtered
+    # tool list computed at compile time would be a control that looks like enforcement while the
+    # handler still answered the call (`leaf_tool_posture`'s own docstring says so). Denial is
+    # checked BEFORE arg validation so a malformed call to a denied tool is refused as denied
+    # rather than as malformed — the more specific and more security-relevant of the two answers.
+    denial = leaf_tool_denial(name)
+    if denial:
+        sel().log_tool_invocation(
+            session_key=session_key,
+            source="mcp",
+            tool_name=name,
+            tool_kind=session_key,
+            outcome="denied",
+            downstream_service=downstream_service,
+            error=denial,
+        )
+        return f"Error: {denial}"
 
     try:
         args = validate_fn(name, raw_args)

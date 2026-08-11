@@ -40,6 +40,7 @@ from personalclaw.workflows import (
     macros,
     models,
     mutations,
+    provisioning,
     secrets,
     store,
     template_lint,
@@ -258,6 +259,7 @@ async def author_def(
     save: bool = True,
     provenance: str = "chat",
     strict: bool = True,
+    workspace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate a spec and (optionally) save it.
 
@@ -288,6 +290,13 @@ async def author_def(
         "tags": tags or [],
         "provenance": provenance,
     }
+    if isinstance(workspace, dict) and workspace:
+        # The §4.1 `workspace:` declaration, carried through authoring so it reaches the persisted
+        # def. This dict is an allowlist and the parameter did not exist: an author (including
+        # `compile_batch`) could declare a workspace and have it silently dropped here, leaving a
+        # run-start applier reading a key nothing ever wrote — the same config-round-trip failure
+        # a field with a read path and no write path always is.
+        spec[provisioning.WORKSPACE_KEY] = dict(workspace)
     if metadata:
         # Through `DefMetadata.from_dict` and back out, so the tolerant per-field coercion (unknown
         # `surface_mode` → `off`, negative `cadence_days` → 0) applies to the WRITE and not only to

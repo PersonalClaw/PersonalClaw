@@ -29,11 +29,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows import longrun, ownership
+from personalclaw.workflows import leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
 from personalclaw.workflows.models import (
@@ -469,6 +471,76 @@ async def dispatch_visualize(
     )
 
 
+def claim_key(run_id: str, node_id: str) -> str:
+    """The lease target for one branch.
+
+    Per-NODE, not per-run: a run's leaves are meant to execute concurrently, so a run-scoped claim
+    would serialize the fan-out the lease exists to protect.
+    """
+    return f"{run_id}:{node_id}" if run_id and node_id else ""
+
+
+def claim_holder(run_id: str, node_id: str) -> str:
+    """A fresh holder identity for ONE execution attempt of a branch.
+
+    Unique per attempt, and that uniqueness is the whole control — measured, not assumed.
+    `containers.claim` RENEWS a claim held by the same holder (so a worker that lost its in-memory
+    state is not locked out of its own work). A holder derived from stable data — `run_id:node_id`,
+    or even that plus the PID — therefore made every second attempt a renewal rather than a refusal,
+    and the guard passed both executions through while a lease file sat there looking like
+    protection. The PID version failed for the case that matters most: two concurrent co-tenant
+    sessions in ONE gateway share a PID, which is exactly the threat §1.5 names.
+
+    The cost of per-attempt identity is that a genuinely dead holder's branch waits out the TTL
+    instead of being re-claimed instantly. That is the correct direction to be wrong in: a stalled
+    branch is visible and self-healing, while a double execution is silent and can write twice.
+    """
+    return f"{ownership.owned_key(run_id, node_id or 'node')}#{uuid.uuid4().hex[:12]}"
+
+
+def _release_claim(claim_target: str, holder: str) -> None:
+    """Drop this worker's claim on a branch that did NOT start.
+
+    Never raises: a failed release costs one TTL of a stalled branch, while an exception here would
+    turn a recoverable no-spawn return into a crashed dispatch.
+    """
+    if not claim_target:
+        return
+    try:
+        leases.release_claim(claim_target, holder)
+    except Exception:
+        logger.debug("claim release failed for %s", claim_target, exc_info=True)
+
+
+def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) -> dict[str, str]:
+    """The env one stage leaf runs with: lineage + capability posture, secret-filtered.
+
+    Built here because this is where a leaf is actually spawned — the compiled `postures` block is
+    an external contract until something applies it, and `batch_compile.CompileResult.unenforced`
+    names this seam as the missing half. `leaf_env` does the credential filtering (reusing
+    `workspace.looks_secret`, not a second copy of that policy).
+
+    The child's depth is the parent's PLUS ONE: a leaf that inherited the parent's depth unchanged
+    would let each level re-spend the same budget, and `depth_lint`'s static refusal of a nested
+    batch would never trip.
+    """
+    from personalclaw.mcp_shared import LEAF_READ_ONLY_KEY, leaf_env
+    from personalclaw.workflows.batch_compile import lineage_env
+
+    lineage = lineage_env(
+        run_id=run_id,
+        project_id=str(cfg.get("project_id", "") or ""),
+        node_id=node.id or "",
+        depth=int(depth) + 1,
+    )
+    # Absent `capability` means research — the same safe default `Capability.RESEARCH` encodes, and
+    # for the same reason: a leaf wrongly restricted fails visibly, while one wrongly unrestricted
+    # has ambient write access nobody asked for.
+    if str(cfg.get("capability", "") or "research").strip().lower() != "mutating":
+        lineage[LEAF_READ_ONLY_KEY] = "1"
+    return leaf_env(dict(os.environ), lineage)
+
+
 async def dispatch_stage(
     node: Node,
     ctx: BindingContext,
@@ -521,6 +593,28 @@ async def dispatch_stage(
             "the gateway did not initialize the subagent service",
         )
 
+    # No double-execution (WORK-CONTAINERS §1.5). Taken BEFORE the spawn, because a lease acquired
+    # after the work started would record the claim without preventing the thing it exists to
+    # prevent — two co-tenant workers would both have spawned by the time either checked. The claim
+    # is per-NODE (`run_id:node_id`), not per-run: a run's leaves are meant to execute concurrently,
+    # so a run-scoped claim would serialize the fan-out it was written to protect.
+    claim_target = claim_key(run_id, node.id or "")
+    holder = claim_holder(run_id, node.id or "")
+    if claim_target:
+        granted, reason = leases.acquire_claim(claim_target, holder)
+        if granted is None:
+            # DEGRADED, not FAILED: another worker holding the claim means this leaf is already
+            # being executed, which is the lease working. Failing would turn a successful
+            # duplicate-suppression into a red branch on a run that is proceeding correctly.
+            return NodeResult(
+                state=InstanceState.DEGRADED,
+                output=None,
+                degraded_reason=(
+                    f"another worker holds the claim on this node ({reason}) — not executing twice"
+                ),
+                resolved_prompt=prompt,
+            )
+
     info = subagents.spawn(
         task=prompt,
         # The run OWNS this session (§5.1): `workflow:<run_id>:<node_id>`. Passed as the parent key
@@ -542,15 +636,27 @@ async def dispatch_stage(
         cwd=cwd,
         silent=True,
         approval_mode=str(cfg.get("approval_mode", "") or "") or None,
+        # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
+        # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter and
+        # the read-only flag would never be set, and the handler seam would be a gate on a value
+        # nobody writes — the exact inert-control shape this clause exists to close.
+        extra_env=leaf_spawn_env(node, cfg, run_id=run_id, depth=depth),
     )
     if info is None:
-        # At capacity. Not a failure: the node stays ready and the next tick retries.
+        # At capacity. Not a failure: the node stays ready and the next tick retries — so the claim
+        # MUST be released. A claim held across a no-spawn return would make this node refuse its
+        # own retry for the whole TTL: the lease would block the work it exists to protect, which is
+        # the failure mode where a safety control becomes an outage.
+        _release_claim(claim_target, holder)
         return NodeResult(
             state=InstanceState.READY,
             degraded_reason="subagent capacity reached; will retry",
             resolved_prompt=prompt,
         )
     if getattr(info, "error", ""):
+        # A REJECTED spawn never executed, so the claim is released for the same reason as the
+        # capacity path: nothing is running, and holding the claim would only lock out the retry.
+        _release_claim(claim_target, holder)
         return NodeResult(
             state=InstanceState.FAILED,
             failure=Failure(
@@ -560,6 +666,10 @@ async def dispatch_stage(
             ),
             resolved_prompt=prompt,
         )
+    # The claim is deliberately RETAINED here: the spawn is live and the node stays RUNNING
+    # until its completion arrives, which is exactly the window a second worker must not
+    # execute in. It expires on its own TTL, so a killed gateway frees the branch without an
+    # admin step — the property `leases` was built for.
     return NodeResult(
         state=InstanceState.RUNNING,
         output={"subagent_id": info.id},

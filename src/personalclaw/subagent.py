@@ -314,6 +314,11 @@ class SubagentInfo:
     # through. ``none`` (the default builtin) composes the host path-sandbox + resource ceilings
     # with no further isolation; an installed ``sandbox`` app supplies a stronger container tier.
     sandbox: str = "none"
+    # Per-leaf env for a compiled batch branch (WF2WOR-5 C2): the lineage keys plus the
+    # capability flag the tool-handler seam reads, already secret-filtered by `leaf_env`. Carried
+    # per-SESSION rather than through `os.environ` because leaves of one batch run concurrently in
+    # one gateway process — a process-global flag would leak one leaf's posture onto its siblings.
+    extra_env: dict[str, str] = field(default_factory=dict)
     _pid: int | None = None  # PID of ACP agent child process, for tombstone diagnostics
     # Fan-out identity (C1.4): the run a spawn belongs to. Empty for a lone spawn.
     # The run-scoped concurrency lane, the consecutive-failure breaker and the
@@ -957,6 +962,7 @@ class SubagentManager:
         dry_run: bool = False,
         parent_run: str = "",
         sandbox: str = "none",
+        extra_env: dict[str, str] | None = None,
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1151,6 +1157,7 @@ class SubagentManager:
             cwd=resolved_cwd,
             parent_run=parent_run,
             sandbox=sandbox or "none",
+            extra_env=dict(extra_env or {}),
         )
         info._raw_task = task  # unredacted prompt for ACP agent execution
 
@@ -1885,6 +1892,12 @@ class SubagentManager:
         # the run previews what WOULD happen with no side effects.
         if info.dry_run:
             extra_kwargs["dry_run"] = True
+        if info.extra_env:
+            # The leaf's posture + lineage. Passed through the session's `extra_env` seam, which
+            # already forces a cold (non-pooled) session — a warm pooled worker would carry the
+            # PREVIOUS leaf's env, and inheriting a sibling's capability flag is precisely the
+            # cross-contamination this must not have.
+            extra_kwargs["extra_env"] = dict(info.extra_env)
         client, is_new, _resumed = await self._sessions.get_or_create(
             session_key,
             agent=agent or None,
