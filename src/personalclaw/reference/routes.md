@@ -440,10 +440,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/portability/preview` — validate and preview a zip without applying.
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
+- `POST /api/projects/import` — import a project archive (multipart `file`).
 - `DELETE /api/projects/{project_id}` — _(no summary)_
 - `GET /api/projects/{project_id}` — _(no summary)_
 - `PUT /api/projects/{project_id}` — _(no summary)_
 - `POST /api/projects/{project_id}/context-adapters/regenerate` — _(no summary)_
+- `GET /api/projects/{project_id}/export` — download one project as a manifest ZIP.
 - `GET /api/projects/{project_id}/linked` — the work units scoped under this
 - `GET /api/projects/{project_id}/work` — the state-grouped Work board.
 - `POST /api/projects/{project_id}/work/claim` — take a TTL'd claim on one board row.

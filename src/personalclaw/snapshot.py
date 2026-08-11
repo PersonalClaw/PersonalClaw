@@ -24,6 +24,14 @@ VALID_COMPONENTS = (
     "workspace",
     "notifications",
     "security",
+    # 🔴 `projects` was reachable ONLY through `everything` (via the inventory projection), so
+    # there was no way to ask for the projects and nothing else — and a project is the unit a user
+    # moves between machines, which is exactly the targeted restore the flag exists for. Naming it
+    # also gives the project ARCHIVE format (`workflows/project_archive.py`) a component to be the
+    # whole-home counterpart of: one project travels as a manifest ZIP, every project travels as
+    # this component. Worktrees stay excluded either way — the inventory declares them
+    # `derived_within`, being git-owned checkouts re-creatable from the repo.
+    "projects",
     # Criterion 1 names this invocation verbatim (`--components everything`) and the CLI
     # REJECTED it: "❌ Unknown component: everything". Covers every inventory entry the seven
     # named components do not, which is what makes a targeted restore expressible at all —
@@ -179,6 +187,91 @@ def _everything_paths(pc: Path) -> list[str]:
     return out
 
 
+def _derived_within(entry_path: str) -> tuple[str, ...]:
+    """The inventory's `derived_within` globs for one entry, or ().
+
+    🔴 THIS FIELD HAD NO READER. `projects` declares ``derived_within=("*/worktrees",)`` — "git-owned
+    checkouts, re-creatable from the repo" — and every capture path reached `projects/` through a
+    plain `_copytree_safe`, so a snapshot of a home with one bound workspace copied the entire
+    worktree. The declaration was true and unenforced, which is the worst shape for state policy: it
+    reads as a decision and behaves as an omission. Scoped to the entry it is asked about, not
+    applied globally, because `workspace`'s `knowledge` and `skills`' embeddings file are separate
+    decisions with their own consumers.
+    """
+    try:
+        from personalclaw.durability import inventory as inv
+
+        for entry in inv.INVENTORY:
+            if entry.path == entry_path:
+                return tuple(entry.derived_within)
+    except Exception:  # noqa: BLE001 — a snapshot must work even if this import breaks
+        return ()
+    return ()
+
+
+def _derived_ignore(entry_path: str, root: Path):
+    """A copytree `ignore` that skips whatever `entry_path` declares `derived_within`.
+
+    Matches the glob against the path RELATIVE TO the entry root, which is the frame the inventory
+    writes them in (`*/worktrees` means "any project's worktrees dir", not "a dir called worktrees
+    anywhere"). Matching the absolute path would make the pattern depend on where the home lives.
+    """
+    import fnmatch
+
+    globs = _derived_within(entry_path)
+
+    def _ignore(directory: str, contents: list[str]) -> set[str]:
+        if not globs:
+            return set()
+        skipped: set[str] = set()
+        for name in contents:
+            try:
+                rel = (Path(directory) / name).relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if any(fnmatch.fnmatch(rel, g) for g in globs):
+                skipped.add(name)
+        return skipped
+
+    return _ignore
+
+
+def _projects_component_paths(base: Path) -> list[str]:
+    """Home-relative per-project paths the named `projects` component covers.
+
+    Per-project rather than the `projects/` root so the component can be reported and restored one
+    project at a time — the unit a user actually moves. Mirrors
+    `workflows.project_archive.project_component_paths`, which is the single-project archive's view
+    of the same tree.
+    """
+    root = base / "projects"
+    if not root.is_dir():
+        return []
+    out: list[str] = []
+    for d in sorted(root.iterdir()):
+        try:
+            if not d.is_dir() or d.is_symlink():
+                continue
+        except OSError:
+            continue
+        out.append(f"projects/{d.name}")
+    return out
+
+
+def _store_selected(components: list[str] | None, rel: str) -> bool:
+    """Whether the generic store pass should restore `rel` for this component selection.
+
+    `everything` still selects every store. A NAMED store component (today: `projects`) additionally
+    selects its own subtree, so `--components projects` restores the projects and nothing else. Both
+    are asked here rather than at each call site so the two restore modes cannot drift — the exact
+    asymmetry `_extra_restore_paths` exists to record.
+    """
+    if _want(components, "everything"):
+        return True
+    top = rel.split("/", 1)[0]
+    return top in VALID_COMPONENTS and _want(components, top)
+
+
 def _extra_restore_paths_for_test_paths() -> list[str]:
     """Every inventory path the generic restore pass WOULD reach, independent of what exists on
     disk.
@@ -248,6 +341,7 @@ COMPONENT_HELP = {
     "workspace": "workspace/ directory",
     "notifications": "notifications.jsonl (notification history)",
     "security": "sel_hmac.key, telemetry_salt",
+    "projects": "projects/ — briefs, context ledgers, templates (worktrees excluded, git-owned)",
     "everything": "every other store: tasks, projects, agents, prompts, workflows, uploads, …",
 }
 
@@ -454,9 +548,18 @@ def snapshot_main(
                 print(f"⚠️  Skipping symlinked state path: {rel}")
                 continue
             if src.is_dir():
-                _copytree_safe(
-                    src, stage / rel, dirs_exist_ok=True, ignore=_tree_ignore_dbs(_db_names)
-                )
+                # 🔴 `derived_within` is honored HERE, where the tree is actually copied. `projects`
+                # declares `*/worktrees` derived; without this the copy carried every git worktree a
+                # bound workspace had produced, which is the difference between a megabyte archive
+                # and a multi-gigabyte one.
+                _derived = _derived_ignore(rel, src)
+
+                def _ignore(directory: str, contents: list[str], _d=_derived) -> set[str]:
+                    return set(_tree_ignore_dbs(_db_names)(directory, contents)) | _d(
+                        directory, contents
+                    )
+
+                _copytree_safe(src, stage / rel, dirs_exist_ok=True, ignore=_ignore)
                 staged_extra.append(rel)
             elif src.is_file():
                 (stage / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -1212,8 +1315,14 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> None:
     # 🔴 Every remaining inventory entry (S177) — see `_extra_restore_paths`. Replace mode moves
     # the live copy into the pre-restore backup FIRST, so the destructive half stays recoverable
     # exactly as it is for the named components.
-    if _want(components, "everything"):
+    # A NAMED store component selects its own subtree too, so `--components projects` returns the
+    # projects without also returning every other store (`_store_selected`).
+    if _want(components, "everything") or any(
+        _store_selected(components, rel) for rel in _extra_restore_paths(snap)
+    ):
         for rel in _extra_restore_paths(snap):
+            if not _store_selected(components, rel):
+                continue
             src, live = snap / rel, pc / rel
             if live.exists() and not live.is_symlink():
                 (backup / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -1335,10 +1444,16 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
     if _want(components, "everything"):
         for path in _attach_merge_paths():
             _add(path, inv.MERGE_SQLITE_ATTACH_IGNORE, "every table, INSERT OR IGNORE")
-        for path in _extra_restore_paths(snap):
-            entry = by_path.get(path)
-            strategy = entry.merge if entry else inv.MERGE_UNION_BY_ID
-            _add(path, strategy, "per-file union" if entry and entry.kind else "")
+    # The store rows use the SAME selector `_do_merge`/`_do_replace` use, so `--dry-run
+    # --components projects` describes the restore that `--components projects` performs. A plan
+    # that listed rows the run would skip is worse than no plan: it is a promise about the wrong
+    # restore.
+    for path in _extra_restore_paths(snap):
+        if not _store_selected(components, path):
+            continue
+        entry = by_path.get(path)
+        strategy = entry.merge if entry else inv.MERGE_UNION_BY_ID
+        _add(path, strategy, "per-file union" if entry and entry.kind else "")
     return rows
 
 
@@ -1533,9 +1648,13 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
         # immediately. Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets
         # its marks back, a live home keeps the ones that describe what actually ran.
 
-    if _want(components, "everything"):
+    # `_store_selected` so `--components projects` merges the projects alone — the same gate the
+    # replace path uses, asked once so the two modes cannot answer it differently.
+    if any(_store_selected(components, rel) for rel in _extra_restore_paths(snap)):
         restored = []
         for rel in _extra_restore_paths(snap):
+            if not _store_selected(components, rel):
+                continue
             src = snap / rel
             dst = pc / rel
             if src.is_dir():

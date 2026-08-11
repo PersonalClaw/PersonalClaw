@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, Download, type LucideIcon } from 'lucide-react'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -577,6 +577,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
         )}
       </Popover>
       <HeaderControl icon={MessageSquare} label="Chat" onClick={launchChat} />
+      {/* Export this project as a manifest ZIP — the brief, context ledgers, templates, artifact
+          metadata and run digests, each sha256'd. Credentials never travel; the archive names the
+          ones the far side must re-enter. A plain navigation rather than a fetch, so the browser's
+          own download machinery handles a multi-megabyte archive instead of buffering it in JS. */}
+      <HeaderControl icon={Download} label="Export" priority="low"
+        hint="Download this project as a portable archive (no credentials)"
+        onClick={() => { window.location.href = api.projectExportUrl(id) }} />
     </>
   )
   // The side panel: a task list's tasks, or a directory tree. Keyed so switching

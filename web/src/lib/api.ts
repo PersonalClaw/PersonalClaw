@@ -1273,6 +1273,15 @@ export interface PortabilityManifest {
 }
 export interface PortabilityPreviewResult { ok: boolean; error?: string; manifest?: PortabilityManifest }
 export interface PortabilityImportResult { ok: boolean; error?: string; summary?: { mode: string; items: string[] }; manifest?: PortabilityManifest }
+// One project's archive. `refused` names what did not arrive (a partial import is the normal case
+// for an archive that travelled) and `secrets_expected` names the credentials the far side must
+// re-enter — the archive deliberately carries neither their values nor a way to recover them.
+export interface ProjectImportIssue { path: string; code: string; message: string; fatal: boolean }
+export interface ProjectImportResult {
+  project_name: string; accepted: string[]; refused: ProjectImportIssue[]
+  secrets_expected: string[]; ok: boolean; summary?: string; preview?: boolean
+  project_id?: string; written?: string[]; error?: string
+}
 // Update + changelog.
 export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto_update: boolean; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; update_dev_mode?: boolean; release_notes?: string }
 
@@ -3062,6 +3071,15 @@ export const api = {
       .then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status); return r.text() }),
   // import / export (portable archive)
   portabilityExportUrl: () => '/api/portability/export',
+  // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
+  // a colleague a single project without shipping their memory database. Credentials never travel;
+  // the response headers name the ones the far side must re-enter.
+  projectExportUrl: (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/export`,
+  projectImport: (file: File, opts: { preview?: boolean } = {}) => {
+    const fd = new FormData(); fd.append('file', file)
+    const qs = opts.preview ? '?preview=1' : ''
+    return fetch(`/api/projects/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<ProjectImportResult>)
+  },
   // Both endpoints take a multipart upload of an export zip ('file' field).
   portabilityPreview: (file: File) => {
     const fd = new FormData(); fd.append('file', file)
