@@ -509,7 +509,7 @@
         {
           "id": "WF2KNO-7",
           "title": "render_report action provider (deferred/optional last slice)",
-          "status": "todo",
+          "status": "done",
           "scope": "§6.2 render_report Action Provider (KNOW-R15 — deliberately last, deferrable); Implementation Effort Session 7 (optional)",
           "done_when": "render_report ships in apps/native/knowledge-actions/ providers[] and ALLOWED_HOOK_PROVIDERS; declarative spec (markdown/table-ops/Mermaid xychart) → sanitized self-contained HTML/SVG; spec text stored as the versioned record in artifacts/registry with rendered output as a derived export; periodic synthesizer regenerates visuals from updated data",
           "deps": [
@@ -7411,11 +7411,6 @@
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
-      },
-      {
-        "id": "WF2KNO-7",
-        "title": "render_report action provider (deferred/optional last slice)",
-        "plan": "WF2KNO"
       },
       {
         "id": "WF2KNO-8",

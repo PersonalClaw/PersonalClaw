@@ -439,6 +439,7 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "knowledge-persist",  # writes the knowledge store
         "knowledge-consolidate",  # `apply: true` writes the consolidation
         "artifact-update",  # mutates an artifact
+        "render-report",  # writes the spec artifact + its derived export
         "notification-digest",  # writes an inbox item
     }
 )
