@@ -1045,6 +1045,90 @@ def _run_workspace_dir(run: Any) -> str:
         return ""
 
 
+def drop_status(run_id: str) -> dict[str, Any]:
+    """The run's file-drop policy + what has already been dropped (WORK-CONTAINERS §2.5).
+
+    Returns OK with `enabled: false` for a run whose template declared no drop, rather than an
+    error:
+    "this run does not accept files" is a fact the UI renders as a disabled affordance, and a 4xx
+    would make an intentional configuration look like a broken request (§2.5's honest disabled
+    status).
+    """
+    from personalclaw.workflows import filedrop
+
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    policy = filedrop.parse_policy(store.read_spec(run_id))
+    return _ok(
+        enabled=policy.enabled,
+        reason=policy.reason,
+        auto_accept_mimes=list(policy.auto_accept_mimes),
+        max_files=filedrop.MAX_DROPPED_FILES,
+        files=filedrop.read_manifest(run_id),
+    )
+
+
+def accept_dropped_file(
+    run_id: str, *, filename: str, data: bytes, mime: str = "", confirmed: bool = False
+) -> dict[str, Any]:
+    """Ingest one dropped file into the run's immutable zone, gated on approval.
+
+    Every refusal is a DISTINCT code, because the four reasons a drop is refused need four different
+    reactions from the caller: not accepting files at all (hide the affordance), needing approval
+    (show what + size and ask), too many files (offer a clear-out), too large (nothing to do but
+    pick a smaller file). One generic rejection would collapse them into a dead end.
+    """
+    from personalclaw.workflows import filedrop
+
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    policy = filedrop.parse_policy(store.read_spec(run_id))
+    if not policy.enabled:
+        return _err("WF_DROP_DISABLED", policy.reason or "this run does not accept dropped files")
+    needs, why = filedrop.approval_required(policy, mime, confirmed=confirmed)
+    if needs:
+        return _err(
+            "WF_DROP_APPROVAL_REQUIRED",
+            why,
+            pending={"filename": filedrop.safe_filename(filename), "size": len(data), "mime": mime},
+        )
+    existing = filedrop.read_manifest(run_id)
+    safe = filedrop.safe_filename(filename)
+    if len(existing) >= filedrop.MAX_DROPPED_FILES and not any(
+        e.get("filename") == safe for e in existing
+    ):
+        return _err(
+            "WF_DROP_LIMIT",
+            f"this run already holds {filedrop.MAX_DROPPED_FILES} dropped files",
+        )
+    try:
+        entry = filedrop.store_dropped_bytes(run_id, filename, data)
+    except (OSError, ValueError) as exc:
+        return _err("WF_DROP_WRITE_FAILED", f"could not store the dropped file: {exc}")
+    entry["mime"] = mime
+    entry["approved"] = not needs
+    entry["accepted_at"] = _now()
+    filedrop.record_drop(run_id, entry)
+    return _ok(file=entry, files=filedrop.read_manifest(run_id))
+
+
+def outbox(run_id: str) -> dict[str, Any]:
+    """The run's published-artifact listing — the §2.5 outbox, newest-first.
+
+    A read over what `apply_publish` journalled, so the listing and the publishes cannot disagree.
+    Each row carries its artifact `kind`; the FE resolves the preview through the `contentTypes`
+    registry rather than this route naming renderers.
+    """
+    from personalclaw.workflows import filedrop
+
+    run = store.get(run_id)
+    if run is None:
+        return _err("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    return _ok(files=filedrop.outbox_entries(run_id))
+
+
 def workspace_review(run_id: str) -> dict[str, Any]:
     """The code-run cockpit's diff panel + the two reintegration verbs (WORK-CONTAINERS §4.1).
 

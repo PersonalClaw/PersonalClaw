@@ -492,6 +492,10 @@ def test_publishing_records_the_run_on_the_artifacts_own_event(tmp_path, monkeyp
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # `workflows.store` binds `config_dir` at IMPORT, so patching the loader alone leaves the
+    # publish journal writing to the REAL home. Measured: this test wrote
+    # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
     from personalclaw.artifacts import native, registry
     from personalclaw.workflows.engine import NodeResult, apply_publish
     from personalclaw.workflows.models import InstanceState, Node
@@ -529,5 +533,233 @@ def test_publishing_records_the_run_on_the_artifacts_own_event(tmp_path, monkeyp
         edges = parse_lineage(event.metadata)
         assert edges["source"] == ["run:r-prov#write"]
         assert edges["informed_by"] == ["knowledge:item-7"]
+    finally:
+        registry.unregister_provider(provider.name)
+
+
+# ── media self-containment (§2.2c) ───────────────────────────────────────────
+#
+# The property: a published body that references a workspace file must not break when that file
+# moves. The reference is rewritten to a content-hash name and the bytes are copied into the
+# artifact's own version dir, so the version survives the workspace being deleted.
+
+
+def test_local_refs_are_rewritten_to_content_hash_names():
+    from personalclaw.workflows.publish import rewrite_media_refs
+
+    content = "See ![chart](out/chart.png) and [notes](notes.md)."
+    body, copies, unresolved = rewrite_media_refs(
+        content, lambda ref: (b"bytes-of-" + ref.encode(), "a" * 64)
+    )
+    assert unresolved == []
+    assert {c.reference for c in copies} == {"out/chart.png", "notes.md"}
+    # The stem survives so a versions listing stays readable; the digest is what makes it immutable.
+    assert "![chart](chart@aaaaaaaaaaaa.png)" in body
+    assert "[notes](notes@aaaaaaaaaaaa.md)" in body
+
+
+def test_remote_and_opted_out_refs_are_left_alone():
+    """A URL is already self-contained, and `@` means "leave this pointer alone" everywhere else in
+    the product — copying either would be the publish overriding an explicit choice."""
+    from personalclaw.workflows.publish import rewrite_media_refs
+
+    content = "![a](https://example.com/x.png) ![b](@live/pointer.png) ![c](/etc/passwd)"
+    body, copies, unresolved = rewrite_media_refs(content, lambda ref: (b"x", "b" * 64))
+    assert copies == []
+    assert unresolved == []
+    assert body == content
+
+
+def test_an_unresolvable_ref_is_reported_and_left_verbatim():
+    """Not replaced with a placeholder: a body whose broken image became `[missing]` would read as
+    though the run produced something it did not."""
+    from personalclaw.workflows.publish import rewrite_media_refs
+
+    body, copies, unresolved = rewrite_media_refs("![x](gone.png)", lambda ref: None)
+    assert copies == []
+    assert unresolved == [("gone.png", "could not read the referenced file")]
+    assert body == "![x](gone.png)"
+
+
+def test_one_file_referenced_twice_is_copied_once():
+    """Content-addressed means the second reference resolves to the same copy — otherwise a body
+    citing one chart in two places would burn two slots for identical bytes."""
+    from personalclaw.workflows.publish import rewrite_media_refs
+
+    calls: list[str] = []
+
+    def _resolve(ref: str):
+        calls.append(ref)
+        return b"same", "c" * 64
+
+    body, copies, _ = rewrite_media_refs("![a](x.png) ![b](x.png)", _resolve)
+    assert len(copies) == 1
+    assert calls == ["x.png"]
+    assert body.count("x@cccccccccccc.png") == 2
+
+
+def test_store_version_file_refuses_a_name_that_could_shadow_a_snapshot(tmp_path, monkeypatch):
+    """The structural guard: a companion named `v3.png` would be counted as a version snapshot by
+    `_list_version_numbers` and pruned as one."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # `workflows.store` binds `config_dir` at IMPORT, so patching the loader alone leaves the
+    # publish journal writing to the REAL home. Measured: this test wrote
+    # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
+    from personalclaw.artifacts import native
+
+    provider = native.NativeArtifactProvider()
+    monkeypatch.setattr(provider, "_root", home / "artifacts", raising=False)
+    art = provider.create(name="Guarded", content="body", kind="markdown")
+    assert provider.store_version_file(art.slug, "v3.png", b"x") is False
+    assert provider.store_version_file(art.slug, "chart@abcabcabcabc.png", b"x") is True
+
+
+def test_publish_copies_referenced_files_into_the_version_dir(tmp_path, monkeypatch):
+    """The end-to-end claim: after a publish, the artifact's version dir holds the referenced file
+    under its content-hash name, and the body points at that name — so deleting the run workspace
+    does not break the version."""
+    import hashlib
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # `workflows.store` binds `config_dir` at IMPORT, so patching the loader alone leaves the
+    # publish journal writing to the REAL home. Measured: this test wrote
+    # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
+    from personalclaw.artifacts import native, registry
+    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.models import InstanceState, Node
+
+    cwd = tmp_path / "ws"
+    (cwd / "out").mkdir(parents=True)
+    (cwd / "out" / "chart.png").write_bytes(b"\x89PNG-pretend")
+    digest = hashlib.sha256(b"\x89PNG-pretend").hexdigest()
+
+    provider = native.NativeArtifactProvider()
+    monkeypatch.setattr(provider, "_root", home / "artifacts", raising=False)
+    registry.register_provider(provider)
+    try:
+        node = Node.from_dict(
+            {
+                "kind": "stage",
+                "id": "write",
+                "config": {"prompt": "x", "publish": {"artifact": "Media report"}},
+            }
+        )
+        result = apply_publish(
+            node,
+            NodeResult(
+                state=InstanceState.DONE,
+                output="The findings, with ![chart](out/chart.png) attached for reference.",
+            ),
+            run_id="r-media",
+            cwd=str(cwd),
+        )
+        media = result.published["media"]
+        assert media["self_contained"] is True
+        assert media["unresolved"] == []
+        assert media["stored"][0]["sha256"] == digest
+        name = media["stored"][0]["filename"]
+        assert name == f"chart@{digest[:12]}.png"
+        art = provider.find_similar("Media report")
+        landed = provider._artifact_dir(art.slug) / "versions" / name
+        assert landed.read_bytes() == b"\x89PNG-pretend"
+        # The stored body points at the copy, not at the workspace path.
+        detail = provider.get(art.slug)
+        assert name in detail.content
+        assert "out/chart.png" not in detail.content
+    finally:
+        registry.unregister_provider(provider.name)
+
+
+def test_publish_refuses_to_copy_a_file_outside_the_run_cwd(tmp_path, monkeypatch):
+    """Containment is the security posture of the copy: `../` traversal must not pull a host file
+    into an artifact the dashboard serves."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # `workflows.store` binds `config_dir` at IMPORT, so patching the loader alone leaves the
+    # publish journal writing to the REAL home. Measured: this test wrote
+    # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
+    from personalclaw.artifacts import native, registry
+    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.models import InstanceState, Node
+
+    (tmp_path / "secret.txt").write_bytes(b"a credential")
+    cwd = tmp_path / "ws"
+    cwd.mkdir()
+
+    provider = native.NativeArtifactProvider()
+    monkeypatch.setattr(provider, "_root", home / "artifacts", raising=False)
+    registry.register_provider(provider)
+    try:
+        node = Node.from_dict(
+            {
+                "kind": "stage",
+                "id": "write",
+                "config": {"prompt": "x", "publish": {"artifact": "Escape probe"}},
+            }
+        )
+        result = apply_publish(
+            node,
+            NodeResult(state=InstanceState.DONE, output="Look at [it](../secret.txt) closely."),
+            run_id="r-escape",
+            cwd=str(cwd),
+        )
+        media = result.published["media"]
+        assert media["stored"] == []
+        assert media["self_contained"] is False
+        assert media["unresolved"][0]["reference"] == "../secret.txt"
+        # The reference is left verbatim, so the break is visible rather than silently rewritten.
+        assert "a credential" not in (
+            provider.get(provider.find_similar("Escape probe").slug).content
+        )
+    finally:
+        registry.unregister_provider(provider.name)
+
+
+def test_publish_journals_the_outcome_for_the_outbox(tmp_path, monkeypatch):
+    """The outbox reads `publishes.jsonl`; this proves the publish path WRITES it. A reader of a key
+    nothing writes is the worst shape of inert code."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: home)
+    # `workflows.store` binds `config_dir` at IMPORT, so patching the loader alone leaves the
+    # publish journal writing to the REAL home. Measured: this test wrote
+    # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
+    monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
+    from personalclaw.artifacts import native, registry
+    from personalclaw.workflows import filedrop, store
+    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.models import InstanceState, Node
+
+    provider = native.NativeArtifactProvider()
+    monkeypatch.setattr(provider, "_root", home / "artifacts", raising=False)
+    registry.register_provider(provider)
+    try:
+        node = Node.from_dict(
+            {
+                "kind": "stage",
+                "id": "write",
+                "config": {"prompt": "x", "publish": {"artifact": "Outbox probe"}},
+            }
+        )
+        apply_publish(
+            node,
+            NodeResult(state=InstanceState.DONE, output="A body worth publishing once."),
+            run_id="r-outbox",
+        )
+        rows = store.read_jsonl("r-outbox", "publishes.jsonl")
+        assert len(rows) == 1
+        entries = filedrop.outbox_entries("r-outbox")
+        assert entries[0]["artifact"] == "Outbox probe"
+        assert entries[0]["action"] == "create"
+        assert entries[0]["node_id"] == "write"
+        assert entries[0]["self_contained"] is True
     finally:
         registry.unregister_provider(provider.name)

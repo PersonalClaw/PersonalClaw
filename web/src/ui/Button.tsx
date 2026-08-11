@@ -41,7 +41,7 @@ const sizes: Record<Size, string> = {
  *  hardcoded colors/px — all via tokens. */
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
-  loading = false, className, onClick, disabled, type = 'button', title, ariaExpanded,
+  loading = false, className, onClick, disabled, type = 'button', title, ariaExpanded, ariaPressed,
 }: {
   children: ReactNode
   variant?: Variant
@@ -57,6 +57,11 @@ export function Button({
   // action button carries no misleading `aria-expanded`; set it only when the button folds
   // content (e.g. the runs-inbox "Show N suppressed" archive toggle).
   ariaExpanded?: boolean
+  // A button acting as a SELECTED/UNSELECTED choice (a list row that stays chosen, a view toggle)
+  // must announce that state, or a screen-reader user hears an identical label for the row they are
+  // on and the row they are not. Separate from `ariaExpanded` on purpose: expanded means "reveals
+  // content", pressed means "is the current selection", and one attribute cannot carry both.
+  ariaPressed?: boolean
 }) {
   const reduce = useReducedMotion()
   const ref = useRef<HTMLButtonElement>(null)
@@ -89,6 +94,7 @@ export function Button({
       type={type}
       title={title}
       aria-expanded={ariaExpanded}
+      aria-pressed={ariaPressed}
       onClick={onClick}
       disabled={off}
       onPointerMove={onMove}

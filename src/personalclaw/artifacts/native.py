@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,12 @@ from personalclaw.config.loader import config_dir
 from personalclaw.security import is_sensitive_path
 
 logger = logging.getLogger(__name__)
+
+#: The only companion-file names ``store_version_file`` accepts: ``<stem>@<hex>[.ext]``. Anchored to
+#: the ``@`` so a companion can never collide with a ``vN.<ext>`` snapshot — the two live in one
+#: directory, and a name in both namespaces would let a media copy be pruned as a version (or
+#: overwrite one).
+_MEDIA_NAME_RE = re.compile(r"[\w.\-]+@[0-9a-f]{6,64}(\.[A-Za-z0-9]{1,12})?")
 
 
 def _now() -> str:
@@ -287,6 +294,29 @@ class NativeArtifactProvider(ArtifactProvider):
         vdir.mkdir(parents=True, exist_ok=True)
         self._write_bytes(vdir / self._body_filename(art, version), data)
         self._prune_versions(art.slug)
+
+    def store_version_file(self, slug: str, filename: str, data: bytes) -> bool:
+        """Land one content-addressed companion file in ``<slug>/versions/``.
+
+        The name MUST carry the ``<stem>@<hash><ext>`` shape the publish path mints. That is a
+        structural guard, not cosmetics: a companion accepted as ``v3.html`` would overwrite a
+        version snapshot, and one accepted as ``v3.png`` would be counted as a snapshot by
+        ``_list_version_numbers`` and pruned as one. The ``@`` cannot appear in a snapshot name, so
+        requiring it makes the two namespaces disjoint by construction.
+
+        Idempotent by content address: a re-publish referencing the same unchanged file writes the
+        same bytes to the same name, so the copy is made once however many versions cite it.
+        """
+        if not _MEDIA_NAME_RE.fullmatch(filename):
+            return False
+        vdir = self._artifact_dir(slug) / "versions"
+        if not vdir.parent.is_dir():
+            return False
+        vdir.mkdir(parents=True, exist_ok=True)
+        dest = vdir / filename
+        if dest.exists():
+            return True
+        return self._write_bytes(dest, data)
 
     def _append_event(self, art: Artifact, event: ArtifactEvent) -> None:
         art.events.append(event)

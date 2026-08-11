@@ -1461,7 +1461,47 @@ def _restriction_skip(cfg: dict[str, Any], run_id: str) -> tuple[bool, str]:
     return ownership.skips_node(cfg, mode)
 
 
-def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeResult:
+def _publish_media_resolver(cwd: str | None) -> Any:
+    """A `rewrite_media_refs` resolver reading files under the run's own cwd — and only there.
+
+    Containment is the whole security posture of the copy: `..` traversal and symlinks out of the
+    tree are refused, so a published body cannot pull `~/.ssh/id_rsa` into an artifact the dashboard
+    serves by writing `![](../../../.ssh/id_rsa)`. Returns None (never raises) for anything it will
+    not read, which `rewrite_media_refs` reports as unresolved rather than silently dropping.
+    """
+    import hashlib
+    from pathlib import Path
+
+    from personalclaw.security import is_sensitive_path
+
+    #: Companion copies ride inside the artifact's version dir, which the dashboard serves and the
+    #: 50-snapshot window holds. A large binary copied per version would blow both, so the cap is
+    #: deliberately far below the artifact body cap.
+    max_bytes = 8 * 1024 * 1024
+
+    def _resolve(reference: str) -> tuple[bytes, str] | None:
+        if not cwd:
+            return None
+        try:
+            root = Path(cwd).resolve()
+            target = (root / reference).resolve()
+            if not target.is_relative_to(root) or not target.is_file():
+                return None
+            if is_sensitive_path(str(target)):
+                return None
+            if target.stat().st_size > max_bytes:
+                return None
+            data = target.read_bytes()
+        except (OSError, ValueError):
+            return None
+        return data, hashlib.sha256(data).hexdigest()
+
+    return _resolve
+
+
+def apply_publish(
+    node: Node, result: NodeResult, *, run_id: str = "", cwd: str | None = None
+) -> NodeResult:
     """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2,
     S47).
 
@@ -1483,6 +1523,7 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
         PublishAction,
         flatten_lineage,
         parse_publish,
+        rewrite_media_refs,
         upsert_plan,
     )
 
@@ -1525,6 +1566,13 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
             return _with_publish(
                 result, {"action": "noop", "reason": "no writable artifact provider"}
             )
+        # Media self-containment BEFORE the material-change comparison (WORK-CONTAINERS §2.2c):
+        # the rewritten body is what gets stored, so gating on the pre-rewrite text would compare a
+        # body the artifact never holds. A first publish would then look unchanged on its second run
+        # purely because the reference names differ.
+        content, media_copies, media_unresolved = rewrite_media_refs(
+            content, _publish_media_resolver(cwd)
+        )
         existing = provider.find_similar(spec.artifact)
         previous = None
         if existing is not None:
@@ -1570,10 +1618,92 @@ def apply_publish(node: Node, result: NodeResult, *, run_id: str = "") -> NodeRe
             }
         else:
             payload = {**plan.to_dict(), "slug": existing.slug if existing else ""}
+        # Copies land AFTER the body, because the destination is keyed by the slug the write just
+        # settled. A copy failure does NOT fail the node for the same reason a registry failure does
+        # not: the work happened. It is REPORTED instead — a body whose image reference points at a
+        # copy that was never made must say so, or the artifact looks self-contained and isn't.
+        payload["media"] = _land_media_copies(
+            provider, str(payload.get("slug") or ""), media_copies, media_unresolved
+        )
+        _journal_publish(run_id, node.id or "", payload)
         return _with_publish(result, payload)
     except Exception as exc:
         logger.debug("publish failed for node %s", node.id, exc_info=True)
         return _with_publish(result, {"action": "error", "reason": f"{type(exc).__name__}: {exc}"})
+
+
+def _journal_publish(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
+    """Record one publish outcome in the run's own log — what the §2.5 outbox lists.
+
+    A run-scoped journal rather than a query over the artifact registry: the registry knows an
+    artifact exists, not which run published it, and reconstructing that from event metadata means
+    scanning every artifact's events to answer "what did THIS run produce". A NOOP is journalled
+    too,
+    because an outbox that hides a converged republish makes the artifact look abandoned by its
+    producer — the same reason `upsert_plan` attaches provenance to a no-op.
+    """
+    if not run_id or not payload.get("slug"):
+        return
+    from datetime import datetime, timezone
+
+    from personalclaw.workflows import store as _store
+
+    try:
+        _store.append_jsonl(
+            run_id,
+            "publishes.jsonl",
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "node_id": node_id,
+                "slug": payload.get("slug", ""),
+                "artifact": payload.get("artifact", ""),
+                "kind": payload.get("kind", ""),
+                "action": payload.get("action", ""),
+                "change_note": payload.get("change_note", ""),
+                "media": payload.get("media", {}),
+            },
+        )
+    except Exception:
+        # A journal write must never fail a completed stage — the artifact already landed.
+        logger.debug("publish journal write failed for run %s", run_id, exc_info=True)
+
+
+def _land_media_copies(
+    provider: Any, slug: str, copies: list[Any], unresolved: list[tuple[str, str]]
+) -> dict[str, Any]:
+    """Copy each referenced local file into the artifact's version dir. Reports what landed.
+
+    `unresolved` rides in the SAME record as the successes so one read answers "is this artifact
+    self-contained?". Split across two fields on two surfaces, the failures are the ones nobody
+    looks at.
+    """
+    stored: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = [{"reference": r, "reason": why} for r, why in unresolved]
+    for copy in copies:
+        ok = False
+        if slug:
+            try:
+                ok = provider.store_version_file(slug, copy.filename, copy.data)
+            except Exception:
+                logger.debug("media copy failed for %s/%s", slug, copy.filename, exc_info=True)
+                ok = False
+        if ok:
+            stored.append(
+                {
+                    "reference": copy.reference,
+                    "filename": copy.filename,
+                    "sha256": copy.sha256,
+                    "size": copy.size,
+                }
+            )
+        else:
+            failed.append(
+                {
+                    "reference": copy.reference,
+                    "reason": "the artifact store did not accept the copy",
+                }
+            )
+    return {"stored": stored, "unresolved": failed, "self_contained": not failed}
 
 
 def _with_publish(result: NodeResult, payload: dict[str, Any]) -> NodeResult:
@@ -1826,7 +1956,7 @@ async def dispatch(
     # publish path instead of quietly dropping a declared output. Ordered after the gate
     # deliberately — publishing the output of a node that failed its own artifact gate would
     # store a deliverable the run does not stand behind.
-    return apply_publish(node, result, run_id=run_id)
+    return apply_publish(node, result, run_id=run_id, cwd=cwd or None)
 
 
 async def _dispatch_inner(

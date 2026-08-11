@@ -6356,7 +6356,7 @@
         {
           "id": "WF2WOR-3",
           "title": "Artifact publishing: media self-containment, file drop/outbox, cockpit diffs",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§2 (Artifacts — existing entity; R4/R5/R10/R17), Migration Order steps 3 & 8",
           "done_when": "Success Criterion 3: a publish:{artifact} output appears in the existing Artifacts UI versioned only on material change with a change_note and typed lineage deep links; local files copied into the version dir with content-hash names; per-run file drop (approval-gated multipart) + outbox listing route work; cockpit renders structured version diffs + multi-view tabs on the contentTypes.ts registry",
           "deps": [],
