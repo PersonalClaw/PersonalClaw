@@ -433,6 +433,21 @@ def _bot_name_sanitizer(value: str) -> str:
     return _sanitize_bot_name(value)
 
 
+def _scratchpad_path_sanitizer(value: str) -> str:
+    """Canonicalize the watched-scratchpad path at the WRITE boundary.
+
+    `pathguard.canonicalize` is the same realpath+expanduser the trigger capability fence uses, so
+    a stored path can never differ from the one a fence would compare — a config file holding
+    ``~/notes/../.ssh/id_rsa`` while the runtime resolved something else is the split-brain S118
+    documented. Empty stays empty: "" is how the feature is turned off.
+    """
+    if not value.strip():
+        return ""
+    from personalclaw.triggers.pathguard import canonicalize
+
+    return canonicalize(value.strip())
+
+
 _EDITABLE_CONFIG: dict[str, dict] = {
     "agent.approval_mode": {"type": "enum", "values": ["auto", "interactive", "trust_reads"]},
     "agent.yolo": {"type": "bool"},
@@ -523,6 +538,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},
     "feedback.window_days": {"type": "int", "min": 7, "max": 365},
     # AGENT-ROUTING — suggest-first specialist routing (runtime-editable).
+    # WORKFLOWS-V2-UNIVERSAL-PLANNING UP-R18 — the watched scratchpad. "" = off, which is
+    # the default; canonicalized on write so the stored path is the one the fence compares.
+    "planning.scratchpad_path": {
+        "type": "str",
+        "max_len": 512,
+        "sanitize": _scratchpad_path_sanitizer,
+    },
     "agents_routing.enabled": {"type": "bool"},
     "agents_routing.min_confidence": {"type": "float", "min": 0.3, "max": 0.95},
     "agents_routing.cooldown_hours": {"type": "float", "min": 0.0, "max": 720.0},

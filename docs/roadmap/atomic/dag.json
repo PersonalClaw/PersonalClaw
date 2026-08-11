@@ -2177,7 +2177,7 @@
         {
           "id": "WF2UNI-9",
           "title": "Watched-scratchpad intake (Success Criterion 9): periodic scan proposes plans into the needs-input inbox, never auto-executed, with source backlink + dedup",
-          "status": "todo",
+          "status": "done",
           "scope": "Planner Entry Surfaces (UP-R18); Provider & Config Integration (watched scratchpad scan); Success Criteria 9",
           "done_when": "a file-watch/interval automation trigger scans the configured planning.scratchpad_path, runs each actionable line through the triage gate + intent classifier, and lands a PROPOSED plan via InboxService with a backlink to the source line; dedup by content-hash + seen-line tracking; checked/struck lines ignored; planning.scratchpad_path wired through the 5-point config contract.",
           "deps": [
@@ -7435,11 +7435,6 @@
       {
         "id": "WF2UNI-7",
         "title": "Wire the S45 template pipeline into production: source_session_id mining, discover-then-freeze candidate templates, suggest_template registration, eval_specs importer",
-        "plan": "WF2UNI"
-      },
-      {
-        "id": "WF2UNI-9",
-        "title": "Watched-scratchpad intake (Success Criterion 9): periodic scan proposes plans into the needs-input inbox, never auto-executed, with source backlink + dedup",
         "plan": "WF2UNI"
       },
       {
