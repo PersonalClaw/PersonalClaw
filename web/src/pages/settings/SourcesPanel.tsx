@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
-import { PanelHeader, Section, ToggleRow, NumberRow } from './settingsUI'
+import { PanelHeader, Section, ToggleRow, NumberRow, Field } from './settingsUI'
+import { TextInput } from '../../ui/forms'
+import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
 
 // The editable sources.* fields mirror the backend _EDITABLE_CONFIG allowlist
@@ -17,15 +19,26 @@ type SourcesCfg = Record<string, unknown>
  *  PATCHes one allowlisted path. */
 export function SourcesPanel() {
   const [cfg, setCfg] = useState<SourcesCfg | null>(null)
+  const [scratchpad, setScratchpad] = useState<string | null>(null)
 
   const { data } = useCachedData('settings:sources', () =>
-    api.personalclawConfig().then((c) => (c.sources ?? {}) as SourcesCfg).catch(() => ({} as SourcesCfg)),
+    api.personalclawConfig().then((c) => ({
+      sources: (c.sources ?? {}) as SourcesCfg,
+      // planning.* is a sibling section, not part of sources.*, so it is fetched with the
+      // same request rather than a second round trip.
+      scratchpadPath: String(((c.planning ?? {}) as Record<string, unknown>).scratchpad_path ?? ''),
+    })).catch(() => ({ sources: {} as SourcesCfg, scratchpadPath: '' })),
     { persist: true },
   )
 
-  useEffect(() => { if (data) setCfg(data) }, [data])
+  useEffect(() => {
+    if (data) {
+      setCfg(data.sources)
+      setScratchpad(data.scratchpadPath)
+    }
+  }, [data])
 
-  if (!data || !cfg) return <FormSkeleton sections={2} />
+  if (!data || !cfg || scratchpad === null) return <FormSkeleton sections={3} />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error
   // (a swallowed 400 would look exactly like a successful save).
@@ -36,6 +49,19 @@ export function SourcesPanel() {
       setCfg((c) => ({ ...c, [key]: prev }))
       notify(`Couldn't save ${key}: ${String((e as Error)?.message || e)}`, 'error')
     })
+  }
+
+  // A path is typed, not toggled, so it commits on Enter/blur rather than per keystroke —
+  // PATCHing every character would send a request per letter AND canonicalize a half-typed
+  // path server-side, so the field would fight the user as they type.
+  const saveScratchpad = () => {
+    const next = (scratchpad ?? '').trim()
+    api.patchConfig('planning.scratchpad_path', next)
+      .then(() => notify(next ? 'Scratchpad path saved' : 'Scratchpad intake turned off', 'success'))
+      .catch((e) => {
+        setScratchpad(data.scratchpadPath)
+        notify(`Couldn't save scratchpad path: ${String((e as Error)?.message || e)}`, 'error')
+      })
   }
 
   return (
@@ -61,6 +87,19 @@ export function SourcesPanel() {
             hint="How many new items one poll may ingest before the rest wait for the next cycle." />
           <NumberRow label="Daily request budget per source" cfg={cfg} field="daily_request_budget" min={1} max={100000} patch={patch}
             hint="Upper bound on network requests one source may make in a rolling day (enforced by the fetching providers)." />
+        </div>
+      </Section>
+
+      <Section title="Watched scratchpad" hint="A notes file whose jotted todos become plan proposals you accept — never runs on its own.">
+        <div className="rounded-lg bg-surface-container px-4 py-1">
+          <Field label="Scratchpad path" hint="Full path to a local notes file. Each new actionable line becomes a PROPOSED plan in your inbox, linked back to its source line. Checked (- [x]) and struck-through lines are ignored. Leave empty to turn this off — no file is read.">
+            <div className="flex items-center gap-s">
+              <TextInput value={scratchpad} onChange={setScratchpad} mono placeholder="~/notes/today.md"
+                onKeyDown={(e) => { if (e.key === 'Enter') saveScratchpad() }} />
+              <Button variant="secondary" size="sm" onClick={saveScratchpad}
+                disabled={(scratchpad ?? '').trim() === data.scratchpadPath}>Save</Button>
+            </div>
+          </Field>
         </div>
       </Section>
     </div>
