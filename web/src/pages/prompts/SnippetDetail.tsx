@@ -154,7 +154,11 @@ function SnippetRenderPanel({ name, vars }: { name: string; vars: PromptVariable
       <div className="flex flex-col gap-2">
         {vars.map((v) => (
           <Field key={v.name} label={`${v.name}${v.required ? ' *' : ''}`}>
-            <input value={String(values[v.name] ?? '')} onChange={(e) => setValues((s) => ({ ...s, [v.name]: e.target.value }))} placeholder={v.description}
+            {/* Raw input inside a publishing Field — only the form-family components read
+                FieldLabelCtx, so it cannot claim the label and must name itself. Same wording as
+                PromptDetail's Try-it fields, so the two surfaces announce alike. */}
+            <input value={String(values[v.name] ?? '')} aria-label={`${v.name} value`}
+              onChange={(e) => setValues((s) => ({ ...s, [v.name]: e.target.value }))} placeholder={v.description}
               className="w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
           </Field>
         ))}

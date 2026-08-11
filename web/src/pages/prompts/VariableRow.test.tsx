@@ -24,15 +24,17 @@ describe('VariableRow', () => {
     const { getByLabelText, getByText } = render(
       <VariableRow v={base} onChange={() => {}} onRemove={() => {}} />,
     )
-    // a11y names present on every field (the canonical copy's gain over the two duplicates).
-    expect((getByLabelText('Variable name') as HTMLInputElement).value).toBe('topic')
-    expect(getByLabelText('Variable type')).toBeTruthy()
-    expect(getByLabelText('Variable description')).toBeTruthy()
-    expect(getByLabelText('Variable default value')).toBeTruthy()
+    // a11y names present on every field AND scoped to the variable this row edits — a constant
+    // label here was non-null but ambiguous once a prompt had two variables (measured: two rows both
+    // announced "Variable name"). See promptFieldNames.test.tsx for the two-row proof.
+    expect((getByLabelText('Name of variable "topic"') as HTMLInputElement).value).toBe('topic')
+    expect(getByLabelText('Type of variable "topic"')).toBeTruthy()
+    expect(getByLabelText('Description of variable "topic"')).toBeTruthy()
+    expect(getByLabelText('Default value of variable "topic"')).toBeTruthy()
     // Each field carries a unique `name=` (defeats browser autofill); the useId() prefix
     // makes them field-specific.
-    expect((getByLabelText('Variable name') as HTMLInputElement).name).toMatch(/^var-name-/)
-    expect((getByLabelText('Variable type') as HTMLSelectElement).name).toMatch(/^var-type-/)
+    expect((getByLabelText('Name of variable "topic"') as HTMLInputElement).name).toMatch(/^var-name-/)
+    expect((getByLabelText('Type of variable "topic"') as HTMLSelectElement).name).toMatch(/^var-type-/)
     // Required toggle shows its current state.
     expect(getByText('optional')).toBeTruthy()
   })
@@ -41,18 +43,18 @@ describe('VariableRow', () => {
     const { getByLabelText, rerender } = render(
       <VariableRow v={base} onChange={() => {}} onRemove={() => {}} />,
     )
-    expect((getByLabelText('Variable description') as HTMLInputElement).placeholder).toBe('Description (shown when invoked)')
+    expect((getByLabelText('Description of variable "topic"') as HTMLInputElement).placeholder).toBe('Description (shown when invoked)')
     rerender(<VariableRow v={base} onChange={() => {}} onRemove={() => {}} descriptionPlaceholder="Description" />)
-    expect((getByLabelText('Variable description') as HTMLInputElement).placeholder).toBe('Description')
+    expect((getByLabelText('Description of variable "topic"') as HTMLInputElement).placeholder).toBe('Description')
   })
 
   it('reveals the choices field only for select-type variables', () => {
     const { queryByLabelText, rerender } = render(
       <VariableRow v={base} onChange={() => {}} onRemove={() => {}} />,
     )
-    expect(queryByLabelText('Variable choices')).toBeNull()
+    expect(queryByLabelText('Choices for variable "topic"')).toBeNull()
     rerender(<VariableRow v={{ ...base, type: 'select', options: ['a', 'b'] }} onChange={() => {}} onRemove={() => {}} />)
-    expect((queryByLabelText('Variable choices') as HTMLInputElement).value).toBe('a, b')
+    expect((queryByLabelText('Choices for variable "topic"') as HTMLInputElement).value).toBe('a, b')
   })
 
   it('sanitizes the name, toggles required, and wires remove', () => {
@@ -61,7 +63,7 @@ describe('VariableRow', () => {
     const { getByLabelText, getByText, container } = render(
       <VariableRow v={base} onChange={onChange} onRemove={onRemove} />,
     )
-    const nameInput = getByLabelText('Variable name') as HTMLInputElement
+    const nameInput = getByLabelText('Name of variable "topic"') as HTMLInputElement
     fireEvent.change(nameInput, { target: { value: 'my var!' } })
     expect(onChange).toHaveBeenCalledWith({ name: 'my_var_' })
 
@@ -85,7 +87,7 @@ describe('VariableRow', () => {
   it('keeps a comma while typing, so a select can hold more than one option', () => {
     const onCommit = vi.fn()
     const { getByLabelText } = render(<Row initial={{ ...base, type: 'select', options: [] }} onCommit={onCommit} />)
-    const input = getByLabelText('Variable choices') as HTMLInputElement
+    const input = getByLabelText('Choices for variable "topic"') as HTMLInputElement
     type(input, 'red,green')
     expect(input.value).toBe('red,green')
     fireEvent.blur(input)
@@ -95,7 +97,7 @@ describe('VariableRow', () => {
   it('lets a space follow a comma, and trims it away only on commit', () => {
     const onCommit = vi.fn()
     const { getByLabelText } = render(<Row initial={{ ...base, type: 'select', options: [] }} onCommit={onCommit} />)
-    const input = getByLabelText('Variable choices') as HTMLInputElement
+    const input = getByLabelText('Choices for variable "topic"') as HTMLInputElement
     type(input, 'red, green, blue')
     expect(input.value).toBe('red, green, blue')
     fireEvent.blur(input)
@@ -105,7 +107,7 @@ describe('VariableRow', () => {
   it('drops empty choices on commit (a trailing comma persists no blank option)', () => {
     const onCommit = vi.fn()
     const { getByLabelText } = render(<Row initial={{ ...base, type: 'select', options: [] }} onCommit={onCommit} />)
-    const input = getByLabelText('Variable choices') as HTMLInputElement
+    const input = getByLabelText('Choices for variable "topic"') as HTMLInputElement
     type(input, 'red, ,green,')
     fireEvent.blur(input)
     expect(onCommit).toHaveBeenCalledWith(expect.objectContaining({ options: ['red', 'green'] }))
@@ -115,8 +117,8 @@ describe('VariableRow', () => {
     const { getByLabelText, rerender } = render(
       <VariableRow v={{ ...base, type: 'select', options: ['a', 'b'] }} onChange={() => {}} onRemove={() => {}} />,
     )
-    expect((getByLabelText('Variable choices') as HTMLInputElement).value).toBe('a, b')
+    expect((getByLabelText('Choices for variable "topic"') as HTMLInputElement).value).toBe('a, b')
     rerender(<VariableRow v={{ ...base, type: 'select', options: ['x'] }} onChange={() => {}} onRemove={() => {}} />)
-    expect((getByLabelText('Variable choices') as HTMLInputElement).value).toBe('x')
+    expect((getByLabelText('Choices for variable "topic"') as HTMLInputElement).value).toBe('x')
   })
 })

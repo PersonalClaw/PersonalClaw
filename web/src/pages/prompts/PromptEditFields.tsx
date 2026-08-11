@@ -45,17 +45,20 @@ export function PromptEditFields({ draft, onChange, Section }: {
   return (
     <div className="flex flex-col gap-l">
       <Section label="Title">
-        <input value={draft.title} onChange={(e) => set('title', e.target.value)} placeholder="A human-readable label" className={inputCls} />
+        <input value={draft.title} onChange={(e) => set('title', e.target.value)} aria-label="Prompt title"
+          placeholder="A human-readable label" className={inputCls} />
       </Section>
 
       <Section label="Description">
-        <input value={draft.description} onChange={(e) => set('description', e.target.value)} placeholder="One line: what this prompt does" className={inputCls} />
+        <input value={draft.description} onChange={(e) => set('description', e.target.value)} aria-label="Prompt description"
+          placeholder="One line: what this prompt does" className={inputCls} />
       </Section>
 
       <Section label="Tags">
         <input
           value={draft.tags.join(', ')}
           onChange={(e) => set('tags', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
+          aria-label="Prompt tags"
           placeholder="comma-separated"
           className={inputCls}
         />
@@ -64,15 +67,17 @@ export function PromptEditFields({ draft, onChange, Section }: {
       <Section label={`Variables · ${draft.variables.length}`}>
         <div className="flex flex-col gap-s">
           {draft.variables.map((v, i) => (
-            <VariableRow key={i} v={v} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} />
+            <VariableRow key={i} v={v} rowIndex={i} onChange={(patch) => updateVar(i, patch)} onRemove={() => removeVar(i)} />
           ))}
           <AddItemButton className="self-start" onClick={() => addVar()}><Plus size={14} /> Add variable</AddItemButton>
         </div>
       </Section>
 
       <Section label="Template">
+        {/* `Section` is injected as a PROP and renders a bare label div — it publishes no label id,
+            so nothing here can claim one. Each control names itself after its section. */}
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={12}
-          spellCheck={false} placeholder={'The prompt body. {{variable}} placeholders, {% if %}/{% for %} logic, {{ fn() }} functions, and {{> snippet}} includes.'}
+          aria-label="Prompt template" spellCheck={false} placeholder={'The prompt body. {{variable}} placeholders, {% if %}/{% for %} logic, {{ fn() }} functions, and {{> snippet}} includes.'}
           className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-y" />
         {includes.length > 0 && (
           <div className="mt-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)' }}>
