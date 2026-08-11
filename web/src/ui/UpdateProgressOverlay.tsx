@@ -5,6 +5,7 @@ import { AlertTriangle, Check, CheckCircle2, DownloadCloud, Loader2, RefreshCw }
 import { spring, bounce } from '../design/motion'
 import { useChatSocket } from '../lib/useChatSocket'
 import { api } from '../lib/api'
+import { useFocusTrap } from './useFocusTrap'
 
 // ── Update progress overlay ────────────────────────────────────────────────
 // The self-update pipeline (POST /api/update) broadcasts `update_progress` WS
@@ -157,7 +158,29 @@ function StepRow({ label, status }: { label: string; status: 'done' | 'active' |
  *  restart). Cancel/Dismiss on failure. */
 export function UpdateProgressOverlay() {
   const { progress, cancel } = useUpdateProgress()
-  const stepIdx = progress ? STEPS.findIndex((s) => s.id === progress.phase) : -1
+  return createPortal(
+    <AnimatePresence>
+      {progress && <UpdateSheet progress={progress} cancel={cancel} />}
+    </AnimatePresence>,
+    document.body,
+  )
+}
+
+/** The overlay's sheet, split out so `useFocusTrap` mounts and unmounts WITH THE DIALOG.
+ *
+ *  The hook is a mount/unmount contract (its effect has a `[]` dep list, and it captures the
+ *  previously-focused element during its FIRST RENDER). Calling it in `UpdateProgressOverlay`
+ *  would run it at app start — no dialog, a null ref, and the "restore focus on close" capture
+ *  taken from whatever happened to be focused when the app booted.
+ *
+ *  Why this needed fixing at all: the sheet already declared `role="alertdialog"` +
+ *  `aria-modal="true"`, which is a PROMISE that focus is owned. Measured on the live DOM before:
+ *  focus stayed on `<body>` when the overlay appeared, and ONE Tab press landed on the nav's
+ *  "Home" button behind the scrim. Its two sibling dialogs (`Modal`, `dialog/DialogShell`) both
+ *  use this hook; this one declared the contract without honouring it. */
+function UpdateSheet({ progress, cancel }: { progress: UpdateProgress; cancel: () => void }) {
+  const trapRef = useFocusTrap<HTMLDivElement>()
+  const stepIdx = STEPS.findIndex((s) => s.id === progress.phase)
   const isError = progress?.phase === 'error'
   const isDone = progress?.phase === 'done'
   const isRestartOnly = progress?.restartOnly ?? false
@@ -171,13 +194,11 @@ export function UpdateProgressOverlay() {
         ? 'Restarting gateway'
         : 'Updating PersonalClaw'
 
-  return createPortal(
-    <AnimatePresence>
-      {progress && (
-        <motion.div key="update-overlay" className="fixed inset-0 z-[80] flex items-center justify-center p-2xl"
+  return (
+    <motion.div key="update-overlay" className="fixed inset-0 z-[80] flex items-center justify-center p-2xl"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
           <div className="absolute inset-0 bg-canvas/70 backdrop-blur-sm" />
-          <motion.div role="alertdialog" aria-modal="true" aria-label="Update progress"
+          <motion.div ref={trapRef} role="alertdialog" aria-modal="true" aria-label="Update progress"
             className="relative w-full max-w-[400px] overflow-hidden rounded-xl bg-surface shadow-sheet"
             initial={{ opacity: 0, scale: 0.97, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98, y: 6 }} transition={bounce.lift}>
@@ -216,10 +237,7 @@ export function UpdateProgressOverlay() {
                 </button>
               )}
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>,
-    document.body,
+      </motion.div>
+    </motion.div>
   )
 }
