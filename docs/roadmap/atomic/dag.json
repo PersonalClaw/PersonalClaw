@@ -6436,7 +6436,7 @@
         {
           "id": "WF2WOR-10",
           "title": "Project export/import archive I/O + snapshot/portability registration + CLI/REST/FE",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§1.7 (export/import contract R15), Migration Order step 8",
           "done_when": "Success Criterion 9: archive I/O writes the manifest ZIP and extracts to a unique tmp with janitor cleanup and extraction-time path-safety; optional client-side AES-GCM encryption works; a 'projects' component is registered in snapshot.VALID_COMPONENTS and portability; exporting then importing on a clean home yields brief/overview/ledgers/templates/artifact-metadata/run-digests intact (sha256-verified) with zero secrets in the ZIP; CLI/REST surface + FE export button work",
           "deps": [],

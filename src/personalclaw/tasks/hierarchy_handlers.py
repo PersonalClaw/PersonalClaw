@@ -1,8 +1,10 @@
 """HTTP handlers for /api/projects and /api/task-lists (the Project → TaskList
 levels of the task hierarchy)."""
 
+import asyncio
 import logging
 import time
+from pathlib import Path
 
 from aiohttp import web
 
@@ -694,11 +696,187 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "reset_task_ids": reset_ids})
 
 
+async def api_projects_export(request: web.Request) -> web.Response:
+    """GET /api/projects/{project_id}/export — download one project as a manifest ZIP.
+
+    Serves the ARCHIVE, not a JSON summary: the point of the format is that the bytes travel to
+    another machine. The plan's skip list and expected-credential names ride back in response
+    HEADERS, because a user who is handed a file has no other way to learn that three credentials
+    must be re-entered on the far side — and the values themselves are, by design, not in the file.
+
+    `?passphrase=` encrypts client-side (AES-GCM). Optional and off by default: an encrypted archive
+    is unreadable without the passphrase the user chose, which is a real way to lose a project.
+    """
+    from personalclaw.artifacts import registry as artifact_registry
+    from personalclaw.config.loader import config_dir
+    from personalclaw.workflows import project_archive as pa
+    from personalclaw.workflows import store as wf_store
+
+    pid = request.match_info["project_id"]
+    store = _store()
+    project = store.get_project(pid)
+    if project is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    passphrase = request.query.get("passphrase", "")
+    if passphrase and not pa.encryption_available():
+        return web.json_response(
+            {"error": "encryption needs the optional `cryptography` extra"}, status=400
+        )
+
+    artifacts: list[dict] = []
+    try:
+        provider = artifact_registry.get_provider()
+        if provider is not None:
+            artifacts = [a.to_dict() for a in provider.list(project_id=pid)]
+    except Exception:  # noqa: BLE001 — an export must not fail because one store is unreadable
+        logger.warning("project export: artifact metadata unavailable for %s", pid)
+
+    runs: list[dict] = []
+    try:
+        rows, _total = wf_store.list_runs(project_id=pid, limit=1000)
+        runs = [r.to_dict() for r in rows]
+    except Exception:  # noqa: BLE001
+        logger.warning("project export: run digests unavailable for %s", pid)
+
+    project_root = config_dir() / "projects" / pid
+    try:
+        raw, plan = await asyncio.to_thread(
+            pa.export_project_archive,
+            pid,
+            project_root=project_root,
+            project_name=project.name,
+            artifacts=artifacts,
+            runs=runs,
+            passphrase=passphrase,
+        )
+    except pa.ArchiveRefused as exc:
+        return web.json_response({"error": str(exc), "reason": exc.reason}, status=400)
+
+    filename = pa.archive_filename(project.name, pid, encrypted=bool(passphrase))
+    return web.Response(
+        body=raw,
+        content_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(raw)),
+            # The two decisions a user must act on, in headers a download can carry.
+            "X-PersonalClaw-Entities": str(len(plan.entries)),
+            "X-PersonalClaw-Skipped": str(len(plan.skipped)),
+            "X-PersonalClaw-Secrets-Expected": ",".join(sorted(plan.secrets_present)),
+        },
+    )
+
+
+async def api_projects_import(request: web.Request) -> web.Response:
+    """POST /api/projects/import — import a project archive (multipart `file`).
+
+    `?preview=1` plans without writing, which is the honest default for an archive that came from
+    somewhere else: the user sees what will be accepted, what is refused and under which name it
+    will land BEFORE anything touches the home.
+
+    A name collision takes an `imported-N` slot; the existing project is the one thing an import
+    must not damage.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.workflows import project_archive as pa
+
+    upload, err = await _read_project_upload(request)
+    if err is not None:
+        return err
+    assert upload is not None
+
+    preview = request.query.get("preview", "") in ("1", "true", "yes")
+    passphrase = request.query.get("passphrase", "")
+    store = _store()
+    existing = [p.name for p in store.list_projects()]
+
+    try:
+        plan, archive = await asyncio.to_thread(
+            pa.read_archive_plan, upload, existing_names=existing, passphrase=passphrase
+        )
+    except pa.ArchiveRefused as exc:
+        return web.json_response({"error": str(exc), "reason": exc.reason}, status=400)
+    except pa.EncryptionUnavailable as exc:
+        return web.json_response(
+            {"error": str(exc), "reason": "encryption_unavailable"}, status=400
+        )
+    finally:
+        upload.unlink(missing_ok=True)
+
+    payload = plan.to_dict()
+    payload["summary"] = _import_summary(plan)
+    if preview:
+        payload["preview"] = True
+        return web.json_response(payload)
+
+    if not plan.ok:
+        return web.json_response(
+            {**payload, "error": "the archive contributed nothing importable"}, status=400
+        )
+
+    created = store.create_project(plan.project_name)
+    project_root = config_dir() / "projects" / created.id
+    written = await asyncio.to_thread(pa.commit_import, plan, archive, project_root=project_root)
+    payload.update({"preview": False, "project_id": created.id, "written": written})
+    return web.json_response(payload, status=201)
+
+
+def _import_summary(plan) -> str:
+    from personalclaw.workflows.project_export import import_summary
+
+    return import_summary(plan)
+
+
+async def _read_project_upload(request: web.Request):
+    """Read a multipart `file` field into a unique temp file.
+
+    Mirrors `dashboard.handlers.portability._read_upload_file`'s shape rather than sharing it: that
+    one lives in the dashboard package and importing it here would put a handler module's private
+    helper on the tasks package's import path.
+    """
+    import tempfile
+
+    from aiohttp.multipart import BodyPartReader
+
+    ctype = request.headers.get("Content-Type", "")
+    if not ctype.lower().startswith("multipart/"):
+        return None, web.json_response(
+            {"error": "multipart/form-data with a 'file' field is required"}, status=400
+        )
+    try:
+        reader = await request.multipart()
+    except (ValueError, AssertionError, RuntimeError) as exc:
+        return None, web.json_response(
+            {"error": f"failed to parse multipart body: {exc}"}, status=400
+        )
+    part = await reader.next()
+    if part is None or not isinstance(part, BodyPartReader) or part.name != "file":
+        return None, web.json_response({"error": "file field required"}, status=400)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    try:
+        while True:
+            chunk = await part.read_chunk(65536)
+            if not chunk:
+                break
+            tmp.write(chunk)
+        tmp.close()
+        return Path(tmp.name), None
+    except Exception:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
 def register_hierarchy_routes(app: web.Application) -> None:
     """Register /api/projects/* and /api/task-lists/* routes."""
+    # Static sub-paths BEFORE the dynamic /{project_id} matcher, else `import` reads as an id.
+    app.router.add_post("/api/projects/import", api_projects_import)
     app.router.add_get("/api/projects", api_projects_list)
     app.router.add_post("/api/projects", api_projects_create)
     app.router.add_get("/api/projects/{project_id}", api_projects_get)
+    app.router.add_get("/api/projects/{project_id}/export", api_projects_export)
     app.router.add_get("/api/projects/{project_id}/linked", api_projects_linked)
     app.router.add_get("/api/projects/{project_id}/work", api_projects_work)
     app.router.add_post("/api/projects/{project_id}/work/claim", api_projects_work_claim)

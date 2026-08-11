@@ -147,6 +147,42 @@ _DB_SUFFIXES = frozenset({".db"})
 _DB_SIDECARS = ("-wal", "-shm")
 
 
+def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
+    """Whether `rel_to_entry` matches one of `entry_path`'s inventory `derived_within` globs.
+
+    🔴 The field had NO reader anywhere. `projects` declares ``derived_within=("*/worktrees",)`` —
+    git-owned checkouts, re-creatable from the repo — and this export reached `projects/` through a
+    generic `rglob`, so an export of a home with one bound workspace carried the whole worktree.
+    Enforcing it in BOTH whole-home paths (here and `snapshot._derived_ignore`) is the point: a
+    declaration honored in one direction is the asymmetry that made a restore drop what a backup
+    captured.
+
+    Matches the path AND every ANCESTOR of it. `*/worktrees` names a directory, and what an export
+    walks is the files inside it — `p-1/worktrees/repo/src/a.py` matches no glob written about the
+    directory, so a leaf-only test would exclude the empty dir and carry its entire contents. Found
+    by writing the exclusion first and then counting the exported files.
+    """
+    import fnmatch
+
+    try:
+        from personalclaw.durability import inventory as inv
+
+        globs: tuple[str, ...] = ()
+        for entry in inv.INVENTORY:
+            if entry.path == entry_path:
+                globs = tuple(entry.derived_within)
+                break
+        if not globs:
+            return False
+        candidate = PurePosixPath(rel_to_entry)
+        chain = [candidate.as_posix()] + [
+            p.as_posix() for p in candidate.parents if p.name or p.parts
+        ]
+        return any(fnmatch.fnmatch(c, g) for c in chain for g in globs)
+    except Exception:  # noqa: BLE001 — an export must work even if this import breaks
+        return False
+
+
 def _remaining_export_paths(pc: Path) -> list[str]:
     """Declared entries the hand-written export lists do not already carry (S182).
 
@@ -324,6 +360,12 @@ def create_export_zip() -> tuple[bytes, dict]:
                         continue
                     rel = fpath.relative_to(pc)
                     if _is_excluded(PurePosixPath(str(rel))) or is_sensitive_path(str(fpath)):
+                        continue
+                    # The entry's own `derived_within` (e.g. `projects/*/worktrees`). Checked
+                    # against the path relative to the ENTRY, which is the frame the inventory
+                    # writes the globs in — `*/worktrees` means "any project's worktrees", not
+                    # "any directory named worktrees anywhere under the home".
+                    if _is_derived_within(entry, fpath.relative_to(src).as_posix()):
                         continue
                     # 🔴 Never raw-copy a live database out of a tree. `workflows/runs.db` and
                     # `loop/loops.db` sit INSIDE declared trees, so `rglob` reaches them — and a
