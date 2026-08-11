@@ -4824,7 +4824,7 @@
         {
           "id": "CE-8",
           "title": "Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue",
-          "status": "todo",
+          "status": "in_progress",
           "scope": "Amendment 2026-07-26 — T7.4 (apps slack-channel + core inbox_providers docstrings)",
           "done_when": "slack-channel app.json registers >=2 providers incl. an inbox MessageSourceProvider over the existing runtime client; Slack messages flow through the generic inbox source seam with no core slack string (inbox_providers docstring + native_source.py comment residue scrubbed); non-seam Slack surface lives behind the app's own ui block; boundary tests green",
           "deps": [
@@ -7481,11 +7481,6 @@
         "id": "WV-12",
         "title": "Two-layer context-compaction ladder for LLM-backed nodes",
         "plan": "WV"
-      },
-      {
-        "id": "CE-8",
-        "title": "Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue",
-        "plan": "CHANNEL-EXPANSION"
       },
       {
         "id": "WF2WOR-9",
