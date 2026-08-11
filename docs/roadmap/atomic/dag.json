@@ -2768,7 +2768,7 @@
         {
           "id": "WV-12",
           "title": "Two-layer context-compaction ladder for LLM-backed nodes",
-          "status": "todo",
+          "status": "done",
           "scope": "§2 Context Lifecycle (two-layer context ladder)",
           "done_when": "proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template",
           "deps": [
@@ -7456,11 +7456,6 @@
         "id": "WS-7",
         "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
         "plan": "WS"
-      },
-      {
-        "id": "WV-12",
-        "title": "Two-layer context-compaction ladder for LLM-backed nodes",
-        "plan": "WV"
       },
       {
         "id": "WF2WOR-9",

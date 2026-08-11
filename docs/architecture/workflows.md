@@ -52,6 +52,7 @@ while not terminal:
 | `gate_policy.py` | risk-scoped auto-approval |
 | `attention.py` | a waiting gate → a durable inbox row + one notification |
 | `context.py` | handoffs, carryover buckets, decision records |
+| `compaction.py` | the two-layer prompt-compaction ladder for LLM-backed nodes: proactive at ~80% of the bound model window, then aggressive re-compaction + one retry on a length rejection, degrading to drop-with-placeholder if a summarizer raises. Wraps `personalclaw.context_compaction` — it does not reimplement it |
 | `macros.py` | template macros, expanded at definition time |
 | `blocks.py` | shared prompt blocks, resolved at definition time |
 | `coalescer.py` | per-observer event batching in front of the SSE write |
