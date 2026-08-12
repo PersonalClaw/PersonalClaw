@@ -6,8 +6,8 @@ import type { LucideIcon } from 'lucide-react'
 import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
-  type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
-  type SearchProviderInfo, type DoctorReport, type ProjectionRule,
+  type PromptBindings, type SelVerify, type SavedAgent,
+  type SearchProviderInfo, type DoctorReport,
   type ToolsSavings,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -86,7 +86,15 @@ const useDurability = () => useCachedData('settings:durability-card', async () =
   ])
   return { status, snaps }
 }, { persist: true })
-const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives().catch(() => [] as SessionArchive[]), { persist: true })
+// 🔴 SAME KEY-POISONING SHAPE AS `'apps'` ABOVE, and it made a fix on another surface INERT.
+// `#/settings/archive` now branches on the load error — but this tile shares its key, so while this
+// caller swallowed, the hub primed `cache:settings:archives` with `[]` and the panel read a success.
+// A cold-cache probe missed it entirely (navigating straight to the panel never runs this hook); the
+// key-consumer rail in `ui/loadErrorState.test.tsx` is what caught it.
+// Consequence, stated: on failure this tile now stays in its `loading` shimmer instead of claiming
+// "0 archived sessions". Every hub tile turns a failure into a permanent shimmer — one idiom, ~30
+// tiles, logged as its own family rather than fixed inside this change.
+const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives(), { persist: true })
 const useAudit = () => useCachedData('settings:audit-verify', () => api.selVerify().catch(() => null as SelVerify | null), { persist: false })
 const useLogLevel = () => useCachedData('settings:log-level', () => api.logLevel().catch(() => null as string | null), { persist: true }).data
 const useVoice = () => useCachedData('settings:voice', async () => {
@@ -101,7 +109,8 @@ const useLegibility = () => useCachedData('settings:legibility', () =>
   api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)), { persist: true })
 const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catch(() => null as DoctorReport | null), { persist: false })
 const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
-const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules().catch(() => [] as ProjectionRule[]), { persist: true })
+// Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
+const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules(), { persist: true })
 const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
 const useFeedbackProducers = () => useCachedData('settings:feedback-producers', () => api.feedbackProducers().catch(() => null), { persist: false })
 const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {

@@ -14,7 +14,7 @@ import {
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
-import { ListSkeleton, FormSkeleton } from '../../ui/ListScaffold'
+import { ListSkeleton, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput, Select, ChipInput, NumberField } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -545,12 +545,15 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
 
 // ── Audit ────────────────────────────────────────────────────────────────────
 function AuditTab() {
-  const { data: events, refresh } = useCachedData(
-    'settings:memory-events', () => api.memoryEvents({ limit: 100 }).catch(() => [] as MemoryEvent[]),
+  const { data: events, error, refresh } = useCachedData(
+    'settings:memory-events', () => api.memoryEvents({ limit: 100 }),
   )
   const [filter, setFilter] = useState('')
   const reload = () => { invalidateCache('settings:memory-events'); refresh() }
 
+  // Was `.catch(() => [] as MemoryEvent[])`: a failed read of the memory audit log rendered
+  // "No matching events." — indistinguishable from a memory that has genuinely recorded nothing.
+  if (!events && error) return <LoadError what="memory audit log" error={error} onRetry={reload} />
   if (!events) return <ListSkeleton rows={8} />
   const q = filter.trim().toLowerCase()
   const shown = q ? events.filter((e) => `${e.event_type} ${e.memory_type} ${e.memory_key ?? ''}`.toLowerCase().includes(q)) : events

@@ -26,6 +26,7 @@ import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { DotGlow } from '../ui/DotGlow'
 import { EmptyState, ListSkeleton, LoadError, Skeleton } from '../ui/ListScaffold'
+import { FieldError } from '../ui/forms'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
@@ -143,7 +144,11 @@ function fmtTokens(n: number): string {
  *  personal, not generic. Clicking one fills the composer (the user reviews, then
  *  sends) rather than firing immediately. Silent when none are available. */
 function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
-  const { data } = useCachedData('chat:suggestions', () => api.suggestions().then((r) => r.suggestions).catch(() => [] as string[]), { persist: true })
+  // No `.catch`: this key is PERSISTED, so a swallowed rejection wrote a fabricated `[]` into
+  // sessionStorage as though it were an answer, and the next visit painted "no suggestions" from
+  // cache. Without it the rejection leaves `data` undefined and nothing is cached. The strip still
+  // hides on failure, which is honest — a decoration that quietly does not appear claims nothing.
+  const { data } = useCachedData('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
   const items = (data ?? []).slice(0, 6)
   if (!items.length) return null
   return (
@@ -169,7 +174,8 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
  *  reuses the one `ensureSession` path, so a starter the user opens and walks away from
  *  costs nothing. */
 function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
-  const { data } = useCachedData('chat:starters', () => api.sessionTemplates().catch(() => [] as SessionTemplate[]), { persist: true })
+  // Same as the suggestion strip: persisted key, so the swallow cached a fabricated empty list.
+  const { data } = useCachedData('chat:starters', () => api.sessionTemplates(), { persist: true })
   const items = (data ?? []).slice(0, 6)
   if (!items.length) return null
   return (
@@ -648,7 +654,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // the word-boundary-snapped animated reveal. Read from the server dashboard config
   // (cached; paints instantly on revisit). reduced-motion/animSpeed=0 still force
   // immediate inside the coalescer regardless of this preference.
-  const { data: streamRevealCfg } = useCachedData('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal).catch(() => 'smooth' as const), { persist: true })
+  // `.catch(() => 'smooth')` fabricated a SETTING and persisted it: a failed read cached
+  // "smooth" as if the user had chosen it, so the transcript animated one way and the cache kept
+  // saying so. The fallback belongs at the USE SITE (below), where it is a default rather than a
+  // stored answer.
+  const { data: streamRevealCfg } = useCachedData('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal), { persist: true })
   const coalescer = useStreamCoalescer((revealed) => {
     patchLastAssistant((segs) => {
       const r = applyCoalescedFlush(segs, revealed, coalescing.current)
@@ -2642,7 +2652,10 @@ function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
   onClose: () => void
 }) {
   const [q, setQ] = useState('')
-  const { data, loading } = useCachedData('chat:artifact-picker', () => api.artifacts().catch(() => []))
+  // The swallow made a failed read indistinguishable from an empty library, and this picker's
+  // empty state TEACHES ("Ask in chat for a widget…") — so a 500 told a user with artifacts to go
+  // make their first one. Same shape as #1162's chat history, one surface down.
+  const { data, loading, error: artifactsError } = useCachedData('chat:artifact-picker', () => api.artifacts())
   const all = data ?? []
   const attachedSlugs = new Set(attached.map((a) => a.slug))
   const n = q.trim().toLowerCase()
@@ -2663,7 +2676,12 @@ function ArtifactContextPicker({ attached, onPick, onRemove, onClose }: {
             ))}
           </div>
         )}
-        {all.length === 0 && !loading ? (
+        {data === undefined && artifactsError ? (
+          // The error branch comes FIRST: `data === undefined` is true for loading, failure AND an
+          // empty library, so a failure test placed after them is unreachable. `FieldError`
+          // announces (role=alert), which a teaching empty state deliberately does not.
+          <FieldError>Couldn't load your artifacts — {(artifactsError as Error)?.message || 'the server did not respond'}</FieldError>
+        ) : all.length === 0 && !loading ? (
           <p className="text-on-surface-low text-[0.8125rem]">
             No artifacts yet. Ask in chat for a widget or a document and it lands here.
           </p>
@@ -3352,8 +3370,10 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     () => api.chatSessions(archivedView),
     { persist: false },
   )
-  const { data: foldersData, refresh: refreshFolders } = useCachedData<ChatFolder[]>('chat:folders', () => api.chatFolders().catch(() => []), { persist: true })
-  const { data: tagsData, refresh: refreshTags } = useCachedData<ChatTag[]>('chat:tags', () => api.chatTags().catch(() => []), { persist: true })
+  // Both persisted, and both feed a menu whose empty state says "Create a folder or tag first" —
+  // an instruction, not just a blank. A swallowed rejection cached that claim.
+  const { data: foldersData, error: foldersError, refresh: refreshFolders } = useCachedData<ChatFolder[]>('chat:folders', () => api.chatFolders(), { persist: true })
+  const { data: tagsData, error: tagsError, refresh: refreshTags } = useCachedData<ChatTag[]>('chat:tags', () => api.chatTags(), { persist: true })
   const folders = foldersData ?? []
   const tags = tagsData ?? []
   // Local optimistic overlay so pin/folder/tag mutations paint instantly; it
@@ -3762,7 +3782,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         </div>
       </div>
       {/* assign folder + tags */}
-      <SessionOrgMenu s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
+      <SessionOrgMenu orgLoadFailed={!!foldersError || !!tagsError} s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
       <SquareIconButton label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'} on={s.pinned}
         onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }}
         className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
@@ -3953,8 +3973,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
 }
 
 /** Per-session folder + tag assignment menu (hover-revealed in a row). */
-function SessionOrgMenu({ s, folders, tags, onSetFolder, onToggleTag }: {
+function SessionOrgMenu({ s, folders, tags, orgLoadFailed, onSetFolder, onToggleTag }: {
   s: ChatSessionSummary; folders: ChatFolder[]; tags: ChatTag[]
+  /** The folder/tag reads failed, so an empty list is not evidence that none exist — without this
+   *  the menu instructs the user to create what they may already have. */
+  orgLoadFailed?: boolean
   onSetFolder: (key: string, folderId: string | null) => void; onToggleTag: (key: string, tagId: string) => void
 }) {
   return (
@@ -3982,7 +4005,10 @@ function SessionOrgMenu({ s, folders, tags, onSetFolder, onToggleTag }: {
             {tags.map((t) => (
               <MenuRow key={t.id} label={t.name} selected={(s.tags ?? []).includes(t.id)} onClick={() => onToggleTag(s.key, t.id)} />
             ))}
-            {folders.length === 0 && tags.length === 0 && <div className="px-m py-2 text-[0.8125rem] text-on-surface-low">Create a folder or tag first.</div>}
+            {/* A failed read must not instruct the user to create what they may already have. */}
+            {orgLoadFailed && folders.length === 0 && tags.length === 0
+              ? <div className="px-m py-2"><FieldError>Couldn't load your folders and tags</FieldError></div>
+              : folders.length === 0 && tags.length === 0 && <div className="px-m py-2 text-[0.8125rem] text-on-surface-low">Create a folder or tag first.</div>}
           </div>
         )}
       </Popover>

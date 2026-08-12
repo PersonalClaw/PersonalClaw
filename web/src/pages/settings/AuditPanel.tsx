@@ -6,7 +6,7 @@ import { confirm } from '../../ui/dialog'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { PanelHeader } from './settingsUI'
 import { Button } from '../../ui/Button'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
 
 const OUTCOME_TONE: Record<string, string> = {
@@ -32,14 +32,18 @@ export function AuditPanel() {
   // Live audit log — cached in-memory for instant in-app revisit, but NOT persisted
   // across reloads (it moves fast and freshness matters). `loading` drives the
   // refresh spinner; a mutation/manual refresh invalidates then revalidates.
-  const { data: events, loading: busy, refresh } = useCachedData(
-    'settings:audit', () => api.selEvents({ limit: 200 }).catch(() => [] as SelEvent[]), { persist: false },
+  const { data: events, loading: busy, error, refresh } = useCachedData(
+    'settings:audit', () => api.selEvents({ limit: 200 }), { persist: false },
   )
   const reload = () => { invalidateCache('settings:audit'); refresh() }
 
   const runVerify = async () => { setVerify(null); try { setVerify(await api.selVerify()) } catch { setVerify({ valid: false, error: 'verify failed' }) } }
   const rotate = async () => { if (!(await confirm({ title: 'Rotate the audit-log signing key?', body: 'Past entries stay verifiable under the old key.', confirmLabel: 'Rotate key' }))) return; await api.selRotate().catch(() => {}); reload() }
 
+  // An audit log that cannot be read is the one list where "nothing happened" is the most dangerous
+  // possible lie. The fetcher's `.catch(() => [] as SelEvent[])` made a 500 render "No matching
+  // events." — the same words as a genuinely quiet log, with no alert and no retry.
+  if (!events && error) return <LoadError what="audit log" error={error} onRetry={reload} />
   if (!events) return <ListSkeleton rows={8} />
   const needle = q.trim().toLowerCase()
   const shown = events.filter((e) => {

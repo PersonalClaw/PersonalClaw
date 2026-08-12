@@ -243,7 +243,10 @@ function Launcher({ navigate }: RouteProps) {
               key={s.key}
               type="button"
               onClick={() => navigate(`chat/${encodeURIComponent(s.key)}`)}
-              className="inline-flex items-center gap-xs text-on-surface-var transition-colors hover:text-on-surface"
+              // 20px tall with 16px between chips: under SC 2.5.8's 24px minimum, and the spacing
+              // exception needs 24px of clearance. `min-h-6` + `-my-0.5` grows the target and hands
+              // the 4px back, so the row does not reflow — the Toggle fix's shape.
+              className="inline-flex min-h-6 -my-0.5 items-center gap-xs text-on-surface-var transition-colors hover:text-on-surface"
               data-type="body-m"
             >
               <MessageSquare size={12} className="shrink-0 text-on-surface-low" /> <span className="max-w-[16rem] truncate">{s.title}</span>
