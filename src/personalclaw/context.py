@@ -187,6 +187,40 @@ def _self_model_snapshot(svc) -> str:
         return ""
 
 
+def _record_ambient_measurements(alloc, *, sweep_args: dict) -> None:
+    """Persist what this render measured (LEARN-R14b / §2.5). Never raises.
+
+    Two things, one write path:
+
+    - **Budget utilization**, every render. `ambient.report()` already computed it and
+      sent it to a debug log, which means the flywheel health composite's
+      50-80%-utilization band had no source of truth — it would have rendered from a
+      key nothing wrote.
+    - **The ablation-delta sweep**, on a cadence (default daily). Run here because this
+      is the only place that holds the real candidate pool; a sweep over reconstructed
+      inputs would measure a different assembly and report the delta as if it were
+      this one. Cadence-gated because it costs one extra allocation per heuristic.
+    """
+    try:
+        from personalclaw.learning.staging import get_store
+
+        store = get_store()
+        store.record_allocation(used_tokens=alloc.used_tokens, budget_tokens=alloc.budget_tokens)
+        if not store.ablation_due():
+            return
+        from personalclaw.learning import ambient
+        from personalclaw.learning.surfacing import ablation_deltas
+
+        budget = int(sweep_args.pop("budget_tokens", 0) or 0)
+        query = str(sweep_args.pop("query", "") or "")
+        sources = ambient.sources_for(**sweep_args)
+        if not sources or budget <= 0:
+            return
+        store.record_ablation(ablation_deltas(sources, query=query, budget_tokens=budget))
+    except Exception:
+        logger.debug("ambient measurement recording failed", exc_info=True)
+
+
 def _render_ambient(
     *,
     lessons: str = "",
@@ -234,6 +268,18 @@ def _render_ambient(
         text = ambient.frame(alloc, lessons_block=lessons)
         if text:
             logger.debug("ambient allocation: %s", ambient.report(alloc))
+        _record_ambient_measurements(
+            alloc,
+            sweep_args={
+                "lessons": lessons,
+                "skill_index": skill_index,
+                "voice": voice,
+                "persona": persona,
+                "self_model": self_model,
+                "query": query,
+                "budget_tokens": alloc.budget_tokens,
+            },
+        )
         return text
     except Exception:
         logger.debug("ambient allocation failed; falling back to lessons", exc_info=True)

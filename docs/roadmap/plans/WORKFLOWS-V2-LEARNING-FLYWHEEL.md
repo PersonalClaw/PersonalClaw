@@ -1356,3 +1356,135 @@ alphabetic `foo/bar/baz/qux/quux` so five distinct signatures actually exercise 
   across several ticks, so the atom sat complete-and-gated on `feature-wf2lea11-retroactive-skill`
   (impl `6f135a45` + tracking) until the permission was restored. No code changed in the interval —
   `origin/main` never moved off `a2e874a8`, so the gate result above still stood at push time.
+
+### WF2LEA-9 — Step 9: polish tier — DONE (4 of 5 parts; part 4 dropped with a DEVIATION)
+
+**Part 1 — heat-earned promotion multi-gate: WIRED (it existed and nothing ran it).**
+`usage.promotion_ready` already implemented R6f's multi-gate correctly (uses AND context diversity
+AND recency AND success rate) and had **no caller anywhere in `src/`** — exported from
+`learning/__init__` and exercised only by `test_learning_usage.py`. That is the worse half of the
+inert shape: the bare "surfaced ≥2×" the gate was written to replace was still what the ladder
+effectively used, because nothing consulted the replacement. `Kind.TIER_MIGRATION` was the mirror
+defect — a declared proposal kind with no writer.
+- **Writer:** `history._run_learning_curator` (the verified consolidation maintenance tick that
+  already hosts `run_aging`) → new `curator.promotion_suggestions()` → `file_promotion_suggestions()`
+  → `proposals.enqueue(kind=tier_migration)`. Never auto-promotes; the queue's fingerprint reinforces
+  a pending row and silently skips a rejected one, so a daily cadence cannot nag.
+- **Reader:** `proposals.list_pending()` → `/api/learning/proposals` → the Proposal Inbox.
+- **Test:** `tests/test_learning_promotion_wire.py` (10) — drives the real `UsageStore` through
+  surfaced/run/run_success events, reads the proposal out of the queue's own live reader, asserts the
+  evidence travels in the body, that filing twice does not duplicate, and an **AST assertion that
+  `_run_learning_curator` calls both functions** (testing the functions alone would have passed
+  exactly the state this atom found).
+
+**Part 2 — `memory_record.heat` migrated onto the one kernel (a real behaviour change).**
+Its private recency term `0.5·e^(−days/30)` is now `0.5·decay.strength(...)`. The old curve had no
+per-kind rate (an episodic fragment aged exactly like a distilled fact) and no importance axis, so
+the same record could be hot to the retrieval boost and prunable to the curator.
+- Added the 5 missing memory profiles to `decay.KIND_MULTIPLIERS` (3 already collided by string
+  value — that collision is the one-kernel property working). `episodic` is **1.3, not a round
+  number**: the formula it replaces was `e^(−0.03·days)` and 0.03 / BASE_LAMBDA ≈ 1.299.
+- `memory_record._DECAY_PROFILES` maps all 8 `MemoryKind` members and `decay_profile()` **RAISES**
+  for an unmapped kind rather than defaulting to the reference rate.
+- **Old vs new** (30 days idle, 0 visits, importance 0.5): OLD `0.183940` for *every* kind →
+  NEW `semantic`/`preference`/`self_persona` `0.406126`, `lesson`/`commitment` `0.373712`,
+  `note` `0.329877`, `procedural` `0.303549`, `episodic` `0.291183`. Kind and importance now matter;
+  neither did before. `promote_by_heat`'s 1.0 threshold and the M5b retrieval boost both see these.
+- **Surfacing-rank doctrine asserted.** `test_the_kernels_verdict_never_reorders_retrieval` drives
+  the live `procedural_priors()` with two records — one 400 active days idle that the kernel
+  **`prune`s** and one fresh — and asserts the prunable-but-used record still ranks FIRST. Plus
+  `test_strength_alone_cannot_win_a_rank` (structural: 0.7 usage > 0.5 recency) and a source-level
+  rail that `memory_service`/`memory_vault` never import `DecayVerdict`. `heat` may use `strength`;
+  the eviction VERDICT may not reach rank.
+- **Test:** `tests/test_learning_decay_heat.py` (18).
+
+**Part 3 — the observability panel: `GET /api/learning/health` + `HealthPanel` on the existing
+Learning page** (no new route — §6.2 says the panel lives there). Each of the four additions traced
+writer → DOM:
+- **Health composite (0-100) with the 50-80% band** — `measure.health_composite`, weighted
+  precision/capture/utilization/judge. Budget utilization **had no persisted writer at all**:
+  `ambient.report()` computed it and sent it to a debug log, so a panel reading it would have
+  rendered from a key nothing wrote. New writer `context._record_ambient_measurements` →
+  `allocation_samples` (rolling 500) → `StagingStore.utilization()` → the composite → the DOM.
+- **Judge MAE buckets (R10d)** — `judge_calibration.mae_buckets`. **Premise correction:** R10d says
+  "predicted judge confidence", and nothing writes `overall` or `scores` to the ledger (the
+  controller journals verdict/status/**evidence**), so an MAE over `overall` would have averaged
+  parse defaults. Predicted confidence is therefore **sample agreement** from
+  `judge_evidence.samples`, which `engine.dispatch_gate` genuinely writes; `VerdictRecord.samples` +
+  `.agreement` were added and parsed from where the writer puts them. Ground truth is a **human
+  divergence label only** — silence is not agreement, or the MAE would improve as the user stopped
+  looking, so buckets report `mae: null` with an `unlabelled` count until a real label lands.
+- **Attribution verdict history (R16)** — `attribution.verdict_history()` +
+  `proposer_trust_report()`, both of which existed with no reader outside their own module.
+- **Per-op LLM cost (R19e)** — new `StagingStore.cost_by_op()` over `flush_records.cadence`, the
+  op identity every flush already carries.
+- **Unmeasured is rendered as unmeasured.** Every score is `number | null`; a component with no data
+  is EXCLUDED from the composite and reweighted, and says so. A fresh install reads "not measured
+  yet", never 0/100. The FE **reads `error`** and renders the `LoadError` primitive.
+- **Tests:** `tests/test_learning_health_panel.py` (31), 5 new route tests in
+  `tests/test_learning_routes.py` (incl. one that drives two live writers and asserts the response),
+  `web/src/pages/learning/HealthPanel.test.tsx` (10).
+
+**Part 4 — per-tool approval identity → procedural priors: DROPPED, DEVIATION recorded.**
+§4's row explicitly authorizes dropping it "if not worth it". The evidence says it is not, and that
+building it would ADD an inert layer rather than close one:
+1. The counters the RE-SPEC targets **no longer exist**. `stats.py:118-127` records that the previous
+   `summary()` led with "tools approved 0 denied 0 auto 0" — "six writerless counters presented as
+   measurements" — and they were deleted for exactly that reason.
+2. The per-tool identity the wire needs **already exists and is live**:
+   `MemoryService.record_procedural(tool=…, task_shape=…, outcome=…)`, called from
+   `after_turn_review.py:132` and `learning/run_end.py:299`, persisting per-tool rows that the heat
+   gate promotes to global priors.
+3. The **consumer is inert**. `MemoryService.procedural_priors()` — the "procedural priors" the row
+   names — has **zero readers outside its own tests** (repo-wide grep: 1 definition, 2 test
+   references, no call site). Feeding it more rows would deepen an inert path, and giving it a live
+   reader means adding a sixth ambient injection block — a real design change that `ambient.py:76`
+   warns against ("vocabulary rather than extended") and that belongs to the allocator, not here.
+**Left undone deliberately, and worth its own atom:** `procedural_priors()` is an inert reader, and
+`record_procedural`'s declared `denied` outcome is an enum member no writer produces. Closing both
+together is a coherent piece of work; half-wiring either here was the alternative and is worse.
+
+**Part 5 — intent-adaptive weight profiles + ablation-delta sweep.**
+**Premise correction:** the intent profiles were **already live** — `surfacing.classify_intent` +
+`INTENT_WEIGHTS` are consumed by `allocate()` at the real call site. The missing half was §2.5's
+ablation-delta rule ("every surfacing heuristic ships with a measured delta and is removed if ~0"),
+which had no implementation anywhere.
+- New `surfacing.ablation_deltas()` over a closed `ABLATABLE` set (intent, path_bonus, entity_prior,
+  rank_decay, diversification), threaded as an `ablate` **parameter** rather than patched onto module
+  globals — the sweep runs beside live traffic and a patched global would reorder a turn in flight.
+  An unknown name **raises**: a typo would report delta 0.0, the same reading as a useless heuristic.
+- **Writer:** `context._record_ambient_measurements`, cadence-gated by
+  `StagingStore.ablation_due()` (daily) — five extra allocations per turn to learn something that
+  changes monthly is a cost with no matching benefit. Runs on the SAME candidate pool as the live
+  render via the extracted `ambient.sources_for()`, so it cannot measure a drifting second assembly.
+- **Reader:** `latest_ablation()` → `/api/learning/health` → the panel, which names a `no_effect`
+  heuristic as "a candidate for removal". Reporting the null result is the feature.
+
+**Deviations / premise corrections (all recorded above):** part 4 dropped on evidence; R10d's
+predicted confidence re-sourced from `judge_evidence.samples` because `overall` has no writer;
+part 5's intent half found already shipped; part 1's gate found already written but unwired.
+`ambient.render`'s source-building was extracted to `sources_for()` — mechanical, semantics
+preserved, 381 ambient/surfacing tests unchanged and green.
+
+**Gate:** `make lint` clean (black/isort/flake8 + mypy 800 files). Targeted
+`-k "learning or decay or heat or calibration or attribution or memory"` = **1638 passed, 2 skipped,
+1 xfailed**. Full-suite-only gates (`inert_surface_baseline`, `agent_reference`, `docs_lint_baseline`,
+`config_roundtrip`) = **35 passed**. Web: `typecheck` clean, **FULL** `npm test` = **151 files /
+1497 tests passed** (the global `tokenLint`/`inertUtilities`/`primitiveAdoption`/`uiDocs.drift`/
+`consistencyAudit` ratchets included), `npm run build` clean.
+**Two generated baselines legitimately changed and are regenerated in this same commit:**
+`src/personalclaw/reference/{index,routes}.md` (+1 row for the new route: 631→632 agent-callable) and
+`docs/design/consistency-audit.json` (`filesScanned` 439→442 for the new FE files — `driftHits` 7 and
+`filesWithDrift` 6 are UNCHANGED, so no new drift was blessed).
+**Known pre-existing reds, verified not mine.** The full suite ran **18269 passed / 5 failed**. All 5
+are documented flakes: `test_workflows_controller.py::TestResumeCache` (2) failed under CPU
+contention (`Timeout (>120s)`, `RuntimeError: Runner is closed`) and passed **85/85 re-run serially
+with `-n 0`**; `test_harness_validate.py` (3) fails in ANY worktree — root cause read from the
+assertion, `[Errno 2] No such file or directory: '.venv/bin/python'`, because the validator shells out
+to a relative venv path the worktree has no copy of. The same file is **11/11 green in the main
+checkout**, and this diff touches nothing under `harness/`.
+**SEL:** the three new test files and the 5 new route tests add **0 bytes** to
+`~/.personalclaw/security_events.jsonl` (measured against a verified 0-byte idle rate). The 8961-byte
+delta from `test_learning_routes.py` as a whole is the file's PRE-EXISTING leak — its accept/reject
+tests call `_audit` → `sel().log_api_access` without home isolation. Every test added here isolates
+the home (`PERSONALCLAW_HOME` + `config_dir`).

@@ -3031,13 +3031,16 @@
         {
           "id": "WF2LEA-9",
           "title": "Step 9: polish tier — multi-gate heat promotion, memory-heat kernel migration, observability panel completion, per-tool approval identity, intent-adaptive/ablation sweeps",
-          "status": "todo",
+          "status": "done",
           "scope": "§7 step 9, §2.3 heat-earned promotion + decay kernel (R6f), §6 flywheel observability panel completion (R14b), §4 Disposition 'stats approve/deny counters → procedural priors'",
           "done_when": "heat-earned promotion uses the multi-gate (usage+recency+diversity); memory_record.heat migrated onto the one kernel; observability panel shows health composite (0-100), judge-calibration MAE buckets (R10d), attribution verdict history (R16), per-op LLM cost aggregates (R19e); per-tool approval identity added and fed to procedural priors (or dropped with DEVIATION); intent-adaptive weight profiles + ablation-delta sweep",
+          "status_note": "4 of 5 parts shipped; part 4 (per-tool approval identity) DROPPED with a DEVIATION under the plan's own line-317 authorization — see the plan's Execution log.",
+          "evidence": "Part 1: `usage.promotion_ready` had NO caller in src/ and `Kind.TIER_MIGRATION` had NO writer — now wired via curator.promotion_suggestions/file_promotion_suggestions from the verified consolidation tick (history._run_learning_curator), read by the Proposal Inbox; AST test asserts the call site. Part 2: memory_record.heat's private `0.5·e^(−days/30)` recency term replaced by decay.strength() with an exhaustive MemoryKind→profile map that RAISES on an unmapped kind; behaviour change pinned (30d/0-visit heat 0.18394 → 0.291-0.406 by kind); doctrine asserted — the kernel's prune verdict does not reorder procedural_priors and recency alone cannot outrank usage. Part 3: new GET /api/learning/health + HealthPanel on the existing Learning page renders the 0-100 composite with the 50-80% band, R10d MAE buckets (predicted confidence from judge_evidence.samples — `overall` is never journaled), R16 attribution verdict history, R19e per-cadence cost; budget utilization got the writer it never had (context._record_ambient_measurements → allocation_samples), since ambient.report() only debug-logged it. Part 5: intent profiles were already live; added surfacing.ablation_deltas over 5 named heuristics, persisted on a daily cadence and rendered, with a null-result verdict. Every metric renders unmeasured as null, never 0.",
           "deps": [
             "WF2LEA-2",
             "WF2LEA-5"
-          ]
+          ],
+          "pr": "#1109"
         },
         {
           "id": "WF2LEA-10",

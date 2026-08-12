@@ -169,6 +169,29 @@ class StagingStore:
                 created_ts REAL NOT NULL,
                 detail     TEXT NOT NULL DEFAULT ''
             );
+
+            -- One row per ambient render (LEARN-R14b). `ambient.report()` computed
+            -- exactly this and sent it to a debug log, so the budget-utilization the
+            -- health composite needs had no persisted writer at all: a panel reading
+            -- it would have rendered from a key nothing wrote.
+            CREATE TABLE IF NOT EXISTS allocation_samples (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                used_tokens  INTEGER NOT NULL,
+                budget_tokens INTEGER NOT NULL,
+                created_ts   REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_alloc_ts ON allocation_samples(created_ts);
+
+            -- One row per heuristic per sweep (§2.5's ablation-delta rule).
+            CREATE TABLE IF NOT EXISTS ablation_sweeps (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                sweep_ts   REAL NOT NULL,
+                heuristic  TEXT NOT NULL,
+                delta      REAL NOT NULL,
+                verdict    TEXT NOT NULL,
+                items      INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_ablation_ts ON ablation_sweeps(sweep_ts);
             """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_staging_consumed ON staging(consumed_by) "
@@ -416,6 +439,146 @@ class StagingStore:
             "cost_usd": round(sum(float(r["cost"] or 0.0) for r in rows), 6),
             "all_ok_streak": streak,
         }
+
+    def cost_by_op(self, *, days: int = 7, now: float | None = None) -> list[dict[str, Any]]:
+        """Per-op LLM cost aggregates (LEARN-R19e), dearest first.
+
+        The "op" is the flush record's `cadence` — the identity every flush already
+        carries. A single total answers "was it expensive"; only the per-op split
+        answers "expensive at WHAT", which is the question that leads to a change.
+        """
+        now = time.time() if now is None else now
+        since = now - max(1, days) * 86400
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT cadence, COUNT(*) AS passes, SUM(cost_usd) AS cost "
+                "FROM flush_records WHERE created_ts >= ? GROUP BY cadence;",
+                (since,),
+            ).fetchall()
+        out: list[dict[str, Any]] = [
+            {
+                "op": str(r["cadence"]),
+                "passes": int(r["passes"] or 0),
+                "cost_usd": round(float(r["cost"] or 0.0), 6),
+            }
+            for r in rows
+        ]
+        # Dearest first, ties broken by name so the order is stable across reads.
+        out.sort(key=lambda row: (-float(row["cost_usd"]), str(row["op"])))
+        return out
+
+    # ── Budget utilization (LEARN-R14b) ──
+
+    #: Rows kept in `allocation_samples`. A rolling window, not a history: the panel
+    #: reports a recent mean, and an unbounded per-turn table would be the largest
+    #: thing in learning.db within a week for no added answer.
+    ALLOCATION_KEEP = 500
+
+    def record_allocation(
+        self, *, used_tokens: int, budget_tokens: int, now: float | None = None
+    ) -> bool:
+        """Record one ambient render's budget usage. Returns False when unusable.
+
+        A zero or negative budget is not a 0% sample — it is an absent measurement,
+        and averaging it in would drag the composite toward "starving" on every turn
+        where the allocator was switched off.
+        """
+        if budget_tokens <= 0:
+            return False
+        ts = time.time() if now is None else now
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO allocation_samples (used_tokens, budget_tokens, created_ts) "
+                "VALUES (?, ?, ?);",
+                (max(0, int(used_tokens)), int(budget_tokens), ts),
+            )
+            cur.execute(
+                "DELETE FROM allocation_samples WHERE id <= "
+                "(SELECT MAX(id) - ? FROM allocation_samples);",
+                (self.ALLOCATION_KEEP,),
+            )
+        return True
+
+    def utilization(self, *, days: int = 7, now: float | None = None) -> dict[str, Any]:
+        """Mean budget utilization over the window, as a fraction in [0, 1]."""
+        now = time.time() if now is None else now
+        since = now - max(1, days) * 86400
+        with self._cursor() as cur:
+            row = cur.execute(
+                "SELECT COUNT(*) AS n, SUM(used_tokens) AS used, SUM(budget_tokens) AS budget "
+                "FROM allocation_samples WHERE created_ts >= ?;",
+                (since,),
+            ).fetchone()
+        samples = int(row["n"] or 0)
+        budget = float(row["budget"] or 0.0)
+        used = float(row["used"] or 0.0)
+        return {
+            "samples": samples,
+            # None, not 0.0: "never measured" and "measured at zero" are opposite
+            # claims about the allocator, and the composite must be able to tell them
+            # apart or an install with no traffic reads as a starving one.
+            "mean": round(used / budget, 4) if samples and budget > 0 else None,
+        }
+
+    # ── Ablation sweeps (§2.5) ──
+
+    def record_ablation(self, rows: list[dict[str, Any]], *, now: float | None = None) -> int:
+        """Persist one sweep's rows. Returns how many landed."""
+        if not rows:
+            return 0
+        ts = time.time() if now is None else now
+        with self._cursor() as cur:
+            for row in rows:
+                cur.execute(
+                    "INSERT INTO ablation_sweeps (sweep_ts, heuristic, delta, verdict, items) "
+                    "VALUES (?, ?, ?, ?, ?);",
+                    (
+                        ts,
+                        str(row.get("heuristic", "")),
+                        float(row.get("delta", 0.0) or 0.0),
+                        str(row.get("verdict", "")),
+                        int(row.get("items", 0) or 0),
+                    ),
+                )
+        return len(rows)
+
+    def latest_ablation(self) -> dict[str, Any]:
+        """The most recent sweep, or an empty dict when none has ever run."""
+        with self._cursor() as cur:
+            newest = cur.execute("SELECT MAX(sweep_ts) AS ts FROM ablation_sweeps;").fetchone()
+            ts = newest["ts"] if newest else None
+            if not ts:
+                return {}
+            rows = cur.execute(
+                "SELECT heuristic, delta, verdict, items FROM ablation_sweeps "
+                "WHERE sweep_ts = ? ORDER BY delta;",
+                (ts,),
+            ).fetchall()
+        return {
+            "at": datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat(),
+            "rows": [
+                {
+                    "heuristic": str(r["heuristic"]),
+                    "delta": round(float(r["delta"]), 6),
+                    "verdict": str(r["verdict"]),
+                    "items": int(r["items"]),
+                }
+                for r in rows
+            ],
+        }
+
+    def ablation_due(self, *, every_secs: float = 86400.0, now: float | None = None) -> bool:
+        """Is a sweep due? True when none has run, or the newest is older than the cadence.
+
+        The cadence is the whole reason this is affordable: the sweep runs the
+        allocator once per heuristic, and paying that per turn to learn something that
+        changes monthly would be a cost with no matching benefit.
+        """
+        ts_now = time.time() if now is None else now
+        with self._cursor() as cur:
+            row = cur.execute("SELECT MAX(sweep_ts) AS ts FROM ablation_sweeps;").fetchone()
+        newest = float(row["ts"]) if row and row["ts"] else 0.0
+        return (ts_now - newest) >= max(1.0, every_secs)
 
     def week(self, *, days: int = 7, now: float | None = None) -> dict[str, Any]:
         """The week-at-a-glance panel: one bucket per DAY (§6 — S76).

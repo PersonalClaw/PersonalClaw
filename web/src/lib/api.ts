@@ -1108,6 +1108,69 @@ export interface StagingWeek {
   produced_total: number; cost_usd: number
 }
 
+// The flywheel observability panel (GET /api/learning/health — LEARN-R14b).
+//
+// EVERY score and rate here is `number | null`, and null means UNMEASURED, not zero. The
+// backend refuses to score silence: a component with no data is excluded from the
+// composite and says so, because reporting an un-instrumented subsystem as 0% is
+// indistinguishable from reporting a broken one and the user's only apparent fix would
+// be to generate traffic.
+/** LEARN-R16's five-way verdict plus its honest not-yet state. Closed — the FE maps every
+ *  member explicitly rather than falling back, because a default branch would render a
+ *  verdict nobody defined as whatever the fallback said. */
+export type AttributionVerdict =
+  | 'EFFECTIVE' | 'PARTIALLY_EFFECTIVE' | 'INEFFECTIVE' | 'MIXED' | 'HARMFUL' | 'PENDING'
+
+export interface HealthComponent {
+  name: 'precision' | 'capture' | 'utilization' | 'judge'
+  score: number | null
+  weight: number
+  detail: string
+}
+export interface MaeBucket {
+  bucket: string
+  /** Verdicts that landed in this confidence band. */
+  n: number
+  /** …of which a human actually labelled. `mae` is null until at least one did. */
+  labelled: number
+  mae: number | null
+}
+export interface LearningHealth {
+  days: number
+  composite: {
+    score: number | null
+    components: HealthComponent[]
+    measured: number
+    of: number
+    ideal_band: [number, number]
+  }
+  utilization: { samples: number; mean: number | null; ideal_band: [number, number] }
+  capture: { days: number; passes: number; errors: number; cost_usd: number; all_ok_streak: number }
+  surfacing: { surfaced: number; used: number; precision: number | null }
+  cost_by_op: { op: string; passes: number; cost_usd: number }[]
+  judge: {
+    runs_scanned: number
+    verdicts: number
+    divergences: number
+    false_pass_rate: number | null
+    nodding_gates: { template: string; node: string; detail: string }[]
+    mae: { buckets: MaeBucket[]; labelled: number; unlabelled: number; no_confidence: number }
+  }
+  attribution: {
+    proposers: {
+      source: string
+      counts: Record<string, number>
+      total: number
+      decided: number
+      harm_rate: number
+      effective_rate: number
+    }[]
+    history: { source: string; verdict: AttributionVerdict }[]
+  }
+  /** The last ablation-delta sweep, or `{}` when none has run yet (§2.5). */
+  ablation: { at?: string; rows?: { heuristic: string; delta: number; verdict: string; items: number }[] }
+}
+
 // One projected fire in the week grid (GET /api/triggers/week — AUTO-A3). `suppressed_by` is "" for
 // a fire that will actually run, "quiet" inside a quiet window, "skipped" on one of the trigger's
 // skip_dates. The two suppression kinds stay distinct because they are different promises: a quiet
@@ -2782,6 +2845,8 @@ export const api = {
     del(`/api/learning/proposals/${encodeURIComponent(id)}`),
   learningStagingWeek: (days = 7) =>
     get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
+  learningHealth: (days = 7) =>
+    get<LearningHealth>(`/api/learning/health?days=${days}`),
   skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>

@@ -97,6 +97,27 @@ class VerdictRecord:
     #: that caused it. Patching a judge prompt invalidates comparisons across the change.
     prompt_version: str = ""
     created_at: str = ""
+    #: The per-sample verdicts behind the median aggregation, as `engine.dispatch_gate`
+    #: writes them into `judge_evidence.samples` (LEARN-R10d).
+    #:
+    #: This — not `overall` — is the judge's PREDICTED CONFIDENCE, because it is the
+    #: thing the write path actually records. Measured: nothing anywhere writes `overall`
+    #: or `scores` to the ledger (the controller journals verdict/status/evidence only),
+    #: so an MAE computed from `overall` would have been an average of parse defaults.
+    samples: list[str] = field(default_factory=list)
+
+    @property
+    def agreement(self) -> float | None:
+        """Fraction of samples that agreed with the aggregate, or None with no samples.
+
+        None rather than 1.0: a single-sample judge is not a unanimous panel, and a
+        verdict with no recorded samples has no confidence to report at all.
+        """
+        if not self.samples:
+            return None
+        target = self.verdict.upper()
+        agreed = sum(1 for s in self.samples if str(s).upper() == target)
+        return agreed / len(self.samples)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,6 +127,7 @@ class VerdictRecord:
             "verdict": self.verdict,
             "overall": self.overall,
             "scores": dict(self.scores),
+            "samples": list(self.samples),
             "evidence_refs": list(self.evidence_refs),
             "proof": self.proof[:2000],
             "status": self.status,
@@ -395,6 +417,84 @@ def divergence_exemplars(
     return out
 
 
+#: Predicted-confidence buckets for the MAE report (LEARN-R10d). Four is enough to see
+#: whether the judge is miscalibrated at the CONFIDENT end — which is the interesting
+#: question, because a hedged wrong answer costs a cycle and a confident one ships.
+MAE_BUCKETS: tuple[tuple[float, float], ...] = ((0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0))
+
+
+def _bucket_label(low: float, high: float) -> str:
+    return f"{low:.2f}-{high:.2f}"
+
+
+def mae_buckets(
+    verdicts: list[VerdictRecord], divergences: list[DivergenceRecord]
+) -> dict[str, Any]:
+    """(predicted confidence, ground-truth outcome) error per bucket — LEARN-R10d.
+
+    **Predicted** is sample agreement (see `VerdictRecord.agreement`): a unanimous panel
+    predicts 1.0, a 2-1 split predicts 0.67. Expressed as P(pass) so a confident REJECT
+    and a confident PASS live at opposite ends of one axis.
+
+    **Ground truth is a HUMAN LABEL ONLY.** A verdict nobody overrode is unlabelled, not
+    correct — treating silence as agreement would compute an MAE that falls as the user
+    stops paying attention, which is the opposite of a calibration signal. So the report
+    carries `labelled`/`unlabelled` and every bucket's `mae` is None until a real label
+    lands in it. R10d's own instruction is to report now and correct only once volume
+    justifies; a fabricated 0.0 would look like justification.
+    """
+    labels: dict[tuple[str, str], bool] = {}
+    for div in divergences:
+        labels[(div.run_id, div.node_id)] = div.human_verdict.upper() == "PASS"
+
+    buckets: dict[str, dict[str, Any]] = {
+        _bucket_label(low, high): {"bucket": _bucket_label(low, high), "n": 0, "_errors": []}
+        for low, high in MAE_BUCKETS
+    }
+    unlabelled = 0
+    no_confidence = 0
+    for rec in verdicts:
+        if rec.status != "kept":
+            continue
+        agreement = rec.agreement
+        if agreement is None:
+            no_confidence += 1
+            continue
+        predicted_pass = agreement if rec.verdict.upper() == "PASS" else 1.0 - agreement
+        for low, high in MAE_BUCKETS:
+            # Closed at the top of the last bucket only, so 1.0 lands somewhere.
+            if low <= predicted_pass < high or (high == 1.0 and predicted_pass == 1.0):
+                slot = buckets[_bucket_label(low, high)]
+                break
+        else:  # pragma: no cover — the bands tile [0, 1] exhaustively
+            continue
+        slot["n"] += 1
+        actual = labels.get((rec.run_id, rec.node_id))
+        if actual is None:
+            unlabelled += 1
+            continue
+        slot["_errors"].append(abs(predicted_pass - (1.0 if actual else 0.0)))
+
+    rows = []
+    for low, high in MAE_BUCKETS:
+        slot = buckets[_bucket_label(low, high)]
+        errors = slot.pop("_errors")
+        rows.append(
+            {
+                "bucket": slot["bucket"],
+                "n": slot["n"],
+                "labelled": len(errors),
+                "mae": round(sum(errors) / len(errors), 4) if errors else None,
+            }
+        )
+    return {
+        "buckets": rows,
+        "labelled": sum(r["labelled"] for r in rows),
+        "unlabelled": unlabelled,
+        "no_confidence": no_confidence,
+    }
+
+
 def calibration_summary(
     verdicts: list[VerdictRecord], divergences: list[DivergenceRecord]
 ) -> dict[str, Any]:
@@ -473,6 +573,16 @@ def verdicts_from_journal(entries: list[dict[str, Any]]) -> list[VerdictRecord]:
                     status=str(entry.get("status", "kept") or "kept"),
                     prompt_version=str(entry.get("prompt_version", "")),
                     created_at=str(entry.get("created_at", "")),
+                    # From `evidence.samples` — where the write path puts them. Reading
+                    # a top-level `samples` key instead would have found nothing.
+                    samples=[
+                        str(s)
+                        for s in (
+                            (entry.get("evidence") or {}).get("samples", [])
+                            if isinstance(entry.get("evidence"), dict)
+                            else []
+                        )
+                    ],
                 )
             )
         except (AttributeError, TypeError, ValueError):
