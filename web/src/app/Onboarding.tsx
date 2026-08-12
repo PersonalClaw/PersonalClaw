@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
 import { ArrowRight, User, Cpu, Sparkles, Loader2, ExternalLink, Check } from 'lucide-react'
@@ -107,8 +108,8 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
         placeholder="Your name"
         className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1.0625rem] placeholder:text-on-surface-low outline-none" />
       <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
-        disabled={!value.trim()}
-        className="inline-flex size-9 shrink-0 items-center justify-center rounded-pill disabled:opacity-40"
+        {...unavailableWhen(!value.trim(), 'Enter your name first')}
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-pill disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
         style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }} aria-label="Continue">
         <ArrowRight size={17} />
       </motion.button>

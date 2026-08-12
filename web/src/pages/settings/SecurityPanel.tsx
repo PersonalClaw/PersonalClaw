@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { unavailableWhen } from '../../ui/unavailable'
 import { ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, type EgressPolicyConfig } from '../../lib/api'
@@ -137,8 +138,9 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
             onKeyDown={(e) => { if (e.key === 'Enter') add() }}
             placeholder="e.g. nas.local"
             className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
-          <button type="button" disabled={disabled || !draft.trim()} onClick={add}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50">
+          <button type="button" onClick={add}
+            {...unavailableWhen(!draft.trim(), 'Enter a pattern first', { busy: disabled })}
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
             <Plus size={15} /> Add
           </button>
         </div>
@@ -220,8 +222,9 @@ function DeniedCommandsEditor({ builtin, user, onChange }: { builtin: string[]; 
                 placeholder="e.g. my-secret-tool .*"
                 className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low"
               />
-              <button type="button" disabled={busy || !draft.trim()} onClick={add}
-                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50">
+              <button type="button" onClick={add}
+                {...unavailableWhen(!draft.trim(), 'Enter a host first', { busy })}
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
                 <Plus size={15} /> Add
               </button>
             </div>

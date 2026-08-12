@@ -171,7 +171,14 @@ function gatedSubmits(): Array<{ file: string; line: number; tag: string }> {
         else if (ch === '}') depth--
         else if (ch === '>' && depth === 0) {
           const tag = text.slice(m.index!, i + 1)
-          if (/disabled=\{[^}]*!\w+[\w.]*\.trim\(\)|disabled=\{[^}]*length === 0/.test(tag)) {
+          // Count BOTH shapes of a validity gate: the native `disabled={!x.trim()}` and the
+          // converted `{...unavailableWhen(!x.trim(), …)}`. Moving the 10 raw buttons onto the
+          // helper dropped this matcher's population 37 → 29 and tripped the vacuity floor
+          // below — because the floor was measuring the OLD shape only, so it stopped covering
+          // the very sites that had just been fixed.
+          if (
+            /disabled=\{[^}]*!\w+[\w.]*\.trim\(\)|disabled=\{[^}]*length === 0|unavailableWhen\(/.test(tag)
+          ) {
             out.push({ file: abs.slice(SRC.length + 1), line: text.slice(0, m.index).split('\n').length, tag })
           }
           break
@@ -184,22 +191,26 @@ function gatedSubmits(): Array<{ file: string; line: number; tag: string }> {
 
 describe('the unexplained-submit tail only shrinks', () => {
   const gated = gatedSubmits()
-  const unexplained = gated.filter((t) => !/disabledReason/.test(t.tag))
+  // A site is explained by EITHER path: the `Button` prop, or the raw-button helper.
+  const unexplained = gated.filter((t) => !/disabledReason|unavailableWhen\(/.test(t.tag))
 
   it('finds the gated submits (not vacuously green)', () => {
     expect(gated.length, 'the matcher must find validity-gated submits').toBeGreaterThan(30)
   })
 
-  it('has at most the 10 raw-<button> holdouts left', () => {
-    // 10, not 8: an earlier census walked only `pages/` and missed `app/Onboarding.tsx` and
-    // `ui/PlanningWalkthrough.tsx`. The rail walks the whole tree, which is why its number is
-    // the one to trust.
+  it('has NO unexplained validity-gated submit left', () => {
+    // The raw-<button> tail closed with `unavailableWhen`, so the floor is now ZERO: every
+    // validity-gated submit in the tree explains itself by one path or the other.
+    //
+    // The count was 10, not 8, because an earlier census walked only `pages/` and missed
+    // `app/Onboarding.tsx` and `ui/PlanningWalkthrough.tsx`. The rail walks the whole tree,
+    // which is why its number is the one to trust.
     expect(
       unexplained.length,
-      `${unexplained.length} validity-gated submits still cannot say why they are unavailable ` +
-        '(was 10, all raw <button>). A NEW one should pass disabledReason via the Button primitive:\n  ' +
+      `${unexplained.length} validity-gated submits still cannot say why they are unavailable. ` +
+        'Pass `disabledReason` on a <Button>, or spread `unavailableWhen()` on a raw <button>:\n  ' +
         unexplained.map((t) => `${t.file}:${t.line}`).join('\n  '),
-    ).toBeLessThanOrEqual(10)
+    ).toBe(0)
   })
 
   it('every holdout is a RAW button, not the primitive', () => {

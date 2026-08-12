@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { unavailableWhen } from '../ui/unavailable'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Coins, type LucideIcon } from 'lucide-react'
@@ -347,10 +348,11 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
             className="inline-flex items-center gap-1 rounded-pill px-m h-7 text-on-surface-low text-[0.75rem] transition-colors hover:bg-surface-high hover:text-on-surface">
             Continue in full chat <ArrowRight size={11} className="shrink-0" />
           </button>
-          <motion.button type="button" onClick={send} disabled={!input.trim() || busy}
+          <motion.button type="button" onClick={send}
+            {...unavailableWhen(!input.trim(), 'Type a message first', { busy })}
             whileTap={{ scale: 0.92 }} transition={spring.spatialFast}
             aria-label="Send"
-            className="ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill bg-primary text-on-primary transition-colors hover:bg-primary-emphasis disabled:opacity-40 disabled:pointer-events-none">
+            className="ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill bg-primary text-on-primary transition-colors hover:bg-primary-emphasis disabled:opacity-40 disabled:pointer-events-none aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
             {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
           </motion.button>
         </div>
