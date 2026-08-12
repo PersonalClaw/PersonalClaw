@@ -467,7 +467,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
         className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={!dirty || busy}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
         {dirty && <span className="text-on-surface-low text-[0.75rem]">Unsaved changes</span>}
         {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
       </div>

@@ -105,7 +105,7 @@ export function AccountPanel() {
             {/* The shared Button primitive — the two older Save buttons in this
                 panel are hand-rolled, but new chrome adopts the kit. */}
             <Button size="sm" variant={handleDirty ? 'primary' : 'secondary'}
-              disabled={!handleDirty} onClick={saveHandle}>
+              disabled={!handleDirty} disabledReason={!handleDirty ? 'No changes to save' : undefined} onClick={saveHandle}>
               {handleSaved ? <Check size={14} /> : null} {handleSaved ? 'Saved' : 'Save'}
             </Button>
           </div>

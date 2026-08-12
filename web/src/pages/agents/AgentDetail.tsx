@@ -151,7 +151,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
           <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
             placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={!dirty || busy}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
+            <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
           </div>
         </div>
