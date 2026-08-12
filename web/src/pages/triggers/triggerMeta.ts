@@ -217,7 +217,20 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     // Honest last-run status (T7): prefer the newest run record's status (persists
     // across restarts; carries launched/failure/timeout) over last_status (only
     // ok/error — a fire-and-forget run shows "ok" there, overstating it).
-    lastStatus: j.last_run_status || j.last_status || null,
+    //
+    // 🪤 AND THE FALLBACK OVERSTATED HARDEST WHEN THERE WAS NO RUN AT ALL. `last_status` is
+    // job-level health, not a run outcome, and the backend reports `'ok'` for a job that has never
+    // fired: measured on #/triggers, `schedule:clock:photographer-nudge…` returns
+    // `last_status: 'ok'` with `last_run_ts: null, run_count: 0`. The row therefore drew the
+    // ok-green CheckCircle next to the words "never" — 2 of 7 rows did — asserting a successful
+    // last run for a trigger that has never had one. That is the one pair `scheduleMeta` says a
+    // user must never confuse, and it was being manufactured HERE, by mixing two fields.
+    //
+    // So the health fallback only applies once a run exists. With no run the value stays null and
+    // `statusMeta` renders its own honest 'never run' state (neutral Circle). The backend claiming
+    // `'ok'` for a never-fired job is a separate data defect, recorded in the ledger — this stops
+    // the UI from repeating it as a claim about a run.
+    lastStatus: j.last_run_status || (j.last_run_ts ? j.last_status : null) || null,
     runCount: null, usedBy: [],
     schedule: j,
   }
