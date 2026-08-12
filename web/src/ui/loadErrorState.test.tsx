@@ -111,20 +111,47 @@ describe('the migrated surfaces read the error', () => {
     // invoked in chat with filled-in {{variables}}" plus a New-prompt CTA, with no error text and no
     // live region. Removing the swallow is half the fix; the branch is the other half.
     'pages/prompts/PromptsListPage.tsx',
+    // `#/workflows` does not use the hook at all — it hand-rolls `useState` + `Promise.all` with a
+    // `.catch` per read. Measured with all three workflow endpoints at 500: "No workflow runs yet —
+    // start one from the Definitions tab", no error text, no live region. Its THIRD read keeps its
+    // fallback on purpose (surfacing is a freshness column; a startable list beats an error for it),
+    // which is why the swallow check below is scoped to the hook's own fetchers.
+    'pages/workflows/WorkflowsListPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {
     it(`${rel} branches on the load error before the empty state`, () => {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, 'must render the shared primitive').toMatch(/<LoadError\b/)
-      // Reading `error` off the hook is what makes the branch possible at all. The alias is free-form
-      // because a surface can have MORE THAN ONE fetch to guard — `#/learning` has two (the proposal
-      // inbox and the capture week) and cannot name them both `loadErr`.
-      expect(src, 'must destructure the hook error').toMatch(/error:\s*\w*(?:err|Err)\w*/)
+      // The property that makes the branch possible is that the rejection is CAPTURED rather than
+      // discarded. Two shapes qualify, and both ship here:
+      //   • `useCachedData` consumers destructure it — `error: somethingErr` (the alias is free-form
+      //     because a surface can guard more than one fetch; `#/learning` has two and cannot name both
+      //     `loadErr`);
+      //   • a hand-rolled loader catches into state — `.catch((e) => { setSomethingErr(e); … })`, which
+      //     is what `#/workflows` does with its `Promise.all`.
+      // Substituting data (`.catch(() => [])`) satisfies neither, which is the whole point.
+      expect(src, 'must capture the rejection, not discard it').toMatch(
+        /error:\s*\w*(?:err|Err)\w*|catch\(\(\w+\)\s*=>\s*\{[^}]*[Ee]rr\w*\(/,
+      )
       // And the error branch must precede the skeleton/empty branches, or it never runs.
+      // REACHABILITY, not source order. The first two adopters put `<LoadError>` textually before their
+      // skeleton, so an earlier version of this rail asserted exactly that — and it rejected
+      // `#/workflows`, whose error branch is perfectly reachable while sitting AFTER its `<Loading />`
+      // because a separate `loading` flag is cleared in a `finally` and therefore opens on failure.
+      // Source order was a proxy for the real property; these are the two shapes that satisfy it:
       const errAt = src.search(/<LoadError\b/)
-      const skelAt = src.search(/<ListSkeleton\b/)
-      expect(errAt, 'the error branch must come before the skeleton branch').toBeLessThan(skelAt)
+      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\s*\/>/].map((re) => {
+        const i = src.search(re)
+        return i === -1 ? Number.POSITIVE_INFINITY : i
+      }))
+      expect(loadAt, 'the surface must have a loading state at all').toBeLessThan(Number.POSITIVE_INFINITY)
+      const errorBranchFirst = errAt < loadAt
+      const loadingClearedOnFailure = /finally\s*\{[^}]*setLoading\(false\)/.test(src)
+      expect(
+        errorBranchFirst || loadingClearedOnFailure,
+        'the error branch must be reachable: either it precedes the loading branch, or the loading flag is cleared in a finally so a failure gets past it',
+      ).toBe(true)
     })
   }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Play, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { EmptyState, ListRow, Loading } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, Loading, LoadError } from '../../ui/ListScaffold'
 import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
@@ -41,17 +41,27 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
   const [findings, setFindings] = useState<WorkflowSurfacingFinding[]>([])
   const [runs, setRuns] = useState<WorkflowRunSummary[]>([])
   const [loading, setLoading] = useState(true)
+  // Per-read failure, so the tab a user is looking at reports its OWN fetch: a definitions failure must
+  // not be announced on the Runs tab, and neither is the optional surfacing read's business.
+  const [defsErr, setDefsErr] = useState<unknown>(null)
+  const [runsErr, setRunsErr] = useState<unknown>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
+      // The two PRIMARY reads capture their rejection instead of swallowing it. Substituting an empty
+      // list for a failed request made this page say "No workflow runs yet — start one from the
+      // Definitions tab" to someone whose runs exist and whose server just answered 500: measured with
+      // all three endpoints failing, the page carried no error text and no live region at all.
+      // The THIRD read keeps its fallback deliberately — see the comment above: surfacing is a
+      // freshness column, and a plain startable list is a better answer than an error for it.
       const [d, r, s] = await Promise.all([
-        api.workflowDefs().catch(() => ({ defs: [], total: 0 })),
-        api.workflowRuns({ limit: 100 }).catch(() => ({ runs: [], total: 0, limit: 0, offset: 0 })),
+        api.workflowDefs().then((v) => { setDefsErr(null); return v }).catch((e) => { setDefsErr(e); return null }),
+        api.workflowRuns({ limit: 100 }).then((v) => { setRunsErr(null); return v }).catch((e) => { setRunsErr(e); return null }),
         api.workflowSurfacing().catch(() => ({ defs: [], total: 0, findings: [] })),
       ])
-      setDefs(d.defs)
-      setRuns(r.runs)
+      if (d) setDefs(d.defs)
+      if (r) setRuns(r.runs)
       setSurfacing(Object.fromEntries(s.defs.map((row) => [row.name, row])))
       setFindings(s.findings)
     } finally {
@@ -219,7 +229,9 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
         results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading /> : tab === 'defs' ? (
-          filteredDefs.length === 0 ? (
+          defsErr ? (
+            <LoadError what="workflow definitions" error={defsErr} onRetry={load} />
+          ) : filteredDefs.length === 0 ? (
             <EmptyState
               icon={Workflow}
               title={q ? 'No matching definitions' : 'No workflow definitions yet'}
@@ -302,6 +314,8 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               ))}
             </div>
           )
+        ) : runsErr ? (
+          <LoadError what="workflow runs" error={runsErr} onRetry={load} />
         ) : filteredRuns.length === 0 ? (
           <EmptyState
             icon={Workflow}
