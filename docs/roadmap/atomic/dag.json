@@ -1996,6 +1996,17 @@
             "DIST-10"
           ],
           "blocked_reason": "BLOCKED-OWNER: acceptance requires `brew install personalclaw/tap/personalclaw` on a CLEAN MAC plus a new personalclaw/tap repository (outward-facing repo creation, owner-only), and `nix run .#personalclaw` — verified `nix` is ABSENT on this machine, so the nix half cannot be verified here either."
+        },
+        {
+          "id": "DIST-13",
+          "title": "Route `personalclaw update` through the per-kind updater; lift it out of the dashboard layer into core `self_update`",
+          "status": "done",
+          "pr": "#1115",
+          "scope": "Reopens DIST-9 (S4) — the CLI half of the per-kind self-update; Design §C; Contracts C1, C2",
+          "done_when": "the install-kind decision + the shared git/pip primitives live in core `src/personalclaw/self_update.py` and `dashboard/handlers/updates_kind.py` is DELETED (no re-export shim), with every call site moved in the same commit — the dashboard handlers, `gateway._auto_apply_update`'s `_package_root`, and the CLI; `personalclaw update` dispatches exhaustively over `INSTALL_KINDS` with NO default arm (git = fetch/reset/build/install honouring `dashboard.update_dev_mode`; pip/pipx/uv-tool = resolved installer `-U personalclaw==<latest>` needing no source tree, then \"restart the gateway\"; container + desktop print instructions and exit 0; an unmapped kind names what it detected and exits 1); the destructive-reset confirmation survives, and a NON-INTERACTIVE stdin refuses the reset (exit 1) instead of prompting, reading a piped \"y\" or raising EOFError; the `mainline` default is replaced by current-branch → `refs/remotes/origin/HEAD` → `git remote show origin` → the literal `main`, railed by a test asserting no updater module carries the old literal; one test drives every CLI branch with git/pip faked at two seams (never a real `reset --hard` or `pip -U`); spawn-ceiling census re-keyed to the moved sites; CHANGELOG entry",
+          "deps": [
+            "DIST-9"
+          ]
         }
       ]
     },

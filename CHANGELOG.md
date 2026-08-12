@@ -100,6 +100,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`personalclaw update` was a dead end unless you had installed from git.** If you installed the
+  documented way — `pipx install personalclaw`, `pip install personalclaw`, `uv tool install
+  personalclaw` — `personalclaw update` printed "❌ PERSONALCLAW_PROJECT_DIR not set — cannot locate
+  source tree" and exited 1, because the CLI still ran the old git-only pipeline while the
+  install-kind-aware updater the dashboard uses lived elsewhere. The command now behaves per install
+  kind: a **wheel install** upgrades itself in place (`-U personalclaw==<latest>`, no source tree, no
+  Node) and tells you to `personalclaw restart`; a **git checkout** keeps the fetch + reset + rebuild
+  pipeline and honours Developer update mode (ride release tags by default, every commit when it's
+  on); a **container** prints the two `docker compose pull` / `up -d` commands rather than pretending
+  it can patch an image; a **desktop** install defers to the app's own updater. An install kind it
+  does not recognize says what it detected and refuses to guess, instead of falling back to
+  `git reset --hard` on a tree it may not own.
+- **`personalclaw update` could run `git reset --hard` without anyone agreeing to it.** With
+  uncommitted tracked changes, the confirmation prompt used to read whatever was on stdin — so from
+  cron, a pipe, or `< /dev/null` it could take a piped "y" and discard your work, or crash with an
+  `EOFError` traceback. Without a terminal it now refuses the destructive reset, names the files at
+  risk and the remedy (`git stash` or commit), and exits non-zero. Declining at a real prompt still
+  exits 0 — that's a choice, not a failure. Untracked files are no longer listed as at risk, because
+  a reset does not touch them.
+- **A detached-HEAD update fetched a branch that does not exist.** When git reported no branch (a
+  checkout parked on a release tag), the updater fell back to a hardcoded branch name this project
+  has never used, so the fetch failed with a confusing git error. It now resolves the branch
+  honestly: the branch you are on, else the remote's own `HEAD` (read locally, so it still works
+  offline), else what the remote reports, else `main`.
 - **Deleting a knowledge item mid-enrichment crashed its background pipeline with a noisy
   error.** If you deleted an item within the ~30 seconds its tags/insights were still being
   extracted, the enrichment pipeline hit a `FOREIGN KEY constraint failed` error, logged a full

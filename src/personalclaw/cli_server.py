@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from personalclaw import __version__
+from personalclaw import __version__, self_update
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import _DEFAULT_PORT, config_dir, config_path
 from personalclaw.constants import DATA_WARNING
@@ -362,127 +362,25 @@ def _restart(port: int) -> None:
     _spawn_detached_gateway(port)
 
 
-def _update() -> None:
-    """Update PersonalClaw via git fetch + reset --hard + rebuild."""
-    print("Updating PersonalClaw…\n")
+# Every InstallKind `_update` maps to a branch. The dispatch is exhaustive over
+# `self_update.INSTALL_KINDS` and has NO default arm that falls back to the git
+# pipeline: before DIST-13 this command WAS the git pipeline, so a pip/pipx/uv-tool
+# user got "PERSONALCLAW_PROJECT_DIR not set" and exit 1 — a dead end with the
+# per-kind machinery one module away. A kind added later must be mapped here
+# consciously; `test_cli_update_kinds` reds until it is.
+_UPDATE_HANDLED_KINDS: frozenset[str] = frozenset({"git", "pip", "container", "desktop"})
 
-    proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
-    if not proj:
-        print("❌ PERSONALCLAW_PROJECT_DIR not set — cannot locate source tree")
-        print("   Run from the project directory or run `personalclaw setup` first.")
-        sys.exit(1)
 
-    proj_path = Path(proj)
-    if not (proj_path / ".git").is_dir():
-        print(f"❌ No git repo at {proj}")
-        sys.exit(1)
+def _refresh_agent_config(cwd: str) -> None:
+    """Re-run `setup --agent-only` so new denied commands / MCP servers take effect.
 
-    print(f"  📂 {proj}")
-
-    # Detect current branch
-    branch_result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=proj,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if branch_result.returncode != 0:
-        print("❌ Could not determine current branch")
-        sys.exit(1)
-    branch = branch_result.stdout.strip() or "mainline"
-    if branch == "HEAD":
-        branch = "mainline"
-
-    # Fetch + reset --hard: no merge conflicts, untracked files preserved
-    print("  ⬇️  git fetch…")
-    result = subprocess.run(
-        ["git", "fetch", "origin", branch],
-        cwd=proj,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if result.returncode != 0:
-        print(f"  ❌ git fetch failed:\n{result.stderr.strip()}")
-        sys.exit(1)
-
-    # Check if there are new commits
-    diff_result = subprocess.run(
-        ["git", "diff", "HEAD", f"origin/{branch}", "--quiet"],
-        cwd=proj,
-        capture_output=True,
-        timeout=10,
-    )
-    if diff_result.returncode == 0:
-        print("\n✅ Already up to date!")
-        return
-
-    # Warn about local tracked-file changes before discarding
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=proj,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    tracked_changes = [
-        line for line in status.stdout.strip().splitlines() if not line.startswith("??")
-    ]
-    if tracked_changes:
-        print("  ⚠️  Local tracked-file changes will be discarded:")
-        for line in tracked_changes[:10]:
-            print(f"      {line}")
-        resp = input("  Continue? [y/N] ").strip().lower()
-        if resp != "y":
-            print("  Aborted.")
-            sys.exit(0)
-
-    print(f"  🔄 git reset --hard origin/{branch}…")
-    result = subprocess.run(
-        ["git", "reset", "--hard", f"origin/{branch}"],
-        cwd=proj,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        print(f"  ❌ git reset failed:\n{result.stderr.strip()}")
-        sys.exit(1)
-
-    # Build frontend frontend assets (assumes Node.js is already on PATH)
-    build_frontend_sync(proj_path)
-
-    # Installer-resolved: the git-checkout updater ran in whatever venv the
-    # contributor made, and `uv venv` (what CONTRIBUTING documents) has no pip.
-    from personalclaw._installer import NoInstallerError, install_argv, installer_name
-
-    try:
-        argv = install_argv(["-e", ".", "--quiet"])
-    except NoInstallerError as exc:
-        print(f"  ❌ {exc}")
-        sys.exit(1)
-
-    print(f"  🔨 {installer_name()} install -e .")
-    result = subprocess.run(
-        argv,
-        cwd=proj,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"  ❌ Install failed:\n{result.stderr.strip()}")
-        sys.exit(1)
-
-    print("\n✅ PersonalClaw updated!")
-    print(f"\n{DATA_WARNING}\n")
-
-    # Re-install agent config so new denied commands take effect.
-    # Run as subprocess since the current process has old code loaded.
+    A subprocess, not an in-process call: this interpreter has the OLD code loaded,
+    and the point is to apply the version that was just installed.
+    """
     print("  🔒 Refreshing agent config…")
     r = subprocess.run(
         [sys.executable, "-m", "personalclaw", "setup", "--agent-only"],
-        cwd=proj,
+        cwd=cwd or None,
         capture_output=True,
         text=True,
         timeout=30,
@@ -491,6 +389,236 @@ def _update() -> None:
         print("  ✅ Agent config refreshed (hooks + MCP servers updated)")
     else:
         print("  ⚠️  Agent config refresh failed — run: personalclaw setup --agent-only")
+
+
+def _confirm_discarding(tracked: list[str]) -> bool:
+    """Ask before `git reset --hard` destroys tracked edits. False ⇒ do not reset.
+
+    Non-interactive stdin (cron, a pipe, `< /dev/null`) does NOT prompt. Reading a
+    piped "y" — or letting `input()` raise EOFError into a traceback — would let an
+    unattended caller destroy uncommitted work that nobody agreed to lose. Refusing
+    is recoverable (stash or commit, then re-run); a wrong "yes" is not. The caller
+    turns this refusal into a NON-ZERO exit, because the update the user asked for
+    did not happen; an interactive "n" exits 0, because declining is a choice.
+    """
+    print("  ⚠️  Local tracked-file changes would be discarded:")
+    for line in tracked[:10]:
+        print(f"      {line}")
+    if not sys.stdin.isatty():
+        print("  ❌ Refusing to discard them without confirmation (stdin is not a terminal).")
+        print("     Commit or `git stash` them, or re-run `personalclaw update` in a terminal.")
+        return False
+    try:
+        resp = input("  Continue? [y/N] ").strip().lower()
+    except EOFError:
+        resp = ""  # no answer is not a yes
+    return resp == "y"
+
+
+def _update_git(proj: str) -> None:
+    """Advance a git checkout: fetch → (confirm) reset --hard → build → install.
+
+    Respects ``dashboard.update_dev_mode`` exactly as the dashboard's apply does:
+    OFF (default) the checkout rides release TAGS like every other install kind, so
+    being on the latest tag is "up to date" even when `main` has newer commits; ON is
+    the contributor "track every commit" behavior.
+    """
+    git_dir = self_update.git_root(proj)
+    if not git_dir:
+        # Detection said "git" because a .git was found; losing it between then and
+        # now means the tree moved. Say so rather than resetting something else.
+        print(f"❌ No git repo at {proj}")
+        sys.exit(1)
+    print(f"  📂 {git_dir}")
+
+    if not AppConfig.load().dashboard.update_dev_mode:
+        latest = _latest_release_version()
+        if _is_current(latest):
+            print(f"\n✅ Already on the latest release (v{latest}).")
+            print("   Enable Developer update mode (Settings → Updates) to track every commit.")
+            return
+
+    branch = self_update.resolve_default_branch(git_dir)
+    print("  ⬇️  git fetch…")
+    fetched = self_update.git_fetch(git_dir, branch)
+    if fetched.returncode != 0:
+        print(f"  ❌ git fetch origin {branch} failed:\n{(fetched.stderr or '').strip()}")
+        sys.exit(1)
+
+    if self_update.git_is_up_to_date(git_dir, branch):
+        print("\n✅ Already up to date!")
+        return
+
+    tracked = self_update.git_tracked_changes(git_dir)
+    if tracked:
+        interactive = sys.stdin.isatty()
+        if not _confirm_discarding(tracked):
+            # A human who typed "n" made a choice (0). A non-interactive caller made
+            # none and we refused on its behalf, so the update it asked for did not
+            # happen (1) — see _confirm_discarding.
+            if interactive:
+                print("  Aborted.")
+            sys.exit(0 if interactive else 1)
+
+    print(f"  🔄 git reset --hard origin/{branch}…")
+    reset = self_update.git_reset_hard(git_dir, branch)
+    if reset.returncode != 0:
+        print(f"  ❌ git reset failed:\n{(reset.stderr or '').strip()}")
+        sys.exit(1)
+
+    # The SPA is built from source here (a checkout has no bundled dist), and both
+    # the build and the editable install run at the PACKAGE root — which is nested
+    # one level under the repo root in the monorepo layout, where git runs.
+    pkg_root = self_update.package_root(git_dir)
+    build_frontend_sync(Path(pkg_root))
+    _install(["-e", ".", "--quiet"], cwd=pkg_root, label="install -e .")
+
+    print("\n✅ PersonalClaw updated!")
+    print(f"\n{DATA_WARNING}\n")
+    _refresh_agent_config(pkg_root)
+
+
+def _update_pip() -> None:
+    """Upgrade a wheel install (pip / pipx / uv tool) in the running environment.
+
+    No source tree is required — that requirement is exactly the dead end this
+    replaced. The installer is RESOLVED (uv or pip): a uv-created venv, and a
+    `uv tool install`, ship no pip module. Unlike the dashboard's apply there is no
+    re-exec: this process is a short-lived CLI, not the gateway, so it prints the
+    restart command instead of bouncing a running server nobody asked it to touch.
+    """
+    latest = _latest_release_version()
+    if _is_current(latest):
+        print(f"\n✅ Already on the latest release (v{latest}).")
+        return
+    spec = self_update.upgrade_spec(latest)
+    if latest:
+        print(f"  ⬆️  v{__version__} → v{latest}")
+    _install(["-U", spec, "--quiet"], cwd="", label=f"install -U {spec}")
+
+    print("\n✅ PersonalClaw updated!")
+    print(f"\n{DATA_WARNING}\n")
+    _refresh_agent_config("")
+    print("\n  ↻ Restart the gateway to run the new code: personalclaw restart")
+
+
+def _update_container() -> None:
+    """A container image cannot be updated in place — print the two commands.
+
+    Exit code is 0 (see `_update`): the install is healthy and correctly
+    configured, and the command did the only thing it can do here — say exactly
+    how to become current.
+    """
+    print("  📦 This is a container install — the image is replaced, not patched.")
+    print("  Run these on the host:\n")
+    for cmd in self_update.container_instructions():
+        print(f"      {cmd}")
+    print("\n  See docs/guides/containers.md. Your data lives in the mounted volume")
+    print("  and survives the recreate; `personalclaw snapshot` first if you want a copy.")
+
+
+def _update_desktop() -> None:
+    """The desktop shell owns its own updater — delegate, don't fight it.
+
+    Exit code 0 for the same reason as the container branch.
+    """
+    print("  🖥  This is a desktop install — the PersonalClaw app updates itself.")
+    print("  Open the app and accept the update it offers (or re-download the latest")
+    print("  release from https://github.com/PersonalClaw/PersonalClaw/releases).")
+
+
+def _is_current(latest: str) -> bool:
+    """True when *latest* is known and not newer than the running version.
+
+    An UNKNOWN latest (offline, or no release ever published) is deliberately not
+    "current": the update proceeds rather than claiming a state it cannot see.
+    """
+    return bool(latest) and self_update.version_tuple(latest) <= self_update.version_tuple(
+        __version__
+    )
+
+
+def _latest_release_version() -> str:
+    """The latest published release version (no leading ``v``), or "".
+
+    Offline-tolerant by construction: `fetch_latest_release` degrades to its cache
+    and never raises, and an unknown latest means "don't claim to know", not "fail".
+    """
+    import asyncio
+
+    try:
+        status = asyncio.run(self_update.build_update_status(__version__))
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "release probe failed; continuing without a latest version", exc_info=True
+        )
+        return ""
+    return str(status.get("latest") or "")
+
+
+def _install(args: list[str], *, cwd: str, label: str) -> None:
+    """Run the resolved installer with *args*, or exit 1 with a readable reason."""
+    from personalclaw._installer import NoInstallerError, install_argv, installer_name
+
+    try:
+        argv = install_argv(args)
+    except NoInstallerError as exc:
+        print(f"  ❌ {exc}")
+        sys.exit(1)
+
+    print(f"  🔨 {installer_name()} {label}")
+    result = subprocess.run(argv, cwd=cwd or None, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
+        # leads with the headline, so raw stderr reads as corrupted or as a fragment.
+        summary = self_update.installer_error_summary(result.stderr or "", limit=500)
+        print(f"  ❌ Install failed: {summary}" if summary else "  ❌ Install failed")
+        sys.exit(1)
+
+
+def _update() -> None:
+    """`personalclaw update` — advance this install, per how it was installed.
+
+    | kind | what happens | exit |
+    |---|---|---|
+    | git | fetch + reset --hard + SPA build + editable install; | 0; 1 on failure or an |
+    |  | dev_mode picks commits vs release tags | unconfirmed destructive reset |
+    | pip | resolved installer `-U personalclaw==<latest>`, then | 0; 1 on install failure |
+    |  | "restart the gateway" (pip / pipx / uv tool) |  |
+    | container | prints `docker compose pull` + `up -d` | 0 |
+    | desktop | defers to the app's own updater | 0 |
+    | *unmapped* | names what it detected and refuses to guess | 1 |
+
+    **Why container/desktop exit 0.** The status answers "did the command do its
+    job?", not "did bytes change?" — the git branch already exits 0 on "Already up
+    to date", so 0 has never meant "something changed" here. For these kinds the job
+    IS delegation: a correctly configured container install is not a failure, and an
+    unattended caller cannot act on printed instructions anyway, so a non-zero would
+    only add noise where it cannot help. The counter-argument — that a script doing
+    `personalclaw update && restart` learns nothing — is real, which is why the
+    printed text is unambiguous about who must act; scripts that need the
+    distinction should read `apply_method` from `GET /api/update/check`.
+    """
+    print("Updating PersonalClaw…\n")
+
+    kind = self_update.detect_install_kind()
+    if kind not in _UPDATE_HANDLED_KINDS:
+        # No silent fall-through to the git pipeline: `reset --hard` on a tree that
+        # this kind may not even own is the worst possible guess.
+        print(f"❌ Unrecognized install kind: {kind!r} — refusing to guess how to update it.")
+        print("   Check PERSONALCLAW_INSTALL_KIND, or update the way you installed:")
+        print("   pip/pipx/uv tool → upgrade the `personalclaw` package;")
+        print("   container → docker compose pull && up -d; git checkout → git pull.")
+        sys.exit(1)
+
+    if kind == "git":
+        _update_git(self_update.project_dir())
+    elif kind == "pip":
+        _update_pip()
+    elif kind == "container":
+        _update_container()
+    elif kind == "desktop":
+        _update_desktop()
 
 
 def _status(args: argparse.Namespace) -> None:

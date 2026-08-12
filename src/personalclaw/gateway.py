@@ -3413,9 +3413,9 @@ class GatewayOrchestrator:
             # interpreter's env (sys.executable) before the re-exec. Git ran
             # at the repo root; pip + the frontend build run at the package
             # root (nested in the monorepo layout).
-            from personalclaw.dashboard.handlers.updates import _package_root
+            from personalclaw.self_update import package_root
 
-            pkg_root = _package_root(proj)
+            pkg_root = package_root(proj)
             if self.dashboard_state:
                 self.dashboard_state.push_update_progress("installing", "Installing package…")
             pip_install = await asyncio.create_subprocess_exec(
