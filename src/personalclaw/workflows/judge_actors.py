@@ -1,8 +1,28 @@
-"""Actor-based transitions and judge isolation — self-approval made structurally impossible.
+"""Actor-based transitions and judge isolation — one invariant enforced, one authored.
 
-Two invariants the engine ENFORCES rather than suggests. Both exist because the
-alternative — telling the model not to approve its own work — is advice, and advice
-does not survive a worker that is being scored on completion.
+Two invariants live here. Both exist because the alternative — telling the model not to
+approve its own work — is advice, and advice does not survive a worker that is being
+scored on completion. **They are not equally live, and this docstring used to claim they
+were** (WF2LOO-15):
+
+* **ENFORCED — judge isolation.** `plan_judge_session` / `validate_judge_model` are called
+  from `engine.dispatch_gate` (`engine.py:1308-1311`), which refuses a `cross_model` gate
+  whose candidate judge shares the worker's model family. That seam was itself dead once
+  and was wired at S146; the comment there records it.
+* **AUTHORED, NOT ENFORCED — the worker-transition rule.** `check_transition` and
+  `resolve_transition` have NO production caller: the state machine has no ACTOR at a node
+  transition to check. `controller.py`'s `actor` parameter belongs to the *mutation* queue,
+  not to node state, so there is currently nothing to pass. Wiring it means introducing an
+  actor into the transition path — real work, owned by `WF2LOO-13` with the rest of the
+  unwired judge surface, not a one-liner.
+* Also authored and unwired for the same reason: `blind_provenance` and
+  `assemble_judge_evidence`. The live judge gate sends a one-word prompt and parses the
+  word (`engine.py`'s `dispatch_gate`), so there is no message-list evidence to blind yet.
+
+Read the two sections below as a specification of the rule, then, not as a description of
+what runs. `tests/test_workflows_judge_actors_claims.py` fails if either half of that
+statement stops being true — including if someone wires the transition rule and forgets to
+update this text.
 
 **The worker actor may never transition a node to `done`.** It can reach `waiting`
 (work parked) or `review` (work submitted). The terminal transition belongs to a judge

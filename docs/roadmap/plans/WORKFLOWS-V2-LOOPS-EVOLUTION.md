@@ -842,6 +842,25 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
 
 ## Execution log
 
+- **[2026-08-12][WF2LOO-15] DONE — judge_actors claimed two enforced invariants and ran one.**
+  Measured live references outside the module: `plan_judge_session` **3**, `validate_judge_model` **4** — judge
+  isolation IS enforced from `engine.dispatch_gate`, and `engine.py:1296` records that this very seam was dead until
+  S146. Against that: `check_transition` **0**, `resolve_transition` **0**, `blind_provenance` **0**,
+  `assemble_judge_evidence` **0**. So the headline "self-approval made structurally impossible" described a rule that
+  nothing applies.
+  **Why it was never wired — structural, not an oversight.** The state machine has no ACTOR at a node transition;
+  `controller.py:1210`'s `actor` belongs to the mutation queue. There is literally nothing to pass to
+  `check_transition` where a node's state changes, so wiring the rule means introducing an actor into the transition
+  path. That is `WF2LOO-13`'s work, and this atom refuses to fake it: it corrects the claim and CONSOLIDATES ownership
+  (WF2LOO-13's scope now names all four functions) so the unwired judge surface has one owner instead of three
+  half-findings across `judge_contract` and `judge_actors`.
+  **The rail is bidirectional**, which is the part worth keeping: it fails if the enforced half loses its caller, AND
+  if the authored half GAINS one while the docstring still says it has none — the pleasant version of this bug is
+  someone wiring the rule and leaving prose that calls it unwired. Both directions proven by probe (marker removed →
+  red; a caller injected while the marker stays → red), each reverted with a targeted edit. A vacuity floor asserts
+  every symbol the rail reasons about is still defined, so a rename cannot make it pass by measuring nothing.
+  **No behaviour change:** `engine.py` and `controller.py` are untouched.
+
 - **2026-08-01 — DONE — Judge contract + runtime_hints + enforcement invariants (session 29 of the WF2 queue).**
   Branch `feature-wf2-loops-judge`, PR #167. `workflows/judge_contract.py` (closed verdict enum
   PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT, rubric ratchet with strict-no-averaging,

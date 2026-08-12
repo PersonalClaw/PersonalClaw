@@ -2413,7 +2413,7 @@
           "id": "WF2LOO-13",
           "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
           "status": "todo",
-          "scope": "The wiring half of what WF2LOO-1 authored and WF2LOO-12 measured as unwired. The live judge path is taught to speak the contract instead of a bare word, and the 6 judge STAGES' already contract-shaped output stops being discarded. The two verdict vocabularies (judge_contract.Verdict PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs verify.Verdict PASS/RETRY/ESCALATE/REJECT) are reconciled to ONE, not bridged - engine.py currently restates the sampling rule precisely to avoid feeding one vocabulary's values to the other's aggregator. Enforcement lands only after the population is measured: giving a never-run control teeth before the population satisfies it is an outage, which is why WF2LOO-12 deliberately did not.",
+          "scope": "The wiring half of what WF2LOO-1 authored and WF2LOO-12 measured as unwired. The live judge path is taught to speak the contract instead of a bare word, and the 6 judge STAGES' already contract-shaped output stops being discarded. The two verdict vocabularies (judge_contract.Verdict PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs verify.Verdict PASS/RETRY/ESCALATE/REJECT) are reconciled to ONE, not bridged - engine.py currently restates the sampling rule precisely to avoid feeding one vocabulary's values to the other's aggregator. Enforcement lands only after the population is measured: giving a never-run control teeth before the population satisfies it is an outage, which is why WF2LOO-12 deliberately did not. — plus (WF2LOO-15) judge_actors' four unwired functions: check_transition/resolve_transition need an actor on the node-transition path, blind_provenance/assemble_judge_evidence need the message-list evidence the one-word gate does not produce.",
           "done_when": "GateKind.JUDGE asks for the contract JSON instead of one bare word; validate_verdict decides the gate, so a PASS without proof/evidence_refs is rejected rather than accepted; meets_ratchet compares the 14 declared runtime_hints.judge rubric criteria against their target_score for the first time; hints_from_dict becomes the parser of the declarations 6 templates already carry; the 6 judge STAGES' output is validated and bound by the templates that produce it (today zero templates bind nodes.judge.output.*); the two verdict enums are reconciled to one closed set with the loser deleted (clean break), keeping the pre-tier, sampling and cross-model isolation seams WF2LOO-6/WF2LOO-11 built. Gated on a prior measurement of how many real judge responses would satisfy the contract - measured blast radius: 7 judge gates in 7 bundled templates change prompt + parse; 6 templates x 14 rubric criteria become live thresholds (an unscored criterion is a 'not scored' shortfall, i.e. a REJECT, under Ratchet.STRICT); every judge answer grows from ~1 token to a JSON object on a gate that runs every loop iteration, plus a more frequent PROTOCOL failure mode on unparseable JSON. WF2LOO-12's rail is retired in the same change, since the docstring stops saying enforcement is not wired.",
           "deps": [
             "WF2LOO-12",
@@ -2431,6 +2431,18 @@
           ],
           "pr": "#1161",
           "evidence": "FINDING (re-verified on this tree): controller.py _is_dry - docstring 'Did an iteration surface anything new? Feeds until_dry termination' - returned True only for None or len()==0 and contained no reference to progress_field; its ONLY caller is _advance_loop (one call site, so no non-loop behavior could change). The only other progress_field reference in src/ was template_lint.py's TANGLED-loop comment asserting behavior that did not exist. SECOND FINDING (sharper than the first): the output _advance_loop measures is self._outputs[item.node.id] for the leaf that completed the iteration. In both declaring templates the body is sequence[work-stage, judge-stage], so that leaf is the JUDGE, whose schema is {reasoning, verdict, scores, evidence_refs, proof, cannot_judge} - no progress key, and never empty. until_dry was therefore dead for these two templates under the OLD rule as well, not merely mis-scoped: dry_streak could never increment at all. CENSUS of until_dry loops in bundled/: 4 total - audit-sweep sweep_until_dry (streak 2, cap 3, no field), deep-research investigate (streak 2, cap {{inputs.rounds}}, no field), general-project project (streak 2, meaningful_progress boolean, cap 6), goal-pursuit-open-ended work (streak 2, new_findings_count integer, cap 12). Only the latter two change. BODY-EMITS CHECK (constraint: a body that cannot emit its declared field would make the template wrong): both DO - goal-pursuit-open-ended's cycle stage declares schema {summary, key_insight, new_findings_count, evidence} and its prompt says 'Set new_findings_count to the number of genuinely NEW things this cycle established. Zero is a valid and useful answer'; general-project's work stage declares schema {summary, meaningful_progress, evidence}. So no template needed fixing. PROBE 1: call site reverted to _is_dry(output) => test_two_zero_progress_iterations_end_the_loop and test_progress_resets_the_streak both fail (RunStatus.ESCALATED instead of COMPLETE - the loop ran on to the breaker), while the two no-regression tests still pass; reverted by targeted edit. PROBE 2: general-project's progress_field renamed to a typo => the template rail fails naming the loop and the field; reverted by targeted edit, git diff on the template empty. DISCOVERY: WF2LOO-7's status header says todo, but its wiring is present in code and its test file (test_workflows_loop_wiring.py) is where the driven tests for this atom live - header stale, log and code win. No web/ change: until_dry termination has no frontend surface."
+        },
+        {
+          "id": "WF2LOO-15",
+          "status": "done",
+          "title": "judge_actors: separate the enforced invariant from the authored one, and rail the claim",
+          "scope": "LOOP-R3 judge integrity — workflows/judge_actors.py's enforcement claim vs its call graph",
+          "done_when": "judge_actors' docstring distinguishes the ENFORCED invariant (judge isolation — plan_judge_session/validate_judge_model called from engine.dispatch_gate) from the AUTHORED-but-unwired one (the worker-transition rule: check_transition/resolve_transition have no production caller because node transitions carry no actor — controller.py's actor belongs to the mutation queue), and names blind_provenance/assemble_judge_evidence as unwired for the same reason; tests/test_workflows_judge_actors_claims.py pins the claim to the call graph in BOTH directions and is proven to fail when the marker is removed AND when a caller is wired while the marker stays; WF2LOO-13's scope names all four functions so the unwired judge surface has ONE owner",
+          "deps": [
+            "WF2LOO-12"
+          ],
+          "pr": "#1170",
+          "evidence": "Measured: plan_judge_session 3 live refs and validate_judge_model 4 (enforced, wired at S146 per engine.py:1296's own comment); check_transition, resolve_transition, blind_provenance and assemble_judge_evidence 0 live refs each. controller.py's only `actor` is the mutation queue's (controller.py:1210), so a node transition has no actor to check — which is why the rule was never wired, and why wiring it is WF2LOO-13's work rather than a one-liner."
         }
       ]
     },
@@ -8281,6 +8293,7 @@
       "WF2LOO-12",
       "WF2LOO-13",
       "WF2LOO-14",
+      "WF2LOO-15",
       "WF2TAS-1",
       "WF2TAS-2",
       "WF2TAS-3",
@@ -9563,8 +9576,8 @@
       {
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
-        "total_atoms": 14,
-        "done": 12,
+        "total_atoms": 15,
+        "done": 13,
         "in_progress": 0,
         "todo": 1,
         "blocked": 1
@@ -9993,6 +10006,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 849
+    "edge_count": 850
   }
 }
