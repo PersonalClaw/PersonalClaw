@@ -152,7 +152,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
                 slot), and what the inbox strip already declares; the strip is untouched at any width
                 where it fits, so desktop is byte-identical. Keyboard reach is unaffected — the
                 roving-tabindex arrow nav scrolls each tab into view as it takes focus. */}
-            <Segmented value={kind} onChange={setKind} collapse="scroll"
+            <Segmented ariaLabel="Artifact kind" value={kind} onChange={setKind} collapse="scroll"
               options={[{ key: '', label: 'All kinds' }, ...ARTIFACT_KINDS.map((k) => ({ key: k.key, label: k.label }))]} />
             <FilterMenu label={src ? `via ${src}` : 'Any source'} value={src} onPick={setSrc}
               options={[{ key: '', label: 'Any source' }, ...SOURCES.map((s) => ({ key: s, label: `via ${s}` }))]} />
@@ -160,7 +160,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
               <FilterMenu label={col || 'All collections'} value={col} onPick={setCol}
                 options={[{ key: '', label: 'All collections' }, ...collections.map((c) => ({ key: c, label: c }))]} />
             )}
-            <div className="ml-auto"><Segmented value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
+            <div className="ml-auto"><Segmented ariaLabel="Sort artifacts" value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && artifacts.length === 0
