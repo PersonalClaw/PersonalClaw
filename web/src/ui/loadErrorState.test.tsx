@@ -117,6 +117,12 @@ describe('the migrated surfaces read the error', () => {
     // fallback on purpose (surfacing is a freshness column; a startable list beats an error for it),
     // which is why the swallow check below is scoped to the hook's own fetchers.
     'pages/workflows/WorkflowsListPage.tsx',
+    // `#/discover` is the sharpest instance of the family so far: its `.catch(() => null)` made `data`
+    // falsy, which the render reads as "Discover is off" — so a 500 did not merely stay silent, it made
+    // a FALSE CLAIM ABOUT A SETTING and offered "Open Settings" to turn tips back on. Measured against
+    // a 500 on `/api/legibility/discover`: "Discover is off — … Turn them back on in Settings ›
+    // Legibility." A confident wrong answer beats a silent one for damage.
+    'pages/discover/DiscoverPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -129,10 +135,18 @@ describe('the migrated surfaces read the error', () => {
       //     because a surface can guard more than one fetch; `#/learning` has two and cannot name both
       //     `loadErr`);
       //   • a hand-rolled loader catches into state — `.catch((e) => { setSomethingErr(e); … })`, which
-      //     is what `#/workflows` does with its `Promise.all`.
-      // Substituting data (`.catch(() => [])`) satisfies neither, which is the whole point.
+      //     is what `#/workflows` does with its `Promise.all`;
+      //   • or it is destructured plainly as `error` — the most direct form, and the one a surface with
+      //     a single fetch should use (`#/discover`).
+      // Substituting data (`.catch(() => [])` / `(() => null)`) satisfies none of them, which is the point.
+      //
+      // ⚠️ THIRD WIDENING. This matcher has now been wrong about three separate adopters: it demanded the
+      // alias `loadErr` (#1127 widened it), then an alias containing "err" at all (#1132's plain `error`),
+      // and its sibling reachability check demanded source order (#1129 replaced it). Each time it had
+      // encoded an accident of whoever adopted first. **When a rail rejects a new adopter, check the rail
+      // before the adopter.**
       expect(src, 'must capture the rejection, not discard it').toMatch(
-        /error:\s*\w*(?:err|Err)\w*|catch\(\(\w+\)\s*=>\s*\{[^}]*[Ee]rr\w*\(/,
+        /\berror\s*[,}]|error:\s*\w*(?:err|Err)\w*|catch\(\(\w+\)\s*=>\s*\{[^}]*[Ee]rr\w*\(/,
       )
       // And the error branch must precede the skeleton/empty branches, or it never runs.
       // REACHABILITY, not source order. The first two adopters put `<LoadError>` textually before their
