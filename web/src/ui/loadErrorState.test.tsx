@@ -96,14 +96,25 @@ const walk = (d: string): string[] =>
   })
 
 describe('the migrated surfaces read the error', () => {
-  const ADOPTERS = ['pages/projects/ProjectsSection.tsx', 'pages/code/CodeSection.tsx']
+  // `#/learning` joined after a measured failure: with both learning endpoints returning 500 and a
+  // COLD sessionStorage (a warm cache masks this entirely), the page rendered "Nothing to review —
+  // proposals appear here when the system notices a pattern worth offering" with **no error text
+  // anywhere**, and its capture-week panel — the whole point of the surface, the days capture never
+  // ran — simply vanished. The most confident possible way to say the opposite of what happened.
+  const ADOPTERS = [
+    'pages/projects/ProjectsSection.tsx',
+    'pages/code/CodeSection.tsx',
+    'pages/learning/LearningPage.tsx',
+  ]
 
   for (const rel of ADOPTERS) {
     it(`${rel} branches on the load error before the empty state`, () => {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, 'must render the shared primitive').toMatch(/<LoadError\b/)
-      // Reading `error` off the hook is what makes the branch possible at all.
-      expect(src, 'must destructure the hook error').toMatch(/error:\s*loadErr/)
+      // Reading `error` off the hook is what makes the branch possible at all. The alias is free-form
+      // because a surface can have MORE THAN ONE fetch to guard — `#/learning` has two (the proposal
+      // inbox and the capture week) and cannot name them both `loadErr`.
+      expect(src, 'must destructure the hook error').toMatch(/error:\s*\w*(?:err|Err)\w*/)
       // And the error branch must precede the skeleton/empty branches, or it never runs.
       const errAt = src.search(/<LoadError\b/)
       const skelAt = src.search(/<ListSkeleton\b/)
