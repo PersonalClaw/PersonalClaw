@@ -3699,13 +3699,31 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
             const kind = s.origin === 'code' ? 'code project' : s.origin === 'loop' ? 'loop' : s.origin === 'channel' ? 'channel' : 'campaign'
             const label = s.source_label || s.source_id || kind
             const canOpen = !!s.source_id && (s.origin === 'code' || s.origin === 'loop')
+            // A channel/campaign origin has no cockpit to open, so this chip is never actionable
+            // — it is provenance, not a control. It used to render as a permanently disabled
+            // button element: announced as a button that can never be pressed in ANY state, which
+            // no reason could ever unblock. A span is what it actually is; the tag now follows
+            // whether there is somewhere to go.
+            // (Comment deliberately spells no literal button tag — the primitive-adoption ratchet
+            // counts raw source, comments included, so prose markup reds CI.)
+            const chip = 'inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors'
+            const tint = { background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }
+            const glyph = s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />
+            if (!canOpen) {
+              return (
+                <span title={`From a ${kind}`} className={`${chip} cursor-default`} style={tint}>
+                  {glyph}
+                  {label}
+                </span>
+              )
+            }
             return (
-              <button type="button" disabled={!canOpen}
-                onClick={(e) => { e.stopPropagation(); if (canOpen) navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
-                title={canOpen ? `From ${kind} “${label}” — open its cockpit` : `From a ${kind}`}
-                className={`inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors ${canOpen ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}
-                style={{ background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }}>
-                {s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />}
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
+                title={`From ${kind} “${label}” — open its cockpit`}
+                className={`${chip} hover:brightness-125 cursor-pointer`}
+                style={tint}>
+                {glyph}
                 {label}
               </button>
             )

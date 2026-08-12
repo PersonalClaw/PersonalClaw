@@ -627,7 +627,11 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
         </>)}
 
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} disabled={saving || !canSubmit}>{saving ? 'Adding…' : 'Add server'}</Button>
+          {/* `canSubmit` asks for different fields per kind, so the reason follows the kind;
+              omitted while `saving`, where the label already reads "Adding…". */}
+          <Button size="sm" onClick={kind === 'mcp' ? submitMcp : submitOpenai} disabled={saving || !canSubmit}
+            disabledReason={saving ? undefined
+              : kind === 'mcp' ? 'Name the server and give it a command' : "Enter the server's endpoint URL"}>{saving ? 'Adding…' : 'Add server'}</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>

@@ -243,7 +243,13 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><FileText size={12} /> Saved to your knowledge library, then enriched automatically.</span>
           <div className="flex gap-s">
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button onClick={save} disabled={busy || !canSave}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {busy ? 'Saving…' : `Add ${tm.label.toLowerCase()}`}</Button>
+            {/* Reason per KIND, because `canSave` means something different for each; omitted
+                while `busy`, where the label already reads "Saving…". */}
+            <Button onClick={save} disabled={busy || !canSave}
+              disabledReason={busy ? undefined
+                : kind === 'bookmark' ? 'Enter a URL starting with http:// or https://'
+                  : kind === 'file' ? (!file ? 'Choose a file first' : 'That file is over the size limit')
+                    : 'Add a title or some content'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {busy ? 'Saving…' : `Add ${tm.label.toLowerCase()}`}</Button>
           </div>
         </div>
       </div>

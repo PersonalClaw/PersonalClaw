@@ -107,9 +107,13 @@ export function Composer({
   const micLabel = mic.state === 'recording' ? 'Stop recording' : mic.state === 'transcribing' ? 'Transcribing…' : 'Voice input'
   const actions = (
     <div className="flex items-center gap-1">
+      {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
+          accessible NAME, so the action stops being findable by the name it has when it works —
+          the failure cycle 56 measured and ruled against. */}
       {controls.optimize && onOptimize && (
         <IconButton icon={optimizing ? Loader2 : Sparkles}
-          label={optimizing ? 'Optimizing…' : !canSend ? 'Optimize prompt — type something first' : 'Optimize prompt (⌘↵)'}
+          label={optimizing ? 'Optimizing…' : 'Optimize prompt (⌘↵)'}
+          disabledReason="Type something first"
           active={optimizing} size={40}
           disabled={!optimizing && !canSend}
           className={optimizing ? '[&_svg]:animate-spin' : undefined}
@@ -139,10 +143,11 @@ export function Composer({
           // (the streaming spinner then takes over for the turn).
           case 'sent':
             return <IconButton icon={Check} label="Sent" filled size={40} onClick={undefined} iconKey="sent" bloom />
-          // Disabled until the draft meets minChars (so AT + the disabled
-          // affordance read correctly).
+          // Disabled until the draft meets minChars. The name stays "Send message" in every
+          // state — the reason rides `disabledReason` (the accessible description), so the
+          // button is still findable by its own name while it is unavailable.
           case 'send-disabled':
-            return <IconButton icon={ArrowUp} label="Send message — type a bit more first" filled={false} disabled size={40} onClick={undefined} iconKey="send" />
+            return <IconButton icon={ArrowUp} label="Send message" disabledReason="Type a bit more first" filled={false} disabled size={40} onClick={undefined} iconKey="send" />
           case 'send':
             return <IconButton icon={ArrowUp} label="Send message" filled disabled={false} size={40} onClick={fireSend} iconKey="send" />
         }

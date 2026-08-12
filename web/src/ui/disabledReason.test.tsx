@@ -176,8 +176,19 @@ function gatedSubmits(): Array<{ file: string; line: number; tag: string }> {
           // helper dropped this matcher's population 37 → 29 and tripped the vacuity floor
           // below — because the floor was measuring the OLD shape only, so it stopped covering
           // the very sites that had just been fixed.
+          //
+          // 🪤 AND IT WAS STILL REPORTING A FALSE ZERO. The two literal shapes above only see a
+          // validity check written INLINE. Nine gates named theirs — `!canSave`, `!canSubmit`,
+          // `!canAdvance`, `!canSavePw`, `!canSend` — and every one was outside the population,
+          // so "0 unexplained" was measured over a set that excluded them. Nothing was wrong with
+          // the assertion; the *population* was the bug, and a passing rail is exactly what that
+          // looks like. A `!can*` predicate resolves to the same thing (required fields present,
+          // trimmed non-empty, values matching), so it belongs in the same family.
+          //
+          // Scoped to `!can*` deliberately: `readOnly` / `locked` gates are a MODE, not something
+          // the user can supply, and they are a different family with a different fix.
           if (
-            /disabled=\{[^}]*!\w+[\w.]*\.trim\(\)|disabled=\{[^}]*length === 0|unavailableWhen\(/.test(tag)
+            /disabled=\{[^}]*!\w+[\w.]*\.trim\(\)|disabled=\{[^}]*length === 0|disabled=\{[^}]*!can[A-Z]\w*|unavailableWhen\(/.test(tag)
           ) {
             out.push({ file: abs.slice(SRC.length + 1), line: text.slice(0, m.index).split('\n').length, tag })
           }
@@ -222,5 +233,63 @@ describe('the unexplained-submit tail only shrinks', () => {
       'a Button-primitive submit can pass disabledReason directly — do not leave it silent:\n  ' +
         primitives.join('\n  '),
     ).toEqual([])
+  })
+})
+
+// ── The reason must not live in the accessible NAME ────────────────────────────────────
+//
+// The other half of the false zero. Two composer controls DID explain themselves — by folding
+// the reason into `label`, which is the `aria-label`, which IS the accessible name. Measured live
+// on the running app before this change:
+//
+//   "Optimize prompt — type something first"   (name, not description)
+//   "Send message — type a bit more first"     (name, not description)
+//
+// That is the approach cycle 56 measured and ruled against: the button stops being findable by
+// the name it has when it works, so "find the Send button" fails precisely when the user is
+// stuck. `title` (the accessible DESCRIPTION) is where a reason belongs — the name stays
+// constant across states.
+//
+// Neither gate is an expression (`disabled` is passed bare, or via a state-machine branch), so no
+// population-based rail can bind to them. Asserted by source instead.
+
+describe('a reason never rides the accessible name', () => {
+  const composer = readFileSync(join(SRC, 'ui/Composer.tsx'), 'utf8')
+
+  it('keeps the composer labels constant across states', () => {
+    // Scoped to what `label`/`aria-label` actually carries — the reason itself still appears in
+    // the file, on `disabledReason`, which is the whole point. Asserting the raw string was
+    // absent anywhere failed against the fix, which is a reminder to assert the PLACE, not the
+    // presence.
+    const labels = [...composer.matchAll(/(?:aria-)?label=(?:"([^"]*)"|\{([^}]*)\})/g)]
+      .map((m) => (m[1] ?? m[2] ?? '').toLowerCase())
+    for (const leaked of ['type something first', 'type a bit more first']) {
+      const where = labels.filter((l) => l.includes(leaked))
+      expect(
+        where,
+        `"${leaked}" is a reason — it belongs on disabledReason, not in the label/aria-label`,
+      ).toEqual([])
+    }
+  })
+
+  it('explains both gated composer controls', () => {
+    // The optimize button and the send-disabled branch of the send state machine.
+    expect(composer).toMatch(/disabledReason="Type something first"/)
+    expect(composer).toMatch(/label="Send message" disabledReason="Type a bit more first"/)
+  })
+
+  it('has no em-dash reason left in any aria-label in the tree', () => {
+    // The general shape: `label`/`aria-label` carrying "<action> — <why it is unavailable>".
+    // Tolerates an em dash that is part of the action itself ("Steer — send into the running
+    // turn" names what the action DOES), so this looks only for the imperative-instruction tail
+    // that a reason has.
+    const offenders: string[] = []
+    for (const abs of walk(SRC)) {
+      const text = readFileSync(abs, 'utf8')
+      for (const m of text.matchAll(/(?:aria-)?label=["'{`][^"'`]*—\s*(type|enter|choose|pick|fill|add|name|answer|complete|write|set)\b[^"'`]*/gi)) {
+        offenders.push(`${abs.slice(SRC.length + 1)}: ${m[0].slice(0, 78)}`)
+      }
+    }
+    expect(offenders.length, `a reason is riding an accessible name:\n  ${offenders.join('\n  ')}`).toBe(0)
   })
 })

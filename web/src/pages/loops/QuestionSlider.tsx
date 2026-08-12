@@ -100,7 +100,8 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
           <ArrowLeft size={15} /> Back
         </Button>
         {onLast ? (
-          <Button size="sm" onClick={() => onSubmit(answerRecord(questions, state))} disabled={!canSubmit(questions, state)}>
+          <Button size="sm" onClick={() => onSubmit(answerRecord(questions, state))} disabled={!canSubmit(questions, state)}
+            disabledReason="Answer the required questions first">
             <Check size={15} /> {submitLabel} · {answeredCount}/{total}
           </Button>
         ) : (
@@ -108,7 +109,8 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
             {!q.required && (
               <Button variant="ghost" size="sm" onClick={() => dispatch({ type: 'next', total })}>Skip</Button>
             )}
-            <Button size="sm" onClick={() => dispatch({ type: 'next', total })} disabled={!canAdvance(q, state)}>
+            <Button size="sm" onClick={() => dispatch({ type: 'next', total })} disabled={!canAdvance(q, state)}
+              disabledReason="This question is required">
               Next <ArrowRight size={15} />
             </Button>
           </div>
