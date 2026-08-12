@@ -32,6 +32,25 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
 /** Field wrapper — label row (optional right slot for a SoonTag) + control.
  *  The label carries a stable id and is exposed via context so the wrapped
  *  control associates with it for accessibility. */
+/** The one-line failure message under a control or beside an action — the shape 30 call sites
+ *  had hand-rolled as `<p className="text-danger text-[0.8125rem]">{err}</p>`.
+ *
+ *  Byte-identical on screen; what it adds is `role="alert"`. Measured on `#/settings/design`
+ *  with `POST /api/themes` forced to 500: the failure text appeared on screen and the page
+ *  held **zero** live regions, so a screen-reader user pressed Save, watched the button return
+ *  to idle, and was told nothing. The app's other two failure surfaces — `InlineError` (the
+ *  danger band) and `LoadError` — both announce; this line was the family's silent member.
+ *
+ *  `InlineError` stays the choice for a banner ABOVE a body (a tinted, dismissible strip).
+ *  Reach for FieldError for the terse line that belongs to one control or one action. */
+export function FieldError({ children, className }: {
+  children: ReactNode
+  /** Per-site spacing only (e.g. `mt-2`, `mb-m`, `shrink-0`); the tone and size are fixed. */
+  className?: string
+}) {
+  return <p role="alert" className={cx('text-danger text-[0.8125rem]', className)}>{children}</p>
+}
+
 export function Field({ label, hint, right, children }: { label: string; hint?: string; right?: ReactNode; children: ReactNode }) {
   const labelId = useId()
   return (

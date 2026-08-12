@@ -3,7 +3,7 @@ import { Sun, Moon, Monitor, Check, Plus, Trash2, ChevronDown, RotateCcw, Slider
 import { Surface } from '../../ui/Surface'
 import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
-import { Field, TextInput } from '../../ui/forms'
+import { Field, TextInput, FieldError } from '../../ui/forms'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
@@ -263,7 +263,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
               disabledReason={!name.trim() ? 'Name the theme first' : undefined}><Plus size={15} /> {busy === 'save' ? 'Saving…' : 'Save theme'}</Button>
           </div>
         </Field>
-        {err && <p className="mt-s text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError className="mt-s">{err}</FieldError>}
       </Surface>
       {COLOR_GROUPS.map((group) => {
         const tokens = TOKENS.filter((t) => t.group === group)

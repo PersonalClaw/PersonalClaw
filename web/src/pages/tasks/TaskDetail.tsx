@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
@@ -76,7 +77,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
     return (
       <div className="flex flex-col gap-l">
         <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.title.trim()}
@@ -115,7 +116,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         </span>
       </div>
 
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {/* chips */}
       <div className="flex flex-wrap gap-s">

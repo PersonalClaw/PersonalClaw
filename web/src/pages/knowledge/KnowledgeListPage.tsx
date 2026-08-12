@@ -5,7 +5,7 @@ import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
-import { Checkbox } from '../../ui/forms'
+import { Checkbox, FieldError } from '../../ui/forms'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
 import { SidePanel } from '../../ui/SidePanel'
@@ -908,7 +908,7 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
         <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
         <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
       </label>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button><Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save intent'}</Button></div>
     </div>
   )
