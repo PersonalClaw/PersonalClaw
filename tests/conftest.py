@@ -3,8 +3,12 @@
 import asyncio
 import os
 import shutil
+import sys
+import time
+from pathlib import Path
 
 import pytest
+import real_home_guard
 from hypothesis import HealthCheck, settings
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
@@ -37,6 +41,100 @@ def _ensure_event_loop():
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+@pytest.fixture(autouse=True)
+def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
+    """Make an UNSPECIFIED home mean a per-test tmp dir instead of the developer's
+    real ``~/.personalclaw`` (CRE-8).
+
+    The hazard, measured rather than assumed: a plain
+    ``pytest -k "project or memory or knowledge or recall"`` appended **44,402 bytes** of
+    `artifact_save`/`tool_invocation` rows to the user's real
+    ``~/.personalclaw/security_events.jsonl`` and created/rewrote 62 more real-home entries
+    (`tasks/*.json`, `codegraph/*.db`, `workspace/_ext/*/memory/*.md`, `prompts/`,
+    `prompt_snippets/`, `learning.db`, `session_search.db`, `tokenjuice_savings.json`, …).
+    Thirteen distinct writer families, and every one of them reached the real home through
+    the same two seams: ``config.loader.config_dir()`` (153 call sites) and SEL's own
+    ``sel._default_dir()``. Patching thirteen subsystems one at a time would have been
+    thirteen fixtures guarding one seam, and the fourteenth subsystem would leak again.
+
+    So this redirects those two seams, and ONLY when the caller expressed no preference:
+
+    * ``$PERSONALCLAW_HOME`` set (to anything, **including the real home**) → pass through
+      untouched. Several rails deliberately point it at the real home and assert a refusal
+      (``test_cli_gateway_flags``'s ``--approval yolo`` rails, ``test_seed``'s main-home
+      rails); redirecting an explicit choice would make those rails vacuous.
+    * ``$HOME``/``Path.home()`` repointed by the test → pass through untouched. That test
+      already isolated itself, and its assertions read back from *its* home.
+    * neither → the resolution would be the real home purely by default. Redirect.
+
+    Deliberately NOT done, both previously rejected in this repo and re-rejected here:
+    a global ``$PERSONALCLAW_HOME`` for pytest jobs (CRE-6 removed exactly that: it takes
+    precedence over ``Path.home()`` inside ``config_dir``, so it defeats the tests that
+    assert env precedence and the ones that assert the default resolution), and a blanket
+    ``Path.home`` patch (see ``_isolate_session_map`` — it breaks the real-home safety
+    rails, and it would also silently redefine the unrelated ``Path.home()/".aws"`` and
+    ``Path.home()/".ssh"`` paths that the artifact/task sensitivity tests assert on).
+
+    What a fixture CANNOT reach, and therefore was fixed at source instead: a home resolved
+    into a module-level constant at import time. The rail below caught 147 real-home entries
+    still landing in ``subagents/`` after this fixture was in place, because
+    ``subagent_persistence`` froze ``config_dir() / "subagents"`` at first import — before any
+    fixture exists. Three such constants were converted to call-time resolvers
+    (``subagent_persistence._subagents_dir``, ``session_map._sessions_dir``, and a dead
+    ``schedule._DEFAULT_DIR`` whose import-time ``config_dir()`` mkdir'd the real home merely
+    by importing the module). If a new leak appears here, check for that shape first.
+
+    Ordering matters: this fixture is declared BEFORE ``_reset_sel_singleton`` so it is set
+    up first and torn down LAST. The singleton is cleared around every test, so the next
+    ``sel()`` call constructs a fresh ``SecurityEventLog`` — and that construction must
+    still find the redirected ``_default_dir``, or the leak comes straight back.
+    """
+    import personalclaw.config.loader as config_loader
+    import personalclaw.sel as sel_mod
+
+    real_home = real_home_guard.REAL_HOME
+    holder: list[Path] = []
+
+    def tmp_home() -> Path:
+        # Created lazily: most tests never resolve an unspecified home, and eagerly
+        # minting a tmp dir per test would add thousands of empty dirs to basetemp.
+        if not holder:
+            holder.append(tmp_path_factory.mktemp("pclaw-home"))
+        return holder[0]
+
+    def caller_chose_a_home() -> bool:
+        return bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != real_home.parent
+
+    original_config_dir = config_loader.config_dir
+    original_sel_dir = sel_mod._default_dir
+
+    def guarded_config_dir() -> Path:
+        if caller_chose_a_home():
+            return original_config_dir()
+        # NB: return the tmp dir WITHOUT delegating first — config_dir() mkdirs whatever
+        # it resolves, so delegating would create ~/.personalclaw on a machine that has
+        # none (the rail's own "absent home" case) before we could redirect it.
+        return tmp_home()
+
+    def guarded_sel_dir() -> Path:
+        if caller_chose_a_home():
+            return original_sel_dir()
+        return tmp_home()
+
+    monkeypatch.setattr(config_loader, "config_dir", guarded_config_dir)
+    monkeypatch.setattr(sel_mod, "_default_dir", guarded_sel_dir)
+    # `from ... import config_dir` at module scope binds the function object into the
+    # importing module, where patching the loader can never reach it (58 such modules).
+    # Re-point every binding of THIS function object — identity-matched, so nothing else
+    # is touched. Function-local imports (95 sites, incl. every `as _cd` alias) resolve
+    # from the loader at call time and are already covered by the patch above.
+    for module in list(sys.modules.values()):
+        if module is None or not getattr(module, "__name__", "").startswith("personalclaw"):
+            continue
+        if getattr(module, "config_dir", None) is original_config_dir:
+            monkeypatch.setattr(module, "config_dir", guarded_config_dir)
 
 
 @pytest.fixture(autouse=True)
@@ -289,3 +387,45 @@ def _restore_workflow_def_registry() -> object:
 
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
+
+
+# ── Real-home rail (CRE-8) ──────────────────────────────────────────────
+# `_isolate_real_home_writers` above fixes the leaks that exist today; this pair of
+# hooks is what NOTICES the next one. Detection lives in `tests/real_home_guard.py`
+# so it can be driven against a fake root and proven to fire
+# (`tests/test_real_home_guard.py`) — a guard that only ever runs against the tree it
+# guards cannot be distinguished from a guard that never fires.
+#
+# TEETH, deliberately: this fails the run rather than printing a warning. The
+# population after the fixture above is ZERO (measured over the full suite), so the
+# rail has nothing to grandfather, and a report nobody is forced to read is how the
+# 44,402-byte leak survived long enough to need this atom. `ALLOWED_RESIDUE` exists
+# for a NAMED, individually justified residue and is currently empty; a blanket
+# allowance would turn the rail back into a baseline.
+_real_home_since_ns: int | None = None
+
+
+def pytest_sessionstart(session):
+    """Arm the rail. Controller only — xdist workers share the one real home, so a
+    per-worker arm/report would multiply one leak into N identical reports."""
+    global _real_home_since_ns
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    _real_home_since_ns = time.time_ns()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Report anything the run created/modified/grew under the REAL home, and fail."""
+    if _real_home_since_ns is None:
+        return
+    root = real_home_guard.REAL_HOME
+    changes = real_home_guard.scan_changes(root, _real_home_since_ns)
+    report = real_home_guard.format_report(root, changes)
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("=", "real-home rail", red=bool(changes))
+        reporter.write_line(report)
+    else:  # pragma: no cover - only when the terminal plugin is disabled
+        print(report)
+    if changes:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

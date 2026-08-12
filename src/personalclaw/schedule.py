@@ -37,13 +37,12 @@ except ImportError:
     get_description = None  # type: ignore[assignment]
 from croniter import croniter  # type: ignore[import-untyped]
 
-from personalclaw.config.loader import AppConfig, config_dir
+from personalclaw.config.loader import AppConfig
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ──
 
-_DEFAULT_DIR = config_dir()
 _CRONS_FILE = "crons.json"
 _STORE_VERSION = 2
 _MIN_INTERVAL_SECS = 60
