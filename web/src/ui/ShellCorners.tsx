@@ -8,6 +8,7 @@ import { NotificationBell } from './NotificationBell'
 import { SystemWidget } from './SystemWidget'
 import { DegradedChip } from './DegradedChip'
 import { useIsMobile } from '../app/useIsMobile'
+import { accentChip } from '../design/accent'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
  *  the two corners that carry native shell controls, floating above page content:
@@ -63,7 +64,7 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
           aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'} title={terminalOpen ? 'Hide terminal (⌘`)' : 'Open terminal (⌘`)'}
           className="grid size-7 place-items-center rounded-pill transition-colors"
           style={terminalOpen
-            ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }
+            ? accentChip
             : { color: 'var(--color-on-surface-low)' }}>
           <SquareTerminal size={16} />
         </button>

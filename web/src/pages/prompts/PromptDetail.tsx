@@ -12,6 +12,7 @@ import { Field } from '../../ui/forms'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues } from './promptMeta'
 import { toDraft, draftToPayload, type PromptDraft } from './PromptForm'
 import { PromptEditFields } from './PromptEditFields'
+import { accentChip } from '../../design/accent'
 
 /** Substitute each variable's default into the template so the rendered view
  *  reads naturally (e.g. {{bot_name}} → "PersonalClaw"). Placeholders without a
@@ -118,7 +119,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         )}
         {full.kind && <span className="inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>{full.kind} prompt</span>}
         {full.launch_spec && Object.keys(full.launch_spec).length > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}><Rocket size={11} /> runnable</span>
+          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={accentChip}><Rocket size={11} /> runnable</span>
         )}
         <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
       </div>

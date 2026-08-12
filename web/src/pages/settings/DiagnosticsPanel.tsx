@@ -4,6 +4,7 @@ import { Surface } from '../../ui/Surface'
 import { SearchField } from '../../ui/SearchField'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
+import { accentChip } from '../../design/accent'
 
 /** A single streamed log entry (backend emits {level, msg} JSON per SSE frame,
  *  msg already formatted as "<ts> <LEVEL> <logger>: <message>"). */
@@ -140,7 +141,7 @@ export function DiagnosticsPanel() {
             </div>
             <button onClick={() => setAutoscroll((v) => !v)} title={autoscroll ? 'Autoscroll on' : 'Autoscroll off'}
               className="inline-flex items-center justify-center size-8 rounded-lg transition-colors"
-              style={autoscroll ? { background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+              style={autoscroll ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
               <ArrowDownToLine size={15} />
             </button>
             <button onClick={() => setPaused((v) => !v)} title={paused ? 'Resume' : 'Pause'}

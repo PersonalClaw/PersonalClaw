@@ -13,6 +13,7 @@ import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type 
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { providerMeta, isReservedAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
+import { accentChip } from '../../design/accent'
 
 /** Native agent inspector: view ↔ in-panel edit (full builder), set-as-default,
  *  delete. */
@@ -80,7 +81,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       {reserved && <ReservedModelEditor agent={agent} onSaved={onSaved} />}
 
       <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : 'Native'}</span>
+        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : 'Native'}</span>
         {!reserved && agent.model && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{agent.model}</span>}
         {agent.approval_mode && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var">{agent.approval_mode}</span>}
       </div>
