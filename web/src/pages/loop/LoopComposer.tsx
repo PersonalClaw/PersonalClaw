@@ -235,7 +235,13 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
           sentence at every viewport: a name that changes with screen width is worse than a long
           one, because "Scratch" and "Scratch (auto-clean when done)" are different controls to
           anyone searching by name. */}
-      <label className="inline-flex cursor-pointer items-center gap-1.5 text-[0.75rem] text-on-surface-low"
+      {/* `min-h-6` (24px) is the HIT AREA, not the look: the box stays 14px. Measured on `#/loop`, the
+          label — which is the real pointer target, since it is natively associated — was **204x18**, so
+          the 24px SC 2.5.8 minimum failed on the height axis even counting the whole label. The
+          undersized-target spacing exception does not rescue it either: the nearest other target sits
+          0px away, so the 24px circles intersect. Same move as the small Toggle: grow the target, leave
+          the control's drawn size alone. */}
+      <label className="inline-flex min-h-6 cursor-pointer items-center gap-1.5 text-[0.75rem] text-on-surface-low"
         title="When done, reclaim this loop's scratch dir. Its report is saved to Artifacts first, so nothing is lost.">
         <input type="checkbox" disabled={busy} checked={scratch} onChange={(e) => setScratch(e.target.checked)}
           aria-label="Scratch (auto-clean when done)"
