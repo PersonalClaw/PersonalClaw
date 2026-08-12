@@ -3,7 +3,7 @@ import { api, type InboxSettings } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { notify } from '../../app/appSdk'
 
 /** Inbox settings → /api/inbox/settings: auto-cleanup retention for the unified inbox.
@@ -23,7 +23,13 @@ export function InboxSettingsPanel() {
   // Stale-while-revalidate + persist: paint instantly on revisit/reload. The
   // editable form state `s` is seeded/rehydrated from this read-only `data`;
   // the patch handler keeps mutating `s` optimistically + saving.
-  const { data } = useCachedData('settings:inbox', () => api.inboxSettings().catch(() => null), { persist: true })
+  // 🔴 `.catch(() => null)` made a failed read RESOLVE with null — so `!data` below fired and the panel
+  // sat in its skeleton forever. Measured with `GET /api/inbox/settings` at 500: 0 editable controls, 22
+  // shimmering skeleton nodes, no error text, no retry — a dead end that looks like a slow network. Worse,
+  // the resolved `null` was PERSISTED: `sessionStorage['cache:settings:inbox'] === "null"`, so the next
+  // mount seeded null from cache and could not tell "failed" from "loaded". Same cache-key poisoning as
+  // the `'apps'` key, with `null` instead of `[]` — and this key has THREE consumers.
+  const { data, error: loadErr, refresh } = useCachedData('settings:inbox', () => api.inboxSettings(), { persist: true })
   useEffect(() => { if (data) setS(data) }, [data])
 
   useEffect(() => {
@@ -60,6 +66,7 @@ export function InboxSettingsPanel() {
       .catch(() => setEngagementOn(!v))
   }
 
+  if (!data && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={refresh} />
   if (!data || !s) return <FormSkeleton sections={2} />
   return (
     <div>

@@ -128,6 +128,12 @@ describe('the migrated surfaces read the error', () => {
     // install one from a local path or git URL" plus a Browse Store CTA, and the Store tab renders as
     // an empty shelf. Both guards are per-fetch, so a catalog outage never claims your Library is empty.
     'pages/apps/AppsSection.tsx',
+    // `#/settings/inbox` swallowed to `null`, which the hook PERSISTED — `sessionStorage
+    // ['cache:settings:inbox'] === "null"` — so all THREE consumers of that key seeded null from cache and
+    // read it as loaded. Its own gate then rendered `<FormSkeleton>` forever: measured with the GET at 500,
+    // 0 editable controls, 22 shimmering skeleton nodes, no error, no retry. Adding it here also puts the
+    // key-poisoning check below over `'settings:inbox'`.
+    'pages/settings/InboxSettingsPanel.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -160,7 +166,11 @@ describe('the migrated surfaces read the error', () => {
       // because a separate `loading` flag is cleared in a `finally` and therefore opens on failure.
       // Source order was a proxy for the real property; these are the two shapes that satisfy it:
       const errAt = src.search(/<LoadError\b/)
-      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\s*\/>/].map((re) => {
+      // Three loading primitives ship: `ListSkeleton` (a shaped list placeholder), `Loading` (a spinner)
+      // and `FormSkeleton` (a shaped form placeholder, used by the settings panels). The rail knew the
+      // first two because the first adopters used them — the same accident this file has now corrected
+      // four times. The vocabulary is what widens; the property being checked does not.
+      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\s*\/>/, /<FormSkeleton\b/].map((re) => {
         const i = src.search(re)
         return i === -1 ? Number.POSITIVE_INFINITY : i
       }))
