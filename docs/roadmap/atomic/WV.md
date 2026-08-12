@@ -24,6 +24,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WV-12` | ✅ | Two-layer context-compaction ladder for LLM-backed nodes | `WV-3`, `WV-8`, `EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)` | proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template |
 | `WV-13` | ✅ | Give `on_item_error: collect` an executor + an exhaustiveness ratchet over `ItemErrorPolicy` | `WV-4` | `tick.foreach_outcome` branches on every `ItemErrorPolicy` member and RAISES on an unmapped one; `collect` runs every item then fails the container, and its per-item failures land in the ledger as one `items_collected` record; the three policies produce three DIFFERENT run-level observables for one seeded failing item, driven through the real controller; `enum:ItemErrorPolicy.COLLECT` leaves `inert-surface-baseline.json` |
 | `WV-14` | ✅ | Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over `OverlapPolicy` | `WV-3`, `WV-4` | `overlap.decide` branches on every `OverlapPolicy` member and RAISES on an unmapped one; a `queue` start with a prior in flight PERSISTS an unlaunched run (DRAFT + a marker on `run.extra`) and returns `outcome: "queued"` naming it, instead of launching beside the prior; `overlap.drain` starts it from the controller's terminal write and from the watchdog poll, single-flight and idempotent; a hand-made DRAFT with no marker is never launched; the queue is capped at one and a dropped start names the cap in its outcome and the log; `enum:OverlapPolicy.QUEUE` leaves `inert-surface-baseline.json` |
+| `WV-15` | ✅ | Map every status a fire writes, and an AST rail over the three status→outcome tables | `WV-14` | `HOOK_STATUS_TO_OUTCOME` names `launched` + `skipped_incident` and `SCHEDULE_STATUS_TO_OUTCOME` names `blocked_injection` + all six `INERT_OUTCOMES`, so no live status reaches a `.get()` fallback; both fallbacks LOG the status they could not classify and never return `ran`; a suppressed or screened row is `LEDGER` weight and lands in `feed_response`'s suppressed half; `tests/test_triggers_status_vocabulary.py` infers each writer's possible values from its own AST (conditional expressions, `in`/`not in` guards, local names) with per-writer vacuity floors and a pinned writer-file census, and reds on all nine statuses if the tables are reverted |
 
 ## Atom scopes
 
@@ -303,3 +304,107 @@ asserted, an AST read of `decide` asserting it names every member, and a source 
    the ratchet.
 8. Regenerate `inert-surface-baseline.json` (151 → 150; `enum` 24 → 23) and add the `overlap.py`
    row to `docs/architecture/workflows.md`'s module table.
+
+### `WV-15` — Map every status a fire writes, and an AST rail over the three status→outcome tables
+
+**Status:** done
+
+§7 criterion 4 (one run-history feed, typed outcomes) + criterion 8 (zero silent drops)
+
+**Done when:** `HOOK_STATUS_TO_OUTCOME` names `launched` + `skipped_incident` and `SCHEDULE_STATUS_TO_OUTCOME` names `blocked_injection` + all six `INERT_OUTCOMES`, so no live status reaches a `.get()` fallback; both fallbacks LOG the status they could not classify and never return `ran`; a suppressed or screened row is `LEDGER` weight and lands in `feed_response`'s suppressed half; `tests/test_triggers_status_vocabulary.py` infers each writer's possible values from its own AST (conditional expressions, `in`/`not in` guards, local names) with per-writer vacuity floors and a pinned writer-file census, and reds on all nine statuses if the tables are reverted
+
+**Design**
+
+**The finding: a projection table is only as honest as the writers it was authored against.**
+`triggers/history.py` translates each store's own status word into a `FIRE_OUTCOMES` member, and
+both projections read their table with a `.get(status, <fallback>)`. WV-14 added `queued` to all
+three tables because a NEW member's ripple is obvious. The statuses that were already being written
+when the tables were authored are the ones nobody re-checked, and nine were live:
+
+| writer | status | projected as | what a user saw |
+|---|---|---|---|
+| `hooks.py:590` | `skipped_incident` | `RAN if last_run` | "ran" — for a hook the incident kill switch stopped BEFORE dispatch |
+| `hooks.py:653` | `launched` | `RAN if last_run` | "ran" — for a background turn nobody has seen |
+| `gateway.py:1429` | `blocked_injection` | `FAILED` | a defended injection attempt as a broken automation |
+| `service.py:665` | the six `INERT_OUTCOMES` | `FAILED` | a quiet-hours skip as a red failure, in the `did` half |
+
+**A silent fallback is the defect, not the missing key.** Both fallbacks were individually
+defensible — `hook_to_record`'s `RAN if last_run` reads "we know it ran, we just lack the verdict",
+and `schedule_run_to_record`'s `FAILED` follows `FireRecord.from_dict`'s "unclassifiable must not
+count as a success". Neither says anything, which is why four statuses (nine values) sat unmapped
+across two WV sessions that edited these very tables. So the fallbacks now LOG the status they
+could not classify, and the hook path splits into three explicit cases — mapped, absent (`""`, a row
+written before the field existed, the one case that still reads `RAN`), and unmapped-and-loud
+(`FAILED` + a warning). No branch swallows a value silently.
+
+**The mappings, and what a user now sees instead of "ran".**
+
+* `launched` → `DEFERRED` (hook table). Matches the other two tables exactly; T7's whole point is
+  that started ≠ succeeded, and the background turn records its own outcome in its own run. The
+  user sees `launched`-blue "deferred" with "outcome not yet known" instead of a green tick.
+* `skipped_incident` → `SKIPPED_GATE`. The provider is never called, so nothing ran, nothing was
+  spent, nothing changed — `SKIPPED_GATE`'s family (quiet-hours / cooldown / condition-false) and,
+  through `INERT_OUTCOMES`, a ledger row that folds out of the default runs inbox. NOT `REFUSED`
+  (which `blocked` already carries: a denylist refusal is a verdict on THIS action, while an
+  incident suspends every automated action and lifts on its own) and NOT `DEFERRED` (deferred work
+  still starts; this fire is dropped and never retried). The user sees a neutral grey suppression
+  row naming the incident, in the archived half, instead of a green "ran".
+* `blocked_injection` → `BLOCKED_INJECTION`. The member exists for exactly this row. The user sees
+  the red-shield "blocked" badge `statusMeta` already renders, instead of "failed" — and it leaves
+  `TRUE_FAILURE_OUTCOMES`, so a defence stops looking like a fault.
+* the six `INERT_OUTCOMES` → themselves, by construction (`**{v: v for v in sorted(INERT_OUTCOMES)}`)
+  rather than six hand-copied lines: the writer's own guard is `outcome not in INERT_OUTCOMES:
+  return`, so that set IS the vocabulary and a seventh member needs no second edit. The user sees
+  each suppression as the suppression it was, folded into `suppressed_ids`, with the reason
+  `_record_suppression_row` already stored — instead of six kinds of red "failed" in the `did` half.
+
+**No new vocabulary member, deliberately.** Every one of the nine landed on an existing `Outcome`;
+WV-14 paid the cost of adding one (three tables plus `engine.dispatch_action` plus the FE union) and
+nothing here needed it. `weight` moved instead: `LEDGER_WEIGHT_OUTCOMES` (deferred ∪ blocked ∪
+inert) replaces the hook projection's hardcoded `FULL` and the schedule projection's
+`DEFERRED`-only check, because `FULL` claims "earned a run directory and a journal" and a fire that
+never reached a runner has no exit code to show.
+
+**Autopause is untouched, and that is a finding worth recording.** `autopause
+.consecutive_failures_from` reads the RAW store rows (`trigger` → `outcome` → `status`), not
+`FireRecord.outcome`, and already skips inert exit types. So the mis-projection never spent the
+failure budget — it was purely a history/UI lie, and the fix does not move a single autopause
+decision.
+
+**The rail is AST-based because a regex finds only the easy half.** A `grep` over `hooks.py` finds
+`skipped_incident` and misses `launched`, whose write is
+`hook.last_status = result.outcome if result.outcome in ("launched", "queued") else "ok"` — a NAME
+whose values live in the condition's `in` tuple. Two of the four writers have that shape; a third
+(`service.py`) writes a variable pinned by an early-return `not in` guard; a fourth (the manual-fire
+handler) writes a local assigned in four branches and passed as a keyword. So the rail infers each
+write's POSSIBLE VALUES: constants, both arms of a conditional expression, `str()`/`or` unwrapping,
+local-name resolution, and `in`/`not in` guards — with the guard checked BEFORE the expression,
+because `status=outcome` resolves to `{""}` through its assignment and to the right six through its
+guard. The boolean handling is asymmetric on purpose: `A and B` holding implies B, and `not (A or
+B)` implies `not B`; nothing else proves anything about one operand, so nothing else is guessed.
+Anything unresolvable FAILS rather than counting as clean, since "I could not tell" is how these
+got in.
+
+**Vacuity and the second drift direction.** Each writer carries `min_sites`/`min_values` floors
+measured against the real source (8/7, 2/3, 1/6, 1/4, 2/2), so a shape change that stops matching
+reds instead of reading as clean. And `test_the_writer_file_census_is_pinned` enumerates every
+module that assigns `.last_status` or constructs a `ScheduleRun`, because a NEW writer file is drift
+no per-file scan can see. The executor table's writer set is honestly partial and says so: its
+runner is injected, so an app provider or `_http_runner`'s HTTP body is out of static reach —
+`classify`'s unrecognized→FAILED rule covers the open half, and the rail covers the one in-repo
+runner that fires every clock trigger.
+
+**Implementation plan**
+
+1. `triggers/history.py` — the four table entries (each with a comment saying why that outcome and
+   not the neighbouring one), `LEDGER_WEIGHT_OUTCOMES`, `_hook_reason` (reason strings shared
+   word-for-word with the schedule path), the three-case hook fallback, and a warning on both
+   unmapped paths.
+2. `tests/test_triggers_status_vocabulary.py` (new) — the writer census, the inference, the two
+   rails, the file-census pin, a self-test of the shape that hid `launched`, and the
+   `INERT_OUTCOMES` name-resolution test.
+3. `tests/test_triggers_history.py` — behavioural coverage per status: deferred not ran, incident
+   skip inert + archived, unmapped is failed AND loud, absent status still reads `ran`, screened not
+   failed, the six suppressions parametrised, and the end-to-end fold in `feed_response`.
+4. No `web/` change: `scheduleMeta.statusMeta` already renders `deferred`, `blocked_injection` and
+   the `skipped_` family, and no new `Outcome` member means the FE union is unchanged.

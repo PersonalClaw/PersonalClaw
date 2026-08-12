@@ -32,6 +32,15 @@ alternative is the schedule-only feed the criterion calls wrong.
 2. **`launched` is not `ran`.** The schedule store's honest T7 status — the action started a
    background turn, outcome unknown — maps to `deferred`, not `ran`. Calling it `ran` would report
    success for work nobody has seen, which is the distinction T7 exists to keep.
+3. **A status these tables lack is not a run** (WV-15). Both projections used to fall back to
+   "it ran" — `hook_to_record` literally returned `RAN if last_run` — so every status written after
+   the tables were authored read as work that happened. Measured: NINE values across FOUR writers.
+   `hooks.py` writes `skipped_incident` (the incident kill switch held the action BEFORE dispatch —
+   nothing executed) and `launched`; `gateway._record_blocked_fire` writes `blocked_injection`; and
+   `service._record_suppression_row` writes all six `INERT_OUTCOMES` members into
+   `ScheduleRun.status`. The tables now name every one of them, the fallbacks are LOUD (a warning
+   naming the status, and never `ran`), and `tests/test_triggers_status_vocabulary.py` reads the
+   writers' own ASTs so the next status cannot ship unmapped.
 """
 
 from __future__ import annotations
@@ -65,7 +74,33 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # "parked / resource-busy" half, and `LEDGER` weight follows for the same reason
     # `launched` gets it: no run directory or journal exists for it yet.
     "queued": Outcome.DEFERRED.value,
+    # 🔴 A SCREENED payload (WV-15). `gateway._record_blocked_fire` writes `status:
+    # "blocked_injection"` and this table had no key for it, so a defended injection attempt fell to
+    # the `FAILED` fallback below and appeared in the user's history as a genuine failure — the one
+    # outcome `TRUE_FAILURE_OUTCOMES` contains. `BLOCKED_INJECTION` is a real member and says the
+    # rest of what a reader needs: never auto-retried, and the row names the matched pattern class.
+    "blocked_injection": Outcome.BLOCKED_INJECTION.value,
+    # 🔴 A SUPPRESSED fire (WV-15). `service._record_suppression_row` persists the typed outcome in
+    # BOTH `trigger` and `status` so criterion 8's "zero silent drops" is real — and every one of
+    # them missed this table and projected as `failed`. A quiet-hours skip rendered as a red failure
+    # in the runs feed, which is the exact confusion `isInertOutcome` was written to prevent one
+    # layer later, and it also kept the row OUT of `partition_inert`'s suppressed half, so it buried
+    # the fires that mattered instead of folding away.
+    #
+    # Identity by construction rather than six hand-copied lines: the writer's own guard is
+    # `outcome not in INERT_OUTCOMES: return`, so that set IS the vocabulary, and a seventh inert
+    # member must not need a second edit here to stay honest.
+    **{value: value for value in sorted(INERT_OUTCOMES)},
 }
+
+#: Outcomes whose row is bookkeeping, not an openable run — `LEDGER` weight (`FULL` means "earned a
+#: run directory and a journal"). A `DEFERRED` fire has not produced one YET, and a suppressed or
+#: screened fire never will: neither reached a runner. Kept as one set because both projections
+#: below owe the same answer, and they disagreed before WV-15 (the hook projection hardcoded
+#: `FULL`, so a hook the incident switch stopped claimed an exit code it never had).
+LEDGER_WEIGHT_OUTCOMES: frozenset[str] = frozenset(
+    {Outcome.DEFERRED.value, Outcome.BLOCKED_INJECTION.value} | set(INERT_OUTCOMES)
+)
 
 #: A hook's `last_status` → `FIRE_OUTCOMES`. Hooks report a shell exit code, so the vocabulary is
 #: narrower: it either ran or it did not.
@@ -80,6 +115,23 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
     # fire would fall to the `RAN if last_run` default and read as "it ran and did something
     # durable" — a queued start has run nothing.
     "queued": Outcome.DEFERRED.value,
+    # 🔴 FIRE-AND-FORGET (WV-15). `hooks.py:653` writes `launched` for a run-prompt/run-workflow/
+    # invoke-agent action, and this table — alone among the three — had no key for it, so the one
+    # status written to say "started ≠ succeeded" landed on the `RAN if last_run` default and said
+    # "succeeded". `DEFERRED`, matching `SCHEDULE_STATUS_TO_OUTCOME` and `executor
+    # .STATUS_TO_OUTCOME`: the background turn records its own outcome in its own run.
+    "launched": Outcome.DEFERRED.value,
+    # 🔴 THE INCIDENT KILL SWITCH (WV-15). `hooks.py:590` writes this when `incident_active()` holds
+    # the action BEFORE dispatch — the provider is never called, so nothing ran, nothing was spent
+    # and nothing changed. That is `SKIPPED_GATE`'s family (quiet-hours / cooldown /
+    # condition-false) and its `INERT_OUTCOMES` membership is the point: the row collapses to a
+    # ledger row and folds out of the default runs inbox instead of claiming a run.
+    #
+    # NOT `REFUSED`, which `blocked` already carries: a denylist refusal is a verdict on THIS
+    # action ("you may not do that"), while an incident suspends every automated action for a while
+    # and lifts on its own. NOT `DEFERRED` either — deferred work still starts, and this fire is
+    # dropped, never retried.
+    "skipped_incident": Outcome.SKIPPED_GATE.value,
 }
 
 
@@ -132,11 +184,20 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
 
     An unknown status becomes `failed`, matching `FireRecord.from_dict`'s own rule — a row this
     build cannot classify must not be counted as a success, because a success is what the health
-    rollup treats as nothing to look at.
+    rollup treats as nothing to look at. It also LOGS (WV-15): four statuses reached this fallback
+    for months and a silent fallback is why nobody noticed. A warning naming the status is how the
+    next one gets found before a user reads it as a failure.
     """
     run = run or {}
     status = str(run.get("status", "") or "")
     outcome = SCHEDULE_STATUS_TO_OUTCOME.get(status, Outcome.FAILED.value)
+    if status and status not in SCHEDULE_STATUS_TO_OUTCOME:
+        logger.warning(
+            "run status %r is not in SCHEDULE_STATUS_TO_OUTCOME; recorded as %s. Map it in "
+            "triggers/history.py — a status this build cannot classify is shown as a failure.",
+            status,
+            outcome,
+        )
     reason = str(run.get("error") or "") or str(run.get("summary") or "")
     if status == "timeout":
         # The vocabulary folds timeout into `failed`, so the reason has to carry what was lost.
@@ -145,6 +206,15 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         reason = reason or "action launched a background turn; outcome not yet known"
     elif status == "queued":
         reason = reason or "queued behind a run already in flight; it starts when that one ends"
+    elif outcome == Outcome.BLOCKED_INJECTION.value:
+        # `_record_blocked_fire` already writes the matched pattern class into `error`; this only
+        # covers a row that lost it, because "blocked" with no reason reads as a bug in us.
+        reason = reason or "payload blocked by the injection screen; never retried"
+    elif outcome in INERT_OUTCOMES:
+        # The suppression reason IS the row's `error` (that is where `_record_suppression_row` puts
+        # it). A blank one still must not render as an unexplained skip — §7 criterion 8's whole
+        # point is that a user can ask "why did my automation not run" and get an answer.
+        reason = reason or f"suppressed: {status.replace('_', ' ')}"
     job_id = str(run.get("job_id", "") or "")
     return FireRecord(
         id=str(run.get("run_id", "") or ""),
@@ -153,15 +223,37 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         reason=_redact(reason)[:200],
         # `FULL` — a schedule run has a real run record behind it (trace, error, duration), which
         # is what `FULL` means: "earned a run directory and a journal". A `DEFERRED` (launched)
-        # fire has not produced that yet, so it stays `LEDGER` until its background turn reports.
+        # fire has not produced that yet, so it stays `LEDGER` until its background turn reports —
+        # as do the suppressed and screened rows WV-15 mapped, which never reached a runner at all.
         weight=(
-            RunWeight.LEDGER.value if outcome == Outcome.DEFERRED.value else RunWeight.FULL.value
+            RunWeight.LEDGER.value if outcome in LEDGER_WEIGHT_OUTCOMES else RunWeight.FULL.value
         ),
         started_at=_iso(run.get("started_at")),
         finished_at=_iso(run.get("finished_at")),
         duration_secs=round(float(run.get("duration_ms") or 0) / 1000.0, 3),
         run_id=str(run.get("run_id", "") or ""),
     )
+
+
+def _hook_reason(status: str, outcome: str) -> str:
+    """What a hook's row SAYS, given its raw status and mapped outcome.
+
+    Deliberately the same sentences `schedule_run_to_record` writes for `launched`/`queued`: one
+    feed showing two different explanations of one thing reads as two different things. A `RAN` row
+    carries no reason, because "it ran" is the whole story and a decorative reason costs a line of a
+    user's attention for nothing.
+    """
+    if outcome == Outcome.RAN.value:
+        return ""
+    if status == "launched":
+        return "action launched a background turn; outcome not yet known"
+    if status == "queued":
+        return "queued behind a run already in flight; it starts when that one ends"
+    if status == "skipped_incident":
+        # Names the CAUSE and the exit, not just the state: an incident pause the user cannot see
+        # the end of is indistinguishable from a hook that broke.
+        return "suppressed: incident mode is active; automated actions resume when it clears"
+    return f"hook last reported {status or 'an unknown status'}"
 
 
 def hook_to_record(hook: Any) -> FireRecord | None:
@@ -175,28 +267,52 @@ def hook_to_record(hook: Any) -> FireRecord | None:
 
     `counters` carries `run_count` so the feed can show "this has run 12 times, here is the most
     recent" without inventing eleven rows it does not have.
+
+    🔴 THE FALLBACK IS THE DEFECT (WV-15). This read `RAN if last_run` for any status the table
+    lacked, and two of the eight `hooks.py` writes were exactly that: `skipped_incident` (the
+    incident switch — the provider was never called) and `launched` (a background turn nobody has
+    seen) both landed on "it ran and did something durable". Three cases, and each needs its own
+    answer:
+
+    * A status the table names → its mapped outcome.
+    * NO status at all (`""`) with a `last_run` → `RAN`. This is a store row written before the
+      field existed; "it ran" is the fact we actually have and the verdict is the part that is
+      missing, so calling it a failure would invent one. It cannot hide a new status — a hook that
+      executes always writes one of the literals.
+    * A status the table does NOT name → `FAILED` plus a WARNING naming it. Matches
+      `schedule_run_to_record`'s rule (unclassifiable must not read as a success) and is loud,
+      because the whole reason these two sat unmapped is that the fallback said nothing.
     """
     run_count = int(getattr(hook, "run_count", 0) or 0)
     last_run = getattr(hook, "last_run", None)
     if run_count <= 0 and not last_run:
         return None
     status = str(getattr(hook, "last_status", "") or "")
-    outcome = HOOK_STATUS_TO_OUTCOME.get(
-        status.lower(), Outcome.RAN.value if last_run else Outcome.FAILED.value
-    )
+    key = status.lower()
+    if key in HOOK_STATUS_TO_OUTCOME:
+        outcome = HOOK_STATUS_TO_OUTCOME[key]
+    elif not key:
+        outcome = Outcome.RAN.value if last_run else Outcome.FAILED.value
+    else:
+        outcome = Outcome.FAILED.value
+        logger.warning(
+            "hook status %r is not in HOOK_STATUS_TO_OUTCOME; recorded as %s. Map it in "
+            "triggers/history.py — a status this build cannot classify is shown as a failure.",
+            status,
+            outcome,
+        )
     hook_id = str(getattr(hook, "id", "") or "")
     return FireRecord(
         id=f"lifecycle:{hook_id}:last",
         trigger_id=f"lifecycle:{hook_id}",
         outcome=outcome,
-        reason=(
-            ""
-            if outcome == Outcome.RAN.value
-            # `status` comes from the hook store, so it is redacted like any other stored text.
-            else _redact(f"hook last reported {status or 'an unknown status'}")
-        ),
+        reason=_redact(_hook_reason(status, outcome)),
         # `FULL`: a hook genuinely executed a script, with an exit code and a duration behind it.
-        weight=RunWeight.FULL.value,
+        # `LEDGER` when it did not (WV-15): an incident-suppressed hook never reached its provider
+        # and a `launched` one has no verdict yet, so neither has the exit code `FULL` promises.
+        weight=(
+            RunWeight.LEDGER.value if outcome in LEDGER_WEIGHT_OUTCOMES else RunWeight.FULL.value
+        ),
         started_at=_iso(last_run),
         finished_at=_iso(last_run),
         run_id="",

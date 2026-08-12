@@ -25,6 +25,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   against a process that can read the root-only secret file (see
   `docs/architecture/app-platform.md`).
 
+### Fixed
+
+- **Run history no longer says "ran" for automations that did not run.** The run feed translates
+  each store's own status word into a typed outcome, and four of the statuses actually being written
+  had no entry in that translation — so they landed on a fallback nobody had chosen for them. A
+  lifecycle hook that only *launched* background work, and a hook the incident kill switch stopped
+  **before** it reached its action, both showed as "ran"; a payload the injection screen blocked, and
+  every fire suppressed by quiet hours, a budget cap, an overlap or a triage decision, all showed as
+  a red "failed". Each now shows what it was: `deferred` ("outcome not yet known"), a neutral grey
+  suppression that folds into the archived half of the feed with its reason, and the shield-marked
+  `blocked`. Suppressed and screened rows are also marked as ledger entries rather than openable
+  runs, since neither ever reached a runner. This was a reporting fix only — the trigger
+  autopause counter reads the stored rows directly and was never affected, so no automation's
+  pause/resume behaviour changes. A status the build cannot classify is now logged by name and never
+  reported as a success.
+
 ### Changed
 
 - **A workflow plan now tells you which of its stops survive an unattended run.** The autonomy
