@@ -119,7 +119,12 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
             {(analysis.cycles?.length ?? 0) > 0 && (
               <span className="inline-flex items-center gap-1.5 text-danger"><TriangleAlert size={13} /> {analysis.cycles.length} cycle{analysis.cycles.length === 1 ? '' : 's'} detected</span>
             )}
-            {criticalSet.size > 0 && <span className="text-on-surface-low/70">— critical-path tasks are ringed below</span>}
+            {/* Undimmed: `on-surface-low` is already the faintest ink, and the `/70` suffix it used
+                to carry took this legend to 3.84:1 in dark and 3.95:1 in light (axe `[serious]`, all
+                three viewport/theme configs). Its siblings above are full-alpha `text-warn` /
+                `text-danger`; this is the only member that was dimmed, and it is real explanatory
+                copy rather than decoration. */}
+            {criticalSet.size > 0 && <span className="text-on-surface-low">— critical-path tasks are ringed below</span>}
           </div>
         )}
         <DagView width={svgW} height={height} className="block" onNodeClick={onOpen}
