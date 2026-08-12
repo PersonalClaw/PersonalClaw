@@ -392,3 +392,95 @@ bug must land before the first tag push** or the release job's verify-wheel step
   (clean-machine walkthroughs V1–V4) and `CRE-7` (real-world provisioning remainder) are owner
   validation tasks for the same reason. Unblock = owner creates the tap repo and/or installs nix, or
   rules that an unverified flake may land behind a documented "untested" note.
+
+### `DIST-13` — DONE: `personalclaw update` was still the git-only path (2026-08-11)
+
+- **DISCOVERY (S4, the CLI half was never replaced).** This plan's own log records that S4's
+  per-kind behavior "replaced, not gated" the git-only updater. It did — on the dashboard side.
+  `cli.py:592` registers `update`, `cli.py:944` dispatches to `cli_server._update`, and that
+  function was still: require `$PERSONALCLAW_PROJECT_DIR`, require a `.git` dir, `git fetch` +
+  `git reset --hard` + rebuild. `grep -rn "updates_kind\|detect_install_kind"
+  src/personalclaw/cli*.py` returned **nothing**; `updates_kind.py`'s only importers were the
+  dashboard handlers. So for the two installs README.md:165-166 and
+  `docs/guides/getting-started.md`:31-32 document **first** — `pipx install personalclaw` and
+  `pip install personalclaw` — `personalclaw update` printed *"❌ PERSONALCLAW_PROJECT_DIR not
+  set — cannot locate source tree"* and exited 1. A dead end for the majority install path, with
+  the correct machinery one module away, shipped in v0.1.0–v0.1.3.
+
+- **DONE (the layering fix).** The taxonomy lived at `dashboard/handlers/updates_kind.py`, so
+  reaching `detect_install_kind()` meant importing an HTTP handler — which is *why* the CLI kept
+  its own pipeline. Adding a CLI→handler import would have preserved the smell, so the decision +
+  the shared primitives moved to core `src/personalclaw/self_update.py` and `updates_kind.py` was
+  **deleted** (clean break: no re-export, no shim). Moved: `detect_install_kind` / `InstallKind` /
+  new `INSTALL_KINDS`, `fetch_latest_release`, `build_update_status`, `normalize_version`,
+  `version_tuple`, `read_release_cache`, `package_root`, `commits_behind_upstream`,
+  `installer_error_summary`, plus new `container_instructions`, `upgrade_spec`,
+  `resolve_default_branch` and the single `_run_git` seam. Call sites moved in the same commit:
+  five dashboard-handler imports, `gateway._auto_apply_update`'s `_package_root`, the
+  `handlers/__init__` re-export of a duplicate `_version_tuple` (deleted — `self_update`
+  version_tuple is now the one implementation), and the CLI. Left in the handler deliberately: the
+  409 in-flight guard, `push_update_progress`, `_graceful_reexec`, `_live_auth_mode`, redaction and
+  the legacy changelog-diff check.
+
+- **DEVIATION (rejected: one shared `apply(kind, progress=…)`).** The two lifecycles differ for
+  real — the dashboard applies asynchronously, streams `update_progress`, holds the 409 guard and
+  re-execs the live gateway; the CLI is a short-lived synchronous process that prints, prompts a
+  TTY and has no server to re-exec — so a single apply would be a callback-shaped abstraction over
+  two different lifecycles. The shared surface is the decision plus the primitives. Related
+  DEVIATION: the CLI's pip branch does **not** re-exec (there is nothing to re-exec) and does not
+  auto-restart a running gateway either; it prints `personalclaw restart`, because silently
+  bouncing a gateway would kill in-flight work the user never offered up.
+
+- **DONE (per-kind CLI behavior).** Exhaustive over `INSTALL_KINDS`, no default arm:
+
+  | kind | behavior | exit |
+  |---|---|---|
+  | `git` | `resolve_default_branch` → fetch → (confirm) `reset --hard` → SPA build → editable install → `setup --agent-only`; honours `dashboard.update_dev_mode` (OFF = ride release tags, so on-the-latest-tag is "up to date" even when `main` is ahead; ON = track every commit) | 0; 1 on any git/install failure |
+  | `pip` (pip / pipx / uv tool) | resolved installer `-U personalclaw==<latest>` (unpinned when the tag is unknown — offline still tries), no source tree required, then `setup --agent-only` + "restart the gateway" | 0; 1 on install failure or `NoInstallerError` |
+  | `container` | prints the two documented `docker compose … pull` / `up -d` commands + the volume/snapshot note | **0** |
+  | `desktop` | defers to the app's own updater (electron-updater, DC-1) | **0** |
+  | unmapped | names what it detected and refuses to guess | **1** |
+
+  No fifth kind was added: `pip` already covers pip/pipx/uv-tool because the apply is identical,
+  and `_installer.install_argv` resolves which program performs it (a uv venv ships no pip).
+
+- **DONE (two exit-code decisions, made not left ambiguous).** *container/desktop = 0*: the status
+  answers "did the command do its job?", not "did bytes change?" — the git branch has always exited
+  0 on "Already up to date", so 0 never meant "something changed" here, and for these kinds the job
+  IS delegation. A correctly configured container install is not a failure, and an unattended caller
+  cannot act on printed instructions anyway, so non-zero would add noise exactly where it cannot
+  help. The counter-argument (`personalclaw update && restart` learns nothing) is real, so the
+  printed text is unambiguous about who must act and a script that needs the distinction reads
+  `apply_method` from `GET /api/update/check`. *Non-interactive stdin = 1, and never a prompt*:
+  `input()` on a pipe either reads a piped "y" — destroying uncommitted tracked work nobody agreed
+  to lose — or raises EOFError into a traceback. Refusing is recoverable (stash/commit, re-run); a
+  wrong yes is not. An interactive "n" still exits 0, because declining is a choice, whereas
+  refusing on someone's behalf means the update they asked for did not happen.
+
+- **DONE (the `mainline` bug — a second, independent defect in the same function).**
+  `cli_server` defaulted `branch = "mainline"` when `git rev-parse --abbrev-ref HEAD` returned
+  empty or `HEAD` (detached), and this repository's default branch is `main` — so a detached-HEAD
+  update fetched a ref that has never existed here. `gateway._auto_apply_update` already coerced to
+  `main`, so the CLI was the sole holdout. Replaced with `resolve_default_branch`: the checked-out
+  branch (updating advances the branch you are on) → the remote's HEAD read from the LOCAL
+  `refs/remotes/origin/HEAD` (offline-safe) → `git remote show origin`'s `HEAD branch:` (network, so
+  last, and `(unknown)` is rejected) → the literal `main`. A rail asserts the old literal appears in
+  no updater module, *including in prose* — it caught the design comment in which I had quoted it.
+
+- **DONE (nothing inert).** `tests/test_cli_update_kinds.py` (18 tests) drives every branch: four
+  kinds, the unmapped refusal, dispatch exhaustiveness (`set(INSTALL_KINDS) ==
+  _UPDATE_HANDLED_KINDS`), up-to-date, dev-mode-off-on-latest-tag, fetch failure, and the
+  confirmation confirmed / declined / EOF'd / refused-without-a-TTY; plus the pinned and unpinned
+  pip specs, the ANSI-stripped installer-error line, and `NoInstallerError`. Faking is at exactly
+  two seams — `self_update._run_git` and `cli_server.subprocess.run` — so no test can reach a real
+  `git reset --hard` or `pip -U`. `tests/test_self_update.py` (renamed from `test_updates_kind.py`)
+  adds branch resolution, the `_run_git` timeout (rc 124) / missing-binary (rc 127) shapes, and the
+  `mainline` rail. The four existing update test modules were realigned to the new seam, never
+  weakened. `tests/test_spawn_ceiling_audit.py` was re-keyed for the moved/new spawn sites.
+
+- **DISCOVERY (a small correctness fix found while porting).** `git status --porcelain` output was
+  `.strip()`ped as a blob before splitting, which ate the FIRST line's leading space — and porcelain
+  status codes are column-significant (`" M"` unstaged vs `"M "` staged). Now split first, filter
+  blanks. Also: the CLI ran the frontend build and the editable install at the repo root, while the
+  dashboard used `package_root`; in the monorepo layout (`pyproject.toml` nested at
+  `<repo>/PersonalClaw`) the CLI's version was wrong. Both surfaces now use `package_root`.

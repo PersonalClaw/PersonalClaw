@@ -53,9 +53,7 @@ async def test_container_returns_instructions(monkeypatch) -> None:
             "instructions": ["docker compose pull", "docker compose up -d"],
         }
 
-    monkeypatch.setattr(
-        "personalclaw.dashboard.handlers.updates_kind.build_update_status", _fake_status
-    )
+    monkeypatch.setattr("personalclaw.self_update.build_update_status", _fake_status)
     resp = await upd.api_update_apply(_req())
     body = json.loads(resp.body.decode())
     assert resp.status == 200
@@ -73,9 +71,7 @@ async def test_desktop_returns_instructions(monkeypatch) -> None:
     async def _fake_status(_cur):
         return {"kind": "desktop", "apply_method": "desktop_delegate", "instructions": []}
 
-    monkeypatch.setattr(
-        "personalclaw.dashboard.handlers.updates_kind.build_update_status", _fake_status
-    )
+    monkeypatch.setattr("personalclaw.self_update.build_update_status", _fake_status)
     resp = await upd.api_update_apply(_req())
     body = json.loads(resp.body.decode())
     assert resp.status == 200
