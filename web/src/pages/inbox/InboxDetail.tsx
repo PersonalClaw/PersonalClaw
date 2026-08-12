@@ -158,7 +158,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       {channelBacked && (
         <>
           <Section label="Reclassify">
-            <Segmented options={CLASSIFICATIONS.map((c) => ({ key: c.key, label: c.label, tone: c.tone, icon: c.icon }))}
+            <Segmented ariaLabel="Reclassify" options={CLASSIFICATIONS.map((c) => ({ key: c.key, label: c.label, tone: c.tone, icon: c.icon }))}
               value={item.classification} onChange={(v) => patch({ classification: v as InboxClassification }, 'class')} />
           </Section>
 

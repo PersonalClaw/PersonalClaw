@@ -245,7 +245,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
         // (plan) — separate from the action cluster, which holds only the toggle.
         left={<div className="flex min-w-0 items-center gap-m">
           <PageTitle className="shrink-0">Files</PageTitle>
-          {!rootsLoading && roots.length > 0 && <div className="min-w-0 overflow-x-auto"><Segmented value={tab} onChange={switchTab} options={tabOptions} /></div>}
+          {!rootsLoading && roots.length > 0 && <div className="min-w-0 overflow-x-auto"><Segmented ariaLabel="File root" value={tab} onChange={switchTab} options={tabOptions} /></div>}
         </div>}
         right={
           <HeaderActions>
