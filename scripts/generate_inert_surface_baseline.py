@@ -47,6 +47,13 @@ references a surface is exactly the hand-built state that hides the seam gap.
     author-supplied edges against ``{e.value for e in Lineage}``, so a template author
     could reach both members and the census called them dead.
 
+    THE CONVERSE ALSO HOLDS, AND ``PHF-13`` RULED ON IT: a shape is only worth teaching when it
+    PROVES reachability. Value-lookup ``E(value)`` does not, so it is deliberately NOT taught —
+    the per-site provenance audit and the arithmetic behind that ruling live in
+    ``_inert_enum_members``. Clearing a member on a construction that never executes, or one fed
+    only from state this codebase itself wrote, would HIDE a real gap instead of naming it, and a
+    false clear is the one error this census must not make quietly.
+
 The render is DETERMINISTIC: files, surface lists, and per-kind totals are all sorted,
 the output is ``json.dumps(..., indent=2, sort_keys=True)`` with a trailing newline, and
 it carries no timestamps or absolute paths. A second run is byte-identical to the first.
@@ -379,11 +386,45 @@ def _inert_enum_members(files: list[Path], attr_names: set[str]) -> list[tuple[P
     MORE under-reporting (a class that is iterated somewhere keeps no member reported, even a
     member that genuinely has no producer) for the elimination of an entire false-red class.
     That is the deliberate trade — this census exists to name work worth doing, and a
-    reported surface that is actually reachable sends someone to "fix" working code. Value-
-    lookup construction is the KNOWN REMAINING false-red shape: ``judge_contract.py:342``
-    does ``Verdict(str(raw.get("verdict", "")).upper())`` on model-supplied text, which makes
-    every member reachable, yet ``Verdict.REPLAN`` is still reported. Teaching the detector
-    that shape is separate work — do not paper over it by editing the baseline.
+    reported surface that is actually reachable sends someone to "fix" working code.
+
+    VALUE-LOOKUP ``E(value)`` IS DELIBERATELY NOT TAUGHT — audited and ruled on by ``PHF-13``.
+    ``PHF-12`` left it named as the "known remaining false-red shape" on the strength of
+    ``judge_contract.py:342`` (``Verdict(str(raw.get("verdict", "")).upper())`` on model-emitted
+    text). Auditing all six value-lookup sites behind the surviving enum surfaces found that
+    premise WRONG and the shape unsound as a clearing rule: ``E(value)`` proves reachability only
+    when BOTH hold — the construction actually EXECUTES in production, and its value crosses a
+    trust/authoring boundary. Per site:
+
+      * ``tasks/models.py:74`` ``DependencyType(raw_type)`` — EXTERNALLY REACHABLE. Reached from
+        ``POST /api/tasks``: ``tasks/handlers.py:242`` calls ``create_task(**body)`` on
+        ``await request.json()``, ``tasks/native.py:246`` coerces it, ``TaskDependency.from_dict``
+        looks the member up. A client picks the member. This one IS a false red, and is the only
+        one; it stays reported rather than being cleared by an unsound rule.
+      * ``memory_record.py:216``/``:218`` ``MemoryTier(...)``/``MemoryScope(...)`` — INTERNAL ONLY.
+        Fed by ``from_semantic_row``/``from_episodic_row`` (``vector_memory.py:1124``/``:1161``)
+        off rows this codebase wrote via ``to_row``; the vault mirror is render-only (no parse
+        back). Nothing writes ``"segment"`` or ``"workspace"``, so neither member round-trips in.
+      * ``workflows/confirmation.py:177`` ``Status(...)`` — INTERNAL ONLY. ``from_dict`` reads what
+        ``to_dict`` wrote, and that is only ``pending``/``expired``: ``resolve`` returns a
+        ``Resolution`` and never stamps ``RESOLVED``.
+      * ``workflows/judge_actors.py:84`` ``Actor(...)`` — DEAD CALL SITE. Only
+        ``resolve_transition`` calls it, and nothing in ``src/`` calls that (tests only).
+      * ``workflows/judge_contract.py:342`` ``Verdict(...)`` — DEAD CALL SITE. ``validate_verdict``
+        has no production caller; ``engine.py:1510`` deliberately RESTATES the aggregation rule
+        instead of importing it. Model-emitted text never reaches this constructor.
+      * ``judge_contract.py:224`` ``enum_cls(str(value))`` (``Ratchet``) — DEAD CALL SITE for the
+        same reason (``hints_from_dict`` has no production caller), and invisible to an
+        ``E(value)`` rule regardless: the class is loop-bound, not named at the call.
+
+    So a syntactic ``E(value)`` rule would clear six classes of which exactly ONE is genuinely
+    reachable — a 5-of-6 false-clear rate. A false clear is worse here than the over-report it
+    replaces: it buries a genuine gap inside every internal deserializer. Proving "provably
+    outside" needs interprocedural dataflow (four hops across three modules for the
+    ``DependencyType`` case), which is not a cheap deterministic AST rule, so the rule stays as
+    it is. ``test_value_lookup_alone_does_not_clear_a_member`` pins that decision, and
+    ``test_the_audited_value_lookup_call_sites_have_no_production_caller`` reds if a dead site
+    above is ever wired up — at which point re-verdict the member instead of trusting this list.
 
     Path-typed (no repo-relative rendering) so the detector can be exercised against a
     fixture tree; ``_inert_enum_surfaces`` is the thin repo-relative wrapper.

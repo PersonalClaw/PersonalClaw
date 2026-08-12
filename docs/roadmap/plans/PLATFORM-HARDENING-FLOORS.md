@@ -537,3 +537,112 @@ Rows 1-4 are roughly one focused session between them.
   and fixes no reported surface — it corrects the CLASSIFIER, so five lines leave because they were
   never inert. Regeneration is therefore legitimate under the shrink-only rule (the population
   genuinely shrank) and happens in the same commit, by the tool, never by hand.
+- [2026-08-12][PHF-13] DONE — per-class provenance verdicts for the census's 13 surviving enum
+  surfaces, and the ruling that value-lookup `E(value)` must NOT clear a member. This is a
+  CLASSIFICATION atom: it makes the census's verdict on each surface correct and evidence-backed and
+  builds none of the missing writers. **`PHF-12`'s premise was wrong.** It recorded that
+  `judge_contract.py:342` (`Verdict(str(raw.get("verdict", "")).upper())`) runs on model-emitted text
+  and so makes `Verdict.REPLAN` reachable. That line lives inside `validate_verdict`, and **nothing
+  in `src/` calls `validate_verdict`** — `engine.py:1510` deliberately RESTATES the aggregation rule
+  rather than importing it, and only tests import the function. Model output never reaches that
+  constructor. Same shape at `judge_actors.py:84` (`Actor(...)`, reached only from
+  `resolve_transition`, whose only callers are in `tests/test_workflows_judge_pretier.py`) and
+  `judge_contract.py:224` (`enum_cls(str(value))` for `Ratchet`, inside the equally uncalled
+  `hints_from_dict`). THE RULE THAT FALLS OUT: `E(value)` proves reachability only when BOTH hold —
+  the construction EXECUTES in production, and its value crosses a trust/authoring boundary.
+- [2026-08-12][PHF-13] THE 13-MEMBER VERDICT (member → verdict → evidence). Six sit on classes with
+  an `E(value)` site; seven have none at all:
+  - `DependencyType.REQUIRED_FOR` (tasks/models.py) → **FALSE RED — externally reachable.**
+    `tasks/handlers.py:242` calls `registry.create_task(**body)` on `await request.json()`;
+    `tasks/native.py:246` coerces via `_coerce_dependencies`; `TaskDependency.from_dict`
+    (models.py:74) looks the member up. A `POST /api/tasks` client picks it. The bulk endpoint
+    (`handlers.py:164`) is a second path. LEFT REPORTED rather than cleared by an unsound rule.
+  - `PromptCache.AUTOMATIC` (llm/prompt_cache.py) → **reachable OUT OF REPO only.** An app sets
+    `BrandedProviderSpec(prompt_cache=PromptCache.AUTOMATIC)` (`sdk/provider_helpers.py:65`,
+    threaded into `ProviderCapability` at `:334`); `agents/native/runtime.py:775` reads the grade.
+    Attribute access in another repo — the census's declared blind spot, the same one that makes
+    `sdk_export` 127. Not dead weight; not clearable by any in-repo rule.
+  - `MemoryTier.SEGMENT` (memory_record.py) → **genuinely inert.** `MemoryTier(self.tier)` (:216)
+    only ever sees rows `to_row` wrote, read back by `from_semantic_row`/`from_episodic_row`
+    (`vector_memory.py:1124`/`:1161`); the vault mirror (`memory_vault.render_record`) is
+    render-only with no parse-back. No writer produces `"segment"` — sealing into topic clusters is
+    unbuilt. TO CLOSE: the §3.5 sealing step that clusters episodics into a segment row.
+  - `MemoryScope.WORKSPACE` (memory_record.py) → **genuinely inert.** Same round-trip as above, and
+    the one surface that advertises the value throws it away: `mcp_memory.py:41-49` offers
+    `scope: global|workspace` on `memory_remember`, and `dashboard/handlers/schedule.py:181` calls
+    `svc.write_lesson(rule, category, negative)` — `scope` is never read. TO CLOSE: thread `scope` +
+    `workspace` from the lessons POST body into the write (one param, one test).
+  - `Status.RESOLVED` (workflows/confirmation.py) → **genuinely inert.** `from_dict` (:177) reads
+    what `to_dict` wrote, and that is only `pending`/`expired`: `resolve()` returns a `Resolution`
+    and never stamps a status, `on_expiry` returns `EXPIRED`. So `dag_card`'s
+    `live = request.status is Status.PENDING` (:480) still offers Approve/Deny after an answer.
+    TO CLOSE: stamp `RESOLVED` on the record when a resolution is applied.
+  - `Actor.WORKER` (workflows/judge_actors.py) → **genuinely inert.** `Actor(...)` at :84 is inside
+    `check_transition`, called only by `resolve_transition`, which no production file calls — the
+    actor-authority invariant ships unwired. TO CLOSE: call `resolve_transition` from the engine's
+    state-transition path (that is the plan's own intent, not this atom's scope).
+  - `Verdict.REPLAN` (workflows/judge_contract.py) → **genuinely inert.** `validate_verdict` has no
+    production caller (see above), so no judge response is ever parsed through this contract.
+    TO CLOSE: route the judge response through `validate_verdict` instead of `engine.py`'s restated
+    rule — one seam, and it retires the duplication `engine.py:1510` documents.
+  - `Ratchet.RELAXED` (workflows/judge_contract.py) → **genuinely inert.** Its only construction is
+    `enum_cls(str(value))` at :224 inside `hints_from_dict`, which also has no production caller; a
+    template's `runtime_hints.judge.ratchet` is never parsed. Note it is loop-bound, so an
+    `E(value)` rule cannot see it even syntactically. TO CLOSE: same seam as `Verdict.REPLAN`.
+  - `StructuredOutput.JSON_MODE` and `.JSON_SCHEMA` (llm/capabilities.py) → **genuinely inert, and
+    worse than unwired.** `llm/capabilities.py:63-64` says apps declare the grade via
+    `BrandedProviderSpec.structured_output` — **that field does not exist**
+    (`sdk/provider_helpers.py:48-65` carries `prompt_cache` only), so `grounding.py:492`'s live
+    reader (`getattr(cap, "structured_output", StructuredOutput.NONE)`) can never see anything but
+    `NONE`, and `:496`'s `bundle.structured_output = True` never fires. A live reader of a key
+    nobody can write. TO CLOSE: add the field to the SDK spec and thread it at `:325`, or delete the
+    claim.
+  - `Completeness.INFERRED` (workflows/containers.py) → **genuinely inert.** The only producer
+    (`:428-431`) returns `COMPLETE`/`ERROR`/`PARTIAL`; nothing marks a projection as inferred.
+    TO CLOSE: mark derived-not-observed sections at the point they are derived.
+  - `ItemStatus.SENT` (inbox.py) → **genuinely inert, and deliberately so.** `status` is a plain
+    `str` field (`inbox.py:152`) never coerced through the enum, and no writer produces `"sent"`;
+    the declaration's own docstring says it "predates the others… it stays because those items
+    exist on disk". A legacy on-disk value kept as documentation. TO CLOSE: nothing — keep, or
+    delete with the legacy items.
+  - `SessionMode.CONTINUOUS` (workflows/models.py:153) → **genuinely inert; the whole class is.**
+    `SessionMode` is referenced NOWHERE in `src/`; `FRESH` escapes the census only because
+    `judge_contract.py:170` `Isolation.FRESH` shares the attribute name (the deliberate global
+    attr-name under-report). The clearest DELETE candidate of the 13 — left in place because
+    node-session semantics are live WF2 spec surface and deletion is an owner call, not a
+    classification one.
+- [2026-08-12][PHF-13] DECISION: the census rule is **NOT widened**, and that is the atom's answer.
+  A syntactic `E(value)` clear would clear six classes of which exactly ONE is genuinely reachable —
+  measured, not argued: a temporary widening probe took enum 13 → 7 (clearing `MemoryTier.SEGMENT`,
+  `MemoryScope.WORKSPACE`, `DependencyType.REQUIRED_FOR`, `Status.RESOLVED`, `Actor.WORKER`,
+  `Verdict.REPLAN`) while leaving `Ratchet.RELAXED` flagged, so the rule would be unsound AND
+  inconsistent. A false CLEAR is strictly worse than the over-report it replaces: it buries a
+  genuine gap inside every internal deserializer, and unlike a false red it passes the shrink-only
+  ratchet in silence because the count goes DOWN. And "provably outside" is not a cheap deterministic
+  AST rule — the one genuine case needs four interprocedural hops across three modules
+  (`request.json()` → `create_task(**body)` → `_coerce_dependencies` → `from_dict`). So the verdicts
+  above ARE the deliverable, recorded in the detector docstring (where the flags are produced) as
+  well as here.
+- [2026-08-12][PHF-13] RAILS, since the ruling is a decision and decisions rot. Three tests in
+  `tests/test_inert_surface_baseline.py` (18 passed): `test_value_lookup_alone_does_not_clear_a_member`
+  (fixture tree — a member reachable only through `E(row[...])` is STILL reported);
+  `test_the_audited_value_lookup_call_sites_have_no_production_caller` (real tree — `validate_verdict`
+  / `hints_from_dict` / `resolve_transition` still have none, so it reds the moment one is wired up,
+  which is exactly when `Verdict.REPLAN`/`Ratchet.RELAXED`/`Actor.WORKER` must be re-verdicted); and
+  `test_the_value_lookup_ruling_is_recorded_in_the_generator` (the verdict vocabulary is present and
+  `PHF-12`'s superseded claim is refused). PROBE, proving the pin can fail: the temporary widening
+  reds exactly three tests — the new pin plus the two baseline-freshness tests ("3 failed, 15
+  passed") — reverted by a targeted edit, never `git checkout --`.
+- [2026-08-12][PHF-13] RATCHET UNTOUCHED. Forbidden-to-raise is intact, no counter rose, and the
+  baseline was regenerated BY THE TOOL and is byte-identical: 140 total (enum 13, sdk_export 127,
+  config / trigger_kind / editable_config 0). Nothing left and nothing entered, because no `src/`
+  behaviour changed — the change is the classifier's DOCUMENTED RULING plus its rails. No `web/`
+  change. No CHANGELOG entry: a repo audit tool and its committed baseline are not a user-visible
+  surface.
+- [2026-08-12][PHF-13] DEVIATION: the atom was scoped assuming `PHF-12`'s DISCOVERY was factually
+  correct and that the only question was whether "provably external" could be expressed cheaply.
+  The audit found the cited premise itself wrong (three of the six sites never execute), so the atom
+  delivered the corrected verdicts and a documented refusal to widen rather than a widened detector.
+  Per the census's own standing rule the fix for a misclassification is to teach the detector the
+  shape — here the correct teaching is that this shape must NOT clear, so the detector is taught in
+  prose and in tests, and the baseline is untouched.
