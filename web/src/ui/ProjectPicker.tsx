@@ -71,8 +71,18 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
 
   return (
     <div ref={ref} className="relative">
+      {/* The name carries the DIMENSION, composed exactly as `PillButton` and `HeaderModePill`
+          compose theirs (`${dimension}: ${label}`). This trigger shows a value and nothing else, and
+          its `title` is not the accessible name while the button has text — so it announced its value
+          alone. Measured on `#/code`, that value is "New project", which is ALSO the name of the
+          Project-kind tab sitting 8px to its right: two controls in one row with the identical
+          accessible name and different jobs. The guard is not theoretical here either — `label` falls
+          back to the bare word "Project" when a bound project is missing from the list, which would
+          otherwise announce "Project: Project". Sighted users see no change. */}
       <button type="button" disabled={disabled} onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox" aria-expanded={open} title="Choose the project this work scopes under"
+        aria-haspopup="listbox" aria-expanded={open}
+        aria-label={label === 'Project' ? 'Project' : `Project: ${label}`}
+        title="Choose the project this work scopes under"
         className="inline-flex h-8 items-center gap-1.5 rounded-pill bg-surface-high px-2.5 text-[0.8125rem] text-on-surface-var transition-colors hover:bg-surface-highest disabled:opacity-50">
         <FolderKanban size={14} className="shrink-0 text-primary" />
         <span className="max-w-[140px] truncate">{label}</span>
