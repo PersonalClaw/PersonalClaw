@@ -24,6 +24,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2LOO-12` | ✅ (#PENDING) | Make `judge_contract`'s enforcement claim honest, and rail it against drift | `WF2LOO-1`, `WF2LOO-6` | `judge_contract.py`'s docstring stops asserting live enforcement ("a PASS without cited proof is invalid ... rejected by the contract") and instead records, measured, that its six enforcement entry points have ZERO production callers, names both live judge paths that supersede it (the one-word `GateKind.JUDGE` gate read by `verify.parse_verdict`; the 6 templates' contract-shaped `judge` STAGE whose output nothing reads), and states what wiring would take. No function is deleted and no judge gate is made stricter: `engine.py` and `verify.py` stay byte-identical. One rail (`test_the_unwired_enforcement_claim_matches_the_live_path`) fails in both directions — enforcement gaining a caller while the docstring still says it has none, and the live gate leaving its one-word prompt while the docstring still gives that as the reason — proven able to fail by three probes (marker removed; injected `validate_verdict` caller; gate prompt switched to JSON) each reverted by a targeted edit, plus two vacuity floors. |
 | `WF2LOO-13` | ⬜ | Wire the judge contract into the live judge path (blast radius measured by `WF2LOO-12`) | `WF2LOO-12`, `WF2LOO-7` | The live judge path speaks the contract: `GateKind.JUDGE` asks for the contract JSON instead of one bare word, `validate_verdict` decides the gate (so a PASS without `proof`/`evidence_refs` is rejected rather than accepted), `meets_ratchet` compares the 14 declared `runtime_hints.judge` rubric criteria against their `target_score` for the first time, `hints_from_dict` becomes the parser of the declarations 6 templates already carry, and the 6 judge STAGES' already-contract-shaped output is validated and bound by the templates that produce it. The two verdict vocabularies (`judge_contract.Verdict` PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs `verify.Verdict` PASS/RETRY/ESCALATE/REJECT) are reconciled to one, not bridged. Measured blast radius: 7 judge gates in 7 bundled templates change prompt + parse; 6 templates x 14 rubric criteria become live thresholds; every judge answer grows from one token to a JSON object on a gate that runs every loop iteration (cost + latency + a new PROTOCOL failure mode on unparseable JSON). Ship behind a measurement of how many real judge responses would satisfy the contract BEFORE it gets teeth — enforcing it against today's population is an outage, which is why `WF2LOO-12` deliberately did not. |
 | `WF2LOO-14` | ✅ (#PENDING) | Make `until_dry` read the `progress_field` its templates declare | `WF2LOO-3` | `controller._advance_loop` decides dryness from the loop's declared `progress_field` instead of from the whole output of whichever node happened to finish the iteration: `_progress_reading` states one exhaustive per-type rule (`None`/`False`/`0`/blank/empty ⇒ dry; anything else ⇒ progress; an unmapped type ⇒ *unreadable*, never swallowed), and `_progress_value` finds the field anywhere in the iteration's body — necessary because both declaring templates emit it from the FIRST stage of a sequence body and end the iteration on a judge stage whose schema has no such key, so a last-leaf-only read would have shipped inert. A loop declaring no field keeps the whole-output rule byte-for-byte, and a declared-but-absent or unreadable field falls back to it rather than counting as dryness (a missing key must not truncate a user's run). `streak` semantics untouched. Blast radius is exactly two shipped templates: `goal-pursuit-open-ended` (`new_findings_count`) and `general-project` (`meaningful_progress`) now end after two zero-progress cycles instead of running to their 12/6 iteration cap; both bodies DO emit their declared field, so no template needed fixing. Driven through a real controller (ends on two zero-progress iterations; does NOT end while progress is reported; a progress cycle resets the streak; an absent field runs to the cap), plus a rail over every bundled template that a declared field is emitted by a body schema AND named in that node's prompt — proven able to fail by two probes (call site reverted to `_is_dry`, one template's field renamed) each reverted by a targeted edit. |
+| `WF2LOO-15` | ✅ | judge_actors: separate the enforced invariant from the authored one, and rail the claim | `WF2LOO-12` | judge_actors' docstring distinguishes the ENFORCED invariant (judge isolation — plan_judge_session/validate_judge_model called from engine.dispatch_gate) from the AUTHORED-but-unwired one (the worker-transition rule: check_transition/resolve_transition have no production caller because node transitions carry no actor — controller.py's actor belongs to the mutation queue), and names blind_provenance/assemble_judge_evidence as unwired for the same reason; tests/test_workflows_judge_actors_claims.py pins the claim to the call graph in BOTH directions and is proven to fail when the marker is removed AND when a caller is wired while the marker stays; WF2LOO-13's scope names all four functions so the unwired judge surface has ONE owner |
 
 ## Atom scopes
 
@@ -339,3 +340,31 @@ every other loop mode. `_is_dry` has exactly ONE caller, so no non-loop behavior
 7. Prove both halves can fail: revert the call site to `_is_dry` (the two ending tests go red);
    rename one template's declared field (the rail goes red). Revert each with a targeted edit.
 8. Correct `template_lint.py`'s comment so it describes the behavior that now exists.
+
+### `WF2LOO-15` — judge_actors: separate the enforced invariant from the authored one
+
+**Status:** done
+
+**Design.** `judge_actors` opened with *"Two invariants the engine ENFORCES rather than suggests"*, and only one of
+them ran. Measured live references outside the module: `plan_judge_session` 3, `validate_judge_model` 4 — the judge
+**isolation** rule is genuinely enforced from `engine.dispatch_gate`, and `engine.py:1296`'s own comment records that
+this seam was itself dead until S146 wired it. Against that: `check_transition` 0, `resolve_transition` 0,
+`blind_provenance` 0, `assemble_judge_evidence` 0.
+
+The reason the transition rule was never wired is structural, not an oversight: **the state machine has no actor at a
+node transition.** `controller.py`'s `actor` parameter (line 1210) belongs to the *mutation* queue, so there is
+nothing to pass to `check_transition` at the point a node's state changes. Introducing one is real work, and it is
+`WF2LOO-13`'s — this atom refuses to fake it, corrects the claim, and consolidates ownership so the unwired judge
+surface has a single owner instead of three half-findings across two modules.
+
+Same for the blinding pair: the live judge gate sends a one-word prompt and parses the word, so there is no
+message-list evidence for `assemble_judge_evidence` to blind. Authored for the richer judge path, not for this one.
+
+**Implementation plan.**
+1. Rewrite the module docstring into three bullets — ENFORCED (with the file:line seam), AUTHORED-NOT-ENFORCED (with
+   the reason and the owning atom), and the blinding pair — and say the sections below specify a rule rather than
+   describe what runs.
+2. `tests/test_workflows_judge_actors_claims.py`: a vacuity floor (every symbol still defined), the enforced half must
+   keep a live caller, and the authored half must agree with the docstring **in both directions**.
+3. Prove both failure directions with probes, reverted by targeted edits.
+4. Extend `WF2LOO-13`'s scope to name all four functions.
