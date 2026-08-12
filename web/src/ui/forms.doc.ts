@@ -38,6 +38,7 @@ const docs: UiDoc[] = [
       { name: 'onChange', description: 'Fires with the new string on each keystroke.' },
       { name: 'onKeyDown', description: 'Key handler on the input (e.g. Enter to submit).' },
       { name: 'placeholder', description: 'Placeholder text shown when empty.' },
+      { name: 'required', description: 'Publishes `aria-required` and nothing else — no asterisk, no colour, no layout change. Mark the field a form actually enforces: the app already explains mandatory fields at the submit button (40 `disabledReason` sites read "Enter a … first"), which a screen-reader user tabbing the field never hears. A VISIBLE required marker is a separate design decision; this is the invisible half.' },
       { name: 'size', description: "Height/text tier — 'sm' h-8 (dense in-panel), 'md' h-9 (rows/side panels), 'lg' h-10 (page forms; DEFAULT, the DESIGN.md canonical Input)." },
       { name: 'surface', description: "Fill token — 'container' (default, sits in a panel), 'high' (on a panel/toolbar), 'base' (on the raw surface)." },
       { name: 'type', description: "'text' (default) or 'password' to mask a secret (API keys, tokens)." },
