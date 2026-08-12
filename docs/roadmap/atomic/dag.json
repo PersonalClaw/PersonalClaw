@@ -6477,7 +6477,7 @@
         {
           "id": "WF2WOR-2",
           "title": "Cross-project needs-input inbox FE + reply-resume routing",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§6.1 (needs-input inbox / decision queue, R1), Migration Order step 4",
           "done_when": "Success Criterion 4: the needs-input inbox surfaces a gated run, an attention-state loop, and a blocked task as decision-ready NeedsInputItem cards; a reply resumes the exact blocked node via resume_token; modify-and-approve (permission_suggestions + updated_input) works; count pills, digest-batching, staleness re-notify and the Open Decisions lane render",
           "deps": [
@@ -6485,7 +6485,8 @@
             "EXT:WORKFLOWS-V2:workflow_resume answer grammar for modify-and-approve",
             "EXT:SELF-VERIFICATION:replay harness gates needs-input/approval journal-event reification"
           ],
-          "pr": "#190"
+          "pr": "#190",
+          "evidence": "Status was stale, not the work: PR #190 (\"S51 the NeedsInputItem card, owner binding and staleness re-notify\") is MERGED — mergedAt 2026-08-02T21:38:44Z, merge commit 11763fd2, in main's history — and the atom was left `in_progress` after it landed. Outcome-checked, not just PR-checked: workflows/needs_input.py + attention.py project the gated run/attention loop/blocked task as NeedsInputItem cards through the already-registered ItemKind.NEEDS_INPUT inbox seam (no bespoke FE component — the shared inbox renders it), and resume_token routes the reply back to the exact blocked node via workflows/controller.py + service.py."
         },
         {
           "id": "WF2WOR-3",
@@ -6933,11 +6934,6 @@
         "plan": "AE"
       },
       {
-        "id": "AG-11",
-        "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
-        "plan": "AG"
-      },
-      {
         "id": "AG-6",
         "title": "S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py)",
         "plan": "AG"
@@ -6945,6 +6941,11 @@
       {
         "id": "AG-9",
         "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
+        "plan": "AG"
+      },
+      {
+        "id": "AG-11",
+        "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
         "plan": "AG"
       },
       {
@@ -6968,16 +6969,6 @@
         "plan": "APE"
       },
       {
-        "id": "APE-10",
-        "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
-        "plan": "APE"
-      },
-      {
-        "id": "APE-11",
-        "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
-        "plan": "APE"
-      },
-      {
         "id": "APE-4",
         "title": "quality manifest block + Store card rendering + first-party CI verification",
         "plan": "APE"
@@ -6985,6 +6976,16 @@
       {
         "id": "APE-5",
         "title": "Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-10",
+        "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-11",
+        "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
         "plan": "APE"
       },
       {
@@ -7066,6 +7067,11 @@
         "id": "CC-8",
         "title": "Chat plan-mode entry + mid-task re-planning bound to the existing planning gate",
         "plan": "CC"
+      },
+      {
+        "id": "CE-9",
+        "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
+        "plan": "CE"
       },
       {
         "id": "CRE-7",
@@ -7168,8 +7174,13 @@
         "plan": "EA"
       },
       {
-        "id": "EI-12",
-        "title": "App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)",
+        "id": "EI-2",
+        "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-3",
+        "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
         "plan": "EI"
       },
       {
@@ -7178,9 +7189,24 @@
         "plan": "EI"
       },
       {
-        "id": "ES-11",
-        "title": "Bundled optimize-harness template (budgeted search over PClaw's own artifacts)",
-        "plan": "ES"
+        "id": "EI-8",
+        "title": "Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-10",
+        "title": "Secrets vault UX + presence-only API + grant-to-sandbox toggles",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-12",
+        "title": "App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)",
+        "plan": "EI"
+      },
+      {
+        "id": "EIAT-3",
+        "title": "mail-inbox send_reply over SMTP, draft-by-default (S2)",
+        "plan": "EIAT"
       },
       {
         "id": "ES-2",
@@ -7205,6 +7231,11 @@
       {
         "id": "ES-7",
         "title": "Harness ablation runner + skills bench + model-upgrade watchdog",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-11",
+        "title": "Bundled optimize-harness template (budgeted search over PClaw's own artifacts)",
         "plan": "ES"
       },
       {
@@ -7250,6 +7281,11 @@
       {
         "id": "KL-7",
         "title": "S3 reading view: editorial type scale, progress, in-reader highlight→note",
+        "plan": "KL"
+      },
+      {
+        "id": "KL-10",
+        "title": "Indexing H1.3: vector arm searches chunks and rolls up to items before RRF",
         "plan": "KL"
       },
       {
@@ -7378,16 +7414,6 @@
         "plan": "PEP"
       },
       {
-        "id": "PEP-10",
-        "title": "Always-on conventions viewer + first domain-craft skills",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-11",
-        "title": "First-party product-app suite program",
-        "plan": "PEP"
-      },
-      {
         "id": "PEP-3",
         "title": "App Store persistent category/source rail + card polish",
         "plan": "PEP"
@@ -7405,6 +7431,16 @@
       {
         "id": "PEP-7",
         "title": "Artifacts as an indexed knowledge source",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-10",
+        "title": "Always-on conventions viewer + first domain-craft skills",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-11",
+        "title": "First-party product-app suite program",
         "plan": "PEP"
       },
       {
@@ -7433,16 +7469,6 @@
         "plan": "PHF"
       },
       {
-        "id": "PR2-10",
-        "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
-        "plan": "PR2"
-      },
-      {
-        "id": "PR2-11",
-        "title": "Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)",
-        "plan": "PR2"
-      },
-      {
         "id": "PR2-7",
         "title": "Automation would-execute rendering on the trust surface (§3.3)",
         "plan": "PR2"
@@ -7455,6 +7481,16 @@
       {
         "id": "PR2-9",
         "title": "Richer memory-pipeline alarm + flywheel/knowledge degraded floors (§3.2 richer, §5.2)",
+        "plan": "PR2"
+      },
+      {
+        "id": "PR2-10",
+        "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
+        "plan": "PR2"
+      },
+      {
+        "id": "PR2-11",
+        "title": "Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)",
         "plan": "PR2"
       },
       {
@@ -7473,11 +7509,6 @@
         "plan": "PT"
       },
       {
-        "id": "PUBL-10",
-        "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
-        "plan": "PUBL"
-      },
-      {
         "id": "PUBL-7",
         "title": "Fresh-clone getting-started walkthrough on a clean machine and fix remote friction",
         "plan": "PUBL"
@@ -7490,6 +7521,11 @@
       {
         "id": "PUBL-9",
         "title": "Verify Store git-source install from the published apps repo URL",
+        "plan": "PUBL"
+      },
+      {
+        "id": "PUBL-10",
+        "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
       },
       {
@@ -7533,11 +7569,6 @@
         "plan": "TSE"
       },
       {
-        "id": "WF2AUT-11",
-        "title": "idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption)",
-        "plan": "WF2AUT"
-      },
-      {
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
@@ -7548,24 +7579,24 @@
         "plan": "WF2KNO"
       },
       {
+        "id": "WF2LEA-6",
+        "title": "Step 6: template refiner AGENT + version store + Versions/Ledger FE tabs + skill sidecar overlays",
+        "plan": "WF2LEA"
+      },
+      {
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
         "plan": "WF2LEA"
       },
       {
-        "id": "WF2LEA-7",
-        "title": "Step 7: ad-hoc→template detector call sites + tier-migration detector + template_save_from_session",
-        "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LOO-10",
-        "title": "code-project template (product decision + build)",
-        "plan": "WF2LOO"
-      },
-      {
         "id": "WF2UNI-12",
         "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
         "plan": "WF2UNI"
+      },
+      {
+        "id": "WF2WOR-12",
+        "title": "Container workspace mode + snapshot-anchored fork (deferred, opt-in)",
+        "plan": "WF2WOR"
       },
       {
         "id": "WS-3",
@@ -7591,408 +7622,617 @@
         "id": "WS-7",
         "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
         "plan": "WS"
-      },
-      {
-        "id": "WF2WOR-9",
-        "title": "Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC)",
-        "plan": "WORKFLOWS-V2-WORK-CONTAINERS"
-      },
-      {
-        "id": "EI-3",
-        "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
-        "plan": "EXECUTION-ISOLATION"
-      },
-      {
-        "id": "EI-8",
-        "title": "Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview",
-        "plan": "EXECUTION-ISOLATION"
       }
     ],
     "topo_order": [
       "AAP-1",
       "AAP-2",
       "AAP-3",
+      "AAP-4",
+      "AAP-5",
+      "AAP-6",
+      "AAP-7",
+      "AAP-8",
+      "AAP-9",
+      "AAP-10",
+      "AE-1",
+      "AE-2",
+      "AE-3",
+      "AE-4",
+      "AE-5",
+      "AE-6",
+      "AE-7",
+      "AE-8",
+      "AE-9",
       "AE-10",
+      "AG-1",
+      "AG-2",
+      "AG-3",
+      "AG-4",
       "AG-5",
       "AG-6",
+      "AG-7",
+      "AG-8",
       "AG-9",
+      "AG-10",
+      "AG-11",
       "AP-1",
+      "AP-2",
+      "AP-3",
+      "AP-4",
+      "AP-5",
+      "AP-6",
+      "AP-7",
       "APE-1",
+      "APE-2",
+      "APE-3",
       "APE-4",
       "APE-5",
       "APE-7",
       "APE-8",
       "APE-9",
+      "APE-10",
+      "APE-11",
+      "APE-6",
       "AR-1",
+      "AR-2",
+      "AR-3",
+      "AR-4",
+      "AR-5",
+      "AR-6",
+      "AR-7",
+      "AR-8",
+      "AR2-1",
+      "AR2-2",
+      "AR2-3",
+      "AR2-4",
+      "AR2-5",
+      "AR2-6",
+      "AR2-7",
       "AR2-8",
       "AS-1",
+      "AS-2",
       "AS-3",
       "AS-4",
+      "AS-5",
+      "AS-6",
       "AS-7",
+      "AS-8",
+      "AS-9",
       "BA-1",
+      "BA-2",
+      "BA-3",
+      "BA-4",
+      "BA-5",
+      "BA-6",
+      "BA-7",
+      "BA-8",
+      "BA-9",
       "CA-1",
+      "CA-2",
       "CA-3",
       "CA-4",
+      "CA-5",
       "CA-6",
+      "CA-7",
+      "CA-8",
+      "CA-9",
       "CATO-1",
+      "CATO-2",
+      "CATO-3",
+      "CATO-4",
+      "CATO-5",
+      "CATO-6",
+      "CATO-7",
+      "CATO-8",
+      "CC-1",
+      "CC-2",
+      "CC-3",
       "CC-4",
       "CC-5",
+      "CC-6",
       "CC-7",
       "CC-8",
       "CE-1",
+      "CE-2",
+      "CE-3",
+      "CE-4",
+      "CE-5",
+      "CE-6",
+      "CE-8",
+      "CE-7",
+      "CE-9",
+      "CE2-1",
+      "CE2-2",
+      "CE2-3",
+      "CE2-4",
+      "CE2-5",
+      "CE2-6",
+      "CRE-1",
+      "CRE-2",
+      "CRE-3",
+      "CRE-4",
+      "CRE-5",
+      "CRE-6",
       "CRE-7",
+      "CRE-8",
+      "DAS-1",
+      "DAS-2",
+      "DAS-3",
+      "DAS-4",
+      "DAS-5",
       "DAS-6",
+      "DAS-7",
+      "DAS-8",
       "DAS-9",
+      "DAS-10",
       "DC-1",
       "DC-2",
+      "DC-3",
+      "DC-4",
+      "DC-5",
+      "DC-6",
       "DCU-1",
       "DCU-2",
+      "DCU-3",
+      "DCU-4",
+      "DCU-5",
+      "DCU-6",
+      "DCU-7",
       "DFE-1",
       "DFE-2",
+      "DFE-3",
+      "DFE-4",
+      "DFE-5",
+      "DFE-6",
+      "DFE-7",
+      "DFE-8",
+      "DHT-1",
+      "DHT-2",
+      "DHT-3",
+      "DHT-4",
+      "DHT-5",
+      "DHT-6",
+      "DHT-7",
+      "DHT-8",
+      "DHT-9",
+      "DHT-10",
+      "DIST-1",
+      "DIST-2",
+      "DIST-3",
+      "DIST-4",
+      "DIST-5",
+      "DIST-6",
+      "DIST-7",
+      "DIST-8",
+      "DIST-9",
+      "DIST-10",
       "DIST-11",
       "DIST-12",
+      "DIST-13",
+      "DL-1",
+      "DL-2",
+      "DL-3",
       "DL-4",
+      "DL-5",
       "DL-6",
+      "DL-7",
+      "DL-8",
       "DL-9",
+      "DSC-1",
+      "DSC-2",
+      "DSC-3",
+      "DSC-4",
+      "DSC-5",
+      "DSC-6",
+      "DSC-7",
+      "DSC-8",
+      "DSC-9",
+      "DSC-10",
       "DSC-11",
       "DSC-12",
       "EA-1",
+      "EA-2",
+      "EA-3",
+      "EA-4",
+      "EA-5",
+      "EA-6",
+      "EA-7",
+      "EA-8",
+      "EA-9",
       "EI-1",
+      "EI-2",
+      "EI-3",
+      "EI-4",
+      "EI-5",
+      "EI-6",
+      "EI-7",
+      "EI-8",
+      "EI-9",
+      "EI-10",
       "EI-11",
       "EI-12",
-      "EI-5",
+      "EIAT-1",
+      "EIAT-2",
+      "EIAT-3",
+      "EIAT-4",
+      "EIAT-5",
+      "EIAT-6",
       "ES-1",
+      "ES-2",
+      "ES-3",
+      "ES-4",
+      "ES-5",
+      "ES-6",
+      "ES-7",
+      "ES-8",
+      "ES-9",
+      "ES-10",
+      "ES-11",
       "ET-1",
+      "ET-2",
       "ET-3",
+      "ET-4",
+      "ET-5",
+      "ET-6",
+      "ET-7",
+      "ET-8",
       "FM-1",
+      "FM-2",
+      "FM-3",
+      "FM-4",
+      "FM-5",
+      "FM-6",
+      "FM-7",
+      "FS-1",
+      "FS-2",
+      "FS-3",
       "FS-4",
+      "FS-5",
+      "FS-6",
       "HC-1",
+      "HC-2",
       "HC-3",
       "HC-4",
+      "HC-5",
+      "IA2-1",
+      "IA2-2",
+      "IA2-3",
+      "IA2-4",
+      "IA2-5",
+      "IA2-6",
+      "IA2-7",
+      "INU-1",
+      "INU-2",
+      "INU-3",
+      "INU-4",
+      "INU-5",
       "INU-6",
+      "INU-7",
+      "INU-8",
+      "KL-1",
+      "KL-2",
+      "KL-3",
+      "KL-4",
+      "KL-5",
       "KL-6",
       "KL-7",
+      "KL-8",
       "KL-9",
+      "KL-10",
+      "KL-11",
+      "KL-12",
+      "LMMV-1",
       "LMMV-2",
       "LMMV-3",
       "LMMV-4",
+      "LMMV-5",
       "LMMV-6",
+      "LMMV-7",
+      "LV-1",
+      "LV-2",
+      "LV-3",
+      "LV-4",
+      "LV-5",
       "LV-6",
+      "LV-7",
       "MC-1",
+      "MC-2",
       "MC-3",
+      "MC-4",
+      "MC-5",
+      "MC-6",
+      "MC-7",
+      "MC-8",
+      "MC-9",
+      "MC-10",
+      "MGAV-1",
+      "MGAV-2",
+      "MGAV-3",
+      "MGAV-4",
       "MGAV-5",
       "MGAV-6",
       "MGAV-7",
       "MGAV-8",
+      "MGAV-9",
       "MI-1",
+      "MI-2",
       "MI-3",
       "MI-4",
+      "MI-5",
+      "MRI-1",
+      "MRI-2",
+      "MRI-3",
       "MRI-5",
+      "MRI-4",
       "MRT-1",
       "MRT-2",
+      "MRT-3",
+      "MRT-4",
+      "MRT-5",
+      "MUCV-1",
+      "MUCV-2",
+      "MUCV-3",
+      "MUCV-4",
+      "MUCV-5",
+      "MUCV-6",
+      "MUCV-7",
+      "MUCV-8",
+      "OO-1",
+      "OO-2",
+      "OO-3",
+      "OO-4",
+      "OO-5",
+      "OO-6",
+      "OO-7",
       "OU-1",
+      "OU-2",
+      "OU-3",
+      "OU-4",
       "OU-5",
       "OU-6",
       "OU-7",
+      "OU-8",
+      "OU-9",
+      "OU-10",
+      "OU-11",
       "PA-1",
+      "PA-2",
+      "PA-3",
+      "PA-4",
+      "PA-5",
+      "PA-6",
+      "PBC-1",
+      "PBC-2",
+      "PBC-3",
+      "PBC-4",
+      "PBC-5",
+      "PBC-6",
+      "PBC-7",
       "PCS-1",
       "PCS-2",
+      "PCS-3",
+      "PCS-4",
+      "PCS-5",
       "PCS-6",
+      "PCS-7",
+      "PCS-8",
       "PEP-1",
-      "PEP-10",
+      "PEP-2",
+      "PEP-3",
       "PEP-4",
+      "PEP-5",
       "PEP-6",
       "PEP-7",
+      "PEP-8",
+      "PEP-9",
+      "PEP-10",
+      "PEP-11",
       "PHF-1",
+      "PHF-2",
+      "PHF-3",
+      "PHF-4",
+      "PHF-5",
+      "PHF-6",
+      "PHF-7",
+      "PHF-8",
+      "PHF-9",
       "PHF-10",
       "PHF-11",
-      "PHF-3",
-      "PHF-5",
+      "PL-1",
+      "PL-2",
+      "PL-3",
+      "PL-4",
+      "PL-5",
+      "PL-6",
+      "PL-7",
       "PR-1",
+      "PR-2",
+      "PR-3",
       "PR-4",
+      "PR-5",
       "PR-6",
       "PR-7",
       "PR-8",
-      "PR2-11",
+      "PR2-1",
+      "PR2-2",
+      "PR2-3",
+      "PR2-4",
+      "PR2-5",
+      "PR2-6",
       "PR2-7",
       "PR2-8",
       "PR2-9",
+      "PR2-10",
+      "PR2-11",
+      "PT-1",
       "PT-2",
       "PT-3",
       "PT-4",
+      "PT-5",
+      "PT-6",
+      "PUBL-1",
+      "PUBL-2",
+      "PUBL-3",
+      "PUBL-4",
+      "PUBL-5",
+      "PUBL-6",
       "PUBL-7",
       "PUBL-8",
       "PUBL-9",
+      "PUBL-10",
+      "RUA-1",
+      "RUA-2",
+      "RUA-3",
+      "RUA-4",
       "SH-1",
+      "SH-2",
       "SH-3",
+      "SH-4",
       "SH-5",
       "SH-6",
+      "SH-7",
       "SH-8",
       "SH-9",
+      "SH-10",
+      "SL-1",
+      "SL-2",
+      "SL-3",
+      "SL-4",
+      "SL-5",
+      "SL-6",
+      "SL-7",
+      "SM-1",
+      "SM-2",
+      "SM-3",
+      "SM-4",
       "SM-5",
+      "SM-6",
+      "SM-7",
+      "SM-8",
+      "SM-9",
+      "SV-1",
+      "SV-2",
+      "SV-3",
+      "SV-4",
       "SV-5",
       "SV-6",
       "SV-7",
       "SV-8",
       "SV-9",
+      "SV-10",
+      "SV-11",
+      "TSE-1",
+      "TSE-2",
+      "TSE-3",
       "TSE-4",
-      "WF2AUT-10",
-      "WF2AUT-11",
+      "TSE-5",
+      "WF2AUT-1",
+      "WF2AUT-2",
+      "WF2AUT-3",
+      "WF2AUT-4",
+      "WF2AUT-5",
       "WF2AUT-6",
       "WF2AUT-7",
+      "WF2AUT-8",
       "WF2AUT-9",
-      "WF2KNO-10",
+      "WF2AUT-10",
+      "WF2AUT-11",
+      "WF2AUT-12",
+      "WF2AUT-13",
+      "WF2KNO-1",
+      "WF2KNO-2",
+      "WF2KNO-3",
+      "WF2KNO-4",
+      "WF2KNO-5",
+      "WF2KNO-6",
       "WF2KNO-7",
       "WF2KNO-8",
-      "WF2LEA-10",
-      "WF2LEA-12",
+      "WF2KNO-9",
+      "WF2KNO-10",
+      "WF2LEA-1",
+      "WF2LEA-2",
       "WF2LEA-3",
       "WF2LEA-4",
+      "WF2LEA-5",
+      "WF2LEA-6",
+      "WF2LEA-7",
       "WF2LEA-8",
+      "WF2LEA-9",
+      "WF2LEA-10",
+      "WF2LEA-11",
+      "WF2LEA-12",
+      "WF2LEA-13",
+      "WF2LOO-1",
+      "WF2LOO-2",
+      "WF2LOO-3",
+      "WF2LOO-4",
+      "WF2LOO-5",
+      "WF2LOO-6",
+      "WF2LOO-7",
+      "WF2LOO-8",
+      "WF2LOO-9",
       "WF2LOO-10",
       "WF2LOO-11",
-      "WF2LOO-7",
-      "WF2UNI-10",
-      "WF2UNI-11",
+      "WF2TAS-1",
+      "WF2TAS-2",
+      "WF2TAS-3",
+      "WF2TAS-4",
+      "WF2TAS-5",
+      "WF2TAS-6",
+      "WF2TAS-7",
+      "WF2TAS-8",
+      "WF2TAS-9",
+      "WF2TAS-10",
+      "WF2TAS-11",
+      "WF2UNI-1",
+      "WF2UNI-2",
+      "WF2UNI-3",
+      "WF2UNI-4",
+      "WF2UNI-5",
+      "WF2UNI-6",
+      "WF2UNI-7",
       "WF2UNI-8",
       "WF2UNI-9",
+      "WF2UNI-10",
+      "WF2UNI-11",
+      "WF2UNI-12",
+      "WF2UNI-13",
       "WF2WOR-1",
-      "WF2WOR-10",
-      "WF2WOR-3",
-      "WS-1",
-      "WV-11",
-      "WV-12",
-      "WV-9",
-      "AAP-4",
-      "AAP-5",
-      "AAP-6",
-      "AAP-7",
-      "AG-11",
-      "AG-7",
-      "AP-2",
-      "AP-5",
-      "APE-10",
-      "APE-11",
-      "APE-2",
-      "APE-3",
-      "AR-2",
-      "AS-2",
-      "AS-5",
-      "AS-8",
-      "AS-9",
-      "BA-2",
-      "CA-2",
-      "CA-5",
-      "CA-7",
-      "CATO-2",
-      "CATO-3",
-      "CATO-4",
-      "CATO-5",
-      "CC-6",
-      "CE-2",
-      "CE-3",
-      "CE-4",
-      "CE-5",
-      "DAS-7",
-      "DAS-8",
-      "DC-3",
-      "DC-4",
-      "DC-5",
-      "DCU-3",
-      "DFE-3",
-      "DL-5",
-      "DL-8",
-      "EA-4",
-      "EA-5",
-      "EA-7",
-      "EA-8",
-      "EA-9",
-      "EI-10",
-      "EI-3",
-      "EI-6",
-      "EI-7",
-      "EI-8",
-      "ES-2",
-      "ES-3",
-      "ES-4",
-      "ET-2",
-      "ET-4",
-      "ET-8",
-      "FM-2",
-      "FM-3",
-      "FM-5",
-      "FM-6",
-      "FS-6",
-      "HC-2",
-      "HC-5",
-      "INU-7",
-      "KL-10",
-      "KL-8",
-      "LMMV-5",
-      "MC-2",
-      "MC-4",
-      "MGAV-9",
-      "MI-2",
-      "MRI-4",
-      "MRT-3",
-      "MRT-4",
-      "OU-2",
-      "OU-8",
-      "PA-2",
-      "PA-4",
-      "PCS-3",
-      "PEP-2",
-      "PEP-3",
-      "PEP-8",
-      "PHF-2",
-      "PHF-4",
-      "PHF-6",
-      "PHF-7",
-      "PHF-8",
-      "PHF-9",
-      "PR-2",
-      "PR-5",
-      "PT-5",
-      "SH-10",
-      "SH-2",
-      "SH-4",
-      "SH-7",
-      "SV-10",
-      "TSE-5",
-      "WF2AUT-12",
-      "WF2LEA-5",
-      "WF2LOO-8",
       "WF2WOR-2",
+      "WF2WOR-3",
       "WF2WOR-4",
       "WF2WOR-6",
       "WF2WOR-7",
-      "WS-2",
-      "WV-10",
-      "AAP-8",
-      "AAP-9",
-      "AG-8",
-      "AP-3",
-      "APE-6",
-      "AR-3",
-      "AS-6",
-      "CA-8",
-      "CATO-6",
-      "CATO-7",
-      "CATO-8",
-      "CE-6",
-      "CE-8",
-      "DAS-10",
-      "DCU-4",
-      "DFE-4",
-      "ET-5",
-      "ET-6",
-      "FM-4",
-      "KL-11",
-      "KL-12",
-      "LMMV-7",
-      "LV-1",
-      "MC-5",
-      "MC-6",
-      "MC-7",
-      "MI-5",
-      "MRT-5",
-      "OU-3",
-      "PA-6",
-      "PCS-4",
-      "PCS-5",
-      "PEP-9",
-      "PR-3",
-      "PR2-10",
-      "PT-6",
-      "PUBL-10",
-      "WF2AUT-8",
-      "WF2LEA-7",
-      "WF2LEA-9",
+      "WF2WOR-8",
+      "WF2WOR-9",
+      "WF2WOR-5",
+      "WF2WOR-10",
       "WF2WOR-11",
       "WF2WOR-12",
+      "WS-1",
+      "WS-2",
       "WS-3",
       "WS-4",
       "WS-5",
       "WS-6",
       "WS-7",
-      "AAP-10",
-      "AG-10",
-      "AP-4",
-      "AP-6",
-      "AR-4",
-      "AR-5",
-      "AR-6",
-      "CE-7",
-      "DC-6",
-      "DCU-5",
-      "DCU-6",
-      "DCU-7",
-      "DFE-5",
-      "EI-2",
-      "EI-9",
-      "EIAT-1",
-      "FM-7",
-      "LV-2",
-      "LV-3",
-      "LV-5",
-      "MC-8",
-      "MC-9",
-      "OU-4",
-      "OU-9",
-      "PCS-7",
-      "PCS-8",
-      "PEP-11",
-      "SV-11",
-      "WF2KNO-9",
-      "WF2LEA-11",
-      "WF2LEA-6",
-      "WF2LOO-9",
-      "WF2UNI-7",
       "WS-8",
       "WS-9",
-      "AP-7",
-      "AR-7",
-      "AR-8",
-      "BA-3",
-      "CA-9",
-      "DFE-6",
-      "DFE-7",
-      "DFE-8",
-      "EA-2",
-      "EA-6",
-      "EI-4",
-      "EIAT-2",
-      "EIAT-5",
-      "ES-11",
-      "ES-5",
-      "ES-7",
-      "LV-4",
-      "MC-10",
-      "OU-10",
-      "PA-3",
-      "PEP-5",
-      "WF2UNI-12",
-      "WF2WOR-8",
-      "BA-4",
-      "BA-7",
-      "EIAT-3",
-      "EIAT-4",
-      "ES-10",
-      "ES-6",
-      "ES-8",
-      "LV-7",
-      "OU-11",
-      "PA-5",
-      "WF2WOR-9",
-      "BA-5",
-      "BA-6",
-      "BA-8",
-      "DL-7",
-      "ES-9",
-      "WF2WOR-5",
-      "BA-9",
-      "CE-9",
-      "ET-7"
+      "WV-1",
+      "WV-2",
+      "WV-3",
+      "WV-4",
+      "WV-5",
+      "WV-6",
+      "WV-7",
+      "WV-8",
+      "WV-9",
+      "WV-10",
+      "WV-11",
+      "WV-12",
+      "WV-13",
+      "WV-14"
     ],
     "cycles": [
       [
@@ -8002,8 +8242,8 @@
       ],
       [
         "CRE-4",
-        "DIST-1",
         "DIST-3",
+        "DIST-1",
         "CRE-4"
       ]
     ],
@@ -9028,7 +9268,8 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "RUA",
@@ -9036,39 +9277,44 @@
         "total_atoms": 4,
         "done": 4,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "INU",
         "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
-        "total_atoms": 7,
-        "done": 5,
+        "total_atoms": 8,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "MGAV",
         "plan": "MEMORY-GRAPH-AND-VAULT",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 7
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "WF2KNO",
         "plan": "WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS",
         "total_atoms": 10,
-        "done": 6,
+        "done": 9,
         "in_progress": 0,
-        "todo": 4
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "WF2TAS",
@@ -9076,7 +9322,8 @@
         "total_atoms": 11,
         "done": 11,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PR2",
@@ -9084,15 +9331,17 @@
         "total_atoms": 11,
         "done": 6,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 11,
-        "done": 4,
+        "done": 6,
         "in_progress": 0,
-        "todo": 7
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "DSC",
@@ -9100,7 +9349,8 @@
         "total_atoms": 12,
         "done": 10,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "MRI",
@@ -9108,15 +9358,17 @@
         "total_atoms": 5,
         "done": 3,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "DAS",
         "plan": "DURABILITY-AND-SYNC",
         "total_atoms": 10,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 5
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "DFE",
@@ -9124,15 +9376,17 @@
         "total_atoms": 8,
         "done": 0,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 9
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "DHT",
@@ -9140,15 +9394,17 @@
         "total_atoms": 10,
         "done": 10,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 11,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 11
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "AE",
@@ -9156,7 +9412,8 @@
         "total_atoms": 10,
         "done": 9,
         "in_progress": 0,
-        "todo": 1
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "TSE",
@@ -9164,55 +9421,62 @@
         "total_atoms": 5,
         "done": 3,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "DIST",
         "plan": "DISTRIBUTION",
-        "total_atoms": 12,
-        "done": 10,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 0,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "WF2UNI",
         "plan": "WORKFLOWS-V2-UNIVERSAL-PLANNING",
-        "total_atoms": 12,
-        "done": 6,
+        "total_atoms": 13,
+        "done": 12,
         "in_progress": 0,
-        "todo": 6
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
         "total_atoms": 11,
-        "done": 6,
+        "done": 10,
         "in_progress": 0,
-        "todo": 5
+        "todo": 0,
+        "blocked": 1
       },
       {
         "code": "LMMV",
         "plan": "LOCAL-MODEL-MANAGER-V2",
         "total_atoms": 7,
-        "done": 1,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6
+        "todo": 3,
+        "blocked": 0
       },
       {
         "code": "SM",
         "plan": "SESSION-MANAGEMENT",
-        "total_atoms": 8,
-        "done": 7,
+        "total_atoms": 9,
+        "done": 9,
         "in_progress": 0,
-        "todo": 1
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "CE2",
@@ -9220,7 +9484,8 @@
         "total_atoms": 6,
         "done": 6,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PA",
@@ -9228,47 +9493,53 @@
         "total_atoms": 6,
         "done": 0,
         "in_progress": 0,
-        "todo": 6
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "WV",
         "plan": "WORKFLOWS-V2",
-        "total_atoms": 12,
-        "done": 8,
+        "total_atoms": 14,
+        "done": 14,
         "in_progress": 0,
-        "todo": 4
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "AP",
         "plan": "AGENT-PACKS",
         "total_atoms": 7,
-        "done": 0,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "MRT",
         "plan": "MODEL-ROUTING-TELEMETRY",
         "total_atoms": 5,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 5
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "WF2LEA",
         "plan": "WORKFLOWS-V2-LEARNING-FLYWHEEL",
-        "total_atoms": 12,
-        "done": 2,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 10
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "CRE",
         "plan": "CI-RELEASE-ENGINEERING",
-        "total_atoms": 7,
-        "done": 6,
+        "total_atoms": 8,
+        "done": 7,
         "in_progress": 0,
-        "todo": 1
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "MI",
@@ -9276,7 +9547,8 @@
         "total_atoms": 5,
         "done": 0,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "OO",
@@ -9284,15 +9556,17 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "WF2AUT",
         "plan": "WORKFLOWS-V2-AUTOMATION-SUBSTRATE",
-        "total_atoms": 12,
-        "done": 5,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 7
+        "todo": 1,
+        "blocked": 1
       },
       {
         "code": "CC",
@@ -9300,23 +9574,26 @@
         "total_atoms": 8,
         "done": 3,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "AR2",
         "plan": "AGENT-ROUTING",
         "total_atoms": 8,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 1
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "FS",
         "plan": "FEEDBACK-SIGNAL",
         "total_atoms": 6,
-        "done": 4,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PBC",
@@ -9324,7 +9601,8 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "CA",
@@ -9332,7 +9610,8 @@
         "total_atoms": 9,
         "done": 0,
         "in_progress": 0,
-        "todo": 9
+        "todo": 9,
+        "blocked": 0
       },
       {
         "code": "EA",
@@ -9340,31 +9619,35 @@
         "total_atoms": 9,
         "done": 1,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "EIAT",
         "plan": "EMAIL-INBOX-AND-TRIGGERS",
-        "total_atoms": 5,
-        "done": 0,
+        "total_atoms": 6,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "CATO",
         "plan": "COST-AND-TOKEN-OBSERVABILITY",
         "total_atoms": 8,
-        "done": 0,
+        "done": 8,
         "in_progress": 0,
-        "todo": 8
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PCS",
         "plan": "PROMPT-CACHE-SUBSTRATE",
         "total_atoms": 8,
-        "done": 0,
+        "done": 4,
         "in_progress": 0,
-        "todo": 8
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "MUCV",
@@ -9372,7 +9655,8 @@
         "total_atoms": 8,
         "done": 8,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "IA2",
@@ -9380,7 +9664,8 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "AAP",
@@ -9388,15 +9673,17 @@
         "total_atoms": 10,
         "done": 0,
         "in_progress": 0,
-        "todo": 10
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "SV",
         "plan": "SELF-VERIFICATION",
         "total_atoms": 11,
-        "done": 4,
+        "done": 8,
         "in_progress": 0,
-        "todo": 7
+        "todo": 3,
+        "blocked": 0
       },
       {
         "code": "PT",
@@ -9404,7 +9691,8 @@
         "total_atoms": 6,
         "done": 1,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "HC",
@@ -9412,23 +9700,26 @@
         "total_atoms": 5,
         "done": 0,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "CE",
         "plan": "CHANNEL-EXPANSION",
         "total_atoms": 9,
-        "done": 0,
+        "done": 8,
         "in_progress": 0,
-        "todo": 9
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 0,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "DC",
@@ -9436,7 +9727,8 @@
         "total_atoms": 6,
         "done": 0,
         "in_progress": 0,
-        "todo": 6
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "SL",
@@ -9444,23 +9736,26 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PR",
         "plan": "PLATFORM-REACH",
         "total_atoms": 8,
-        "done": 0,
+        "done": 8,
         "in_progress": 0,
-        "todo": 8
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 11,
-        "done": 0,
+        "done": 3,
         "in_progress": 0,
-        "todo": 11
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "PUBL",
@@ -9468,15 +9763,17 @@
         "total_atoms": 10,
         "done": 6,
         "in_progress": 0,
-        "todo": 4
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 10
+        "todo": 9,
+        "blocked": 0
       },
       {
         "code": "DL",
@@ -9484,7 +9781,8 @@
         "total_atoms": 9,
         "done": 3,
         "in_progress": 0,
-        "todo": 6
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "FM",
@@ -9492,7 +9790,8 @@
         "total_atoms": 7,
         "done": 0,
         "in_progress": 0,
-        "todo": 7
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "AR",
@@ -9500,7 +9799,8 @@
         "total_atoms": 8,
         "done": 0,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "ET",
@@ -9508,7 +9808,8 @@
         "total_atoms": 8,
         "done": 0,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "LV",
@@ -9516,7 +9817,8 @@
         "total_atoms": 7,
         "done": 0,
         "in_progress": 0,
-        "todo": 7
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "OU",
@@ -9524,7 +9826,8 @@
         "total_atoms": 11,
         "done": 0,
         "in_progress": 0,
-        "todo": 11
+        "todo": 11,
+        "blocked": 0
       },
       {
         "code": "SH",
@@ -9532,23 +9835,26 @@
         "total_atoms": 10,
         "done": 0,
         "in_progress": 0,
-        "todo": 10
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 0,
+        "done": 2,
         "in_progress": 0,
-        "todo": 12
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "WF2WOR",
         "plan": "WORKFLOWS-V2-WORK-CONTAINERS",
         "total_atoms": 12,
-        "done": 0,
-        "in_progress": 8,
-        "todo": 4
+        "done": 11,
+        "in_progress": 0,
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "DCU",
@@ -9556,15 +9862,17 @@
         "total_atoms": 7,
         "done": 0,
         "in_progress": 0,
-        "todo": 7
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 11,
-        "done": 0,
+        "done": 6,
         "in_progress": 0,
-        "todo": 11
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "PEP",
@@ -9572,9 +9880,10 @@
         "total_atoms": 11,
         "done": 0,
         "in_progress": 0,
-        "todo": 11
+        "todo": 11,
+        "blocked": 0
       }
     ],
-    "edge_count": 826
+    "edge_count": 838
   }
 }
