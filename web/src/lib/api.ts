@@ -467,7 +467,9 @@ export interface ScheduleRun {
   id?: string
   run_id?: string; job_id?: string; job_name?: string
   trigger?: string                          // "manual" | "scheduled"
-  started_at?: number; finished_at?: number; duration_ms?: number
+  // ISO-8601 on `/api/triggers/history`, epoch seconds on the schedule endpoints — the
+  // union is the honest declaration, and every reader goes through `epochSeconds`.
+  started_at?: number | string; finished_at?: number | string; duration_ms?: number
   status?: string                           // "success" | "error"
   summary?: string; error?: string; trace?: string
   // 🔴 The TYPED fire outcome (S163). `/api/triggers/history` returns FireRecord rows, whose
