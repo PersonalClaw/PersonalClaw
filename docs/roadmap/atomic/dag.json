@@ -2663,6 +2663,18 @@
           "scope": "§5.5 Codebase Graph — codegraph/ package (parse.py tree-sitter extraction, index.py per-workspace SQLite with mtime+size invalidation), code_map + code_map_overview tools registered under the workflows group, SDLC planning-brief module summary (budget-capped ~2K tokens), @-mention centrality ranking; tree-sitter + tree-sitter-language-pack as core deps; Session 6",
           "done_when": "As-a-user validation: both tools in GET /api/tools (group=workflows), code_map_overview returns real repo shape, @-mention search centrality-ranked; measured 3.9s full index / 37ms incremental on 1,467-file repo; fail-soft verified with tree_sitter imports forced to fail; centrality distinct-file + name-rarity fix locked by test; log [2026-07-28][S6] DONE 'completes CONTEXT-ECONOMY', gate green (8575 passed)",
           "deps": []
+        },
+        {
+          "id": "CE2-7",
+          "status": "done",
+          "title": "Grammar availability is a capability, not an assertion: reason-recording + a skip gate for the codegraph suite",
+          "scope": "§5.5 Codebase Graph — parse.py's tolerant availability contract + tests/test_codegraph.py's posture",
+          "done_when": "parser_status() returns (available, reason) and records WHY a grammar would not load once per language with the remedy; parser_available keeps its bool contract; tests/test_codegraph.py probes the capability once and SKIPS the 35 grammar-dependent tests naming the recorded reason instead of failing, while an unimportable tree_sitter_language_pack still hard-fails as the packaging regression it is; the self-contradicting test_parser_available_is_a_question_not_an_assertion tests the contract it names; a failing loader is proven to skip (37 passed / 35 skipped / 0 failed) and a working one to pass 72/72",
+          "deps": [
+            "CE2-6"
+          ],
+          "pr": "#1169",
+          "evidence": "Measured 2026-08-12: PRs #1144 (2 failures) and #1162 (21) went red in CI entirely inside tests/test_codegraph.py, rooted in parser_available('python') returning False on a runner while parser_available's bare except discarded the reason; 70/70 passed locally. Grammar loading is a network-backed per-user cache fetch, so absence is normal and the suite must not red for it."
         }
       ]
     },
@@ -7837,6 +7849,7 @@
       "CE2-4",
       "CE2-5",
       "CE2-6",
+      "CE2-7",
       "CRE-1",
       "CRE-2",
       "CRE-3",
@@ -9577,8 +9590,8 @@
       {
         "code": "CE2",
         "plan": "CONTEXT-ECONOMY",
-        "total_atoms": 6,
-        "done": 6,
+        "total_atoms": 7,
+        "done": 7,
         "in_progress": 0,
         "todo": 0,
         "blocked": 0
@@ -9980,6 +9993,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 848
+    "edge_count": 849
   }
 }
