@@ -97,7 +97,7 @@ export function SourcesPanel() {
               <TextInput value={scratchpad} onChange={setScratchpad} mono placeholder="~/notes/today.md"
                 onKeyDown={(e) => { if (e.key === 'Enter') saveScratchpad() }} />
               <Button variant="secondary" size="sm" onClick={saveScratchpad}
-                disabled={(scratchpad ?? '').trim() === data.scratchpadPath}>Save</Button>
+                disabled={(scratchpad ?? '').trim() === data.scratchpadPath} disabledReason={(scratchpad ?? '').trim() === data.scratchpadPath ? 'No changes to save' : undefined}>Save</Button>
             </div>
           </Field>
         </div>

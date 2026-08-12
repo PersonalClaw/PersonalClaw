@@ -797,12 +797,16 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
       <p className="text-on-surface text-[0.9375rem]">{intent.goal}</p>
       <div className="flex flex-wrap items-center gap-s">
         <Button size="sm" variant="secondary" onClick={run} disabled={running}><Play size={14} className={running ? 'animate-pulse' : ''} /> {running ? 'Running…' : 'Run on existing items'}</Button>
+        {/* The blocked reason used to live on a WRAPPING span's title, where a hover finds it and
+            a keyboard user never can — the button inside stayed natively disabled and out of the
+            tab order. Both strings now ride the button: `title` explains the action,
+            `disabledReason` explains the block, and Button joins them when it is soft-off. */}
         {intent.propose_skill && (
-          <span title={hasOutcomes ? 'Synthesize a reusable skill from what this intent has gathered' : 'Gather some matches first'}>
-            <Button size="sm" variant="secondary" onClick={generateSkill} disabled={genning || !hasOutcomes}>
-              <Sparkles size={14} className={genning ? 'animate-pulse' : ''} /> {genning ? 'Generating…' : 'Generate skill'}
-            </Button>
-          </span>
+          <Button size="sm" variant="secondary" onClick={generateSkill}
+            title="Synthesize a reusable skill from what this intent has gathered"
+            disabled={genning || !hasOutcomes} disabledReason={!hasOutcomes && !genning ? 'Gather some matches first' : undefined}>
+            <Sparkles size={14} className={genning ? 'animate-pulse' : ''} /> {genning ? 'Generating…' : 'Generate skill'}
+          </Button>
         )}
         <span onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="ghost" onClick={() => api.deleteKnowledgeIntent(intent.id).then(() => { onChanged(); onClose() })}><Trash2 size={14} /> Delete</Button>
