@@ -30,6 +30,7 @@ __all__ = [
     "UserResolver",
     "ItemKind",
     "NON_CHANNEL_KINDS",
+    "SOURCE_DECLARABLE_KINDS",
     "make_item_id",
     "emit_attention_item",
     "evaluate_alert",
@@ -85,6 +86,25 @@ NON_CHANNEL_KINDS = frozenset(
         ItemKind.NEEDS_INPUT.value,
         ItemKind.DIGEST.value,
         ItemKind.SYSTEM.value,
+    }
+)
+
+#: The kinds a MESSAGE SOURCE may declare for its own items (``IncomingMessage.kind``).
+#:
+#: Exactly the channel-shaped kinds — everything in :class:`ItemKind` that is NOT in
+#: :data:`NON_CHANNEL_KINDS`. Enumerated literally rather than computed by subtraction so
+#: both ends read as a closed set at a glance; ``test_inbox_item_kind_seam`` asserts the
+#: two stay equal, so adding an enum member cannot silently skip this decision.
+#:
+#: The narrowing is the point: the non-channel kinds are core's OWN attention vocabulary,
+#: raised only through :func:`emit_attention_item` with the ``refs`` that make them
+#: actionable. A source that could claim ``proposal`` would produce a row with no refs,
+#: no deep-link and no reply — a dead row wearing a live kind's chip.
+SOURCE_DECLARABLE_KINDS = frozenset(
+    {
+        ItemKind.MESSAGE.value,
+        ItemKind.MENTION.value,
+        ItemKind.EMAIL.value,
     }
 )
 

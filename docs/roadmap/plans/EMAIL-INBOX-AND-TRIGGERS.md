@@ -331,3 +331,86 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
   call, so it is not something a tick may pick. Everything else in the atom (SMTP `send_reply`,
   `In-Reply-To` threading, `supports_dry_run` honouring the platform's live-writes posture) is
   implementable the moment that posture is confirmed. Unblock = owner confirms the default.
+
+- **DONE `EIAT-6`** (2026-08-11) — **Carry a source-declared item kind through to the inbox row (core).**
+  **The finding: the inbox shipped LIVE READERS for two kinds nothing could ever write.**
+  `web/src/pages/inbox/inboxMeta.ts` declares `ITEM_KINDS` including `{key:'mention'}` and
+  `{key:'email'}`; `InboxPage` filters `(it.item_kind || 'message') === kind` and `kindMeta()`
+  renders the label/icon; `handlers_inbox` filters (`?kind=`) and counts (`GET /api/inbox/kinds`)
+  on the same field; `inbox.py` persists it and carries it through `emit_attention_item`. But
+  `inbox_providers/base.py::IncomingMessage` had **no kind field at all** (id, channel_id,
+  channel_name, thread_id, text, sender_id, sender_name, timestamp, thread_context, is_dm), so
+  `InboxService._ingest` constructed every polled row with the dataclass default and
+  `ItemKind.EMAIL` / `ItemKind.MENTION` were unreachable **by construction** — `grep -rn "ItemKind\."
+  src/personalclaw` outside `inbox.py` produced no writer for either, and
+  `inert-surface-baseline.json` had independently censused both as inert. EIAT-2's mail-inbox app
+  could poll a real mailbox and still produce rows indistinguishable from a chat message. This is
+  the "live reader of an unwritten key" shape: the reader is correct, the round trip is complete,
+  and the seam simply cannot express the value.
+  **Design.** (1) The kind rides the seam: `IncomingMessage.kind` (default `message`) → `_ingest`
+  → `InboxItem.item_kind`. (2) Core never infers one — no text scan for the operator's name.
+  `evaluate_alert` already matches names for *alerting*, and reusing that here would confuse a
+  soft signal with a durable, filterable classification (a row permanently labelled "Mention"
+  because someone typed the user's first name). A mention is what the SOURCE knows from its
+  payload's at-mention ids. (3) `SOURCE_DECLARABLE_KINDS` (`= ItemKind` minus `NON_CHANNEL_KINDS`
+  = message/mention/email) is the single validation point for every source, present and future.
+  **The unknown-kind posture: refuse the CLAIM, keep the MESSAGE, log loudly.** Both rejected
+  alternatives were considered explicitly. *Trusting* the declared value would let a source mint a
+  kind the dashboard has no chip/icon/label for — an unfilterable, unreachable row — or claim one
+  of core's own non-channel attention kinds and render a row with no refs, no deep-link and no
+  reply (a dead row wearing a live kind's chip). *Dropping* the message would mean one typo
+  (`"mail"` for `"email"`) silently stops a user's mail arriving, and in the filesystem source's
+  case wedges the poll batch on the offending file forever, since the file is only renamed into
+  `processed/` after a successful parse. So the row is delivered and confined to a kind the UI can
+  render, and the mistake is loud on the one side that can fix it — the provider author's logs.
+  Explicitly **not** a silent fallback to `message`: an unknown kind always warns, naming the
+  source and the value.
+  **Which kinds got a real core writer, and which did not.** `filesystem_source` passes each batch
+  entry's declared `kind` through — the drop-box is core's documented seam for a local producer (a
+  mail fetcher, a channel bridge) to state what a message is. So **both `email` and `mention` are
+  reachable and proven end-to-end inside core**, but as *declared* kinds: core validates and
+  persists what the producer states, and **no core source derives either one** (there is no IMAP/
+  SMTP anywhere in core, and deriving `mention` from text is exactly the heuristic this atom
+  refuses). The **native** push source was deliberately left as `message`: an agent-posted item is
+  not a channel message, but relabelling it `system`/`agent_request` moves it into
+  `NON_CHANNEL_KINDS`, which is what the UI keys its reply affordance off — it would kill the
+  `can_reply`/`reply_target` routing native questions depend on. That is a change with a frontend
+  half and its own validation, not this atom's.
+  **`ItemStatus.SENT` stays open and untouched.** It is the third inert surface on `inbox.py`, and
+  it belongs to `EIAT-3`'s reply path (a draft was sent at the source) — which is owner-gated on
+  the draft-by-default confirmation (Owner task 4). Giving it a writer here would have pre-decided
+  that product question in code.
+  **Round trip proven on the real path, not on the dataclass.** `tests/test_inbox_item_kind_seam.py`
+  drops a real JSON batch in `<home>/inbox/incoming/`, polls it with `FilesystemSourceProvider`
+  through `InboxService._poll_once`, re-reads the row from disk with a *fresh* `InboxStore`, then
+  asserts `GET /api/inbox`, `?kind=<kind>` and `/api/inbox/kinds` — including the exact comparison
+  `InboxPage` makes. Plus: the refusal cases with the warning asserted (`"mail"`, `"Email"`,
+  `"proposal"`, …), a ratchet asserting `SOURCE_DECLARABLE_KINDS == {ItemKind} - NON_CHANNEL_KINDS`
+  so a future enum member cannot silently skip the declarable decision, and a parity test that
+  every declarable kind has an `ITEM_KINDS` chip in `inboxMeta.ts` (the reader half, with a
+  vacuity assertion so a drifted regex fails instead of passing empty).
+  **No frontend change was needed** — the `InboxItemKind` union and `ITEM_KINDS` were already
+  exhaustive over the enum, and chips are built from what is present in the store, so Mentions and
+  Email light up the moment a row lands. **No SDK export was added on purpose**: a constant on
+  `personalclaw.sdk.inbox` would have no in-repo consumer and would therefore book a NEW inert
+  `sdk_export` surface; the closed set is documented on `IncomingMessage` instead.
+  **Baseline.** `inert-surface-baseline.json` regenerated with its own generator
+  (`scripts/generate_inert_surface_baseline.py`) in this commit on a legitimate SHRINK only:
+  `src/personalclaw/inbox.py` 3 → 1 inert surfaces (`enum:ItemKind.EMAIL` and
+  `enum:ItemKind.MENTION` cleared, `enum:ItemStatus.SENT` correctly remaining), totals 154 → 152,
+  enum 27 → 25. No counter rose.
+  **APPS-REPO FOLLOW-ON (out of scope here, do not edit the apps repo from a core atom).** The
+  provider-side writers are one argument each: `mail-inbox` must pass `kind="email"` on every
+  `IncomingMessage` it builds (it currently sets none, so its mail still lands as `message`); a
+  channel inbox source must pass `kind="mention"` when the **vendor payload** lists the operator
+  among that message's at-mention ids, and `message` otherwise — never by scanning the text. Valid
+  values are `message` / `mention` / `email`; anything else is refused (row kept, filed as
+  `message`, warning logged naming the app's `source_name`). The field defaults to `message`, so an
+  app that does nothing keeps today's behavior exactly — this is additive, not a break.
+  **Deliberately NOT done:** the inbox→event bridge's `meta` does not carry the kind. No matcher
+  reads it (`event_triggers.matches()` gates inbox events on sender/address globs only, per
+  EIAT-5's DEVIATION), so adding it would ship an inert field; an "email-only trigger" needs the
+  backend matcher first.
+  **Gate:** `make lint` clean · targeted `pytest -k "inbox or item_kind or notification or trigger"`
+  green · inert-surface + agent-reference + docs-lint + config-roundtrip ratchets green · full suite
+  green apart from the known worktree-only `test_harness_validate` trio · real-home rail: unchanged.

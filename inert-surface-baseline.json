@@ -2,10 +2,8 @@
   "generated_from": "scripts/generate_inert_surface_baseline.py",
   "per_file": {
     "src/personalclaw/inbox.py": {
-      "inert": 3,
+      "inert": 1,
       "surfaces": [
-        "enum:ItemKind.EMAIL",
-        "enum:ItemKind.MENTION",
         "enum:ItemStatus.SENT"
       ]
     },
@@ -370,10 +368,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 27,
+      "enum": 25,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 154
+    "inert": 152
   }
 }
