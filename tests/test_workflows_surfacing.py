@@ -28,7 +28,6 @@ from personalclaw.workflows.surfacing import (
     MAX_WHEN_TO_USE_CHARS,
     MIN_TRIGGERS,
     FreedomLevel,
-    Lifecycle,
     SurfaceMode,
     SurfacingMeta,
     Veto,
@@ -541,7 +540,6 @@ def test_every_field_round_trips():
         agent_digest="d",
         surface_mode=SurfaceMode.SUGGEST,
         freedom_level=FreedomLevel.LOW,
-        lifecycle=Lifecycle.UNTIL_DEACTIVATED,
         preconditions=[{"kind": "file", "path": "x"}],
         requirements=["git"],
         cadence_days=30,
@@ -560,10 +558,26 @@ def test_an_unknown_FREEDOM_level_reads_as_medium():
     )
 
 
-def test_an_unknown_LIFECYCLE_reads_as_one_shot():
-    """The shortest-lived option. Guidance that outlives its relevance is guidance the user stops
-    reading, which costs the guidance that is still relevant."""
-    assert SurfacingMeta.from_dict({"lifecycle": "forever"}).lifecycle is Lifecycle.ONE_SHOT
+def test_there_is_no_guidance_LIFECYCLE_field_to_declare():
+    """WF2TAS-12: `lifecycle` (`one_shot`/`session`/`until_deactivated`) was deleted, because the
+    persistence it described had nowhere to happen.
+
+    Measured: nothing in `src/` reads `agent_digest`, and `render_passive` has no production caller,
+    so the passive channel this field paced does not exist yet — `test_learning_ambient` calls it an
+    "unbuilt producer" in as many words. `DefMetadata` had no `lifecycle` field either, so no
+    authored def could set it and `meta_from_def` could not carry it. Three members, one reachable
+    default, zero observable difference. Deleted rather than documented: a field that only looks
+    configurable teaches an author to declare it and wonder why nothing changed. The rebuild recipe
+    (what a consumer must exist first) is recorded in the WORKFLOWS-V2-TASKS-SOPS execution log.
+    """
+    import dataclasses as dc
+
+    assert "lifecycle" not in {f.name for f in dc.fields(SurfacingMeta)}
+    # A def file hand-edited to carry the old key still loads: `from_dict` names what it reads, so
+    # a dropped field is ignored rather than a crash on a def somebody already wrote.
+    assert (
+        SurfacingMeta.from_dict({"lifecycle": "until_deactivated", "summary": "s"}).summary == "s"
+    )
 
 
 def test_a_PRE_EXISTING_def_with_none_of_these_keys_loads():

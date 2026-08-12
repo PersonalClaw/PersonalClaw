@@ -340,22 +340,16 @@
         "enum:Lineage.INFORMED_BY",
         "enum:Lineage.RELATED"
       ]
-    },
-    "src/personalclaw/workflows/surfacing.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:Lifecycle.UNTIL_DEACTIVATED"
-      ]
     }
   },
   "totals": {
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 19,
+      "enum": 18,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 146
+    "inert": 145
   }
 }

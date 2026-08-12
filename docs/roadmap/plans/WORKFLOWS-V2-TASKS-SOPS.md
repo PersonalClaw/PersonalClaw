@@ -1547,3 +1547,79 @@ rule appends `-x`); the fix is a `_SPECIAL` entry declaring a real member, exact
 PATCH accepts `lease_ttl_secs=120` and `surface_mode_default=passive`; refuses `99999` ("must be
 between 30 and 3600"), `vibes` ("must be one of ['off','passive','suggest']") and `cap=0`; accepts
 `ttl=0`. The resolvers then read the patched values with **no restart**.
+
+### 2026-08-12 — WF2TAS-12 (retire the guidance-persistence `Lifecycle`) DONE — PR PENDING
+
+`workflows/surfacing.py` loses the `Lifecycle` enum, the `SurfacingMeta.lifecycle` field and its two
+round-trip keys. `test_workflows_def_surfacing_fields.py` gains the adapter-completeness rail plus a
+proof it can fail. `inert-surface-baseline.json` regenerated on the shrink.
+
+- **THE FINDING.** S58 shipped `lifecycle` (`one_shot` | `session` | `until_deactivated`) with a
+  docstring warning that `until_deactivated` "is the one that needs care: guidance that outlives its
+  relevance is guidance the user stops reading". Nothing branched on it. A def could declare
+  `until_deactivated`, it round-tripped, it linted, and the guidance behaved identically to
+  `one_shot`. `inert-surface-baseline.json` already listed `enum:Lifecycle.UNTIL_DEACTIVATED`.
+
+- **THE MEASUREMENT — the field was inert at BOTH ends of its seam, not just the reader.** The live
+  consumer of def surfacing state is `GET /api/workflows/surfacing` → `service.list_defs_surfacing`
+  → `surfacing_channels.{cadence_from_def,freshness,overdue,sort_key,doctor_entry,doctor,handoffs_from_def}`.
+  It reads `DefMetadata`, and `DefMetadata` has **no** `lifecycle` field — so `author_def` could not
+  write one and `meta_from_def` (the ONE conversion point, `surfacing_channels.py:1069`) could not
+  carry one. On the reader side the whole passive channel is absent: `render_passive` is called only
+  from `render_suggest`/`drift` inside its own module, `agent_digest` — the text passive mode injects
+  — is read nowhere in `src/` outside `models.py`/`meta_from_def`, and `meta_from_def` has no
+  production caller at all. Two independent corroborations already in-tree: `FS.md` records that this
+  module's `may_suggest`/`veto_reasons` are "themselves inert (zero runtime callers)", and
+  `test_learning_ambient.py::test_a_template_suggestion_would_fit_the_budget_when_a_producer_exists`
+  calls the passive/suggest renders "the two unbuilt producers" in its own docstring. **Today's
+  behaviour for a def that has surfaced once: it never surfaced, because nothing surfaces passively.**
+
+- **Why this is a gap and not merely an unbuilt layer.** Sibling policy fields differ measurably:
+  `cadence_days` has 5 consumers outside `surfacing.py` and `surface_mode` has 2 — both reach live
+  code because both are on `DefMetadata`. `lifecycle` had neither end. (`revisit_window_days`,
+  `freedom_level`, `preconditions`, `scope_ref` are in the same `SurfacingMeta`-only position — see
+  the DISCOVERY below.)
+
+- **PARKED-vs-DELETED, decided: deleted.** With no per-def surfaced-state anywhere in the system, no
+  wiring could make the three members differ observably, and inventing a store to make an enum true
+  is explicitly not the job. The remaining choice was keep-with-a-note or clean break. A note that
+  the field is "declarative-only pending a consumer" is a prose TODO, which the tenets put in a plan
+  file rather than in code — and a field that only looks configurable is worse than a missing one,
+  because it teaches an author to declare it and wonder which behaviour changed. The rebuild recipe
+  (passive-channel caller → per-def surfaced-state → `DefMetadata` field + adapter mapping) is
+  recorded in `docs/roadmap/atomic/WF2TAS.md` under `WF2TAS-12`.
+
+- **Guidance did not get more aggressive — the check that mattered.** `one_shot` was the default, so
+  the deletion's risk was silently promoting some def to "surface every match". It cannot: there is
+  no passive surfacing path to be more aggressive on, and no matching/veto behaviour changed
+  (`veto_reasons`, `may_suggest`, `surface_mode`, `MIN_TRIGGERS`/`MAX_TRIGGERS` untouched). **A def
+  that declared nothing before behaves identically after; a def that declared
+  `lifecycle: until_deactivated` on disk still loads, with the key ignored** — `from_dict` names what
+  it reads, so a dropped field is not a crash on a def somebody already wrote.
+
+- **THE RATCHET.** Two layers, neither of them new machinery. (1) The generic one already exists and
+  is the right owner: if `Lifecycle` is re-added with an unreferenced member, the inert-surface
+  census counts it, `surfacing.py`'s counter RISES and `test_inert_surface_baseline` reds — writing a
+  second bespoke "do not re-add this" guard would duplicate a ratchet the repo already runs. (2) The
+  new rail closes the adjacent gap the measurement exposed: `meta_from_def` must name every field
+  `SurfacingMeta` and `DefMetadata` share (7 today). Read from the SOURCE via AST, because a field
+  the adapter forgot arrives at its dataclass DEFAULT — a legal value, so a behavioural assertion
+  cannot tell "carried" from "silently dropped"; only the call site can. Vacuity-guarded at 7 (a rail
+  over an empty intersection passes forever), with `test_the_conversion_rail_can_FAIL` proving teeth
+  against a doctored adapter that drops `cadence_days` — the quiet half of the defect class, since a
+  def would simply never appear overdue and nothing would raise.
+
+- **DISCOVERY — `lifecycle` was not alone in the `SurfacingMeta`-only position.**
+  `freedom_level`, `preconditions`, `revisit_window_days`, `scope`, `scope_ref` are also on
+  `SurfacingMeta` with no `DefMetadata` twin; the owner's measurement put `revisit_window_days` and
+  `freedom_level` at 0 consumers each. They are NOT touched here (this atom's scope is `lifecycle`),
+  and they do not show in the inert census because the enum heuristic clears a member whose name is
+  accessed as an attribute anywhere in `src/` — `FreedomLevel.MEDIUM` is referenced in
+  `surfacing.py` itself. Whoever builds the passive channel should decide all five at once rather
+  than one per atom; the adapter rail added here will fire the moment any of them gains a
+  `DefMetadata` twin without a mapping.
+
+- **DEVIATION — none.** No gate, no migration: the deleted field had no writer, so there is no
+  persisted state to migrate (clean break under the pre-1.0 banner, as the owner's lifecycle
+  deferral directs). No user-visible surface changed, so no CHANGELOG entry: the field was
+  unreachable from the API, the UI and the CLI alike — `web/src` contains no reference to it.
