@@ -13,6 +13,7 @@ const doc: UiDoc = {
     { name: 'onChange', description: 'Fires with the next boolean on click. Omit it (with readOnly) for a display-only indicator that renders a non-interactive span.' },
     { name: 'label', description: 'Accessible name (aria-label) for the switch role.' },
     { name: 'disabled', description: 'Dim (40%) + not-allowed; button form only.' },
+    { name: 'disabledReason', description: 'WHY the switch is unavailable, when disabled is true. Given a reason it stays REACHABLE — aria-disabled instead of the native attribute, plus the reason as its title and the click suppressed — because a natively disabled switch leaves the tab order and a keyboard user tabs past it without learning it exists. Omit it for transient unavailability (in flight, still loading), where the stronger native attribute is right.' },
     { name: 'size', description: "'md' default (h-6 w-10), 'sm' for dense rows (h-5 w-9)." },
     { name: 'readOnly', description: 'Render a display-only indicator (non-interactive span) — pair with omitting onChange so it can sit inside a larger clickable row without nesting buttons.' },
     { name: 'decorative', description: 'Purely visual — drops the switch role/aria entirely (aria-hidden) for a toggle sitting INSIDE an already-labeled clickable control, so it does not surface as a second unnamed switch node.' },
@@ -21,7 +22,9 @@ const doc: UiDoc = {
     { guidance: true, description: 'Reach for Toggle for any on/off switch rather than hand-rolling an inline-styled track — spring knob, token track colors, and role="switch"/aria-checked come built in.' },
     { guidance: true, description: 'Pass a label for the a11y name; for a display-only indicator, set readOnly and omit onChange so it renders a non-interactive span.' },
     { guidance: true, description: 'Set decorative ONLY when the switch is nested inside an already-labeled clickable control — it hides the switch from the a11y tree to avoid a duplicate unnamed node.' },
+    { guidance: true, description: 'When the switch is off-limits because of a PRECONDITION the user can fix (no password set, no model bound, a parent feature off), pass disabledReason so the control keeps its tab stop and says what would unlock it — the same contract Button carries.' },
     { guidance: false, description: 'Do not nest an interactive Toggle inside another <button> — use decorative there, and let the wrapping labeled control own the click and a11y state.' },
+    { guidance: false, description: 'Do not pass disabledReason for an in-flight or still-loading state: re-clicking a switch mid-save is exactly what the native attribute prevents, and "not known yet" is not something the user can act on.' },
   ],
   anatomy: ['track (button / span, rounded-pill, primary-on / neutral-off)', 'motion.span knob (springs across on toggle)'],
 }

@@ -246,7 +246,11 @@ function LoginSection() {
         hint={state.credential_configured
           ? 'Adds a sign-in page as another way in. Your token link keeps working — it stays the way back in if you ever forget the password.'
           : 'Set a password first. Turning this on without one would show a form nobody can pass.'}>
+        {/* The precondition lives in the row hint above, which a keyboard user never reaches while the
+            switch is natively disabled — they tab past a SECURITY control without learning it exists.
+            With a reason it keeps its tab stop and announces what would unlock it. */}
         <Toggle on={state.login_enabled} onChange={toggleLogin} disabled={!state.credential_configured}
+          disabledReason="Set a password first — a sign-in form nobody can pass is worse than none"
           label="Offer password sign-in" />
       </Row>
 
@@ -255,6 +259,7 @@ function LoginSection() {
           ? 'Also ask for a time-based code at sign-in.'
           : 'Enroll an authenticator first with `personalclaw auth totp setup`, then turn this on — verify a code works before requiring it.'}>
         <Toggle on={state.totp_required} onChange={toggleTotp} disabled={!state.totp_enabled}
+          disabledReason="Enroll an authenticator first with `personalclaw auth totp setup`"
           label="Require a 2FA code" />
       </Row>
 
