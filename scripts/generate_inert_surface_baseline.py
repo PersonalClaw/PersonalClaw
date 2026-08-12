@@ -37,6 +37,23 @@ production ``src/`` clears a surface, so the census only reports the strongest d
 and-untouched cases. Readers in ``tests/`` deliberately do NOT count — a test that
 references a surface is exactly the hand-built state that hides the seam gap.
 
+⚠️  A FALSE RED IS A BUG IN THIS TOOL, AND THE FIX IS TO TEACH IT THE SHAPE. The census
+    governs which cleanups get picked, so a surface it reports must really be unreachable.
+    When a reported surface turns out to be reachable through a consumption shape the
+    detector does not recognise, the fix is to TEACH THE DETECTOR THAT SHAPE — never to
+    delete the line from the baseline by hand, and never to relax the forbidden-to-raise
+    rule. ``PHF-12`` did exactly that for whole-enum iteration: ``Lineage.INFORMED_BY`` and
+    ``Lineage.RELATED`` were reported inert while ``workflows/publish.py:136`` validated
+    author-supplied edges against ``{e.value for e in Lineage}``, so a template author
+    could reach both members and the census called them dead.
+
+    THE CONVERSE ALSO HOLDS, AND ``PHF-13`` RULED ON IT: a shape is only worth teaching when it
+    PROVES reachability. Value-lookup ``E(value)`` does not, so it is deliberately NOT taught —
+    the per-site provenance audit and the arithmetic behind that ruling live in
+    ``_inert_enum_members``. Clearing a member on a construction that never executes, or one fed
+    only from state this codebase itself wrote, would HIDE a real gap instead of naming it, and a
+    false clear is the one error this census must not make quietly.
+
 The render is DETERMINISTIC: files, surface lists, and per-kind totals are all sorted,
 the output is ``json.dumps(..., indent=2, sort_keys=True)`` with a trailing newline, and
 it carries no timestamps or absolute paths. A second run is byte-identical to the first.
@@ -45,7 +62,8 @@ Per-surface-kind heuristic (each documented at its detector below):
   * ``config``          — a leaf config field (from the SH3.1 config walk) whose name is
                           not set in ``AppConfig.load()``'s mapping (no reader).
   * ``enum``            — an Enum member whose name is never accessed as an attribute
-                          anywhere in ``src/`` (declared and never referenced).
+                          anywhere in ``src/`` AND whose class is never iterated as a whole
+                          (declared and reachable through neither path).
   * ``trigger_kind``    — a kind in ``triggers.models.KINDS`` whose literal appears in no
                           other file under ``triggers/`` (declared, nothing dispatches it).
   * ``editable_config`` — an ``_EDITABLE_CONFIG`` PATCH-allowlist key with no backing
@@ -210,21 +228,235 @@ def _enum_members(tree: ast.Module) -> list[tuple[str, str]]:
     return out
 
 
-def _inert_enum_surfaces(files: list[Path], attr_names: set[str]) -> list[tuple[str, str]]:
-    """An enum member whose name is never accessed as an attribute anywhere in ``src/`` is
-    declared and never referenced — the "enum member nobody writes" shape. Iteration-only
-    consumption (``for m in E:``) is not detected; that is the accepted under-reporting
-    direction (never a false red)."""
-    out: list[tuple[str, str]] = []
+def _module_file(module: str) -> Path | None:
+    """The ``src/`` file implementing a dotted ``personalclaw.*`` module (or ``None``)."""
+    if module != "personalclaw" and not module.startswith("personalclaw."):
+        return None
+    base = _src_root().joinpath(*module.split(".")[1:])
+    for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _absolute_import_module(node: ast.ImportFrom, path: Path) -> str | None:
+    """The absolute dotted module an ``ImportFrom`` names, resolving ``.``/``..`` against the
+    importing file's own package (``from .models import X`` inside ``workflows/`` →
+    ``personalclaw.workflows.models``)."""
+    if not node.level:
+        return node.module
+    try:
+        parts = path.resolve().relative_to(_src_root()).parts[:-1]
+    except ValueError:  # a file outside src/ (a fixture tree) has no package to climb
+        return None
+    package = ["personalclaw", *parts]
+    climb = node.level - 1
+    if climb:
+        if climb >= len(package):
+            return None
+        package = package[: len(package) - climb]
+    return ".".join([*package, *([node.module] if node.module else [])])
+
+
+def _enum_name_bindings(
+    tree: ast.Module, path: Path, enum_names: dict[Path, set[str]]
+) -> tuple[dict[str, Path], dict[str, Path]]:
+    """Resolve the enum-ish names a single file can see.
+
+    Returns ``(class_bindings, module_bindings)``: local name → the file that DECLARES that
+    enum class, and local name → the module file it aliases (so ``mutations.OpKind`` can be
+    resolved). Import-aware on purpose: seven distinct ``Verdict`` enums exist in ``src/``,
+    so a name-only index would let one file's iteration clear another file's members.
+    """
+    classes: dict[str, Path] = {}
+    modules: dict[str, Path] = {}
+    here = path.resolve()
+    for name in enum_names.get(here, set()):
+        classes[name] = here
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                target = _module_file(alias.name)
+                if target is not None:
+                    modules[alias.asname or alias.name.split(".")[0]] = target
+        elif isinstance(node, ast.ImportFrom):
+            module = _absolute_import_module(node, path)
+            if not module:
+                continue
+            origin = _module_file(module)
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if origin is not None and alias.name in enum_names.get(origin, set()):
+                    classes[local] = origin
+                    continue
+                submodule = _module_file(f"{module}.{alias.name}")
+                if submodule is not None:
+                    modules[local] = submodule
+    return classes, modules
+
+
+#: Builtins that consume EVERY member of the iterable handed to them. ``E(value)``-style
+#: value lookup and ``x in E`` containment are deliberately absent — see the enum detector.
+_ITERATING_BUILTINS = frozenset(
+    {"list", "tuple", "set", "frozenset", "sorted", "iter", "reversed", "enumerate"}
+)
+
+
+def _iterated_expressions(tree: ast.Module) -> list[ast.expr]:
+    """Every expression this module iterates over as a whole: ``for x in <expr>`` (sync and
+    async), each comprehension's ``for ... in <expr>``, and ``list/tuple/set/frozenset/
+    sorted/iter/reversed/enumerate(<expr>)``."""
+    out: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            out.append(node.iter)
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            out.extend(gen.iter for gen in node.generators)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _ITERATING_BUILTINS
+        ):
+            out.extend(arg for arg in node.args if not isinstance(arg, ast.Starred))
+    return out
+
+
+def _iterated_enum_classes(
+    files: list[Path], enum_names: dict[Path, set[str]]
+) -> set[tuple[Path, str]]:
+    """``(declaring file, enum class)`` for every enum class iterated as a whole anywhere in
+    production ``src/``.
+
+    Names are resolved through the iterating file's own imports; a name that resolves to no
+    declaration falls back to EVERY enum class with that name, keeping the detector on the
+    under-reporting side of the contract when resolution fails.
+    """
+    by_name: dict[str, set[Path]] = {}
+    for path, names in enum_names.items():
+        for name in names:
+            by_name.setdefault(name, set()).add(path)
+    iterated: set[tuple[Path, str]] = set()
     for f in files:
         tree = _parse(f)
         if tree is None:
             continue
-        rel = _rel(f)
-        for class_name, member in _enum_members(tree):
+        classes, modules = _enum_name_bindings(tree, f, enum_names)
+        for expr in _iterated_expressions(tree):
+            if isinstance(expr, ast.Name):
+                owner = classes.get(expr.id)
+                if owner is not None:
+                    iterated.add((owner, expr.id))
+                else:
+                    iterated.update((p, expr.id) for p in by_name.get(expr.id, ()))
+            elif isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+                origin = modules.get(expr.value.id)
+                if origin is not None and expr.attr in enum_names.get(origin, set()):
+                    iterated.add((origin, expr.attr))
+                else:
+                    iterated.update((p, expr.attr) for p in by_name.get(expr.attr, ()))
+    return iterated
+
+
+def _inert_enum_members(files: list[Path], attr_names: set[str]) -> list[tuple[Path, str]]:
+    """``(file, "Class.MEMBER")`` for every enum member with neither a reader nor an iterator.
+
+    THE RULE (two independent clears, either one is enough):
+
+    1. the member's name is accessed as an attribute somewhere in production ``src/``
+       (``E.MEMBER``) — a direct reader; or
+    2. the member's ENUM CLASS is iterated as a whole anywhere in production ``src/`` —
+       whole-enum iteration reaches every member by construction, so ONE iteration site
+       clears ALL of that class's members.
+
+    DETECTED ITERATION SHAPES: ``for m in E`` (and ``async for``); all four comprehension
+    forms over ``E`` (``{e.value for e in E}``, ``[e.value for e in E]``, dict and generator);
+    and ``list``/``tuple``/``set``/``frozenset``/``sorted``/``iter``/``reversed``/
+    ``enumerate`` applied to ``E``. Each shape is matched on a bare name (``E``) or a
+    module-qualified one (``mutations.OpKind``), resolved through the iterating file's OWN
+    imports — ``src/`` declares seven distinct ``Verdict`` enums, so a name-only index would
+    let one file's iteration clear another file's members.
+
+    DELIBERATELY NOT DETECTED (each stays on the under-reporting side — a member reachable
+    only this way is still reported, so the tool keeps crying wolf rather than going quiet):
+    ``E.__members__`` / ``_member_map_`` walks, ``getattr(E, name)``, value-lookup
+    construction (``E(value)``), ``value in E`` containment, iteration over a local alias
+    (``alias = E; for m in alias``), and consumers outside this repo.
+
+    ERROR DIRECTION, STATED HONESTLY: clearing a whole class from ONE iteration site trades
+    MORE under-reporting (a class that is iterated somewhere keeps no member reported, even a
+    member that genuinely has no producer) for the elimination of an entire false-red class.
+    That is the deliberate trade — this census exists to name work worth doing, and a
+    reported surface that is actually reachable sends someone to "fix" working code.
+
+    VALUE-LOOKUP ``E(value)`` IS DELIBERATELY NOT TAUGHT — audited and ruled on by ``PHF-13``.
+    ``PHF-12`` left it named as the "known remaining false-red shape" on the strength of
+    ``judge_contract.py:342`` (``Verdict(str(raw.get("verdict", "")).upper())`` on model-emitted
+    text). Auditing all six value-lookup sites behind the surviving enum surfaces found that
+    premise WRONG and the shape unsound as a clearing rule: ``E(value)`` proves reachability only
+    when BOTH hold — the construction actually EXECUTES in production, and its value crosses a
+    trust/authoring boundary. Per site:
+
+      * ``tasks/models.py:74`` ``DependencyType(raw_type)`` — EXTERNALLY REACHABLE. Reached from
+        ``POST /api/tasks``: ``tasks/handlers.py:242`` calls ``create_task(**body)`` on
+        ``await request.json()``, ``tasks/native.py:246`` coerces it, ``TaskDependency.from_dict``
+        looks the member up. A client picks the member. This one IS a false red, and is the only
+        one; it stays reported rather than being cleared by an unsound rule.
+      * ``memory_record.py:216``/``:218`` ``MemoryTier(...)``/``MemoryScope(...)`` — INTERNAL ONLY.
+        Fed by ``from_semantic_row``/``from_episodic_row`` (``vector_memory.py:1124``/``:1161``)
+        off rows this codebase wrote via ``to_row``; the vault mirror is render-only (no parse
+        back). Nothing writes ``"segment"`` or ``"workspace"``, so neither member round-trips in.
+      * ``workflows/confirmation.py:177`` ``Status(...)`` — INTERNAL ONLY. ``from_dict`` reads what
+        ``to_dict`` wrote, and that is only ``pending``/``expired``: ``resolve`` returns a
+        ``Resolution`` and never stamps ``RESOLVED``.
+      * ``workflows/judge_actors.py:84`` ``Actor(...)`` — DEAD CALL SITE. Only
+        ``resolve_transition`` calls it, and nothing in ``src/`` calls that (tests only).
+      * ``workflows/judge_contract.py:342`` ``Verdict(...)`` — DEAD CALL SITE. ``validate_verdict``
+        has no production caller; ``engine.py:1510`` deliberately RESTATES the aggregation rule
+        instead of importing it. Model-emitted text never reaches this constructor.
+      * ``judge_contract.py:224`` ``enum_cls(str(value))`` (``Ratchet``) — DEAD CALL SITE for the
+        same reason (``hints_from_dict`` has no production caller), and invisible to an
+        ``E(value)`` rule regardless: the class is loop-bound, not named at the call.
+
+    So a syntactic ``E(value)`` rule would clear six classes of which exactly ONE is genuinely
+    reachable — a 5-of-6 false-clear rate. A false clear is worse here than the over-report it
+    replaces: it buries a genuine gap inside every internal deserializer. Proving "provably
+    outside" needs interprocedural dataflow (four hops across three modules for the
+    ``DependencyType`` case), which is not a cheap deterministic AST rule, so the rule stays as
+    it is. ``test_value_lookup_alone_does_not_clear_a_member`` pins that decision, and
+    ``test_the_audited_value_lookup_call_sites_have_no_production_caller`` reds if a dead site
+    above is ever wired up — at which point re-verdict the member instead of trusting this list.
+
+    Path-typed (no repo-relative rendering) so the detector can be exercised against a
+    fixture tree; ``_inert_enum_surfaces`` is the thin repo-relative wrapper.
+    """
+    declared: dict[Path, list[tuple[str, str]]] = {}
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        members = _enum_members(tree)
+        if members:
+            declared[f.resolve()] = members
+    enum_names = {path: {cls for cls, _ in members} for path, members in declared.items()}
+    iterated = _iterated_enum_classes(files, enum_names)
+    out: list[tuple[Path, str]] = []
+    for path, members in declared.items():
+        for class_name, member in members:
+            if (path, class_name) in iterated:
+                continue
             if member not in attr_names:
-                out.append((rel, f"{KIND_ENUM}:{class_name}.{member}"))
+                out.append((path, f"{class_name}.{member}"))
     return out
+
+
+def _inert_enum_surfaces(files: list[Path], attr_names: set[str]) -> list[tuple[str, str]]:
+    """An enum member is inert when its name is never accessed as an attribute anywhere in
+    ``src/`` AND its class is never iterated as a whole — see ``_inert_enum_members`` and
+    ``_iterated_enum_classes`` for the two halves."""
+    return [
+        (_rel(path), f"{KIND_ENUM}:{surface}")
+        for path, surface in _inert_enum_members(files, attr_names)
+    ]
 
 
 # ── Kind: trigger_kind ────────────────────────────────────────────────────────

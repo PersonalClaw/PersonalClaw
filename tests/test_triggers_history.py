@@ -34,11 +34,13 @@ from personalclaw.triggers.history import (
     event_trigger_to_record,
     feed_response,
     hook_to_record,
+    is_inert,
     outcome_counts,
+    partition_inert,
     schedule_run_to_record,
     unified_feed,
 )
-from personalclaw.triggers.models import FIRE_OUTCOMES, Outcome, RunWeight
+from personalclaw.triggers.models import FIRE_OUTCOMES, INERT_OUTCOMES, Outcome, RunWeight
 
 NOW = time.time()
 
@@ -169,6 +171,113 @@ def test_a_blocked_hook_maps_to_refused():
         id="h1", name="x", event="PreToolUse", run_count=1, last_run=NOW, last_status="blocked"
     )
     assert hook_to_record(hook).outcome == Outcome.REFUSED.value
+
+
+# ── the statuses the tables did not name (WV-15) ──
+
+
+def _hook(status: str, **over):
+    kw = {"id": "h1", "name": "x", "event": "Stop", "run_count": 1, "last_run": NOW}
+    kw.update(over)
+    return ScriptHook(last_status=status, **kw)
+
+
+def test_a_launched_hook_maps_to_deferred_not_ran():
+    """🔴 `hooks.py` writes `launched` to say "started ≠ succeeded" (T7), and this table — alone of
+    the three — had no key for it, so the honest status landed on the `RAN if last_run` default and
+    reported success for a background turn nobody has seen."""
+    rec = hook_to_record(_hook("launched"))
+    assert rec.outcome == Outcome.DEFERRED.value
+    assert rec.outcome != Outcome.RAN.value
+    assert "not yet known" in rec.reason
+    # It has not earned an exit code, so it has not earned `FULL` either.
+    assert rec.weight == RunWeight.LEDGER.value
+
+
+def test_an_incident_suppressed_hook_is_a_SKIP_not_a_run():
+    """🔴 The worst of the two: `incident_active()` returns BEFORE the provider is called, so
+    nothing executed — and the feed said "it ran and did something durable"."""
+    rec = hook_to_record(_hook("skipped_incident"))
+    assert rec.outcome == Outcome.SKIPPED_GATE.value
+    assert is_inert(rec) is True
+    assert rec.weight == RunWeight.LEDGER.value
+    assert "incident" in rec.reason
+
+
+def test_an_incident_suppressed_hook_folds_into_the_archived_half():
+    """The user-visible consequence: it stops competing with real runs for attention."""
+    did, suppressed = partition_inert([hook_to_record(_hook("skipped_incident"))])
+    assert did == []
+    assert len(suppressed) == 1
+
+
+def test_a_hooks_unmapped_status_is_failed_AND_loud(caplog):
+    """A silent fallback is why two statuses sat unmapped for months. `ran` is never the answer."""
+    with caplog.at_level("WARNING"):
+        rec = hook_to_record(_hook("teleported"))
+    assert rec.outcome == Outcome.FAILED.value
+    assert any("teleported" in r.getMessage() for r in caplog.records)
+
+
+def test_a_hook_with_NO_status_still_reads_as_ran():
+    """The one deliberate exception: an absent status is a row written before the field existed, so
+    "it ran" is the fact we have and the verdict is the part that is missing. It cannot hide a new
+    status — a hook that executes always writes one of `hooks.py`'s literals."""
+    rec = hook_to_record(_hook("", run_count=3))
+    assert rec.outcome == Outcome.RAN.value
+    assert rec.reason == ""
+
+
+def test_a_screened_payload_is_blocked_not_failed():
+    """🔴 `gateway._record_blocked_fire` writes `status: "blocked_injection"` and the table had no
+    key, so a DEFENDED injection attempt read as a broken automation — and `failed` is the only
+    member of `TRUE_FAILURE_OUTCOMES`."""
+    rec = schedule_run_to_record(
+        _run(status="blocked_injection", error="payload blocked by the injection screen (url)")
+    )
+    assert rec.outcome == Outcome.BLOCKED_INJECTION.value
+    assert rec.outcome != Outcome.FAILED.value
+    assert rec.weight == RunWeight.LEDGER.value
+    assert "injection screen" in rec.reason
+
+
+@pytest.mark.parametrize("status", sorted(INERT_OUTCOMES))
+def test_a_suppressed_fire_projects_as_the_suppression_it_was(status):
+    """🔴 `service._record_suppression_row` persists all six so criterion 8's "zero silent drops" is
+    real, and every one of them projected as `failed`: a quiet-hours skip rendered as a red failure
+    AND stayed in the `did` half, burying the fires that mattered."""
+    rec = schedule_run_to_record(_run(status=status, error="quiet hours until 08:00"))
+    assert rec.outcome == status
+    assert is_inert(rec) is True
+    assert rec.weight == RunWeight.LEDGER.value
+    assert rec.reason == "quiet hours until 08:00"
+
+
+def test_a_suppressed_fire_with_no_reason_still_says_something():
+    """§7 criterion 8 is that a user can ask "why did my automation not run" and get an answer."""
+    rec = schedule_run_to_record(_run(status=Outcome.SKIPPED_GATE.value, error="", summary=""))
+    assert "suppressed" in rec.reason
+
+
+def test_the_feed_folds_a_suppressed_row_away_and_a_real_one_forward():
+    """The whole point, end to end: one gate skip and one real run must not read alike."""
+    body = feed_response(
+        unified_feed(
+            schedule_runs=[
+                _run(run_id="skip1", status=Outcome.SKIPPED_GATE.value, error="quiet hours"),
+                _run(run_id="ran1", status="success"),
+            ]
+        )
+    )
+    assert body["suppressed_ids"] == ["skip1"]
+    assert body["did_ids"] == ["ran1"]
+    assert body["suppressed"] == 1
+
+
+def test_an_unmapped_run_status_is_loud(caplog):
+    with caplog.at_level("WARNING"):
+        schedule_run_to_record(_run(status="teleported"))
+    assert any("teleported" in r.getMessage() for r in caplog.records)
 
 
 # ── the event projection ──

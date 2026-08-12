@@ -647,7 +647,10 @@ async def run_script_hook(
         # run-workflow/invoke-agent) only LAUNCHED a background turn — record
         # "launched" so the lifecycle-trigger badge doesn't overstate it as a
         # verified success, matching the schedule path's run-record status.
-        hook.last_status = "launched" if result.outcome == "launched" else "ok"
+        # `queued` is carried through for the same reason and is weaker still: under
+        # `on_overlap: queue` nothing started at all (WV-14), so folding it into "ok"
+        # would report work that has not begun as work that finished.
+        hook.last_status = result.outcome if result.outcome in ("launched", "queued") else "ok"
     elif result.error and "Timed out" in result.error:
         hook.last_status = "timeout"
     else:

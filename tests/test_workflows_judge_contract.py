@@ -403,3 +403,121 @@ def test_malformed_runtime_hints_do_not_break_a_def():
         }
     )
     assert wf.runtime_hints == {}
+
+
+# ── the unwired-enforcement rail (WF2LOO-12) ──
+
+#: The ENFORCEMENT entry points of `judge_contract`. Each carries a rule the module
+#: docstring states as if it were live; none has a production caller. The TYPES are
+#: deliberately absent: `judge_actors` imports `Isolation` and `judge_pretier` imports
+#: `FallbackCheck`, and importing a type enforces nothing.
+_ENFORCEMENT_ENTRY_POINTS = (
+    "validate_verdict",
+    "meets_ratchet",
+    "compute_overall",
+    "detect_forbidden_modes",
+    "aggregate_samples",
+    "hints_from_dict",
+)
+
+#: The claim the module docstring must carry for as long as that list has no caller.
+_UNWIRED_MARKER = "enforcement is not wired"
+
+_OWNER = "workflows/judge_contract.py"
+
+
+def _repo_src():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[1] / "src"
+
+
+def _production_callers() -> dict[str, list[str]]:
+    """Production call sites of the enforcement entry points, keyed by name.
+
+    Substring matching on `name(` / `import name` on purpose: it over-reports rather than
+    under-reports, and an over-report on THIS rail means a human re-reads the docstring.
+    The owning module is excluded — a function calling its own helpers is not wiring.
+    """
+    found: dict[str, list[str]] = {name: [] for name in _ENFORCEMENT_ENTRY_POINTS}
+    for path in sorted(_repo_src().rglob("*.py")):
+        rel = path.as_posix()
+        if rel.endswith(_OWNER):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for name in _ENFORCEMENT_ENTRY_POINTS:
+            if f"{name}(" in text or f"import {name}" in text:
+                found[name].append(rel)
+    return {name: sites for name, sites in found.items() if sites}
+
+
+def test_the_unwired_enforcement_claim_matches_the_live_path():
+    """`judge_contract`'s docstring and the live judge path must move together.
+
+    The module opens by stating rules ("a PASS without cited proof is invalid") that read
+    as descriptions of the running engine. They are not: the live judge gate asks for ONE
+    WORD and `verify.parse_verdict` reads only that word, so no live response can carry the
+    proof the contract demands. The docstring therefore has to SAY it is unenforced — and
+    that admission is itself a claim that can rot.
+
+    So this fails in BOTH directions:
+
+    * enforcement gains a production caller while the docstring still says it has none →
+      the "not wired" section is now the lie, rewrite it to describe what enforces what;
+    * the live gate stops asking for one bare word while enforcement is still unwired →
+      the reason given for not wiring has changed, so re-read the measurement (a
+      structured live gate may make enforcement cheap, or may need the blast radius in
+      `WF2LOO-13` re-measured).
+
+    It does NOT assert that enforcement stays unwired. Wiring it is `WF2LOO-13`; this rail
+    only refuses to let the code and the claim about the code drift apart silently.
+    """
+    import inspect
+
+    from personalclaw.workflows import engine, judge_contract
+
+    source = (_repo_src() / "personalclaw/workflows/judge_contract.py").read_text(encoding="utf-8")
+    # Vacuity floor: a rail scanning for names that no longer exist passes forever on an
+    # empty match set. Every entry point must still be a function in the owning module.
+    missing = [name for name in _ENFORCEMENT_ENTRY_POINTS if f"def {name}(" not in source]
+    assert not missing, (
+        f"this rail scans for enforcement functions judge_contract no longer defines: {missing}"
+        " — retarget the list, do not let it match nothing"
+    )
+
+    doc = (judge_contract.__doc__ or "").lower()
+    wired = _production_callers()
+
+    if wired:
+        assert _UNWIRED_MARKER not in doc, (
+            f"judge_contract's enforcement now HAS production callers ({wired}) but its "
+            "docstring still says enforcement is not wired — rewrite the measurement "
+            "section to describe what enforces what, and on which path"
+        )
+        return
+
+    assert _UNWIRED_MARKER in doc, (
+        "no production code calls judge_contract's enforcement, and the module docstring no "
+        "longer says so — a contract that reads as live but runs nowhere is the exact defect "
+        f"WF2LOO-12 fixed. Entry points checked: {list(_ENFORCEMENT_ENTRY_POINTS)}"
+    )
+    for named in ("dispatch_gate", "parse_verdict"):
+        assert named in doc, (
+            f"the docstring claims enforcement is unwired but no longer names {named!r} as the "
+            "live path that supersedes it — an unwired notice that does not say what runs "
+            "instead sends the next reader looking for a caller that was never there"
+        )
+
+    gate = inspect.getsource(engine.dispatch_gate)
+    # Vacuity floor #2: confirm we are reading the function that owns the judge branch
+    # before drawing a conclusion from what its text does not contain.
+    assert "GateKind.JUDGE" in gate, (
+        "dispatch_gate no longer contains the judge branch — this rail is reading the wrong "
+        "function and its one-word assertion below proves nothing"
+    )
+    assert "EXACTLY ONE word" in gate, (
+        "the live judge gate no longer demands one bare word, but judge_contract still says "
+        "enforcement is unwired BECAUSE a one-word answer cannot carry proof. Re-measure: if "
+        "the gate now returns structured JSON, the contract may be enforceable there "
+        "(WF2LOO-13), and this docstring's stated reason is stale"
+    )

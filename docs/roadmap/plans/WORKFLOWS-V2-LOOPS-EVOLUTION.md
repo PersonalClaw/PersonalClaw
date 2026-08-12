@@ -1,6 +1,6 @@
 # WORKFLOWS-V2-LOOPS-EVOLUTION
 
-**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2LOO.md`](../atomic/WF2LOO.md) as 11 atomic plan(s).
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2LOO.md`](../atomic/WF2LOO.md) as 14 atomic plan(s).
 
 This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
 
@@ -842,6 +842,25 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
 
 ## Execution log
 
+- **[2026-08-12][WF2LOO-15] DONE — judge_actors claimed two enforced invariants and ran one.**
+  Measured live references outside the module: `plan_judge_session` **3**, `validate_judge_model` **4** — judge
+  isolation IS enforced from `engine.dispatch_gate`, and `engine.py:1296` records that this very seam was dead until
+  S146. Against that: `check_transition` **0**, `resolve_transition` **0**, `blind_provenance` **0**,
+  `assemble_judge_evidence` **0**. So the headline "self-approval made structurally impossible" described a rule that
+  nothing applies.
+  **Why it was never wired — structural, not an oversight.** The state machine has no ACTOR at a node transition;
+  `controller.py:1210`'s `actor` belongs to the mutation queue. There is literally nothing to pass to
+  `check_transition` where a node's state changes, so wiring the rule means introducing an actor into the transition
+  path. That is `WF2LOO-13`'s work, and this atom refuses to fake it: it corrects the claim and CONSOLIDATES ownership
+  (WF2LOO-13's scope now names all four functions) so the unwired judge surface has one owner instead of three
+  half-findings across `judge_contract` and `judge_actors`.
+  **The rail is bidirectional**, which is the part worth keeping: it fails if the enforced half loses its caller, AND
+  if the authored half GAINS one while the docstring still says it has none — the pleasant version of this bug is
+  someone wiring the rule and leaving prose that calls it unwired. Both directions proven by probe (marker removed →
+  red; a caller injected while the marker stays → red), each reverted with a targeted edit. A vacuity floor asserts
+  every symbol the rail reasons about is still defined, so a rename cannot make it pass by measuring nothing.
+  **No behaviour change:** `engine.py` and `controller.py` are untouched.
+
 - **2026-08-01 — DONE — Judge contract + runtime_hints + enforcement invariants (session 29 of the WF2 queue).**
   Branch `feature-wf2-loops-judge`, PR #167. `workflows/judge_contract.py` (closed verdict enum
   PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT, rubric ratchet with strict-no-averaging,
@@ -1241,3 +1260,176 @@ Verified load-bearing: removing the rule turns the flagging test red. Gate: `mak
   loop or bundled"` green; `web`: `npm run typecheck` clean, FULL `npm test` **144 files / 1368
   tests** green, `npm run build` clean. `docs/architecture/workflows.md`'s module table gained the two
   new modules in the same commit (its bidirectional drift test demands it).
+
+- **2026-08-12 — DONE — `WF2LOO-12`: the judge contract's enforcement claim is now honest, and
+  railed against drift.** Branch `feature-judge-contract-claims`. `judge_contract.py` opened by
+  stating *"**A PASS without cited proof is invalid.** Not 'discouraged': the verdict is rejected by
+  the contract"* as a description of the running engine. **It never has been.**
+
+  **Measured.** The live judge gate (`engine.dispatch_gate`, `GateKind.JUDGE`) sends
+  `f"{prompt}\n\nRespond with EXACTLY ONE word, one of: PASS, RETRY, ESCALATE, REJECT. No other
+  text."` and reads the answer with `verify.parse_verdict` (`verify.py:63`), which extracts the
+  verdict WORD only — over a DIFFERENT four-member enum (`verify.Verdict` carries RETRY where the
+  contract carries REPLAN/NEEDS_INPUT). A bare word cannot carry proof, scores or a rubric result,
+  so the contract is not merely unused there: it is inexpressible. And nothing calls it —
+  `validate_verdict`, `meets_ratchet`, `compute_overall`, `detect_forbidden_modes`,
+  `aggregate_samples` and `hints_from_dict` have **zero** production callers. The only things that
+  leave the module are TYPES (`judge_actors.py:26` imports `Isolation`; `judge_pretier.py:246`
+  imports `FallbackCheck`), plus two comments (`models.py:712`, `engine.py:1510-1511`) recording
+  that `engine.py` deliberately RESTATES the sampling rule rather than importing it. Population:
+  **7 judge gates in 7 bundled templates**, so enforcing the headline would invalidate every judge
+  PASS in all of them — an outage, not a gate.
+
+  **DISCOVERY — a live structured judge path DOES exist, and it already emits the contract shape.**
+  The `judge` STAGE in 6 bundled templates (`code-project`, `design-project`, `diagnose-run`,
+  `general-project`, `goal-pursuit-open-ended`, `goal-pursuit-verifiable`) declares
+  `config.schema` = `{reasoning, verdict, scores, marginal_value, evidence_refs, proof,
+  cannot_judge}`, and its prompt spells out this module's own five-verdict vocabulary verbatim.
+  `dispatch_infer` really parses it — `want_json = bool(cfg.get("schema"))` (`engine.py:409`). So a
+  `validate_verdict`-shaped response is produced on every loop iteration, and then **discarded**:
+  `dispatch_infer` returns DONE for any parseable JSON whatever the verdict says, and **zero**
+  shipped templates bind `nodes.judge.output.*`. That is what settled the option. Enforcing on that
+  path could not change any outcome (nothing consumes the verdict) so it would ship INERT; making
+  it decide the node instead would fail work that passes today. Both are barred by this program's
+  rules, so **option A (docs honesty) is forced, not preferred.** A third live structured judge,
+  `loop/judge.py`, speaks yet another vocabulary (`CycleVerdict{done, done_reason, marginal_value,
+  quality_score, regressed}`) with no proof field, so the contract is not expressible there either.
+
+  **DISCOVERY — what the rubric declarations actually reach.** 6 templates declare
+  `runtime_hints.judge.rubric` (14 criteria total). `hints_from_dict` is the only parser and has no
+  caller, so as DATA the rubric is inert. As PROSE it does arrive: `WF2LOO-3`'s log claims "a test
+  asserting every declared criterion reaches a judge", and that test is
+  `test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt` — it
+  asserts the criterion STRING is a substring of some judge node's `prompt`. Text inlining, not
+  scoring. No `target_score` is ever compared against a returned score, because `meets_ratchet` has
+  no caller. The claim is literally true and much weaker than it reads.
+
+  **What shipped.** The module docstring now says enforcement has no caller, and carries a measured
+  "what the live judges actually do" section naming both live paths, the rubric's prose-only
+  reachability, and the wiring atom. **No function was deleted** (they are authored contract), and
+  **nothing became stricter**: `engine.py` and `verify.py` are byte-identical to `HEAD`, so a
+  user's judge gate does exactly what it did before this change — one-word prompt, `parse_verdict`,
+  same verdict→state mapping. No `web/` change.
+
+  **The rail.** `test_workflows_judge_contract.py::test_the_unwired_enforcement_claim_matches_the_live_path`
+  fails in BOTH drift directions: (a) any of the six entry points gains a production caller while
+  the docstring still says enforcement is unwired; (b) the live gate stops demanding one bare word
+  while the docstring still gives that as the reason for not wiring. Two vacuity floors keep it from
+  matching nothing — every entry point must still be `def`ined in `judge_contract.py`, and
+  `GateKind.JUDGE` must be found inside `dispatch_gate` before any conclusion is drawn from what its
+  text lacks. **Proven able to fail by three probes, each reverted with a targeted edit:** deleting
+  the `Enforcement is NOT wired` marker (1 failed), injecting a `validate_verdict` caller into
+  `verify.py` (1 failed, naming the caller), and switching the gate prompt to JSON (1 failed). It
+  deliberately does NOT assert enforcement stays unwired — wiring it is `WF2LOO-13`.
+
+  **`WF2LOO-13` recorded (todo) with the measured blast radius** so the wiring is a scoped decision
+  rather than a surprise: 7 judge gates in 7 templates change prompt + parse; 6 templates × 14
+  rubric criteria become live thresholds for the first time (an unscored criterion is a
+  `not scored` shortfall — a REJECT — under `Ratchet.STRICT`); every judge answer grows from ~1
+  token to a JSON object on a gate that runs every loop iteration, with a more frequent PROTOCOL
+  failure mode on unparseable JSON; and the two verdict enums must converge to one closed set
+  rather than be bridged. Its first step is measuring how many real judge responses would satisfy
+  the contract BEFORE it gets teeth — which is why it depends on `WF2LOO-7` (the tick that actually
+  emits `judge_verdict` ledger events; `judge_calibration.VerdictRecord` is the reader).
+
+  **DEVIATION — the rail lives in `tests/test_workflows_judge_contract.py`, not in
+  `tests/test_inert_surface_baseline.py`.** `PHF-13` already pins `validate_verdict` and
+  `hints_from_dict` as caller-free there, and that rail belongs to the census. This one is about
+  the DOCSTRING's honesty versus the live path, which is WF2LOO's contract, so it sits with the
+  module's own tests and the generated inert-surface baseline is untouched (no regeneration needed).
+
+  Gate: `make lint` green; `pytest -k "judge or verdict or gate or rubric"` green; the roadmap
+  derived block regenerated with `tools/regen_dag_derived.py` (614 atoms, 847 edges; the 2 cycles
+  and 1 unresolved ext-ref are pre-existing and unrelated). The source plan's decomposition count
+  moved 11 → 13.
+
+- **2026-08-12 — `WF2LOO-14` DONE (#PENDING): `until_dry` now reads the `progress_field` its
+  templates declare.** `controller._is_dry(output)` — *"Did an iteration surface anything new? Feeds
+  `until_dry` termination"* — returned True only when the output was `None` or `len(output) == 0`.
+  **It never looked at `progress_field`,** and its only other mention in `src/` was
+  `template_lint.py`'s TANGLED-loop comment asserting *"`progress_field` merely names which field it
+  reads"* — behavior that did not exist. So a cycle honestly reporting
+  `{"new_findings_count": 0, "notes": "nothing new"}` is a non-empty dict and counted as PROGRESS;
+  the streak reset, `tick.loop_should_continue`'s `dry_streak < need` never stopped being true, and
+  the run burned every iteration up to its cap paying for a model call each time to learn nothing.
+
+  **SECOND FINDING, sharper than the first.** The output `_advance_loop` measures is
+  `self._outputs[item.node.id]` for the leaf that COMPLETED the iteration. Both declaring templates
+  have `body: sequence[work-stage, judge-stage]`, so that leaf is the **judge**, whose schema
+  (`reasoning`, `verdict`, `scores`, `evidence_refs`, `proof`, `cannot_judge`) carries no progress
+  key and which returns a populated object every time. `until_dry` was therefore dead for these two
+  templates under the OLD rule as well — `dry_streak` could not increment at all, on any output.
+  This is why the fix reads the loop BODY rather than the last leaf: a last-leaf-only read would
+  have shipped inert for exactly the templates that asked for the mode.
+
+  **The rule, one sentence:** a declared progress field is dry when its value is that field's own
+  expression of "nothing" — null, false, zero, blank, or empty. Exhaustively, in
+  `controller._progress_reading`: `None` → dry; `False`/`True` → dry/progress (checked before `int`,
+  since `bool` is an `int` subclass); `0`/`0.0` → dry, any other number → progress **including a
+  negative** (a nonsense count is not evidence that nothing happened); `""`/whitespace → dry,
+  non-blank `str` → progress; empty/non-empty `bytes` → dry/progress; empty/non-empty
+  `list`/`tuple`/`set`/`frozenset`/`dict` → dry/progress; **any other type → `unreadable`**, a real
+  third answer rather than a default branch that guesses.
+
+  **Absence and unreadability fall back to the whole-output rule, deliberately.** `_progress_value`
+  returns `(found?, value)` so a present `None` (a legitimate DRY reading) stays distinguishable
+  from a missing key. Treating a missing key as dryness would end a user's run after `streak`
+  iterations because the body forgot to emit a field — silently truncating real work — where the
+  fallback costs at most one extra iteration and is visible. Same direction for an oversize output
+  whose inline preview is a `result_omitted` stub. The body scan is restricted to nodes whose
+  instance for THIS iteration succeeded: `self._outputs` is keyed by node id, so a body node that
+  did not run this time still holds the PREVIOUS iteration's value, and reading that would report
+  last iteration's progress as this one's. Last match in document order wins. `streak` semantics are
+  untouched — `tick.loop_should_continue` is byte-identical, and `_is_dry` keeps its old body for
+  the loops that declare no field. `_is_dry` has exactly ONE caller, so no non-loop path could
+  change.
+
+  **BLAST RADIUS — exactly two shipped templates.** Census of `until_dry` loops in `bundled/`: four
+  total. `audit-sweep` (`streak 2`, cap 3) and `deep-research` (`streak 2`, cap `{{inputs.rounds}}`)
+  declare no field and are byte-for-byte unchanged. `goal-pursuit-open-ended` (`new_findings_count`,
+  integer, cap 12) now ends after two cycles reporting `0` instead of running to 12;
+  `general-project` (`meaningful_progress`, boolean, cap 6) ends after two `false` cycles instead of
+  running to 6. **Both bodies genuinely CAN emit their field** — `goal-pursuit-open-ended`'s `cycle`
+  declares `schema {summary, key_insight, new_findings_count, evidence}` and its prompt says *"Set
+  new_findings_count to the number of genuinely NEW things this cycle established. Zero is a valid
+  and useful answer"*; `general-project`'s `work` declares `schema {summary, meaningful_progress,
+  evidence}` — so neither declaration was wrong at the template end and **no template needed
+  fixing**.
+
+  **Nothing ships inert.** Driven through a real controller (`test_workflows_loop_wiring.py::
+  TestProgressFieldDecidesDryness`) on a body shaped like the shipped templates — field emitted by
+  the first stage, iteration ended by a judge stage: the loop ENDS at 2 iterations on two
+  zero-progress cycles (`outcome == "dry_streak"`, run COMPLETE); it does NOT end while progress is
+  reported (runs to its cap, no `dry_streak`); a productive cycle RESETS the streak (dry, progress,
+  dry, dry → ends at 4); an absent field runs to the cap. The judge's fake output carries a counter
+  so `check_breaker`'s `identical_output` rule cannot end the loop first and make the test prove
+  nothing. Plus a 19-case table test pinning every per-type reading, `unreadable` included.
+
+  **RAIL + proof it can fail.** `test_workflows_loop_templates.py::
+  test_every_declared_progress_field_can_be_emitted_by_its_body` sweeps EVERY bundled template (not
+  a hand-maintained tuple): a declared `progress_field` must appear in some body node's `schema`
+  AND be named in that node's prompt (a key the prompt never asks for comes back invented or
+  missing), with a vacuity floor asserting at least two loops were actually swept. **Probe 1:** the
+  call site reverted to `_is_dry(output)` → the two ending tests fail (`RunStatus.ESCALATED`, the
+  loop ran on to the breaker) while the two no-regression tests still pass. **Probe 2:**
+  `general-project`'s `progress_field` renamed to a typo → the rail fails naming the loop and the
+  field. Each reverted by a targeted edit; `git diff` on the template is empty.
+
+  **CHANGELOG: yes, under `Fixed`.** This changes when two shipped templates' runs END — a user
+  running `goal-pursuit-open-ended` sees it stop after two quiet cycles instead of twelve, and the
+  cost difference is real money — so it is user-visible behavior, not an internal cleanup.
+  `template_lint.py`'s comment is corrected to describe the behavior that now exists (declared
+  field when a loop names one, whole output when it does not). **No `web/` change:** `until_dry`
+  termination has no frontend surface, and the run widget reads the same ledger events as before.
+
+  **DEVIATION — the atom is filed as `WF2LOO-14` with a dep on `WF2LOO-3` only.** `WF2LOO-7`'s
+  header still says todo, but its wiring is present in code and its test file
+  (`test_workflows_loop_wiring.py`) is where this atom's driven tests live — header stale, log and
+  code win, so claiming a dep on it would be dishonest in both directions. `WF2LOO-13` was not
+  disturbed. The generated inert-surface baseline is untouched: this atom REMOVES an inert control
+  rather than adding a surface.
+
+  Gate: `make lint` green; the loop/dry/tick/controller/template-lint slice green; the roadmap
+  derived block regenerated with `tools/regen_dag_derived.py` (615 atoms, 848 edges; the 2 cycles
+  and 1 unresolved ext-ref are pre-existing and unrelated). The source plan's decomposition count
+  moved 13 → 14.

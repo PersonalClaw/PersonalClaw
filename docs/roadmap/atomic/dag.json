@@ -696,6 +696,18 @@
             "WF2TAS-10",
             "EXT:WORKFLOWS-V2:RunController tick/completion path + _publish stream"
           ]
+        },
+        {
+          "id": "WF2TAS-12",
+          "title": "Retire the guidance-persistence Lifecycle enum; rail the def→SurfacingMeta conversion point",
+          "status": "done",
+          "pr": "#1144",
+          "scope": "§2 Surfacing discipline: the declared-only `Lifecycle` field on `SurfacingMeta` (WF2TAS-4) measured against the live surfacing path (WF2TAS-7/-8), and the adapter seam that would have to carry it",
+          "done_when": "Measured: `render_passive`/`may_suggest` have zero production callers and nothing in src/ reads `agent_digest`, so the passive channel `lifecycle` paced does not exist (corroborated by FS-6's note and test_learning_ambient's \"unbuilt producer\" seam test); `DefMetadata` had no `lifecycle` field, so no authored def could write it and `meta_from_def` could not carry it — three members, zero observable difference. `Lifecycle` + `SurfacingMeta.lifecycle` + its to_dict/from_dict keys DELETED (clean break, not a documented TODO); a stale `lifecycle:` key on disk still loads because from_dict names what it reads. New rail in test_workflows_def_surfacing_fields.py asserts `meta_from_def` names every field shared by `SurfacingMeta` and `DefMetadata` (7 today, vacuity-guarded, source-read via AST because a dropped field arrives as a legal default) plus a proof-it-can-fail test; inert-surface-baseline.json regenerated on the legitimate shrink (surfacing.py entry removed, enum 19→18, inert 146→145). Guidance aggressiveness unchanged: nothing surfaces passively today, so no def surfaces more often",
+          "deps": [
+            "WF2TAS-4",
+            "WF2TAS-7"
+          ]
         }
       ]
     },
@@ -2242,6 +2254,18 @@
             "WF2UNI-6",
             "EXT:LOOPS-EVOLUTION:loop drain / retirement before planning-module deletion"
           ]
+        },
+        {
+          "id": "WF2UNI-13",
+          "title": "Give the unattended-interrupt taxonomy a producer and a reader, delete the member that had no signal, and ratchet both enums",
+          "status": "done",
+          "scope": "Architecture: the confirmation matrix + the three interrupts (shipped by WF2UNI-5, which this atom corrects); autonomy.py's \"Three interrupts, and only three\" module claim",
+          "done_when": "should_interrupt has a live production caller (unattended_interrupts, emitted by _autonomy_surface as the plan preview's unattended_interrupts key); UNINFERABLE is produced from the credentials_or_payment registry signal now carried by name on ConfirmationRequest.signals; CONFLICTING is DELETED (no signal a ConfirmationRequest carries says \"requirements contradict\") and both \"only three interrupts\" claims are corrected; should_interrupt names every ConfirmationType member and RAISES on an unmapped one; an AST ratchet fails when any Interrupt member has no producer; enum:Interrupt.UNINFERABLE and enum:Interrupt.CONFLICTING both leave inert-surface-baseline.json; enforcement is UNCHANGED and the relaxation this atom refused is recorded as an owner decision",
+          "deps": [
+            "WF2UNI-5"
+          ],
+          "pr": "#1137",
+          "evidence": "FINDING: Interrupt's docstring called its members \"the only three things that stop an unattended run\" and NOTHING in production consulted any of them. should_interrupt was the only producer, had no caller outside tests, and could only ever return IRREVERSIBLE; UNINFERABLE and CONFLICTING were produced nowhere and inert-surface-baseline.json listed both. Three documented stops, two impossible, one never run. MEASUREMENT FIRST (wiring a guardrail may only ADD stops): the ONLY enforcement seam is gate_policy.decide, called once from controller._apply's WAITING branch. For a trigger-origin (SCHEDULE/EVENT/HOOK/IDLE), non-blocking run: risk safe -> AUTO_APPROVED (proceeds), caution -> AUTO_APPROVED (proceeds), destructive -> ASK (stops), absent/unparseable -> gate_risk defaults to DESTRUCTIVE -> ASK (stops). So today is neither \"stop for everything\" nor \"stop for nothing\": an unattended run stops for a DESTRUCTIVE-risk GATE NODE and proceeds through everything else. THE TWO LAYERS NEVER MEET, DELIBERATELY: autonomy.py speaks Mode x ConfirmationType, the engine speaks RiskLevel x OriginKind. autonomy.Mode never reaches the run path at all (run.mode is blocking|background, an unrelated axis). The whole autonomy chain (scan_risk -> type_attention -> compile_require_hitl -> build_confirmations) terminates in _autonomy_surface's plan-preview payload, and require_hitl -- described in-module as \"the ONE uniform engine target\" -- has no engine reader either (only mcp_workflows:1120 writes it and confirmation.requires_hitl, itself test-only, reads the shape). _autonomy_surface's own docstring states the asymmetry: \"the ENGINE's own gate policy still governs what actually runs, so a failure here loses advice, never enforcement.\" WHAT WAS REFUSED, AND WHY: (1) should_interrupt as a REPLACEMENT for gate_policy.decide is a SEVERE RELAXATION -- gate_risk defaults an undeclared gate to DESTRUCTIVE (ASK) while _classify_node types a gate node as READ/SAFE (kind \"gate\" matches none of action/transform/stage/infer), so should_interrupt returns False and EVERY UNCLASSIFIED GATE IN AN UNATTENDED RUN WOULD NEWLY AUTO-APPROVE. Not shipped. (2) As an additive veto layered after gate_policy (approve->ask only): safe in direction but INERT BY CONSTRUCTION, since gate nodes classify as READ so the veto never fires -- a live reader of a signal nothing writes. Not shipped. (3) At the action-dispatch seam, stopping unattended runs before OUTWARD actions: this is the one genuine behavioural delta (should_interrupt stops for OUTWARD at CAUTION; gate_policy auto-approves CAUTION). Additive and real, but an E4 OWNER DECISION, not an implementer's: it contradicts this module's own rule that autonomy machinery must not grow a second enforcement path, and it changes unattended semantics for every user template that posts/notifies on a schedule (those runs would newly park for an approval nobody is watching for). Population measured: ZERO of 21 bundled templates use an outward provider (send-message/notify/webhook/call-app-route appear only in bundled/shared/safety-tiers.md prose), so the shipped library is clean, but user templates are not measurable from here. RECORDED, NOT TAKEN. WHAT SHIPPED -- the counterfactual the offer surface was missing: every risk signal caps autonomy at per_stage, so offer_autonomy routinely RECOMMENDS per_stage while still OFFERING unattended, and build_confirmations is computed at the recommended mode. The preview thus listed the stops for a mode the user might not pick and said nothing about the one being offered. unattended_interrupts(confirmations) answers it per confirmation -- which stops survive at unattended, which become journaled assumptions -- and is emitted by _autonomy_surface as unattended_interrupts. Advisory, so it cannot relax anything: it reports on confirmations the plan already raises and changes no verdict. PER-MEMBER: UNINFERABLE KEPT WITH A PRODUCER. The registry already has credentials_or_payment, which IS \"a credential\"; the obstacle was that _classify_node collapses every DESTRUCTIVE-level signal to the same (DESTRUCTIVE, DESTRUCTIVE) pair, so the request reaching should_interrupt no longer knew which signal fired. Fixed by carrying registry signal NAMES on ConfirmationRequest.signals -- a canonical registry value threaded through, NOT a text scan of the question. LABEL-ONLY AND PROVABLY NON-RELAXING: credentials_or_payment is DESTRUCTIVE-level, so such a request already stopped on risk alone; checking the signal first changes WHICH interrupt is reported, never WHETHER the run stops (pinned by test_uninferable_relabels_a_stop_and_never_relaxes_one, which strips signals and asserts both verdicts stop). CONFLICTING DELETED: nothing a ConfirmationRequest carries expresses \"requirements that contradict each other\", and manufacturing one by scanning question text is a heuristic, not a signal. The one real contradiction this module detects -- a template autonomy_floor above the risk ceiling, offer_autonomy:404 -- is resolved at PLAN time by letting the floor win and recording it in capped_by, so it never reaches a run to stop it and would be the wrong semantics for an interrupt. Both \"only three\" claims (module docstring + enum docstring) corrected to two. No on-disk value can exist for the deleted member: Interrupt was never serialized anywhere, having had no producer. RATCHETS (two, because the atom's whole subject is a declared-but-unproducible member): should_interrupt is exhaustive over ConfirmationType with a RAISING tail -- the dangerous default there is `return False`, so a new type falling through the old permissive tail would have been waved through an unattended run; and an AST read asserts every Interrupt member is NAMED in should_interrupt, which is the ratchet that would have caught this finding at birth. Proven to fail: temporarily adding Interrupt.RATCHET_PROOF reds test_every_interrupt_member_is_produced and test_only_two_interrupts_exist (2 failed); reverted by a targeted edit, never git checkout --. The raising tail is asserted directly by test_an_unhandled_confirmation_type_raises_rather_than_proceeding. BASELINE: inert-surface-baseline.json regenerated with scripts/generate_inert_surface_baseline.py -- 148 -> 146 total, enum 21 -> 19, the src/personalclaw/workflows/autonomy.py block removed entirely (both enum:Interrupt.CONFLICTING and enum:Interrupt.UNINFERABLE). No web change: no frontend reads the plan-preview autonomy payload."
         }
       ]
     },
@@ -2371,6 +2395,54 @@
             "WF2LOO-6"
           ],
           "pr": "#836"
+        },
+        {
+          "id": "WF2LOO-12",
+          "title": "Make judge_contract's enforcement claim honest, and rail it against drift",
+          "status": "done",
+          "scope": "An HONESTY atom over WF2LOO-1's deliverable, not a feature atom: it makes what judge_contract.py SAYS match what the code DOES, and deliberately builds none of the missing wiring. The module opens by stating 'A PASS without cited proof is invalid ... the verdict is rejected by the contract' as fact; measured, its six enforcement entry points (validate_verdict, meets_ratchet, compute_overall, detect_forbidden_modes, aggregate_samples, hints_from_dict) have ZERO production callers, and the live judge gate asks for EXACTLY ONE word parsed by verify.parse_verdict over a DIFFERENT enum, so no live response can carry proof, scores or a rubric result. Enforcing the headline would invalidate every judge PASS in all 7 shipped judge gates, which is an outage rather than a gate, so the docstring is what changes. No function is deleted; no judge gate becomes stricter; engine.py and verify.py stay byte-identical. Records WF2LOO-13 as the scoped wiring work.",
+          "done_when": "judge_contract.py's docstring stops asserting live enforcement and records the measurement instead: six enforcement entry points with zero production callers, both live judge paths named (the one-word GateKind.JUDGE gate read by verify.parse_verdict; the contract-shaped judge STAGE in 6 templates whose output dispatch_infer parses and nothing reads or validates), the rubric's prose-only reachability, and what wiring would take. One rail (test_workflows_judge_contract.py::test_the_unwired_enforcement_claim_matches_the_live_path) fails in BOTH drift directions - enforcement gaining a production caller while the docstring still says it has none, and the live gate leaving its one-word prompt while the docstring still gives that as the reason - with two vacuity floors (entry points must still be defined; the judge branch must be found before concluding anything from the gate's text), proven able to fail by three probes (marker removed; injected validate_verdict caller in verify.py; gate prompt switched to JSON) each reverted by a targeted edit. engine.py and verify.py byte-identical to HEAD, so a user's judge gate behaves exactly as before. WF2LOO-13 recorded with its measured blast radius.",
+          "deps": [
+            "WF2LOO-1",
+            "WF2LOO-6"
+          ],
+          "pr": "#1157",
+          "evidence": "FINDING: WF2LOO-1's 'engine tests prove PASS-without-proof invalid' is true only of unit tests against functions with no caller. Live gate prompt: f'{prompt}\\n\\nRespond with EXACTLY ONE word, one of: PASS, RETRY, ESCALATE, REJECT. No other text.' (engine.py judge branch); live parse verify.py:63 parse_verdict returns a verify.Verdict word only. judge_contract's only importers in src/ are judge_actors.py:26 (Isolation) and judge_pretier.py:246 (FallbackCheck) - TYPES, which enforce nothing - plus two comments (models.py:712, engine.py:1510-1511) recording that engine.py deliberately RESTATES the sampling rule rather than importing aggregate_samples. SECOND FINDING (this atom's real discovery): a live structured judge path DOES exist and already emits the contract shape. The judge STAGE in 6 bundled templates (code-project, design-project, diagnose-run, general-project, goal-pursuit-open-ended, goal-pursuit-verifiable) declares config.schema = {reasoning, verdict, scores, marginal_value, evidence_refs, proof, cannot_judge} and its prompt spells out judge_contract's own five-verdict vocabulary; dispatch_infer parses it (want_json = bool(cfg.get('schema')), engine.py:409). But nothing validates it and nothing reads it: dispatch_infer returns DONE for any parseable JSON whatever the verdict says, and ZERO shipped templates bind nodes.judge.output.* . So enforcement there could not change an outcome (ships inert) and making it decide the node would fail work that passes today - both barred, which makes the docs-honesty option forced, not preferred. THIRD: loop/judge.py is a third live structured judge with its own vocabulary (CycleVerdict{done, done_reason, marginal_value, quality_score, regressed}) and no proof field, so the contract is not expressible there either. RUBRIC REACHABILITY: 6 templates declare runtime_hints.judge.rubric (14 criteria); hints_from_dict is the only parser and has no production caller; WF2LOO-3's claimed 'test asserting every declared criterion reaches a judge' is test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt, which asserts the criterion STRING is a substring of a judge prompt - text inlining, not scoring. No target_score is ever compared to a score. BLAST RADIUS recorded for WF2LOO-13: 7 judge gates in 7 templates (gap-healing, goal-pursuit-open-ended, knowledge-lint, knowledge-synthesis, publish-article, rich-ingest, thesis-tracker) change prompt + parse; 6 templates x 14 rubric criteria become live thresholds; one token per judge answer becomes a JSON object on a gate that runs every loop iteration; the two verdict enums must converge."
+        },
+        {
+          "id": "WF2LOO-13",
+          "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
+          "status": "todo",
+          "scope": "The wiring half of what WF2LOO-1 authored and WF2LOO-12 measured as unwired. The live judge path is taught to speak the contract instead of a bare word, and the 6 judge STAGES' already contract-shaped output stops being discarded. The two verdict vocabularies (judge_contract.Verdict PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs verify.Verdict PASS/RETRY/ESCALATE/REJECT) are reconciled to ONE, not bridged - engine.py currently restates the sampling rule precisely to avoid feeding one vocabulary's values to the other's aggregator. Enforcement lands only after the population is measured: giving a never-run control teeth before the population satisfies it is an outage, which is why WF2LOO-12 deliberately did not. — plus (WF2LOO-15) judge_actors' four unwired functions: check_transition/resolve_transition need an actor on the node-transition path, blind_provenance/assemble_judge_evidence need the message-list evidence the one-word gate does not produce.",
+          "done_when": "GateKind.JUDGE asks for the contract JSON instead of one bare word; validate_verdict decides the gate, so a PASS without proof/evidence_refs is rejected rather than accepted; meets_ratchet compares the 14 declared runtime_hints.judge rubric criteria against their target_score for the first time; hints_from_dict becomes the parser of the declarations 6 templates already carry; the 6 judge STAGES' output is validated and bound by the templates that produce it (today zero templates bind nodes.judge.output.*); the two verdict enums are reconciled to one closed set with the loser deleted (clean break), keeping the pre-tier, sampling and cross-model isolation seams WF2LOO-6/WF2LOO-11 built. Gated on a prior measurement of how many real judge responses would satisfy the contract - measured blast radius: 7 judge gates in 7 bundled templates change prompt + parse; 6 templates x 14 rubric criteria become live thresholds (an unscored criterion is a 'not scored' shortfall, i.e. a REJECT, under Ratchet.STRICT); every judge answer grows from ~1 token to a JSON object on a gate that runs every loop iteration, plus a more frequent PROTOCOL failure mode on unparseable JSON. WF2LOO-12's rail is retired in the same change, since the docstring stops saying enforcement is not wired.",
+          "deps": [
+            "WF2LOO-12",
+            "WF2LOO-7"
+          ]
+        },
+        {
+          "id": "WF2LOO-14",
+          "title": "Make until_dry read the progress_field its templates declare",
+          "status": "done",
+          "scope": "An inert-control atom over WF2LOO-3's templates: until_dry termination measured something other than what the templates declare. controller._is_dry(output) returned True only when the output was None or len(output) == 0 and never looked at progress_field, and the output it was handed is the leaf that COMPLETED the iteration - in both declaring templates the judge stage, whose schema carries no progress key and which returns a populated object every time. So for the only two loops that asked for it, the mode's own exit could not fire on either count, and a run burned every iteration up to its cap paying for a model call each time to learn nothing. This atom makes the declared field decide, with one exhaustive per-type rule, and leaves every loop that declares no field byte-for-byte unchanged.",
+          "done_when": "controller._advance_loop decides dryness via _iteration_is_dry: a loop declaring progress_field is judged on THAT field (_progress_reading: None/False/0/blank/empty => dry; anything else including a negative number => progress; an unmapped type => unreadable, never swallowed by a default branch), and _progress_value finds it anywhere in the iteration's body - restricted to nodes whose instance for THIS iteration succeeded, since self._outputs is keyed by node id and holds the previous iteration's value for a node that did not run. Body-wide search is required, not preferred: both declaring templates emit the field from the FIRST stage of a sequence body and end the iteration on a judge stage, so a last-leaf-only read ships inert. A loop declaring no field keeps _is_dry's whole-output rule byte-for-byte; a declared field that is absent or of an unreadable type falls back to that rule rather than counting as dryness, because ending a run over a key the body forgot would silently truncate real work. streak semantics untouched (tick.loop_should_continue unchanged). template_lint.py's comment claiming 'progress_field merely names which field it reads' becomes true. Driven through a real controller on the shipped body shape: ends at 2 iterations on two zero-progress cycles; runs to the cap while progress is reported; a productive cycle resets the streak; an absent field runs to the cap. Rail over EVERY bundled template: a declared progress_field must appear in a body node's schema AND be named in that node's prompt. Both halves proven able to fail by probes (call site reverted to _is_dry => the two ending tests red; one template's field renamed => the rail red), each reverted by a targeted edit. CHANGELOG entry under Fixed: this changes when two shipped templates' runs end.",
+          "deps": [
+            "WF2LOO-3"
+          ],
+          "pr": "#1161",
+          "evidence": "FINDING (re-verified on this tree): controller.py _is_dry - docstring 'Did an iteration surface anything new? Feeds until_dry termination' - returned True only for None or len()==0 and contained no reference to progress_field; its ONLY caller is _advance_loop (one call site, so no non-loop behavior could change). The only other progress_field reference in src/ was template_lint.py's TANGLED-loop comment asserting behavior that did not exist. SECOND FINDING (sharper than the first): the output _advance_loop measures is self._outputs[item.node.id] for the leaf that completed the iteration. In both declaring templates the body is sequence[work-stage, judge-stage], so that leaf is the JUDGE, whose schema is {reasoning, verdict, scores, evidence_refs, proof, cannot_judge} - no progress key, and never empty. until_dry was therefore dead for these two templates under the OLD rule as well, not merely mis-scoped: dry_streak could never increment at all. CENSUS of until_dry loops in bundled/: 4 total - audit-sweep sweep_until_dry (streak 2, cap 3, no field), deep-research investigate (streak 2, cap {{inputs.rounds}}, no field), general-project project (streak 2, meaningful_progress boolean, cap 6), goal-pursuit-open-ended work (streak 2, new_findings_count integer, cap 12). Only the latter two change. BODY-EMITS CHECK (constraint: a body that cannot emit its declared field would make the template wrong): both DO - goal-pursuit-open-ended's cycle stage declares schema {summary, key_insight, new_findings_count, evidence} and its prompt says 'Set new_findings_count to the number of genuinely NEW things this cycle established. Zero is a valid and useful answer'; general-project's work stage declares schema {summary, meaningful_progress, evidence}. So no template needed fixing. PROBE 1: call site reverted to _is_dry(output) => test_two_zero_progress_iterations_end_the_loop and test_progress_resets_the_streak both fail (RunStatus.ESCALATED instead of COMPLETE - the loop ran on to the breaker), while the two no-regression tests still pass; reverted by targeted edit. PROBE 2: general-project's progress_field renamed to a typo => the template rail fails naming the loop and the field; reverted by targeted edit, git diff on the template empty. DISCOVERY: WF2LOO-7's status header says todo, but its wiring is present in code and its test file (test_workflows_loop_wiring.py) is where the driven tests for this atom live - header stale, log and code win. No web/ change: until_dry termination has no frontend surface."
+        },
+        {
+          "id": "WF2LOO-15",
+          "status": "done",
+          "title": "judge_actors: separate the enforced invariant from the authored one, and rail the claim",
+          "scope": "LOOP-R3 judge integrity — workflows/judge_actors.py's enforcement claim vs its call graph",
+          "done_when": "judge_actors' docstring distinguishes the ENFORCED invariant (judge isolation — plan_judge_session/validate_judge_model called from engine.dispatch_gate) from the AUTHORED-but-unwired one (the worker-transition rule: check_transition/resolve_transition have no production caller because node transitions carry no actor — controller.py's actor belongs to the mutation queue), and names blind_provenance/assemble_judge_evidence as unwired for the same reason; tests/test_workflows_judge_actors_claims.py pins the claim to the call graph in BOTH directions and is proven to fail when the marker is removed AND when a caller is wired while the marker stays; WF2LOO-13's scope names all four functions so the unwired judge surface has ONE owner",
+          "deps": [
+            "WF2LOO-12"
+          ],
+          "pr": "#1170",
+          "evidence": "Measured: plan_judge_session 3 live refs and validate_judge_model 4 (enforced, wired at S146 per engine.py:1296's own comment); check_transition, resolve_transition, blind_provenance and assemble_judge_evidence 0 live refs each. controller.py's only `actor` is the mutation queue's (controller.py:1210), so a node transition has no actor to check — which is why the rule was never wired, and why wiring it is WF2LOO-13's work rather than a one-liner."
         }
       ]
     },
@@ -2603,6 +2675,18 @@
           "scope": "§5.5 Codebase Graph — codegraph/ package (parse.py tree-sitter extraction, index.py per-workspace SQLite with mtime+size invalidation), code_map + code_map_overview tools registered under the workflows group, SDLC planning-brief module summary (budget-capped ~2K tokens), @-mention centrality ranking; tree-sitter + tree-sitter-language-pack as core deps; Session 6",
           "done_when": "As-a-user validation: both tools in GET /api/tools (group=workflows), code_map_overview returns real repo shape, @-mention search centrality-ranked; measured 3.9s full index / 37ms incremental on 1,467-file repo; fail-soft verified with tree_sitter imports forced to fail; centrality distinct-file + name-rarity fix locked by test; log [2026-07-28][S6] DONE 'completes CONTEXT-ECONOMY', gate green (8575 passed)",
           "deps": []
+        },
+        {
+          "id": "CE2-7",
+          "status": "done",
+          "title": "Grammar availability is a capability, not an assertion: reason-recording + a skip gate for the codegraph suite",
+          "scope": "§5.5 Codebase Graph — parse.py's tolerant availability contract + tests/test_codegraph.py's posture",
+          "done_when": "parser_status() returns (available, reason) and records WHY a grammar would not load once per language with the remedy; parser_available keeps its bool contract; tests/test_codegraph.py probes the capability once and SKIPS the 35 grammar-dependent tests naming the recorded reason instead of failing, while an unimportable tree_sitter_language_pack still hard-fails as the packaging regression it is; the self-contradicting test_parser_available_is_a_question_not_an_assertion tests the contract it names; a failing loader is proven to skip (37 passed / 35 skipped / 0 failed) and a working one to pass 72/72",
+          "deps": [
+            "CE2-6"
+          ],
+          "pr": "#1169",
+          "evidence": "Measured 2026-08-12: PRs #1144 (2 failures) and #1162 (21) went red in CI entirely inside tests/test_codegraph.py, rooted in parser_available('python') returning False on a runner while parser_available's bare except discarded the reason; 70/70 passed locally. Grammar loading is a network-backed per-user cache fetch, so absence is normal and the suite must not red for it."
         }
       ]
     },
@@ -2822,6 +2906,31 @@
           ],
           "pr": "#1125",
           "evidence": "FINDING: ItemErrorPolicy.COLLECT was a DECLARED STRATEGY WITH NO EXECUTOR, and unlike most inert surfaces it was ADVERTISED — validator.py accepted `on_item_error: collect` and service.capabilities published item_error_policies=[p.value for p in ItemErrorPolicy], the catalog an authoring model reads. tick.py compared against HALT (stop scheduling) and SKIP (tolerate → DEGRADED) only; `collect` fell through to container_outcome, so it silently got a MIXTURE: it did not halt early (like SKIP) but any failure failed the container (like HALT) — neither documented behaviour, and by coincidence the same OUTCOME shape this atom then chose deliberately. What was genuinely missing: a branch naming the member, the failures-as-data half, and a ratchet. SEMANTICS: COLLECT = run every item to terminal (never halt early, like SKIP), then fail the container if any item failed (unlike SKIP's DEGRADED). FAILED not DEGRADED because _ROOT_TO_RUN maps DEGRADED→COMPLETE, so a DEGRADED terminal would make COLLECT's run-level observable identical to SKIP's and the one policy whose point is that failures matter would report success; the branch returns container_outcome rather than a hard-coded FAILED so a CANCELLED/BLOCKED item still reports the more severe verdict off _worst's severity order. ERRORS-AS-DATA: journal, not a container output — no container output surface EXISTS (controller._outputs is keyed by node id and written only where a LEAF completes; the frontier only yields leaves; a container deliberately has no stored instance so a rewind cannot leave a stale verdict), and publishing under the foreach's node id would make {{nodes.<fan>.output}} resolve in memory and resolve to nothing after a restart because rehydration reads inst.output_ref. So one items_collected ledger record per fan-out per epoch carries item_index/item_label/instance_path/node_id/failure_class/cause. FOLLOW-UP (not built): a downstream node is already reachable (a sequence continues past a terminal failed child unless it declares on_error: fail_run), so what is missing is only a way to BIND the set in — either a durable container-output surface (container instance or persisted container-outputs map, written at derivation and restored on rehydrate) or a read-only ledger action provider (cheaper, reuses an existing shape). RATCHET: the decision moved into tick.foreach_outcome, exhaustive over the enum with a raising tail; held by three tests — every member driven, the raise asserted, and an AST read of foreach_outcome asserting it names every member (a behavioural test alone would pass a fallthrough shared by two members). Proven to fail: adding a 4th member RETRY_ALL reds test_every_member_has_a_branch[retry_all] and test_the_source_branches_on_every_member_by_name. BEHAVIOURAL PROOF: one seeded failing item (item 1 of 3 cannot satisfy the body's {{item.v}} binding → a USER-class BindingError, deterministic, zero tokens, not retryable) with max_concurrency: 1 (unbounded, every item is launched before a failure exists to halt on) yields three DIFFERENT observables through the real controller — halt: FAILED with items {0,1} started; skip: COMPLETE with {0,1,2}; collect: FAILED with {0,1,2}. 18 new tests in tests/test_workflows_item_error_policy.py. inert-surface-baseline.json regenerated: 152 → 151 (enum 25 → 24)."
+        },
+        {
+          "id": "WV-14",
+          "title": "Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over OverlapPolicy",
+          "status": "done",
+          "scope": "§2 trigger-origin starts (`on_overlap`, owned by the run-workflow provider re-added in Slice 3)",
+          "done_when": "overlap.decide branches on every OverlapPolicy member and RAISES on an unmapped one; a `queue` start with a prior in flight PERSISTS an unlaunched run (DRAFT + a marker on run.extra) and returns outcome: \"queued\" naming it, instead of launching beside the prior; overlap.drain starts it from the controller's terminal write and from the watchdog poll, single-flight and idempotent; a hand-made DRAFT with no marker is never launched; the queue is capped at one and a dropped start names the cap in its outcome and the log; enum:OverlapPolicy.QUEUE leaves inert-surface-baseline.json",
+          "deps": [
+            "WV-3",
+            "WV-4"
+          ],
+          "pr": "#1130",
+          "evidence": "FINDING: OverlapPolicy.QUEUE did the exact OPPOSITE of its name. run_workflow_provider.py:124-175 compared against SKIP (early return, outcome=\"skip\", nothing starts) and CANCEL_PREVIOUS (store.request_cancel per active prior, then start) and let `queue` match NEITHER branch and fall straight through to store.create + _launch — launching a CONCURRENT run beside the still-running prior, silently. That violates the enum's own docstring (SKIP = \"skip\"  # default — a per-minute trigger must not stack runs) for the one policy whose name promises ordering: a per-minute trigger with on_overlap: queue against a slow workflow stacked runs unboundedly. Reachable and round-tripped, not theoretical: models.py:730 parses on_overlap from a def (unknown → SKIP), models.py:717 serializes it, native_defs.py:108 accepts it from a def payload, and inert-surface-baseline.json listed enum:OverlapPolicy.QUEUE as inert. SEMANTICS (one line each): SKIP (default) — a prior is in flight ⇒ nothing created, nothing starts. QUEUE — a prior is in flight ⇒ the start is PERSISTED as an unlaunched run and started when that prior ends; ordering, not concurrency. CANCEL_PREVIOUS — cancel the priors, then start now. With a free def all three start immediately (queue is not `always queue`, or a per-hour trigger against a one-minute workflow would never start anything directly). MARKER (queued vs hand-made draft): run.extra[\"overlap_queued\"] plus overlap_queued_at, written in the SAME INSERT as the row (WorkflowRun(extra=...)) so there is no window where the row is a plain DRAFT. `extra` is a persisted TEXT/JSON column (store._JSON_COLUMNS) round-tripped by _row_to_run/_run_to_params, so the marker survives a restart with the row. RunStatus.DRAFT is ALSO where a user's unlaunched editor draft sits, so a drain keyed on \"DRAFT for this def\" would start work the user never asked for — the worst available outcome of this atom; test_a_hand_made_draft_is_never_launched pins it directly (a marker-less DRAFT for the same def survives both drain call sites still DRAFT with no controller). Rejected: a new RunStatus.QUEUED member (a state-machine change — active_runs, TERMINAL_RUN_STATUSES, _ROOT_TO_RUN, materialize's exhaustive state→status table and the FE status union + workflowMeta badge Record all switch on it, and none of them need to; the FE already renders a `Draft` badge, so no web change and no web gate); RunOrigin (it says WHO started a run, not what it waits on); a journal fact (durable but unqueryable — \"which drafts are queued\" would mean opening every draft's ledger). DRAIN + IDEMPOTENCY: overlap.drain(name, supervisor) reuses concurrency.single_flight — the same flock leases.acquire_claim is built on — rather than a new lock, plus two more guards, cheapest first: (1) the flock, cross-process and also cross-coroutine because flock conflicts across separate open file descriptions in one process; (2) the supervisor's controller registry, since watchdog.launch already returns the EXISTING controller for a run id it holds — which also covers the window before a new controller's tick loop has written RUNNING, when active_runs() still reads empty; (3) an active re-check INSIDE the lock. Two LIVE call sites: controller._finish after the terminal status is written and published (awaited inline — a floating task makes the handoff untestable and can outlive its loop — and fully guarded, because _finish is the single terminal writer WF2-R10 and must not raise), and watchdog._poll_once after adoption via drain_all. CAP: MAX_QUEUE_DEPTH = 1, coalesce-to-one. Depth 1 keeps the promise the name makes (the fire is not dropped, it runs next) while bounding the backlog; unbounded depth means run N+2 does the same work as run N+1 with staler inputs and one late run becomes a multi-hour replay of expired trigger fires. A dropped start is loud in BOTH places: outcome stdout carries dropped/reason=\"queue_full\"/queue_depth/max_queue_depth/queued_run_id AND the provider logs a WARNING (asserted by test_a_dropped_start_is_logged). It stays outcome=\"skip\" (nothing durable was created) rather than minting a fourth vocabulary member. `queued` also gates the immediate start, so a fire arriving in the window between \"the prior finished\" and \"the drain launched it\" cannot jump the queue. RESTART: the queue IS re-drained, bounded by POLL_INTERVAL_SECS (5s). A queued start is a durable DRAFT row plus its spec.json, and watchdog._poll_once calls drain_all, so the first poll after the gateway returns drains whatever was pending — no separate boot hook. Driven by test_the_watchdog_poll_drains_after_a_restart with a FRESH WorkflowWatchdog that has never seen the run. Deliberately NOT preserved: if the boot sweep suspended the prior to PAUSED, PAUSED counts as active, so the queued run waits for an explicit Resume rather than overtaking a run that is not finished (test_the_queue_waits_while_the_prior_is_only_paused). A queued run whose spec directory vanished is FAILED rather than left queued — safe for the same reason the watchdog's orphan reaper is safe (a DRAFT run has no controller) — because a queue head the drain can never launch would be re-examined every poll forever and would block every start behind it. NEW OUTCOME MEMBER: outcome=\"queued\". Mandatory ripple, not optional — triggers.executor._record_fire_outcome maps an unrecognized runner status to Outcome.FAILED, so an unmapped \"queued\" would have recorded a healthy queued fire as a failure and spent autopause's 5-failure budget. Updated in the same change: STATUS_TO_OUTCOME and SCHEDULE_STATUS_TO_OUTCOME / HOOK_STATUS_TO_OUTCOME → Outcome.DEFERRED (its \"parked / resource-busy\" half) each with their own reason string so the two DEFERRED cases stay distinguishable; hooks.py and dashboard/handlers/triggers.py pass it through instead of folding it into ok/success; engine.dispatch_action maps it to DEGRADED (a DONE node would tell the frontier this action's work completed); action_providers/base.py documents the member and the rule that adding one means updating those maps. \"skip\" would under-report a real run record and \"launched\" would claim work that has not begun. RATCHET: overlap.decide(policy, active=, queued=) names every member and its unreachable tail RAISES; the provider call site additionally refuses an OverlapAction it has no branch for BEFORE anything is created, because the dangerous default there is \"fall through and launch\". Four tests: every member driven, the raise asserted, an AST read of decide asserting it names every member (a behavioural test alone would pass a fallthrough shared by two members — exactly how QUEUE hid), and a source check that every OverlapAction member has a call site. Proven to fail: temporarily adding a fourth member WV14_RATCHET_PROBE reds test_every_member_has_a_branch[wv14_ratchet_probe] and test_the_source_branches_on_every_member_by_name (2 failed, 5 passed); reverted by a targeted edit, never git checkout --. Also proven the atom is a real fix: forcing decide's QUEUE branch back to START reds 12 of 27 tests including the regression test. 27 new tests in tests/test_workflows_overlap_queue.py. inert-surface-baseline.json regenerated with scripts/generate_inert_surface_baseline.py: 151 → 150 total, enum 24 → 23, the single removed line being enum:OverlapPolicy.QUEUE. New module ⇒ docs/architecture/workflows.md module table gained an overlap.py row (test_workflows_hardening's doc-coverage test)."
+        },
+        {
+          "id": "WV-15",
+          "title": "Map every status a fire writes, and an AST rail over the three status→outcome tables",
+          "status": "done",
+          "scope": "§7 criterion 4 (one run-history feed, typed outcomes) + criterion 8 (zero silent drops)",
+          "done_when": "HOOK_STATUS_TO_OUTCOME names launched + skipped_incident and SCHEDULE_STATUS_TO_OUTCOME names blocked_injection + all six INERT_OUTCOMES, so no live status reaches a .get() fallback; both fallbacks LOG the status they could not classify and never return ran; a suppressed or screened row is LEDGER weight and lands in feed_response's suppressed half; tests/test_triggers_status_vocabulary.py infers each writer's possible values from its own AST (conditional expressions, in/not in guards, local names) with per-writer vacuity floors and a pinned writer-file census, and reds on all nine statuses if the tables are reverted",
+          "deps": [
+            "WV-14"
+          ],
+          "pr": "#1152",
+          "evidence": "FINDING: a projection table is only as honest as the writers it was authored against. triggers/history.py translates each store's status word into a FIRE_OUTCOMES member and reads its table with .get(status, <fallback>). WV-14 updated all three tables for the NEW member (queued) because a new member's ripple is obvious; the statuses already being written when the tables were authored are the ones nobody re-checked, and NINE values across FOUR writers were live and unmapped. hooks.py:590 writes skipped_incident (incident kill switch, returns BEFORE the provider is called) and hooks.py:653 writes launched — both fell to hook_to_record's `RAN if last_run`, i.e. \"it ran and did something durable\" for a hook that ran nothing. gateway.py:1429 (_record_blocked_fire) writes status=\"blocked_injection\" and service.py:665 (_record_suppression_row) writes all six INERT_OUTCOMES members into ScheduleRun.status — both fell to schedule_run_to_record's FAILED, so a DEFENDED injection attempt and a quiet-hours skip both read as genuine failures, and the suppression rows also stayed in feed_response's `did` half instead of folding into `suppressed_ids`, burying the fires that mattered. THE SILENT FALLBACK IS THE DEFECT, not the missing key: both fallbacks were individually defensible (RAN-if-last-run = \"we know it ran, we lack the verdict\"; FAILED = FireRecord.from_dict's \"unclassifiable must not count as a success\") and neither said anything, which is how four statuses survived two sessions that edited these very tables. MAPPINGS (each with its reason in a code comment, and what a user now sees): launched → DEFERRED in the hook table, matching SCHEDULE_STATUS_TO_OUTCOME and executor.STATUS_TO_OUTCOME (T7: started ≠ succeeded; the background turn records its own outcome in its own run) — the user sees an info-toned \"deferred\" with \"outcome not yet known\" instead of a green tick. skipped_incident → SKIPPED_GATE: nothing ran, nothing was spent, nothing changed, which is SKIPPED_GATE's family (quiet-hours / cooldown / condition-false) and, via INERT_OUTCOMES, a ledger row that folds out of the default runs inbox — NOT REFUSED (blocked already carries that: a denylist refusal is a verdict on THIS action, while an incident suspends every automated action and lifts on its own) and NOT DEFERRED (deferred work still starts; this fire is dropped and never retried) — the user sees a neutral grey suppression naming the incident, in the archived half, instead of \"ran\". blocked_injection → BLOCKED_INJECTION, the member that exists for exactly this row: the user sees the red-shield \"blocked\" badge statusMeta already renders instead of \"failed\", and the row leaves TRUE_FAILURE_OUTCOMES so a defence stops looking like a fault. The six INERT_OUTCOMES → themselves, identity BY CONSTRUCTION (**{v: v for v in sorted(INERT_OUTCOMES)}) rather than six hand-copied lines, because the writer's own guard is `outcome not in INERT_OUTCOMES: return` — that set IS the vocabulary and a seventh member needs no second edit; the user sees each suppression as the suppression it was, in suppressed_ids, with the reason _record_suppression_row already stored. NO NEW VOCABULARY MEMBER, deliberately: all nine landed on existing Outcome members. WV-14 paid that cost (three tables + engine.dispatch_action + the FE union) and nothing here needed it. weight moved instead: LEDGER_WEIGHT_OUTCOMES (deferred ∪ blocked_injection ∪ inert) replaces the hook projection's hardcoded FULL and the schedule projection's DEFERRED-only check, since FULL means \"earned a run directory and a journal\" and a fire that never reached a runner has no exit code to show. FALLBACKS ARE NOW LOUD: schedule_run_to_record warns on any non-empty unmapped status, and hook_to_record splits into three explicit cases — mapped; absent (\"\", a store row written before the field existed, the one case that still reads RAN because \"it ran\" is the fact we have and the verdict is what is missing, and it cannot hide a new status since an executing hook always writes one of the literals); unmapped-and-loud (FAILED + a warning naming it). AUTOPAUSE IS UNTOUCHED, and that is itself a finding: autopause.consecutive_failures_from reads the RAW store rows (trigger → outcome → status) and already skips inert exit types, so the mis-projection never spent the failure budget — it was purely a history/UI lie and the fix moves no autopause decision. RAIL (tests/test_triggers_status_vocabulary.py, new): AST-based because a regex finds only the easy half — the owner's own grep over hooks.py found skipped_incident and MISSED launched, whose write is `hook.last_status = result.outcome if result.outcome in (\"launched\", \"queued\") else \"ok\"`, a NAME whose values live in the condition's `in` tuple. Two of the four writers have that shape, service.py writes a variable pinned by an early-return `not in` guard, and the manual-fire handler writes a local assigned in four branches then passed as `status=status`. So the rail infers each write's POSSIBLE VALUES: constants, both arms of an IfExp, str()/`or` unwrapping, local-name resolution, and in/not-in guards — GUARDS FIRST, because `status=outcome` resolves to {\"\"} through its assignment and to the correct six through its guard. The boolean handling is asymmetric on purpose: `A and B` holding implies B, and `not (A or B)` implies `not B`; nothing else proves anything about one operand, so nothing else is guessed (an unreadable comparator pins NOTHING rather than guessing). Anything unresolvable FAILS rather than counting as clean. VACUITY + THE SECOND DRIFT DIRECTION: per-writer min_sites/min_values floors measured against the real source (hooks 8/7, gateway-ScheduleRun 2/3, service 1/6, manual-fire 1/4, gateway-_runner 2/2), and test_the_writer_file_census_is_pinned enumerates every module that assigns .last_status or constructs a ScheduleRun — a NEW writer file is drift no per-file scan can see. web_poll.py is named in that census as writing an int HTTP status to a different entity, so its absence from the tables is a decision on the record. The executor table's coverage is honestly PARTIAL and says so: its runner is injected, so an app provider or mcp_automation._http_runner's HTTP body is out of static reach (classify's unrecognized→FAILED rule covers the open half); the rail covers gateway._clock_loop._runner, the one in-repo runner, scoped by function name and asserted to EXIST so a rename reds instead of scanning nothing. PROVEN TO FAIL, two ways: (1) adding a third member to hooks.py:653's `in` tuple (\"wv15_probe\") reds test_every_status_a_writer_produces_is_in_its_table[hooks.py sets ScriptHook.last_status] with \"can write ['wv15_probe'], which HOOK_STATUS_TO_OUTCOME does not map\" (1 failed, 14 passed) — i.e. it reads the exact shape the regex missed — reverted by a targeted edit, never git checkout --, and hooks.py confirmed byte-identical to HEAD; (2) re-running the scan against the PARENT commit's tables reds all four writers' real gaps: hooks → ['launched', 'skipped_incident'], gateway → ['blocked_injection'], service → the six skipped_*; the manual-fire handler and _runner stay green, which is also the audit result for those two. OTHER TWO TABLES AUDITED: SCHEDULE_STATUS_TO_OUTCOME had 3 writers (gateway 2 sites / 3 values, service 1 site / 6 values, manual-fire 1 site / 4 values) and was missing 7 of 12 keys; executor.STATUS_TO_OUTCOME's in-repo writer (gateway._runner, 2 sites / 2 values: error, launched) was already COMPLETE, as was the manual-fire handler (success, failure, launched, queued). NO WEB CHANGE NEEDED, verified in scheduleMeta.statusMeta: it already renders deferred, blocked_injection and the whole skipped_ family by prefix, and no new Outcome member means the FE lifecycle union is unchanged. 14 new behavioural tests in tests/test_triggers_history.py (58 passed) + 15 rail tests; targeted suite 2495 passed / 5 skipped; inert-surface-baseline.json unchanged (no enum member gained or lost a reader)."
         }
       ]
     },
@@ -3482,6 +3591,19 @@
             "EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate",
             "EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision"
           ]
+        },
+        {
+          "id": "WF2AUT-13",
+          "title": "§3.3 cursor rule call site: the spool drain acts on drain_decision instead of acking unconditionally",
+          "status": "done",
+          "scope": "§3.3 consumer cursor rule (\"the trigger-spool.jsonl drain adopts this rule\"); §3.2 peek-then-deliver-then-ack; §7 crit 7 (no double-fire / no lost fire) and crit 8 (no silent drop); triggers/dispatch.py + triggers/loop.py",
+          "done_when": "the spool drain classifies each re-entry into Handling at an explicit side-effect boundary, calls drain_decision, and acts on every DrainAction (consume/hold/give-up/skip-duplicate) with a durable retry budget; a failure AFTER the boundary is never retried; SKIP_CYCLE deleted for want of an honest producer; exhaustiveness ratchet over both enums with a raising tail",
+          "deps": [
+            "WF2AUT-1",
+            "WF2AUT-2"
+          ],
+          "pr": "#1134",
+          "evidence": "THE FINDING: dispatch.py shipped a complete, documented, unit-tested decision layer for the event drain with ZERO production callers -- `grep -rn 'Handling\\.' src/` outside its own definition returned nothing, and `drain_decision(` matched the definition plus tests only. The real drain (loop.py::_drain_spool) re-entered each spooled envelope through emit_event, caught everything with a logger.warning, and did `handled += 1` UNCONDITIONALLY; its own comment said holding 'would retry it on every tick forever -- the poison pill `drain_decision` names', naming the function it never called. So the retry/hold policy, the bounded budget and the poison-pill give-up were all inert and a transient re-entry failure was swallowed as a delivered fire. SIDE-EFFECT BOUNDARY = the `emit_event(...)` call itself, enforced by two separate try blocks in the new `_reenter_spooled`: above it the drain only reads the envelope, builds kwargs and resolves `get_engine()` (side-effect-free, and resolved LAST on purpose -- emit_event swallows an unreachable engine into a logger.debug, so asking above the line turns a silent loss of the whole batch into a bounded retry); below it the envelope is DELIVERED whatever happens, because the drain cannot know how far emit_event got and 'I don't know' must not become a retry. Pinned by test_a_failure_AFTER_the_side_effect_boundary_is_NEVER_retried, which makes emit_event raise AFTER recording that it was entered and asserts the spool is acked, the hold sidecar empty, and a second tick does not re-enter. DEPS: WF2AUT-1 owns the §3.3 delivery contract that DECLARES Handling/DrainAction/drain_decision (dispatch.py, S64); WF2AUT-2 owns the tick loop that contains the drain and the 'no double/lost fire' criterion this must not regress (loop.py, S100/S142). Both done; nothing else in the plan touches the spool. DURABLE BUDGET: held_retries lives in a one-record sidecar `trigger-spool-hold.json` keyed on the DETERMINISTIC event_id (not Cursor.seq -- every spooled envelope is written seq=0 by event_triggers._spool). One record suffices because HOLD is head-of-line, which also makes the file self-pruning; a sidecar rather than a field on the spooled line because trigger-spool.jsonl is append-only and rewriting a line would have to re-serialize lines a concurrent spool_fire may have appended, trading a bounded retry for a lost fire. write_spool_hold returns whether it persisted and the drain HONOURS it: an unbudgetable hold is acked loudly, since an unbounded retry across restarts is worse than the ack it replaced. CLEAR_SPOOL: it can express a PREFIX ack only (`lines[handled:]`), so HOLD is necessarily head-of-line -- ack the consumed prefix, stop at the first envelope to hold, leave it plus the tail on disk in order. An arbitrary keep-set was rejected for the concurrent-append reason above; blocking is bounded by MAX_TRANSIENT_RETRIES ticks and the transient this exists for fails the whole batch identically. PER MEMBER: SKIP_DUPLICATE WIRED (producer = the shipped is_duplicate over the deterministic payload_hash inside DEDUP_WINDOW_SECS, compared on EMIT times so a family an hour apart stays two facts); SKIP_CYCLE DELETED -- a cycle skip needs a trigger_id to compare Envelope.spawned_by against and the drain has none (it re-enters through emit_event, which matches every stored trigger), and nothing in production writes spawned_by at all (measured: zero writers outside dispatch.py). Handling.PERMANENT also gained an honest producer and it fixed a real drop: an envelope with no event kind used to reach emit_event with an empty event_type, match nothing, and be counted as a delivered fire. drain_decision's transient rules were the FALLTHROUGH, so an unknown handling string inherited 'retry five times then drop' -- now an explicit TRANSIENT branch plus a raising tail. RATCHET (the WV-13/WV-14 pattern): AST over _drain_spool's source must name every DrainAction member and over drain_decision's source every Handling member (both measured exact: 4/4 and 3/3), both functions carry a raising tail proven reachable by a test, and every Handling member is proven PRODUCED at the real boundary rather than merely branched. All 9 behavioural tests drive tick_once, never drain_decision directly. GATE: make lint clean (black/isort/flake8/mypy 804 files); 1966 passed / 2 skipped on -k 'dispatch or trigger or spool or drain'; inert-surface-baseline.json regenerated -- a SHRINK (dispatch.py entry removed entirely, enum 23->21, total 150->148)."
         }
       ]
     },
@@ -6439,7 +6561,7 @@
         {
           "id": "WF2WOR-2",
           "title": "Cross-project needs-input inbox FE + reply-resume routing",
-          "status": "in_progress",
+          "status": "done",
           "scope": "§6.1 (needs-input inbox / decision queue, R1), Migration Order step 4",
           "done_when": "Success Criterion 4: the needs-input inbox surfaces a gated run, an attention-state loop, and a blocked task as decision-ready NeedsInputItem cards; a reply resumes the exact blocked node via resume_token; modify-and-approve (permission_suggestions + updated_input) works; count pills, digest-batching, staleness re-notify and the Open Decisions lane render",
           "deps": [
@@ -6447,7 +6569,8 @@
             "EXT:WORKFLOWS-V2:workflow_resume answer grammar for modify-and-approve",
             "EXT:SELF-VERIFICATION:replay harness gates needs-input/approval journal-event reification"
           ],
-          "pr": "#190"
+          "pr": "#190",
+          "evidence": "Status was stale, not the work: PR #190 (\"S51 the NeedsInputItem card, owner binding and staleness re-notify\") is MERGED — mergedAt 2026-08-02T21:38:44Z, merge commit 11763fd2, in main's history — and the atom was left `in_progress` after it landed. Outcome-checked, not just PR-checked: workflows/needs_input.py + attention.py project the gated run/attention loop/blocked task as NeedsInputItem cards through the already-registered ItemKind.NEEDS_INPUT inbox seam (no bespoke FE component — the shared inbox renders it), and resume_token routes the reply back to the exact blocked node via workflows/controller.py + service.py."
         },
         {
           "id": "WF2WOR-3",
@@ -6758,6 +6881,30 @@
           "done_when": "A tree with three independent failures reports all three in one run; each aggregate prints one result table with every failure visible in a single run.",
           "deps": [],
           "pr": "#881"
+        },
+        {
+          "id": "PHF-12",
+          "title": "Teach the inert-surface census whole-enum iteration — the false-red class its own docstring promised was impossible",
+          "status": "done",
+          "scope": "Corrects PHF-6's census (scripts/generate_inert_surface_baseline.py), whose enum detector documented its own error direction as \"never a false red\" and then produced one. Whole-enum iteration reaches every member by construction, so one iteration site now clears every member of the iterated class; resolution is import-aware so one of the seven Verdict enums cannot clear another's members. The generator states the detected shapes, the honest trade (more under-reporting bought for the elimination of this false-red class), and the KNOWN remaining false-red shape. Baseline regenerated by the tool, every delta accounted for against the code. The shrink-only forbidden-to-raise ratchet is untouched.",
+          "done_when": "whole-enum iteration clears every member of the iterated class, across for/async for, all four comprehension forms, and the list/tuple/set/frozenset/sorted/iter/reversed/enumerate family, matched bare (E) or module-qualified (mutations.OpKind) and resolved through the ITERATING file's own imports so one of the seven Verdict enums cannot clear another's members; the generator states the detected shapes, the honest trade, and value-lookup E(value) as the KNOWN remaining false-red shape; inert-surface-baseline.json regenerated BY THE TOOL (145 -> 140 total, enum 18 -> 13) with every departure verified reachable at a named iteration site and nothing entering; fixture-tree tests pin iteration-only NOT flagged, consumed-nowhere flagged, a same-named enum elsewhere NOT cleared, and a vacuity guard that the census still sees >50 enum classes and still reports members; the shrink-only ratchet is untouched and proven to still red on a real new inert member.",
+          "deps": [
+            "PHF-6"
+          ],
+          "pr": "#1148",
+          "evidence": "FINDING: the audit instrument violated the invariant it documents. _inert_enum_surfaces stated its rule and its error direction explicitly -- \"An enum member whose name is never accessed as an attribute anywhere in src/ is declared and never referenced... Iteration-only consumption (for m in E:) is not detected; that is the accepted under-reporting direction (NEVER A FALSE RED)\" -- and then produced exactly that false red. workflows/publish.py declares Lineage = SOURCE/INFORMED_BY/RELATED and parse_publish (publish.py:136) validates author-supplied edges against the whole enum BY ITERATION: `if edge not in {e.value for e in Lineage}` with the expectation list `{[e.value for e in Lineage]}` in the error string. A template author writes lineage: {informed_by: [...]}, it validates, flatten_lineage (publish.py:433) persists it as a lineage_informed_by scalar on the artifact event, and upsert_plan (publish.py:240-246) only adds the SOURCE run marker on top of whatever the spec declared. Both members reachable and functional; the baseline listed enum:Lineage.INFORMED_BY and enum:Lineage.RELATED as inert. WHY IT MATTERS: five recent atoms were picked off this baseline, so a false red sends an implementer to wire up code that already works, and the census's whole value is that a reported surface is really dead. SHAPES NOW DETECTED: for/async for over E; all four comprehension forms (set/list/dict/generator); and the whole-iterable builtins list/tuple/set/frozenset/sorted/iter/reversed/enumerate applied to E -- each matched bare (E) or module-qualified (mutations.OpKind at workflows/service.py:1748, detectors.Skip at learning/template_gate.py:119, grill_mod.Channel at mcp_workflows.py:1078, all three real shapes in this tree). DELIBERATELY NOT DETECTED, each staying on the under-reporting side: E.__members__/_member_map_ walks (zero occurrences measured), getattr(E, name), value-lookup construction E(value), `value in E` containment (zero occurrences measured), iteration over a local alias, and out-of-repo consumers. isinstance(x, E) was excluded after a first pass wrongly counted it as iteration. RESOLUTION IS IMPORT-AWARE, NOT NAME-BASED -- the landmine: src/ declares SEVEN distinct Verdict enums (learning/accountability.py, learning/proposals.py, supply_chain.py, triggers/disposition.py, triggers/screen.py, workflows/judge_contract.py, workflows/verify.py). workflows/verify.py:76 runs `for verdict in Verdict:` over ITS OWN Verdict; a name-only index would have cleared workflows/judge_contract.py's Verdict.REPLAN on the strength of an unrelated namesake and silently deleted a real finding. So each iterated name resolves through the iterating file's own bindings (local ClassDef, from x import E [as A] incl. relative levels, and module aliases), falling back to every same-named class only when resolution fails -- and that fallback lands on the under-reporting side, never on a false red. TRADE, STATED IN THE TOOL: clearing a whole class per iteration site buys the elimination of this false-red class with MORE under-reporting (a member with no producer goes unreported once anything iterates its class). Proven, not asserted: temporarily adding an unreferenced PHF12_UNDERREPORT_PROBE member to the iterated Lineage kept the suite at 15 passed -- it is NOT reported, which is the documented cost. Reverted by a targeted edit, never git checkout --. STANDING RULE now written in the generator: when a reported surface turns out to be reachable through an unrecognised shape, TEACH THE DETECTOR THE SHAPE -- never hand-edit the baseline, never relax forbidden-to-raise. DELTA, FULLY ACCOUNTED: 145 -> 140 total, enum 18 -> 13, sdk_export 127 unchanged, config/trigger_kind/editable_config 0 unchanged. FIVE surfaces LEFT, ZERO entered. (1-3) loop/loop.py enum:LoopKind.DESIGN, .GENERAL, .GOAL -- iteration site loop/loop.py:39 `KINDS: frozenset[str] = frozenset(k.value for k in LoopKind)`, and KINDS is a live validator: loop/store.py:26 imports it and store.py:279 refuses `if loop.kind not in KINDS`, so all three are author-supplied kind strings that validate. (4-5) workflows/publish.py enum:Lineage.INFORMED_BY, .RELATED -- iteration sites publish.py:136 (the validation set) and publish.py:137 (the error-message expectation list), persisted by flatten_lineage. Every departure has a named iteration site; nothing was hand-removed. DISCOVERY -- A SECOND, DISTINCT FALSE-RED CLASS REMAINS, deliberately not fixed here: value-lookup construction E(value) also makes every member reachable when the value is externally supplied. judge_contract.py:342 does `Verdict(str(raw.get(\"verdict\", \"\")).upper())` on MODEL-EMITTED text, so REPLAN is reachable and still reported. Six of the thirteen surviving enum surfaces sit on classes constructed that way (memory_record.py:216/218 MemoryTier/MemoryScope, tasks/models.py:74 DependencyType, workflows/confirmation.py:177 Status, workflows/judge_actors.py:84 Actor, judge_contract.py:342 Verdict). Unlike iteration, E(value) does not prove reachability by itself -- a deserializer fed only from internally-written state proves nothing -- so separating author/model-supplied values from our own round-trip is a judgment call worth its own atom, not a widening of this one. Named in the detector docstring and LEFT IN THE BASELINE rather than blessed away. RATCHET UNTOUCHED AND PROVEN TO STILL BITE: temporarily adding Completeness.PHF12_RATCHET_PROBE to workflows/containers.py (a shipped, non-iterated enum) reds test_no_per_file_counter_rose_vs_committed_baseline naming the file and the surface (\"containers.py: inert surfaces rose 1 -> 2; new declared-but-inert surface(s): ['enum:Completeness.PHF12_RATCHET_PROBE']\") plus the byte-match test -- 2 failed, 13 passed; reverted by a targeted edit. TESTS (5 new, in tests/test_inert_surface_baseline.py, all against a FIXTURE tree or the real tree -- no dead code added to src/): iteration-only enums across all three shape families are NOT flagged; a consumed-nowhere enum IS flagged and a half-read class still reports only its unread member; a same-named enum in another fixture module is NOT cleared by its namesake's iteration (the Verdict landmine); the Lineage regression on the real tree (its iteration site is seen AND no Lineage member is reported, so deleting that validation correctly reds); and a vacuity guard that the census still sees >50 enum classes and still reports >=5 enum members, so an over-clearing bug cannot read as a suspiciously clean census. NO baseline hand-edit: regenerated with `python scripts/generate_inert_surface_baseline.py`. No CHANGELOG entry -- a repo audit tool and its committed baseline are not a user-visible surface; no runtime behaviour, API, config, or frontend changed."
+        },
+        {
+          "id": "PHF-13",
+          "title": "Per-class provenance verdicts for the census's 13 surviving enum surfaces — and the ruling that value-lookup E(value) must NOT clear a member",
+          "status": "done",
+          "scope": "A CLASSIFICATION atom over PHF-12's census (scripts/generate_inert_surface_baseline.py): it makes the census's verdict on each of the 13 surviving enum surfaces correct and evidence-backed, and deliberately builds no missing writer. Every E(value) construction site behind those surfaces is traced to the origin of its VALUE and classified EXTERNALLY REACHABLE / INTERNAL ONLY / DEAD CALL SITE. The ruling is that E(value) proves reachability only when the construction executes in production AND its value crosses a trust/authoring boundary, which is not expressible as a cheap deterministic AST rule — so the census rule is NOT widened, the shrink-only ratchet is untouched, and the verdict table plus per-member reasons ARE the deliverable. Corrects PHF-12's stated premise that judge_contract.py:342 makes Verdict.REPLAN reachable.",
+          "done_when": "every E(value) construction site behind the 13 surviving enum surfaces is classified EXTERNALLY REACHABLE / INTERNAL ONLY / DEAD CALL SITE with file:line evidence; the verdicts live in the detector that produces the flags and PHF-12's superseded premise is corrected there; the census rule is deliberately NOT widened, so the shrink-only ratchet is untouched and the regenerated baseline is byte-identical (140 total, enum 13); three tests pin the ruling (value-lookup alone does not clear a member; the audited dead call sites still have no production caller; the verdict vocabulary is present in the generator and PHF-12's claim is refused) and the pin is proven able to fail by a temporary widening probe (enum 13 -> 7, 3 failed) reverted by a targeted edit; every member still flagged carries a one-line reason it is genuinely unreachable, plus what closing it would take, in PLATFORM-HARDENING-FLOORS's execution log.",
+          "deps": [
+            "PHF-12"
+          ],
+          "pr": "#1155",
+          "evidence": "FINDING: PHF-12's named-but-unfixed second false-red class rested on a FALSE PREMISE, and the audit is what showed it. PHF-12 recorded that judge_contract.py:342 (`Verdict(str(raw.get(\"verdict\", \"\")).upper())`) runs on model-emitted text and therefore makes Verdict.REPLAN reachable. That line lives inside validate_verdict, and NOTHING in src/ calls validate_verdict: engine.py:1510 deliberately RESTATES the aggregation rule rather than importing it, and only tests (tests/test_workflows_judge_contract.py, tests/test_workflows_loop_templates.py) import the function. Model output never reaches that constructor. Same shape for judge_actors.py:84 Actor(...) (reached only from resolve_transition, whose only callers are in tests/test_workflows_judge_pretier.py) and judge_contract.py:224 `enum_cls(str(value))` for Ratchet (inside the equally uncalled hints_from_dict, and loop-bound so an E(value) rule cannot even see it). RULE DERIVED: E(value) proves reachability only when BOTH hold - the construction EXECUTES in production, and its value crosses a trust/authoring boundary. SIX SITES, AUDITED: (1) tasks/models.py:74 DependencyType(raw_type) - EXTERNALLY REACHABLE: tasks/handlers.py:242 calls registry.create_task(**body) on `await request.json()`, tasks/native.py:246 coerces via _coerce_dependencies, TaskDependency.from_dict (models.py:74) looks the member up, so a POST /api/tasks client picks REQUIRED_FOR; the bulk endpoint (handlers.py:164) is a second path. THE ONE GENUINE FALSE RED. (2-3) memory_record.py:216/218 MemoryTier/MemoryScope - INTERNAL ONLY: __post_init__ coerces rows read by from_semantic_row/from_episodic_row (vector_memory.py:1124/1129/1161/1169) that to_row wrote; the vault mirror (memory_vault.render_record) is render-only with no parse-back; every writer in memory_service.py passes WORKING/EPISODIC/SEMANTIC and SESSION/AGENT/GLOBAL, so \"segment\"/\"workspace\" never round-trip in. (4) workflows/confirmation.py:177 Status - INTERNAL ONLY: from_dict reads what to_dict wrote, and that is only pending/expired (resolve() returns a Resolution and never stamps RESOLVED; on_expiry returns EXPIRED). (5) judge_actors.py:84 Actor and (6) judge_contract.py:342 Verdict + :224 Ratchet - DEAD CALL SITES per the finding above. DECISION: DO NOT WIDEN. A syntactic E(value) rule would clear six classes of which exactly ONE is reachable - measured, not guessed: a temporary widening probe took enum 13 -> 7 (clearing MemoryTier.SEGMENT, MemoryScope.WORKSPACE, DependencyType.REQUIRED_FOR, Status.RESOLVED, Actor.WORKER, Verdict.REPLAN) and left Ratchet.RELAXED flagged anyway, so the rule would be unsound AND inconsistent. A false CLEAR is worse than the over-report it replaces: it buries a genuine gap inside every internal deserializer, and it passes the shrink-only ratchet silently because the count goes DOWN. Proving \"provably outside\" needs interprocedural dataflow (four hops across three modules for the DependencyType case), which is not a cheap deterministic AST rule. THE 13-MEMBER VERDICT: 1 false red (DependencyType.REQUIRED_FOR, left reported rather than cleared by an unsound rule); ONE reachable only OUT OF REPO by an app author (PromptCache.AUTOMATIC via sdk/provider_helpers.py:65 BrandedProviderSpec.prompt_cache, threaded at :334 - the census's declared blind spot, same reason sdk_export is 127); and ELEVEN GENUINELY unreachable, each with a named reason plus what closing it would take in the plan log. DISCOVERIES (not fixed here - classification atom): llm/capabilities.py:63-64 claims apps declare BrandedProviderSpec.structured_output, but that field does NOT exist on the SDK spec (provider_helpers.py:48-65 carries prompt_cache only), so grounding.py:492's live reader of a graded structured-output mode can never see anything but NONE; mcp_memory.py:41-49 advertises scope global|workspace on memory_remember and dashboard/handlers/schedule.py:181 drops the value entirely (write_lesson(rule, category, negative)), which is why MemoryScope.WORKSPACE has no writer; workflows/models.py:153 SessionMode is referenced NOWHERE in src/ (both members dead - FRESH is masked only because judge_contract.py:170 Isolation.FRESH shares the attribute name), the clearest delete candidate. NOT WIDENED, SO PINNED INSTEAD (3 tests in tests/test_inert_surface_baseline.py, 18 passed): test_value_lookup_alone_does_not_clear_a_member (fixture tree: a member reachable only via E(row[...]) is STILL reported); test_the_audited_value_lookup_call_sites_have_no_production_caller (real tree: validate_verdict / hints_from_dict / resolve_transition still have no production caller - it reds when one is wired up, which is the moment to re-verdict the member); and test_the_value_lookup_ruling_is_recorded_in_the_generator (the verdict vocabulary is present and PHF-12's superseded claim is refused). PROBE, REVERTED BY A TARGETED EDIT: the temporary widening reds exactly 3 tests - the new pin plus the two baseline-freshness tests (\"3 failed, 15 passed\"). RATCHET UNTOUCHED: forbidden-to-raise intact, no counter rose, baseline regenerated BY THE TOOL and byte-identical (140 total; enum 13, sdk_export 127, config/trigger_kind/editable_config 0). No src/ behaviour changed, no web/ change, no CHANGELOG entry - a repo audit tool and its committed baseline are not a user-visible surface."
         }
       ]
     },
@@ -6895,11 +7042,6 @@
         "plan": "AE"
       },
       {
-        "id": "AG-11",
-        "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
-        "plan": "AG"
-      },
-      {
         "id": "AG-6",
         "title": "S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py)",
         "plan": "AG"
@@ -6907,6 +7049,11 @@
       {
         "id": "AG-9",
         "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
+        "plan": "AG"
+      },
+      {
+        "id": "AG-11",
+        "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
         "plan": "AG"
       },
       {
@@ -6930,16 +7077,6 @@
         "plan": "APE"
       },
       {
-        "id": "APE-10",
-        "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
-        "plan": "APE"
-      },
-      {
-        "id": "APE-11",
-        "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
-        "plan": "APE"
-      },
-      {
         "id": "APE-4",
         "title": "quality manifest block + Store card rendering + first-party CI verification",
         "plan": "APE"
@@ -6947,6 +7084,16 @@
       {
         "id": "APE-5",
         "title": "Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-10",
+        "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
+        "plan": "APE"
+      },
+      {
+        "id": "APE-11",
+        "title": "UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path",
         "plan": "APE"
       },
       {
@@ -7028,6 +7175,11 @@
         "id": "CC-8",
         "title": "Chat plan-mode entry + mid-task re-planning bound to the existing planning gate",
         "plan": "CC"
+      },
+      {
+        "id": "CE-9",
+        "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
+        "plan": "CE"
       },
       {
         "id": "CRE-7",
@@ -7130,8 +7282,13 @@
         "plan": "EA"
       },
       {
-        "id": "EI-12",
-        "title": "App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)",
+        "id": "EI-2",
+        "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-3",
+        "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
         "plan": "EI"
       },
       {
@@ -7140,9 +7297,24 @@
         "plan": "EI"
       },
       {
-        "id": "ES-11",
-        "title": "Bundled optimize-harness template (budgeted search over PClaw's own artifacts)",
-        "plan": "ES"
+        "id": "EI-8",
+        "title": "Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-10",
+        "title": "Secrets vault UX + presence-only API + grant-to-sandbox toggles",
+        "plan": "EI"
+      },
+      {
+        "id": "EI-12",
+        "title": "App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)",
+        "plan": "EI"
+      },
+      {
+        "id": "EIAT-3",
+        "title": "mail-inbox send_reply over SMTP, draft-by-default (S2)",
+        "plan": "EIAT"
       },
       {
         "id": "ES-2",
@@ -7167,6 +7339,11 @@
       {
         "id": "ES-7",
         "title": "Harness ablation runner + skills bench + model-upgrade watchdog",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-11",
+        "title": "Bundled optimize-harness template (budgeted search over PClaw's own artifacts)",
         "plan": "ES"
       },
       {
@@ -7212,6 +7389,11 @@
       {
         "id": "KL-7",
         "title": "S3 reading view: editorial type scale, progress, in-reader highlight→note",
+        "plan": "KL"
+      },
+      {
+        "id": "KL-10",
+        "title": "Indexing H1.3: vector arm searches chunks and rolls up to items before RRF",
         "plan": "KL"
       },
       {
@@ -7340,16 +7522,6 @@
         "plan": "PEP"
       },
       {
-        "id": "PEP-10",
-        "title": "Always-on conventions viewer + first domain-craft skills",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-11",
-        "title": "First-party product-app suite program",
-        "plan": "PEP"
-      },
-      {
         "id": "PEP-3",
         "title": "App Store persistent category/source rail + card polish",
         "plan": "PEP"
@@ -7367,6 +7539,16 @@
       {
         "id": "PEP-7",
         "title": "Artifacts as an indexed knowledge source",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-10",
+        "title": "Always-on conventions viewer + first domain-craft skills",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-11",
+        "title": "First-party product-app suite program",
         "plan": "PEP"
       },
       {
@@ -7395,16 +7577,6 @@
         "plan": "PHF"
       },
       {
-        "id": "PR2-10",
-        "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
-        "plan": "PR2"
-      },
-      {
-        "id": "PR2-11",
-        "title": "Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)",
-        "plan": "PR2"
-      },
-      {
         "id": "PR2-7",
         "title": "Automation would-execute rendering on the trust surface (§3.3)",
         "plan": "PR2"
@@ -7417,6 +7589,16 @@
       {
         "id": "PR2-9",
         "title": "Richer memory-pipeline alarm + flywheel/knowledge degraded floors (§3.2 richer, §5.2)",
+        "plan": "PR2"
+      },
+      {
+        "id": "PR2-10",
+        "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
+        "plan": "PR2"
+      },
+      {
+        "id": "PR2-11",
+        "title": "Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)",
         "plan": "PR2"
       },
       {
@@ -7435,11 +7617,6 @@
         "plan": "PT"
       },
       {
-        "id": "PUBL-10",
-        "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
-        "plan": "PUBL"
-      },
-      {
         "id": "PUBL-7",
         "title": "Fresh-clone getting-started walkthrough on a clean machine and fix remote friction",
         "plan": "PUBL"
@@ -7452,6 +7629,11 @@
       {
         "id": "PUBL-9",
         "title": "Verify Store git-source install from the published apps repo URL",
+        "plan": "PUBL"
+      },
+      {
+        "id": "PUBL-10",
+        "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
       },
       {
@@ -7495,11 +7677,6 @@
         "plan": "TSE"
       },
       {
-        "id": "WF2AUT-11",
-        "title": "idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption)",
-        "plan": "WF2AUT"
-      },
-      {
         "id": "WF2AUT-12",
         "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
         "plan": "WF2AUT"
@@ -7510,24 +7687,29 @@
         "plan": "WF2KNO"
       },
       {
+        "id": "WF2LEA-6",
+        "title": "Step 6: template refiner AGENT + version store + Versions/Ledger FE tabs + skill sidecar overlays",
+        "plan": "WF2LEA"
+      },
+      {
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
         "plan": "WF2LEA"
       },
       {
-        "id": "WF2LEA-7",
-        "title": "Step 7: ad-hoc→template detector call sites + tier-migration detector + template_save_from_session",
-        "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LOO-10",
-        "title": "code-project template (product decision + build)",
+        "id": "WF2LOO-13",
+        "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
         "plan": "WF2LOO"
       },
       {
         "id": "WF2UNI-12",
         "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
         "plan": "WF2UNI"
+      },
+      {
+        "id": "WF2WOR-12",
+        "title": "Container workspace mode + snapshot-anchored fork (deferred, opt-in)",
+        "plan": "WF2WOR"
       },
       {
         "id": "WS-3",
@@ -7553,408 +7735,626 @@
         "id": "WS-7",
         "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
         "plan": "WS"
-      },
-      {
-        "id": "WF2WOR-9",
-        "title": "Fan-out leaf contract + capability enforcement + measurement harness (C2 + VC)",
-        "plan": "WORKFLOWS-V2-WORK-CONTAINERS"
-      },
-      {
-        "id": "EI-3",
-        "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
-        "plan": "EXECUTION-ISOLATION"
-      },
-      {
-        "id": "EI-8",
-        "title": "Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview",
-        "plan": "EXECUTION-ISOLATION"
       }
     ],
     "topo_order": [
       "AAP-1",
       "AAP-2",
       "AAP-3",
+      "AAP-4",
+      "AAP-5",
+      "AAP-6",
+      "AAP-7",
+      "AAP-8",
+      "AAP-9",
+      "AAP-10",
+      "AE-1",
+      "AE-2",
+      "AE-3",
+      "AE-4",
+      "AE-5",
+      "AE-6",
+      "AE-7",
+      "AE-8",
+      "AE-9",
       "AE-10",
+      "AG-1",
+      "AG-2",
+      "AG-3",
+      "AG-4",
       "AG-5",
       "AG-6",
+      "AG-7",
+      "AG-8",
       "AG-9",
+      "AG-10",
+      "AG-11",
       "AP-1",
+      "AP-2",
+      "AP-3",
+      "AP-4",
+      "AP-5",
+      "AP-6",
+      "AP-7",
       "APE-1",
+      "APE-2",
+      "APE-3",
       "APE-4",
       "APE-5",
       "APE-7",
       "APE-8",
       "APE-9",
+      "APE-10",
+      "APE-11",
+      "APE-6",
       "AR-1",
+      "AR-2",
+      "AR-3",
+      "AR-4",
+      "AR-5",
+      "AR-6",
+      "AR-7",
+      "AR-8",
+      "AR2-1",
+      "AR2-2",
+      "AR2-3",
+      "AR2-4",
+      "AR2-5",
+      "AR2-6",
+      "AR2-7",
       "AR2-8",
       "AS-1",
+      "AS-2",
       "AS-3",
       "AS-4",
+      "AS-5",
+      "AS-6",
       "AS-7",
+      "AS-8",
+      "AS-9",
       "BA-1",
+      "BA-2",
+      "BA-3",
+      "BA-4",
+      "BA-5",
+      "BA-6",
+      "BA-7",
+      "BA-8",
+      "BA-9",
       "CA-1",
+      "CA-2",
       "CA-3",
       "CA-4",
+      "CA-5",
       "CA-6",
+      "CA-7",
+      "CA-8",
+      "CA-9",
       "CATO-1",
+      "CATO-2",
+      "CATO-3",
+      "CATO-4",
+      "CATO-5",
+      "CATO-6",
+      "CATO-7",
+      "CATO-8",
+      "CC-1",
+      "CC-2",
+      "CC-3",
       "CC-4",
       "CC-5",
+      "CC-6",
       "CC-7",
       "CC-8",
       "CE-1",
+      "CE-2",
+      "CE-3",
+      "CE-4",
+      "CE-5",
+      "CE-6",
+      "CE-8",
+      "CE-7",
+      "CE-9",
+      "CE2-1",
+      "CE2-2",
+      "CE2-3",
+      "CE2-4",
+      "CE2-5",
+      "CE2-6",
+      "CE2-7",
+      "CRE-1",
+      "CRE-2",
+      "CRE-3",
+      "CRE-4",
+      "CRE-5",
+      "CRE-6",
       "CRE-7",
+      "CRE-8",
+      "DAS-1",
+      "DAS-2",
+      "DAS-3",
+      "DAS-4",
+      "DAS-5",
       "DAS-6",
+      "DAS-7",
+      "DAS-8",
       "DAS-9",
+      "DAS-10",
       "DC-1",
       "DC-2",
+      "DC-3",
+      "DC-4",
+      "DC-5",
+      "DC-6",
       "DCU-1",
       "DCU-2",
+      "DCU-3",
+      "DCU-4",
+      "DCU-5",
+      "DCU-6",
+      "DCU-7",
       "DFE-1",
       "DFE-2",
+      "DFE-3",
+      "DFE-4",
+      "DFE-5",
+      "DFE-6",
+      "DFE-7",
+      "DFE-8",
+      "DHT-1",
+      "DHT-2",
+      "DHT-3",
+      "DHT-4",
+      "DHT-5",
+      "DHT-6",
+      "DHT-7",
+      "DHT-8",
+      "DHT-9",
+      "DHT-10",
+      "DIST-1",
+      "DIST-2",
+      "DIST-3",
+      "DIST-4",
+      "DIST-5",
+      "DIST-6",
+      "DIST-7",
+      "DIST-8",
+      "DIST-9",
+      "DIST-10",
       "DIST-11",
       "DIST-12",
+      "DIST-13",
+      "DL-1",
+      "DL-2",
+      "DL-3",
       "DL-4",
+      "DL-5",
       "DL-6",
+      "DL-7",
+      "DL-8",
       "DL-9",
+      "DSC-1",
+      "DSC-2",
+      "DSC-3",
+      "DSC-4",
+      "DSC-5",
+      "DSC-6",
+      "DSC-7",
+      "DSC-8",
+      "DSC-9",
+      "DSC-10",
       "DSC-11",
       "DSC-12",
       "EA-1",
+      "EA-2",
+      "EA-3",
+      "EA-4",
+      "EA-5",
+      "EA-6",
+      "EA-7",
+      "EA-8",
+      "EA-9",
       "EI-1",
+      "EI-2",
+      "EI-3",
+      "EI-4",
+      "EI-5",
+      "EI-6",
+      "EI-7",
+      "EI-8",
+      "EI-9",
+      "EI-10",
       "EI-11",
       "EI-12",
-      "EI-5",
+      "EIAT-1",
+      "EIAT-2",
+      "EIAT-3",
+      "EIAT-4",
+      "EIAT-5",
+      "EIAT-6",
       "ES-1",
+      "ES-2",
+      "ES-3",
+      "ES-4",
+      "ES-5",
+      "ES-6",
+      "ES-7",
+      "ES-8",
+      "ES-9",
+      "ES-10",
+      "ES-11",
       "ET-1",
+      "ET-2",
       "ET-3",
+      "ET-4",
+      "ET-5",
+      "ET-6",
+      "ET-7",
+      "ET-8",
       "FM-1",
+      "FM-2",
+      "FM-3",
+      "FM-4",
+      "FM-5",
+      "FM-6",
+      "FM-7",
+      "FS-1",
+      "FS-2",
+      "FS-3",
       "FS-4",
+      "FS-5",
+      "FS-6",
       "HC-1",
+      "HC-2",
       "HC-3",
       "HC-4",
+      "HC-5",
+      "IA2-1",
+      "IA2-2",
+      "IA2-3",
+      "IA2-4",
+      "IA2-5",
+      "IA2-6",
+      "IA2-7",
+      "INU-1",
+      "INU-2",
+      "INU-3",
+      "INU-4",
+      "INU-5",
       "INU-6",
+      "INU-7",
+      "INU-8",
+      "KL-1",
+      "KL-2",
+      "KL-3",
+      "KL-4",
+      "KL-5",
       "KL-6",
       "KL-7",
+      "KL-8",
       "KL-9",
+      "KL-10",
+      "KL-11",
+      "KL-12",
+      "LMMV-1",
       "LMMV-2",
       "LMMV-3",
       "LMMV-4",
+      "LMMV-5",
       "LMMV-6",
+      "LMMV-7",
+      "LV-1",
+      "LV-2",
+      "LV-3",
+      "LV-4",
+      "LV-5",
       "LV-6",
+      "LV-7",
       "MC-1",
+      "MC-2",
       "MC-3",
+      "MC-4",
+      "MC-5",
+      "MC-6",
+      "MC-7",
+      "MC-8",
+      "MC-9",
+      "MC-10",
+      "MGAV-1",
+      "MGAV-2",
+      "MGAV-3",
+      "MGAV-4",
       "MGAV-5",
       "MGAV-6",
       "MGAV-7",
       "MGAV-8",
+      "MGAV-9",
       "MI-1",
+      "MI-2",
       "MI-3",
       "MI-4",
+      "MI-5",
+      "MRI-1",
+      "MRI-2",
+      "MRI-3",
       "MRI-5",
+      "MRI-4",
       "MRT-1",
       "MRT-2",
+      "MRT-3",
+      "MRT-4",
+      "MRT-5",
+      "MUCV-1",
+      "MUCV-2",
+      "MUCV-3",
+      "MUCV-4",
+      "MUCV-5",
+      "MUCV-6",
+      "MUCV-7",
+      "MUCV-8",
+      "OO-1",
+      "OO-2",
+      "OO-3",
+      "OO-4",
+      "OO-5",
+      "OO-6",
+      "OO-7",
       "OU-1",
+      "OU-2",
+      "OU-3",
+      "OU-4",
       "OU-5",
       "OU-6",
       "OU-7",
+      "OU-8",
+      "OU-9",
+      "OU-10",
+      "OU-11",
       "PA-1",
+      "PA-2",
+      "PA-3",
+      "PA-4",
+      "PA-5",
+      "PA-6",
+      "PBC-1",
+      "PBC-2",
+      "PBC-3",
+      "PBC-4",
+      "PBC-5",
+      "PBC-6",
+      "PBC-7",
       "PCS-1",
       "PCS-2",
+      "PCS-3",
+      "PCS-4",
+      "PCS-5",
       "PCS-6",
+      "PCS-7",
+      "PCS-8",
       "PEP-1",
-      "PEP-10",
+      "PEP-2",
+      "PEP-3",
       "PEP-4",
+      "PEP-5",
       "PEP-6",
       "PEP-7",
+      "PEP-8",
+      "PEP-9",
+      "PEP-10",
+      "PEP-11",
       "PHF-1",
+      "PHF-2",
+      "PHF-3",
+      "PHF-4",
+      "PHF-5",
+      "PHF-6",
+      "PHF-7",
+      "PHF-8",
+      "PHF-9",
       "PHF-10",
       "PHF-11",
-      "PHF-3",
-      "PHF-5",
+      "PHF-12",
+      "PHF-13",
+      "PL-1",
+      "PL-2",
+      "PL-3",
+      "PL-4",
+      "PL-5",
+      "PL-6",
+      "PL-7",
       "PR-1",
+      "PR-2",
+      "PR-3",
       "PR-4",
+      "PR-5",
       "PR-6",
       "PR-7",
       "PR-8",
-      "PR2-11",
+      "PR2-1",
+      "PR2-2",
+      "PR2-3",
+      "PR2-4",
+      "PR2-5",
+      "PR2-6",
       "PR2-7",
       "PR2-8",
       "PR2-9",
+      "PR2-10",
+      "PR2-11",
+      "PT-1",
       "PT-2",
       "PT-3",
       "PT-4",
+      "PT-5",
+      "PT-6",
+      "PUBL-1",
+      "PUBL-2",
+      "PUBL-3",
+      "PUBL-4",
+      "PUBL-5",
+      "PUBL-6",
       "PUBL-7",
       "PUBL-8",
       "PUBL-9",
+      "PUBL-10",
+      "RUA-1",
+      "RUA-2",
+      "RUA-3",
+      "RUA-4",
       "SH-1",
+      "SH-2",
       "SH-3",
+      "SH-4",
       "SH-5",
       "SH-6",
+      "SH-7",
       "SH-8",
       "SH-9",
+      "SH-10",
+      "SL-1",
+      "SL-2",
+      "SL-3",
+      "SL-4",
+      "SL-5",
+      "SL-6",
+      "SL-7",
+      "SM-1",
+      "SM-2",
+      "SM-3",
+      "SM-4",
       "SM-5",
+      "SM-6",
+      "SM-7",
+      "SM-8",
+      "SM-9",
+      "SV-1",
+      "SV-2",
+      "SV-3",
+      "SV-4",
       "SV-5",
       "SV-6",
       "SV-7",
       "SV-8",
       "SV-9",
+      "SV-10",
+      "SV-11",
+      "TSE-1",
+      "TSE-2",
+      "TSE-3",
       "TSE-4",
-      "WF2AUT-10",
-      "WF2AUT-11",
+      "TSE-5",
+      "WF2AUT-1",
+      "WF2AUT-2",
+      "WF2AUT-3",
+      "WF2AUT-4",
+      "WF2AUT-5",
       "WF2AUT-6",
       "WF2AUT-7",
+      "WF2AUT-8",
       "WF2AUT-9",
-      "WF2KNO-10",
+      "WF2AUT-10",
+      "WF2AUT-11",
+      "WF2AUT-12",
+      "WF2AUT-13",
+      "WF2KNO-1",
+      "WF2KNO-2",
+      "WF2KNO-3",
+      "WF2KNO-4",
+      "WF2KNO-5",
+      "WF2KNO-6",
       "WF2KNO-7",
       "WF2KNO-8",
-      "WF2LEA-10",
-      "WF2LEA-12",
+      "WF2KNO-9",
+      "WF2KNO-10",
+      "WF2LEA-1",
+      "WF2LEA-2",
       "WF2LEA-3",
       "WF2LEA-4",
+      "WF2LEA-5",
+      "WF2LEA-6",
+      "WF2LEA-7",
       "WF2LEA-8",
+      "WF2LEA-9",
+      "WF2LEA-10",
+      "WF2LEA-11",
+      "WF2LEA-12",
+      "WF2LEA-13",
+      "WF2LOO-1",
+      "WF2LOO-2",
+      "WF2LOO-3",
+      "WF2LOO-4",
+      "WF2LOO-5",
+      "WF2LOO-6",
+      "WF2LOO-7",
+      "WF2LOO-8",
+      "WF2LOO-9",
       "WF2LOO-10",
       "WF2LOO-11",
-      "WF2LOO-7",
-      "WF2UNI-10",
-      "WF2UNI-11",
+      "WF2LOO-12",
+      "WF2LOO-13",
+      "WF2LOO-14",
+      "WF2LOO-15",
+      "WF2TAS-1",
+      "WF2TAS-2",
+      "WF2TAS-3",
+      "WF2TAS-4",
+      "WF2TAS-5",
+      "WF2TAS-6",
+      "WF2TAS-7",
+      "WF2TAS-8",
+      "WF2TAS-9",
+      "WF2TAS-10",
+      "WF2TAS-11",
+      "WF2TAS-12",
+      "WF2UNI-1",
+      "WF2UNI-2",
+      "WF2UNI-3",
+      "WF2UNI-4",
+      "WF2UNI-5",
+      "WF2UNI-6",
+      "WF2UNI-7",
       "WF2UNI-8",
       "WF2UNI-9",
+      "WF2UNI-10",
+      "WF2UNI-11",
+      "WF2UNI-12",
+      "WF2UNI-13",
       "WF2WOR-1",
-      "WF2WOR-10",
-      "WF2WOR-3",
-      "WS-1",
-      "WV-11",
-      "WV-12",
-      "WV-9",
-      "AAP-4",
-      "AAP-5",
-      "AAP-6",
-      "AAP-7",
-      "AG-11",
-      "AG-7",
-      "AP-2",
-      "AP-5",
-      "APE-10",
-      "APE-11",
-      "APE-2",
-      "APE-3",
-      "AR-2",
-      "AS-2",
-      "AS-5",
-      "AS-8",
-      "AS-9",
-      "BA-2",
-      "CA-2",
-      "CA-5",
-      "CA-7",
-      "CATO-2",
-      "CATO-3",
-      "CATO-4",
-      "CATO-5",
-      "CC-6",
-      "CE-2",
-      "CE-3",
-      "CE-4",
-      "CE-5",
-      "DAS-7",
-      "DAS-8",
-      "DC-3",
-      "DC-4",
-      "DC-5",
-      "DCU-3",
-      "DFE-3",
-      "DL-5",
-      "DL-8",
-      "EA-4",
-      "EA-5",
-      "EA-7",
-      "EA-8",
-      "EA-9",
-      "EI-10",
-      "EI-3",
-      "EI-6",
-      "EI-7",
-      "EI-8",
-      "ES-2",
-      "ES-3",
-      "ES-4",
-      "ET-2",
-      "ET-4",
-      "ET-8",
-      "FM-2",
-      "FM-3",
-      "FM-5",
-      "FM-6",
-      "FS-6",
-      "HC-2",
-      "HC-5",
-      "INU-7",
-      "KL-10",
-      "KL-8",
-      "LMMV-5",
-      "MC-2",
-      "MC-4",
-      "MGAV-9",
-      "MI-2",
-      "MRI-4",
-      "MRT-3",
-      "MRT-4",
-      "OU-2",
-      "OU-8",
-      "PA-2",
-      "PA-4",
-      "PCS-3",
-      "PEP-2",
-      "PEP-3",
-      "PEP-8",
-      "PHF-2",
-      "PHF-4",
-      "PHF-6",
-      "PHF-7",
-      "PHF-8",
-      "PHF-9",
-      "PR-2",
-      "PR-5",
-      "PT-5",
-      "SH-10",
-      "SH-2",
-      "SH-4",
-      "SH-7",
-      "SV-10",
-      "TSE-5",
-      "WF2AUT-12",
-      "WF2LEA-5",
-      "WF2LOO-8",
       "WF2WOR-2",
+      "WF2WOR-3",
       "WF2WOR-4",
       "WF2WOR-6",
       "WF2WOR-7",
-      "WS-2",
-      "WV-10",
-      "AAP-8",
-      "AAP-9",
-      "AG-8",
-      "AP-3",
-      "APE-6",
-      "AR-3",
-      "AS-6",
-      "CA-8",
-      "CATO-6",
-      "CATO-7",
-      "CATO-8",
-      "CE-6",
-      "CE-8",
-      "DAS-10",
-      "DCU-4",
-      "DFE-4",
-      "ET-5",
-      "ET-6",
-      "FM-4",
-      "KL-11",
-      "KL-12",
-      "LMMV-7",
-      "LV-1",
-      "MC-5",
-      "MC-6",
-      "MC-7",
-      "MI-5",
-      "MRT-5",
-      "OU-3",
-      "PA-6",
-      "PCS-4",
-      "PCS-5",
-      "PEP-9",
-      "PR-3",
-      "PR2-10",
-      "PT-6",
-      "PUBL-10",
-      "WF2AUT-8",
-      "WF2LEA-7",
-      "WF2LEA-9",
+      "WF2WOR-8",
+      "WF2WOR-9",
+      "WF2WOR-5",
+      "WF2WOR-10",
       "WF2WOR-11",
       "WF2WOR-12",
+      "WS-1",
+      "WS-2",
       "WS-3",
       "WS-4",
       "WS-5",
       "WS-6",
       "WS-7",
-      "AAP-10",
-      "AG-10",
-      "AP-4",
-      "AP-6",
-      "AR-4",
-      "AR-5",
-      "AR-6",
-      "CE-7",
-      "DC-6",
-      "DCU-5",
-      "DCU-6",
-      "DCU-7",
-      "DFE-5",
-      "EI-2",
-      "EI-9",
-      "EIAT-1",
-      "FM-7",
-      "LV-2",
-      "LV-3",
-      "LV-5",
-      "MC-8",
-      "MC-9",
-      "OU-4",
-      "OU-9",
-      "PCS-7",
-      "PCS-8",
-      "PEP-11",
-      "SV-11",
-      "WF2KNO-9",
-      "WF2LEA-11",
-      "WF2LEA-6",
-      "WF2LOO-9",
-      "WF2UNI-7",
       "WS-8",
       "WS-9",
-      "AP-7",
-      "AR-7",
-      "AR-8",
-      "BA-3",
-      "CA-9",
-      "DFE-6",
-      "DFE-7",
-      "DFE-8",
-      "EA-2",
-      "EA-6",
-      "EI-4",
-      "EIAT-2",
-      "EIAT-5",
-      "ES-11",
-      "ES-5",
-      "ES-7",
-      "LV-4",
-      "MC-10",
-      "OU-10",
-      "PA-3",
-      "PEP-5",
-      "WF2UNI-12",
-      "WF2WOR-8",
-      "BA-4",
-      "BA-7",
-      "EIAT-3",
-      "EIAT-4",
-      "ES-10",
-      "ES-6",
-      "ES-8",
-      "LV-7",
-      "OU-11",
-      "PA-5",
-      "WF2WOR-9",
-      "BA-5",
-      "BA-6",
-      "BA-8",
-      "DL-7",
-      "ES-9",
-      "WF2WOR-5",
-      "BA-9",
-      "CE-9",
-      "ET-7"
+      "WV-1",
+      "WV-2",
+      "WV-3",
+      "WV-4",
+      "WV-5",
+      "WV-6",
+      "WV-7",
+      "WV-8",
+      "WV-9",
+      "WV-10",
+      "WV-11",
+      "WV-12",
+      "WV-13",
+      "WV-14",
+      "WV-15"
     ],
     "cycles": [
       [
@@ -7964,8 +8364,8 @@
       ],
       [
         "CRE-4",
-        "DIST-1",
         "DIST-3",
+        "DIST-1",
         "CRE-4"
       ]
     ],
@@ -8990,7 +9390,8 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "RUA",
@@ -8998,47 +9399,53 @@
         "total_atoms": 4,
         "done": 4,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "INU",
         "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
-        "total_atoms": 7,
-        "done": 5,
+        "total_atoms": 8,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "MGAV",
         "plan": "MEMORY-GRAPH-AND-VAULT",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 7
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "WF2KNO",
         "plan": "WORKFLOWS-V2-KNOWLEDGE-SYNTHESIS",
         "total_atoms": 10,
-        "done": 6,
+        "done": 9,
         "in_progress": 0,
-        "todo": 4
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "WF2TAS",
         "plan": "WORKFLOWS-V2-TASKS-SOPS",
-        "total_atoms": 11,
-        "done": 11,
+        "total_atoms": 12,
+        "done": 12,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PR2",
@@ -9046,15 +9453,17 @@
         "total_atoms": 11,
         "done": 6,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 11,
-        "done": 4,
+        "done": 6,
         "in_progress": 0,
-        "todo": 7
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "DSC",
@@ -9062,7 +9471,8 @@
         "total_atoms": 12,
         "done": 10,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "MRI",
@@ -9070,15 +9480,17 @@
         "total_atoms": 5,
         "done": 3,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "DAS",
         "plan": "DURABILITY-AND-SYNC",
         "total_atoms": 10,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 5
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "DFE",
@@ -9086,15 +9498,17 @@
         "total_atoms": 8,
         "done": 0,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 9
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "DHT",
@@ -9102,15 +9516,17 @@
         "total_atoms": 10,
         "done": 10,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 11,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 11
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "AE",
@@ -9118,7 +9534,8 @@
         "total_atoms": 10,
         "done": 9,
         "in_progress": 0,
-        "todo": 1
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "TSE",
@@ -9126,63 +9543,71 @@
         "total_atoms": 5,
         "done": 3,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "DIST",
         "plan": "DISTRIBUTION",
-        "total_atoms": 12,
-        "done": 10,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 2
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 0,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "WF2UNI",
         "plan": "WORKFLOWS-V2-UNIVERSAL-PLANNING",
-        "total_atoms": 12,
-        "done": 6,
+        "total_atoms": 13,
+        "done": 12,
         "in_progress": 0,
-        "todo": 6
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
-        "total_atoms": 11,
-        "done": 6,
+        "total_atoms": 15,
+        "done": 13,
         "in_progress": 0,
-        "todo": 5
+        "todo": 1,
+        "blocked": 1
       },
       {
         "code": "LMMV",
         "plan": "LOCAL-MODEL-MANAGER-V2",
         "total_atoms": 7,
-        "done": 1,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6
+        "todo": 3,
+        "blocked": 0
       },
       {
         "code": "SM",
         "plan": "SESSION-MANAGEMENT",
-        "total_atoms": 8,
-        "done": 7,
+        "total_atoms": 9,
+        "done": 9,
         "in_progress": 0,
-        "todo": 1
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "CE2",
         "plan": "CONTEXT-ECONOMY",
-        "total_atoms": 6,
-        "done": 6,
+        "total_atoms": 7,
+        "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PA",
@@ -9190,47 +9615,53 @@
         "total_atoms": 6,
         "done": 0,
         "in_progress": 0,
-        "todo": 6
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "WV",
         "plan": "WORKFLOWS-V2",
-        "total_atoms": 12,
-        "done": 8,
+        "total_atoms": 15,
+        "done": 15,
         "in_progress": 0,
-        "todo": 4
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "AP",
         "plan": "AGENT-PACKS",
         "total_atoms": 7,
-        "done": 0,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "MRT",
         "plan": "MODEL-ROUTING-TELEMETRY",
         "total_atoms": 5,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 5
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "WF2LEA",
         "plan": "WORKFLOWS-V2-LEARNING-FLYWHEEL",
-        "total_atoms": 12,
-        "done": 2,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 10
+        "todo": 2,
+        "blocked": 0
       },
       {
         "code": "CRE",
         "plan": "CI-RELEASE-ENGINEERING",
-        "total_atoms": 7,
-        "done": 6,
+        "total_atoms": 8,
+        "done": 7,
         "in_progress": 0,
-        "todo": 1
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "MI",
@@ -9238,7 +9669,8 @@
         "total_atoms": 5,
         "done": 0,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "OO",
@@ -9246,15 +9678,17 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "WF2AUT",
         "plan": "WORKFLOWS-V2-AUTOMATION-SUBSTRATE",
-        "total_atoms": 12,
-        "done": 5,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 7
+        "todo": 1,
+        "blocked": 1
       },
       {
         "code": "CC",
@@ -9262,23 +9696,26 @@
         "total_atoms": 8,
         "done": 3,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "AR2",
         "plan": "AGENT-ROUTING",
         "total_atoms": 8,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 1
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "FS",
         "plan": "FEEDBACK-SIGNAL",
         "total_atoms": 6,
-        "done": 4,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PBC",
@@ -9286,7 +9723,8 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "CA",
@@ -9294,7 +9732,8 @@
         "total_atoms": 9,
         "done": 0,
         "in_progress": 0,
-        "todo": 9
+        "todo": 9,
+        "blocked": 0
       },
       {
         "code": "EA",
@@ -9302,31 +9741,35 @@
         "total_atoms": 9,
         "done": 1,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "EIAT",
         "plan": "EMAIL-INBOX-AND-TRIGGERS",
-        "total_atoms": 5,
-        "done": 0,
+        "total_atoms": 6,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "CATO",
         "plan": "COST-AND-TOKEN-OBSERVABILITY",
         "total_atoms": 8,
-        "done": 0,
+        "done": 8,
         "in_progress": 0,
-        "todo": 8
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PCS",
         "plan": "PROMPT-CACHE-SUBSTRATE",
         "total_atoms": 8,
-        "done": 0,
+        "done": 4,
         "in_progress": 0,
-        "todo": 8
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "MUCV",
@@ -9334,7 +9777,8 @@
         "total_atoms": 8,
         "done": 8,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "IA2",
@@ -9342,7 +9786,8 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "AAP",
@@ -9350,15 +9795,17 @@
         "total_atoms": 10,
         "done": 0,
         "in_progress": 0,
-        "todo": 10
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "SV",
         "plan": "SELF-VERIFICATION",
         "total_atoms": 11,
-        "done": 4,
+        "done": 8,
         "in_progress": 0,
-        "todo": 7
+        "todo": 3,
+        "blocked": 0
       },
       {
         "code": "PT",
@@ -9366,7 +9813,8 @@
         "total_atoms": 6,
         "done": 1,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "HC",
@@ -9374,23 +9822,26 @@
         "total_atoms": 5,
         "done": 0,
         "in_progress": 0,
-        "todo": 5
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "CE",
         "plan": "CHANNEL-EXPANSION",
         "total_atoms": 9,
-        "done": 0,
+        "done": 8,
         "in_progress": 0,
-        "todo": 9
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 0,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "DC",
@@ -9398,7 +9849,8 @@
         "total_atoms": 6,
         "done": 0,
         "in_progress": 0,
-        "todo": 6
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "SL",
@@ -9406,23 +9858,26 @@
         "total_atoms": 7,
         "done": 7,
         "in_progress": 0,
-        "todo": 0
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "PR",
         "plan": "PLATFORM-REACH",
         "total_atoms": 8,
-        "done": 0,
+        "done": 8,
         "in_progress": 0,
-        "todo": 8
+        "todo": 0,
+        "blocked": 0
       },
       {
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 11,
-        "done": 0,
+        "done": 3,
         "in_progress": 0,
-        "todo": 11
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "PUBL",
@@ -9430,15 +9885,17 @@
         "total_atoms": 10,
         "done": 6,
         "in_progress": 0,
-        "todo": 4
+        "todo": 4,
+        "blocked": 0
       },
       {
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 10
+        "todo": 9,
+        "blocked": 0
       },
       {
         "code": "DL",
@@ -9446,7 +9903,8 @@
         "total_atoms": 9,
         "done": 3,
         "in_progress": 0,
-        "todo": 6
+        "todo": 6,
+        "blocked": 0
       },
       {
         "code": "FM",
@@ -9454,7 +9912,8 @@
         "total_atoms": 7,
         "done": 0,
         "in_progress": 0,
-        "todo": 7
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "AR",
@@ -9462,7 +9921,8 @@
         "total_atoms": 8,
         "done": 0,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "ET",
@@ -9470,7 +9930,8 @@
         "total_atoms": 8,
         "done": 0,
         "in_progress": 0,
-        "todo": 8
+        "todo": 8,
+        "blocked": 0
       },
       {
         "code": "LV",
@@ -9478,7 +9939,8 @@
         "total_atoms": 7,
         "done": 0,
         "in_progress": 0,
-        "todo": 7
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "OU",
@@ -9486,7 +9948,8 @@
         "total_atoms": 11,
         "done": 0,
         "in_progress": 0,
-        "todo": 11
+        "todo": 11,
+        "blocked": 0
       },
       {
         "code": "SH",
@@ -9494,23 +9957,26 @@
         "total_atoms": 10,
         "done": 0,
         "in_progress": 0,
-        "todo": 10
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 0,
+        "done": 2,
         "in_progress": 0,
-        "todo": 12
+        "todo": 10,
+        "blocked": 0
       },
       {
         "code": "WF2WOR",
         "plan": "WORKFLOWS-V2-WORK-CONTAINERS",
         "total_atoms": 12,
-        "done": 0,
-        "in_progress": 8,
-        "todo": 4
+        "done": 11,
+        "in_progress": 0,
+        "todo": 1,
+        "blocked": 0
       },
       {
         "code": "DCU",
@@ -9518,15 +9984,17 @@
         "total_atoms": 7,
         "done": 0,
         "in_progress": 0,
-        "todo": 7
+        "todo": 7,
+        "blocked": 0
       },
       {
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
-        "total_atoms": 11,
-        "done": 0,
+        "total_atoms": 13,
+        "done": 8,
         "in_progress": 0,
-        "todo": 11
+        "todo": 5,
+        "blocked": 0
       },
       {
         "code": "PEP",
@@ -9534,9 +10002,10 @@
         "total_atoms": 11,
         "done": 0,
         "in_progress": 0,
-        "todo": 11
+        "todo": 11,
+        "blocked": 0
       }
     ],
-    "edge_count": 826
+    "edge_count": 850
   }
 }

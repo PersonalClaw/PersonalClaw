@@ -25,8 +25,48 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   against a process that can read the root-only secret file (see
   `docs/architecture/app-platform.md`).
 
+### Fixed
+
+- **`until_dry` workflow loops now end when the work reports no progress, instead of always running
+  to their iteration cap.** A loop can declare which field of its iteration output counts as
+  progress (`progress_field`), and two shipped templates do — `goal-pursuit-open-ended`
+  (`new_findings_count`) and `general-project` (`meaningful_progress`) — but the engine never read
+  it. Dryness was measured over the *whole* output of the last node in the iteration, which in both
+  templates is a judge stage returning a populated JSON object; so a cycle that honestly reported
+  `new_findings_count: 0` still counted as progress, the "two clean cycles in a row" streak never
+  completed, and the run paid for a model call per iteration up to `max_iterations` (12 and 6) to
+  learn nothing. A declared field now decides, wherever in the iteration it was emitted: zero,
+  false, blank, empty or null means the cycle surfaced nothing new; anything else is progress. Loops
+  that declare no field — the majority, including `audit-sweep` and `deep-research` — keep the
+  previous whole-output rule unchanged. A declared field an iteration did not emit also falls back
+  to that rule rather than counting as dryness: ending a run because the body forgot a key would
+  silently truncate real work, which is worse than paying for one more iteration. `streak` is
+  unchanged and still means N *consecutive* dry iterations.
+- **Run history no longer says "ran" for automations that did not run.** The run feed translates
+  each store's own status word into a typed outcome, and four of the statuses actually being written
+  had no entry in that translation — so they landed on a fallback nobody had chosen for them. A
+  lifecycle hook that only *launched* background work, and a hook the incident kill switch stopped
+  **before** it reached its action, both showed as "ran"; a payload the injection screen blocked, and
+  every fire suppressed by quiet hours, a budget cap, an overlap or a triage decision, all showed as
+  a red "failed". Each now shows what it was: `deferred` ("outcome not yet known"), a neutral grey
+  suppression that folds into the archived half of the feed with its reason, and the shield-marked
+  `blocked`. Suppressed and screened rows are also marked as ledger entries rather than openable
+  runs, since neither ever reached a runner. This was a reporting fix only — the trigger
+  autopause counter reads the stored rows directly and was never affected, so no automation's
+  pause/resume behaviour changes. A status the build cannot classify is now logged by name and never
+  reported as a success.
+
 ### Changed
 
+- **A workflow plan now tells you which of its stops survive an unattended run.** The autonomy
+  offer routinely recommends `per_stage` while still offering `unattended`, and the plan preview
+  listed the confirmations for the *recommended* mode only — so choosing "run it unattended" meant
+  giving up an unnamed set of stops. The preview gained an `unattended_interrupts` block naming, per
+  confirmation, whether unattended still stops for it and which interrupt fires (`irreversible`, or
+  `uninferable` for a credential or payment detail nobody can guess). A credential ask now reports
+  as *uninferable* rather than *irreversible* — the same stop, but it tells you to supply a value
+  instead of sending you looking for a blast radius. Advisory only: what an unattended run may
+  actually do is unchanged, and still decided by the engine's gate policy.
 - **A `foreach` with `on_item_error: collect` now has defined behaviour, and it collects.**
   `collect` was accepted by the validator and advertised in the workflow capabilities catalog, but
   no code branched on it: it fell through to the generic container outcome, so it neither halted
@@ -122,6 +162,31 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An automation fired from a background write could be dropped without a trace when the retry
+  it was owed was skipped.** Some fires are recorded on disk instead of running immediately — a
+  memory write from the CLI, for example, has no event loop to run an action on, so the fire is
+  parked and picked up on the next scheduler tick. If picking it up failed, the fire was marked
+  handled anyway and deleted: a warning in the log, and an automation that never ran. It is now
+  retried. A failure that happened *before* the automation could have started anything is held and
+  tried again on later ticks, up to five times, and the attempt count survives a restart, so a
+  temporary problem no longer costs you the fire. A failure that happened *after* the automation
+  was handed off is never retried, because running it twice is worse than not knowing whether it
+  finished. A fire that can never work — a malformed record, or five failed attempts — is dropped
+  once, loudly, with the reason, instead of stalling every automation behind it. Two identical
+  fires parked within five minutes of each other now run once, which is the same rule already
+  applied to a webhook a sender retried or a file saved twice.
+- **A workflow set to `on_overlap: queue` started a second run alongside the first instead of
+  queueing it.** The policy did the opposite of its name: with a run already in flight, `queue`
+  matched no branch in the code that applies the setting and fell through to "start now", so a
+  trigger that fired every minute against a slow workflow stacked runs without bound — the exact
+  thing the default (`skip`) exists to prevent. `queue` now means what it says: the start is saved
+  as an unstarted run and begins when the run in flight ends, whether that happens while the
+  gateway is up or after a restart. The queue holds one pending start (the run after next would do
+  the same work with staler inputs), and a start refused by that limit says so — in the trigger's
+  recorded outcome and in the log — rather than reporting itself as queued. An unstarted run you
+  created yourself is never picked up by this: only starts the overlap policy queued are, and the
+  distinction is recorded on the run. Trigger history shows a queued fire as deferred with its own
+  reason, so it is no longer indistinguishable from one that ran.
 - **The Inbox's Mentions and Email filters could never match anything.** The dashboard has
   filtered and counted items by kind for a while, and the inbox stored a kind per row — but the
   message-source seam every provider builds on had no field for it, so every message a source

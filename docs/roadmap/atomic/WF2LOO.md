@@ -21,6 +21,10 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2LOO-9` | ⬜ | goal-pursuit-monitor template + self-schedule tool module + bounds config (R15) | `WF2LOO-3`, `EXT:AUTOMATION-SUBSTRATE:trigger entities + resume-targets (set_onetime_task/set_recurring_task, AUTO-R11)` | goal-pursuit-monitor ships as a parked-run-plus-self-created-clock-trigger template; a new set_onetime_task/set_recurring_task tool module is registered via mcp_core._TOOL_MODULES + tool_providers/registry.py; workflows.self_schedule_max_outstanding wired through all four config points (dataclass _meta, load(), to_dict(), _EDITABLE_CONFIG PATCH) with mandatory per-trigger TTL + provenance tag + autonomy-mode gating. Verified: a monitor run parks between checks via a self-created trigger visible in the cockpit with provenance+TTL and survives a gateway restart (criterion 7). BLOCKED until the substrate trigger entities/resume-targets exist — do not ship a template whose central mechanism silently no-ops. |
 | `WF2LOO-10` | ✅ | code-project template (product decision + build) | `WF2LOO-3` | The product decision is made (replace the shipped code-implementation template vs. add code-project beside it) and the chosen template ships with the R5 structural gates: gated initializer (4-condition checklist), WIP=1 engine-enforced single_active_feature, reproduction-before-edit with inverted success_when for bug-flavored runs, baseline capture, and dual verify+guard gate. Verified: a 'build a feature' run passes the init-gate, holds WIP=1, and classifies a seeded regression vs a pre-existing failure via the baseline diff (criterion 6). |
 | `WF2LOO-11` | ⬜ | cross_model judge isolation enforcement | `WF2LOO-1`, `WF2LOO-6` | dispatch_gate receives the producing stage's model and the completion seam accepts a model (not just a use_case) so judge_actors.plan_judge_session/validate_judge_model can demand a different model FAMILY; a template declaring isolation: cross_model provably runs a different family judge; the WFL_UNENFORCEABLE_ISOLATION lint (from WF2LOO-6) is retired now that the claim is enforceable. Unblocks the cross_model declarations in deep-research and code-project. |
+| `WF2LOO-12` | ✅ (#PENDING) | Make `judge_contract`'s enforcement claim honest, and rail it against drift | `WF2LOO-1`, `WF2LOO-6` | `judge_contract.py`'s docstring stops asserting live enforcement ("a PASS without cited proof is invalid ... rejected by the contract") and instead records, measured, that its six enforcement entry points have ZERO production callers, names both live judge paths that supersede it (the one-word `GateKind.JUDGE` gate read by `verify.parse_verdict`; the 6 templates' contract-shaped `judge` STAGE whose output nothing reads), and states what wiring would take. No function is deleted and no judge gate is made stricter: `engine.py` and `verify.py` stay byte-identical. One rail (`test_the_unwired_enforcement_claim_matches_the_live_path`) fails in both directions — enforcement gaining a caller while the docstring still says it has none, and the live gate leaving its one-word prompt while the docstring still gives that as the reason — proven able to fail by three probes (marker removed; injected `validate_verdict` caller; gate prompt switched to JSON) each reverted by a targeted edit, plus two vacuity floors. |
+| `WF2LOO-13` | ⬜ | Wire the judge contract into the live judge path (blast radius measured by `WF2LOO-12`) | `WF2LOO-12`, `WF2LOO-7` | The live judge path speaks the contract: `GateKind.JUDGE` asks for the contract JSON instead of one bare word, `validate_verdict` decides the gate (so a PASS without `proof`/`evidence_refs` is rejected rather than accepted), `meets_ratchet` compares the 14 declared `runtime_hints.judge` rubric criteria against their `target_score` for the first time, `hints_from_dict` becomes the parser of the declarations 6 templates already carry, and the 6 judge STAGES' already-contract-shaped output is validated and bound by the templates that produce it. The two verdict vocabularies (`judge_contract.Verdict` PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs `verify.Verdict` PASS/RETRY/ESCALATE/REJECT) are reconciled to one, not bridged. Measured blast radius: 7 judge gates in 7 bundled templates change prompt + parse; 6 templates x 14 rubric criteria become live thresholds; every judge answer grows from one token to a JSON object on a gate that runs every loop iteration (cost + latency + a new PROTOCOL failure mode on unparseable JSON). Ship behind a measurement of how many real judge responses would satisfy the contract BEFORE it gets teeth — enforcing it against today's population is an outage, which is why `WF2LOO-12` deliberately did not. |
+| `WF2LOO-14` | ✅ (#PENDING) | Make `until_dry` read the `progress_field` its templates declare | `WF2LOO-3` | `controller._advance_loop` decides dryness from the loop's declared `progress_field` instead of from the whole output of whichever node happened to finish the iteration: `_progress_reading` states one exhaustive per-type rule (`None`/`False`/`0`/blank/empty ⇒ dry; anything else ⇒ progress; an unmapped type ⇒ *unreadable*, never swallowed), and `_progress_value` finds the field anywhere in the iteration's body — necessary because both declaring templates emit it from the FIRST stage of a sequence body and end the iteration on a judge stage whose schema has no such key, so a last-leaf-only read would have shipped inert. A loop declaring no field keeps the whole-output rule byte-for-byte, and a declared-but-absent or unreadable field falls back to it rather than counting as dryness (a missing key must not truncate a user's run). `streak` semantics untouched. Blast radius is exactly two shipped templates: `goal-pursuit-open-ended` (`new_findings_count`) and `general-project` (`meaningful_progress`) now end after two zero-progress cycles instead of running to their 12/6 iteration cap; both bodies DO emit their declared field, so no template needed fixing. Driven through a real controller (ends on two zero-progress iterations; does NOT end while progress is reported; a progress cycle resets the streak; an absent field runs to the cap), plus a rail over every bundled template that a declared field is emitted by a body schema AND named in that node's prompt — proven able to fail by two probes (call site reverted to `_is_dry`, one template's field renamed) each reverted by a targeted edit. |
+| `WF2LOO-15` | ✅ | judge_actors: separate the enforced invariant from the authored one, and rail the claim | `WF2LOO-12` | judge_actors' docstring distinguishes the ENFORCED invariant (judge isolation — plan_judge_session/validate_judge_model called from engine.dispatch_gate) from the AUTHORED-but-unwired one (the worker-transition rule: check_transition/resolve_transition have no production caller because node transitions carry no actor — controller.py's actor belongs to the mutation queue), and names blind_provenance/assemble_judge_evidence as unwired for the same reason; tests/test_workflows_judge_actors_claims.py pins the claim to the call graph in BOTH directions and is proven to fail when the marker is removed AND when a caller is wired while the marker stays; WF2LOO-13's scope names all four functions so the unwired judge surface has ONE owner |
 
 ## Atom scopes
 
@@ -112,3 +116,255 @@ Judge Design: judge stage contract Isolated+provenance-blinded (R1); Engine-enfo
 
 **Done when:** dispatch_gate receives the producing stage's model and the completion seam accepts a model (not just a use_case) so judge_actors.plan_judge_session/validate_judge_model can demand a different model FAMILY; a template declaring isolation: cross_model provably runs a different family judge; the WFL_UNENFORCEABLE_ISOLATION lint (from WF2LOO-6) is retired now that the claim is enforceable. Unblocks the cross_model declarations in deep-research and code-project.
 
+
+### `WF2LOO-12` — Make `judge_contract`'s enforcement claim honest, and rail it against drift
+
+**Status:** ✅ done (#PENDING)
+
+An HONESTY atom, not a feature atom: it changes what the module SAYS to match what the code
+DOES, and it deliberately builds none of the missing wiring. No function is deleted; no judge
+gate becomes stricter.
+
+**Done when:** `judge_contract.py`'s docstring stops asserting live enforcement and records the
+measurement instead — six enforcement entry points with zero production callers, both live judge
+paths named, and what wiring would take; `engine.py` and `verify.py` are byte-identical, so a
+user's judge gate behaves exactly as before; one rail fails in both drift directions and is
+proven able to fail by three probes reverted with targeted edits; the wiring work is recorded as
+`WF2LOO-13` with its measured blast radius.
+
+**Design**
+
+`WF2LOO-1` shipped `judge_contract.py` and its "Done when" claims *"engine tests prove ...
+PASS-without-proof invalid"*. The module opens with the same claim as a statement of fact:
+
+> **A PASS without cited proof is invalid.** Not "discouraged": the verdict is rejected by the
+> contract.
+
+**The live judge gate has never run that contract.** Measured on this tree:
+
+| Fact | Evidence |
+|---|---|
+| the live gate demands ONE WORD | `engine.py` judge branch: `f"{prompt}\n\nRespond with EXACTLY ONE word, one of: PASS, RETRY, ESCALATE, REJECT. No other text."` |
+| the live parse keeps only the word | `verify.py:63` `parse_verdict` — returns a `verify.Verdict`, no `scores`, no `evidence_refs` |
+| a DIFFERENT enum | `verify.Verdict` is PASS/RETRY/ESCALATE/REJECT; this module's is PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT |
+| enforcement has no caller | `validate_verdict`, `meets_ratchet`, `compute_overall`, `detect_forbidden_modes`, `aggregate_samples`, `hints_from_dict` → 0 production callers (only `Isolation` / `FallbackCheck`, the TYPES, are imported by `judge_actors.py:26` / `judge_pretier.py:246`) |
+| blast radius of enforcing it | 7 judge gates in 7 bundled templates; 6 templates declare `runtime_hints.judge.rubric` (14 criteria) |
+
+So enforcing the headline against the shipped population would invalidate **every** judge PASS in
+all 7 templates. This program's rule is explicit — giving a never-run control teeth before the
+population satisfies it is an outage, not a gate — so the enforcement stays unwired and the
+DOCSTRING is what changes.
+
+**The measurement also found a second live judge path, and it is the interesting one.** Six
+templates' `judge` STAGE (`code-project`, `design-project`, `diagnose-run`, `general-project`,
+`goal-pursuit-open-ended`, `goal-pursuit-verifiable`) declares `config.schema` =
+`{reasoning, verdict, scores, marginal_value, evidence_refs, proof, cannot_judge}` and its prompt
+spells out THIS module's five-verdict vocabulary. `dispatch_infer` genuinely parses that JSON
+(`want_json = bool(cfg.get("schema"))`). A contract-shaped judge response is therefore produced
+on every loop iteration — and then **discarded**: `dispatch_infer` returns DONE for any parseable
+JSON whatever the verdict says, `validate_verdict` never sees it, and **no shipped template binds
+`nodes.judge.output.*`** (measured: zero references in all six).
+
+That closes the "is there a live structured path to enforce on?" question in the only way that
+settles the atom. There is one, but enforcing there cannot change any outcome, because nothing
+consumes the verdict — so any enforcement added there today ships INERT by construction; and
+making it decide the node instead would fail work that passes today. Both are barred, which makes
+the docs-honesty option forced rather than preferred.
+
+**What the rubric declarations actually reach.** `runtime_hints.judge.rubric` (6 templates, 14
+criteria) is parsed only by `hints_from_dict`, which has no production caller. The criteria DO
+reach the model, but as PROSE: `WF2LOO-3`'s log claims "a test asserting every declared criterion
+reaches a judge", and that test —
+`test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt` — asserts
+the criterion STRING is a substring of some judge node's `prompt`. Text inlining, not scoring. No
+`target_score` is ever compared against a returned score, because `meets_ratchet` has no caller.
+The claim is literally true and much weaker than it reads.
+
+**Implementation plan**
+
+1. Measure before writing: census the bundled templates for judge gates (7 / 7 templates), for
+   `runtime_hints.judge.rubric` (6 templates, 14 criteria), and for `nodes.judge.output.*`
+   bindings (zero). Trace one rubric criterion end to end to establish it arrives as prose only.
+2. Answer the structured-path question explicitly rather than assuming the gate is the only judge:
+   check `judge_pretier`, `judge_actors`, the ladder gate, `judge_calibration`, `loop/judge.py`
+   and the `schema` → `want_json` stage path. (`loop/judge.py` is a third, live, structured judge
+   with its OWN vocabulary — `CycleVerdict{done, marginal_value, quality_score, regressed}` — and
+   no proof field, so the contract is not expressible there either.)
+3. Rewrite the module docstring: keep every authored rule, but say up front that enforcement has
+   no caller, and add a measured "what the live judges actually do" section naming both paths.
+4. Add the two-directional rail with vacuity floors (entry points must still be defined; the
+   judge branch must still be found before concluding anything from the gate's text).
+5. Prove the rail fails: remove the marker; inject a `validate_verdict` production caller; switch
+   the gate prompt to JSON. Revert each with a targeted edit and confirm `engine.py` / `verify.py`
+   are byte-identical to `HEAD`.
+6. Record the wiring work as `WF2LOO-13` with the measured blast radius so it is a scoped decision
+   rather than a surprise.
+
+### `WF2LOO-13` — Wire the judge contract into the live judge path (blast radius measured by `WF2LOO-12`)
+
+**Status:** todo
+
+Judge Design: Typed Verdict Contract (R2/R2c), Runtime Hints rubric convergence contract (R3);
+the wiring half of what `WF2LOO-1` authored and `WF2LOO-12` measured as unwired.
+
+**Done when:** the live judge path speaks the contract — `GateKind.JUDGE` asks for the contract
+JSON instead of one bare word, `validate_verdict` decides the gate, `meets_ratchet` compares the
+14 declared rubric criteria against their `target_score` for the first time, `hints_from_dict`
+becomes the parser of declarations 6 templates already carry, and the 6 judge STAGES' already
+contract-shaped output is validated and bound by the templates that produce it. The two verdict
+vocabularies are reconciled to ONE, not bridged.
+
+**Design**
+
+The cheap half is already done by accident: 6 templates' judge stages emit exactly the contract
+shape, so the *prompt engineering* for a structured judge exists and works. The expensive half is
+the gate (7 gates, 7 templates) and the consequences of turning declarations into thresholds.
+
+Measured blast radius (from `WF2LOO-12`):
+
+* **7 judge gates across 7 bundled templates** (`gap-healing`, `goal-pursuit-open-ended`,
+  `knowledge-lint`, `knowledge-synthesis`, `publish-article`, `rich-ingest`, `thesis-tracker`)
+  change both prompt and parse.
+* **6 templates x 14 rubric criteria** become live thresholds for the first time; a criterion the
+  judge does not score is a `not scored` shortfall under `Ratchet.STRICT`, i.e. a REJECT.
+* **Cost:** every judge answer grows from ~1 token to a JSON object, on a gate that runs every
+  loop iteration; plus a new PROTOCOL failure mode when the JSON does not parse (today an
+  unparseable word already fails the gate, so the shape of the failure is not new — its frequency
+  is).
+* **Vocabulary:** `verify.Verdict` (PASS/RETRY/ESCALATE/REJECT) and `judge_contract.Verdict`
+  (PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT) must converge. `engine.py` currently restates the
+  sampling rule precisely to avoid feeding one vocabulary's values to the other's aggregator.
+
+**Implementation plan**
+
+1. Measure the population BEFORE giving the control teeth: run the 7 judge gates with the
+   contract prompt and count how many real responses would satisfy `validate_verdict`
+   (proof/evidence_refs present, every rubric criterion scored). Enforcement lands only after
+   that number is known — this is the step whose absence made `WF2LOO-12` a docs atom.
+2. Reconcile the two verdict enums to one closed set, deleting the loser (clean break).
+3. Move the gate to the contract prompt + `validate_verdict`, keeping the pre-tier, sampling and
+   cross-model isolation seams `WF2LOO-6`/`WF2LOO-11` already built.
+4. Validate and bind the 6 judge STAGES' output so a stage verdict stops being discarded.
+5. Retire `WF2LOO-12`'s rail in the same change: the docstring stops saying "enforcement is NOT
+   wired", which is exactly the direction that rail is built to catch.
+
+### `WF2LOO-14` — Make `until_dry` read the `progress_field` its templates declare
+
+**Status:** ✅ done (#PENDING)
+
+An inert-control atom over `WF2LOO-3`'s templates: `until_dry` termination measured something
+other than what the templates declare, so the mode's own exit could not fire for either template
+that asked for it.
+
+**Done when:** dryness is decided from the loop's declared `progress_field` with one exhaustive
+per-type rule; loops declaring none keep today's whole-output rule byte-for-byte; an absent or
+unreadable field falls back rather than ending a loop; `streak` is untouched; a driven controller
+test proves the loop ENDS on two zero-progress iterations and does NOT end while progress is
+reported; a rail over every bundled template proves a declared field can actually be emitted by
+its body.
+
+**Design**
+
+`controller._is_dry(output)` — *"Did an iteration surface anything new? Feeds `until_dry`
+termination"* — returned True only when the output was `None` or `len(output) == 0`. It never
+looked at `progress_field`. Two shipped templates declare one, both `mode: until_dry, streak: 2`:
+
+| Template | field | body shape | cap |
+|---|---|---|---|
+| `goal-pursuit-open-ended` | `new_findings_count` (integer) | `sequence[cycle, judge]` | 12 |
+| `general-project` | `meaningful_progress` (boolean) | `sequence[work, judge]` | 6 |
+
+Two independent reasons the exit could never fire for them:
+
+1. **The field was never read.** A structured cycle returning `{"new_findings_count": 0, "notes":
+   "nothing new"}` is a non-empty dict, so it counted as progress.
+2. **The output measured was the wrong node's.** `_advance_loop` reads
+   `self._outputs[item.node.id]` for the leaf that COMPLETED the iteration — in both templates the
+   `judge` stage, whose schema (`reasoning`, `verdict`, `scores`, …) has no progress key and which
+   returns a populated object every time. Even under the whole-output rule that output can never be
+   empty, so `tick.loop_should_continue`'s `dry_streak < need` never stopped being true and the run
+   burned every iteration up to its cap, paying for a model call each time to learn nothing.
+
+The third symptom was a doc claim: `template_lint.py`'s TANGLED-loop comment asserted
+*"`progress_field` merely names which field it reads"* — describing behavior that did not exist.
+
+**The dryness rule for a declared field**, one sentence: *a declared progress field is dry when its
+value is that field's own expression of "nothing" — null, false, zero, blank, or empty.* Per type,
+exhaustively, in `_progress_reading`:
+
+| value | reading | why |
+|---|---|---|
+| `None` | dry | the body answered "nothing" |
+| `False` / `True` | dry / progress | a boolean field IS the answer (checked before `int`: `bool` is an `int`) |
+| `0` / `0.0` | dry | the shipped `new_findings_count: 0` case |
+| non-zero number | progress | including a NEGATIVE: a nonsense count is not evidence that nothing happened |
+| `""` / whitespace | dry | a blank statement of what is new says nothing is new |
+| non-blank `str` | progress | |
+| empty / non-empty `bytes` | dry / progress | |
+| empty / non-empty `list`,`tuple`,`set`,`frozenset`,`dict` | dry / progress | nothing collected |
+| any other type | **unreadable** | no rule exists, so it refuses to call it dry — not swallowed by a default branch |
+
+**Absence and unreadability fall back to the whole-output rule, deliberately.** Treating a missing
+key as dryness would end a user's run after `streak` iterations because the body forgot to emit a
+field — silently truncating real work. One extra iteration is the cheaper and more visible mistake.
+The same direction covers an oversize output whose inline preview is a `result_omitted` stub.
+
+**Blast radius: exactly the two templates above.** Both bodies genuinely emit their declared field
+(schema + an explicit prompt instruction, verified), so neither template was wrong at its own end
+and no template needed fixing. `goal-pursuit-open-ended`: two cycles reporting
+`new_findings_count: 0` now end the loop instead of running to 12. `general-project`: two cycles
+reporting `meaningful_progress: false` end it instead of running to 6. The other two `until_dry`
+loops (`audit-sweep`, `deep-research`) declare no field and are byte-for-byte unchanged, as is
+every other loop mode. `_is_dry` has exactly ONE caller, so no non-loop behavior could change.
+
+**Implementation plan**
+
+1. Census `_is_dry`'s callers (one: `_advance_loop`) and every `progress_field` declaration in
+   `src/` (two bundled templates, one lint comment) before touching the signature.
+2. Keep `_is_dry` as the whole-output rule, unchanged, for loops that declare no field.
+3. Add `_progress_reading` (the exhaustive per-type table above, with `unreadable` as a real third
+   answer) and `_progress_value` (`(found?, value)`, so a present `None` stays distinguishable from
+   absence).
+4. Scan the loop BODY for the field, restricted to nodes whose instance for THIS iteration
+   succeeded — `self._outputs` is keyed by node id and holds the previous iteration's value for a
+   node that did not run, and reading that would report last iteration's progress as this one's.
+   Last match in document order wins.
+5. Drive it through a real controller on a body shaped like the shipped templates (field emitted by
+   the first stage, iteration ended by a judge stage): ends at 2 iterations on zeros; runs to the
+   cap while progress is reported; a productive cycle resets the streak; an absent field runs to
+   the cap. The judge's fake output carries a counter so `check_breaker`'s `identical_output` rule
+   cannot end the loop first and make the test prove nothing.
+6. Rail the template end over EVERY bundled template (not a hand-maintained list): a declared
+   `progress_field` must appear in some body node's `schema` AND be named in that node's prompt —
+   a key the prompt never asks for comes back invented or missing.
+7. Prove both halves can fail: revert the call site to `_is_dry` (the two ending tests go red);
+   rename one template's declared field (the rail goes red). Revert each with a targeted edit.
+8. Correct `template_lint.py`'s comment so it describes the behavior that now exists.
+
+### `WF2LOO-15` — judge_actors: separate the enforced invariant from the authored one
+
+**Status:** done
+
+**Design.** `judge_actors` opened with *"Two invariants the engine ENFORCES rather than suggests"*, and only one of
+them ran. Measured live references outside the module: `plan_judge_session` 3, `validate_judge_model` 4 — the judge
+**isolation** rule is genuinely enforced from `engine.dispatch_gate`, and `engine.py:1296`'s own comment records that
+this seam was itself dead until S146 wired it. Against that: `check_transition` 0, `resolve_transition` 0,
+`blind_provenance` 0, `assemble_judge_evidence` 0.
+
+The reason the transition rule was never wired is structural, not an oversight: **the state machine has no actor at a
+node transition.** `controller.py`'s `actor` parameter (line 1210) belongs to the *mutation* queue, so there is
+nothing to pass to `check_transition` at the point a node's state changes. Introducing one is real work, and it is
+`WF2LOO-13`'s — this atom refuses to fake it, corrects the claim, and consolidates ownership so the unwired judge
+surface has a single owner instead of three half-findings across two modules.
+
+Same for the blinding pair: the live judge gate sends a one-word prompt and parses the word, so there is no
+message-list evidence for `assemble_judge_evidence` to blind. Authored for the richer judge path, not for this one.
+
+**Implementation plan.**
+1. Rewrite the module docstring into three bullets — ENFORCED (with the file:line seam), AUTHORED-NOT-ENFORCED (with
+   the reason and the owning atom), and the blinding pair — and say the sections below specify a rule rather than
+   describe what runs.
+2. `tests/test_workflows_judge_actors_claims.py`: a vacuity floor (every symbol still defined), the enforced half must
+   keep a live caller, and the authored half must agree with the docstring **in both directions**.
+3. Prove both failure directions with probes, reverted by targeted edits.
+4. Extend `WF2LOO-13`'s scope to name all four functions.

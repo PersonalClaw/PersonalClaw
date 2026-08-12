@@ -87,6 +87,12 @@ STATUS_TO_OUTCOME: dict[str, str] = {
     "report": Outcome.RAN.value,
     "skip": Outcome.SKIPPED_NOOP.value,
     "launched": Outcome.DEFERRED.value,
+    # `queued` → `DEFERRED` too, but for the OTHER half of that member's definition:
+    # DEFERRED is "parked / yielded / resource-busy", and a start held behind a run already
+    # in flight (`on_overlap: queue`) is exactly resource-busy. It is NOT `skipped_overlap`,
+    # which means nothing durable happened — a queued start persisted a run record, and the
+    # reason string below is what keeps the two DEFERRED cases distinguishable.
+    "queued": Outcome.DEFERRED.value,
     "error": Outcome.FAILED.value,
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
@@ -224,7 +230,11 @@ def classify(reported: str, exception: BaseException | None = None) -> tuple[str
         outcome = STATUS_TO_OUTCOME[status]
         reason = "" if outcome == Outcome.RAN.value else f"runner reported {status}"
         if outcome == Outcome.DEFERRED.value:
-            reason = "action launched background work; outcome not yet known"
+            reason = (
+                "the run was queued behind a run already in flight; it starts when that " "one ends"
+                if status == "queued"
+                else "action launched background work; outcome not yet known"
+            )
         elif outcome == Outcome.SKIPPED_NOOP.value:
             # `FireRecord.reason` is MANDATORY for anything other than a clean run, and this row
             # folds out of the default view — so the reason is the only thing that will ever explain

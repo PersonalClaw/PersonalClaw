@@ -20,14 +20,6 @@
         "enum:PromptCache.AUTOMATIC"
       ]
     },
-    "src/personalclaw/loop/loop.py": {
-      "inert": 3,
-      "surfaces": [
-        "enum:LoopKind.DESIGN",
-        "enum:LoopKind.GENERAL",
-        "enum:LoopKind.GOAL"
-      ]
-    },
     "src/personalclaw/memory_record.py": {
       "inert": 2,
       "surfaces": [
@@ -303,20 +295,6 @@
         "enum:DependencyType.REQUIRED_FOR"
       ]
     },
-    "src/personalclaw/triggers/dispatch.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:DrainAction.SKIP_CYCLE",
-        "enum:DrainAction.SKIP_DUPLICATE"
-      ]
-    },
-    "src/personalclaw/workflows/autonomy.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:Interrupt.CONFLICTING",
-        "enum:Interrupt.UNINFERABLE"
-      ]
-    },
     "src/personalclaw/workflows/confirmation.py": {
       "inert": 1,
       "surfaces": [
@@ -343,23 +321,9 @@
       ]
     },
     "src/personalclaw/workflows/models.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:OverlapPolicy.QUEUE",
-        "enum:SessionMode.CONTINUOUS"
-      ]
-    },
-    "src/personalclaw/workflows/publish.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:Lineage.INFORMED_BY",
-        "enum:Lineage.RELATED"
-      ]
-    },
-    "src/personalclaw/workflows/surfacing.py": {
       "inert": 1,
       "surfaces": [
-        "enum:Lifecycle.UNTIL_DEACTIVATED"
+        "enum:SessionMode.CONTINUOUS"
       ]
     }
   },
@@ -367,10 +331,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 24,
+      "enum": 13,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 151
+    "inert": 140
   }
 }

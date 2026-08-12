@@ -260,6 +260,31 @@ Sessions 1-3 (NEW-16) and 4-5 (NEW-22) are independent tracks; either alone is a
 
 ## Execution log
 
+- **[2026-08-12][CE2-7] DONE — grammar availability is a capability, and the suite now treats it as one.**
+  `tests/test_codegraph.py` asserted `parser_available("python") is True` inside a test named
+  `test_parser_available_is_a_question_not_an_assertion`, while `parse.py`'s own docstring says "False is a normal
+  answer, not an error". MEASURED cost of that contradiction: on 2026-08-12 PRs **#1144** (2 failures) and **#1162**
+  (21 failures) went red in CI, every failure inside this one file, because a runner could not load the python
+  grammar — and a manual re-run was the only remedy. 70/70 passed locally the whole time. The grammars are not in the
+  wheels: `tree_sitter_language_pack` fetches each into a per-user cache on first use, so a cold cache without network
+  legitimately has none.
+  **What shipped.** (1) `parser_status()` returns `(language, available, reason)` and `_record_load_failure` logs
+  `"<ExceptionType>: <message>"` once per language with the grammar cache path and a fixed pre-fetch remedy — WARNING
+  for a language the indexer asks for, DEBUG for anything else. CI previously reported only the absence, so there was
+  nothing to diagnose; `parser_available` keeps its `bool` contract. (2) The suite probes the capability once and skips
+  the **35** grammar-dependent tests naming the recorded reason; the other **37** keep running, which is the fail-soft
+  property this file exists to assert. The floor that never skips is `test_the_parser_dependency_is_installed` — the
+  wheels are declared in `pyproject.toml`, so an unimportable package stays a hard red as the packaging regression it
+  is. (3) The contradictory test now tests the contract it names.
+  **DEVIATION — no parser caching.** The brief offered it as a plausible fix for load pressure. Measured instead: the
+  language pack already memoizes the grammar (5.8 ms first load, 0.1 ms for the next 200), so a local cache buys
+  microseconds and costs thread-safety — one shared `Parser` driven from two gateway threads is not safe. Not done, on
+  evidence.
+  **Both postures proven:** 72/72 pass with a working grammar; with `_get_parser` raising, **37 passed / 35 skipped /
+  0 failed** — and the probe was reverted with a targeted edit. A leftover `raise` from an earlier interrupted attempt
+  was found in the working tree and removed before anything was committed; shipping it would have disabled codegraph
+  permanently.
+
 - [2026-07-26][S1] DONE: retrieval hardening + savings accounting + subagent projection (§1, §2.5a). (a) **Content-hash result ids** — `result_store._content_id` = `r_<sha256(raw)[:12]>` replaces the count-based `_next_id`; `store_result` dedupes identical raw to ONE file (idempotent, touches mtime); eviction + never-raise unchanged; `get_result` legacy read-compat is automatic (reads any `r_*.json`). (b) **`fetch_slice` line addressing** — `line_start`/`line_end` (1-indexed inclusive, mutually exclusive with char `start`/`end`); `tool_result_get` schema + handler in `builtin_tools.py` gain both; the `project_and_retain` recovery hint now names all three modes (line/char/grep). (c) **Savings accounting** — `tool_providers/savings.py` aggregated ledger (`~/.personalclaw/tokenjuice_savings.json`, keyed month|model|compressor, bounded by construction, best-effort never-raise) + `GET /api/tools/savings` + a Settings→Tool-output card in `ProjectionRulesPanel.tsx`. Model hint is `"unknown"` at the seam (no resolved model in scope; plan allows it — will cross-ref guardrails token counts later). (d) **Subagent projection** — the blind 3000-char parent-injection cut in `gateway.py` now routes through `project_and_retain` (keyed by the PARENT session), so a buried subagent finding gets a typed digest + a recoverable raw_ref instead of a truncated prefix. Tests: extended `test_tool_result_store.py` (content-hash/idempotency/line-addressing + OP4-analog no-double-loss on the new id), new `test_tool_savings.py`, `test_tools_handler.py` savings-endpoint tests. Success Criteria #1 (id + line ranges + one-file idempotent) + the §2.5a subagent contract met. Gate: `make lint` green, web typecheck+vitest(231)+build+render-smoke green, `make test` green (7986 passed).
 - [2026-07-26][S1] DEVIATION: the plan lacks an executor-ready `| ID | Task |` table (it has a §7 prose "Implementation Effort"). Derived Session-1 tasks from §1/§2.5a and the Success Criteria; no scope guessing beyond what those name. Recorded here for auditability.
 - [2026-07-26][S1] DEVIATION: regenerated the checked-in agent reference (`src/personalclaw/reference/{index,routes}.md`) via `python -m personalclaw.manifest_reference` — required because the `tool_result_get` schema changed + `/api/tools/savings` was added (`test_agent_reference.py` byte-matches a fresh render). Diff is exactly the new route + route count (442→443).

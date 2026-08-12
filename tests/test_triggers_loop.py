@@ -512,6 +512,321 @@ def test_a_DAMAGED_spool_line_does_not_hide_the_rest(tmp_path, monkeypatch):
     assert fired == ["good"]
 
 
+# ── WF2AUT-13: §3.3's cursor rule had a complete decision layer and ZERO production callers ──
+#
+# `Handling`, `DrainAction`, `drain_decision` and `classify_handler_outcome` were written,
+# documented and unit tested; nothing in `src/` referenced any of them. The drain did
+# `handled += 1` unconditionally and its own comment named "the poison pill `drain_decision`
+# names" while never calling it. Every test below drives the REAL drain (`tick_once`), not
+# `drain_decision` directly — a decision layer proven only by its own unit tests is exactly the
+# shape that shipped inert.
+
+
+def _spool_kind(home, *, kind="memory.memory_write", key="notes/x", value="hi", now=NOW):
+    from personalclaw.triggers.dispatch import Envelope, spool_fire
+
+    return spool_fire(
+        Envelope(
+            seq=0,
+            source="event:e-1",
+            kind=kind,
+            payload={"trigger_id": "e-1", "key": key, "value": value},
+            emitted_at=now,
+        )
+    )
+
+
+def _isolate(tmp_path, monkeypatch):
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config import loader
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+
+
+def _engine_down(monkeypatch):
+    """Make the PRE-DELIVERY engine resolve fail — a failure provably before any side effect."""
+    import personalclaw.event_triggers as et
+
+    def _boom():
+        raise RuntimeError("event engine unreachable")
+
+    monkeypatch.setattr(et, "get_engine", _boom)
+
+
+def _tick(tmp_path, *, now=NOW):
+    return asyncio.run(
+        L.tick_once(
+            TriggerStore(base_dir=tmp_path), runner=_ok, sessions=None, base_dir=tmp_path, now=now
+        )
+    )
+
+
+def test_a_TRANSIENT_pre_delivery_failure_is_HELD_not_acked(tmp_path, monkeypatch):
+    """The inert policy, now live. A re-entry that failed BEFORE the side-effect boundary used to
+    be counted `handled += 1` and acked off the spool; it is now held for a bounded retry."""
+    _isolate(tmp_path, monkeypatch)
+    from personalclaw.triggers.dispatch import drain_spool, read_spool_hold
+
+    _spool_kind(tmp_path)
+    _engine_down(monkeypatch)
+
+    _tick(tmp_path)
+
+    kept = drain_spool()[0]
+    assert len(kept) == 1, "a transient pre-delivery failure must NOT be acked off the spool"
+    assert read_spool_hold() == (kept[0].event_id, 1), "the budget must be on disk, not in memory"
+
+
+def test_a_failure_AFTER_the_side_effect_boundary_is_NEVER_retried(tmp_path, monkeypatch):
+    """🔴 THE SAFETY PIN. HOLD means an envelope can run twice, and a double-fire is the one
+    outcome criterion 7 bans. So the boundary is `emit_event` itself: once entered, the drain
+    cannot know how far it got, and "I don't know" must resolve to DELIVERED.
+
+    Driven by making `emit_event` raise — which production's `emit_event` never does (it swallows
+    into a debug log), so a test is the only way to reach the branch that must not retry.
+    """
+    _isolate(tmp_path, monkeypatch)
+    import personalclaw.event_triggers as et
+    from personalclaw.triggers.dispatch import drain_spool, read_spool_hold
+
+    _spool_kind(tmp_path)
+    entered: list[str] = []
+
+    def _raise_after_entering(**kw):
+        entered.append(kw["key"])
+        raise RuntimeError("the action already ran, then this blew up")
+
+    monkeypatch.setattr(et, "emit_event", _raise_after_entering)
+
+    _tick(tmp_path)
+    assert entered == ["notes/x"], "the boundary must actually have been crossed"
+    assert drain_spool()[0] == [], "a post-boundary failure must be ACKED, never held"
+    assert read_spool_hold() == ("", 0)
+
+    _tick(tmp_path, now=NOW + 1)
+    assert entered == ["notes/x"], "a second tick must not re-enter an envelope whose action ran"
+
+
+def test_the_retry_budget_IS_DURABLE_and_bounded(tmp_path, monkeypatch):
+    """`held_retries` lives on disk, so HOLD is bounded ACROSS process lifetimes. An in-memory
+    count would reset on every restart, and a retry that survives a restart without a surviving
+    count is an UNBOUNDED retry — strictly worse than the unconditional ack this replaced, which
+    at least terminated.
+
+    Each `tick_once` call re-reads the sidecar from disk, which is exactly what a restart does.
+    """
+    _isolate(tmp_path, monkeypatch)
+    from personalclaw.triggers.dispatch import (
+        MAX_TRANSIENT_RETRIES,
+        drain_spool,
+        read_spool_hold,
+        spool_hold_path,
+    )
+
+    _spool_kind(tmp_path)
+    _engine_down(monkeypatch)
+    event_id = drain_spool()[0][0].event_id
+
+    counts = []
+    for attempt in range(MAX_TRANSIENT_RETRIES):
+        _tick(tmp_path, now=NOW + attempt)
+        counts.append(read_spool_hold()[1])
+        if not drain_spool()[0]:
+            break
+
+    assert counts == [1, 2, 3, 4, 0], counts
+    assert drain_spool()[0] == [], "the poison pill must be given up, not held forever"
+    assert not spool_hold_path().exists(), "the budget must be forgotten once the envelope is gone"
+    assert event_id
+
+
+def test_a_HOLD_is_HEAD_OF_LINE_and_keeps_the_tail_in_ORDER(tmp_path, monkeypatch):
+    """`clear_spool(handled=N)` can only ack a PREFIX — there is no "keep line 1, ack line 2". So
+    the drain stops at the first envelope it must hold and leaves the tail on disk, in order.
+    Re-entering the tail first would reorder the stream; acking it would strand the head."""
+    _isolate(tmp_path, monkeypatch)
+    import personalclaw.event_triggers as et
+    from personalclaw.triggers.dispatch import drain_spool
+
+    _spool_kind(tmp_path, key="first")
+    _spool_kind(tmp_path, key="second")
+    fired: list[str] = []
+    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
+
+    _engine_down(monkeypatch)
+    _tick(tmp_path)
+    assert fired == [], "nothing may re-enter while the head is held"
+    assert [e.payload["key"] for e in drain_spool()[0]] == ["first", "second"]
+
+    monkeypatch.undo()
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
+    _tick(tmp_path, now=NOW + 1)
+    assert fired == ["first", "second"], "the tail must follow the head, in order"
+
+
+def test_an_IDENTICAL_payload_spooled_twice_fires_ONCE(tmp_path, monkeypatch):
+    """`SKIP_DUPLICATE`'s honest producer. `event_id`/`payload_hash` are DETERMINISTIC over
+    (source, kind, payload), so two lines with one hash inside `DEDUP_WINDOW_SECS` are the work
+    the window was written to collapse — "an fs event fired twice for one save"."""
+    _isolate(tmp_path, monkeypatch)
+    import personalclaw.event_triggers as et
+    from personalclaw.triggers.dispatch import drain_spool
+
+    _spool_kind(tmp_path, key="same")
+    _spool_kind(tmp_path, key="same")
+    fired: list[str] = []
+    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
+
+    _tick(tmp_path)
+    assert fired == ["same"], "the second identical line must be skipped, not re-fired"
+    assert drain_spool()[0] == [], "and it must still be ACKED, not left to retry forever"
+
+
+def test_the_dedup_window_does_not_collapse_two_SEPARATE_facts(tmp_path, monkeypatch):
+    """Compared on EMIT times, not on the tick's clock: the same payload seen an hour apart is two
+    facts. A window that read the tick's `now` for both would make every re-spool a duplicate."""
+    _isolate(tmp_path, monkeypatch)
+    import personalclaw.event_triggers as et
+    from personalclaw.triggers.dispatch import DEDUP_WINDOW_SECS
+
+    _spool_kind(tmp_path, key="same", now=NOW)
+    _spool_kind(tmp_path, key="same", now=NOW + DEDUP_WINDOW_SECS + 1)
+    fired: list[str] = []
+    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
+
+    _tick(tmp_path)
+    assert fired == ["same", "same"]
+
+
+def test_an_envelope_with_no_event_kind_is_PERMANENT_not_retried(tmp_path, monkeypatch):
+    """`Handling.PERMANENT`'s honest producer, and a real drop this found: an envelope with no
+    kind used to reach `emit_event` with an empty `event_type`, match nothing, and be counted as a
+    delivered fire — a drop wearing a success. No retry can make it routable, so it is consumed
+    LOUDLY rather than held (holding would be the poison pill `drain_decision` warns about)."""
+    _isolate(tmp_path, monkeypatch)
+    import personalclaw.event_triggers as et
+    from personalclaw.triggers.dispatch import drain_spool
+
+    _spool_kind(tmp_path, kind="", key="unroutable")
+    called: list[dict] = []
+    monkeypatch.setattr(et, "emit_event", lambda **kw: called.append(kw))
+
+    _tick(tmp_path)
+    assert called == [], "an unroutable envelope must not reach the emitter at all"
+    assert drain_spool()[0] == [], "and must be acked, because no retry can route it"
+
+
+def test_a_HOLD_that_cannot_persist_its_budget_is_ACKED_not_retried_forever(tmp_path, monkeypatch):
+    """The one place the design refuses to hold. An unbounded retry is worse than the swallow this
+    replaced, so a drain that cannot write the count acks the envelope loudly instead."""
+    _isolate(tmp_path, monkeypatch)
+    from personalclaw.triggers import dispatch as D
+
+    _spool_kind(tmp_path)
+    _engine_down(monkeypatch)
+    monkeypatch.setattr(D, "write_spool_hold", lambda **kw: False)
+
+    _tick(tmp_path)
+    assert D.drain_spool()[0] == [], "an unbudgetable hold must be acked, not retried forever"
+
+
+# ── the exhaustiveness ratchet (the WV-13/WV-14 pattern: a raising tail + an AST read) ──
+
+
+class TestTheDrainIsExhaustive:
+    def test_the_drain_branches_on_every_DrainAction_by_name(self) -> None:
+        """Read out of the SOURCE, not the behaviour: a branch that dispatched on something else
+        (a truthiness test, a fallthrough shared by two members) would still satisfy a behavioural
+        test while leaving the next member's semantics undeclared."""
+        import ast
+        import inspect
+        from pathlib import Path
+
+        from personalclaw.triggers.dispatch import DrainAction
+
+        source = Path(inspect.getsourcefile(L) or "").read_text(encoding="utf-8")
+        fn = next(
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "_drain_spool"
+        )
+        named = {
+            node.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "DrainAction"
+        }
+        assert named == {member.name for member in DrainAction}
+
+    def test_an_unhandled_DrainAction_raises_rather_than_silently_acking(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Proof the ratchet CAN fail. A member with no branch must refuse, not inherit whichever
+        action happened to be written last — the silent ack this whole atom exists to remove."""
+        _isolate(tmp_path, monkeypatch)
+        from personalclaw.triggers import dispatch as D
+
+        _spool_kind(tmp_path)
+        monkeypatch.setattr(D, "drain_decision", lambda **kw: ("future_action", ""))
+        with pytest.raises(AssertionError, match="no branch for DrainAction"):
+            L._drain_spool(now=NOW)
+
+    def test_drain_decision_branches_on_every_Handling_by_name(self) -> None:
+        import ast
+        import inspect
+        from pathlib import Path
+
+        from personalclaw.triggers import dispatch as D
+
+        source = Path(inspect.getsourcefile(D) or "").read_text(encoding="utf-8")
+        fn = next(
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "drain_decision"
+        )
+        named = {
+            node.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "Handling"
+        }
+        assert named == {member.name for member in D.Handling}
+
+    def test_an_unhandled_handling_raises_rather_than_inheriting_the_transient_rule(self) -> None:
+        """The transient rules used to be the FALLTHROUGH, so an unknown handling string silently
+        inherited "retry five times then drop"."""
+        from personalclaw.triggers.dispatch import drain_decision
+
+        with pytest.raises(AssertionError, match="no branch for handling"):
+            drain_decision(handling="future_handling", held_retries=0)
+
+    @pytest.mark.parametrize("member", ["DELIVERED", "TRANSIENT", "PERMANENT"])
+    def test_every_Handling_member_is_PRODUCED_at_the_real_boundary(
+        self, member, tmp_path, monkeypatch
+    ) -> None:
+        """Producers, not just branches. `Handling` had no writer anywhere in `src/` — every member
+        must now come out of `_reenter_spooled` for a state a real spooled envelope can be in."""
+        _isolate(tmp_path, monkeypatch)
+        import personalclaw.event_triggers as et
+        from personalclaw.triggers.dispatch import Envelope, Handling
+
+        kind = "memory.memory_write"
+        if member == "PERMANENT":
+            kind = ""
+        if member == "TRANSIENT":
+            _engine_down(monkeypatch)
+        else:
+            monkeypatch.setattr(et, "emit_event", lambda **kw: None)
+        handling, _detail = L._reenter_spooled(
+            Envelope(seq=0, source="event:e-1", kind=kind, payload={"key": "k"}, emitted_at=NOW),
+            now=NOW,
+        )
+        assert handling == getattr(Handling, member).value
+
+
 # ── S142: pending approvals re-arm (`retry_queue` had no caller either) ──
 
 

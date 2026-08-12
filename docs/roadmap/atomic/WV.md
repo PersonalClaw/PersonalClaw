@@ -23,6 +23,8 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WV-11` | ⬜ | Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider | `WV-3`, `WV-8` | node outputs over threshold keep head/tail in journal and write body to runs/<id>/artifacts/, populating bindings.node_artifacts so {{nodes.x.artifact}} resolves to a live pointer; artifact_inspect action provider registered (registry + ALLOWED_HOOK_PROVIDERS + validation schema) pulls artifact content on demand |
 | `WV-12` | ✅ | Two-layer context-compaction ladder for LLM-backed nodes | `WV-3`, `WV-8`, `EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)` | proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template |
 | `WV-13` | ✅ | Give `on_item_error: collect` an executor + an exhaustiveness ratchet over `ItemErrorPolicy` | `WV-4` | `tick.foreach_outcome` branches on every `ItemErrorPolicy` member and RAISES on an unmapped one; `collect` runs every item then fails the container, and its per-item failures land in the ledger as one `items_collected` record; the three policies produce three DIFFERENT run-level observables for one seeded failing item, driven through the real controller; `enum:ItemErrorPolicy.COLLECT` leaves `inert-surface-baseline.json` |
+| `WV-14` | ✅ | Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over `OverlapPolicy` | `WV-3`, `WV-4` | `overlap.decide` branches on every `OverlapPolicy` member and RAISES on an unmapped one; a `queue` start with a prior in flight PERSISTS an unlaunched run (DRAFT + a marker on `run.extra`) and returns `outcome: "queued"` naming it, instead of launching beside the prior; `overlap.drain` starts it from the controller's terminal write and from the watchdog poll, single-flight and idempotent; a hand-made DRAFT with no marker is never launched; the queue is capped at one and a dropped start names the cap in its outcome and the log; `enum:OverlapPolicy.QUEUE` leaves `inert-surface-baseline.json` |
+| `WV-15` | ✅ | Map every status a fire writes, and an AST rail over the three status→outcome tables | `WV-14` | `HOOK_STATUS_TO_OUTCOME` names `launched` + `skipped_incident` and `SCHEDULE_STATUS_TO_OUTCOME` names `blocked_injection` + all six `INERT_OUTCOMES`, so no live status reaches a `.get()` fallback; both fallbacks LOG the status they could not classify and never return `ran`; a suppressed or screened row is `LEDGER` weight and lands in `feed_response`'s suppressed half; `tests/test_triggers_status_vocabulary.py` infers each writer's possible values from its own AST (conditional expressions, `in`/`not in` guards, local names) with per-writer vacuity floors and a pinned writer-file census, and reds on all nine statuses if the tables are reverted |
 
 ## Atom scopes
 
@@ -198,3 +200,211 @@ fallthrough shared by two members).
    failing item, `max_concurrency: 1` so HALT is observable at all), the ledger-record
    assertions, and the exhaustiveness ratchet.
 6. Regenerate `inert-surface-baseline.json` (152 → 151; `enum` 25 → 24).
+
+### `WV-14` — Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over `OverlapPolicy`
+
+**Status:** done
+
+§2 trigger-origin starts (`on_overlap`, owned by the run-workflow provider re-added in Slice 3)
+
+**Done when:** `overlap.decide` branches on every `OverlapPolicy` member and RAISES on an unmapped one; a `queue` start with a prior in flight PERSISTS an unlaunched run (DRAFT + a marker on `run.extra`) and returns `outcome: "queued"` naming it, instead of launching beside the prior; `overlap.drain` starts it from the controller's terminal write and from the watchdog poll, single-flight and idempotent; a hand-made DRAFT with no marker is never launched; the queue is capped at one and a dropped start names the cap in its outcome and the log; `enum:OverlapPolicy.QUEUE` leaves `inert-surface-baseline.json`
+
+**Design**
+
+`OverlapPolicy.QUEUE` did the exact OPPOSITE of its name. `run_workflow_provider` compared
+against `SKIP` (return early, nothing starts) and `CANCEL_PREVIOUS` (cancel the priors, then
+start) and let `queue` **match neither branch and fall straight through to `store.create` +
+`_launch`** — so the one policy whose name promises ordering started a CONCURRENT run beside the
+still-running prior, silently. That directly violates the enum's own docstring
+(`SKIP = "skip"  # default — a per-minute trigger must not stack runs`): a per-minute trigger with
+`on_overlap: queue` against a slow workflow stacked runs without bound. It was reachable and
+round-tripped, not theoretical — `models.py` parses and serializes `on_overlap`, `native_defs.py`
+accepts it from a def payload, and `inert-surface-baseline.json` had listed
+`enum:OverlapPolicy.QUEUE` as inert for the length of the program.
+
+**Semantics, one line each.** SKIP (default) — a prior is in flight ⇒ nothing is created and
+nothing starts. QUEUE — a prior is in flight ⇒ the start is PERSISTED as an unlaunched run and
+started when that prior ends; ordering, not concurrency. CANCEL_PREVIOUS — a prior is in flight ⇒
+cancel it, then start now; the newest fire wins. With a free def all three start immediately —
+`queue` is not `always queue`, or a per-hour trigger against a one-minute workflow would never
+start anything directly.
+
+**The queue is a marked DRAFT run, not a new status.** `RunStatus.DRAFT` is where an unlaunched run
+already lives, so no state-machine member and no frontend mapping changes (the FE renders it with
+its existing `Draft` badge). But DRAFT is *also* where a user's deliberately-unstarted editor draft
+sits, so a drain keyed on "DRAFT for this def" would start work the user never asked to start —
+the worst available outcome of this atom. Queued-ness is therefore an explicit marker,
+`run.extra["overlap_queued"]`, and `extra` is a persisted JSON column, so it survives a restart
+with the row. Rejected: a new `RunStatus.QUEUED` (a state-machine change — `active_runs`,
+`TERMINAL_RUN_STATUSES`, `_ROOT_TO_RUN`, `materialize`'s exhaustive state→status table and the FE
+status union/badge `Record` all switch on it, and none of them need to); `RunOrigin` (it says WHO
+started a run, not what it waits on); a journal fact (durable but unqueryable — "which drafts are
+queued" would mean opening every draft's ledger).
+
+**The drain is single-flight and idempotent, reusing `concurrency.single_flight`** — the same flock
+the claim leases are built on — rather than a new lock. Three guards, cheapest first: the flock
+(cross-process, and cross-coroutine because flock conflicts across separate open file descriptions
+in one process); the supervisor's controller registry, since `watchdog.launch` already returns the
+EXISTING controller for a run id it holds (which also covers the window before a new controller has
+written RUNNING, when `active_runs()` still reads empty); and an active re-check *inside* the lock.
+Two live call sites: `controller._finish` after the terminal status is written (the moment the def
+stops being busy — awaited inline, since a floating task makes the handoff untestable, and fully
+guarded because `_finish` is the single terminal writer and must not raise), and the watchdog's 5s
+poll after adoption.
+
+**Cap: one — coalesce-to-one.** Depth 1 keeps the promise the name makes (the fire is not dropped;
+it runs next) while bounding the backlog. Unbounded depth does not: run N+2 does the same work as
+run N+1 with staler inputs, and a workflow that once ran long would spend hours replaying trigger
+fires whose reason has expired — one late run silently becoming a multi-hour backlog. A dropped
+start is loud in both places: the returned outcome carries `dropped/reason: "queue_full"/
+queue_depth/max_queue_depth/queued_run_id`, and the provider logs a WARNING. It stays
+`outcome: "skip"` (nothing durable was created) rather than minting a fourth vocabulary member.
+
+**Restart: the queue IS re-drained, with a ≤5s bound.** A queued start is a durable DRAFT row plus
+its spec file, and the watchdog's poll calls `drain_all`, so the first poll after the gateway comes
+back drains whatever was pending — no separate boot hook. The one thing deliberately NOT preserved:
+if the prior was suspended to PAUSED by the boot sweep, PAUSED counts as active, so the queued run
+waits for an explicit Resume rather than overtaking a run that is not finished. A queued run whose
+spec directory vanished is FAILED rather than left queued — a queue head the drain can never launch
+would be re-examined every poll forever and would block every start behind it.
+
+**`outcome: "queued"` is a new vocabulary member, and an unmapped status is recorded as FAILED.**
+`triggers.executor._record_fire_outcome` maps an unrecognized runner status to `Outcome.FAILED`, so
+the member ships with every reader updated in the same change: `STATUS_TO_OUTCOME` and
+`SCHEDULE_STATUS_TO_OUTCOME`/`HOOK_STATUS_TO_OUTCOME` → `Outcome.DEFERRED` (its "parked /
+resource-busy" half) with their own reason string, `hooks.py` and the manual-fire handler pass it
+through instead of folding it into `ok`/`success`, and `engine.dispatch_action` maps it to DEGRADED
+(a DONE node would tell the frontier this action's work completed). `"skip"` would under-report a
+real run record; `"launched"` would claim work that has not begun.
+
+**Exhaustiveness.** The decision moves into one named function, `overlap.decide(policy, active=,
+queued=)`, which names every member and raises on an unmapped one; the provider's call site also
+refuses an `OverlapAction` it has no branch for, before anything is created, because the dangerous
+default there is "fall through and launch". Four tests hold it: every member driven, the raise
+asserted, an AST read of `decide` asserting it names every member, and a source check that every
+`OverlapAction` member has a call site.
+
+**Implementation plan**
+
+1. `models.py` — document each `OverlapPolicy` member (three bare values, one carrying a comment)
+   and point at the one function that decides.
+2. `overlap.py` (new) — `decide()` exhaustive with a raising tail; `OverlapAction`; the marker
+   (`QUEUED_KEY`/`queued_extra`/`is_queued`), `queued_runs`/`queued_depth`/`queued_names`;
+   `drain(name, supervisor)` under `single_flight` and `drain_all(supervisor)`.
+3. `run_workflow_provider.py` — replace the two-way comparison with `decide`; the QUEUE branch
+   creates with the marker in the same INSERT and returns `outcome="queued"`; the DROP branch
+   returns and logs the cap; `dry_run` moves ahead of the write paths and names the decided action.
+4. `controller.py` — `_drain_overlap_queue()` off `_finish`, gated on a terminal status, awaited
+   inline and fully guarded (WF2-R10).
+5. `watchdog.py` — `overlap.drain_all(self)` at the end of `_poll_once`, after adoption.
+6. The `"queued"` outcome vocabulary: `action_providers/base.py`, `triggers/executor.py`,
+   `triggers/history.py`, `hooks.py`, `dashboard/handlers/triggers.py`, `workflows/engine.py`.
+7. `tests/test_workflows_overlap_queue.py` — the three-policy observables, the cap, the drain on
+   the real controller path, the fresh-watchdog restart drain, the hand-made-draft safety test, and
+   the ratchet.
+8. Regenerate `inert-surface-baseline.json` (151 → 150; `enum` 24 → 23) and add the `overlap.py`
+   row to `docs/architecture/workflows.md`'s module table.
+
+### `WV-15` — Map every status a fire writes, and an AST rail over the three status→outcome tables
+
+**Status:** done
+
+§7 criterion 4 (one run-history feed, typed outcomes) + criterion 8 (zero silent drops)
+
+**Done when:** `HOOK_STATUS_TO_OUTCOME` names `launched` + `skipped_incident` and `SCHEDULE_STATUS_TO_OUTCOME` names `blocked_injection` + all six `INERT_OUTCOMES`, so no live status reaches a `.get()` fallback; both fallbacks LOG the status they could not classify and never return `ran`; a suppressed or screened row is `LEDGER` weight and lands in `feed_response`'s suppressed half; `tests/test_triggers_status_vocabulary.py` infers each writer's possible values from its own AST (conditional expressions, `in`/`not in` guards, local names) with per-writer vacuity floors and a pinned writer-file census, and reds on all nine statuses if the tables are reverted
+
+**Design**
+
+**The finding: a projection table is only as honest as the writers it was authored against.**
+`triggers/history.py` translates each store's own status word into a `FIRE_OUTCOMES` member, and
+both projections read their table with a `.get(status, <fallback>)`. WV-14 added `queued` to all
+three tables because a NEW member's ripple is obvious. The statuses that were already being written
+when the tables were authored are the ones nobody re-checked, and nine were live:
+
+| writer | status | projected as | what a user saw |
+|---|---|---|---|
+| `hooks.py:590` | `skipped_incident` | `RAN if last_run` | "ran" — for a hook the incident kill switch stopped BEFORE dispatch |
+| `hooks.py:653` | `launched` | `RAN if last_run` | "ran" — for a background turn nobody has seen |
+| `gateway.py:1429` | `blocked_injection` | `FAILED` | a defended injection attempt as a broken automation |
+| `service.py:665` | the six `INERT_OUTCOMES` | `FAILED` | a quiet-hours skip as a red failure, in the `did` half |
+
+**A silent fallback is the defect, not the missing key.** Both fallbacks were individually
+defensible — `hook_to_record`'s `RAN if last_run` reads "we know it ran, we just lack the verdict",
+and `schedule_run_to_record`'s `FAILED` follows `FireRecord.from_dict`'s "unclassifiable must not
+count as a success". Neither says anything, which is why four statuses (nine values) sat unmapped
+across two WV sessions that edited these very tables. So the fallbacks now LOG the status they
+could not classify, and the hook path splits into three explicit cases — mapped, absent (`""`, a row
+written before the field existed, the one case that still reads `RAN`), and unmapped-and-loud
+(`FAILED` + a warning). No branch swallows a value silently.
+
+**The mappings, and what a user now sees instead of "ran".**
+
+* `launched` → `DEFERRED` (hook table). Matches the other two tables exactly; T7's whole point is
+  that started ≠ succeeded, and the background turn records its own outcome in its own run. The
+  user sees `launched`-blue "deferred" with "outcome not yet known" instead of a green tick.
+* `skipped_incident` → `SKIPPED_GATE`. The provider is never called, so nothing ran, nothing was
+  spent, nothing changed — `SKIPPED_GATE`'s family (quiet-hours / cooldown / condition-false) and,
+  through `INERT_OUTCOMES`, a ledger row that folds out of the default runs inbox. NOT `REFUSED`
+  (which `blocked` already carries: a denylist refusal is a verdict on THIS action, while an
+  incident suspends every automated action and lifts on its own) and NOT `DEFERRED` (deferred work
+  still starts; this fire is dropped and never retried). The user sees a neutral grey suppression
+  row naming the incident, in the archived half, instead of a green "ran".
+* `blocked_injection` → `BLOCKED_INJECTION`. The member exists for exactly this row. The user sees
+  the red-shield "blocked" badge `statusMeta` already renders, instead of "failed" — and it leaves
+  `TRUE_FAILURE_OUTCOMES`, so a defence stops looking like a fault.
+* the six `INERT_OUTCOMES` → themselves, by construction (`**{v: v for v in sorted(INERT_OUTCOMES)}`)
+  rather than six hand-copied lines: the writer's own guard is `outcome not in INERT_OUTCOMES:
+  return`, so that set IS the vocabulary and a seventh member needs no second edit. The user sees
+  each suppression as the suppression it was, folded into `suppressed_ids`, with the reason
+  `_record_suppression_row` already stored — instead of six kinds of red "failed" in the `did` half.
+
+**No new vocabulary member, deliberately.** Every one of the nine landed on an existing `Outcome`;
+WV-14 paid the cost of adding one (three tables plus `engine.dispatch_action` plus the FE union) and
+nothing here needed it. `weight` moved instead: `LEDGER_WEIGHT_OUTCOMES` (deferred ∪ blocked ∪
+inert) replaces the hook projection's hardcoded `FULL` and the schedule projection's
+`DEFERRED`-only check, because `FULL` claims "earned a run directory and a journal" and a fire that
+never reached a runner has no exit code to show.
+
+**Autopause is untouched, and that is a finding worth recording.** `autopause
+.consecutive_failures_from` reads the RAW store rows (`trigger` → `outcome` → `status`), not
+`FireRecord.outcome`, and already skips inert exit types. So the mis-projection never spent the
+failure budget — it was purely a history/UI lie, and the fix does not move a single autopause
+decision.
+
+**The rail is AST-based because a regex finds only the easy half.** A `grep` over `hooks.py` finds
+`skipped_incident` and misses `launched`, whose write is
+`hook.last_status = result.outcome if result.outcome in ("launched", "queued") else "ok"` — a NAME
+whose values live in the condition's `in` tuple. Two of the four writers have that shape; a third
+(`service.py`) writes a variable pinned by an early-return `not in` guard; a fourth (the manual-fire
+handler) writes a local assigned in four branches and passed as a keyword. So the rail infers each
+write's POSSIBLE VALUES: constants, both arms of a conditional expression, `str()`/`or` unwrapping,
+local-name resolution, and `in`/`not in` guards — with the guard checked BEFORE the expression,
+because `status=outcome` resolves to `{""}` through its assignment and to the right six through its
+guard. The boolean handling is asymmetric on purpose: `A and B` holding implies B, and `not (A or
+B)` implies `not B`; nothing else proves anything about one operand, so nothing else is guessed.
+Anything unresolvable FAILS rather than counting as clean, since "I could not tell" is how these
+got in.
+
+**Vacuity and the second drift direction.** Each writer carries `min_sites`/`min_values` floors
+measured against the real source (8/7, 2/3, 1/6, 1/4, 2/2), so a shape change that stops matching
+reds instead of reading as clean. And `test_the_writer_file_census_is_pinned` enumerates every
+module that assigns `.last_status` or constructs a `ScheduleRun`, because a NEW writer file is drift
+no per-file scan can see. The executor table's writer set is honestly partial and says so: its
+runner is injected, so an app provider or `_http_runner`'s HTTP body is out of static reach —
+`classify`'s unrecognized→FAILED rule covers the open half, and the rail covers the one in-repo
+runner that fires every clock trigger.
+
+**Implementation plan**
+
+1. `triggers/history.py` — the four table entries (each with a comment saying why that outcome and
+   not the neighbouring one), `LEDGER_WEIGHT_OUTCOMES`, `_hook_reason` (reason strings shared
+   word-for-word with the schedule path), the three-case hook fallback, and a warning on both
+   unmapped paths.
+2. `tests/test_triggers_status_vocabulary.py` (new) — the writer census, the inference, the two
+   rails, the file-census pin, a self-test of the shape that hid `launched`, and the
+   `INERT_OUTCOMES` name-resolution test.
+3. `tests/test_triggers_history.py` — behavioural coverage per status: deferred not ran, incident
+   skip inert + archived, unmapped is failed AND loud, absent status still reads `ran`, screened not
+   failed, the six suppressions parametrised, and the end-to-end fold in `feed_response`.
+4. No `web/` change: `scheduleMeta.statusMeta` already renders `deferred`, `blocked_injection` and
+   the `skipped_` family, and no new `Outcome` member means the FE union is unchanged.

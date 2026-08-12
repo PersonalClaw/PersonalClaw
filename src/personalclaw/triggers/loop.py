@@ -231,18 +231,114 @@ async def _poll_idle(
     return delivered
 
 
+def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
+    """Re-enter one spooled envelope through `emit_event`. Returns `(handling, detail)`.
+
+    🔴 **THE SIDE-EFFECT BOUNDARY, drawn explicitly because HOLD makes it load-bearing**
+    (WF2AUT-13). A held envelope is retried on a later tick. That is right for a failure that
+    happened before anything observable, and it is data corruption for one that happened after —
+    the double-fire §3.2/criterion 7 bans. So the boundary is the `emit_event(...)` call itself,
+    and the split is enforced structurally by two separate `try` blocks rather than by a comment:
+
+    * **Above the line** the function only reads the envelope, builds keyword arguments and resolves
+      the engine. Nothing there can fire a trigger, write a ledger row or touch a store, so a
+      failure there provably delivered nothing and is honestly retryable.
+    * **Below the line** the envelope is DELIVERED, full stop, whatever happens next. `emit_event`
+      matches every stored trigger and schedules their actions; once entered, the drain cannot know
+      how far it got, and "I don't know" must resolve to delivered rather than to a retry.
+
+    `get_engine()` is resolved as the LAST pre-flight step, immediately above the boundary, and that
+    placement is the point: it is a pure lazy constructor (its store is bound on first use, not
+    here), so asking for it is side-effect-free, and asking BEFORE the boundary converts "the event
+    engine is not reachable" from a fact `emit_event` swallows into a `logger.debug` — silently
+    losing every spooled fire — into a pre-delivery TRANSIENT that earns a bounded retry.
+
+    Re-entry stays through `emit_event`, the SAME seam a live source write uses, not a second
+    dispatch path: that is what stops a spooled fire skipping a gate a live one walks, which is
+    exactly how the `web_watch` screen gap (S134) opened.
+    """
+    from personalclaw.triggers.dispatch import Handling, classify_handler_outcome
+
+    try:
+        from personalclaw.event_triggers import SOURCE_MEMORY, emit_event, get_engine
+
+        # `kind` is `f"{source}.{event_type}"` (EIAT-1); split on the first dot so the
+        # spooled fire re-enters scoped to the source it came from. Legacy envelopes with
+        # no source prefix fall back to memory — the only source that spooled before EIAT-1.
+        kind = str(getattr(envelope, "kind", "") or "")
+        source, _, event_type = kind.partition(".")
+        if not event_type:
+            source, event_type = SOURCE_MEMORY, kind
+        if not event_type:
+            # PERMANENT, not transient: an envelope with no event kind names no event, so no
+            # source can ever route it and no retry can make it routable. It used to reach
+            # `emit_event` with an empty `event_type`, match nothing, and count as a delivered
+            # fire — a drop wearing a success.
+            return Handling.PERMANENT.value, "envelope carries no event kind; nothing can route it"
+        payload = getattr(envelope, "payload", None) or {}
+        meta = payload.get("meta")
+        kwargs = {
+            "source": source,
+            "event_type": event_type,
+            "key": str(payload.get("key", "") or ""),
+            "value": str(payload.get("value", "") or ""),
+            "now": now,
+            "meta": dict(meta) if isinstance(meta, dict) else None,
+        }
+        get_engine()
+    except Exception as exc:  # noqa: BLE001 - classified, not swallowed
+        # `classify_handler_outcome` maps an unclassified throw to TRANSIENT — its "never drop"
+        # rule. This is its first production call site; it was written for exactly this seam.
+        return classify_handler_outcome(exc), f"re-entry could not be prepared: {exc!r}"
+
+    # ─────────────── SIDE-EFFECT BOUNDARY. Past this line: DELIVERED. ───────────────
+    try:
+        emit_event(**kwargs)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001 - defensive; production `emit_event` never raises
+        logger.warning("spooled fire raised after the side-effect boundary", exc_info=True)
+        return (
+            Handling.DELIVERED.value,
+            "re-entry raised after the side-effect boundary; counted delivered because a retry "
+            "could double-fire an action that already ran",
+        )
+    return Handling.DELIVERED.value, ""
+
+
 def _drain_spool(*, now: float = 0.0) -> int:
-    """Consume the sync-context spool. Returns how many fires were drained.
+    """Consume the sync-context spool under §3.3's cursor rule. Returns how many lines were ACKED.
 
     Peek-then-deliver-then-ack, which is why `drain_spool` and `clear_spool` are two calls: the
     spool is only truncated after the envelopes have been handed on, so a crash mid-drain re-drains
     rather than losing them. `clear_spool(handled=...)` keeps whatever arrived during the drain.
 
-    A spooled fire re-enters through `emit_event`, the SAME seam a live source write uses —
-    not through a second dispatch path. That is what stops a spooled fire skipping the gates a live
-    one walks, which is exactly how the `web_watch` screen gap (S134) happened.
+    🔴 **§3.3's cursor rule had a complete decision layer and no caller** (WF2AUT-13). `Handling`,
+    `DrainAction`, `drain_decision` and `classify_handler_outcome` were written, documented and unit
+    tested; `grep` found zero production references to any of them. Meanwhile this loop did
+    `handled += 1` unconditionally and this very comment block said the alternative would be "the
+    poison pill `drain_decision` names" — naming the function it never called. So the retry/hold
+    policy, its bounded budget and the poison-pill give-up were all inert, and a transient re-entry
+    failure was swallowed as a delivered fire.
+
+    This is the call site. Each envelope is classified at the side-effect boundary
+    (`_reenter_spooled`), `drain_decision` turns that into a `DrainAction`, and every member has a
+    branch below with a raising tail so a new one cannot inherit another's semantics.
+
+    **At-most-once is preserved, not traded.** HOLD is head-of-line (see `clear_spool`'s prefix-ack
+    note) and only ever reachable from a pre-delivery failure, so nothing whose side effect may have
+    run is ever retried. A hold that cannot persist its budget is acked instead of held, because an
+    unbounded retry is worse than the swallow this replaced.
     """
     from personalclaw.triggers import service as svc
+    from personalclaw.triggers.dispatch import (
+        DEDUP_WINDOW_SECS,
+        DrainAction,
+        clear_spool,
+        clear_spool_hold,
+        drain_decision,
+        is_duplicate,
+        read_spool_hold,
+        write_spool_hold,
+    )
 
     try:
         envelopes, bad = svc.drain_spooled_fires()
@@ -255,46 +351,99 @@ def _drain_spool(*, now: float = 0.0) -> int:
         # parseable), so the log is the only record there will be.
         logger.warning("spool drain skipped %d unparseable line(s)", bad)
     if not envelopes:
+        # An empty spool has nothing left to hold a budget for. Clearing here rather than only on
+        # the ack path stops a stale count outliving the envelope it belonged to.
+        clear_spool_hold()
         return 0
 
+    now_ts = now or time.time()
+    held_id, held_retries = read_spool_hold()
+    seen: dict[str, float] = {}
     handled = 0
+    holding = ""
+
     for envelope in envelopes:
-        payload = getattr(envelope, "payload", None) or {}
-        try:
-            from personalclaw.event_triggers import SOURCE_MEMORY, emit_event
+        event_id = str(getattr(envelope, "event_id", "") or "")
+        # The budget belongs to ONE envelope: a recorded id that is not this one means the head
+        # moved on, and a carried-over count would give this envelope a shorter budget than the
+        # first got (`Cursor.held_retries`'s own rule).
+        retries = held_retries if event_id and event_id == held_id else 0
+        emitted = float(getattr(envelope, "emitted_at", 0.0) or 0.0) or now_ts
 
-            # `kind` is `f"{source}.{event_type}"` (EIAT-1); split on the first dot so the
-            # spooled fire re-enters scoped to the source it came from. Legacy envelopes with
-            # no source prefix fall back to memory — the only source that spooled before EIAT-1.
-            kind = str(getattr(envelope, "kind", "") or "")
-            source, _, event_type = kind.partition(".")
-            if not event_type:
-                source, event_type = SOURCE_MEMORY, kind
-            meta = payload.get("meta")
-            emit_event(
-                source=source,
-                event_type=event_type,
-                key=str(payload.get("key", "") or ""),
-                value=str(payload.get("value", "") or ""),
-                now=now or time.time(),
-                meta=dict(meta) if isinstance(meta, dict) else None,
+        if is_duplicate(envelope, seen, emitted, DEDUP_WINDOW_SECS):
+            # Honest producer for SKIP_DUPLICATE: `event_id`/`payload_hash` are DETERMINISTIC over
+            # (source, kind, payload), so two lines with one hash inside `DEDUP_WINDOW_SECS` are the
+            # work the window exists to collapse — "a webhook retried by its sender and an fs event
+            # fired twice for one save". Compared on emit times, not on the tick's clock, so a
+            # family seen an hour apart stays two facts. Decided before re-entry: no handler runs,
+            # which is why this is not a `drain_decision` outcome.
+            action, why = DrainAction.SKIP_DUPLICATE.value, "identical payload already re-entered"
+            detail = ""
+        else:
+            handling, detail = _reenter_spooled(envelope, now=now_ts)
+            action, why = drain_decision(handling=handling, held_retries=retries)
+
+        if action == DrainAction.CONSUME.value:
+            if why or detail:
+                # A consume WITH a reason is a permanent failure or a post-boundary raise, i.e. a
+                # fire that will never run. Criterion 8 counts a silent one as a drop.
+                logger.warning("spooled fire %s consumed undelivered: %s %s", event_id, why, detail)
+            seen[envelope.payload_hash] = emitted
+            handled += 1
+            continue
+
+        if action == DrainAction.SKIP_DUPLICATE.value:
+            logger.info("spooled fire %s skipped: %s", event_id, why)
+            handled += 1
+            continue
+
+        if action == DrainAction.GIVE_UP.value:
+            # The poison pill, given its ledger row at last. Loud and at WARNING because this is the
+            # one branch that drops a fire that COULD have run — the alternative (hold forever on
+            # one unreachable engine) stops every other automation on the machine.
+            logger.warning(
+                "spooled fire %s GIVEN UP after %d attempts: %s %s",
+                event_id,
+                retries + 1,
+                why,
+                detail,
             )
-        except Exception:  # noqa: BLE001 - one bad envelope must not strand the rest
-            logger.warning("spooled fire failed to re-enter the event path", exc_info=True)
-        # Counted as handled either way: `emit_event` is itself best-effort, and holding a
-        # line whose re-entry raised would retry it on every tick forever — the poison pill
-        # `drain_decision` names. The warning above is the record.
-        handled += 1
+            handled += 1
+            continue
 
-    try:
-        from personalclaw.triggers.dispatch import clear_spool
+        if action == DrainAction.HOLD.value:
+            if write_spool_hold(event_id=event_id, held_retries=retries + 1):
+                logger.info("spooled fire %s held: %s %s", event_id, why, detail)
+                holding = event_id
+                # Head-of-line: stop here so the ack covers only the prefix already consumed. This
+                # envelope and everything behind it stay on disk for the next tick, in order.
+                break
+            logger.warning(
+                "spooled fire %s could not persist its retry budget; acking rather than retrying "
+                "unbounded: %s",
+                event_id,
+                detail,
+            )
+            handled += 1
+            continue
 
-        clear_spool(handled=handled)
-    except Exception:  # noqa: BLE001
-        # NOT re-raised, and the ack is what failed: the fires already ran, so the next tick will
-        # re-run them. Logged loudly because a double-fire is the one outcome criterion 7 bans, and
-        # an unwritable spool file is the only way to reach it.
-        logger.warning("spool ack failed; %d fire(s) may re-run next tick", handled, exc_info=True)
+        raise AssertionError(
+            f"no branch for DrainAction {action!r} — a new member must declare what the drain does "
+            "with it rather than fall through to another member's handling"
+        )
+
+    if not holding:
+        clear_spool_hold()
+    if handled:
+        try:
+            clear_spool(handled=handled)
+        except Exception:  # noqa: BLE001
+            # NOT re-raised, and the ack is what failed: the fires already ran, so the next tick
+            # will re-run them. Logged loudly because a double-fire is the one outcome criterion 7
+            # bans, and an unwritable spool file is the only way to reach it.
+            logger.warning(
+                "spool ack failed; %d fire(s) may re-run next tick", handled, exc_info=True
+            )
     return handled
 
 

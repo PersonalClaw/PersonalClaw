@@ -38,8 +38,16 @@ asserts every per-file inert counter **may only shrink** versus the committed ba
 from __future__ import annotations
 
 import json
+import textwrap
+from pathlib import Path
 
 from scripts.generate_inert_surface_baseline import (
+    _attribute_names_in_src,
+    _enum_members,
+    _inert_enum_members,
+    _iterated_enum_classes,
+    _parse,
+    _src_py_files,
     baseline_path,
     build_baseline,
     build_inventory,
@@ -221,6 +229,254 @@ def test_a_cleanup_that_shrinks_a_counter_does_not_red_the_ratchet():
     shrunk[victim]["surfaces"].pop()
     shrunk[victim]["inert"] -= 1
     assert regressions(per_file, shrunk) == []
+
+
+# ── enum census: whole-enum iteration clears a class (PHF-12) ────────────────
+#
+# The census once reported an enum member inert whenever its NAME was never accessed as an
+# attribute, which called every iteration-only enum dead: `workflows/publish.py:136`
+# validates author-supplied lineage edges against `{e.value for e in Lineage}`, so
+# `Lineage.INFORMED_BY` and `Lineage.RELATED` are reachable and were reported anyway. These
+# tests pin both directions of the corrected rule against a FIXTURE tree — never by adding
+# dead code to `src/` — plus a vacuity guard that the real census still finds a population.
+
+
+def _fixture_tree(tmp_path: Path, modules: dict[str, str]) -> list[Path]:
+    """Write ``{filename: source}`` into ``tmp_path`` and return the sorted file list."""
+    for name, source in modules.items():
+        (tmp_path / name).write_text(textwrap.dedent(source), encoding="utf-8")
+    return sorted(tmp_path.glob("*.py"))
+
+
+def _inert_in(tmp_path: Path, modules: dict[str, str]) -> set[str]:
+    """``{"Class.MEMBER"}`` the enum detector reports for a fixture tree."""
+    files = _fixture_tree(tmp_path, modules)
+    return {surface for _, surface in _inert_enum_members(files, _attribute_names_in_src(files))}
+
+
+def test_an_enum_consumed_only_by_iteration_is_not_flagged(tmp_path):
+    """Every shape the detector claims to support clears its class, with no member of any of
+    them touched as an attribute anywhere in the fixture tree."""
+    inert = _inert_in(
+        tmp_path,
+        {
+            "looped.py": """
+                from enum import Enum
+
+                class Looped(Enum):
+                    ONE = "one"
+                    TWO = "two"
+
+                def kinds():
+                    out = []
+                    for member in Looped:
+                        out.append(member.value)
+                    return out
+                """,
+            "comprehended.py": """
+                from enum import Enum
+
+                class Comprehended(str, Enum):
+                    ALPHA = "alpha"
+                    BETA = "beta"
+
+                ALLOWED = {e.value for e in Comprehended}
+                """,
+            "called.py": """
+                from enum import Enum
+
+                class Called(Enum):
+                    RED = "red"
+                    BLUE = "blue"
+
+                ORDERED = tuple(sorted(Called, key=str))
+                """,
+        },
+    )
+    assert inert == set(), f"iteration-only enums were flagged (false red): {sorted(inert)}"
+
+
+def test_an_enum_consumed_nowhere_is_still_flagged(tmp_path):
+    """The rule can still fail: a genuinely unreferenced member is reported. Two members of
+    the SAME class are declared and one is read as an attribute, so this also proves the
+    per-member half survives — only iteration clears a whole class."""
+    inert = _inert_in(
+        tmp_path,
+        {
+            "orphan.py": """
+                from enum import Enum
+
+                class Orphan(Enum):
+                    GHOST = "ghost"
+                    PHANTOM = "phantom"
+                """,
+            "partial.py": """
+                from enum import Enum
+
+                class Partial(Enum):
+                    USED = "used"
+                    UNUSED = "unused"
+
+                DEFAULT = Partial.USED
+                """,
+        },
+    )
+    assert inert == {"Orphan.GHOST", "Orphan.PHANTOM", "Partial.UNUSED"}, sorted(inert)
+
+
+def test_iterating_one_enum_does_not_clear_a_same_named_enum_elsewhere(tmp_path):
+    """Resolution is import-aware, not name-based. ``src/`` declares seven distinct
+    ``Verdict`` enums; if iterating one cleared them all, a real inert member would go
+    unreported the moment any namesake was iterated somewhere."""
+    inert = _inert_in(
+        tmp_path,
+        {
+            "shadow_a.py": """
+                from enum import Enum
+
+                class Shadow(Enum):
+                    A_ONLY = "a"
+                """,
+            "shadow_b.py": """
+                from enum import Enum
+
+                class Shadow(Enum):
+                    B_ONLY = "b"
+
+                VALUES = [s.value for s in Shadow]
+                """,
+        },
+    )
+    assert inert == {"Shadow.A_ONLY"}, sorted(inert)
+
+
+def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
+    """The finding itself, on the real tree: ``Lineage`` is recognised as iterated (its
+    validation set in ``workflows/publish.py``) and no ``Lineage`` member is reported.
+
+    If the validation that iterates ``Lineage`` is ever deleted, this test SHOULD red — the
+    members would then genuinely be unreachable."""
+    files = _src_py_files()
+    enum_names: dict[Path, set[str]] = {}
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        names = {cls for cls, _ in _enum_members(tree)}
+        if names:
+            enum_names[f.resolve()] = names
+    iterated = _iterated_enum_classes(files, enum_names)
+    publish = next(f for f in files if f.as_posix().endswith("workflows/publish.py"))
+    assert (publish.resolve(), "Lineage") in iterated
+
+    inert = {surface for _, surface in _inert_enum_members(files, _attribute_names_in_src(files))}
+    assert not [s for s in inert if s.startswith("Lineage.")], sorted(inert)
+
+
+def test_the_enum_census_still_finds_a_nontrivial_population():
+    """Vacuity guard. Clearing a whole class per iteration site is a broad clear, so a bug
+    that over-cleared (or a detector that silently matched everything) would leave the enum
+    census reporting nothing while every other kind still looked healthy. The census must
+    still SEE many enum classes and still REPORT some inert members."""
+    files = _src_py_files()
+    classes = {
+        cls for f in files if (tree := _parse(f)) is not None for cls, _ in _enum_members(tree)
+    }
+    assert len(classes) > 50, f"only {len(classes)} enum classes seen — the walk is broken"
+    assert build_inventory()["totals"]["by_kind"]["enum"] >= 5, (
+        "the enum census reports (almost) nothing — whole-class clearing has over-reached; "
+        "shrink the detected shapes rather than trusting a suspiciously clean census"
+    )
+
+
+# ── PHF-13: the value-lookup ruling (NOT a widening — a pinned decision) ─────────────────
+#
+# ``PHF-13`` audited every ``E(value)`` site behind the surviving enum surfaces and ruled
+# AGAINST teaching the detector that shape: five of the six sites either never execute in
+# production or read only values this codebase itself wrote, so a syntactic rule would FALSE-
+# CLEAR them. A false clear passes the shrink-only ratchet silently (the count goes DOWN), so
+# the ruling needs its own rail. These two tests are it.
+
+
+def test_value_lookup_alone_does_not_clear_a_member(tmp_path):
+    """A member reachable only through ``E(value)`` is STILL REPORTED — on purpose.
+
+    ``E(value)`` does not prove reachability: the construction may never execute, and its value
+    may come from state we wrote ourselves. Whoever wants to change this must first re-run
+    ``PHF-13``'s per-site provenance audit (verdict table in the generator docstring and in
+    ``PLATFORM-HARDENING-FLOORS``'s execution log) — not just make this test green.
+    """
+    inert = _inert_in(
+        tmp_path,
+        {
+            "deserializer.py": """
+                from enum import Enum
+
+                class Coerced(str, Enum):
+                    WRITTEN = "written"
+                    NEVER_WRITTEN = "never_written"
+
+                def load(row):
+                    # Value lookup over a column WE wrote. Reaches NEVER_WRITTEN only if some
+                    # writer ever produced it — and none does.
+                    return Coerced(row["state"])
+
+                def save(rec):
+                    rec["state"] = Coerced.WRITTEN.value
+                """,
+        },
+    )
+    assert inert == {"Coerced.NEVER_WRITTEN"}, (
+        "value-lookup construction cleared a member the census cannot prove is reachable; "
+        f"got {sorted(inert)} — see PHF-13's verdict table before widening this rule"
+    )
+
+
+def test_the_audited_value_lookup_call_sites_have_no_production_caller():
+    """``PHF-13``'s load-bearing evidence, pinned on the real tree.
+
+    ``Verdict.REPLAN``, ``Ratchet.RELAXED`` and ``Actor.WORKER`` are reported inert even though
+    each sits on a class with an ``E(value)`` construction, because the FUNCTIONS holding those
+    constructions have no production caller — ``engine.py`` deliberately restates the judge
+    aggregation rule instead of importing it. If one of them is ever wired up, this test reds:
+    re-verdict the member then (the flag may have become a false red) instead of trusting the
+    generator's table.
+    """
+    owners = {
+        "validate_verdict": "workflows/judge_contract.py",
+        "hints_from_dict": "workflows/judge_contract.py",
+        "resolve_transition": "workflows/judge_actors.py",
+    }
+    callers: dict[str, list[str]] = {name: [] for name in owners}
+    for f in _src_py_files():
+        rel = f.as_posix()
+        text = f.read_text(encoding="utf-8")
+        for name, owner in owners.items():
+            if rel.endswith(owner):
+                continue
+            if f"{name}(" in text or f"import {name}" in text:
+                callers[name].append(rel)
+    wired = {name: found for name, found in callers.items() if found}
+    assert not wired, (
+        f"a value-lookup call site PHF-13 recorded as dead now has a production caller ({wired})"
+        " — re-verdict the enum members that ruling covers (Verdict.REPLAN, Ratchet.RELAXED,"
+        " Actor.WORKER)"
+    )
+
+
+def test_the_value_lookup_ruling_is_recorded_in_the_generator():
+    """The verdicts are the deliverable, so they must live where the next reader lands: in the
+    detector that produces the flags, not only in a plan log."""
+    from scripts import generate_inert_surface_baseline as gen
+
+    doc = (gen._inert_enum_members.__doc__ or "").lower()
+    assert "deliberately not taught" in doc, "the PHF-13 ruling is missing from the detector"
+    for marker in ("externally reachable", "internal only", "dead call site"):
+        assert marker in doc, f"the per-site verdict vocabulary lost {marker!r}"
+    assert "construction is the known remaining false-red shape" not in doc, (
+        "PHF-12's superseded premise is asserted again in the detector docstring; "
+        "judge_contract.py:342 has no production caller, so it does not make REPLAN reachable"
+    )
 
 
 def test_forbidden_to_raise_doc_line_is_present():

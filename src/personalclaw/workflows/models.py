@@ -431,10 +431,24 @@ class OriginKind(str, Enum):
 
 
 class OverlapPolicy(str, Enum):
-    """What a trigger-origin start does when the previous run is still going."""
+    """What a trigger-origin start does when the previous run is still going.
 
-    SKIP = "skip"  # default — a per-minute trigger must not stack runs
+    🔴 The branch is `workflows.overlap.decide`, exhaustive with a raising tail, and it is
+    the ONLY place that decides. `QUEUE` shipped as a member nothing branched on: the
+    run-workflow provider compared against `SKIP` and `CANCEL_PREVIOUS` and let `queue` fall
+    through to create+launch, so the one policy whose name promises ordering started a
+    CONCURRENT run — the exact behaviour `SKIP`'s comment below says the default exists to
+    prevent (WV-14). A new member must add its own branch there rather than inherit one.
+    """
+
+    #: Default. A prior is still going ⇒ nothing is created and nothing starts. A per-minute
+    #: trigger must not stack runs.
+    SKIP = "skip"
+    #: A prior is still going ⇒ the start is PERSISTED as an unlaunched run and started when
+    #: that prior ends. Ordering, not concurrency. Capped at `overlap.MAX_QUEUE_DEPTH`; a
+    #: start dropped by the cap says so in its outcome rather than reading as queued.
     QUEUE = "queue"
+    #: A prior is still going ⇒ cancel it, then start now. The newest fire wins.
     CANCEL_PREVIOUS = "cancel_previous"
 
 

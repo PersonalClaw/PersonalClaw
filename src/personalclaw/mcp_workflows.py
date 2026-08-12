@@ -1091,7 +1091,8 @@ def _grill_surface(
 
 
 def _autonomy_surface(definition: dict) -> dict:
-    """The risk scan, the autonomy offer, and the confirmations the recommended mode will raise.
+    """The risk scan, the autonomy offer, the confirmations the recommended mode will raise, and
+    which of those an unattended run would still stop for.
 
     Best-effort like the other surfaces. A missing autonomy block must not stop a plan reaching the
     user — but note the asymmetry: the ENGINE's own gate policy still governs what actually runs, so
@@ -1119,6 +1120,11 @@ def _autonomy_surface(definition: dict) -> dict:
             "attention": {k: v.value for k, v in autonomy_mod.type_attention(spec, hits).items()},
             "require_hitl": autonomy_mod.compile_require_hitl(spec, offer.recommended),
             "confirmations": [c.to_dict() for c in confirmations],
+            # WF2UNI-13: and which of those stops SURVIVE at unattended. The recommended mode is
+            # usually `per_stage` (every risk signal caps there) while `unattended` stays on
+            # offer, so without this the preview lists the stops for a mode the user may not
+            # pick and says nothing about the one they are being offered.
+            "unattended_interrupts": autonomy_mod.unattended_interrupts(confirmations),
         }
     except Exception:
         logger.debug("autonomy surface unavailable", exc_info=True)

@@ -21,10 +21,16 @@ chosen mode all reduce to one flag the engine already knows how to honour. The p
 is explicit: autonomy machinery that grew its own enforcement path would contradict the engine's
 trust plumbing, so the compilation target is single by design.
 
-**Three interrupts, and only three.** An unattended run stops for an irreversible action, an
-uninferable credential or product decision, and a conflicting requirement. Everything else proceeds
-with a JOURNALED assumption — because a run that stops for every ambiguity is not unattended, and
-one that proceeds without recording what it assumed cannot be audited afterwards.
+**Two interrupts, and only two.** An unattended run stops for an irreversible action and for an
+uninferable credential or payment detail. Everything else proceeds with a JOURNALED assumption —
+because a run that stops for every ambiguity is not unattended, and one that proceeds without
+recording what it assumed cannot be audited afterwards.
+
+**The interrupt taxonomy ADVISES; it does not enforce.** `should_interrupt` answers "would
+unattended stop here?" for the plan-review surface. Enforcement is `gate_policy.decide`, on the
+engine's own `RiskLevel` × `OriginKind` vocabulary. That split is deliberate — see
+`compile_require_hitl`: autonomy machinery that grew a second enforcement path would contradict the
+engine's trust plumbing, so this module explains the trade and the engine makes it.
 """
 
 from __future__ import annotations
@@ -50,7 +56,7 @@ class Mode(str, Enum):
     FRAME_ONLY = "frame_only"  # produce the plan, run nothing
     FIRST_STAGE = "first_stage"  # run one stage, then come back
     PER_STAGE = "per_stage"  # approve each stage as it comes
-    UNATTENDED = "unattended"  # run to completion, stopping only at the three interrupts
+    UNATTENDED = "unattended"  # run to completion, stopping only at the two interrupts
 
 
 #: Strength order. `index()` on this is the comparison — an enum with a `<` operator would invite
@@ -502,6 +508,13 @@ class ConfirmationRequest:
     question: str
     auto_approved: bool = False
     reason: str = ""
+    #: The `RISK_SIGNALS` names that fired on this node, carried by NAME rather than collapsed into
+    #: `risk`. `_classify_node` flattens every DESTRUCTIVE-level signal to the same
+    #: `(DESTRUCTIVE, DESTRUCTIVE)` pair, which loses the distinction the interrupt taxonomy needs:
+    #: "this deletes data" and "this needs a credential I cannot guess" both stop an unattended run,
+    #: but for different reasons and with different remedies. Reading the signal name off the
+    #: registry keeps that distinction without text-scanning the question.
+    signals: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -512,6 +525,7 @@ class ConfirmationRequest:
             "question": self.question,
             "auto_approved": self.auto_approved,
             "reason": self.reason,
+            "signals": list(self.signals),
         }
 
 
@@ -584,6 +598,7 @@ def build_confirmations(spec: dict[str, Any], mode: Mode) -> list[ConfirmationRe
                 question=_question_for(node_id, confirmation_type, node_hits),
                 auto_approved=False,
                 reason=reason,
+                signals=tuple(sorted({h.signal for h in node_hits})),
             )
         )
     return out
@@ -621,20 +636,28 @@ def _question_for(node_id: str, confirmation_type: ConfirmationType, hits: list[
     return f"`{node_id}` performs a {confirmation_type.value} action. Proceed?"
 
 
-# ── the three interrupts ──
+# ── the two interrupts ──
 
 
 class Interrupt(str, Enum):
-    """The only three things that stop an unattended run.
+    """The only two things that stop an unattended run.
 
     Closed on purpose. "Anything surprising" is not a taxonomy — it is a licence to stop whenever,
     which makes unattended mode a slower per-stage mode. Everything outside this set proceeds with
     a journaled assumption.
+
+    Closed AND produced: every member is named in `should_interrupt`, and a ratchet fails the build
+    if a new one is added without a branch. A documented interrupt nothing can produce is worse than
+    no interrupt at all — it reads, to anyone auditing the guardrail, like a stop that exists.
+    (WF2UNI-13 removed a third member, `CONFLICTING`, for exactly that reason: "requirements that
+    contradict each other" named no signal a `ConfirmationRequest` carries. The one real
+    contradiction this module detects — a template `autonomy_floor` above the risk ceiling, in
+    `offer_autonomy` — is resolved at PLAN time by letting the floor win, so it never reaches a run
+    to stop it.)
     """
 
     IRREVERSIBLE = "irreversible"
-    UNINFERABLE = "uninferable"  # a credential or a product decision nobody can guess
-    CONFLICTING = "conflicting"  # requirements that contradict each other
+    UNINFERABLE = "uninferable"  # a credential or payment detail nobody can guess
 
 
 @dataclass
@@ -668,26 +691,86 @@ def should_interrupt(
     Returns `(interrupt, which, reason)`. In any mode below unattended everything stops anyway, so
     the taxonomy only governs the unattended case — which is exactly where a wrong answer is
     expensive in both directions.
+
+    ADVISORY. This is the plan-review counterfactual ("what would unattended skip?"), not the run's
+    gate: `gate_policy.decide` enforces. Keeping the two apart is why this function may be read as a
+    frank description of the trade rather than as a control that has to be conservative.
+
+    Exhaustive over `ConfirmationType` with a RAISING tail, and every `Interrupt` member is named
+    here. Both halves are the ratchet (WF2UNI-13): before it, two of the three documented interrupts
+    were produced nowhere, so the taxonomy described stops that could not happen.
     """
     if mode != Mode.UNATTENDED:
         return True, None, f"{mode.value} mode stops here regardless"
 
+    if SIGNALS_BY_NAME["credentials_or_payment"].name in confirmation.signals:
+        # Checked BEFORE risk, and it changes only the LABEL: `credentials_or_payment` is a
+        # DESTRUCTIVE-level signal, so this request also trips the IRREVERSIBLE branch below and
+        # stops either way. The distinction is worth carrying anyway — "this cannot be undone" tells
+        # the user to review, "nobody can guess this value" tells them to supply it. Naming the
+        # second as irreversible sends them looking for a blast radius that is not the problem.
+        return True, Interrupt.UNINFERABLE, confirmation.question
+
     if confirmation.risk == RiskLevel.DESTRUCTIVE:
         return True, Interrupt.IRREVERSIBLE, confirmation.question
 
-    if confirmation.confirmation_type == ConfirmationType.SPEND:
-        return False, None, "spend proceeds under the run's budget"
+    kind = confirmation.confirmation_type
+    if kind == ConfirmationType.DESTRUCTIVE:
+        # Reachable only for a request whose type says destructive while its risk does not.
+        # Trusting the weaker of two disagreeing fields is how a destructive action gets waved
+        # through, so the stop is asserted from either one.
+        return True, Interrupt.IRREVERSIBLE, confirmation.question
 
-    if confirmation.confirmation_type == ConfirmationType.READ:
-        return False, None, "a read needs no decision"
-
-    if confirmation.confirmation_type == ConfirmationType.OUTWARD:
+    if kind == ConfirmationType.OUTWARD:
         # Outward writes are CAUTION, not destructive — but they cannot be unsent, and an
         # unattended run posting to a channel is the surprise people remember. Interrupting here is
         # the deliberate asymmetry: a delayed message costs patience, a wrong one costs trust.
         return True, Interrupt.IRREVERSIBLE, confirmation.question
 
-    return False, None, "proceeding with a journaled assumption"
+    if kind == ConfirmationType.SPEND:
+        return False, None, "spend proceeds under the run's budget"
+
+    if kind == ConfirmationType.READ:
+        return False, None, "a read needs no decision"
+
+    if kind == ConfirmationType.WRITE:
+        return False, None, "proceeding with a journaled assumption"
+
+    raise AssertionError(
+        f"no branch for ConfirmationType.{getattr(kind, 'name', kind)} — a new confirmation type "
+        "must declare whether an unattended run stops for it rather than inheriting the last "
+        "branch written, which is how a stop silently becomes a proceed"
+    )
+
+
+def unattended_interrupts(confirmations: list[ConfirmationRequest]) -> list[dict[str, Any]]:
+    """Per confirmation, whether UNATTENDED would still stop for it.
+
+    The counterfactual the offer surface was missing. `offer_autonomy` routinely recommends
+    `per_stage` while still OFFERING `unattended` (every risk signal caps at `per_stage`), so the
+    preview's `confirmations` list describes the stops for the RECOMMENDED mode only. A user
+    weighing the upgrade is choosing precisely which of those stops to give up, and until this ran
+    the preview never said which — making "run it unattended" a blind trade rather than the informed
+    consent the rest of this module insists on.
+
+    Advisory, and additive by construction: it reports on the confirmations the plan already raises
+    and changes no verdict. Enforcement stays with the engine's gate policy.
+    """
+    out: list[dict[str, Any]] = []
+    for request in confirmations:
+        stop, which, reason = should_interrupt(mode=Mode.UNATTENDED, confirmation=request)
+        out.append(
+            {
+                "request_id": request.request_id,
+                "node_id": request.node_id,
+                "interrupts": stop,
+                # "" rather than None: an absent interrupt is "unattended proceeds here", and a
+                # renderer that has to distinguish null from missing gets that wrong.
+                "interrupt": which.value if which is not None else "",
+                "reason": reason,
+            }
+        )
+    return out
 
 
 # ── earned trust ──

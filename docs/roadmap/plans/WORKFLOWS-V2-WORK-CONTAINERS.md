@@ -1374,3 +1374,17 @@ plan's reality note was verified rather than trusted.
   **Ownership is first-writer-wins.** `project_id`/`run_id` describe who PRODUCED an item, so a second project re-persisting identical content records corroboration (mentions, `source_ref`) without moving the item into its own container; the project tag is derived from the OWNER in metadata, not from the reinforcing run, or "private to its project" would end wherever the last run happened to be. Only an EXPLICIT `sharing_policy` on a later write may change visibility. An item written outside a run gets no scope fields at all — a visibility field on a row belonging to no container reads as meaningful and is not.
   **DEVIATION — clause 1 is scoped to the RUN path, not project-bound chat sessions.** §1.2 states the contract as "project `context_dir` = default cwd fallback for **stage nodes**", and that is where it landed. Re-pointing a project-bound chat's `session.workspace_dir` (today `default_workspace_dir()`, `chat_handlers.py`) would trade a capability for a partition: cwd is also the native-tool root, so a project chat would LOSE the workspace root it can file-search today in exchange for a project-local memory partition. Not done unilaterally; the project's context dir is already granted to those sessions as an extra tool root, so the continuity half is unaffected.
   **Gate (by EXIT CODE):** `make lint` 0 (black/isort/flake8/mypy — mypy clean on 800 files); `pytest -k "project or memory or knowledge or recall"` 2138 passed / 2 skipped / 1 xfailed; `test_inert_surface_baseline` + `test_agent_reference` + `test_docs_lint_baseline` + `test_config_roundtrip` 35 passed with **no baseline regenerated** (the new modules are consumed by production call sites, so the inert-surface count did not move); FULL `npm test --workspace web` 1368 tests / 144 files, `tsc --noEmit` 0, `npm run build --workspace web` 0. No config field added, so no `config-baseline.json` change. Tests isolate via `PERSONALCLAW_HOME` **and** module-bound `config_dir` patches, and replace the process-global `context._memory_stores` partition cache per test — a leaked entry there would answer with a store rooted in another home.
+
+### 2026-08-12 — catalog correction (WF2WOR-2 status), not a session
+
+`WF2WOR-2` sat at `in_progress` in `docs/roadmap/atomic/dag.json` with `pr: "#190"` long after
+that PR merged — session 51 above was already logged DONE, so the atom's status, not the work,
+was stale. Corrected to `done` with the PR state as evidence (`#190` MERGED
+2026-08-02T21:38:44Z, merge commit `11763fd2`, in `main`'s history), outcome-checked against
+`workflows/needs_input.py` + `attention.py` (NeedsInputItem cards through the registered
+`ItemKind.NEEDS_INPUT` seam) and the `resume_token` reply path. Audited alongside it: no other
+atom in the catalog carries a `pr` marker while unfinished. `WF2LOO-9` and `WF2AUT-11` stay
+`blocked` — their prerequisites are cross-plan EXT refs with no PR evidence either way, so
+un-blocking them is an owner call, not a mechanical one. The rest of the correction was the
+derived `dag` block, which `tools/regen_dag_derived.py` now regenerates and
+`tests/test_roadmap_dag_derived.py` now ratchets.
