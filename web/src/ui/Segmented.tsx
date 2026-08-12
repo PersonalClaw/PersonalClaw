@@ -106,6 +106,12 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
       el?.focus()
     }
   }
+  // Tabs are `shrink-0`. `size-8` / `px-m` set a tab's size but NOT its floor, so in a constrained
+  // slot the flex parent squeezed them: measured on the #/skills header at 390px, where this control
+  // deliberately collapses to icon-only, the two icon tabs rendered **15.3 x 32** instead of 32 x 32 —
+  // under the 24px SC 2.5.8 minimum, with the 15px glyph filling the box edge to edge. Overflow is the
+  // job of `collapse` ('scroll' / 'menu'), not of silently crushing every target: a strip that cannot
+  // fit should scroll or fold, and a tab that is 15px wide is neither legible nor tappable.
   const strip = (
     <div role="tablist" aria-label={ariaLabel} className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       {options.map((o, idx) => {
@@ -124,7 +130,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
             whileTap={disabled ? undefined : { scale: pressScale }}
             transition={spring.spatialFast}
             onClick={() => onChange(o.key)} title={o.title ?? o.label}
-            className={`relative inline-flex items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
+            className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
             style={on ? withWeight({ color: fg }, 550) : { color: fg }}>
             {on && (
               <motion.span
