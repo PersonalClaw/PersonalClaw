@@ -557,10 +557,17 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
       onClick={onOpen} className="group flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high"
       style={selected ? { outline: '1.5px solid var(--color-primary)', outlineOffset: -1.5 } : undefined}>
       {/* Selection checkbox — visible on hover, or always once a selection is active. */}
+      {/* 20x20 painted, 24x24 CLICKED. Measured 30 of these on `#/tasks`, and SC 2.5.8's spacing
+          exception cannot rescue them: each sits INSIDE this row's own 1212x47 clickable surface, so
+          the 24px circle is inside another target by construction (cycle 72's trap, from the
+          `sm` Toggle). The button is now a transparent 24px box with the painted 20px control inside
+          it, and `-m-0.5` returns the 4px so no row reflows — the fix is the hit box, not the design. */}
       <button type="button" aria-label={selected ? 'Deselect task' : 'Select task'}
         onClick={(e) => { e.stopPropagation(); onToggleSelect?.() }}
-        className={`shrink-0 grid size-5 place-items-center rounded-md border transition-all ${selected ? 'border-primary bg-primary text-on-primary' : `border-outline-variant text-transparent ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}`}>
-        <Check size={13} />
+        className="shrink-0 grid size-6 -m-0.5 place-items-center">
+        <span className={`grid size-5 place-items-center rounded-md border transition-all ${selected ? 'border-primary bg-primary text-on-primary' : `border-outline-variant text-transparent ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}`}>
+          <Check size={13} />
+        </span>
       </button>
       <sm.icon size={20} className="shrink-0" style={{ color: sm.tone }} />
       <div className="flex-1 min-w-0">
