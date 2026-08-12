@@ -75,6 +75,28 @@ const PRIORITY_MAP = Object.fromEntries(PRIORITIES.map((p) => [p.key, p]))
 export const priorityMeta = (k?: string): PriorityMeta => PRIORITY_MAP[k ?? ''] ?? { key: k ?? '', label: k ?? '—', tone: 'var(--color-on-surface-low)' }
 // (the backend persists any priority string verbatim — all rungs save, no gating)
 
+/** The priority to SHOW on a browsing surface, or null when it carries no signal.
+ *
+ *  `medium` is the default: `models.py` declares `priority: TaskPriority = MEDIUM` and normalizes a
+ *  missing value with `d.get("priority", "medium")`. So a medium task is **indistinguishable from
+ *  one whose priority was never set** — rendering "Medium" asserts an intent that may not exist.
+ *  Measured on the validation home: **28 of 30 tasks are medium**, so the chip appeared on 93% of
+ *  rows in a semantic colour while telling the user nothing, and the two `high` tasks it exists to
+ *  surface did not stand out at all.
+ *
+ *  This is the rule the file next door already applies to the assignee — "on a single-user install
+ *  every task is the owner's, and '@you' on every row is noise" (`TasksListPage`'s `MetaLine`).
+ *  Priority simply never got it.
+ *
+ *  Every EXPLICIT rung still shows, including `low` and `trivial`: deliberately deprioritising
+ *  something is a real signal, and so is any unrecognised string the backend kept verbatim. Only
+ *  the default is silent.
+ *
+ *  Detail views should keep using {@link priorityMeta} — a field's current value belongs in the
+ *  editor that sets it, where a blank would read as "unset" rather than "medium". */
+export const signalPriority = (k?: string): PriorityMeta | null =>
+  !k || k === 'medium' ? null : priorityMeta(k)
+
 /** Tiny muted badge marking a field the backend can't persist yet. */
 export function SoonTag() {
   return <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem] uppercase tracking-wide bg-surface-high text-on-surface-low" title="Designed ahead of the backend — not saved yet">soon</span>

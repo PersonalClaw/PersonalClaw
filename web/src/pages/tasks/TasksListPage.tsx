@@ -17,7 +17,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type TaskItem, type ProjectItem, type TaskListItem, type Loop } from '../../lib/api'
-import { statusMeta, priorityMeta, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
+import { statusMeta, signalPriority, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
 import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
@@ -483,7 +483,10 @@ function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
 }
 
 function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => void }) {
-  const pm = priorityMeta(t.priority)
+  // Only a priority the user actually CHOSE. `medium` is the default and is indistinguishable from
+  // unset, so it rendered on 93% of rows in a semantic colour saying nothing — the same reasoning
+  // the assignee below already gets. See `signalPriority`.
+  const pm = signalPriority(t.priority)
   const due = dueMeta(t.due)
   const exit = t.exit_criteria ?? []
   // Whose work this is, on a shared board (TEAM-SHARED-ENTITIES §2.1). Shown only
@@ -491,22 +494,44 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   // "@you" on every row is noise. Rendered here because both the list row and the
   // card use this line, so one edit covers both views.
   const who = (t.assignee ?? '').trim() || (t.author ?? '').trim()
+
+  // Two groups, exactly as before: an identity group separated by the flex gap alone, then a
+  // schedule group whose members carry a leading `·`. That `·` used to be hard-coded, which was
+  // safe only because priority ALWAYS rendered. Now that the group can be empty, the dot is
+  // conditional on something actually preceding it — otherwise a row starts "· 0/2 criteria".
+  const lead: React.ReactNode[] = []
+  if (pm) lead.push(<span key="pri" style={{ color: pm.tone }}>{pm.label}</span>)
+  if (who) {
+    lead.push(
+      <span key="who" className="inline-flex items-center gap-1"
+        title={(t.assignee ?? '').trim() ? `Assigned to ${who}` : `Created by ${who}`}>
+        <UserRound size={11} /> {who}
+      </span>,
+    )
+  }
+  if (t.project) {
+    lead.push(
+      <TextLink key="proj" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }}
+        icon={FolderKanban} iconSize={11} title={`Filter by project “${t.project}”`}>{t.project}</TextLink>,
+    )
+  }
+  const tail: { key: string; node: React.ReactNode }[] = []
+  if (due) tail.push({ key: 'due', node: <span style={{ color: due.tone }}>{due.label}</span> })
+  if (exit.length > 0) tail.push({ key: 'exit', node: <span>{exitDoneCount(exit)}/{exit.length} criteria</span> })
+  const comments = typeof t.comment_count === 'number' && t.comment_count > 0
+    ? <span key="cmt" className="inline-flex items-center gap-1"><MessageSquare size={11} /> {t.comment_count}</span>
+    : null
+
+  // Nothing chosen, nobody named, no project, no date, no criteria, no comments ⇒ an EMPTY meta
+  // line. Render nothing rather than a blank row that still spends its top margin.
+  if (lead.length === 0 && tail.length === 0 && !comments) return null
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
-      <span style={{ color: pm.tone }}>{pm.label}</span>
-      {who && (
-        <span
-          className="inline-flex items-center gap-1"
-          title={(t.assignee ?? '').trim() ? `Assigned to ${who}` : `Created by ${who}`}
-        >
-          <UserRound size={11} /> {who}
-        </span>
-      )}
-      {t.project && <TextLink onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }}
-        icon={FolderKanban} iconSize={11} title={`Filter by project “${t.project}”`}>{t.project}</TextLink>}
-      {due && <span style={{ color: due.tone }}>· {due.label}</span>}
-      {exit.length > 0 && <span>· {exitDoneCount(exit)}/{exit.length} criteria</span>}
-      {typeof t.comment_count === 'number' && t.comment_count > 0 && <span className="inline-flex items-center gap-1"><MessageSquare size={11} /> {t.comment_count}</span>}
+      {lead}
+      {tail.map((x, i) => (
+        <span key={x.key}>{(lead.length > 0 || i > 0) ? '· ' : ''}{x.node}</span>
+      ))}
+      {comments}
     </div>
   )
 }
@@ -549,7 +574,7 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
 
 function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number; onOpen: () => void; onProject?: (p: string) => void }) {
   const sm = statusMeta(t.status)
-  const pm = priorityMeta(t.priority)
+  const pm = signalPriority(t.priority)
   const due = dueMeta(t.due)
   const done = TERMINAL.has(t.status)
   const exit = t.exit_criteria ?? []
@@ -568,7 +593,7 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
-        <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>
+        {pm && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>}
         {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] hover:brightness-125" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}><FolderKanban size={10} /> {t.project}</button>}
         {due && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
         {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
