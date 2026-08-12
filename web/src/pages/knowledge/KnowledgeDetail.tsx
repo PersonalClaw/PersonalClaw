@@ -742,9 +742,12 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
               already reads "No insights yet" (below), and `aria-expanded` is dropped when
               `!hasMore` so it stops claiming to be a disclosure. A tab stop here would be a dead
               stop announcing a fact the visible text carries. */}
-          <button type="button" onClick={onToggle} disabled={!hasMore}
+          {/* Nothing more to show is worth SAYING: natively disabled, this row left the tab order
+              and a keyboard user could not tell an empty section from a broken one. */}
+          <button type="button" onClick={hasMore ? onToggle : undefined} aria-disabled={!hasMore || undefined}
             aria-expanded={hasMore ? open : undefined}
-            className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default">
+            title={!hasMore ? 'Nothing more to show' : undefined}
+            className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default aria-disabled:cursor-default">
             <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10">
               <Sparkles size={14} className={`text-primary ${genning || processing ? 'animate-pulse' : ''}`} />
             </span>

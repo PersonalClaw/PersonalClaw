@@ -80,10 +80,16 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
             <div className="max-h-52 overflow-y-auto flex flex-col gap-0.5">
               {candidates.length === 0 ? <div className="px-2 py-3 text-on-surface-low text-[0.8125rem]">No tasks to add.</div> : candidates.map(({ task, cyclic }) => {
                 const sm = statusMeta(task.status)
+                // A row that would close a dependency loop. The visible `cycle` chip already told a
+                // sighted user why; natively disabled, the row left the tab order, so a keyboard user
+                // could neither reach it nor hear that reason. Soft-off keeps the tab stop and puts
+                // the same sentence on the row itself. `enabled:hover:` now matches (the element is
+                // no longer natively disabled), so the hover tint is neutralised for the soft state.
                 return (
-                  <button key={task.id} type="button" disabled={cyclic}
-                    onClick={() => { onChange([...value, task.id]); setQ(''); }}
-                    className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high disabled:opacity-40 disabled:cursor-not-allowed">
+                  <button key={task.id} type="button" aria-disabled={cyclic || undefined}
+                    onClick={cyclic ? undefined : () => { onChange([...value, task.id]); setQ(''); }}
+                    title={cyclic ? 'That would create a dependency cycle' : undefined}
+                    className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high aria-disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                     <sm.icon size={14} className="shrink-0" style={{ color: sm.tone }} />
                     <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{task.title}</span>
                     {cyclic && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Would create a dependency cycle"><AlertTriangle size={11} /> cycle</span>}
