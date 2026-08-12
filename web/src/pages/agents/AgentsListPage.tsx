@@ -203,7 +203,14 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
           {agent.model && <span className="font-mono text-[0.75rem]">{agent.model}</span>}
-          {agent.description && <span className="truncate">· {agent.description}</span>}
+          {/* The `·` separates the model from the description, so it may only render when the model
+              did. It was hard-coded onto the description, and the model is optional — every built-in
+              inherits its model from Settings → Models — so all 8 native rows read "· Built-in worker
+              for …", a separator with nothing to separate. A DOM sweep of 17 surfaces found 106
+              rendered `·` separators and exactly these 8 dangling; the sibling `DiscoveredRow` below
+              never had a prefix, so the two row variants now agree when there is no model. Same shape
+              `MetaLine` fixed on #/tasks — see the rail in ui/danglingSeparator.test.ts. */}
+          {agent.description && <span className="truncate">{agent.model ? '· ' : ''}{agent.description}</span>}
         </div>
       </div>
       <div className="hidden sm:flex shrink-0 items-center gap-m text-on-surface-low text-[0.75rem]">
