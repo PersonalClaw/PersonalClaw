@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { Pencil, Trash2, Check, X, PlayCircle, Loader2, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
@@ -144,7 +145,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
     return (
       <div className="flex flex-col gap-l">
         <ScheduleForm draft={draft} onChange={setDraft} compact />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.name.trim()}
@@ -185,7 +186,7 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
           <Toggle on={job.enabled} onChange={toggle} disabled={busy} label="Toggle enabled" size="sm" />
         </label>
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
       {note && !running && <p className="text-ok text-[0.8125rem]">{note}</p>}
 
       {/* schedule + mode summary */}

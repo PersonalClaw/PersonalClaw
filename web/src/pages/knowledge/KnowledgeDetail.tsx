@@ -5,7 +5,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
-import { ChipInput } from '../../ui/forms'
+import { ChipInput, FieldError } from '../../ui/forms'
 import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
@@ -300,7 +300,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     return (
       <>
       <div className="flex h-full min-h-0 flex-col gap-l">
-        {err && <p className="shrink-0 text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError className="shrink-0">{err}</FieldError>}
         {titleEditable && (
           <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} autoFocus placeholder="Title"
             className="shrink-0 w-full bg-transparent text-on-surface outline-none border-b border-outline-variant/40 pb-1.5 text-[1.0625rem] focus:border-primary" data-type="title-l" />
@@ -359,7 +359,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     <div className="flex h-full min-h-0 flex-col gap-l">
       {/* The title + wand + action cluster live in the dedicated page's header bar
           (published via onHeader) — not inline here, so there's a single header. */}
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {/* Metadata row: provider/size/shape/words/age on the left, the live ingestion
           status DAG floated to the right of the same row. */}
