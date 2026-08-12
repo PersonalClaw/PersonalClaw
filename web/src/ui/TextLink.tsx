@@ -40,8 +40,18 @@ export function TextLink({
   title?: string
   className?: string
 }) {
+  // `py-0.5 -my-0.5`: measured 10 of these at **20px tall** inside `#/tasks`' clickable rows, where
+  // SC 2.5.8's spacing exception cannot apply — a link nested in a larger target can never clear it.
+  // Vertical PADDING (not a min-height) grows the hit box to 24px without changing the display type:
+  // switching to `inline-flex` made the element an atomic inline box and re-rounded the text baseline,
+  // which moved 0.83% of the pixels on `#/tasks` for no reason. The negative margin hands the 4px
+  // back, so the line keeps its rhythm and every other TextLink surface stays byte-identical.
+  //
+  // `py-1` (4px a side) rather than `py-0.5`: an inline box's rect is the union of its line boxes, and
+  // a 19.99px line box plus 2+2 measured **23.99** — passing to the eye, failing the 24px floor. Real
+  // headroom beats a value that is only exactly right when the font rounds kindly.
   const cls = cx(
-    'text-primary hover:underline disabled:opacity-50',
+    'text-primary hover:underline disabled:opacity-50 py-1 -my-1',
     Icon && 'inline-flex items-center gap-1',
     SIZE[size],
     className,
