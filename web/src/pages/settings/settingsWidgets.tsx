@@ -5,7 +5,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
-  type SettingsProvider, type InboxSettings, type NotificationSettings, type UpdateCheck,
+  type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
   type SearchProviderInfo, type DoctorReport, type ProjectionRule,
   type ToolsSavings,
@@ -66,7 +66,9 @@ const useSearchEntity = () => useCachedData('settings:search', async () => {
 const useRuntimes = () => useCachedData('settings:agent-runtimes', () => api.agentRuntimes().catch(() => null as AgentRuntime[] | null), { persist: true })
 const useProviders = () => useCachedData('settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true })
 const useDashCfg = () => useCachedData('settings:dashboard-config', () => api.dashboardConfig().catch(() => null as DashboardConfig | null), { persist: true })
-const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings().catch(() => null as InboxSettings | null), { persist: true })
+// The swallow here is what POISONED the shared `'settings:inbox'` key: it resolved with `null`, which the
+// hook then persisted, so both inbox-settings panels seeded `null` from cache and read it as loaded.
+const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings(), { persist: true })
 // 🔴 NO `.catch(() => [])` HERE EITHER, and the reason is subtler than one surface's empty state:
 // `useCachedData` caches by KEY, and this hook shares the `'apps'` key with `#/apps`. Swallowing the
 // rejection made this call RESOLVE with `[]`, which the hook then persisted to sessionStorage — so
@@ -386,9 +388,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       // Alert keywords moved to the notification rules matrix (plan 42 S3), so this card
       // now surfaces what the inbox itself still owns: how long items are kept.
-      const { data: s, refresh } = useInbox()
+      const { data: s, error: inboxErr, refresh } = useInbox()
       return (
-        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined} rows={2}>
+        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined && !inboxErr} rows={2}>
+          {/* A tile that shimmers forever is the same lie in miniature — say it failed instead. */}
+          {!s && Boolean(inboxErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load inbox settings.</div>}
           {s && <>
             <div className="flex items-baseline gap-1.5">
               <BigStat value={s.retention_days} caption="day retention" />
