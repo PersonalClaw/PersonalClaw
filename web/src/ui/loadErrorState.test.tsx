@@ -88,6 +88,46 @@ describe('LoadError announces and offers recovery', () => {
 // follow-up rather than swept.
 
 const SRC = join(process.cwd(), 'src')
+// 🪤 A RAIL MEASURES THE PROGRAM, NOT THE EXPLANATION OF IT — and not the code NEAR the program either.
+// The two scanners below used to read raw source inside a fixed character window after
+// `useCachedData(`, which made them wrong in two compounding ways:
+//
+//   1. The first adopter to DOCUMENT the swallow it removed tripped them: `ArchivePanel`'s comment
+//      quotes the `.catch(() => [] as SessionArchive[])` it deleted, three lines under the call.
+//      (Fourth time a ratchet here has counted its own prose as code — a `<button>` in comment text
+//      broke the primitive-adoption ratchet twice.)
+//   2. 🔴 Worse, THE COMMENTS WERE LOAD-BEARING. Stripping them alone made `#/discover` fail, because
+//      its `dismiss` MUTATION's `.catch(() => {})` sits 2 lines below its fetcher and had been pushed
+//      out of the 220-char window by the comment between them. The window never measured "the fetcher
+//      swallows"; it measured "nothing that looks like a swallow happens to be nearby".
+//
+// So the scan is structural now: paren-match the call and look ONLY at its argument list. A comment
+// cannot pad it, and a mutation two lines down cannot be mistaken for the fetcher.
+const codeOf = (abs: string) =>
+  readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+const SWALLOW = /\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/
+
+/** Every `useCachedData('key', …)` call in a file, as `{ key, args, line }` — `args` is the call's own
+ *  argument list, paren-matched from the opening paren to its partner. */
+function cachedCalls(src: string): { key: string; args: string; line: number }[] {
+  const out: { key: string; args: string; line: number }[] = []
+  for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(/g)) {
+    const start = (m.index ?? 0) + m[0].length
+    let i = start
+    let depth = 1
+    while (i < src.length && depth > 0) {
+      const c = src[i]
+      if (c === '(') depth++
+      else if (c === ')') depth--
+      i++
+    }
+    const args = src.slice(start, i - 1)
+    const key = args.match(/^\s*'([^']+)'/)?.[1]
+    if (key) out.push({ key, args, line: src.slice(0, m.index).split('\n').length })
+  }
+  return out
+}
 const walk = (d: string): string[] =>
   readdirSync(d).flatMap((n) => {
     const p = join(d, n)
@@ -150,6 +190,17 @@ describe('the migrated surfaces read the error', () => {
     //   • `chat:folders` · `chat:tags` — feed a menu whose empty state INSTRUCTS ("Create a folder
     //     or tag first"). The failure is threaded to it as `orgLoadFailed` so it says so instead.
     'pages/ChatPage.tsx',
+    // The `#/settings/*` async lists, taken as a FAMILY rather than a surface: a census of every
+    // settings reader whose data renders as a list found ten, of which five conflated a failed load
+    // with an empty one. These two are the page-body-scale members and fit this rail unchanged.
+    // `#/settings/audit` is the sharpest case in the whole family — "No matching events" is also what a
+    // tamper-evident security log says when nothing happened, so a read failure rendered as silence.
+    // Measured at 500 with a cold sessionStorage: no `role="alert"`, no retry, and the server's own
+    // message nowhere on the page. The other three members (the memory Audit tab, the remote-provider
+    // region, the custom-rules list) are pinned per site in
+    // `pages/settings/settingsListHonesty.test.ts` — see its header for why they cannot live here.
+    'pages/settings/ArchivePanel.tsx',
+    'pages/settings/AuditPanel.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -213,13 +264,9 @@ describe('the migrated surfaces read the error', () => {
     // key → [file:line, swallows?]
     const consumers = new Map<string, { at: string; swallows: boolean }[]>()
     for (const abs of files) {
-      const src = readFileSync(abs, 'utf8')
-      for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(\s*(?:\/\/[^\n]*\n\s*)*(?:\/\*[\s\S]*?\*\/\s*)*'([^']+)'\s*,([\s\S]{0,260}?)\)\s*(?:,|;|\n)/g)) {
-        const key = m[1]
-        const body = m[2]
-        const swallows = /\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/.test(body)
-        const at = `${abs.slice(SRC.length + 1)}:${src.slice(0, m.index).split('\n').length}`
-        consumers.set(key, [...(consumers.get(key) ?? []), { at, swallows }])
+      for (const c of cachedCalls(codeOf(abs))) {
+        const at = `${abs.slice(SRC.length + 1)}:${c.line}`
+        consumers.set(c.key, [...(consumers.get(c.key) ?? []), { at, swallows: SWALLOW.test(c.args) }])
       }
     }
     // Sanity: the scan must actually see the multi-consumer key it was written for.
@@ -228,8 +275,7 @@ describe('the migrated surfaces read the error', () => {
 
     const adopterKeys = new Set<string>()
     for (const rel of ADOPTERS) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
-      for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(\s*(?:\/\/[^\n]*\n\s*)*(?:\/\*[\s\S]*?\*\/\s*)*'([^']+)'/g)) adopterKeys.add(m[1])
+      for (const c of cachedCalls(codeOf(join(SRC, rel)))) adopterKeys.add(c.key)
     }
     expect(adopterKeys.size, 'the adopters must declare at least one cache key').toBeGreaterThan(0)
 
@@ -245,9 +291,8 @@ describe('the migrated surfaces read the error', () => {
     // hook is handed a successful empty list. A surface that renders LoadError while still swallowing
     // is asserting a state it can never enter.
     for (const rel of ADOPTERS) {
-      const src = readFileSync(join(SRC, rel), 'utf8')
-      const swallowing = [...src.matchAll(/useCachedData[\s\S]{0,220}?\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/g)]
-      expect(swallowing.map((m) => m[0].slice(0, 60)), `${rel} swallows a fetch rejection`).toEqual([])
+      const swallowing = cachedCalls(codeOf(join(SRC, rel))).filter((c) => SWALLOW.test(c.args))
+      expect(swallowing.map((c) => `${c.key}:${c.line}`), `${rel} swallows a fetch rejection`).toEqual([])
     }
   })
 

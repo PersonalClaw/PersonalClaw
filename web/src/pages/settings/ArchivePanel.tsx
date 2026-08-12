@@ -3,7 +3,7 @@ import { Archive, Search, FileText, Loader2 } from 'lucide-react'
 import { api, type SessionArchive } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader } from './settingsUI'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
 
 /** Archive — browse archived chat-session transcripts (read-only). Each row is an
@@ -14,9 +14,14 @@ export function ArchivePanel() {
   const [open, setOpen] = useState<string | null>(null)
 
   // Archives change slowly — persist for instant paint on revisit + reload.
-  const { data: archives } = useCachedData(
-    'settings:archives', () => api.sessionArchives().catch(() => [] as SessionArchive[]), { persist: true },
+  const { data: archives, error, refresh } = useCachedData(
+    'settings:archives', () => api.sessionArchives(), { persist: true },
   )
+  // The fetcher used to carry `.catch(() => [] as SessionArchive[])`, so a 500 resolved as an empty
+  // list and this panel answered "No archived sessions yet." — and `{ persist: true }` wrote that
+  // fiction to sessionStorage, where it survived a reload. The rejection has to REACH the hook
+  // before `error` can be read at all.
+  if (!archives && error) return <LoadError what="archived sessions" error={error} onRetry={refresh} />
   if (!archives) return <ListSkeleton rows={6} />
 
   const needle = q.trim().toLowerCase()
