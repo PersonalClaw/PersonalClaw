@@ -47,11 +47,15 @@ describe('PanelHeader is the page heading of a settings sub-route', () => {
     expect(container.querySelector('h3'), 'h3 under an h1 title skips a level').toBeNull()
   })
 
-  it('every settings panel uses it (not vacuously green)', () => {
+  it('EVERY settings panel uses it — the count floor was too loose', () => {
+    // 🪤 This assertion used to read `users.length > 20` while there were 28 panels, so it stayed green
+    // with TWO panels missing a page title entirely: `#/settings/design` measured **h1s=0** and its outline
+    // began at `h2: Color scheme`, and `#/settings/diagnostics` the same. A ">N" floor cannot see a small
+    // shortfall — name the exceptions instead, so a new panel without a title fails with its own filename.
     const files = readdirSync(SETTINGS).filter((f) => /Panel\.tsx$/.test(f))
-    const users = files.filter((f) => /<PanelHeader\b/.test(readFileSync(join(SETTINGS, f), 'utf8')))
     expect(files.length, 'the settings panels must be discoverable').toBeGreaterThan(20)
-    expect(users.length, 'PanelHeader is the shared page title — most panels must use it').toBeGreaterThan(20)
+    const missing = files.filter((f) => !/<PanelHeader\b/.test(readFileSync(join(SETTINGS, f), 'utf8')))
+    expect(missing, 'a settings sub-route is a page; its panel title is its h1').toEqual([])
   })
 
   it("the inbox DRAWER copy does not use PanelHeader — #/inbox already has an h1", () => {
