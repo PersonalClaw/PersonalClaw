@@ -92,18 +92,6 @@ class FreedomLevel(str, Enum):
     LOW = "low"
 
 
-class Lifecycle(str, Enum):
-    """How long passive guidance persists once it has surfaced.
-
-    `UNTIL_DEACTIVATED` is the one that needs care: guidance that outlives its relevance is guidance
-    the user stops reading, which costs the guidance that is still relevant.
-    """
-
-    ONE_SHOT = "one_shot"
-    SESSION = "session"
-    UNTIL_DEACTIVATED = "until_deactivated"
-
-
 @dataclass
 class SurfacingMeta:
     """The matching/display split, as data.
@@ -119,7 +107,6 @@ class SurfacingMeta:
     agent_digest: str = ""
     surface_mode: SurfaceMode = SurfaceMode.OFF
     freedom_level: FreedomLevel = FreedomLevel.MEDIUM
-    lifecycle: Lifecycle = Lifecycle.ONE_SHOT
     preconditions: list[dict[str, Any]] = field(default_factory=list)
     requirements: list[str] = field(default_factory=list)
     cadence_days: int = 0
@@ -135,7 +122,6 @@ class SurfacingMeta:
             "agent_digest": self.agent_digest,
             "surface_mode": self.surface_mode.value,
             "freedom_level": self.freedom_level.value,
-            "lifecycle": self.lifecycle.value,
             "preconditions": [dict(p) for p in self.preconditions],
             "requirements": list(self.requirements),
             "cadence_days": self.cadence_days,
@@ -167,7 +153,6 @@ class SurfacingMeta:
             agent_digest=str(d.get("agent_digest", "") or ""),
             surface_mode=_enum(SurfaceMode, d.get("surface_mode"), SurfaceMode.OFF),
             freedom_level=_enum(FreedomLevel, d.get("freedom_level"), FreedomLevel.MEDIUM),
-            lifecycle=_enum(Lifecycle, d.get("lifecycle"), Lifecycle.ONE_SHOT),
             preconditions=[p for p in (d.get("preconditions") or []) if isinstance(p, dict)],
             requirements=[str(r) for r in (d.get("requirements") or [])],
             cadence_days=int(d.get("cadence_days", 0) or 0),

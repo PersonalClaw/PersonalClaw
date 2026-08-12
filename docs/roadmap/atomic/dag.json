@@ -696,6 +696,18 @@
             "WF2TAS-10",
             "EXT:WORKFLOWS-V2:RunController tick/completion path + _publish stream"
           ]
+        },
+        {
+          "id": "WF2TAS-12",
+          "title": "Retire the guidance-persistence Lifecycle enum; rail the def→SurfacingMeta conversion point",
+          "status": "done",
+          "pr": "#1144",
+          "scope": "§2 Surfacing discipline: the declared-only `Lifecycle` field on `SurfacingMeta` (WF2TAS-4) measured against the live surfacing path (WF2TAS-7/-8), and the adapter seam that would have to carry it",
+          "done_when": "Measured: `render_passive`/`may_suggest` have zero production callers and nothing in src/ reads `agent_digest`, so the passive channel `lifecycle` paced does not exist (corroborated by FS-6's note and test_learning_ambient's \"unbuilt producer\" seam test); `DefMetadata` had no `lifecycle` field, so no authored def could write it and `meta_from_def` could not carry it — three members, zero observable difference. `Lifecycle` + `SurfacingMeta.lifecycle` + its to_dict/from_dict keys DELETED (clean break, not a documented TODO); a stale `lifecycle:` key on disk still loads because from_dict names what it reads. New rail in test_workflows_def_surfacing_fields.py asserts `meta_from_def` names every field shared by `SurfacingMeta` and `DefMetadata` (7 today, vacuity-guarded, source-read via AST because a dropped field arrives as a legal default) plus a proof-it-can-fail test; inert-surface-baseline.json regenerated on the legitimate shrink (surfacing.py entry removed, enum 19→18, inert 146→145). Guidance aggressiveness unchanged: nothing surfaces passively today, so no def surfaces more often",
+          "deps": [
+            "WF2TAS-4",
+            "WF2TAS-7"
+          ]
         }
       ]
     },
@@ -8185,6 +8197,7 @@
       "WF2TAS-9",
       "WF2TAS-10",
       "WF2TAS-11",
+      "WF2TAS-12",
       "WF2UNI-1",
       "WF2UNI-2",
       "WF2UNI-3",
@@ -9319,8 +9332,8 @@
       {
         "code": "WF2TAS",
         "plan": "WORKFLOWS-V2-TASKS-SOPS",
-        "total_atoms": 11,
-        "done": 11,
+        "total_atoms": 12,
+        "done": 12,
         "in_progress": 0,
         "todo": 0,
         "blocked": 0
@@ -9884,6 +9897,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 838
+    "edge_count": 840
   }
 }
