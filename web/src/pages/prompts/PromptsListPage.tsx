@@ -15,6 +15,7 @@ import { promptVars, sourceTone, sourceLabel } from './promptMeta'
 import { PromptDetail } from './PromptDetail'
 import { SnippetDetail } from './SnippetDetail'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 type Tab = 'system' | 'user' | 'snippets'
 const TABS: { key: Tab; label: string; icon: typeof User }[] = [
@@ -123,7 +124,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Prompts</span>}
+          left={<PageTitle>Prompts</PageTitle>}
           right={
             // Structural view switch + primary action in the 4-tier cluster (degrade
             // together, no clip on mobile). Search / sort / source-filter live on the

@@ -19,6 +19,7 @@ import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpe
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { PageTitle } from '../../ui/PageTitle'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
 // compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
@@ -150,7 +151,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `truncate` on this flex container does nothing (it has no text of its own), which
           // left the row 111px under the controls at 390px. Now "Inbox" holds its width and
           // the secondary count truncates — the same shape `notifications` uses.
-          left={<span data-type="title-l" className="text-on-surface flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span className="min-w-0 truncate text-on-surface-low text-[0.75rem] font-normal">{status.pending_count} pending · {status.total_count} total</span>}</span>}
+          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span className="min-w-0 truncate text-on-surface-low text-[0.75rem] font-normal">{status.pending_count} pending · {status.total_count} total</span>}</PageTitle>}
           right={
             // The header has room now (search/filter live on the page), so surface
             // the actions directly — the cluster collapses them (icon-only → …) if tight.

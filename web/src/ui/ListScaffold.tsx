@@ -5,6 +5,7 @@ import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
+import { PageTitle } from './PageTitle'
 
 /** Shared shell for the workspace/build list PAGES (design Tenet 2: list as a
  *  destination page, not a cramped panel). Centered column at the customizable
@@ -18,7 +19,7 @@ export function ListScaffold({ title, right, children, bodyClassName }: {
 }) {
   return (
     <div className="flex h-full flex-col">
-      <TopBar left={<span data-type="title-l" className="text-on-surface">{title}</span>} right={right} />
+      <TopBar left={<PageTitle>{title}</PageTitle>} right={right} />
       <div className="flex-1 overflow-y-auto">
         <div className={bodyClassName ?? 'mx-auto px-l py-2xl'} style={{ maxWidth: 'var(--content-width)' }}>
           {children}

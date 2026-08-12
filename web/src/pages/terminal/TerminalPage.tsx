@@ -8,6 +8,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { api } from '../../lib/api'
 import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
+import { PageTitle } from '../../ui/PageTitle'
 
 export interface TermTab { id: string; label: string; cwd?: string; shell?: string; custom?: boolean }
 
@@ -120,7 +121,7 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   return (
     <div className="flex h-full flex-col">
       <TopBar
-        left={<span data-type="title-l" className="text-on-surface">Terminal</span>}
+        left={<PageTitle>Terminal</PageTitle>}
         right={<HeaderActions>
           {persist !== null && (
             <HeaderControl icon={Anchor}

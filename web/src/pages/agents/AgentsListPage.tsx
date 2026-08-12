@@ -14,6 +14,7 @@ import { NativeAgentDetail, DiscoveredAgentDetail } from './AgentDetail'
 import { api, type SavedAgent, type DiscoveredAgent } from '../../lib/api'
 import { useConfigFsWatch } from '../../lib/useConfigFsWatch'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 type Open =
   | { kind: 'native'; name: string }
@@ -93,7 +94,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Agents</span>}
+          left={<PageTitle>Agents</PageTitle>}
           right={<HeaderActions>
             <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} priority="low" onClick={syncAgents} />
             <HeaderControl icon={Plus} label="New agent" variant="primary" priority="primary" onClick={onCreate} />

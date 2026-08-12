@@ -21,6 +21,7 @@ import { statusMeta, priorityMeta, dueMeta, parseDueDate, TERMINAL, ListChecksLi
 import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
+import { PageTitle } from '../../ui/PageTitle'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
 // views that ignore the status filter (they present all statuses themselves)
@@ -342,7 +343,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Tasks</span>}
+          left={<PageTitle>Tasks</PageTitle>}
           right={
             // Header keeps only structural controls — the view switcher + the primary
             // action, in the 4-tier cluster so they degrade together (view icon+label →

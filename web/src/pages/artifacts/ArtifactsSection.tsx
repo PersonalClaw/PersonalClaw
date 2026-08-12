@@ -15,6 +15,7 @@ import { promptInput } from '../../ui/dialog'
 import { ARTIFACT_KINDS } from '../files/fileMeta'
 import { ArtifactGrid } from './ArtifactGrid'
 import { ArtifactViewer } from './ArtifactViewer'
+import { PageTitle } from '../../ui/PageTitle'
 
 const SOURCES = ['chat', 'cron', 'subagent', 'manual', 'import'] as const
 const SORTS = [
@@ -113,7 +114,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
         left={<div className="flex min-w-0 items-center gap-m">
           {slug
             ? <QuietButton onClick={back} title="Back to the library"><ArrowLeft size={13} /> Library</QuietButton>
-            : <span data-type="title-l" className="text-on-surface shrink-0">Artifacts</span>}
+            : <PageTitle className="shrink-0">Artifacts</PageTitle>}
           {slug && active && <span className="truncate text-on-surface" data-type="title-l">{active.name}</span>}
         </div>}
         right={slug ? (

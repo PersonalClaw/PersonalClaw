@@ -20,6 +20,7 @@ import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm, promptInput } from '../../ui/dialog'
+import { PageTitle } from '../../ui/PageTitle'
 
 type View = 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
 
@@ -365,7 +366,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Knowledge</span>}
+          left={<PageTitle>Knowledge</PageTitle>}
           // The ONE responsive header cluster (`HeaderActions`), like the other 26 header
           // right-slots in the app. This page was hand-rolling a plain `flex` div with a bare
           // `Segmented` + `IconButton` + `Button`, so nothing degraded: the slot measured

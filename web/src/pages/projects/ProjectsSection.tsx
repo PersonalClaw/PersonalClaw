@@ -24,6 +24,7 @@ import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
@@ -117,7 +118,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
         keepCornerPadding
-        left={<div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">Projects</span></div>}
+        left={<div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>Projects</PageTitle></div>}
         right={<HeaderActions><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
 
       {!!projects?.length && (

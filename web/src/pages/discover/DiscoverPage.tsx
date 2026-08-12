@@ -9,6 +9,7 @@ import { spring } from '../../design/motion'
 import { useCachedData } from '../../lib/useCachedData'
 import { api, type DiscoverResponse, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
+import { PageTitle } from '../../ui/PageTitle'
 
 /** Discover hub (§6) — the full curated tour of PersonalClaw, grouped by area.
  *  Every tip the dashboard spotlight rotates through lives here at once, each a
@@ -35,7 +36,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
         <TopBar
           keepCornerPadding
           left={
-            <span data-type="title-l" className="flex items-center gap-s text-on-surface">
+            <PageTitle className="flex items-center gap-s">
               Discover
               {data && data.enabled && data.visible_count > 0 && (
                 <span
@@ -46,7 +47,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                   {data.visible_count}
                 </span>
               )}
-            </span>
+            </PageTitle>
           }
         />
       }

@@ -41,6 +41,7 @@ import { AppsPanel } from './AppsPanel'
 import { SettingsHome } from './SettingsHome'
 import type { RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
+import { PageTitle } from '../../ui/PageTitle'
 
 // A subpage panel's render context: `go` navigates between subpages, `navigate` is
 // the raw router (for cross-section links), and `query`/`setQuery` let a panel put
@@ -114,7 +115,7 @@ export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
   if (!current) {
     return (
       <div className="flex h-full flex-col">
-        <TopBar left={<span data-type="title-l" className="text-on-surface">Settings</span>} />
+        <TopBar left={<PageTitle>Settings</PageTitle>} />
         <SettingsHome go={go} />
       </div>
     )

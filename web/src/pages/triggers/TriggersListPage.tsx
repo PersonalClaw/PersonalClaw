@@ -19,6 +19,7 @@ import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, type Trigger } from './triggerMeta'
 import { statusMeta, triggerHealthMeta } from '../schedule/scheduleMeta'
+import { PageTitle } from '../../ui/PageTitle'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
@@ -101,7 +102,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
       topBar={
         <TopBar
           keepCornerPadding
-          left={<span data-type="title-l" className="text-on-surface">Triggers</span>}
+          left={<PageTitle>Triggers</PageTitle>}
           right={<HeaderActions><HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={onCreate} /></HeaderActions>}
         />
       }

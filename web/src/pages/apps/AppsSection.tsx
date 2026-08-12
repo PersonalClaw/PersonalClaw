@@ -34,6 +34,7 @@ import { useGuardedInstall, guardedFromApp, type GuardedResult } from '../../lib
 import { AppIcon } from './appIcon'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
+import { PageTitle } from '../../ui/PageTitle'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
@@ -476,7 +477,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           keepCornerPadding
           left={
             <div className="flex items-center gap-3 min-w-0">
-              <span data-type="title-l" className="text-on-surface">Apps</span>
+              <PageTitle>Apps</PageTitle>
               <Segmented ariaLabel="Native, Library, or Store" value={view} onChange={setView}
                 options={[{ key: 'native', label: 'Native' }, { key: 'library', label: 'Library' }, { key: 'store', label: 'Store' }]} />
             </div>
