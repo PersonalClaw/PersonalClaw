@@ -1126,7 +1126,8 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
           <Toggle on={s.graph_enabled !== false} onChange={(v) => patch({ graph_enabled: v })} label="Entity graph" />
         </Row>
         <Row label="Volunteer related memory" hint="When a message mentions someone or something the entity graph knows, offer up to 3 linked memories for that turn — including ones that share no words with what you typed. Needs the entity graph. Off by default: it puts context in front of the model you didn't ask for. The Health tab reports how often what it volunteered was actually used.">
-          <Toggle on={Boolean(s.push_context)} onChange={(v) => patch({ push_context: v })} label="Volunteer related memory" disabled={s.graph_enabled === false} />
+          <Toggle on={Boolean(s.push_context)} onChange={(v) => patch({ push_context: v })} label="Volunteer related memory" disabled={s.graph_enabled === false}
+            disabledReason="Turn on the entity graph first — volunteering follows its links" />
         </Row>
         {s.push_context && s.graph_enabled !== false && (
           <Row label="Volunteer confidence" hint="How sure the match must be before memory is volunteered. 0.9 = declared aliases only · 0.8 also admits exact names · 0.6 admits looser matches (more offered, more of it irrelevant).">
