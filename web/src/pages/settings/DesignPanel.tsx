@@ -10,6 +10,7 @@ import { useAppearance } from '../../app/appearance'
 import { useMode, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
+import { PanelHeader } from './settingsUI'
 
 /** Design subpage. Cleanly separated concerns:
  *   1. COLOR SCHEME — pick a curated scheme (swatches) or fork your own. Colors only.
@@ -30,6 +31,15 @@ export function DesignPanel() {
 
   return (
     <div className="flex flex-col gap-2xl">
+      {/* Every other settings sub-route opens with `PanelHeader` — its title is the page's `h1`. These two
+          panels started straight at their first `<section>`, so `#/settings/design` measured **h1s=0** and
+          its outline began at `h2: Color scheme` with nothing above it, while all 26 siblings had exactly
+          one. The PanelHeader-as-h1 change gave every panel that USES it an h1; it could not reach a panel that never rendered one. */}
+      <PanelHeader
+        title="Design"
+        hint="The system's visual identity — colour scheme, light/dark preference, type scale, density and motion. Every control here applies live to the theme you are currently in."
+      />
+
       {/* ── 1. COLOR SCHEME ── */}
       <section>
         <div className="flex items-center justify-between mb-m">
