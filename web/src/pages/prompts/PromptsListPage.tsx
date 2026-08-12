@@ -6,7 +6,7 @@ import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
-import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SidePanel } from '../../ui/SidePanel'
 import { ContextMenu, type ContextMenuItem, Disintegrate } from '../../ui/motion'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -75,8 +75,13 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   onCreate: (tab: Tab) => void
   onOpen: (tab: Tab, name: string, opts?: { edit?: boolean }) => void
 } & Pick<RouteProps, 'navigate' | 'query' | 'setQuery'>) {
-  const { data: items, refresh } = useCachedData<PromptItem[]>('prompts', () => api.prompts().catch(() => []), { persist: true })
-  const { data: snippets, refresh: refreshSnips } = useCachedData<PromptSnippet[]>('prompt-snippets', () => api.snippets().catch(() => []), { persist: true })
+  // No `.catch(() => [])` on either fetcher. Swallowing the rejection inside the fetcher hands the
+  // hook an EMPTY LIST, which is a different claim than "the request failed" — and this surface then
+  // said "No user prompts" with a New-prompt CTA to someone whose library is intact. Measured against
+  // a 500 with a cold sessionStorage: no error text anywhere on the page, no live region. Letting the
+  // rejection through is what makes `error` — and therefore the branch below — exist at all.
+  const { data: items, error: itemsErr, refresh } = useCachedData<PromptItem[]>('prompts', () => api.prompts(), { persist: true })
+  const { data: snippets, error: snipsErr, refresh: refreshSnips } = useCachedData<PromptSnippet[]>('prompt-snippets', () => api.snippets(), { persist: true })
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [tabRaw, setTabRaw] = useQueryParam(query, setQuery, 'tab', 'user', { replace: true })
   const tab = (TABS.some((t) => t.key === tabRaw) ? tabRaw : 'user') as Tab
@@ -112,6 +117,10 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const openSnip = snippets?.find((s) => s.name === openName) ?? null
   const loading = rows === null
   const count = rows?.length ?? 0
+  // Each tab reads its OWN fetch: the snippets tab must not claim failure because the prompt list
+  // failed, and vice versa. Without the branch this state is an INFINITE SKELETON, since `rows` stays
+  // null while nothing is still in flight.
+  const loadErr = isSnips ? snipsErr : itemsErr
   const anyItems = isSnips ? (snippets === undefined || (snippets?.length ?? 0) > 0) : (items === undefined || (items?.length ?? 0) > 0)
 
   const filterSections: FilterSectionDef[] = [
@@ -160,7 +169,9 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       }
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {loading ? <ListSkeleton rows={6} /> : count === 0 ? (
+        {rows === null && loadErr ? (
+          <LoadError what={isSnips ? 'snippets' : 'prompts'} error={loadErr} onRetry={load} />
+        ) : loading ? <ListSkeleton rows={6} /> : count === 0 ? (
           isSnips ? (
             <EmptyState icon={Puzzle} title={q ? 'No matching snippets' : 'No snippets'} hint={q ? 'Try a different term.' : 'Snippets are reusable fragments other prompts include with {{> name}}. Their variables merge into the including prompt.'} action={!q ? { label: 'New snippet', onClick: () => onCreate('snippets'), icon: Plus } : undefined} />
           ) : (
