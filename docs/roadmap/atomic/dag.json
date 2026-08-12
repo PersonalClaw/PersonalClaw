@@ -2395,6 +2395,30 @@
             "WF2LOO-6"
           ],
           "pr": "#836"
+        },
+        {
+          "id": "WF2LOO-12",
+          "title": "Make judge_contract's enforcement claim honest, and rail it against drift",
+          "status": "done",
+          "scope": "An HONESTY atom over WF2LOO-1's deliverable, not a feature atom: it makes what judge_contract.py SAYS match what the code DOES, and deliberately builds none of the missing wiring. The module opens by stating 'A PASS without cited proof is invalid ... the verdict is rejected by the contract' as fact; measured, its six enforcement entry points (validate_verdict, meets_ratchet, compute_overall, detect_forbidden_modes, aggregate_samples, hints_from_dict) have ZERO production callers, and the live judge gate asks for EXACTLY ONE word parsed by verify.parse_verdict over a DIFFERENT enum, so no live response can carry proof, scores or a rubric result. Enforcing the headline would invalidate every judge PASS in all 7 shipped judge gates, which is an outage rather than a gate, so the docstring is what changes. No function is deleted; no judge gate becomes stricter; engine.py and verify.py stay byte-identical. Records WF2LOO-13 as the scoped wiring work.",
+          "done_when": "judge_contract.py's docstring stops asserting live enforcement and records the measurement instead: six enforcement entry points with zero production callers, both live judge paths named (the one-word GateKind.JUDGE gate read by verify.parse_verdict; the contract-shaped judge STAGE in 6 templates whose output dispatch_infer parses and nothing reads or validates), the rubric's prose-only reachability, and what wiring would take. One rail (test_workflows_judge_contract.py::test_the_unwired_enforcement_claim_matches_the_live_path) fails in BOTH drift directions - enforcement gaining a production caller while the docstring still says it has none, and the live gate leaving its one-word prompt while the docstring still gives that as the reason - with two vacuity floors (entry points must still be defined; the judge branch must be found before concluding anything from the gate's text), proven able to fail by three probes (marker removed; injected validate_verdict caller in verify.py; gate prompt switched to JSON) each reverted by a targeted edit. engine.py and verify.py byte-identical to HEAD, so a user's judge gate behaves exactly as before. WF2LOO-13 recorded with its measured blast radius.",
+          "deps": [
+            "WF2LOO-1",
+            "WF2LOO-6"
+          ],
+          "pr": "#1157",
+          "evidence": "FINDING: WF2LOO-1's 'engine tests prove PASS-without-proof invalid' is true only of unit tests against functions with no caller. Live gate prompt: f'{prompt}\\n\\nRespond with EXACTLY ONE word, one of: PASS, RETRY, ESCALATE, REJECT. No other text.' (engine.py judge branch); live parse verify.py:63 parse_verdict returns a verify.Verdict word only. judge_contract's only importers in src/ are judge_actors.py:26 (Isolation) and judge_pretier.py:246 (FallbackCheck) - TYPES, which enforce nothing - plus two comments (models.py:712, engine.py:1510-1511) recording that engine.py deliberately RESTATES the sampling rule rather than importing aggregate_samples. SECOND FINDING (this atom's real discovery): a live structured judge path DOES exist and already emits the contract shape. The judge STAGE in 6 bundled templates (code-project, design-project, diagnose-run, general-project, goal-pursuit-open-ended, goal-pursuit-verifiable) declares config.schema = {reasoning, verdict, scores, marginal_value, evidence_refs, proof, cannot_judge} and its prompt spells out judge_contract's own five-verdict vocabulary; dispatch_infer parses it (want_json = bool(cfg.get('schema')), engine.py:409). But nothing validates it and nothing reads it: dispatch_infer returns DONE for any parseable JSON whatever the verdict says, and ZERO shipped templates bind nodes.judge.output.* . So enforcement there could not change an outcome (ships inert) and making it decide the node would fail work that passes today - both barred, which makes the docs-honesty option forced, not preferred. THIRD: loop/judge.py is a third live structured judge with its own vocabulary (CycleVerdict{done, done_reason, marginal_value, quality_score, regressed}) and no proof field, so the contract is not expressible there either. RUBRIC REACHABILITY: 6 templates declare runtime_hints.judge.rubric (14 criteria); hints_from_dict is the only parser and has no production caller; WF2LOO-3's claimed 'test asserting every declared criterion reaches a judge' is test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt, which asserts the criterion STRING is a substring of a judge prompt - text inlining, not scoring. No target_score is ever compared to a score. BLAST RADIUS recorded for WF2LOO-13: 7 judge gates in 7 templates (gap-healing, goal-pursuit-open-ended, knowledge-lint, knowledge-synthesis, publish-article, rich-ingest, thesis-tracker) change prompt + parse; 6 templates x 14 rubric criteria become live thresholds; one token per judge answer becomes a JSON object on a gate that runs every loop iteration; the two verdict enums must converge."
+        },
+        {
+          "id": "WF2LOO-13",
+          "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
+          "status": "todo",
+          "scope": "The wiring half of what WF2LOO-1 authored and WF2LOO-12 measured as unwired. The live judge path is taught to speak the contract instead of a bare word, and the 6 judge STAGES' already contract-shaped output stops being discarded. The two verdict vocabularies (judge_contract.Verdict PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs verify.Verdict PASS/RETRY/ESCALATE/REJECT) are reconciled to ONE, not bridged - engine.py currently restates the sampling rule precisely to avoid feeding one vocabulary's values to the other's aggregator. Enforcement lands only after the population is measured: giving a never-run control teeth before the population satisfies it is an outage, which is why WF2LOO-12 deliberately did not.",
+          "done_when": "GateKind.JUDGE asks for the contract JSON instead of one bare word; validate_verdict decides the gate, so a PASS without proof/evidence_refs is rejected rather than accepted; meets_ratchet compares the 14 declared runtime_hints.judge rubric criteria against their target_score for the first time; hints_from_dict becomes the parser of the declarations 6 templates already carry; the 6 judge STAGES' output is validated and bound by the templates that produce it (today zero templates bind nodes.judge.output.*); the two verdict enums are reconciled to one closed set with the loser deleted (clean break), keeping the pre-tier, sampling and cross-model isolation seams WF2LOO-6/WF2LOO-11 built. Gated on a prior measurement of how many real judge responses would satisfy the contract - measured blast radius: 7 judge gates in 7 bundled templates change prompt + parse; 6 templates x 14 rubric criteria become live thresholds (an unscored criterion is a 'not scored' shortfall, i.e. a REJECT, under Ratchet.STRICT); every judge answer grows from ~1 token to a JSON object on a gate that runs every loop iteration, plus a more frequent PROTOCOL failure mode on unparseable JSON. WF2LOO-12's rail is retired in the same change, since the docstring stops saying enforcement is not wired.",
+          "deps": [
+            "WF2LOO-12",
+            "WF2LOO-7"
+          ]
         }
       ]
     },
@@ -7637,6 +7661,11 @@
         "plan": "WF2LEA"
       },
       {
+        "id": "WF2LOO-13",
+        "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
+        "plan": "WF2LOO"
+      },
+      {
         "id": "WF2UNI-12",
         "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
         "plan": "WF2UNI"
@@ -8224,6 +8253,8 @@
       "WF2LOO-9",
       "WF2LOO-10",
       "WF2LOO-11",
+      "WF2LOO-12",
+      "WF2LOO-13",
       "WF2TAS-1",
       "WF2TAS-2",
       "WF2TAS-3",
@@ -9506,10 +9537,10 @@
       {
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
-        "total_atoms": 11,
-        "done": 10,
+        "total_atoms": 13,
+        "done": 11,
         "in_progress": 0,
-        "todo": 0,
+        "todo": 1,
         "blocked": 1
       },
       {
@@ -9936,6 +9967,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 843
+    "edge_count": 847
   }
 }
