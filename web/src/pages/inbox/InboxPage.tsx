@@ -115,6 +115,11 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
 
   const health = status?.health
   const disabled = status ? !status.enabled : false
+  // This surface's own definition of "the user has narrowed": a query, a status filter off its
+  // default (`open` — NOT `all`, which is the trap the results-announcement rail records), or a kind
+  // chip. Shared by the empty state's title AND hint so the two can never disagree about which state
+  // the list is in.
+  const narrowed = !!(q.trim() || filter !== 'open' || kind)
 
   // Live per-filter counts so the menu shows where items sit. Counts respect the active
   // KIND chip — a count that ignored it would disagree with the list right beside it.
@@ -197,7 +202,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
           // `filter !== 'all'` was true on mount and the list announced "39 items" before the user
           // did anything. The announcement is for a query the USER made.
-          results={{ count: (filtered ?? []).length, noun: 'items', active: !!q.trim() || filter !== 'open' || !!kind }}>
+          results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }}>
           <FilterMenu sections={filterSections} label="Show" />
         </ListControls>
       }
@@ -265,7 +270,20 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           </div>
         )}
         {filtered === null ? <ListSkeleton rows={6} /> : filtered.length === 0 ? (
-          <EmptyState icon={InboxIcon} title={q || filter !== 'open' || kind ? 'Nothing here' : 'Inbox zero'} hint={disabled ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.' : kind ? `No ${kindMeta(kind).label.toLowerCase()} right now.` : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'} />
+          // 🪤 NARROWED FIRST, THEN THE BLANK SLATE. The title always distinguished the two
+          // ('Nothing here' vs 'Inbox zero'), but the HINT tested `disabled` first — so a user with
+          // items who searched for something that does not match was told "Enable a source to begin",
+          // advice for a completely different problem, under a title saying their filter found
+          // nothing. Measured on `#/inbox`: filtering to no matches rendered the blank-slate
+          // onboarding paragraph. Eleven other list surfaces answer the same state with "Try a
+          // different …"; this is the twelfth.
+          <EmptyState icon={InboxIcon}
+            title={narrowed ? 'Nothing here' : 'Inbox zero'}
+            hint={narrowed
+              ? (kind ? `No ${kindMeta(kind).label.toLowerCase()} matches the current search or filter.` : 'Try a different search or filter.')
+              : disabled
+                ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.'
+                : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'} />
         ) : (
           <div className="flex flex-col gap-s">
             {filtered.map((it, i) => {
