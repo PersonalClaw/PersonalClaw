@@ -274,9 +274,16 @@ class NativeAgentRuntime(AgentProvider):
         self._cwd = Path(cwd) if cwd else None
         self._session_key = session_key
         # Per-turn procedural-outcome accumulator (M5d): bounded list of
-        # (tool, failed) the after-turn review drains into procedural memory.
-        # Capped so a long run can't grow it unbounded.
-        self._tool_outcomes: list[tuple[str, bool]] = []
+        # (tool, outcome) the after-turn review drains into procedural memory, where
+        # `outcome` is one of `memory_service.PROCEDURAL_OUTCOMES`. Capped so a long
+        # run can't grow it unbounded.
+        #
+        # An OUTCOME rather than a `failed` bool (WF2LEA-13): a denial and a failure
+        # are both `Error: …` to the model but different priors — labelling the
+        # user's refusal "failed" is what taught the failure-synthesis pass to
+        # publish "this tool is unreliable — prefer an alternative" about a tool
+        # that works fine and is merely not allowed here.
+        self._tool_outcomes: list[tuple[str, str]] = []
         # Unattended run (scheduled run-prompt/run-workflow, Goal/Code loop cycle,
         # dry-run replay): no human is present. Interactive tools are stripped at
         # start() and the approval gate fails fast (recoverable denial, no 300s
@@ -1046,8 +1053,22 @@ class NativeAgentRuntime(AgentProvider):
         failed = result_str.startswith("Error:")
         # Procedural-memory signal (M5d): accumulate this turn's tool outcomes for
         # the after-turn review to mine into how-to-work priors. Bounded.
+        #
+        # A DENIED call is not a FAILED one (WF2LEA-13). Every denial path in this
+        # class — the hard deny-list, the task-mode gate, a PreToolUse hook, the
+        # user's reject, and the unattended auto-decline — returns an observation
+        # authored by `security.classify_denial`, so that function's own recogniser
+        # is the discriminator rather than a second copy of its wording here. The
+        # breaker still sees `failed`: a denial IS a reason to stop repeating the
+        # call, it is just not evidence about the tool.
         if len(self._tool_outcomes) < 200:
-            self._tool_outcomes.append((tool_name, failed))
+            if not failed:
+                _outcome = "success"
+            elif security.is_denial_observation(result_str):
+                _outcome = "denied"
+            else:
+                _outcome = "failed"
+            self._tool_outcomes.append((tool_name, _outcome))
         streak = self._breaker.record(_bkey, failed)
         if failed and streak >= _BREAKER_WARN:
             result_str += (
@@ -1390,11 +1411,13 @@ class NativeAgentRuntime(AgentProvider):
     def is_alive(self) -> bool:
         return True
 
-    def drain_tool_outcomes(self) -> list[tuple[str, bool]]:
-        """Return this run's accumulated (tool, failed) outcomes and clear them.
+    def drain_tool_outcomes(self) -> list[tuple[str, str]]:
+        """Return this run's accumulated ``(tool, outcome)`` pairs and clear them.
 
-        The after-turn review drains this into procedural memory (M5d). Draining
-        (not just reading) keeps the accumulator bounded across turns."""
+        ``outcome`` is one of :data:`personalclaw.memory_service.PROCEDURAL_OUTCOMES`
+        — ``success``, ``failed`` or ``denied``. The after-turn review drains this
+        into procedural memory (M5d). Draining (not just reading) keeps the
+        accumulator bounded across turns."""
         out = list(self._tool_outcomes)
         self._tool_outcomes.clear()
         return out
