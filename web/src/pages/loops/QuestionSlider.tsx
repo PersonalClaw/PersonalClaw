@@ -90,9 +90,13 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
 
       {/* Footer: Back / Skip / Next while walking; a single Submit on the last question. */}
       <div className="flex items-center justify-between border-t border-outline-variant/30 pt-m">
+        {/* Reachable at the first question rather than natively disabled: walking back with the
+            keyboard otherwise destroys focus on arrival: the button being pressed drops out of
+            the tab order and focus falls to <body>. */}
         <Button variant="ghost" size="sm"
           onClick={() => state.index === 0 ? onExit?.() : dispatch({ type: 'back' })}
-          disabled={state.index === 0 && !onExit}>
+          disabled={state.index === 0 && !onExit}
+          disabledReason="This is the first question">
           <ArrowLeft size={15} /> Back
         </Button>
         {onLast ? (
