@@ -303,13 +303,6 @@
         "enum:DependencyType.REQUIRED_FOR"
       ]
     },
-    "src/personalclaw/triggers/dispatch.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:DrainAction.SKIP_CYCLE",
-        "enum:DrainAction.SKIP_DUPLICATE"
-      ]
-    },
     "src/personalclaw/workflows/autonomy.py": {
       "inert": 2,
       "surfaces": [
@@ -366,10 +359,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 23,
+      "enum": 21,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 150
+    "inert": 148
   }
 }

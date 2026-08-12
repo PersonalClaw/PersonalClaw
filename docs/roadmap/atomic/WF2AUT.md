@@ -22,6 +22,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2AUT-10` | ⬜ | §5 did/suppressed fold affordance FE consumer | `WF2AUT-5` | the Automations runs-inbox surfaces the did-vs-suppressed fold control so archived/inert rows can be revealed on demand; backend archive split already present, this wires the FE toggle |
 | `WF2AUT-11` | 🔴 | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) | `WF2AUT-3`, `EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion` | kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4) |
 | `WF2AUT-12` | ⬜ | webhook kind fire endpoint + scoped token verification (E4-blocked) | `WF2AUT-5`, `EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate`, `EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision` | owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard |
+| `WF2AUT-13` | ✅ | §3.3 cursor rule call site: the spool drain acts on `drain_decision` instead of acking unconditionally | `WF2AUT-1`, `WF2AUT-2` | the spool drain classifies each re-entry into `Handling` at an explicit side-effect boundary, calls `drain_decision`, and acts on every `DrainAction` (consume/hold/give-up/skip-duplicate) with a durable retry budget; a failure AFTER the boundary is never retried; `SKIP_CYCLE` deleted for want of an honest producer; exhaustiveness ratchet over both enums with a raising tail |
 
 ## Atom scopes
 
@@ -132,4 +133,80 @@ Unblock by porting the loop-cycle driver off autonudge first, per LOOPS-EVOLUTIO
 Status REMAINING BLOCKED (E4 owner decision); §1.2 webhook kind; §1.4 decision 12 scoped tokens; §7 step 6; S119/S123
 
 **Done when:** owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard
+
+### `WF2AUT-13` — §3.3 cursor rule call site: the spool drain acts on `drain_decision` instead of acking unconditionally
+
+**Status:** done (PR PENDING)
+
+§3.3 consumer cursor rule ("the `trigger-spool.jsonl` drain adopts this rule"); §3.2 peek-then-deliver-then-ack; §7 crit 7 (no double-fire / no lost fire) and crit 8 (no silent drop); `triggers/dispatch.py` + `triggers/loop.py`
+
+**Done when:** the spool drain classifies each re-entry into `Handling` at an explicit side-effect boundary, calls `drain_decision`, and acts on every `DrainAction` (consume/hold/give-up/skip-duplicate) with a durable retry budget; a failure AFTER the boundary is never retried; `SKIP_CYCLE` deleted for want of an honest producer; exhaustiveness ratchet over both enums with a raising tail
+
+**Design**
+
+The finding: `triggers/dispatch.py` shipped a complete, documented, unit-tested decision layer for
+the event drain with **zero production callers**. `Handling` ("the vocabulary that makes 'never drop'
+checkable"), `DrainAction`, `drain_decision` and `classify_handler_outcome` were referenced nowhere
+in `src/`. Meanwhile the real drain — `loop.py::_drain_spool` — re-entered each spooled envelope
+through `emit_event`, caught everything with a `logger.warning`, and did `handled += 1`
+**unconditionally**, then acked the whole batch. Its own comment said holding "would retry it on
+every tick forever — the poison pill `drain_decision` names", naming the function it never called.
+So §3.3's retry/hold policy, its bounded budget and its poison-pill give-up were all inert, and a
+transient re-entry failure was silently swallowed as a delivered fire. §3.3 states the rule and says
+"the `trigger-spool.jsonl` drain adopts this rule" — so this atom is that adoption, not new policy.
+
+**The side-effect boundary is the constraint that shapes everything.** A double-fire is the one
+outcome §7 crit 7 bans, and `handled += 1` on failure existed precisely to guarantee at-most-once.
+Introducing HOLD means an envelope can run twice, so the boundary must be explicit: the drain may
+only hold a failure that provably happened **before** any side effect. `emit_event` is that line. Its
+pre-flight (read the envelope, split `kind`, build kwargs, resolve `get_engine()`) touches no store
+and fires no trigger; once `emit_event` is entered it matches every stored trigger and schedules
+their actions, and the drain cannot know how far it got — so "I don't know" resolves to DELIVERED.
+The two halves are separated by two `try` blocks rather than a comment, and `get_engine()` is the
+last pre-flight step deliberately: `emit_event` swallows an unreachable engine into a `logger.debug`,
+so resolving it above the line converts a silent total loss of the batch into a bounded retry.
+
+**HOLD is head-of-line, because `clear_spool(handled=N)` can only express a PREFIX ack.** There is no
+"keep line 2, ack lines 1 and 3". Extending it to an arbitrary keep-set was rejected: it would have
+to re-serialize lines a concurrent `spool_fire` may have appended since the read, trading a bounded
+retry for a lost fire. So the drain acks the prefix it consumed, stops at the first envelope it must
+hold, and leaves that envelope plus the tail on disk in order. Blocking is bounded by
+`MAX_TRANSIENT_RETRIES` ticks, and the transient this exists for (engine unreachable) fails the whole
+batch identically anyway.
+
+**The retry budget is durable, or there is no hold.** `held_retries` lives in a one-record sidecar
+(`trigger-spool-hold.json`) keyed on the deterministic `event_id` — not on `Cursor.seq`, because
+every spooled envelope is written with `seq=0`. One record suffices because HOLD is head-of-line,
+which also makes the file self-pruning. A sidecar rather than a field on the spooled line for the
+same append-path reason as above. `write_spool_hold` returns whether it persisted, and the caller
+honours it: a hold that cannot record its count is **acked loudly instead of held**, because an
+unbounded retry across process lifetimes is strictly worse than the unconditional ack it replaced.
+
+**Per skip_* member.** `SKIP_DUPLICATE` is WIRED: `event_id`/`payload_hash` are deterministic over
+(source, kind, payload), so two spool lines sharing a hash inside `DEDUP_WINDOW_SECS` are exactly
+what the window was written to collapse; the shipped `is_duplicate` is the producer, compared on
+emit times so a family seen an hour apart stays two facts. `SKIP_CYCLE` is **DELETED**: a cycle skip
+needs a `trigger_id` to compare `Envelope.spawned_by` against, and the drain has none (it re-enters
+through `emit_event`, which matches against every stored trigger), and nothing in production writes
+`spawned_by` at all. `cycle_guard`, which returns a plain `(bool, reason)`, stays the only expression
+of that rule.
+
+**Implementation plan**
+
+1. `dispatch.py`: delete `DrainAction.SKIP_CYCLE` and document why; give `drain_decision` an explicit
+   `TRANSIENT` branch plus a raising tail (the transient rules were the *fallthrough*, so an unknown
+   handling string silently inherited "retry five times then drop"); document the prefix-ack
+   constraint on `clear_spool`; add `spool_hold_path` / `read_spool_hold` / `write_spool_hold` /
+   `clear_spool_hold`.
+2. `loop.py`: add `_reenter_spooled` — the boundary, returning `(handling, detail)` and calling
+   `classify_handler_outcome` for a pre-flight throw, `Handling.PERMANENT` for an envelope with no
+   event kind (it used to reach `emit_event` with an empty `event_type`, match nothing, and count as
+   delivered — a drop wearing a success), and `Handling.DELIVERED` for anything past the line.
+3. `loop.py`: rewrite `_drain_spool` as the call site — dedup check, `drain_decision`, a branch per
+   `DrainAction` with a raising tail, prefix ack, sidecar write-or-ack.
+4. Tests in `tests/test_triggers_loop.py`, all driving the REAL drain via `tick_once`: hold, the
+   post-boundary never-retried pin, budget durability to give-up, head-of-line ordering, duplicate
+   collapse, the window not collapsing two facts, permanent, unbudgetable hold, plus the ratchet
+   (AST over both functions' source + both raising tails + a producer per `Handling` member).
+5. Regenerate `inert-surface-baseline.json` (a legitimate shrink) in the same commit.
 

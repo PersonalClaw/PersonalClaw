@@ -122,6 +122,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An automation fired from a background write could be dropped without a trace when the retry
+  it was owed was skipped.** Some fires are recorded on disk instead of running immediately — a
+  memory write from the CLI, for example, has no event loop to run an action on, so the fire is
+  parked and picked up on the next scheduler tick. If picking it up failed, the fire was marked
+  handled anyway and deleted: a warning in the log, and an automation that never ran. It is now
+  retried. A failure that happened *before* the automation could have started anything is held and
+  tried again on later ticks, up to five times, and the attempt count survives a restart, so a
+  temporary problem no longer costs you the fire. A failure that happened *after* the automation
+  was handed off is never retried, because running it twice is worse than not knowing whether it
+  finished. A fire that can never work — a malformed record, or five failed attempts — is dropped
+  once, loudly, with the reason, instead of stalling every automation behind it. Two identical
+  fires parked within five minutes of each other now run once, which is the same rule already
+  applied to a webhook a sender retried or a file saved twice.
 - **A workflow set to `on_overlap: queue` started a second run alongside the first instead of
   queueing it.** The policy did the opposite of its name: with a run already in flight, `queue`
   matched no branch in the code that applies the setting and fell through to "start now", so a

@@ -220,13 +220,25 @@ class Cursor:
 
 
 class DrainAction(str, Enum):
-    """What the drain does with the event at the cursor."""
+    """What the drain does with the event at the cursor.
+
+    Every member has a PRODUCER and a branch in `triggers.loop._drain_spool` (WF2AUT-13), and
+    that function's dispatch carries a raising tail so a member added here without a branch
+    fails loudly instead of inheriting another's behaviour.
+
+    `SKIP_CYCLE` was DELETED rather than left declared. A cycle skip needs a `trigger_id` to
+    compare `Envelope.spawned_by` against, and the spool drain has none: it re-enters through
+    `emit_event`, which does its own matching against every stored trigger, so there is no one
+    trigger the drain could guard. Nothing in production writes `spawned_by` either (measured:
+    zero writers outside this module). A member with no honest producer reads as a shipped
+    control and is worse than its absence — so `cycle_guard`, which returns a plain
+    `(bool, reason)`, stays the only expression of that rule.
+    """
 
     CONSUME = "consume"
     HOLD = "hold"
     GIVE_UP = "give_up"
     SKIP_DUPLICATE = "skip_duplicate"
-    SKIP_CYCLE = "skip_cycle"
 
 
 def drain_decision(
@@ -248,6 +260,12 @@ def drain_decision(
     * `transient` past the budget → GIVE_UP, loudly. Holding indefinitely
     on one unreachable provider
       would stop every other automation, which is worse than one loudly-dropped event.
+
+    Exhaustive over the closed enum with a RAISING tail (WF2AUT-13). The transient rules used to
+    be the *fallthrough*, which meant an unknown handling string — a typo, or a `Handling` member
+    added without a rule here — silently inherited "retry five times then drop". A new member must
+    declare its own cursor behaviour, because inheriting the wrong one of these three is either
+    event loss or a poison pill.
     """
     if handling == Handling.DELIVERED.value:
         return DrainAction.CONSUME.value, ""
@@ -256,15 +274,21 @@ def drain_decision(
             DrainAction.CONSUME.value,
             "permanent failure: the payload cannot be handled, so holding would stall the stream",
         )
-    if held_retries + 1 >= max_retries:
+    if handling == Handling.TRANSIENT.value:
+        if held_retries + 1 >= max_retries:
+            return (
+                DrainAction.GIVE_UP.value,
+                f"transient failure persisted for {max_retries} attempts; advancing loudly rather "
+                "than stalling every other automation",
+            )
         return (
-            DrainAction.GIVE_UP.value,
-            f"transient failure persisted for {max_retries} attempts; advancing loudly rather than "
-            "stalling every other automation",
+            DrainAction.HOLD.value,
+            f"transient failure, attempt {held_retries + 1} of {max_retries}; the event is not "
+            "lost",
         )
-    return (
-        DrainAction.HOLD.value,
-        f"transient failure, attempt {held_retries + 1} of {max_retries}; the event is not lost",
+    raise AssertionError(
+        f"no branch for handling {handling!r} — a new Handling member must declare its own cursor "
+        "rule here rather than inherit another member's"
     )
 
 
@@ -407,6 +431,15 @@ def clear_spool(*, handled: int, path: Path | None = None) -> None:
     Rewrite-with-remainder rather than delete: a fire spooled while the
     drain was running would be lost
     by an unconditional truncate, and that window is exactly when a busy machine spools most.
+
+    ⚠️ **PREFIX ACK ONLY, and that constrains the drain** (WF2AUT-13). This can express "ack the
+    first N" and nothing else — there is no "keep line 2, ack lines 1 and 3". So `DrainAction.HOLD`
+    is necessarily HEAD-OF-LINE: the drain acks the prefix it consumed, stops at the first envelope
+    it must hold, and leaves that envelope plus everything after it for the next tick. Extending
+    this to an arbitrary keep-set was considered and rejected — it would have to re-serialize lines
+    a concurrent `spool_fire` may have appended since the read, trading a bounded retry for a lost
+    fire. Head-of-line blocking is bounded by `MAX_TRANSIENT_RETRIES` ticks, and the transient this
+    exists for (the event engine unreachable) fails the whole batch identically anyway.
     """
     target = path or spool_path()
     try:
@@ -418,6 +451,93 @@ def clear_spool(*, handled: int, path: Path | None = None) -> None:
         from personalclaw.workflows.store import atomic_write
 
         atomic_write(target, "\n".join(remaining) + ("\n" if remaining else ""))
+    except Exception:
+        return
+
+
+# ── the HELD envelope's retry budget: what makes HOLD bounded across restarts (WF2AUT-13) ──
+
+
+def spool_hold_path() -> Path:
+    """Where the currently HELD envelope's retry count lives, beside the spool.
+
+    A SIDECAR rather than a field on the spooled line, because the append path forbids the
+    alternative: `trigger-spool.jsonl` is append-only and `clear_spool` only ever drops a prefix, so
+    stamping a count onto one line would mean re-serializing lines a concurrent `spool_fire` may
+    have appended since the read — trading a bounded retry for a lost fire. This file has exactly
+    one writer (the drain) and never touches the append path.
+
+    Resolved per call like `spool_path`, for the same reason: a module-level path binds to whatever
+    home was set when the module first loaded, which is how a test writes into the real
+    `~/.personalclaw`.
+
+    Deliberately NOT a `durability.inventory` StateEntry — like the spool itself and `file_poll`'s
+    hash maps, this is high-churn runtime bookkeeping that is meaningless once restored, and a
+    backup that carried a stale retry count would resurrect a budget for an envelope that is gone.
+    """
+    from personalclaw.config.loader import config_dir
+
+    return Path(config_dir()) / "trigger-spool-hold.json"
+
+
+def read_spool_hold(*, path: Path | None = None) -> tuple[str, int]:
+    """The `(event_id, held_retries)` of the currently held envelope, or `("", 0)` if none.
+
+    ONE record, not a map, because HOLD is head-of-line by construction (see `clear_spool`): the
+    drain stops at the first envelope it must hold, so a second can never be held in the same pass.
+    That also makes the file self-pruning — a per-event map would accumulate a dead key for every
+    envelope ever held and need its own garbage collection, over a file nothing else reads.
+
+    Keyed on `event_id` — deterministic, derived from the payload hash — and NOT on `Cursor.seq`:
+    every spooled envelope is written with `seq=0` (`event_triggers._spool`), so seq cannot identify
+    one. A recorded id that does not match the current head means the head changed and the budget
+    starts over, which is `Cursor.advance`'s rule applied to the spool.
+
+    Unreadable or malformed reads as "no hold". That direction is chosen: it costs extra retries on
+    a genuinely transient failure, where assuming the budget is spent would drop a recoverable event
+    on its first blip.
+    """
+    target = path or spool_hold_path()
+    try:
+        record = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            return "", 0
+        return str(record.get("event_id", "") or ""), int(record.get("held_retries", 0) or 0)
+    except Exception:
+        return "", 0
+
+
+def write_spool_hold(*, event_id: str, held_retries: int, path: Path | None = None) -> bool:
+    """Persist the held envelope's retry count. Returns whether it was written.
+
+    This is what makes HOLD *bounded*. Without a durable count the budget resets on every process
+    start, and a retry that survives restarts without a surviving count is an unbounded retry — a
+    crash-looping gateway would re-enter the same failing envelope forever. That is strictly worse
+    than the unconditional ack this replaced, which at least terminated.
+
+    So the return value is load-bearing and the caller MUST honour it: a drain that cannot persist
+    the count cannot bound the retry, and must ack the envelope loudly rather than hold it.
+    """
+    target = path or spool_hold_path()
+    try:
+        from personalclaw.workflows.store import atomic_write
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(
+            target,
+            json.dumps(
+                {"event_id": event_id, "held_retries": int(held_retries)}, separators=(",", ":")
+            ),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def clear_spool_hold(*, path: Path | None = None) -> None:
+    """Forget the hold. Called whenever the drain acks past the envelope it was holding."""
+    try:
+        (path or spool_hold_path()).unlink(missing_ok=True)
     except Exception:
         return
 
