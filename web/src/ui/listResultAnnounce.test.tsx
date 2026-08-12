@@ -54,6 +54,20 @@ import { ListControls } from './ListControls'
 //   1 row                 "1 item"                (singularised)
 //   query cleared         ""
 
+/** The `active:` expression under test — FOLLOWED THROUGH A NAMED CONST when the surface hoists it.
+ *
+ *  🪤 FOURTH WIDENING OF THIS FAMILY, and the same lesson each time: the rail was checking the
+ *  SPELLING on one line, not the property. `#/inbox` now derives `narrowed` once and shares it between
+ *  the announcement and its empty state — strictly better code, since the two can no longer disagree
+ *  about which state the list is in — and the line-scoped matcher rejected it. The property is
+ *  "derived from the query or from a filter compared against THIS surface's own default"; where that
+ *  expression is written is not the property. */
+function activeExpr(src: string, line: string): string {
+  const raw = line.match(/active:\s*([^,}]+)/)?.[1]?.trim() ?? ''
+  if (!/^[A-Za-z_$][\w$]*$/.test(raw)) return raw
+  return src.match(new RegExp(`const ${raw}\\s*=\\s*([^\n]+)`))?.[1] ?? raw
+}
+
 const opts = { value: '', onChange: () => {}, options: [] }
 
 describe('a filtered list announces its result count', () => {
@@ -173,7 +187,7 @@ describe('the migrated list surfaces pass a result count', () => {
       // query (`!!q.trim()`); filter-only ones compare against their own default value.
       const line = src.split('\n').find((l) => l.includes('results={{'))!
       expect(line, 'active must be derived, not hardcoded').not.toMatch(/active:\s*true/)
-      expect(line, 'active must reference the query or the filter').toMatch(/active:\s*(!!|\w+\s*!==)/)
+      expect(activeExpr(src, line), 'active must reference the query or the filter').toMatch(/(!!|\w+\s*!==)/)
     })
   }
 
@@ -189,7 +203,7 @@ describe('the migrated list surfaces pass a result count', () => {
     for (const [rel, dflt] of Object.entries(defaults)) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       const line = src.split('\n').find((l) => l.includes('results={{'))!
-      expect(line, `${rel} defaults its filter to '${dflt}'`).toContain(`!== '${dflt}'`)
+      expect(activeExpr(src, line), `${rel} defaults its filter to '${dflt}'`).toContain(`!== '${dflt}'`)
     }
   })
 
