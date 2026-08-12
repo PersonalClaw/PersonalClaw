@@ -389,6 +389,96 @@ def test_the_enum_census_still_finds_a_nontrivial_population():
     )
 
 
+# ── PHF-13: the value-lookup ruling (NOT a widening — a pinned decision) ─────────────────
+#
+# ``PHF-13`` audited every ``E(value)`` site behind the surviving enum surfaces and ruled
+# AGAINST teaching the detector that shape: five of the six sites either never execute in
+# production or read only values this codebase itself wrote, so a syntactic rule would FALSE-
+# CLEAR them. A false clear passes the shrink-only ratchet silently (the count goes DOWN), so
+# the ruling needs its own rail. These two tests are it.
+
+
+def test_value_lookup_alone_does_not_clear_a_member(tmp_path):
+    """A member reachable only through ``E(value)`` is STILL REPORTED — on purpose.
+
+    ``E(value)`` does not prove reachability: the construction may never execute, and its value
+    may come from state we wrote ourselves. Whoever wants to change this must first re-run
+    ``PHF-13``'s per-site provenance audit (verdict table in the generator docstring and in
+    ``PLATFORM-HARDENING-FLOORS``'s execution log) — not just make this test green.
+    """
+    inert = _inert_in(
+        tmp_path,
+        {
+            "deserializer.py": """
+                from enum import Enum
+
+                class Coerced(str, Enum):
+                    WRITTEN = "written"
+                    NEVER_WRITTEN = "never_written"
+
+                def load(row):
+                    # Value lookup over a column WE wrote. Reaches NEVER_WRITTEN only if some
+                    # writer ever produced it — and none does.
+                    return Coerced(row["state"])
+
+                def save(rec):
+                    rec["state"] = Coerced.WRITTEN.value
+                """,
+        },
+    )
+    assert inert == {"Coerced.NEVER_WRITTEN"}, (
+        "value-lookup construction cleared a member the census cannot prove is reachable; "
+        f"got {sorted(inert)} — see PHF-13's verdict table before widening this rule"
+    )
+
+
+def test_the_audited_value_lookup_call_sites_have_no_production_caller():
+    """``PHF-13``'s load-bearing evidence, pinned on the real tree.
+
+    ``Verdict.REPLAN``, ``Ratchet.RELAXED`` and ``Actor.WORKER`` are reported inert even though
+    each sits on a class with an ``E(value)`` construction, because the FUNCTIONS holding those
+    constructions have no production caller — ``engine.py`` deliberately restates the judge
+    aggregation rule instead of importing it. If one of them is ever wired up, this test reds:
+    re-verdict the member then (the flag may have become a false red) instead of trusting the
+    generator's table.
+    """
+    owners = {
+        "validate_verdict": "workflows/judge_contract.py",
+        "hints_from_dict": "workflows/judge_contract.py",
+        "resolve_transition": "workflows/judge_actors.py",
+    }
+    callers: dict[str, list[str]] = {name: [] for name in owners}
+    for f in _src_py_files():
+        rel = f.as_posix()
+        text = f.read_text(encoding="utf-8")
+        for name, owner in owners.items():
+            if rel.endswith(owner):
+                continue
+            if f"{name}(" in text or f"import {name}" in text:
+                callers[name].append(rel)
+    wired = {name: found for name, found in callers.items() if found}
+    assert not wired, (
+        f"a value-lookup call site PHF-13 recorded as dead now has a production caller ({wired})"
+        " — re-verdict the enum members that ruling covers (Verdict.REPLAN, Ratchet.RELAXED,"
+        " Actor.WORKER)"
+    )
+
+
+def test_the_value_lookup_ruling_is_recorded_in_the_generator():
+    """The verdicts are the deliverable, so they must live where the next reader lands: in the
+    detector that produces the flags, not only in a plan log."""
+    from scripts import generate_inert_surface_baseline as gen
+
+    doc = (gen._inert_enum_members.__doc__ or "").lower()
+    assert "deliberately not taught" in doc, "the PHF-13 ruling is missing from the detector"
+    for marker in ("externally reachable", "internal only", "dead call site"):
+        assert marker in doc, f"the per-site verdict vocabulary lost {marker!r}"
+    assert "construction is the known remaining false-red shape" not in doc, (
+        "PHF-12's superseded premise is asserted again in the detector docstring; "
+        "judge_contract.py:342 has no production caller, so it does not make REPLAN reachable"
+    )
+
+
 def test_forbidden_to_raise_doc_line_is_present():
     """done_when: "the forbidden-to-raise doc line is present" — in BOTH the generator and
     this test, so neither can drop it unnoticed."""
