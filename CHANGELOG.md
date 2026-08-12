@@ -27,6 +27,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A lesson saved for one project no longer becomes a rule for every project.** The
+  `memory_remember` tool offers `scope: "workspace"` and the workspace-identity prompt block
+  promises such a lesson is "only visible in this working directory" — but `POST /api/lessons`
+  read neither the scope nor the workspace name, and neither `write_lesson` layer had a scope
+  parameter, so the lesson was stored **global** and the caller was told `ok`. A workspace lesson
+  is now stored against the working directory it was taught in (`realpath`, matched exactly), and
+  is injected only into sessions running in that directory. Global lessons are unchanged: every
+  lesson saved before this release is global and still applies everywhere, and no migration runs.
+  The endpoint now **refuses instead of downgrading** — `scope="workspace"` without a workspace, a
+  workspace that is not an absolute path, or an unrecognized scope each return 400 rather than
+  quietly writing a global lesson. Your lesson list still shows every lesson (and now says which
+  workspace each belongs to), so a workspace lesson stays visible to manage and delete;
+  `GET /api/lessons?workspace=<absolute path>` asks for one directory's view.
+
 - **`until_dry` workflow loops now end when the work reports no progress, instead of always running
   to their iteration cap.** A loop can declare which field of its iteration output counts as
   progress (`progress_field`), and two shipped templates do — `goal-pursuit-open-ended`

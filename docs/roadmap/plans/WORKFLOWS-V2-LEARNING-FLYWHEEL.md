@@ -1591,3 +1591,120 @@ route, no new config key: the block rides the budget knob that already exists). 
 `test_harness_validate.py` failures (`.venv/bin/python` relative path, 11/11 green in the main
 checkout; nothing here touches `harness/`). No `web/` change. **Real-home rail:
 `/Users/golani/.personalclaw` unchanged by this run.**
+
+---
+
+**DONE — `WF2LEA-14` (2026-08-12): lesson SCOPE now survives the write path, and the read path
+honors it.** Filed here rather than under a memory plan because this plan owns the lesson write
+path end to end: `WF2LEA-3` owns the three `/api/lessons` consumers, `WF2LEA-13` owns how a lesson
+reaches a prompt. `MEMORY-GRAPH-AND-VAULT` owns the graph/vault, not lesson reach;
+`PLATFORM-HARDENING-FLOORS` only *catalogued* `enum:MemoryScope.WORKSPACE` as inert — it is the
+census, not the owner.
+
+**The finding (the whole chain).** `mcp_memory.py:41-48` advertises `scope: "global" |
+"workspace"` with `workspace` documented as *"required when scope='workspace'"*, and enforces it:
+line 106-110 returns `"Error: workspace name is required when scope='workspace'"` before POSTing
+`{"rule","category","scope"[,"workspace"]}` to `/api/lessons`.
+`dashboard/handlers/schedule.py::api_lessons_create` read `rule`, `category` and `negative` and
+**never** `scope`/`workspace`, then called `svc.write_lesson(rule, category, negative)`.
+`memory_service.write_lesson` and `vector_memory.write_lesson` had **no scope parameter at all**,
+so the row landed at the `MemoryRecord` default — global — and the symptom was already sitting in
+`inert-surface-baseline.json` as `enum:MemoryScope.WORKSPACE`. Read side: `get_records`/`query`
+could filter `scope`/`scope_ref`, but `get_lessons()` returned every `lesson.%` row unfiltered. So
+a caller that carefully asked for a workspace-scoped lesson silently got a global one and was told
+`{"ok": true}`.
+
+**Write path threaded.** `api_lessons_create` → `resolve_lesson_scope` →
+`memory_service.write_lesson(scope=, scope_ref=)` → `vector_memory.write_lesson` → the row's
+`scope`/`scope_ref` columns. The endpoint does not trust the MCP tool's validation: the tool is one
+client of a route anyone can call, and it was the *only* thing enforcing a contract the server
+ignored.
+
+**Read-side decision, and the measurement behind it.** A grep for a "current workspace" in
+`memory_service.py`/`context.py` finds nothing, as expected. What *does* exist is stronger: memory
+is already partitioned by working directory (`config.loader.memory_dir_for_cwd` →
+`_ext/<slug(realpath(cwd))>`), and the `workspace-identity` prompt block tells the agent *"You are
+operating in workspace (working directory): {{ws_path}}"* and documents `scope=workspace` as *"only
+visible in this working directory"* — a promise the code did not keep. So a workspace **is** a
+working directory, `scope_ref` is its `realpath`, and **option (a)** applies at the one read path
+that has a cwd: `context.build_session_context(cwd)` now calls `lessons_context(cwd)`. Two facts
+made this worth doing rather than falling back to (b): that read path is the one that assembles the
+prompt, and the cwd partitioning is COARSE — `ContextBuilder.__init__` registers the gateway's one
+store under both the no-cwd `_default` key and the running-workspace key, so several working
+directories share one `memory.db` in production and the scope filter is the only thing separating
+them.
+
+**What a workspace lesson is visible to:** a session whose cwd `realpath`-matches its `scope_ref`
+(its injected lessons block); the lesson INVENTORY — unfiltered `GET /api/lessons`, the MemoryPanel
+list, the count badge, the CLI listing, and `delete_lesson` (a lesson you cannot see is a lesson
+you cannot delete); and `GET /api/lessons?workspace=<abs path>` for its own directory.
+**What it is invisible to:** any session in a different working directory; every recall path with
+no workspace identity — `build_session_context()` with no cwd, the dashboard grill-tree recall in
+`loop_routes.py`, `get_context_preview`; and a `?workspace=` filter for another directory. Matching
+is EXACT — no basename, prefix or case-insensitive comparison — because two unrelated checkouts are
+routinely both named `web`, and a fuzzy match would leak one project's private rule into another. A
+ref that matches nothing simply shows no lesson, which is the safe direction to fail.
+
+**Refusal behaviour (three, not two).** `scope="workspace"` with no workspace → 400 `"workspace is
+required when scope='workspace'"`. An unknown scope string → 400 naming the two writable values.
+And the third, found while designing: a **non-absolute** workspace → 400, because a bare `alpha`
+would `realpath` against the *gateway's* cwd and land under a ref nothing can ever match — storing
+a lesson nobody will ever see is as dishonest as storing it at the wrong scope. `session`/`agent`
+are real `MemoryScope` members with no lesson write path and are refused by name. Nothing is
+written in any refusal case (asserted). Absent *or* blank scope means the documented default; `""`
+and `" "` cannot mean different things because no caller can tell them apart. Every `MemoryScope`
+member is mapped with no default branch, and a test iterates the enum so a fifth member reds
+instead of quietly becoming global.
+
+**Two rails so a narrower write never mutates a wider record.** (1) A workspace lesson keys as
+`lesson.ws.<md5(ref + rule)>`; sharing the global `lesson.<md5(rule)>` would have made a second
+write with the same text an UPSERT that silently re-scoped the global lesson — the same defect, one
+layer down. (2) The dedup pass iterates `_lessons_in_bucket(scope, scope_ref)` instead of every
+lesson, because its substring / topic-overlap / cosine branches all *supersede the loser*, so an
+unscoped pass would let a project-local rule soft-delete a lesson every other workspace still
+reads. A global write is therefore byte-identical to before.
+
+**Additive.** `scope` arrived with migration v6 as `DEFAULT 'global'`, so all existing lessons are
+already global and stay visible everywhere; every read `COALESCE`s NULL → `'global'`; the axis
+UPDATE fires only for a non-global write (the same "skip plain global/durable" rule `_apply_axes`
+follows). No migration, no backfill.
+
+**Inventory vs visibility are separate reads on purpose.** `get_lessons()` keeps its exact
+semantics (every scope) and `lessons_visible_in()` is the new fail-closed read that decides what may
+enter a prompt. Collapsing them into one defaulted parameter was rejected: whichever default won,
+one caller would be silently wrong — an undeletable workspace lesson, or a workspace lesson leaking
+into every recall.
+
+**DEVIATION (docs, not code): `WF2LEA-14` declares `WF2LEA-3` as its dependency, and that row's
+`⬜` status line is stale.** The reroute landed — `context.py` says so in its own comment ("no
+parallel JSONL store (WF2LEA-3 retired it)"), `LessonStore` is gone, and `/api/lessons` reads and
+writes `memory.db` `lesson.*`. The code and this log win over the header, per the plan-header rule.
+The dep is recorded honestly rather than re-pointed at a green row.
+
+**Product surface, recorded not half-built.** The dashboard MemoryPanel gains no scope CHOOSER: the
+Studio has no working-directory identity to offer, so a picker would have to invent one, and manual
+dashboard entry stays global — which is what that surface can honestly promise. The list response
+now carries `scope`/`workspace` per row, so a future FE badge is a display change over data that
+already arrives. The MCP `memory_list` inventory DOES label a workspace lesson with its directory —
+listing it unlabeled beside global rules would present a project-local rule as a universal one, the
+same confusion one surface over. No `web/` files changed.
+
+**Inert surface.** `enum:MemoryScope.WORKSPACE` left `inert-surface-baseline.json` as a *result*:
+the member now decides the stored key, the persisted axis, the dedup bucket and the visibility
+query, and is driven end to end by the new tests. Regenerated with
+`scripts/generate_inert_surface_baseline.py` in the same commit: enum 13 → 12, total 140 → 139.
+
+**One test fake had to be realigned.** `tests/test_triggers_lifecycle_fire.py::_fake_service`'s
+`_VS.write_lesson` stub did not accept the new scope keywords, so the service's pass-through broke
+it. The stub now mirrors the real signature — a fake that drops the parameter would only prove the
+fake's own shape.
+
+**Gate.** `make lint` clean (black/isort/flake8 + mypy 804 files).
+`tests/test_lesson_scope.py` = 22 passed. Targeted
+`-k "lesson or memory_scope or schedule or mcp_memory"` = **274 passed, 2 skipped**. Ratchets
+(`roadmap_dag_derived`, `inert_surface_baseline`, `docs_lint_baseline`, `agent_reference`) = 45+
+passed; `agent_reference` needed `python -m personalclaw.manifest_reference` (the MCP tool
+description changed) and `inert-surface-baseline.json` was regenerated by its own script — both in
+this commit. Full suite: **18651 passed / 3 failed / 30 skipped / 12 xfailed in 221s**; the 3 are
+the known worktree-only `test_harness_validate.py` failures (nothing here touches `harness/`).
+No `web/` change. **Real-home rail: `/Users/golani/.personalclaw` unchanged by this run.**

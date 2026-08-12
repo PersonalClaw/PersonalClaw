@@ -23,6 +23,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2LEA-11` | ✅ | Amendment E1.3: retroactive completed-run/conversation → skill proposal (verify-then-build, no second queue) | `WF2LEA-7` | After auditing skill_remember + proposals.py + §3.2 coverage, ONLY the missing retroactive path is added: a successful run/conversation can be promoted to a skill PROPOSAL feeding §3.2's existing queue; agent may propose unprompted but never writes; a rejected promotion is remembered in decision memory and does not re-surface |
 | `WF2LEA-12` | ⬜ | Amendment E1.4: project_context_review → typed proposals into the §2.2 queue | `WF2LEA-1` | project_context_review reads a conversation/run and emits project_instruction/project_file/project_skill proposals with per-item rationale into the §2.2 queue; nothing written until accepted; accepting applies exactly the accepted items; the decision is recorded so a second review does not re-propose a rejected item; prompt-triggered only |
 | `WF2LEA-13` | ✅ | Close the procedural-memory loop: a live reader for `procedural_priors` + the `denied`/`corrected` outcome contract | `WF2LEA-9` | procedural_priors() has a production reader — MemoryService.procedural_block() → context.build_session_context() → learning.ambient as a named block mapped onto the EXISTING `lesson` kind (no sixth kind, no sixth slot), competing inside the one `learning.context_budget_tokens` budget; a raw `→ failed`/`→ denied` row is NEVER surfaced (synthesis input only) so the block cannot become a tool-call log, and the environment-failure guardrail applies on the read side too; `denied` gains a live writer (the native runtime labels every classify_denial observation as denied, not failed) feeding synthesize_failures' pre-existing `→ denied` cluster read; `corrected` is REMOVED from the contract (no attributable seam) and PROCEDURAL_OUTCOMES is a closed set record_procedural enforces; heat may rank priors but the eviction verdict never does; the whole chain (capture → heat promotion → priors → rendered block in the real session context) is driven in one test, and a stored lesson is provably never crowded out by a prior |
+| `WF2LEA-14` | ✅ | Carry lesson SCOPE through the /api/lessons write path and honor it on read (`MemoryScope.WORKSPACE` stops being inert) | `WF2LEA-3` | `POST /api/lessons {scope:'workspace', workspace:'<abs cwd>'}` persists `scope='workspace'` + `scope_ref=realpath(cwd)` on the `lesson.*` row, threaded handler → `memory_service.write_lesson` → `vector_memory.write_lesson`; the endpoint REFUSES rather than downgrades (missing workspace / non-absolute workspace / unknown-or-unwritable scope → 400, nothing written), and every `MemoryScope` member is mapped with no default branch; the read side splits into an INVENTORY read (`get_lessons`, unchanged — list/count/delete still see every scope) and a fail-closed VISIBILITY read (`lessons_visible_in` / `get_lessons_context`) that yields global-only unless the caller declares a working directory, wired at the ONE read path that has one (`context.build_session_context(cwd)`); dedup is bucket-scoped and a workspace key is `lesson.ws.<hash(ref+rule)>` so a narrower write can never supersede or re-scope a global lesson; existing (all-global) lessons render byte-identically; `enum:MemoryScope.WORKSPACE` leaves `inert-surface-baseline.json` (140 → 139) |
 
 ## Atom scopes
 
@@ -243,3 +244,126 @@ that already exists), does not touch the breaker's failure accounting, does not 
 `TIER_MIGRATION` installer branch (a separate, human-approval-shaped question), and does not widen
 `task_shape` beyond the coarse tool identity M5d chose — a finer shape is a capture change with its
 own noise budget, and this atom is about the read side.
+
+### `WF2LEA-14` — Carry lesson SCOPE through the `/api/lessons` write path and honor it on read
+
+**Status:** ✅ done (#PENDING)
+
+Created 2026-08-12 from a traced defect, not from a task row. `WF2LEA-3` owns the three
+`/api/lessons` consumers (the `mcp_memory` tools, the dashboard backing in
+`handlers/schedule.py`, the no-embedder write path) and `WF2LEA-13` owns how a lesson competes
+for the ambient budget on the way into a prompt — so the plan that owns the lesson write path
+end to end owns closing it.
+
+**Done when:** a `POST /api/lessons {scope:"workspace", workspace:"<absolute cwd>"}` persists
+`scope='workspace'` + `scope_ref=realpath(cwd)` and reads back that way from a fresh store; the
+lesson is invisible to another working directory and to a reader with no working directory —
+including through the real `build_session_context` — while a global lesson still reaches
+everyone; the endpoint refuses (400) rather than downgrading on a missing workspace, a
+non-absolute workspace, or an unknown/unwritable scope; every `MemoryScope` member is mapped
+with no default branch; and `enum:MemoryScope.WORKSPACE` leaves the inert-surface baseline as a
+result of being consumed, not referenced.
+
+#### Design
+
+**The finding: an advertised, validated, enforced parameter that three layers then dropped.**
+`mcp_memory.py:41-48` advertises `scope: "global" | "workspace"` with `workspace` described as
+*"required when scope='workspace'"*, and it enforces exactly that — line 106-110 returns
+`"Error: workspace name is required when scope='workspace'"` — before POSTing
+`{"rule","category","scope"[,"workspace"]}` to `/api/lessons`. `api_lessons_create` then read
+`rule`, `category` and `negative` and **never** `scope`/`workspace`, calling
+`svc.write_lesson(rule, category, negative)`. Neither `memory_service.write_lesson` nor
+`vector_memory.write_lesson` had a scope parameter at all, so the row landed at the
+`MemoryRecord` default — global. The symptom was already catalogued:
+`enum:MemoryScope.WORKSPACE` sat in `inert-surface-baseline.json`. A caller that carefully asked
+for a workspace-scoped lesson silently got a global one and was told `{"ok": true}`.
+
+**Refuse, never downgrade.** The endpoint does not trust the MCP tool's validation — the tool is
+one client of an HTTP route anyone can call, and for a while it was the only thing enforcing a
+contract the server ignored. `resolve_lesson_scope` maps a declared `(scope, workspace)` pair
+onto stored axes and raises for anything it cannot honor exactly: a missing workspace, a
+**non-absolute** workspace (a bare `alpha` would `realpath` against the *gateway's* cwd and land
+under a ref nothing can ever match — silent invisibility is as dishonest as a silent downgrade),
+an unknown string, and `session`/`agent`, which are real `MemoryScope` members with no lesson
+write path. Absent or blank means the documented default; `""` and `" "` cannot mean different
+things because no caller can see the difference. Each member is tested explicitly, so a fifth
+member added later reds rather than quietly becoming global.
+
+**The read side, measured before deciding.** There is no ambient "current workspace" in
+`memory_service.py` or `context.py`. What exists is stronger and already load-bearing: memory is
+partitioned by working directory (`config.loader.memory_dir_for_cwd`), and the
+`workspace-identity` prompt block tells the agent in as many words *"You are operating in
+workspace (working directory): …"*, then documents `scope=workspace` as *"only visible in this
+working directory"* — a promise the code did not keep. So a workspace **is** a working directory,
+the ref is its `realpath`, and option (a) applies at exactly one read path:
+`context.build_session_context(cwd=…)` already has the cwd and is the path that assembles the
+prompt. That partitioning is COARSE — the gateway registers its one store under both the no-cwd
+`_default` key and the running-workspace key — so several working directories share one
+memory.db in production, and the scope filter is what separates them.
+
+**What a workspace lesson is visible to:** a session whose cwd `realpath`-matches its
+`scope_ref` (its injected lessons block, via `build_session_context`); the lesson inventory —
+`GET /api/lessons` with no filter, the MemoryPanel list, the count badge, the CLI listing, and
+`delete_lesson` (a lesson you cannot see is a lesson you cannot delete); and `GET
+/api/lessons?workspace=<abs path>` for its own workspace.
+**What it is invisible to:** any session in a different working directory; any recall path with
+no workspace identity — the dashboard grill-tree recall (`loop_routes`), the debug context
+preview, and `build_session_context()` with no cwd; and `GET /api/lessons?workspace=` for
+another directory. Matching is EXACT: no basename, prefix, or case-insensitive comparison, because
+two unrelated checkouts are routinely both named `web` and a fuzzy match would leak one project's
+private rule into another. A ref that matches nothing shows no lesson — the safe direction to
+fail.
+
+**Inventory and visibility are separate reads, deliberately.** `get_lessons()` keeps its exact
+behavior (every scope) because the management surfaces and the delete path need it;
+`lessons_visible_in(workspace)` is the new, fail-closed read that decides what may enter a
+prompt, and `get_lessons_context` is built on it. Folding both into one defaulted parameter was
+rejected: whichever default was chosen, one of the two callers would be silently wrong — a
+workspace lesson that cannot be deleted, or one that leaks into every recall.
+
+**A narrower write must never mutate a wider record.** Two mechanisms enforce it. The key: a
+workspace lesson is `lesson.ws.<md5(ref + rule)>`, so writing text that already exists globally
+is a new row rather than an UPSERT that re-scopes the global one (the same silent-rescope defect,
+one layer down). The dedup pass: it iterates `_lessons_in_bucket(scope, scope_ref)` — that
+workspace's own lessons for a workspace write, global-only for a global write — because the
+substring, topic-overlap and cosine branches all *supersede the loser*, and an unscoped pass
+would let a project-local rule soft-delete a lesson every other workspace still reads. A global
+write therefore behaves byte-identically to before.
+
+**Additive, no migration.** `scope` was added by migration v6 with `DEFAULT 'global'`, so every
+existing lesson is already global and stays visible everywhere; every read `COALESCE`s a NULL to
+`'global'` so a hand-restored row cannot vanish. The extra axis UPDATE only fires for a
+non-global write, mirroring `_apply_axes`'s own "skip for plain global/durable" rule.
+
+#### Implementation plan
+
+1. `memory_service.py`: module-level `normalize_workspace_ref` (realpath, exact, "" for
+   relative/empty) and `resolve_lesson_scope` (exhaustive over `MemoryScope`, raises with a
+   caller-facing message, never widens).
+2. `vector_memory.write_lesson`: `scope`/`scope_ref` keywords; workspace key derivation;
+   bucket-scoped dedup; one axis UPDATE after `set_semantic` for non-global writes.
+3. `vector_memory`: `_lesson_rows` (one SELECT), `get_lessons` (inventory, behavior unchanged),
+   `lessons_visible_in` (fail-closed visibility), `_lessons_in_bucket` (dedup population),
+   `get_lessons_context(workspace)`.
+4. `memory_service`: thread the axes through `write_lesson` (normalizing by the same function the
+   read side uses), add `lessons_visible_in`, make `lessons_context(workspace)` normalize and
+   default closed.
+5. `handlers/schedule.py`: resolve-or-400 on create; `?workspace=` filter on list; each listed row
+   carries its own `scope`/`workspace`.
+6. `context.py`: pass the session `cwd` into `lessons_context` — the one read path that has one.
+7. `mcp_memory.py`: the advertised `workspace` field now says *absolute working-directory path,
+   copied from the WORKSPACE IDENTITY block*, matching what the server enforces; `memory_list`
+   labels a workspace lesson with its directory so the inventory cannot read as universal rules.
+8. `tests/test_lesson_scope.py`: the round trip through the real handler + a fresh store, the
+   two-cwd/one-store injection proof, the three refusals, the exhaustive-enum rail, and the
+   no-collision / no-supersede rails.
+9. Regenerate `inert-surface-baseline.json` (it legitimately shrinks).
+
+**Scope guard — what this atom is NOT.** It does not add a scope CHOOSER to the dashboard
+MemoryPanel: the Studio has no working-directory identity to offer, so a picker would have to
+invent one, and manual dashboard entry stays global (correct — a global lesson is what the
+surface can honestly promise). The list response now carries `scope`/`workspace` so a future FE
+badge is a display change over data that already arrives. It does not give `session`/`agent`
+scopes a lesson write path, does not touch `MemoryTier`, and does not add promotion (a workspace
+lesson never widens to global on its own — that is the M5+ heat-gated promotion axis, and it
+stays out of the write path this atom fixes).

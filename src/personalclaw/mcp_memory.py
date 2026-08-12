@@ -45,7 +45,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "workspace": {
                         "type": "string",
-                        "description": "Workspace name (required when scope='workspace'). Use the workspace name from your session context.",  # noqa: E501
+                        "description": "Absolute working-directory path (required when scope='workspace'). Copy it verbatim from the WORKSPACE IDENTITY block in your session context — a relative name or a bare project name is refused, because a workspace lesson is matched to a directory exactly.",  # noqa: E501
                     },
                 },
                 "required": ["rule", "category"],
@@ -140,7 +140,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return "No lessons saved."
         lines = []
         for le in lessons:
-            lines.append(f"[{le.get('category', '?')}] {le['rule']}")
+            # This is the INVENTORY (every scope), so a workspace-scoped lesson is
+            # labeled with the directory it belongs to. Listing it unlabeled beside
+            # global rules would present a project-local rule as a universal one —
+            # the same confusion the scope exists to prevent, one surface over.
+            ws = le.get("workspace") or ""
+            suffix = f" (workspace: {ws})" if le.get("scope") == "workspace" and ws else ""
+            lines.append(f"[{le.get('category', '?')}] {le['rule']}{suffix}")
         return "\n".join(lines)
 
     if name == "memory_forget":

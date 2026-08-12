@@ -1101,7 +1101,12 @@ class ContextBuilder:
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
-            lessons_ctx = service_for(memory).lessons_context() or ""
+            # `workspace=cwd` is what makes a workspace-scoped lesson visible, and this
+            # is the ONE read path that can supply it: a workspace IS the working
+            # directory (see the workspace-identity block above, which tells the agent
+            # exactly that). Global lessons come back regardless; a lesson scoped to a
+            # different directory does not.
+            lessons_ctx = service_for(memory).lessons_context(cwd) or ""
 
         # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
         # independent per-block character caps that summed to ~9× the budget the
