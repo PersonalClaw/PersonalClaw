@@ -20,6 +20,7 @@ After M3, nothing outside L2 (provider) / L3 (this) references ``vector_store``.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from personalclaw.identity import current_username
@@ -27,10 +28,87 @@ from personalclaw.memory_providers.base import MemoryProvider
 
 if TYPE_CHECKING:
     from personalclaw.memory import MemoryStore
-    from personalclaw.memory_record import MemoryCapabilities, MemoryRecord
+    from personalclaw.memory_record import MemoryCapabilities, MemoryRecord, MemoryScope
     from personalclaw.vector_memory import SemanticRejectCode, VectorMemoryStore
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_workspace_ref(workspace: str | None) -> str:
+    """The canonical ``scope_ref`` a workspace-scoped record is filed under.
+
+    A workspace **is** a working directory — that is what the `workspace-identity`
+    prompt snippet tells the agent ("You are operating in workspace (working
+    directory): …"), and what `config.loader._slug_cwd` already partitions memory by.
+    So the ref is that directory's realpath, and nothing else.
+
+    Exact match only, deliberately: no basename, prefix, or case-insensitive
+    matching. Two unrelated checkouts are routinely both named ``web``, so a fuzzy
+    comparison would surface one project's private lesson inside another — the leak
+    this scope exists to prevent. A ref that matches nothing simply shows no lesson,
+    which is the safe direction to fail.
+
+    Returns "" for empty input or a non-absolute path (see
+    :func:`resolve_lesson_scope`, which refuses rather than storing an
+    unmatchable ref).
+    """
+    raw = (workspace or "").strip()
+    if not raw:
+        return ""
+    expanded = os.path.expanduser(raw)
+    if not os.path.isabs(expanded):
+        return ""
+    return os.path.realpath(expanded)
+
+
+def resolve_lesson_scope(
+    scope: str | None, workspace: str | None
+) -> tuple["MemoryScope", str | None]:
+    """Resolve a caller-declared ``(scope, workspace)`` pair into stored axes.
+
+    Raises :class:`ValueError` with a caller-facing message when the pair cannot be
+    honored **exactly as asked**. Never downgrades: writing a global lesson because a
+    workspace one could not be resolved is the silent-rescope defect, so an
+    unresolvable request is refused instead of quietly widened.
+
+    Every :class:`MemoryScope` member is handled explicitly and there is no default
+    branch — a member added later raises rather than falling through to GLOBAL.
+    """
+    from personalclaw.memory_record import MemoryScope
+
+    # Absent OR blank means "not declared" → the documented default. Treating "" as
+    # absent but " " as an unknown value would be a distinction no caller can see.
+    raw = (scope or "").strip().lower() or MemoryScope.GLOBAL.value
+    try:
+        parsed = MemoryScope(raw)
+    except ValueError:
+        writable = ", ".join(repr(s.value) for s in (MemoryScope.GLOBAL, MemoryScope.WORKSPACE))
+        raise ValueError(f"unknown scope {raw!r}: expected one of {writable}") from None
+    if parsed is MemoryScope.GLOBAL:
+        return (parsed, None)
+    if parsed is MemoryScope.WORKSPACE:
+        if not (workspace or "").strip():
+            return _refuse("workspace is required when scope='workspace'")
+        ref = normalize_workspace_ref(workspace)
+        if not ref:
+            return _refuse(
+                "workspace must be an absolute working-directory path "
+                f"(got {str(workspace).strip()!r}); use the working directory from "
+                "your session context"
+            )
+        return (parsed, ref)
+    if parsed is MemoryScope.SESSION or parsed is MemoryScope.AGENT:
+        return _refuse(
+            f"scope {parsed.value!r} is not writable for a lesson: use 'global' or 'workspace'"
+        )
+    return _refuse(f"scope {parsed.value!r} has no lesson storage rule")
+
+
+def _refuse(message: str) -> "tuple[MemoryScope, str | None]":
+    """Raise a caller-facing ``ValueError`` (typed as a return so the exhaustive
+    branches in :func:`resolve_lesson_scope` all read as terminal)."""
+    raise ValueError(message)
+
 
 # Ceiling on records the push reflex may volunteer per turn (§3's hard 5). A config
 # value cannot exceed it: an unbounded "possibly relevant" block is precisely the
@@ -325,12 +403,18 @@ class MemoryService:
         vs = self._vs
         return (vs.get_semantic_context(query_text=query_text, cap=cap) or "") if vs else ""
 
-    def lessons_context(self) -> str:
-        """The lessons block for injection (empty if none / no vector store)."""
+    def lessons_context(self, workspace: str | None = None) -> str:
+        """The lessons block for injection (empty if none / no vector store).
+
+        ``workspace`` is the reading session's working directory — the only thing that
+        makes a workspace-scoped lesson visible. A caller that omits it (the dashboard
+        grill-tree recall, the debug preview) gets GLOBAL lessons only, which is why a
+        workspace lesson cannot leak through a path that has no workspace identity.
+        """
         vs = self._vs
-        if vs is None or not vs.get_lessons():
+        if vs is None:
             return ""
-        return vs.get_lessons_context() or ""
+        return vs.get_lessons_context(normalize_workspace_ref(workspace) or None) or ""
 
     def search_episodic(
         self,
@@ -1495,7 +1579,12 @@ class MemoryService:
         category: str = "knowledge",
         negative: str | None = None,
         source: str = "user_explicit",
+        *,
+        scope: "MemoryScope | None" = None,
+        scope_ref: str | None = None,
     ) -> bool:
+        """Write a lesson. ``scope``/``scope_ref`` come from
+        :func:`resolve_lesson_scope` — ``None`` means GLOBAL (every existing caller)."""
         vs = self._vs
         if vs is None:
             return False
@@ -1503,7 +1592,17 @@ class MemoryService:
             negative and self._memory_write_blocked(negative, source)
         ):
             return False
-        ok = vs.write_lesson(rule, category=category, negative=negative, source=source)
+        # Normalize HERE, not at the endpoint alone: `lessons_context` normalizes what
+        # it reads, so the write must normalize by the same function or the two sides
+        # drift and a lesson lands under a ref nothing will ever match.
+        ok = vs.write_lesson(
+            rule,
+            category=category,
+            negative=negative,
+            source=source,
+            scope=scope,
+            scope_ref=normalize_workspace_ref(scope_ref) or None,
+        )
         if ok:
             # `MemoryWrite` (AUTO crit 5): selectable in the hook UI since it was declared, and
             # fired by nothing until now. Emitted only on a SUCCESSFUL write, and only after the
@@ -1516,8 +1615,22 @@ class MemoryService:
         return ok
 
     def get_lessons(self, limit: int | None = None) -> list[dict]:
+        """The lesson INVENTORY (every scope) — management lists, counts, deletes."""
         vs = self._vs
         return vs.get_lessons(limit=limit) if vs else []
+
+    def lessons_visible_in(
+        self, workspace: str | None = None, limit: int | None = None
+    ) -> list[dict]:
+        """Lessons a session in ``workspace`` may be shown: global + that workspace's
+        own. ``None`` → global only (see ``VectorMemoryStore.lessons_visible_in``).
+
+        Normalized by the same function the write path uses, so a caller may pass a raw
+        working directory and cannot land on a ref the writer never produced."""
+        vs = self._vs
+        if vs is None:
+            return []
+        return vs.lessons_visible_in(normalize_workspace_ref(workspace) or None, limit=limit)
 
     def delete_lesson(self, rule_substring: str) -> bool:
         vs = self._vs

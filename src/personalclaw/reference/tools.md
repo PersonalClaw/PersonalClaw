@@ -1092,7 +1092,7 @@ Save a learned correction or preference that persists across all future sessions
 - `negative` (string, optional) — What NOT to do (optional)
 - `rule` (string, required) — The lesson to remember
 - `scope` (string, optional) — Where to save: 'global' (default, all workspaces) or 'workspace' (active workspace only)
-- `workspace` (string, optional) — Workspace name (required when scope='workspace'). Use the workspace name from your session context.
+- `workspace` (string, optional) — Absolute working-directory path (required when scope='workspace'). Copy it verbatim from the WORKSPACE IDENTITY block in your session context — a relative name or a bare project name is refused, because a workspace lesson is matched to a directory exactly.
 
 **Example — Persist a durable preference:**
 

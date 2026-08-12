@@ -21,9 +21,8 @@
       ]
     },
     "src/personalclaw/memory_record.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "enum:MemoryScope.WORKSPACE",
         "enum:MemoryTier.SEGMENT"
       ]
     },
@@ -331,10 +330,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 13,
+      "enum": 12,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 140
+    "inert": 139
   }
 }

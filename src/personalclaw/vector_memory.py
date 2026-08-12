@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from personalclaw.memory_record import (
         MemoryCapabilities,
         MemoryRecord,
+        MemoryScope,
     )
 
 logger = logging.getLogger(__name__)
@@ -2431,16 +2432,38 @@ class VectorMemoryStore(MemoryProvider):
         category: str = "knowledge",
         negative: str | None = None,
         source: str = "user_explicit",
+        *,
+        scope: "MemoryScope | None" = None,
+        scope_ref: str | None = None,
     ) -> bool:
         """Write a lesson as a semantic entry with key lesson.<hash>.
 
-        Deduplicates against existing lessons:
+        ``scope`` is the REACH axis the lesson is stored under (``None`` → GLOBAL,
+        today's behavior). A ``WORKSPACE`` lesson persists ``scope_ref`` — the
+        canonical working-directory ref from
+        :func:`memory_service.normalize_workspace_ref` — and is only ever visible
+        through :meth:`lessons_visible_in` for that same ref.
+
+        Deduplicates against existing lessons **within the same scope bucket**:
         - Substring match: if existing contains new (or vice versa), longer wins
         - Topic overlap: if >50% of significant words match, newer replaces older
         - Semantic similarity: if >85% cosine similarity, longer wins
+
+        Bucket-scoping the dedup pass is deliberate: a narrower write must never
+        supersede or suppress a wider record. Without it a workspace lesson could
+        delete a global one that every other workspace still depends on, and a
+        global write would behave differently than it does today.
         """
         import hashlib
 
+        from personalclaw.memory_record import MemoryScope
+
+        if scope is None:
+            scope = MemoryScope.GLOBAL
+        if scope is not MemoryScope.WORKSPACE:
+            # Only WORKSPACE carries a ref through this path; anything else would
+            # be a ref the visibility query never consults.
+            scope_ref = None
         rule_lower = rule.lower()
         rule_words = self._lesson_keywords(rule_lower)
         rule_emb = self._try_embed(rule) if self.embed_fn else None
@@ -2449,7 +2472,18 @@ class VectorMemoryStore(MemoryProvider):
         # The new lesson's deterministic key — computed upfront so "newer replaces
         # older" paths can SUPERSEDE the loser toward it (reversible pointer)
         # rather than hard-deleting (lossy). See mem-supersession-chain.
-        new_key = f"lesson.{hashlib.md5(rule.encode()).hexdigest()[:12]}"
+        #
+        # A workspace lesson keys under `lesson.ws.<hash(ref + rule)>` so it can
+        # never collide with the global `lesson.<hash(rule)>` for the same text.
+        # Sharing one key would make the second write an UPSERT that silently
+        # re-scopes the first — a global lesson everyone relies on would become
+        # visible in one directory only, which is the exact silent-rescope defect
+        # this atom exists to remove.
+        if scope is MemoryScope.WORKSPACE:
+            digest = hashlib.md5(f"{scope_ref}\x00{rule}".encode()).hexdigest()[:12]
+            new_key = f"lesson.ws.{digest}"
+        else:
+            new_key = f"lesson.{hashlib.md5(rule.encode()).hexdigest()[:12]}"
         # Best mid-band (same-topic, not-a-dup) neighbor → judged for contradiction
         # AFTER the new lesson is written. (key, value, similarity).
         contradiction_candidate: tuple[str, str, float] | None = None
@@ -2462,7 +2496,7 @@ class VectorMemoryStore(MemoryProvider):
                     )
                 self.db.commit()
 
-        for existing in self.get_lessons():
+        for existing in self._lessons_in_bucket(scope, scope_ref):
             existing_val = str(json.loads(existing["value_json"]))
             existing_lower = existing_val.lower()
 
@@ -2541,6 +2575,18 @@ class VectorMemoryStore(MemoryProvider):
         value = rule if not negative else f"{rule} — NOT: {negative}"
         confidence = 1.0 if source == "user_explicit" else 0.9
         err = self.set_semantic(key, value, confidence, source)
+        if err is None and scope is not MemoryScope.GLOBAL:
+            # Persist the REACH axis onto the row `set_semantic` just wrote. Done
+            # here rather than inside `_write_semantic` because that INSERT is the
+            # single statement shared by all nine typed writers, and only the
+            # lesson writer has a caller-declared scope to record. Skipped for
+            # GLOBAL so a global write stays byte-identical to today (the same
+            # rule `_apply_axes` follows for plain global/durable records).
+            self.db.execute(
+                "UPDATE semantic_memory SET scope = ?, scope_ref = ? WHERE key = ?",
+                (scope.value, scope_ref, key),
+            )
+            self.db.commit()
         if err is None and rule_emb:
             emb_blob = struct.pack(f"{len(rule_emb)}f", *rule_emb)
             self.db.execute(
@@ -2603,19 +2649,73 @@ class VectorMemoryStore(MemoryProvider):
         }
         return {w for w in re.split(r"\W+", text) if len(w) > 2 and w not in stop}
 
-    def get_lessons(self, limit: int | None = None) -> list[dict]:
-        """Return lesson.* entries ordered by most recently updated."""
+    #: SCOPE reads `COALESCE(scope, 'global')` everywhere below: migration v6 added the
+    #: column with ``DEFAULT 'global'``, but a row written by an older binary against a
+    #: hand-restored db could still hold NULL, and a NULL must read as the widest reach
+    #: (today's behavior) rather than dropping the lesson out of every query.
+    _LESSON_SCOPE = "COALESCE(scope, 'global')"
+
+    def _lesson_rows(self, extra_sql: str, params: tuple, limit: int | None) -> list[dict]:
+        """One lesson SELECT for the inventory / visibility / bucket readers."""
         sql = (
             "SELECT * FROM semantic_memory "
             "WHERE is_deleted = 0 AND key LIKE 'lesson.%' "
-            "ORDER BY updated_at DESC"
+            + extra_sql
+            + " ORDER BY updated_at DESC"
         )
         if limit is not None and limit > 0:
             sql += " LIMIT ?"
-            rows = self.db.execute(sql, (limit,)).fetchall()
-        else:
-            rows = self.db.execute(sql).fetchall()
-        return [dict(r) for r in rows]
+            params = params + (limit,)
+        return [dict(r) for r in self.db.execute(sql, params).fetchall()]
+
+    def get_lessons(self, limit: int | None = None) -> list[dict]:
+        """Return lesson.* entries ordered by most recently updated — EVERY scope.
+
+        This is the INVENTORY read: the management list, the count badge, and
+        :meth:`delete_lesson` all need to see a workspace lesson (a lesson you
+        cannot see is a lesson you cannot delete). It is deliberately NOT the
+        read that decides what gets injected into a prompt — that is
+        :meth:`lessons_visible_in`, which is scope-filtered and fail-closed.
+        """
+        return self._lesson_rows("", (), limit)
+
+    def lessons_visible_in(
+        self, workspace: str | None = None, limit: int | None = None
+    ) -> list[dict]:
+        """The VISIBILITY read: lessons a session in ``workspace`` may be shown.
+
+        ``workspace`` is a canonical working-directory ref (see
+        :func:`memory_service.normalize_workspace_ref`). ``None``/empty — a caller
+        with no workspace identity — yields GLOBAL lessons only. Fail-closed on
+        purpose: a reader that cannot say which workspace it is must never be handed
+        a workspace-scoped lesson, and a scope this method does not know about
+        (``session``, ``agent``) is excluded rather than defaulted in.
+        """
+        if not workspace:
+            return self._lesson_rows(f"AND {self._LESSON_SCOPE} = 'global' ", (), limit)
+        return self._lesson_rows(
+            f"AND ({self._LESSON_SCOPE} = 'global' "
+            f"OR ({self._LESSON_SCOPE} = 'workspace' AND scope_ref = ?)) ",
+            (workspace,),
+            limit,
+        )
+
+    def _lessons_in_bucket(
+        self, scope: "MemoryScope", scope_ref: str | None, limit: int | None = None
+    ) -> list[dict]:
+        """Lessons in EXACTLY one scope bucket — the dedup pass's population.
+
+        Distinct from :meth:`lessons_visible_in`: a workspace write dedups against
+        that workspace's own lessons and no others, so it can never supersede a
+        global lesson that other workspaces still read.
+        """
+        from personalclaw.memory_record import MemoryScope
+
+        if scope is MemoryScope.WORKSPACE:
+            return self._lesson_rows(
+                f"AND {self._LESSON_SCOPE} = 'workspace' AND scope_ref = ? ", (scope_ref,), limit
+            )
+        return self._lesson_rows(f"AND {self._LESSON_SCOPE} = ? ", (scope.value,), limit)
 
     def delete_lesson(self, rule_substring: str) -> bool:
         """Delete lessons whose value contains rule_substring."""
@@ -2627,9 +2727,15 @@ class VectorMemoryStore(MemoryProvider):
                 deleted = True
         return deleted
 
-    def get_lessons_context(self) -> str:
-        """Format lessons for prompt injection."""
-        lessons = self.get_lessons(limit=50)
+    def get_lessons_context(self, workspace: str | None = None) -> str:
+        """Format lessons for prompt injection — scope-filtered.
+
+        Reads through :meth:`lessons_visible_in`, so a caller that does not declare a
+        workspace gets GLOBAL lessons only. Existing behavior is unchanged: every
+        lesson written before this scope carry-through is global, so a no-workspace
+        render is byte-identical to what it produced before.
+        """
+        lessons = self.lessons_visible_in(workspace, limit=50)
         if not lessons:
             return ""
         lines = [
