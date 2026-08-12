@@ -3986,18 +3986,21 @@
           "done_when": "A reply is composed but NOT sent while draft-mode is on; enabling sending delivers and threads correctly via In-Reply-To; the provider honors the platform's live-writes/dry-run posture (supports_dry_run). Owner-gated on the draft-by-default confirmation (Owner task 4).",
           "deps": [
             "EIAT-2"
-          ]
+          ],
+          "blocked_reason": "BLOCKED-OWNER: the atom's own done_when ends 'Owner-gated on the draft-by-default confirmation (Owner task 4)' — whether replies default to draft or to send is a product/safety decision about sending mail on the user's behalf, not an engineering call. Everything else in EIAT-3 (SMTP send_reply, In-Reply-To threading, supports_dry_run) is implementable the moment that posture is confirmed."
         },
         {
           "id": "EIAT-4",
           "title": "Prompt-bound receiving addresses + app settings UI (mail-inbox, S3)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 — T3.1, T3.3; Contract C4 (BoundAddress via ProviderSettings). App-side prompt-bound addresses and configSchema settings page.",
           "done_when": "Mail to a bound address fires run-prompt/invoke-agent and runs the stored user-authored default_prompt grounded in fence_untrusted(body, source='mail:<address>'); the fenced markers wrap the body and an in-body fence-break attempt is neutralised (explicit test); addresses (name/address/default_prompt/per-address senders) are manageable from the app's configSchema-generated settings page with secrets masked; README documents the worked Gmail-filter -> bound-address composition example. Validation (V3) needs the owner-decided receiving-address strategy (Owner task 2).",
           "deps": [
             "EIAT-1",
             "EIAT-2"
-          ]
+          ],
+          "pr": "apps#34",
+          "evidence": "mail-inbox bound_addresses (name/address/default_prompt/allow_senders) in provider.settingsSchema so the generated settings page manages them; the app composes default_prompt + fence_untrusted(body, source='mail:<address>') ONCE at prompt time (mime.py stays unfenced) and sets channel_id to the bound address so an InboxAddress trigger can match — without that the feature would have been inert; core's event_triggers.py:537 passes already-fenced text through instead of re-wrapping, so the attribution survives to invoke-agent. Per-address allowlist fail-closed and narrowing-only. Fence-break neutralisation asserted with core's is_fenced, not a substring. No secret field declared on purpose: x-meta.sensitive masking is wire-only and would persist the password into data/config.json. Gate: 45 manifests valid, 51 tests, boundary clean, DCO signed."
         },
         {
           "id": "EIAT-5",
