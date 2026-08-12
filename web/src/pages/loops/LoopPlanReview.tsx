@@ -691,8 +691,10 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
             user must be able to fix ordering without delete-and-recreate. */}
         {total > 1 && (
           <div className="shrink-0 flex flex-col -my-1">
-            <SquareIconButton icon={ChevronUp} label="Move phase up" disabled={index === 0} onClick={onMoveUp} />
-            <SquareIconButton icon={ChevronDown} label="Move phase down" disabled={index === total - 1} onClick={onMoveDown} />
+            <SquareIconButton icon={ChevronUp} label="Move phase up" disabled={index === 0} onClick={onMoveUp}
+              disabledReason="Already the first phase" />
+            <SquareIconButton icon={ChevronDown} label="Move phase down" disabled={index === total - 1} onClick={onMoveDown}
+              disabledReason="Already the last phase" />
           </div>
         )}
         <input value={phase.role} onChange={(e) => set({ role: e.target.value })} placeholder="role (e.g. researcher)"
