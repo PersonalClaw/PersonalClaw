@@ -123,6 +123,11 @@ describe('the migrated surfaces read the error', () => {
     // a 500 on `/api/legibility/discover`: "Discover is off — … Turn them back on in Settings ›
     // Legibility." A confident wrong answer beats a silent one for damage.
     'pages/discover/DiscoverPage.tsx',
+    // `#/apps` swallowed TWICE — the installed list (`() => []`) and the Store catalog (`() => null`).
+    // Measured against a 500 on `/api/apps*`: "No apps installed — Browse the Store to add apps, or
+    // install one from a local path or git URL" plus a Browse Store CTA, and the Store tab renders as
+    // an empty shelf. Both guards are per-fetch, so a catalog outage never claims your Library is empty.
+    'pages/apps/AppsSection.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -168,6 +173,46 @@ describe('the migrated surfaces read the error', () => {
       ).toBe(true)
     })
   }
+
+  it('no OTHER consumer of an adopter\'s cache key swallows either', () => {
+    // 🔴 THE ONE THAT ACTUALLY BIT. `useCachedData` caches by KEY, so a swallow at ANY call site
+    // resolves with a substitute value that the hook then persists — and every other consumer of that
+    // key reads it as a success, making their own `data === undefined && error` branch unreachable.
+    // Measured on `#/apps`: the `'apps'` key has FOUR consumers (the shell's nav badge, two settings
+    // panels, and the Store), three of which swallowed. With all `/api/apps*` calls at 500 and the
+    // Store's own swallow already removed, `sessionStorage['cache:apps']` was `"[]"` and the page still
+    // rendered "No apps installed". Fixing one file was not enough; fixing the key was.
+    const files: string[] = []
+    for (const abs of walk(SRC)) files.push(abs)
+    // key → [file:line, swallows?]
+    const consumers = new Map<string, { at: string; swallows: boolean }[]>()
+    for (const abs of files) {
+      const src = readFileSync(abs, 'utf8')
+      for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(\s*(?:\/\/[^\n]*\n\s*)*(?:\/\*[\s\S]*?\*\/\s*)*'([^']+)'\s*,([\s\S]{0,260}?)\)\s*(?:,|;|\n)/g)) {
+        const key = m[1]
+        const body = m[2]
+        const swallows = /\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/.test(body)
+        const at = `${abs.slice(SRC.length + 1)}:${src.slice(0, m.index).split('\n').length}`
+        consumers.set(key, [...(consumers.get(key) ?? []), { at, swallows }])
+      }
+    }
+    // Sanity: the scan must actually see the multi-consumer key it was written for.
+    const appsConsumers = consumers.get('apps') ?? []
+    expect(appsConsumers.length, "the scan must find the 'apps' key's consumers").toBeGreaterThanOrEqual(3)
+
+    const adopterKeys = new Set<string>()
+    for (const rel of ADOPTERS) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(\s*(?:\/\/[^\n]*\n\s*)*(?:\/\*[\s\S]*?\*\/\s*)*'([^']+)'/g)) adopterKeys.add(m[1])
+    }
+    expect(adopterKeys.size, 'the adopters must declare at least one cache key').toBeGreaterThan(0)
+
+    const poisoners: string[] = []
+    for (const key of adopterKeys) {
+      for (const c of consumers.get(key) ?? []) if (c.swallows) poisoners.push(`${c.at} (key '${key}')`)
+    }
+    expect(poisoners, 'a swallow here makes every other consumer of the key unable to see the failure').toEqual([])
+  })
 
   it('no adopter swallows the rejection inside its fetcher', () => {
     // `.catch(() => [])` inside the fetcher makes the error branch unreachable by construction: the

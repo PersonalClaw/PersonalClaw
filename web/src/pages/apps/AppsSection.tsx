@@ -19,7 +19,7 @@ import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef, type FilterOption } from '../../ui/FilterMenu'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -308,14 +308,18 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   const q = query
   const sq = setQuery
   const nav = navigate
-  const { data: apps, refresh } = useCachedData<AppSummary[]>(
-    'apps', () => api.apps().catch(() => []), { persist: true },
+  // No `.catch(() => [])`. An empty list is a CLAIM ("you have no apps"), and this surface makes it
+  // out loud: measured against a 500 on `/api/apps*` with a cold sessionStorage, the Library rendered
+  // "No apps installed — Browse the Store to add apps" plus a Browse Store CTA, with no error text
+  // anywhere and no live region. Letting the rejection through is what makes `error` exist.
+  const { data: apps, error: appsErr, refresh } = useCachedData<AppSummary[]>(
+    'apps', () => api.apps(), { persist: true },
   )
   // Store catalog is lifted here (was inside StoreView) so the shared, pinned
   // controls bar can host the Store's search + Filter&sort too — same idiom as
   // the Library, instead of a second control bar that scrolls with the body.
-  const { data: catalog, refresh: refreshCatalog } = useCachedData(
-    'app-catalog', () => api.appCatalog().catch(() => null), { persist: true },
+  const { data: catalog, error: catalogErr, refresh: refreshCatalog } = useCachedData(
+    'app-catalog', () => api.appCatalog(), { persist: true },
   )
   const [search, setSearch] = useQueryParam(q, sq, 'q', '', { replace: true })
   const [openName, setOpenName] = useQueryParam(q, sq, 'open', '')
@@ -517,12 +521,15 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
           {isStore ? (
-            <StoreView catalog={catalog} result={storeResult} totalKnown={storeUniverse.length}
+            <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
               installedCount={(apps ?? []).filter((a) => !a.native).length}
               onInstalled={reload} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag)}
               filtersActive={!!n || storeType !== 'all' || storeEntity !== 'all' || storeTag !== 'all'}
               onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch}
               onOpenSources={() => setSourcesOpen(true)} />
+          ) : apps === undefined && appsErr ? (
+            // Before the skeleton branch, or a failed fetch spins it forever.
+            <LoadError what="apps" error={appsErr} onRetry={reload} />
           ) : apps === undefined ? <ListSkeleton rows={4} />
             : libResult && libResult.length === 0 ? (
               // Empty state, tab-aware: Native (should never be empty in practice —
@@ -598,8 +605,11 @@ function ResultCount({ n, total, noun }: { n: number; total: number; noun: strin
  *  Search / filter / sort live in the parent's pinned controls bar (same idiom as
  *  the Library); this presenter renders the already-filtered `result` cards plus
  *  the always-shown source sections. */
-function StoreView({ catalog, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
+function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
   catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+  /** The catalog fetch's rejection. A Store that cannot reach its catalog must say so rather than
+   *  render as an empty shelf — "nothing to install" and "we could not ask" are different answers. */
+  catalogError?: unknown
   result: StoreItem[]
   totalKnown: number
   // installed non-native apps — the ones that LEFT the Store for the Library. Lets the
@@ -640,6 +650,9 @@ function StoreView({ catalog, result, totalKnown, installedCount, onInstalled, r
     if (r?.ok) { setPending(null); onInstalled(); reloadCatalog() }
   }
 
+  if (catalog === undefined && catalogError) {
+    return <LoadError what="the Store catalog" error={catalogError} onRetry={reloadCatalog} />
+  }
   if (catalog === undefined) return <ListSkeleton rows={3} />
 
   return (
