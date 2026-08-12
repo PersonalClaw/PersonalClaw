@@ -1,0 +1,127 @@
+# DCO — sign-off provenance on every commit in a PR (plan 37).
+#
+# WHY THIS IS ITS OWN WORKFLOW, not a job in ci.yml.
+# ci.yml runs on `pull_request`. This repo's fork-PR policy is
+# `approval_policy: first_time_contributors`, so a NEW contributor's PR runs no
+# workflow until a maintainer clicks "Approve and run". Measured: PR #680 (a fork
+# PR with 8 unsigned commits) had ZERO check-runs on its head SHA, and neither it
+# nor #350 ever received the remediation comment below. The check was gated on
+# exactly the contributors most likely to need it, so four contributors in a row
+# learned about DCO in review instead of from CI.
+#
+# `pull_request_target` runs in the BASE repo's context, so it is not subject to
+# that approval gate and reports on a new contributor's first push. It also carries
+# a write-capable token, which the remediation comment needs — a fork PR under
+# `pull_request` gets a read-only token, so that step could not have posted even
+# after approval.
+#
+# SAFETY — `pull_request_target` runs with the base repo's secrets, so it must never
+# execute fork-supplied code (the "pwn request" hole). This workflow is safe because
+# every step reads git METADATA only: it checks out the merge ref to resolve the
+# commit range, then reads author identities and trailers. It runs no build, no
+# dependency install, and no script from the contributor's tree.
+# Do NOT add a step here that executes anything out of the checked-out tree. Such a
+# step belongs in ci.yml under `pull_request`, where the approval gate guards it.
+name: DCO
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+# One in-flight run per PR — a new push supersedes the previous check.
+concurrency:
+  group: dco-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    # Every commit in a PR must carry a Signed-off-by trailer (DCO — plan 37).
+    # Pure-git check (no external action): diff the PR range against its base and
+    # fail on any commit missing sign-off. PR-only — a feature-branch push has no
+    # base to diff, and the merge to main preserves the signed commits.
+    # Dependabot is exempt: its bot commits cannot carry a Signed-off-by trailer,
+    # and dependency bumps are provenance-clear by construction. The exemption is
+    # per-COMMIT (skip commits authored by dependabot), not gated on the run's
+    # triggering actor — so it still holds after a maintainer pushes a fix onto a
+    # dependabot branch (rebase, lockfile regen), which changes github.actor to a
+    # human and would otherwise re-fail on dependabot's own unsigned commit.
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # post the remediation comment on failure
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # The PR's merge ref, so BASE_SHA..HEAD_SHA resolves without adding the
+          # fork as a remote. Metadata only — see the SAFETY note in the header.
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      - name: Verify DCO sign-off on every commit
+        id: verify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          unsigned=""
+          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
+            email="$(git show -s --format='%ae' "$sha")"
+            # Skip dependabot's own commits — a bot can't sign off, and bumps are
+            # provenance-clear. Maintainer commits on the same branch still checked.
+            case "$email" in
+              *dependabot*@users.noreply.github.com) continue ;;
+            esac
+            author="$(git show -s --format='%an <%ae>' "$sha")"
+            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$author"; then
+              echo "::error::commit $sha is missing a matching 'Signed-off-by: $author' trailer — run: git commit -s (or git rebase --signoff)"
+              unsigned="${unsigned}- \`${sha}\` — ${author}"$'\n'
+              missing=1
+            fi
+          done
+          {
+            echo "unsigned<<EOF"
+            printf '%s' "$unsigned"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          [ "$missing" -eq 0 ] && echo "DCO: all commits signed off."
+          exit "$missing"
+      # On failure, post the exact fix as a PR comment (find-and-update a single
+      # marked comment, so re-runs don't stack). The buried ::error:: annotation
+      # is easy to miss; contributors need the remediation in the PR conversation.
+      - name: Explain how to fix DCO
+        if: failure() && steps.verify.outputs.unsigned != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- dco-help -->';
+            const body = [
+              marker,
+              "### ✍️ This PR needs a DCO sign-off",
+              "",
+              "Every commit must carry a `Signed-off-by` trailer whose name/email match the commit author. These don't:",
+              "",
+              process.env.UNSIGNED.trim(),
+              "",
+              "**Fix — sign off every commit and re-push:**",
+              "```bash",
+              "git rebase --signoff origin/" + context.payload.pull_request.base.ref,
+              "git push --force-with-lease",
+              "```",
+              "For a single commit, `git commit --amend --signoff --no-edit && git push --force-with-lease` also works.",
+              "",
+              "If your author identity is wrong (e.g. a placeholder email), set `git config user.name`/`user.email` to your real GitHub identity first, then rebase with `--signoff --exec 'git commit --amend --no-edit --reset-author'`.",
+              "",
+              "More: [CONTRIBUTING.md → DCO](../blob/" + context.payload.pull_request.base.ref + "/CONTRIBUTING.md#developer-certificate-of-origin-dco).",
+            ].join("\n");
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+        env:
+          UNSIGNED: ${{ steps.verify.outputs.unsigned }}
