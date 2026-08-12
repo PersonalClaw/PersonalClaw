@@ -252,7 +252,13 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
             it doesn't clutter; opens the SAME menu. */}
         {!renaming && (
           <button type="button" onClick={openMenuFromButton} aria-label={`Actions for ${entry.name}`}
-            className="absolute right-1 top-1/2 -translate-y-1/2 grid size-5 place-items-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-on-surface focus-visible:opacity-100 group-hover/row:opacity-100">
+            // 24px HIT BOX, 20px of paint. Measured 13 of these on `#/files` at **20x20**, each inside
+            // its own clickable row — so SC 2.5.8's spacing exception cannot apply however far the
+            // nearest sibling is (cycle 115). `size-6` with `right-0.5` keeps the glyph's centre
+            // exactly where it was: growing an ABSOLUTELY POSITIONED control moves its content unless
+            // the offset absorbs the extra width, which is the wrinkle the row-action fixes elsewhere
+            // (`-m-0.5` on a flow-positioned button) do not have.
+            className="absolute right-0.5 top-1/2 -translate-y-1/2 grid size-6 place-items-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-highest hover:text-on-surface focus-visible:opacity-100 group-hover/row:opacity-100">
             <MoreHorizontal size={13} />
           </button>
         )}
