@@ -39,6 +39,15 @@ from typing import Any
 from personalclaw.workflows import leases, longrun, ownership
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
+from personalclaw.workflows.judge_contract import (
+    JudgeHints,
+    JudgeVerdict,
+    Verdict,
+    aggregate_samples,
+    judge_instruction,
+    parse_judge_json,
+    validate_verdict,
+)
 from personalclaw.workflows.models import (
     Failure,
     FailureClass,
@@ -48,9 +57,8 @@ from personalclaw.workflows.models import (
     NodeKind,
 )
 from personalclaw.workflows.verify import (
-    Verdict,
     check_required_artifacts,
-    parse_verdict,
+    requires_fresh_judge,
     run_ladder,
 )
 
@@ -311,35 +319,75 @@ def _judge_sample_count(cfg: dict[str, Any]) -> int:
     return min(count, MAX_JUDGE_SAMPLES)
 
 
-def _aggregate_gate_verdicts(verdicts: list[Verdict]) -> Verdict | None:
-    """Median-aggregate N sampled verdicts for this gate's vocabulary.
+def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceState, Failure | None]:
+    """One contract-validated verdict → the node's state and failure (WF2LOO-13).
 
-    The RULE is `judge_contract.aggregate_samples`'; the TYPE deliberately is not. See the call
-    site for why sharing one function across two different `Verdict` enums would be S130's bug.
+    The map is exhaustive over the merged `Verdict`, so a new member must add its branch
+    rather than inheriting a pass — the same rule `_dual_guard` applies to `GuardOutcome`.
 
-    Ordered exactly as the contract documents it:
-
-    1. **Any ESCALATE wins.** An escalation names a contradiction the other samples did not see, and
-       a contradiction is a fact rather than an opinion — outvoting it would discard the one sample
-       that noticed.
-    2. **A PASS needs the majority**, strictly (`2 of 3`, not `1 of 2`). This is the whole point: a
-       terminal accept on a single sample was measured to be indistinguishable from noise.
-    3. **Otherwise the majority rejection stands**, preferring REJECT over RETRY when the samples
-       split — a REJECT is terminal and a RETRY spins, so the safe reading of a split is the
-       one that stops and asks rather than the one that loops.
+    An INVALID verdict is decided before the verdict itself, because that is the teeth: a PASS
+    the contract refused (no cited proof, a rubric shortfall, an admitted forbidden mode) is a
+    REJECT, not a pass with a note. `protocol_error` splits the two remediations — "the judge
+    could not answer in the required shape" sends a reader to the prompt, "the work fell short"
+    sends them to the deliverable, and reporting both as one loses the distinction that decides
+    which they read.
     """
-    if not verdicts:
-        return None
-    if len(verdicts) == 1:
-        return verdicts[0]
-    if any(v is Verdict.ESCALATE for v in verdicts):
-        return Verdict.ESCALATE
-    passes = sum(1 for v in verdicts if v is Verdict.PASS)
-    if passes * 2 > len(verdicts):
-        return Verdict.PASS
-    if any(v is Verdict.REJECT for v in verdicts):
-        return Verdict.REJECT
-    return Verdict.RETRY
+    if decision.escalated:
+        return InstanceState.ESCALATED, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=decision.escalation_reason or "judge escalated",
+            remediation="a human must decide: the judge named a contradiction it cannot resolve",
+        )
+    if not decision.valid:
+        return InstanceState.FAILED, Failure(
+            failure_class=(FailureClass.PROTOCOL if decision.protocol_error else FailureClass.USER),
+            cause_plain=f"judge PASS refused by the contract: {decision.invalid_reason}",
+            remediation=(
+                "the judge answered in the wrong shape — check the rubric it was given"
+                if decision.protocol_error
+                else "address the cited shortfall in the work and re-run the producing node"
+            ),
+        )
+    if decision.verdict is Verdict.PASS:
+        return InstanceState.DONE, None
+    if decision.verdict is Verdict.ESCALATE:
+        return InstanceState.ESCALATED, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain="judge returned ESCALATE",
+            remediation="a human must decide; the judge would not rule either way",
+        )
+    if decision.verdict is Verdict.NEEDS_INPUT:
+        # WAITING, not FAILED: the judge is not rejecting the work, it is saying the run cannot
+        # be judged without something only a human has. The caller parks it with the typed ask.
+        return InstanceState.WAITING, None
+    if decision.verdict is Verdict.RETRY:
+        return InstanceState.FAILED, Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain="judge returned RETRY",
+            remediation="the engine will retry",
+            recoverable=True,
+        )
+    if decision.verdict is Verdict.REPLAN:
+        # Recoverable like RETRY, named differently on purpose: the judge is not asking for the
+        # same attempt again, it is asking for the remaining steps to be re-derived from its
+        # critique. The retry hint the controller appends carries that critique.
+        return InstanceState.FAILED, Failure(
+            failure_class=FailureClass.TRANSIENT,
+            cause_plain="judge returned REPLAN: the remaining steps must be re-derived",
+            remediation="re-plan the rest of the work from the judge's critique",
+            recoverable=True,
+        )
+    if decision.verdict is Verdict.REJECT:
+        return InstanceState.FAILED, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=f"judge returned REJECT: {decision.reasoning[:200]}",
+            remediation="address the judge's rubric and re-run the producing node",
+        )
+    return InstanceState.FAILED, Failure(
+        failure_class=FailureClass.INTERNAL,
+        cause_plain=f"unhandled judge verdict {decision.verdict.value!r}",
+        remediation=f"map the new Verdict member in `_judge_gate_outcome` ({node.id})",
+    )
 
 
 # ── dispatchers ──────────────────────────────────────────────────────────────
@@ -1281,6 +1329,11 @@ async def dispatch_gate(
     worker_model: str = "",
     judge_model_resolver: Any = None,
     compaction_saves: list[float] | None = None,
+    #: The run's parsed `runtime_hints.judge` (WF2LOO-13). Threaded from the controller for the
+    #: same reason `worker_model` is: only the JUDGE branch reads it, and the contract's
+    #: defaults are the STRICT ones, so a None here means "this run declared no rubric" — an
+    #: empty rubric the ratchet cannot fail anything against — rather than a loosening.
+    judge_hints: JudgeHints | None = None,
 ) -> NodeResult:
     """A checkpoint the engine — never the worker — resolves (WF2-R3).
 
@@ -1496,10 +1549,44 @@ async def dispatch_gate(
                 )
             judge_model = candidate
 
-        instruction = (
-            f"{prompt}\n\nRespond with EXACTLY ONE word, one of: "
-            "PASS, RETRY, ESCALATE, REJECT. No other text."
+        # 🔴 THE CONTRACT, ON THE LIVE PATH (WF2LOO-13). This used to append `Respond with EXACTLY
+        # ONE word` — which, on `goal-pursuit-open-ended`'s `accept` gate, CONTRADICTED the
+        # template's own "Return JSON: {...}" instruction, and on the other 6 was the only output
+        # shape the judge was given. A bare word cannot carry proof, scores or a rubric result, so
+        # every rule `judge_contract` states was inexpressible here. Now the instruction and the
+        # validation are generated from ONE `JudgeHints`: `judge_instruction` names the exact
+        # rubric keys, the proof requirement and the forbidden modes that `validate_verdict` will
+        # then hold the answer to. See that module's posture section for why generating both from
+        # one object is what keeps enforcement off the 7 live templates' throat.
+        hints = judge_hints or JudgeHints()
+        # 🔴 The judge's evidence is BLINDED and role-filtered (WF2LOO-13, closing
+        # `judge_actors.blind_provenance` / `assemble_judge_evidence`, which had no caller because
+        # the one-word gate produced no evidence to blind). Two typed parts, both in
+        # `JUDGE_EVIDENCE_ROLES`: the template's rubric prose is `spec`, and whatever the gate
+        # binds into `evidence` is `tool_output` — a MEASUREMENT, not the worker's prose about it.
+        # Blinding matters because the controller appends a retry hint to a node's prompt and a
+        # loop body renders `{{iter}}`: "attempt 3 of 5" tells a judge how much patience is left,
+        # which is exactly the pressure that produces a lenient pass.
+        from personalclaw.workflows.judge_actors import Actor, assemble_judge_evidence
+        from personalclaw.workflows.judge_actors import resolve_transition as rule_transition
+
+        blinded = assemble_judge_evidence(
+            [
+                {"role": "spec", "content": prompt},
+                {"role": "tool_output", "content": str(cfg.get("evidence", "") or "")},
+            ],
+            blind=True,
         )
+        rubric_prose = str(blinded[0].get("content", "")) if blinded else prompt
+        measured = str(blinded[1].get("content", "")) if len(blinded) > 1 else ""
+        # Appended only when the prompt does not already carry it. Measured: 5 of the 7 bundled
+        # judge gates bind the SAME node output into both `prompt` and `evidence`, so appending
+        # unconditionally would double the largest chunk of a prompt on a gate that runs every loop
+        # iteration. Compared AFTER blinding, so the two sides are in the same form. A gate whose
+        # evidence is NOT already in its prompt now shows it to the judge for the first time.
+        if measured and measured not in rubric_prose:
+            rubric_prose = f"{rubric_prose}\n\nThe measured evidence:\n{measured}"
+        instruction = judge_instruction(rubric_prose, hints)
         # 🔴 `judge_samples` was DECLARED by a shipped template and READ BY NOTHING (S145).
         # `goal-pursuit-open-ended`'s terminal `accept` gate carries `judge_samples: 3`, and its own
         # prompt tells the model why: "three independent samples of you are being asked — a single
@@ -1507,14 +1594,24 @@ async def dispatch_gate(
         # against the live gate: **one** sample was taken, and a model returning PASS,REJECT,REJECT
         # ACCEPTED the run on the first word. The majority verdict never happened.
         #
-        # The aggregation rule is `judge_contract.aggregate_samples`', restated here rather than
-        # imported, because that function types on `judge_contract.Verdict`
-        # (PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT) while this gate speaks `verify.Verdict`
-        # (PASS/RETRY/ESCALATE/REJECT). Feeding one vocabulary's values to the other's aggregator is
-        # exactly the cross-vocabulary defect S130 found in the fail-mode classifier — so the
-        # RULE is shared and the TYPE is not.
+        # The NODE keeps the say over the count, not `hints.judge_samples`: the contract's default
+        # is 3, and inheriting it here would have tripled the model spend of all 7 live gates in a
+        # change about enforcement. Aggregation is now `judge_contract.aggregate_samples` itself —
+        # the merged `Verdict` removed the cross-vocabulary reason this branch had to restate it.
         samples = _judge_sample_count(cfg)
-        verdicts: list[Verdict] = []
+        # The contract's standing cross-check, when the gate declares a deterministic one. No
+        # bundled judge gate does today, so this costs nothing; without it,
+        # `validate_verdict`'s "a judge PASS that contradicts `exit 1`" escalation could never
+        # fire, which is a control that reads as present and is not.
+        fallback_result: bool | None = None
+        if isinstance(cfg.get("verify"), dict) and verify is not None:
+            try:
+                fallback_result = await verify(cfg["verify"])
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("judge fallback check failed to run", exc_info=True)
+        judged: list[JudgeVerdict] = []
         texts: list[str] = []
         # The pin rides along ONLY when cross_model resolved one — a non-cross gate calls exactly as
         # before (byte-for-byte), so the completion seam the whole loop library already injects is
@@ -1548,16 +1645,16 @@ async def dispatch_gate(
                     resolved_prompt=instruction,
                 )
             texts.append(str(text))
-            parsed = parse_verdict(text)
-            if parsed is None:
+            answer = parse_judge_json(text)
+            if answer is None:
                 # Unparseable is PROTOCOL, and it fails the whole gate even mid-sample: a terminal
                 # accept decided from 2 of 3 samples is a quieter version of the single-sample bug
                 # this session exists to fix.
-                verdict = None
+                unparseable = True
                 break
-            verdicts.append(parsed)
+            judged.append(validate_verdict(answer, hints, fallback_result=fallback_result))
         else:
-            verdict = _aggregate_gate_verdicts(verdicts)
+            unparseable = False
         text = texts[-1] if texts else ""
         # 🔴 Tokens are summed over EVERY sample, not just the last. Measured on my own first
         # draft: a `judge_samples: 3` gate reported 22 tokens where it had really spent ~66 —
@@ -1565,59 +1662,94 @@ async def dispatch_gate(
         # exactly where sampling makes a gate most expensive. A meter that reads low on the
         # expensive path is worse than no meter, because the cap silently stops binding.
         sampled_tokens = sum(_estimate_tokens(instruction, body) for body in texts)
-        if verdict is None:
-            # An unparseable verdict is a PROTOCOL failure, never a silent pass: guessing
-            # would make a control-flow decision out of noise.
+        # `judge_evidence` is assembled for EVERY outcome including the protocol failure, so the
+        # controller's `judge_verdict` ledger event exists even when the judge could not answer.
+        # A gate that fails without leaving evidence is the one an operator cannot diagnose.
+        sample_values = [v.verdict.value for v in judged]
+        if unparseable:
+            # Not a verdict: the judge did not answer in the contract shape. NAMED as PROTOCOL and
+            # never a silent pass — guessing would make a control-flow decision out of noise, and
+            # a bare "PASS" is exactly the shape that used to be accepted with no proof at all.
             return NodeResult(
                 state=InstanceState.FAILED,
+                output={
+                    "verdict": "",
+                    "judge_evidence": {
+                        "samples": sample_values,
+                        "texts": [t[:2000] for t in texts],
+                        "sample_count": samples,
+                        "aggregated": "",
+                        "protocol_error": True,
+                    },
+                    "judge_status": "kept",
+                },
                 failure=Failure(
                     failure_class=FailureClass.PROTOCOL,
-                    cause_plain=f"judge returned no recognizable verdict: {str(text)[:120]}",
+                    cause_plain=(
+                        "judge did not return the contract JSON object: " f"{str(text)[:120]}"
+                    ),
                     remediation="tighten the rubric, or use a ladder gate for a "
                     "deterministic check",
                 ),
                 resolved_prompt=instruction,
                 tokens=sampled_tokens,
             )
-        state = {
-            Verdict.PASS: InstanceState.DONE,
-            Verdict.RETRY: InstanceState.FAILED,
-            Verdict.ESCALATE: InstanceState.ESCALATED,
-            Verdict.REJECT: InstanceState.FAILED,
-        }[verdict]
-        failure = None
-        if verdict in (Verdict.RETRY, Verdict.REJECT):
-            failure = Failure(
-                failure_class=(
-                    FailureClass.TRANSIENT if verdict == Verdict.RETRY else FailureClass.USER
-                ),
-                cause_plain=f"judge returned {verdict.value}",
-                remediation=(
-                    "the engine will retry"
-                    if verdict == Verdict.RETRY
-                    else "address the judge's rubric and re-run the producing node"
-                ),
-                recoverable=verdict == Verdict.RETRY,
-            )
+        decision = aggregate_samples(judged, hints)
+        state, failure = _judge_gate_outcome(decision, node)
         # Carry the evidence chain out on the node output so the controller can emit a
         # `judge_verdict` Run Ledger event at the settle (LOOPS-EVOLUTION R3, criterion 3).
-        # Additive: existing readers of `output["verdict"]` are unaffected. `judge_evidence` holds
-        # the per-sample verdicts + raw texts (the proof a reader replays); `judge_status` is
-        # "discard" when a sample was outvoted by the median aggregation, else "kept".
-        sample_values = [v.value for v in verdicts]
-        judge_status = "kept" if not verdicts or verdict.value in sample_values else "discard"
+        # `judge_evidence` holds the per-sample verdicts + raw texts (the proof a reader replays);
+        # `judge_status` is "discard" when a sample was outvoted by the median aggregation.
+        judge_status = (
+            "kept" if not sample_values or decision.verdict.value in sample_values else "discard"
+        )
+        # 🔴 THE ACTOR RULING (WF2LOO-13, closing `judge_actors.check_transition` /
+        # `resolve_transition`, which had no caller because nothing carried an actor to a node
+        # transition). The gate DOES: an independent judge is the JUDGE actor and is
+        # terminal-capable, but a gate that opted into `self_judge` is the producer grading itself
+        # — the WORKER actor, which may never reach `done`. `resolve_transition` redirects that to
+        # `review`, and review is realized as the engine's existing park-and-ask: a self-judged
+        # PASS is a REQUEST for adjudication, so it waits for a human instead of certifying
+        # itself. No bundled template opts in today, which is exactly why this cannot outage one.
+        actor = Actor.JUDGE if requires_fresh_judge(node.config) else Actor.WORKER
+        effective, note = rule_transition(actor, state.value)
+        output = {
+            "verdict": decision.verdict.value,
+            "judge_verdict": decision.to_dict(),
+            "judge_evidence": {
+                "samples": sample_values,
+                "texts": [t[:2000] for t in texts],
+                "sample_count": samples,
+                "aggregated": decision.verdict.value,
+                "scores": dict(decision.scores),
+                "overall": decision.overall,
+                "shortfalls": list(decision.shortfalls),
+                "invalid_reason": decision.invalid_reason,
+            },
+            "judge_status": judge_status,
+        }
+        if effective == "review" or state is InstanceState.WAITING:
+            # Both parks go through the SAME payload as an `approval` gate: the typed ask and the
+            # MODE-DEPENDENT deadline (WF2-R7). Returning WAITING without them would wedge the
+            # node — nothing to answer and no clock to wake it — which is a quieter failure than
+            # any verdict, and the reason a NEEDS_INPUT verdict cannot simply borrow the state.
+            from personalclaw.workflows.human_input import gate_timeout_secs
+
+            timeout = gate_timeout_secs(cfg, mode=mode)
+            parked = dict(output)
+            if effective == "review":
+                parked["actor_note"] = note
+            return NodeResult(
+                state=InstanceState.WAITING,
+                output=parked,
+                wake_at=now + float(timeout) if timeout > 0 else 0.0,
+                ask=_ask_payload(node, cfg),
+                resolved_prompt=instruction,
+                tokens=sampled_tokens,
+            )
         return NodeResult(
             state=state,
-            output={
-                "verdict": verdict.value,
-                "judge_evidence": {
-                    "samples": sample_values,
-                    "texts": [t[:2000] for t in texts],
-                    "sample_count": samples,
-                    "aggregated": verdict.value,
-                },
-                "judge_status": judge_status,
-            },
+            output=output,
             failure=failure,
             resolved_prompt=instruction,
             tokens=sampled_tokens,
@@ -1697,6 +1829,48 @@ def apply_artifact_gate(node: Node, result: NodeResult, workspace: Any) -> NodeR
             "check where it actually wrote them",
         ),
     )
+
+
+def apply_judge_contract(
+    node: Node, result: NodeResult, judge_hints: JudgeHints | None
+) -> NodeResult:
+    """Validate a judge STAGE's output against the contract (WF2LOO-13).
+
+    Six bundled templates carry a `judge` stage whose prompt asks for this exact object —
+    `{reasoning, verdict, scores, evidence_refs, proof, cannot_judge}` — and before this seam
+    NOTHING validated it and NOTHING read it: `dispatch_stage`/`dispatch_infer` return DONE for
+    any parseable JSON whatever the verdict says. A contract-shaped verdict was produced every
+    loop iteration and discarded.
+
+    Applied at the ONE dispatch seam, like `apply_artifact_gate`, so a node kind cannot skip it.
+    Opt-in via `config.judge_contract: true`, because the seam sees every node and only a judge's
+    output is a verdict.
+
+    **It validates and BINDS; it does not fail the node.** Deliberate, and the difference between
+    a gate and an outage: those stage prompts tell the model in as many words that "reporting
+    real issues is the normal outcome", so a REJECT is expected traffic on 6 live templates and
+    failing on it would convert normal operation into a failed run. What changes is that the
+    bound output is now the ENGINE's record rather than the model's claim — `overall` recomputed
+    from the scores, a PASS that cited no proof carried as `valid: false`, and `contract_valid`
+    for the template's own `success_when` to read. The hard teeth belong to the judge GATE, where
+    the engine owns completion.
+
+    The model's own keys survive underneath the validated ones: a template may read something
+    the contract does not model (`marginal_value`), and a loop's `progress_field` may point at
+    any key in the body's output, so dropping them would break a reader this seam never saw.
+    """
+    if not bool((node.config or {}).get("judge_contract", False)):
+        return result
+    if result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
+        return result  # already failing; a verdict on top of it adds nothing
+    hints = judge_hints or JudgeHints()
+    raw = result.output if isinstance(result.output, dict) else None
+    decision = validate_verdict(raw, hints)
+    payload: dict[str, Any] = dict(raw or {})
+    payload.update(decision.to_dict())
+    payload["contract_valid"] = decision.valid and not decision.protocol_error
+    result.output = payload
+    return result
 
 
 def _restriction_skip(cfg: dict[str, Any], run_id: str) -> tuple[bool, str]:
@@ -2198,6 +2372,9 @@ async def dispatch(
     #: call in a test) simply means no history: the ladder still compacts, it just cannot notice
     #: that it has stopped helping.
     compaction_saves: list[float] | None = None,
+    #: The run's parsed `runtime_hints.judge` (WF2LOO-13). Only the JUDGE gate branch and the
+    #: judge-contract seam below read it.
+    judge_hints: JudgeHints | None = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -2225,9 +2402,13 @@ async def dispatch(
         on_progress=on_progress,
         worker_model=worker_model,
         compaction_saves=compaction_saves,
+        judge_hints=judge_hints,
     )
     # One seam, so a new node kind cannot silently skip the artifact gate.
     result = apply_artifact_gate(node, result, cwd or None)
+    # The SAME seam for the judge contract (WF2LOO-13): a node declaring `judge_contract: true`
+    # has its output validated against the contract before anything can bind it.
+    result = apply_judge_contract(node, result, judge_hints)
     # The SAME seam for `publish:` (S47), for the same reason: a new node kind inherits the
     # publish path instead of quietly dropping a declared output. Ordered after the gate
     # deliberately — publishing the output of a node that failed its own artifact gate would
@@ -2255,6 +2436,7 @@ async def _dispatch_inner(
     on_progress: Any = None,
     worker_model: str = "",
     compaction_saves: list[float] | None = None,
+    judge_hints: JudgeHints | None = None,
 ) -> NodeResult:
     kind = node.kind
     clock = now or time.time()
@@ -2294,6 +2476,7 @@ async def _dispatch_inner(
             mode=mode,
             worker_model=worker_model,
             compaction_saves=compaction_saves,
+            judge_hints=judge_hints,
         )
     if kind == NodeKind.SUBWORKFLOW:
         return await dispatch_subworkflow(

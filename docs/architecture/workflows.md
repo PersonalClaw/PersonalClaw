@@ -62,9 +62,9 @@ while not terminal:
 | `resilience.py` | retries, circuit breaker, budgets |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
 | `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
-| `judge_contract.py` | the typed verdict enum, rubric ratchet, engine-computed overall, forbidden-mode denylist |
+| `judge_contract.py` | the ONE closed verdict enum (`verify.Verdict` was merged into it and deleted), the judge's wire shape (`judge_instruction` renders it, `parse_judge_json` reads it), the rubric ratchet with tolerant score lookup, the engine-computed overall, and the forbidden-mode denylist. Enforced on the live path: the judge gate validates every answer here, and `engine.apply_judge_contract` validates a judge STAGE's output at the dispatch seam |
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
-| `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`) and judge isolation |
+| `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`; a `self_judge` gate's PASS is redirected to review), judge isolation, and the blinded role-filtered evidence a judge is allowed to read |
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |

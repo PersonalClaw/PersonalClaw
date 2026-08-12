@@ -21,6 +21,7 @@ from personalclaw.workflows.judge_contract import (
     Ratchet,
     Verdict,
     hints_from_dict,
+    judge_instruction,
 )
 from personalclaw.workflows.template_lint import lint_template
 from personalclaw.workflows.validator import validate_spec
@@ -60,6 +61,26 @@ def _nodes(node: dict):
         elif isinstance(case, list):
             for item in case:
                 yield from _nodes(item)
+
+
+def _effective_prompt(spec: dict, judge: dict) -> str:
+    """What the judge actually READS.
+
+    For a judge STAGE that is the template's own prompt. For a judge GATE it is not: since
+    WF2LOO-13 the engine composes the instruction from the template's rubric prose PLUS
+    `judge_contract.judge_instruction`, which renders the closed verdict set, the proof
+    requirement and the exact rubric keys from the same `JudgeHints` the validation reads.
+    Asserting the contract properties against the raw template text would measure the wrong
+    artifact — and would push a template author to hand-write a copy of the shape the engine
+    already generates, which is how `goal-pursuit-open-ended` ended up shipping two
+    contradictory instructions.
+    """
+    prompt = (judge.get("config") or {}).get("prompt") or ""
+    if judge.get("kind") != "gate":
+        return prompt
+    return judge_instruction(
+        prompt, hints_from_dict((spec.get("runtime_hints") or {}).get("judge"))
+    )
 
 
 def _judges(spec: dict):
@@ -229,13 +250,13 @@ def test_no_judge_can_write(name):
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)
 def test_every_judge_returns_the_typed_verdict_shape(name):
     """Loop nodes route on data, not prose — so the verdict field has to be there."""
-    for judge in _judges(_spec(name)):
+    spec = _spec(name)
+    for judge in _judges(spec):
         cfg = judge.get("config") or {}
         schema = cfg.get("schema") or {}
-        prompt = cfg.get("prompt") or ""
         if not schema:
-            # A gate-kind judge carries its shape in the prompt instead.
-            assert "verdict" in prompt, f"{name}:{judge.get('id')}"
+            # A gate-kind judge carries its shape in the instruction the engine composes.
+            assert "verdict" in _effective_prompt(spec, judge), f"{name}:{judge.get('id')}"
             continue
         assert "verdict" in schema, f"{name}:{judge.get('id')}"
         assert "cannot_judge" in schema, f"{name}:{judge.get('id')} has no refusal channel"
@@ -244,17 +265,20 @@ def test_every_judge_returns_the_typed_verdict_shape(name):
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)
 def test_every_judge_prompt_names_the_closed_enum(name):
     """A judge told to return a verdict without being told the options invents them."""
-    for judge in _judges(_spec(name)):
-        prompt = (judge.get("config") or {}).get("prompt") or ""
-        assert Verdict.PASS.value in prompt and Verdict.REJECT.value in prompt
+    spec = _spec(name)
+    for judge in _judges(spec):
+        prompt = _effective_prompt(spec, judge)
+        for member in (Verdict.PASS, Verdict.REJECT):
+            assert member.value in prompt, f"{name}:{judge.get('id')} omits {member.value}"
 
 
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)
 def test_every_judge_prompt_demands_evidence(name):
     """A verdict with no cited proof is invalid by contract, so the prompt has to ask
     for it — otherwise every verdict fails validation and the loop cannot finish."""
-    for judge in _judges(_spec(name)):
-        prompt = ((judge.get("config") or {}).get("prompt") or "").lower()
+    spec = _spec(name)
+    for judge in _judges(spec):
+        prompt = _effective_prompt(spec, judge).lower()
         assert "evidence" in prompt or "proof" in prompt
 
 
@@ -549,3 +573,83 @@ def test_the_loop_families_are_all_present():
     assert set(LOOP_TEMPLATES) <= shipped
     # deep-research is the research-loop descendant and pre-dates this session.
     assert "deep-research" in shipped
+
+
+# ── the contract on the judge STAGES (WF2LOO-13) ──
+
+
+@pytest.mark.parametrize("name", LOOP_TEMPLATES)
+def test_every_judge_stage_declares_the_contract(name):
+    """Opt-in, because the dispatch seam sees every node and only a judge's output is a verdict.
+
+    Without the declaration `apply_judge_contract` skips the node, so the contract-shaped verdict
+    these prompts already ask for goes back to being produced every cycle and discarded — which is
+    exactly what WF2LOO-12 measured.
+    """
+    stages = [n for n in _judges(_spec(name)) if n.get("kind") == "stage"]
+    assert stages, f"{name} has no judge stage"
+    for stage in stages:
+        assert (stage.get("config") or {}).get("judge_contract") is True, (
+            f"{name}/{stage.get('id')} asks for the contract object but does not declare "
+            "`judge_contract: true`, so nothing validates the answer"
+        )
+
+
+@pytest.mark.parametrize("name", LOOP_TEMPLATES)
+def test_the_scores_keys_are_the_exact_rubric_criteria(name):
+    """🔴 The anti-outage rule, asserted on the templates that pay for it.
+
+    Under `Ratchet.STRICT` an unscored criterion is a shortfall, i.e. a REJECT. The prompt
+    therefore has to name the score keys the ratchet will look up — spelling them out is what
+    makes enforcement fair rather than a trap. `score_for` tolerates a restatement as a second
+    line of defence; this is the first.
+    """
+    spec = _spec(name)
+    hints = hints_from_dict(spec["runtime_hints"]["judge"])
+    prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(spec))
+    assert "{criterion: integer}" not in prompts, (
+        f"{name} still asks for `scores: {{criterion: integer}}` — a placeholder key invites the "
+        "model to invent one, and an invented key scores nothing"
+    )
+    for criterion in hints.rubric:
+        assert (
+            f'"{criterion.criterion}": integer' in prompts
+        ), f"{name}: the scores object does not name {criterion.criterion!r} verbatim"
+
+
+@pytest.mark.parametrize("name", LOOP_TEMPLATES)
+def test_the_prompt_offers_the_whole_closed_verdict_set(name):
+    """A vocabulary the prompt does not offer cannot be returned, and `RETRY` joined the set when
+    the two verdict enums were merged."""
+    prompts = " ".join(((n.get("config") or {}).get("prompt") or "") for n in _judges(_spec(name)))
+    for member in Verdict:
+        assert f'"{member.value}"' in prompts, f"{name} never offers {member.value}"
+
+
+def test_the_validated_verdict_is_bound_by_the_templates_that_produce_it():
+    """done_when: the judge stage's output is READ, not just produced.
+
+    Measured before this atom: zero templates bound `nodes.judge.output.*`, so a contract-shaped
+    verdict was produced every loop iteration and discarded. The binding site depends on the
+    shape: `code-project` has a node after its terminal judge, and the three loop templates carry
+    the judge's critique into the NEXT iteration's worker prompt via `last.output.*` — which is
+    the revision cycle the rubric exists to drive.
+
+    `design-project` and `diagnose-run` are deliberately absent: their judge is the last node of
+    the root sequence with nothing downstream, so the validated record IS the run's output. Adding
+    a node to manufacture a binding site would be inventing template structure this atom has no
+    mandate to design.
+    """
+    bound = {
+        "code-project": "{{nodes.judge.output.verdict}}",
+        "general-project": "{{last.output.verdict}}",
+        "goal-pursuit-open-ended": "{{last.output.verdict}}",
+        "goal-pursuit-verifiable": "{{last.output.verdict}}",
+    }
+    for name, binding in bound.items():
+        raw = json.dumps(_spec(name))
+        assert binding.replace('"', '\\"') in raw or binding in raw, (
+            f"{name} no longer binds the judge's validated verdict ({binding}) — the verdict is "
+            "produced and discarded again"
+        )
+        assert "shortfalls" in raw, f"{name} stopped carrying the judge's shortfalls"

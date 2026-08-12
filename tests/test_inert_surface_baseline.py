@@ -432,15 +432,24 @@ def test_value_lookup_alone_does_not_clear_a_member(tmp_path):
     )
 
 
-def test_the_audited_value_lookup_call_sites_have_no_production_caller():
-    """``PHF-13``'s load-bearing evidence, pinned on the real tree.
+def test_the_audited_value_lookup_call_sites_are_wired_and_the_members_re_verdicted():
+    """``PHF-13``'s ruling, RE-VERDICTED after ``WF2LOO-13`` wired the judge contract.
 
-    ``Verdict.REPLAN``, ``Ratchet.RELAXED`` and ``Actor.WORKER`` are reported inert even though
+    PHF-13 reported ``Verdict.REPLAN``, ``Ratchet.RELAXED`` and ``Actor.WORKER`` inert even though
     each sits on a class with an ``E(value)`` construction, because the FUNCTIONS holding those
-    constructions have no production caller — ``engine.py`` deliberately restates the judge
-    aggregation rule instead of importing it. If one of them is ever wired up, this test reds:
-    re-verdict the member then (the flag may have become a false red) instead of trusting the
-    generator's table.
+    constructions had no production caller — ``engine.py`` restated the judge aggregation rule
+    instead of importing it. This test used to assert that dead-call-site premise and told the next
+    reader to re-verdict if it ever changed. WF2LOO-13 changed it: ``validate_verdict``,
+    ``hints_from_dict`` and ``resolve_transition`` are all called from the live judge path now.
+
+    So the assertion is inverted rather than dropped, and it pins the re-verdict:
+
+    * ``Verdict.REPLAN`` and ``Actor.WORKER`` left the baseline — the judge gate names both
+      explicitly (``_judge_gate_outcome`` maps REPLAN; the actor ruling picks WORKER for a
+      ``self_judge`` gate), so they are reachable by NAME, not merely by value lookup.
+    * ``Ratchet.RELAXED`` stays inert, and that is the honest verdict: nothing names it, and no
+      bundled template declares ``ratchet: relaxed``. Its only route in is a user template, which
+      is exactly what "externally reachable, internal only" means in the detector's table.
     """
     owners = {
         "validate_verdict": "workflows/judge_contract.py",
@@ -456,11 +465,24 @@ def test_the_audited_value_lookup_call_sites_have_no_production_caller():
                 continue
             if f"{name}(" in text or f"import {name}" in text:
                 callers[name].append(rel)
-    wired = {name: found for name, found in callers.items() if found}
-    assert not wired, (
-        f"a value-lookup call site PHF-13 recorded as dead now has a production caller ({wired})"
-        " — re-verdict the enum members that ruling covers (Verdict.REPLAN, Ratchet.RELAXED,"
-        " Actor.WORKER)"
+    stranded = [name for name, found in callers.items() if not found]
+    assert not stranded, (
+        f"{stranded} lost its production caller — the judge contract is authored-and-unrun again "
+        "(the WF2LOO-12 defect). Re-verdict the members PHF-13 covers before touching the baseline."
+    )
+
+    baseline = _committed_inventory()
+    flagged = {
+        surface for entry in baseline["per_file"].values() for surface in entry.get("surfaces", [])
+    }
+    for cleared in ("enum:Verdict.REPLAN", "enum:Actor.WORKER"):
+        assert cleared not in flagged, (
+            f"{cleared} is flagged inert again while its call site is wired — either the wiring "
+            "regressed or the detector's verdict did; read the code before regenerating"
+        )
+    assert "enum:Ratchet.RELAXED" in flagged, (
+        "Ratchet.RELAXED left the baseline — if a template or a call site now names it, say so "
+        "here; if not, this is a false clear and the ratchet just lost a member it was watching"
     )
 
 

@@ -1433,3 +1433,96 @@ Verified load-bearing: removing the rule turns the flagging test red. Gate: `mak
   derived block regenerated with `tools/regen_dag_derived.py` (615 atoms, 848 edges; the 2 cycles
   and 1 unresolved ext-ref are pre-existing and unrelated). The source plan's decomposition count
   moved 13 → 14.
+
+- **2026-08-12 — `WF2LOO-13` DONE (PR #PENDING).** *Wire the judge contract into the live judge
+  path.* `GateKind.JUDGE` now asks for the contract object (`judge_contract.judge_instruction`),
+  parses it (`parse_judge_json`) and is DECIDED by `validate_verdict`; `engine.apply_judge_contract`
+  applies the same validation to a judge STAGE's output at the dispatch seam; the controller threads
+  the spec's `runtime_hints.judge` through `hints_from_dict`, mirroring
+  `execution_hints.from_runtime_hints`.
+
+  **The population was measured before the control got teeth, and two of `WF2LOO-12`'s numbers
+  moved.** The rubric is **13** criteria across 6 templates, not 14. And of the 7 judge GATES,
+  exactly **1** (`goal-pursuit-open-ended`'s terminal `accept`) sits in a template that declares a
+  rubric at all — so on 6 of 7 the ratchet has nothing to compare and is a no-op by construction.
+  That same gate already asked for the contract object in its own prompt, and the engine then
+  appended `Respond with EXACTLY ONE word` straight after it: the gate shipped two contradictory
+  instructions. The hand-written copy is deleted; the engine generates the shape.
+
+  **Enforcement posture (written into `judge_contract.py`'s docstring, where the code lives).**
+  Three rules keep the teeth off the live templates' throat: (1) prompt and validation are generated
+  from ONE `JudgeHints`, so `judge_instruction` names the exact score keys `meets_ratchet` will look
+  up, the proof requirement, and the forbidden modes — no judge is refused for a requirement it was
+  never given; (2) an undeclared rubric produces no shortfall; (3) `score_for` matches a criterion
+  exact → normalized → uniquely-contained, because byte-exact lookup would have turned a judge that
+  wrote `"verify command passes"` for `"the verify command passes"` into a REJECT under STRICT. The
+  new failure mode is NAMED: unparseable JSON is `FailureClass.PROTOCOL` with the raw text on
+  `judge_evidence` (so the ledger's `judge_verdict` event exists even when the judge could not
+  answer), and a PASS that scored NONE of a declared rubric is flagged `protocol_error` rather than
+  read as "below target" — different remediation, different reader.
+
+  **Enum reconciliation — `verify.Verdict` DELETED.** `judge_contract.Verdict` survives as the one
+  closed set with `RETRY` merged in. Chosen against measured usage, not preference:
+  `judge_contract.Verdict` had **0** production references outside its own module and
+  `verify.Verdict` had 5, but deleting the contract's would have stranded
+  `JudgeVerdict`/`validate_verdict`/`aggregate_samples` or dropped REPLAN + NEEDS_INPUT, and `RETRY`
+  was the only live member the merge would otherwise have lost. `engine._aggregate_gate_verdicts`
+  went with it: its two rules (any ESCALATE wins; a split prefers the terminal REJECT over the
+  spinning RETRY) moved INTO `aggregate_samples`, which the gate now calls — the cross-vocabulary
+  workaround the atom predicted would become unnecessary did.
+
+  **`judge_actors`' four unwired functions closed.** `check_transition`/`resolve_transition` rule on
+  the actor behind the gate's own terminal transition: `Actor.JUDGE` for an independent judge,
+  `Actor.WORKER` when `self_judge` is set — and a WORKER's `done` is redirected to `review`, realized
+  as the engine's existing park-and-ask. `blind_provenance`/`assemble_judge_evidence` build what the
+  judge reads (rubric prose as `spec`, the bound `evidence` as `tool_output`, retry/iteration markers
+  stripped); reachable because the controller appends a retry hint to a node's prompt.
+  `verify.requires_fresh_judge` gained its first caller here too.
+
+  **Both rails INVERTED, not deleted.** `WF2LOO-12`'s
+  `test_the_unwired_enforcement_claim_matches_the_live_path` became
+  `test_every_enforcement_entry_point_has_a_production_caller` +
+  `test_the_docstring_describes_the_live_path_rather_than_disclaiming_it` +
+  `test_the_posture_measurement_stays_with_the_code`, with a new AST rail
+  (`test_the_rules_under_validate_verdict_are_still_reached_from_it`) for the three rules that have
+  no caller outside the module BY DESIGN — the shape a caller-count audit cannot see.
+  `WF2LOO-15`'s rail now asserts all four functions are wired and the disclaimer is gone. PHF-13's
+  `test_the_audited_value_lookup_call_sites_have_no_production_caller` was re-verdicted per its own
+  instruction: `Verdict.REPLAN` and `Actor.WORKER` left `inert-surface-baseline.json` (139 → 137),
+  `Ratchet.RELAXED` stays inert, and the test now pins that split in both directions.
+
+  **DEVIATION — `done_when` 5's binding half is 4 of 6 templates.** `code-project` binds
+  `{{nodes.judge.output.verdict}}`/`.shortfalls` into `handoff`; `general-project`,
+  `goal-pursuit-open-ended` and `goal-pursuit-verifiable` carry the judge's critique into the NEXT
+  iteration's worker prompt via `{{last.output.verdict}}`/`.shortfalls`, which is the revision cycle
+  the rubric exists to drive. `design-project` and `diagnose-run` have NO node after their terminal
+  judge, so their binding is the validated run output; adding a node to manufacture a binding site
+  would be inventing template structure this atom has no mandate to design.
+
+  **DEVIATION — the judge STAGE seam validates and BINDS but does not FAIL the node.** Those six
+  stage prompts say in as many words that "reporting real issues is the normal outcome", so a REJECT
+  is expected traffic on 6 live templates and failing on it would convert normal operation into a
+  failed run — the outage this atom was explicitly scoped to avoid. The hard teeth stay at the judge
+  GATE, where the engine owns completion. A `success_when: output.contract_valid` was drafted and
+  dropped for the same reason: `_check_success_when` produces a non-recoverable PROTOCOL failure, so
+  a plausible model answer (PASS with one criterion at 1) would hard-fail a loop iteration instead of
+  driving a revision cycle.
+
+  **DISCOVERY — `hints_from_dict`/`aggregate_samples`' "2 production refs each" were PROSE.** Both
+  appeared only inside docstrings and comments (`models.py:712`, `execution_hints.py:5`,
+  `engine.py`'s two notes); neither had a call site, which is why WF2LOO-12's rail (matching
+  `name(`) read them as unwired and was right to.
+
+  **OUT OF SCOPE, recorded rather than fixed.** `JudgeHints.judge_samples`/`sample_count()` stay
+  unwired: the contract's default of 3 would have tripled the model spend of all 7 live gates in a
+  change whose subject is enforcement, so `config.judge_samples` per node keeps the say.
+  `verified_done.py` carries a THIRD `Actor` enum (ENGINE/USER/AGENT over `TaskStatus`) that this
+  atom does not reconcile. `verify.judge_session_key` still has no caller.
+  `goal-pursuit-verifiable`'s loop `until` condition reads `{{last.output.command_passed}}`, a key
+  its judge stage's schema does not produce — left alone because `last.output` merges the body's
+  node outputs and re-pointing it needs its own measurement.
+
+  Gate: `make lint` green (black/isort/flake8/mypy); the full suite green apart from the three
+  pre-existing `tests/test_harness_validate.py` failures that red in any worktree; generators
+  re-run — `inert-surface-baseline.json` legitimately SHRANK by 2 and is committed,
+  `personalclaw.manifest_reference` byte-identical, `regen_dag_derived.py --check` current.

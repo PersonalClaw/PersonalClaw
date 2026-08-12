@@ -35,6 +35,10 @@ def _gate(cfg: dict) -> Node:
     return Node.from_dict({"kind": "gate", "id": "accept", "config": {"kind": "judge", **cfg}})
 
 
+#: The contract object the judge gate asks for since WF2LOO-13. A bare "PASS" now reads as "the
+#: judge could not answer in the required shape" — a PROTOCOL failure, not a pass.
+_CONTRACT_PASS = '{"verdict": "PASS", "proof": "re-ran the verify command; exit 0"}'
+
 # A worker on the "claude" family; the evidence is long enough to clear the pre-tier.
 _WORKER = "Anthropic:claude-opus-5"
 _EVIDENCE = "A substantial deliverable with more than enough characters for the pre-tier to allow."
@@ -48,7 +52,7 @@ async def test_a_different_family_judge_runs_and_is_pinned() -> None:
 
     async def completion(instruction, *, use_case=None, output_type=None, model=""):
         seen["model"] = model
-        return "PASS"
+        return _CONTRACT_PASS
 
     node = _gate({"prompt": "accept?", "evidence": _EVIDENCE, "isolation": "cross_model"})
     result = await dispatch_gate(
@@ -70,7 +74,7 @@ async def test_a_same_family_judge_fails_closed() -> None:
 
     async def completion(instruction, *, use_case=None, output_type=None, model=""):
         calls["n"] += 1
-        return "PASS"
+        return _CONTRACT_PASS
 
     node = _gate({"prompt": "accept?", "evidence": _EVIDENCE, "isolation": "cross_model"})
     result = await dispatch_gate(
@@ -92,7 +96,7 @@ async def test_an_undeterminable_judge_family_fails_closed() -> None:
     the gate fails closed rather than certifying against an unknown."""
 
     async def completion(instruction, *, use_case=None, output_type=None, model=""):
-        return "PASS"
+        return _CONTRACT_PASS
 
     node = _gate({"prompt": "accept?", "evidence": _EVIDENCE, "isolation": "cross_model"})
     result = await dispatch_gate(
@@ -115,7 +119,7 @@ async def test_an_undeterminable_worker_family_fails_closed() -> None:
 
     async def completion(instruction, *, use_case=None, output_type=None, model=""):
         calls["n"] += 1
-        return "PASS"
+        return _CONTRACT_PASS
 
     node = _gate({"prompt": "accept?", "evidence": _EVIDENCE, "isolation": "cross_model"})
     result = await dispatch_gate(
@@ -138,7 +142,7 @@ async def test_a_fresh_isolation_gate_is_unchanged_and_pins_no_model() -> None:
 
     async def completion(instruction, *, use_case=None, output_type=None, model=""):
         seen["model"] = model
-        return "PASS"
+        return _CONTRACT_PASS
 
     node = _gate({"prompt": "accept?", "evidence": _EVIDENCE, "isolation": "fresh"})
     result = await dispatch_gate(
