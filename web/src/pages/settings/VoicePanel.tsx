@@ -186,7 +186,7 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   graph: { label: 'graph', cls: 'bg-surface-high text-on-surface-low' },
-  manual: { label: 'manual', cls: 'bg-primary/15 text-primary' },
+  manual: { label: 'manual', cls: 'bg-primary-container text-on-primary-container' },
   learned: { label: 'learned', cls: 'bg-ok/15' },
 }
 

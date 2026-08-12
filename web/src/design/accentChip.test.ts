@@ -69,6 +69,64 @@ describe('no primary tint under primary ink survives', () => {
   })
 })
 
+// ── The same defect, spelled in Tailwind classes ─────────────────────────────────────────
+//
+// The sweep above matches the STYLE-OBJECT spelling only (`background: color-mix(…)` +
+// `color: var(--color-primary)`). A second population wrote the identical pair as utilities —
+// `bg-primary/12 text-primary` — and was therefore invisible to it. axe found one of them on
+// `#/tools` in light mode, `[serious] color-contrast`, 3 nodes at **4.09:1** (`#c8452e` on `#f8e9e6`).
+//
+// Re-measured per alpha with the method validated by reproducing that exact 4.09 (light, primary ink
+// over primary tint on `--color-surface`):
+//
+//     10% → 4.20   12% → 4.09   14% → 3.97   15% → 3.92   20% → 3.64   25% → 3.39
+//     the same alphas in dark:  5.84 / 5.67 / 5.52 / 5.43 / 4.94 / 4.50 — all pass
+//
+// So EVERY class-spelled coral chip at ≥10% fails AA in light, and only 5% (4.52) squeaks through.
+// Seven static chips were converged onto the container pair; two interactive controls are held back
+// below because they carry `hover:bg-primary/25` on the coral branch and a container fill has no
+// hover shade in the token set — picking one is a visual-language decision, not a contrast fix.
+
+const CLASS_TINT_ALLOWED = new Set([
+  // Interactive, with a hover ON the coral branch. `Button`'s `tonal` variant (14 callers) and the
+  // Code cockpit's autopilot toggle both go `bg-primary/15 → hover:bg-primary/25`, i.e. 3.92 → 3.39.
+  // Both need a hover treatment for a container fill before they can move; recorded, not swept.
+  'ui/Button.tsx',
+  'pages/code/CodeCockpitPage.tsx',
+])
+
+describe('no primary tint under primary ink survives — utility spelling', () => {
+  const offenders: string[] = []
+  const seen: string[] = []
+  for (const abs of walk(SRC)) {
+    const rel = abs.slice(SRC.length + 1)
+    readFileSync(abs, 'utf8').split('\n').forEach((line, i) => {
+      // One class string carrying both the coral tint and coral ink. Alpha-bearing only: a bare
+      // `bg-primary` is the solid accent with `text-on-primary`, which is a different, passing pair.
+      if (!/bg-primary\/\d+/.test(line)) return
+      if (!/text-primary\b/.test(line)) return
+      seen.push(`${rel}:${i + 1}`)
+      if (!CLASS_TINT_ALLOWED.has(rel)) offenders.push(`${rel}:${i + 1}`)
+    })
+  }
+
+  it('has none left outside the two recorded interactive holdouts', () => {
+    expect(
+      offenders,
+      `coral ink on a coral tint is 3.64–4.20:1 in light — use bg-primary-container + text-on-primary-container:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([])
+  })
+
+  it('still finds the holdouts — the allowlist is not stale', () => {
+    // If these move or get fixed, this fails and the allowlist shrinks. An allowlist nobody checks
+    // becomes a permanent exemption.
+    expect(seen.length, 'the matcher stopped matching anything at all').toBeGreaterThan(0)
+    for (const rel of CLASS_TINT_ALLOWED) {
+      expect(seen.some((s) => s.startsWith(rel + ':')), `${rel} no longer carries the pattern — drop it from the allowlist`).toBe(true)
+    }
+  })
+})
+
 describe('the sweep actually adopted the shared definition', () => {
   const adopters = walk(SRC).filter((abs) => /\baccentChip\b/.test(readFileSync(abs, 'utf8')))
 

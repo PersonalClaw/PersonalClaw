@@ -82,7 +82,7 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
           {offerable.map((g) => (
             <span key={g.name}
               title={`${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}: ${g.tools.slice(0, 8).join(', ')}${g.tools.length > 8 ? '…' : ''}${g.alwaysOn ? '\nAlways loaded — these are the primitives an agent cannot work without.' : ''}`}
-              className={`inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem] ${g.alwaysOn ? 'bg-primary/12 text-primary' : 'bg-surface-high text-on-surface-low'}`}>
+              className={`inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem] ${g.alwaysOn ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-low'}`}>
               {g.display}
               {/* No `opacity-*` on the count: the chip's own colour is ALREADY the dimmed token
                   (`text-on-surface-low` / `text-primary`), so dimming again halves an intentional

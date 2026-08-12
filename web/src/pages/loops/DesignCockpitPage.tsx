@@ -322,8 +322,11 @@ function DesignPhaseTrail({ plan, phaseStatus, cycle, active, complete }: {
             <div key={i} className="flex items-center gap-1 shrink-0">
               {i > 0 && <span className="w-3 h-px bg-outline-variant/50" />}
               <span title={obj ? `${title} — ${obj}` : title}
-                className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] ${isActive ? 'bg-primary/15 text-primary' : done ? 'text-on-surface-low' : 'text-on-surface-low/70'}`}>
-                <Icon size={12} className="shrink-0" style={isActive ? { color: 'var(--color-primary)' } : done ? { color: 'var(--color-ok)' } : undefined} />
+                className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] ${isActive ? 'bg-primary-container text-on-primary-container' : done ? 'text-on-surface-low' : 'text-on-surface-low/70'}`}>
+                {/* The active branch drops its inline coral: the chip is a container fill now, so the icon
+                    inherits `text-on-primary-container` and matches the label beside it. Coral ink on the
+                    container would be the same too-close pair, one element smaller. */}
+                <Icon size={12} className="shrink-0" style={!isActive && done ? { color: 'var(--color-ok)' } : undefined} />
                 <span className="truncate max-w-[10rem]">{title}</span>
               </span>
             </div>
