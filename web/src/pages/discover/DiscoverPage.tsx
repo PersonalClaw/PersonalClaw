@@ -10,6 +10,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { api, type DiscoverResponse, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
+import { accentChip } from '../../design/accent'
 
 /** Discover hub (§6) — the full curated tour of PersonalClaw, grouped by area.
  *  Every tip the dashboard spotlight rotates through lives here at once, each a
@@ -42,7 +43,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                 <span
                   data-type="label-s"
                   className="inline-flex h-5 items-center rounded-pill px-2"
-                  style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}
+                  style={accentChip}
                 >
                   {data.visible_count}
                 </span>

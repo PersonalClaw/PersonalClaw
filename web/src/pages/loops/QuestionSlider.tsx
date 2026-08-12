@@ -16,6 +16,7 @@ import {
   OTHER_CHOICE,
   type SliderQuestion,
 } from './sliderState'
+import { accentChip } from '../../design/accent'
 
 /** The QuestionSlider / ask() stepper (UNIVERSAL-PLANNING UP-R5, WF2UNI-10).
  *
@@ -67,7 +68,7 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
           transition={spring.spatialFast} className="flex flex-col gap-m">
           {phased && (
             <span className="self-start inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem]"
-              style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}>
+              style={accentChip}>
               <Sparkles size={12} /> Phase {q.phaseIndex! + 1} of {q.phaseCount} · {q.phase}
             </span>
           )}

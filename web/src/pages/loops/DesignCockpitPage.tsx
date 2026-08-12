@@ -16,6 +16,7 @@ import { useRunStream } from './useRunStream'
 import { CockpitPromptBar } from './CockpitPromptBar'
 import type { RouteProps } from '../../app/useQueryState'
 import { promptInput } from '../../ui/dialog'
+import { accentChip } from '../../design/accent'
 
 export type Scheme = 'light' | 'dark'
 type Tab = 'tokens' | 'canvas' | 'palette' | 'contrast' | 'exports'
@@ -250,7 +251,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         {(loop.project_id || loop.tasks_project_id) && projName && (
           <button type="button" onClick={() => onOpenProject?.((loop.project_id || loop.tasks_project_id)!)} title={`Project: ${projName} — open`}
             className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] hover:brightness-110"
-            style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>
+            style={accentChip}>
             <FolderKanban size={11} /><span className="truncate max-w-[14rem]">{projName}</span>
           </button>
         )}
@@ -398,7 +399,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
     <div className="flex flex-col gap-2xl max-w-[64rem]">
       <div className="flex items-center gap-2">
         <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{readOnly ? `PersonalClaw default design system · ${scheme}` : `Resolved design system · ${scheme}`}</span>
-        {!readOnly && (overrideCount ?? 0) > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
+        {!readOnly && (overrideCount ?? 0) > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
         {!readOnly && onRefresh && <button type="button" onClick={onRefresh} className="ml-auto inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface text-[0.75rem]"><RefreshCw size={12} /> Refresh</button>}
       </div>
 

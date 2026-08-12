@@ -4,6 +4,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { Skeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, ApiError, type NodeInspect } from '../../lib/api'
+import { accentChip } from '../../design/accent'
 
 /** The per-node inspector drawer (WORKFLOWS-V2 / WV-10).
  *
@@ -150,7 +151,7 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
           data-testid="cached-badge"
           className="inline-flex items-center rounded-pill px-2 py-0.5 text-[0.6875rem]"
           style={data.cached
-            ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }
+            ? accentChip
             : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}
           title={data.cached ? 'Output served from the resume cache' : 'Freshly produced this run'}
         >

@@ -7,6 +7,7 @@ import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { kindMeta, relTime, firstLine, unreadRail, toneChipBg } from '../pages/notifications/notificationMeta'
 import { fvs, withWeight } from '../design/fontWeight'
+import { accentChip } from '../design/accent'
 
 const MAX_SHADE = 5
 
@@ -53,7 +54,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
         title={unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
         className="relative grid size-7 place-items-center rounded-pill transition-colors"
         style={open
-          ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }
+          ? accentChip
           : { color: 'var(--color-on-surface-low)' }}>
         <Bell size={16} />
         {/* unread badge springs in on a playful bounce, and RE-POPS on each count
@@ -82,7 +83,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             <div className="flex items-center justify-between border-b border-outline-variant/40 px-m py-2.5">
               <span data-type="title-s" className="text-on-surface flex items-center gap-s">
                 Notifications
-                {unread > 0 && <span className="rounded-pill px-1.5 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}
+                {unread > 0 && <span className="rounded-pill px-1.5 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{unread}</span>}
               </span>
               {unread > 0 && (
                 <button type="button" onClick={ackAll}

@@ -4,6 +4,7 @@ import { fvs } from '../design/fontWeight'
 import { Modal } from './Modal'
 import { Markdown } from './Markdown'
 import { api, type SkillItem } from '../lib/api'
+import { accentChip } from '../design/accent'
 
 /** A selectable capability row (a skill today) with a checkbox + suggested chip.
  *  The single picker row shared by the goal-loop and code-loop plan reviews — the
@@ -25,7 +26,7 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5">
             <span className="text-on-surface text-[0.8125rem] truncate" style={fvs(550)}>{name}</span>
-            {suggested && <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.75rem] uppercase tracking-wide" style={{ background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' }}>suggested</span>}
+            {suggested && <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.75rem] uppercase tracking-wide" style={accentChip}>suggested</span>}
           </span>
           {description && <span className="block text-on-surface-low text-[0.75rem] truncate">{description}</span>}
         </span>
