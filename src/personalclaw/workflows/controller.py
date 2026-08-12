@@ -3348,6 +3348,32 @@ class RunController:
                 self._revise_project_overview()
             self._capture_run_end()
         self._publish("workflow_run_update", {"status": status.value, "error": error})
+        if status in TERMINAL_RUN_STATUSES:
+            await self._drain_overlap_queue()
+
+    async def _drain_overlap_queue(self) -> None:
+        """Start the next `on_overlap: queue` run for this def, now that this one has ended.
+
+        The live call site for the queue (WV-14). It belongs here because this is the moment
+        the def stops being busy: `_save_run` above has already written the terminal status,
+        so `store.active_runs()` no longer counts this run and the drain's own re-check sees
+        a free def.
+
+        Awaited inline rather than fired as a task, deliberately: a floating task makes the
+        handoff untestable ("did it start?" becomes a race) and can outlive the loop that
+        created it. Fully guarded, because `_finish` is the single terminal writer (WF2-R10)
+        and MUST NOT raise — a failure here costs the NEXT run's start, never this run's
+        recorded outcome, and the watchdog's poll re-drains what this missed.
+        """
+        supervisor = getattr(self.services, "supervisor", None)
+        if supervisor is None:
+            return
+        try:
+            from personalclaw.workflows import overlap
+
+            await overlap.drain(self.run.workflow_name, supervisor)
+        except Exception:
+            logger.debug("run %s: overlap drain failed", self.run.id, exc_info=True)
 
     def _capture_run_end(self) -> None:
         """Route a terminal run through the LearningGate → run-end learner (LEARNING-FLYWHEEL §3.3).

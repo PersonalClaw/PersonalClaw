@@ -122,6 +122,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A workflow set to `on_overlap: queue` started a second run alongside the first instead of
+  queueing it.** The policy did the opposite of its name: with a run already in flight, `queue`
+  matched no branch in the code that applies the setting and fell through to "start now", so a
+  trigger that fired every minute against a slow workflow stacked runs without bound — the exact
+  thing the default (`skip`) exists to prevent. `queue` now means what it says: the start is saved
+  as an unstarted run and begins when the run in flight ends, whether that happens while the
+  gateway is up or after a restart. The queue holds one pending start (the run after next would do
+  the same work with staler inputs), and a start refused by that limit says so — in the trigger's
+  recorded outcome and in the log — rather than reporting itself as queued. An unstarted run you
+  created yourself is never picked up by this: only starts the overlap policy queued are, and the
+  distinction is recorded on the run. Trigger history shows a queued fire as deferred with its own
+  reason, so it is no longer indistinguishable from one that ran.
 - **The Inbox's Mentions and Email filters could never match anything.** The dashboard has
   filtered and counted items by kind for a while, and the inbox stored a kind per row — but the
   message-source seam every provider builds on had no field for it, so every message a source

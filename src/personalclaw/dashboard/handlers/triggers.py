@@ -1423,10 +1423,15 @@ async def _record_manual_run(
             status = "failure"
             error = str(getattr(result, "error", "") or "") or "the action reported failure"
             summary = error
-        elif result is not None and str(getattr(result, "outcome", "") or "") == "launched":
+        elif result is not None and str(getattr(result, "outcome", "") or "") in (
+            "launched",
+            "queued",
+        ):
             # T7: the action only STARTED background work; its real outcome is its OWN run's, so the
             # honest status is "launched", not "success" — matching `_record_fire_outcome`.
-            status = "launched"
+            # `queued` is the weaker sibling (WV-14): a durable run record exists but nothing has
+            # begun, and both map to `Outcome.DEFERRED` with distinct reasons.
+            status = str(getattr(result, "outcome", "") or "")
             error = ""
             summary = str(getattr(result, "stdout", "") or "")
         else:

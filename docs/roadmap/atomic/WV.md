@@ -23,6 +23,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WV-11` | ⬜ | Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider | `WV-3`, `WV-8` | node outputs over threshold keep head/tail in journal and write body to runs/<id>/artifacts/, populating bindings.node_artifacts so {{nodes.x.artifact}} resolves to a live pointer; artifact_inspect action provider registered (registry + ALLOWED_HOOK_PROVIDERS + validation schema) pulls artifact content on demand |
 | `WV-12` | ✅ | Two-layer context-compaction ladder for LLM-backed nodes | `WV-3`, `WV-8`, `EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)` | proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template |
 | `WV-13` | ✅ | Give `on_item_error: collect` an executor + an exhaustiveness ratchet over `ItemErrorPolicy` | `WV-4` | `tick.foreach_outcome` branches on every `ItemErrorPolicy` member and RAISES on an unmapped one; `collect` runs every item then fails the container, and its per-item failures land in the ledger as one `items_collected` record; the three policies produce three DIFFERENT run-level observables for one seeded failing item, driven through the real controller; `enum:ItemErrorPolicy.COLLECT` leaves `inert-surface-baseline.json` |
+| `WV-14` | ✅ | Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over `OverlapPolicy` | `WV-3`, `WV-4` | `overlap.decide` branches on every `OverlapPolicy` member and RAISES on an unmapped one; a `queue` start with a prior in flight PERSISTS an unlaunched run (DRAFT + a marker on `run.extra`) and returns `outcome: "queued"` naming it, instead of launching beside the prior; `overlap.drain` starts it from the controller's terminal write and from the watchdog poll, single-flight and idempotent; a hand-made DRAFT with no marker is never launched; the queue is capped at one and a dropped start names the cap in its outcome and the log; `enum:OverlapPolicy.QUEUE` leaves `inert-surface-baseline.json` |
 
 ## Atom scopes
 
@@ -198,3 +199,107 @@ fallthrough shared by two members).
    failing item, `max_concurrency: 1` so HALT is observable at all), the ledger-record
    assertions, and the exhaustiveness ratchet.
 6. Regenerate `inert-surface-baseline.json` (152 → 151; `enum` 25 → 24).
+
+### `WV-14` — Make `on_overlap: queue` queue instead of starting a concurrent run + an exhaustiveness ratchet over `OverlapPolicy`
+
+**Status:** done
+
+§2 trigger-origin starts (`on_overlap`, owned by the run-workflow provider re-added in Slice 3)
+
+**Done when:** `overlap.decide` branches on every `OverlapPolicy` member and RAISES on an unmapped one; a `queue` start with a prior in flight PERSISTS an unlaunched run (DRAFT + a marker on `run.extra`) and returns `outcome: "queued"` naming it, instead of launching beside the prior; `overlap.drain` starts it from the controller's terminal write and from the watchdog poll, single-flight and idempotent; a hand-made DRAFT with no marker is never launched; the queue is capped at one and a dropped start names the cap in its outcome and the log; `enum:OverlapPolicy.QUEUE` leaves `inert-surface-baseline.json`
+
+**Design**
+
+`OverlapPolicy.QUEUE` did the exact OPPOSITE of its name. `run_workflow_provider` compared
+against `SKIP` (return early, nothing starts) and `CANCEL_PREVIOUS` (cancel the priors, then
+start) and let `queue` **match neither branch and fall straight through to `store.create` +
+`_launch`** — so the one policy whose name promises ordering started a CONCURRENT run beside the
+still-running prior, silently. That directly violates the enum's own docstring
+(`SKIP = "skip"  # default — a per-minute trigger must not stack runs`): a per-minute trigger with
+`on_overlap: queue` against a slow workflow stacked runs without bound. It was reachable and
+round-tripped, not theoretical — `models.py` parses and serializes `on_overlap`, `native_defs.py`
+accepts it from a def payload, and `inert-surface-baseline.json` had listed
+`enum:OverlapPolicy.QUEUE` as inert for the length of the program.
+
+**Semantics, one line each.** SKIP (default) — a prior is in flight ⇒ nothing is created and
+nothing starts. QUEUE — a prior is in flight ⇒ the start is PERSISTED as an unlaunched run and
+started when that prior ends; ordering, not concurrency. CANCEL_PREVIOUS — a prior is in flight ⇒
+cancel it, then start now; the newest fire wins. With a free def all three start immediately —
+`queue` is not `always queue`, or a per-hour trigger against a one-minute workflow would never
+start anything directly.
+
+**The queue is a marked DRAFT run, not a new status.** `RunStatus.DRAFT` is where an unlaunched run
+already lives, so no state-machine member and no frontend mapping changes (the FE renders it with
+its existing `Draft` badge). But DRAFT is *also* where a user's deliberately-unstarted editor draft
+sits, so a drain keyed on "DRAFT for this def" would start work the user never asked to start —
+the worst available outcome of this atom. Queued-ness is therefore an explicit marker,
+`run.extra["overlap_queued"]`, and `extra` is a persisted JSON column, so it survives a restart
+with the row. Rejected: a new `RunStatus.QUEUED` (a state-machine change — `active_runs`,
+`TERMINAL_RUN_STATUSES`, `_ROOT_TO_RUN`, `materialize`'s exhaustive state→status table and the FE
+status union/badge `Record` all switch on it, and none of them need to); `RunOrigin` (it says WHO
+started a run, not what it waits on); a journal fact (durable but unqueryable — "which drafts are
+queued" would mean opening every draft's ledger).
+
+**The drain is single-flight and idempotent, reusing `concurrency.single_flight`** — the same flock
+the claim leases are built on — rather than a new lock. Three guards, cheapest first: the flock
+(cross-process, and cross-coroutine because flock conflicts across separate open file descriptions
+in one process); the supervisor's controller registry, since `watchdog.launch` already returns the
+EXISTING controller for a run id it holds (which also covers the window before a new controller has
+written RUNNING, when `active_runs()` still reads empty); and an active re-check *inside* the lock.
+Two live call sites: `controller._finish` after the terminal status is written (the moment the def
+stops being busy — awaited inline, since a floating task makes the handoff untestable, and fully
+guarded because `_finish` is the single terminal writer and must not raise), and the watchdog's 5s
+poll after adoption.
+
+**Cap: one — coalesce-to-one.** Depth 1 keeps the promise the name makes (the fire is not dropped;
+it runs next) while bounding the backlog. Unbounded depth does not: run N+2 does the same work as
+run N+1 with staler inputs, and a workflow that once ran long would spend hours replaying trigger
+fires whose reason has expired — one late run silently becoming a multi-hour backlog. A dropped
+start is loud in both places: the returned outcome carries `dropped/reason: "queue_full"/
+queue_depth/max_queue_depth/queued_run_id`, and the provider logs a WARNING. It stays
+`outcome: "skip"` (nothing durable was created) rather than minting a fourth vocabulary member.
+
+**Restart: the queue IS re-drained, with a ≤5s bound.** A queued start is a durable DRAFT row plus
+its spec file, and the watchdog's poll calls `drain_all`, so the first poll after the gateway comes
+back drains whatever was pending — no separate boot hook. The one thing deliberately NOT preserved:
+if the prior was suspended to PAUSED by the boot sweep, PAUSED counts as active, so the queued run
+waits for an explicit Resume rather than overtaking a run that is not finished. A queued run whose
+spec directory vanished is FAILED rather than left queued — a queue head the drain can never launch
+would be re-examined every poll forever and would block every start behind it.
+
+**`outcome: "queued"` is a new vocabulary member, and an unmapped status is recorded as FAILED.**
+`triggers.executor._record_fire_outcome` maps an unrecognized runner status to `Outcome.FAILED`, so
+the member ships with every reader updated in the same change: `STATUS_TO_OUTCOME` and
+`SCHEDULE_STATUS_TO_OUTCOME`/`HOOK_STATUS_TO_OUTCOME` → `Outcome.DEFERRED` (its "parked /
+resource-busy" half) with their own reason string, `hooks.py` and the manual-fire handler pass it
+through instead of folding it into `ok`/`success`, and `engine.dispatch_action` maps it to DEGRADED
+(a DONE node would tell the frontier this action's work completed). `"skip"` would under-report a
+real run record; `"launched"` would claim work that has not begun.
+
+**Exhaustiveness.** The decision moves into one named function, `overlap.decide(policy, active=,
+queued=)`, which names every member and raises on an unmapped one; the provider's call site also
+refuses an `OverlapAction` it has no branch for, before anything is created, because the dangerous
+default there is "fall through and launch". Four tests hold it: every member driven, the raise
+asserted, an AST read of `decide` asserting it names every member, and a source check that every
+`OverlapAction` member has a call site.
+
+**Implementation plan**
+
+1. `models.py` — document each `OverlapPolicy` member (three bare values, one carrying a comment)
+   and point at the one function that decides.
+2. `overlap.py` (new) — `decide()` exhaustive with a raising tail; `OverlapAction`; the marker
+   (`QUEUED_KEY`/`queued_extra`/`is_queued`), `queued_runs`/`queued_depth`/`queued_names`;
+   `drain(name, supervisor)` under `single_flight` and `drain_all(supervisor)`.
+3. `run_workflow_provider.py` — replace the two-way comparison with `decide`; the QUEUE branch
+   creates with the marker in the same INSERT and returns `outcome="queued"`; the DROP branch
+   returns and logs the cap; `dry_run` moves ahead of the write paths and names the decided action.
+4. `controller.py` — `_drain_overlap_queue()` off `_finish`, gated on a terminal status, awaited
+   inline and fully guarded (WF2-R10).
+5. `watchdog.py` — `overlap.drain_all(self)` at the end of `_poll_once`, after adoption.
+6. The `"queued"` outcome vocabulary: `action_providers/base.py`, `triggers/executor.py`,
+   `triggers/history.py`, `hooks.py`, `dashboard/handlers/triggers.py`, `workflows/engine.py`.
+7. `tests/test_workflows_overlap_queue.py` — the three-policy observables, the cap, the drain on
+   the real controller path, the fresh-watchdog restart drain, the hand-made-draft safety test, and
+   the ratchet.
+8. Regenerate `inert-surface-baseline.json` (151 → 150; `enum` 24 → 23) and add the `overlap.py`
+   row to `docs/architecture/workflows.md`'s module table.

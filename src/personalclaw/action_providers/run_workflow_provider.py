@@ -22,7 +22,10 @@ exists for.
 
 **`on_overlap` is honoured here**, not left to the caller. A per-minute trigger against
 a ten-minute workflow must not stack runs, and the def's declared policy (`skip` by
-default) is the single place that decision belongs.
+default) is the single place that decision belongs. The decision itself lives in
+`workflows.overlap.decide` — exhaustive over the policy enum, with a raising tail —
+because `queue` previously matched no branch here and fell through to "start now", which
+is the opposite of what its name promises (WV-14).
 """
 
 from __future__ import annotations
@@ -76,6 +79,7 @@ class RunWorkflowActionProvider(ActionProvider):
 
         try:
             from personalclaw.workflows import defs as defs_mod
+            from personalclaw.workflows import overlap as overlap_mod
             from personalclaw.workflows import store
             from personalclaw.workflows.effects import START_DEDUPE
             from personalclaw.workflows.models import (
@@ -121,10 +125,15 @@ class RunWorkflowActionProvider(ActionProvider):
                 stderr="the definition carries no root node",
             )
 
-        # on_overlap — the def's declared policy, applied before a second run exists.
+        # on_overlap — the def's declared policy, applied before a second run exists. The
+        # branch lives in `overlap.decide`, exhaustive over the enum with a raising tail.
         overlap = _overlap_of(definition, OverlapPolicy)
         active = [r for r in store.active_runs() if r.workflow_name == name]
-        if active and overlap == OverlapPolicy.SKIP:
+        queued = overlap_mod.queued_runs(name)
+        action = overlap_mod.decide(overlap, active=len(active), queued=len(queued))
+        Act = overlap_mod.OverlapAction
+
+        if action == Act.SKIP:
             return ActionResult(
                 success=True,
                 outcome="skip",
@@ -135,20 +144,55 @@ class RunWorkflowActionProvider(ActionProvider):
             )
 
         if (action_config or {}).get("dry_run"):
-            # Honest preview: nothing is created. The engine's own preflight is what
-            # would validate inputs, and claiming more than that here would be a lie.
+            # Honest preview: nothing is created — checked BEFORE the queue path, because a
+            # preview that persisted a queued run would be a write. It names the DECIDED
+            # action, so a dry run against a busy def says "would queue", not "would start".
+            # The engine's own preflight is what would validate inputs, and claiming more
+            # than that here would be a lie.
             return ActionResult(
                 success=True,
                 outcome="skip",
                 stdout=json.dumps(
                     {
                         "dry_run": True,
+                        "would": action.value,
                         "would_start": name,
                         "inputs": dict((action_config or {}).get("inputs") or {}),
                     }
                 ),
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
+
+        if action == Act.DROP:
+            # The cap refused this start. Loud in BOTH places: a truncation that reported
+            # "queued" would be the same lie as the concurrent start this atom replaced.
+            logger.warning(
+                "run-workflow: dropped a queued start for %s — the queue is already %d deep "
+                "(max %d); the pending run is %s",
+                name,
+                len(queued),
+                overlap_mod.MAX_QUEUE_DEPTH,
+                queued[0].id,
+            )
+            return ActionResult(
+                success=True,
+                outcome="skip",
+                stdout=json.dumps(
+                    {
+                        "dropped": True,
+                        "reason": "queue_full",
+                        "queue_depth": len(queued),
+                        "max_queue_depth": overlap_mod.MAX_QUEUE_DEPTH,
+                        "queued_run_id": queued[0].id,
+                    }
+                ),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        if action not in (Act.QUEUE, Act.START, Act.CANCEL_THEN_START):
+            # Refuse before anything is created. The dangerous default at this call site is
+            # "fall through and launch" — which is exactly what `queue` used to do.
+            raise AssertionError(f"run-workflow has no branch for OverlapAction.{action.name}")
 
         run = store.create(
             WorkflowRun(
@@ -162,13 +206,37 @@ class RunWorkflowActionProvider(ActionProvider):
                     kind=OriginKind.HOOK,
                     trigger_id=str(getattr(context, "context", "") or ""),
                 ),
+                # The queued marker goes in the SAME insert as the row — marking after
+                # `create` would leave a window in which the row is an ordinary DRAFT.
+                extra=overlap_mod.queued_extra() if action == Act.QUEUE else {},
             )
         )
         store.write_spec(run.id, spec)
         if caller_key:
             START_DEDUPE.remember(caller_key, run.id)
 
-        if overlap == OverlapPolicy.CANCEL_PREVIOUS:
+        if action == Act.QUEUE:
+            # Persisted, not launched, and NAMED. The drain (`overlap.drain`, called from
+            # the single terminal writer and from the watchdog poll) starts it when the
+            # prior ends. `outcome="queued"` and not "skip": a durable run record exists,
+            # so reporting it as a no-op skip would under-report real state; and not
+            # "launched": nothing is running.
+            return ActionResult(
+                success=True,
+                outcome="queued",
+                stdout=json.dumps(
+                    {
+                        "run_id": run.id,
+                        "workflow": name,
+                        "queued": True,
+                        "started": False,
+                        "behind": [r.id for r in active],
+                    }
+                ),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        if action == Act.CANCEL_THEN_START:
             for prior in active:
                 store.request_cancel(prior.id)
 

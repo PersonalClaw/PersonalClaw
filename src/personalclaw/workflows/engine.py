@@ -1039,6 +1039,15 @@ async def dispatch_action(
             output=output,
             degraded_reason="action started background work; completion not verified",
         )
+    if getattr(result, "outcome", "") == "queued":
+        # `on_overlap: queue` persisted a run and started nothing (WV-14). DEGRADED, not
+        # DONE: a DONE node would tell the frontier this action's work completed, when the
+        # work has not begun. Not NO_CHANGE either — a durable run record was written.
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason="action queued a run behind one already in flight; it has not started",
+        )
     if getattr(result, "outcome", "") == "skip":
         return NodeResult(state=InstanceState.NO_CHANGE, output=output)
     return NodeResult(state=InstanceState.DONE, output=output)

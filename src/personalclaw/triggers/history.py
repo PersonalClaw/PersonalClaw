@@ -61,6 +61,10 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     "timeout": Outcome.FAILED.value,
     # See the module docstring: started ≠ succeeded.
     "launched": Outcome.DEFERRED.value,
+    # `on_overlap: queue` held the start behind a run already in flight (WV-14). DEFERRED's
+    # "parked / resource-busy" half, and `LEDGER` weight follows for the same reason
+    # `launched` gets it: no run directory or journal exists for it yet.
+    "queued": Outcome.DEFERRED.value,
 }
 
 #: A hook's `last_status` → `FIRE_OUTCOMES`. Hooks report a shell exit code, so the vocabulary is
@@ -72,6 +76,10 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
     "blocked": Outcome.REFUSED.value,
+    # A hook whose action queued a run rather than starting one (WV-14). Without this the
+    # fire would fall to the `RAN if last_run` default and read as "it ran and did something
+    # durable" — a queued start has run nothing.
+    "queued": Outcome.DEFERRED.value,
 }
 
 
@@ -135,6 +143,8 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         reason = f"timed out: {reason}" if reason else "timed out"
     elif status == "launched":
         reason = reason or "action launched a background turn; outcome not yet known"
+    elif status == "queued":
+        reason = reason or "queued behind a run already in flight; it starts when that one ends"
     job_id = str(run.get("job_id", "") or "")
     return FireRecord(
         id=str(run.get("run_id", "") or ""),

@@ -46,6 +46,15 @@ class ActionResult:
     #               real outcome is NOT known yet, so the run record says
     #               "launched", not "succeeded" — honest "started ≠ succeeded"
     #               status (T7). The spawned turn records its own outcome.
+    #   "queued"  — the action persisted a durable intent and started NOTHING
+    #               (run-workflow under `on_overlap: queue`, held behind a run
+    #               already in flight). Distinct from both neighbours on purpose:
+    #               "skip" would under-report a real run record, and "launched"
+    #               would claim work that has not begun. Every reader of this
+    #               field maps it to `Outcome.DEFERRED` — a status this
+    #               vocabulary does not recognise is recorded as FAILED
+    #               (`triggers.executor._record_fire_outcome`), so adding a
+    #               member here means adding it to those maps in the same change.
     outcome: str = ""
     # PLATFORM-LEGIBILITY §2: the WHAT/WHY/FIX envelope for a failed action. The
     # three dispatch seams wrap an uncaught provider exception into one, so

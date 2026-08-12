@@ -22,6 +22,12 @@ and it is safe precisely because there is no controller: adoption comes first, s
 with a live controller is never reaped.
 
 **Sticky cancel.** A CANCEL file is honoured even for a run with no controller.
+
+**Overlap-queue drain.** A start held back by `on_overlap: queue` is a durable DRAFT row
+with a marker, so it outlives the process that queued it. The poll drains it once nothing
+is in flight for that def — which is what makes the queue survive a gateway kill, and what
+covers a finish whose process died before its own drain ran (WV-14). Deciding WHICH queued
+run may start is `overlap.drain`'s; this only asks.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import shutdown_event
-from personalclaw.workflows import containers, store
+from personalclaw.workflows import containers, overlap, store
 from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
 from personalclaw.workflows.models import (
@@ -317,6 +323,17 @@ class WorkflowWatchdog:
                 continue
             if live.run.is_terminal:
                 self._controllers.pop(run.id, None)
+
+        # The `on_overlap: queue` drain (WV-14). Last, AFTER adoption, so a crash-survivor
+        # run that is about to be re-adopted still counts as active and a queued start does
+        # not overtake it.
+        #
+        # This is what makes the queue survive a restart: a queued start is a durable DRAFT
+        # row plus its spec file, so the first poll after a gateway comes back drains
+        # whatever was pending — the same 5s bound as adoption, with no separate boot hook.
+        # It also covers a finish whose process died between the terminal write and the
+        # controller's own drain.
+        await overlap.drain_all(self)
 
     def _boot_sweep(self) -> set[str]:
         """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.

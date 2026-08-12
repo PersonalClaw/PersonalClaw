@@ -343,9 +343,8 @@
       ]
     },
     "src/personalclaw/workflows/models.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "enum:OverlapPolicy.QUEUE",
         "enum:SessionMode.CONTINUOUS"
       ]
     },
@@ -367,10 +366,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 24,
+      "enum": 23,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 151
+    "inert": 150
   }
 }
