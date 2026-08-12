@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { GitFork, Route, TriangleAlert, Activity } from 'lucide-react'
 import { api, type TaskItem, type DependencyAnalysis } from '../../lib/api'
-import { statusMeta, priorityMeta, TERMINAL } from './taskMeta'
+import { statusMeta, signalPriority, TERMINAL } from './taskMeta'
 import { depMap, layeredLayout, cyclicNodes } from './dag'
 import { DagView, type DagNode, type DagEdge, type DagNodeState } from './DagView'
 import { EmptyState } from '../../ui/ListScaffold'
@@ -126,7 +126,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
           edges={edges.map((e): DagEdge => ({ id: e.id, from: e.from, to: e.to, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, bad: e.bad, active: e.active }))}
           nodes={nodes.map(({ x, y, t }): DagNode => {
             const sm = statusMeta(t.status)
-            const pm = priorityMeta(t.priority)
+            const pm = signalPriority(t.priority)
             const bad = cyclic.has(t.id)
             const done = TERMINAL.has(t.status)
             return {
@@ -139,7 +139,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
                   <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)}>{t.title}</div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
                     <span style={{ color: sm.tone }}>{sm.label}</span>
-                    <span style={{ color: pm.tone }}>· {pm.label}</span>
+                    {pm && <span style={{ color: pm.tone }}>· {pm.label}</span>}
                   </div>
                 </div>
               ),
