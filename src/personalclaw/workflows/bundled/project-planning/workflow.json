@@ -53,7 +53,7 @@
     "example_outputs": [
       "a plan with ordered steps and their done-conditions"
     ],
-    "when_not_to_use": "not for doing the work — use general-project or code-implementation"
+    "when_not_to_use": "not for doing the work — use general-project or code-project"
   },
   "root": {
     "kind": "sequence",

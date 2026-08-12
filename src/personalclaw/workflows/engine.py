@@ -33,6 +33,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from personalclaw.workflows import leases, longrun, ownership
@@ -151,15 +152,38 @@ def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -
 # ── binding helpers ──────────────────────────────────────────────────────────
 
 
+def _condition_keys(node: Node) -> frozenset[str]:
+    """Config keys holding a CONDITION — parsed by `conditions`, never interpolated.
+
+    Interpolating one can only do harm. `resolve` reads a value that both starts and ends
+    with braces as ONE whole reference (`bindings._WHOLE_RE`), so a two-term
+    `{{a}} && {{b}}` resolves as a single path named `a}} && {{b` and fails — a gate would
+    report a broken binding for an expression that is perfectly well formed. The dispatcher
+    re-reads the raw value anyway, so nothing is lost by leaving these alone.
+
+    `expr` is a condition ONLY on a gate: on a `transform` it is the value-producing
+    expression, and skipping resolution there would hand the next node a template instead
+    of data. `success_when` is a condition on every kind, and is evaluated after the node
+    ran — its `output.*` root does not exist at config-resolution time at all.
+    """
+    if node.kind is NodeKind.GATE:
+        return frozenset({"expr", "success_when"})
+    return frozenset({"success_when"})
+
+
 def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Failure | None]:
-    """Resolve every binding in a node's config.
+    """Resolve every binding in a node's config, except its conditions.
 
     A `BindingError` becomes a USER failure rather than an exception: the spec is wrong,
     the run should say so precisely, and a traceback in a run log tells a non-developer
     nothing actionable.
     """
+    raw = dict(node.config or {})
+    held = {key: raw.pop(key) for key in _condition_keys(node) if key in raw}
     try:
-        return resolve(dict(node.config or {}), ctx), None
+        resolved = resolve(raw, ctx)
+        resolved.update(held)
+        return resolved, None
     except BindingError as exc:
         return {}, Failure(
             failure_class=FailureClass.USER,
@@ -1127,6 +1151,115 @@ def _dispatch_seal(seal: dict[str, Any], ctx: BindingContext, *, now: float) -> 
     return NodeResult(state=InstanceState.WAITING, wake_at=now + max(1, check_every))
 
 
+class GuardOutcome(str, Enum):
+    """What the regression half of a dual gate concluded. CLOSED and mapped exhaustively
+    by `_dual_guard` — an unmapped value falling through to "passed" is the shape that
+    makes a regression gate look enforced while it certifies breakage.
+    """
+
+    #: No guard command declared. The gate is metric-only, which is a legitimate choice.
+    SKIPPED = "skipped"
+    #: The guard command passes now. Nothing regressed.
+    CLEAN = "clean"
+    #: The guard fails now AND failed at baseline: it was already broken, so this change
+    #: is not what broke it. The gate PASSES (degraded) — blaming a pre-existing failure
+    #: on this change is how a correct change gets rejected and someone debugs the wrong
+    #: commit.
+    PRE_EXISTING = "pre_existing"
+    #: The guard passed at baseline and fails now. THIS change broke it. The gate fails.
+    REGRESSION = "regression"
+    #: The guard could not be run at all. Never a pass — an unrunnable check certifies
+    #: nothing, the same rule the metric half applies.
+    UNDETERMINED = "undetermined"
+
+
+async def _dual_guard(block: dict[str, Any], verify: Any) -> NodeResult:
+    """The REGRESSION half of a dual verify+guard gate (LOOPS-EVOLUTION R5e).
+
+    The metric command has already passed when this runs: `command` says the deliverable is
+    done, and `guard` says nothing else got worse. Two commands rather than one because
+    they answer different questions, and a single command that mixes them cannot tell "my
+    feature works" from "I broke the suite".
+
+    **The classification is the point, and it is deterministic — no model involved.** A
+    guard failure is only a regression if the guard was PASSING before the change, which is
+    what `guard_baseline` carries (captured by a baseline node before the first mutating
+    step). Without that comparison the honest answers "you broke this" and "this was
+    already broken" are indistinguishable, and criterion 6 exists because they must not be.
+    """
+    from personalclaw.workflows.conditions import truthy
+
+    guard_cmd = str(block.get("guard", "") or "").strip()
+    if not guard_cmd:
+        return NodeResult(
+            state=InstanceState.DONE,
+            output={"verified": True, "guard": GuardOutcome.SKIPPED.value},
+        )
+
+    guard_block = {
+        "command": guard_cmd,
+        "cwd": block.get("cwd", ""),
+        "label": "guard",
+    }
+    try:
+        outcome = await verify(guard_block)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
+
+    baseline_passed = truthy(block.get("guard_baseline"))
+    if outcome is True:
+        verdict = GuardOutcome.CLEAN
+    elif outcome is None:
+        verdict = GuardOutcome.UNDETERMINED
+    elif baseline_passed:
+        verdict = GuardOutcome.REGRESSION
+    else:
+        verdict = GuardOutcome.PRE_EXISTING
+
+    output = {
+        "verified": True,
+        "guard": verdict.value,
+        "guard_command": guard_cmd,
+        "guard_passed_at_baseline": baseline_passed,
+    }
+
+    if verdict == GuardOutcome.CLEAN:
+        return NodeResult(state=InstanceState.DONE, output=output)
+    if verdict == GuardOutcome.PRE_EXISTING:
+        return NodeResult(
+            state=InstanceState.DEGRADED,
+            output=output,
+            degraded_reason=(
+                "the guard command was already failing before this change (pre-existing, "
+                "not a regression)"
+            ),
+        )
+    if verdict == GuardOutcome.REGRESSION:
+        return _failed_with(
+            FailureClass.USER,
+            "regression: the guard command passed at baseline and fails now",
+            "fix what this change broke, or narrow the change until the guard passes again",
+            output,
+        )
+    if verdict == GuardOutcome.UNDETERMINED:
+        return _failed_with(
+            FailureClass.INTERNAL,
+            "the guard command could not be run, so no regression verdict is possible",
+            "check the guard command exists and is executable in the run workspace",
+            output,
+        )
+    # Exhaustive over GuardOutcome — SKIPPED returned above. A new member must add its
+    # branch rather than inheriting a pass.
+    return _failed_with(
+        FailureClass.INTERNAL,
+        f"unhandled guard outcome {verdict.value!r}",
+        "map the new GuardOutcome member in `_dual_guard`",
+        output,
+    )
+
+
 async def dispatch_gate(
     node: Node,
     ctx: BindingContext,
@@ -1160,27 +1293,39 @@ async def dispatch_gate(
         )
 
     if kind == GateKind.EXPRESSION:
-        from personalclaw.workflows.tick import _truthy
+        from personalclaw.workflows.conditions import evaluate as evaluate_condition
 
-        expr = (node.config or {}).get("expr")
+        # 🔴 The RAW expr, and PARSED rather than interpolated. This used to call
+        # `resolve(expr, ctx)` — which renders a template to a STRING — and then ask
+        # `_truthy` about the result: the shipped `{{inputs.fix}} == true` became the string
+        # `"false == true"`, and a non-empty string is truthy, so the gate could never
+        # reject. Two shipped templates carried a gate that always passed. `conditions`
+        # parses the comparison instead, and is the ONE dialect `until` loops and
+        # `success_when` also use.
+        expr = str((node.config or {}).get("expr", "") or "")
+        if not expr.strip():
+            return _fail(
+                FailureClass.USER,
+                "expression gate has no `expr`",
+                "add `config.expr` with the condition the gate tests",
+            )
         try:
-            value = resolve(expr, ctx)
+            passed = evaluate_condition(expr, ctx)
         except BindingError as exc:
             return _fail(
                 FailureClass.USER,
                 f"gate expression failed to resolve: {exc}",
                 "check the referenced nodes exist",
             )
-        passed = _truthy(value)
         return NodeResult(
             state=InstanceState.DONE if passed else InstanceState.FAILED,
-            output={"passed": passed, "value": value},
+            output={"passed": passed, "expr": expr},
             failure=(
                 None
                 if passed
                 else Failure(
                     failure_class=FailureClass.USER,
-                    cause_plain="gate expression evaluated false",
+                    cause_plain=f"gate condition is false: {expr}",
                     remediation="inspect the upstream node output the gate tests",
                 )
             ),
@@ -1208,19 +1353,19 @@ async def dispatch_gate(
             return NodeResult(state=InstanceState.FAILED, failure=_classify_exception(exc))
         # Tristate, matching loop/gates.py: None means "could not determine", which is
         # NOT a pass — an unrunnable verifier must never certify work.
-        if outcome is True:
-            return NodeResult(state=InstanceState.DONE, output={"verified": True})
         if outcome is None:
             return _fail(
                 FailureClass.INTERNAL,
                 "verification could not be determined (verifier did not run)",
                 "check the command exists and is executable in the run workspace",
             )
-        return _fail(
-            FailureClass.USER,
-            "verification failed",
-            "fix the reported problems and re-run this node",
-        )
+        if outcome is not True:
+            return _fail(
+                FailureClass.USER,
+                "verification failed",
+                "fix the reported problems and re-run this node",
+            )
+        return await _dual_guard(block, verify)
 
     if kind == GateKind.LADDER:
         criteria = cfg.get("criteria")

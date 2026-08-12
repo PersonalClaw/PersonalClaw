@@ -1,0 +1,298 @@
+{
+  "name": "code-project",
+  "version": 1,
+  "description": "Build or fix software behind four structural gates: a gated initializer, WIP=1, a reproduction before any edit on a bug, a baseline captured before the first mutation, and a deliverable gate that runs the metric AND the regression command.",
+  "source": "bundled",
+  "provenance": "bundled",
+  "tags": [
+    "loop",
+    "code",
+    "sdlc"
+  ],
+  "inputs": {
+    "task": {
+      "type": "string",
+      "required": true,
+      "help": "What to build or fix. Specific beats broad — this template plans from what you write."
+    },
+    "cwd": {
+      "type": "string",
+      "default": ".",
+      "help": "The working directory the commands run in. Everything is verified here, so a wrong value verifies the wrong tree."
+    },
+    "verify_command": {
+      "type": "string",
+      "required": true,
+      "help": "The metric command that decides done-ness. The gate runs it and does not take the model's word for it."
+    },
+    "guard_command": {
+      "type": "string",
+      "default": "",
+      "help": "The regression command that must not get worse (often the full suite). Compared against its own baseline, so a failure that was already there is not blamed on this change. Leave empty for no regression half."
+    },
+    "bug_flavored": {
+      "type": "boolean",
+      "default": false,
+      "help": "True for a bug fix: nothing may be edited until the failure is reproduced (or documented as impossible to reproduce locally)."
+    }
+  },
+  "runtime_hints": {
+    "judge": {
+      "rubric": [
+        {
+          "criterion": "the verify command passes",
+          "target_score": 2
+        },
+        {
+          "criterion": "no pre-existing failure is blamed on this change",
+          "target_score": 2
+        },
+        {
+          "criterion": "the change is minimal and scoped to the task",
+          "target_score": 2
+        }
+      ],
+      "ratchet": "strict",
+      "stop_condition": {
+        "consecutive_clean": 2
+      },
+      "marginal_threshold": 2.0,
+      "freedom_level": "medium",
+      "judge_isolation": "fresh",
+      "fallback_check": "command_exit_code",
+      "forbidden_success_modes": [
+        "test deleted or skipped",
+        "assertion weakened",
+        "verify command edited or replaced",
+        "guard command edited or replaced"
+      ]
+    },
+    "execution": {
+      "depth": "balanced",
+      "single_active_feature": true,
+      "escalation": {
+        "attempt_cap": 3,
+        "ladder": [
+          "classified_retry",
+          "fresh_session",
+          "surface"
+        ]
+      },
+      "breaker": {
+        "fingerprint_window": 3,
+        "no_progress_stop": 5
+      }
+    }
+  },
+  "metadata": {
+    "risk": "high",
+    "capabilities": [
+      "read",
+      "write",
+      "execute"
+    ],
+    "requirements": {
+      "binaries": [
+        "git"
+      ]
+    },
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Add a --dry-run flag to the snapshot command. Verify with: pytest tests/test_snapshot.py. Guard with: make lint && make test"
+      },
+      {
+        "event": "mutation",
+        "description": "The breakdown missed the CLI help text — splice another item into the implement fan-out before the verify gate"
+      }
+    ],
+    "keywords": [
+      "implement",
+      "build a feature",
+      "write the code",
+      "fix the bug",
+      "make it work",
+      "ship the change"
+    ],
+    "example_outputs": [
+      "working code, verified by a command, with no regression"
+    ],
+    "when_not_to_use": "not for deciding WHAT to build — use project-planning first"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "code_project",
+    "children": [
+      {
+        "kind": "stage",
+        "id": "init",
+        "label": "Initialize (gated)",
+        "config": {
+          "prompt": "Set this work up so it can be worked at all, then report honestly on four conditions.\n\nTask:\n{{inputs.task}}\n\nWorking directory: {{inputs.cwd}}\nThe command that will decide done-ness: {{inputs.verify_command}}\n\nEstablish, and verify each by doing it rather than by reading about it:\n  1. can_start — the environment runs: dependencies installed, the project builds.\n  2. can_test — ONE test (or check) actually runs and passes right now. Not \"there is a test suite\" — you ran something and saw it pass.\n  3. can_see_progress — {{inputs.verify_command}} runs and produces a readable pass/fail signal.\n  4. can_pick_next — the task is broken into items, each with an acceptance criterion that could be checked by someone who did not write it.\n\nRead enough of the code first that the breakdown reflects what is there rather than what would be convenient. An item naming a function that does not exist costs more than no plan.\n\nReport a condition as false if it is false. The next step is a gate that blocks the work when any of them is, and it exists because starting to code in an environment that cannot run its own tests is the most expensive way to discover that.\n\nReturn JSON: {\"can_start\": boolean, \"can_test\": boolean, \"can_see_progress\": boolean, \"can_pick_next\": boolean, \"blocked_by\": string, \"breakdown\": [{\"item\": string, \"acceptance\": string}]}",
+          "schema": {
+            "can_start": "boolean",
+            "can_test": "boolean",
+            "can_see_progress": "boolean",
+            "can_pick_next": "boolean",
+            "blocked_by": "string",
+            "breakdown": "array"
+          },
+          "model_tier": "standard",
+          "tools_posture": "full"
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "init_gate",
+        "label": "The four-condition checklist",
+        "config": {
+          "kind": "expression",
+          "expr": "{{nodes.init.output.can_start}} && {{nodes.init.output.can_test}} && {{nodes.init.output.can_see_progress}} && {{nodes.init.output.can_pick_next}}"
+        }
+      },
+      {
+        "kind": "action",
+        "id": "baseline",
+        "label": "Capture the baseline (before any edit)",
+        "config": {
+          "provider": "bash",
+          "payload": {
+            "PC_CWD": "{{inputs.cwd}}",
+            "PC_VERIFY_CMD": "{{inputs.verify_command}}",
+            "PC_GUARD_CMD": "{{inputs.guard_command}}"
+          },
+          "with": {
+            "command": "cd \"$PC_CWD\" >/dev/null 2>&1; sh -c \"$PC_VERIFY_CMD\" >/dev/null 2>&1; v=$?; if [ -n \"$PC_GUARD_CMD\" ]; then sh -c \"$PC_GUARD_CMD\" >/dev/null 2>&1; g=$?; else g=0; fi; printf '{\"verify_passed\":%s,\"guard_passed\":%s,\"verify_exit\":%d,\"guard_exit\":%d}\\n' \"$([ $v -eq 0 ] && echo true || echo false)\" \"$([ $g -eq 0 ] && echo true || echo false)\" \"$v\" \"$g\"",
+            "timeout": 900
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "repro",
+        "label": "Reproduce first (bug runs only)",
+        "config": {
+          "prompt": "Establish the failing check BEFORE anything is edited.\n\nTask:\n{{inputs.task}}\nBug fix: {{inputs.bug_flavored}}\nWorking directory: {{inputs.cwd}}\n\nIf this is a bug fix, NOTHING may be edited until a failing test, a failing command, or a documented reproduction exists. The only escape is that the failure depends on production data or infrastructure that cannot be simulated locally — effort alone does not qualify, and \"I could not reproduce it but I can see the bug\" is the shape this step exists to stop. The reproduction artifact IS the validation artifact: it is what proves the fix later.\n\nIf this is not a bug fix, write down the acceptance check that currently fails because the feature is absent, and set fail_reproduced to whether you saw it fail.\n\nReturn JSON: {\"fail_reproduced\": boolean, \"repro_command\": string, \"observed\": string, \"infeasible_reason\": string}",
+          "schema": {
+            "fail_reproduced": "boolean",
+            "repro_command": "string",
+            "observed": "string",
+            "infeasible_reason": "string"
+          },
+          "model_tier": "standard",
+          "tools_posture": "full",
+          "success_when": "inputs.bug_flavored != true || output.fail_reproduced || output.infeasible_reason != ''"
+        }
+      },
+      {
+        "kind": "foreach",
+        "id": "implement",
+        "label": "Implement, one item at a time",
+        "config": {
+          "items": "{{nodes.init.output.breakdown}}",
+          "pipeline": true,
+          "on_item_error": "halt"
+        },
+        "body": {
+          "kind": "sequence",
+          "id": "feature",
+          "children": [
+            {
+              "kind": "stage",
+              "id": "code",
+              "config": {
+                "prompt": "Implement exactly this one item, then stop.\n\nItem: {{item.item}}\nAcceptance: {{item.acceptance}}\n\nThe whole task, for context:\n{{inputs.task}}\n\nThe reproduction this fix has to satisfy:\n{{nodes.repro.output.repro_command}}\n{{nodes.repro.output.observed}}\n\nMatch the surrounding code's idiom, naming and comment density — a file that reads as though a different person wrote one function is harder to maintain than a slightly worse but consistent one.\n\nExpected values need an independent source of truth: a test that asserts what the code happens to do proves only that the code does what it does. Replace a wrong test rather than layering a second one beside it.\n\nDo not touch {{inputs.verify_command}} or {{inputs.guard_command}}, and do not delete or skip a test to make either pass. A gate runs both commands after this and an independent judge checks for exactly those moves.",
+                "model_tier": "standard",
+                "tools_posture": "full"
+              }
+            },
+            {
+              "kind": "gate",
+              "id": "feature_gate",
+              "config": {
+                "kind": "verify_command",
+                "verify": {
+                  "command": "{{inputs.verify_command}}",
+                  "cwd": "{{inputs.cwd}}",
+                  "label": "feature"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "test",
+        "label": "Run the suite and report failures verbatim",
+        "config": {
+          "prompt": "Run the test suite in {{inputs.cwd}} and report what happened, verbatim.\n\nRun: {{inputs.guard_command}}\nIf that is empty, run: {{inputs.verify_command}}\n\nQuote the failures exactly. A paraphrased failure cannot be triaged, and a summarized one hides which assertion broke.\n\nDo not fix anything here. Do not re-run until it passes. This step exists to produce evidence.\n\nReturn JSON: {\"passed\": boolean, \"failures\": [string], \"command_run\": string}",
+          "schema": {
+            "passed": "boolean",
+            "failures": "array",
+            "command_run": "string"
+          },
+          "model_tier": "standard",
+          "tools_posture": "full"
+        }
+      },
+      {
+        "kind": "infer",
+        "id": "triage",
+        "label": "Classify each failure before anything is retried",
+        "config": {
+          "prompt": "Classify each failure into exactly ONE class, and say why the other two do not fit.\n\nThe three classes, exhaustively:\n  - flake — nondeterministic; it passes on a re-run with nothing changed\n  - regression — this change broke it: it was passing at baseline\n  - infra — the environment, not the code: a missing binary, no network, a permission\n\nBaseline, captured before the first edit:\n{{nodes.baseline.output}}\n\nThis run:\n{{nodes.test.output}}\n\nClassifying before retrying is the point. Retrying a regression re-runs a real failure until the budget is gone, and retrying an infra failure never succeeds at all.\n\nReturn JSON: {\"classification\": \"flake\"|\"regression\"|\"infra\"|\"none\", \"per_failure\": [{\"failure\": string, \"class\": string, \"why_not_others\": string}]}",
+          "schema": {
+            "classification": "string",
+            "per_failure": "array"
+          },
+          "model_tier": "fast"
+        }
+      },
+      {
+        "kind": "gate",
+        "id": "verify",
+        "label": "The deliverable gate: metric AND regression",
+        "config": {
+          "kind": "verify_command",
+          "verify": {
+            "command": "{{inputs.verify_command}}",
+            "guard": "{{inputs.guard_command}}",
+            "guard_baseline": "{{nodes.baseline.output.guard_passed}}",
+            "cwd": "{{inputs.cwd}}",
+            "label": "deliverable"
+          }
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "judge",
+        "label": "Independent verification",
+        "config": {
+          "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nThe task:\n{{inputs.task}}\n\nThe command that decides done-ness:\n{{inputs.verify_command}}\n\nThe regression command that must not get worse:\n{{inputs.guard_command}}\n\nBaseline, captured BEFORE the first edit (verify/guard pass-fail and exit codes):\n{{nodes.baseline.output}}\n\nThe engine's own verdict on the deliverable gate (it ran both commands itself):\n{{nodes.verify.output}}\n\nTest run and failure triage:\n{{nodes.test.output}}\n{{nodes.triage.output}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the verify command passes (target 2)\n  - no pre-existing failure is blamed on this change (target 2)\n  - the change is minimal and scoped to the task (target 2)\n\nThese passes are forbidden. Actively check that they did NOT happen:\n  - test deleted or skipped\n  - assertion weakened\n  - verify command edited or replaced\n  - guard command edited or replaced\n\nRe-run the verify command yourself, and diff against the baseline. A failure that was already failing at baseline is NOT this change's fault, and blaming it is how a correct change gets rejected and someone debugs the wrong commit. A failure that was passing at baseline and fails now IS this change's fault, however plausible the excuse.\n\nRe-run any command the evidence cites; read the diff yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, the command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+          "schema": {
+            "reasoning": "string",
+            "verdict": "string",
+            "scores": "object",
+            "evidence_refs": "array",
+            "proof": "string",
+            "cannot_judge": "string"
+          },
+          "model_tier": "reasoning",
+          "tools_posture": "verify",
+          "isolation": "fresh"
+        }
+      },
+      {
+        "kind": "stage",
+        "id": "handoff",
+        "label": "Hand off for review",
+        "config": {
+          "prompt": "Summarize this change for the person who has to review it: what it does, why it is shaped this way, and what to look at hardest.\n\nTask:\n{{inputs.task}}\n\nThe judge's verdict:\n{{nodes.judge.output}}\n\nName every failure the triage classified, with its class — especially any the gate called pre-existing rather than a regression. A pre-existing failure reported as this change's fault sends someone to debug the wrong commit; one hidden entirely leaves it for the next person to find.\n\nDo NOT commit. This is the review hand-off, and committing here would take that decision away from whoever is reading it.",
+          "model_tier": "standard",
+          "tools_posture": "full"
+        }
+      }
+    ]
+  }
+}

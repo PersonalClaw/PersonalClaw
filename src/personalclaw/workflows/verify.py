@@ -288,3 +288,39 @@ def requires_fresh_judge(node_config: dict[str, Any]) -> bool:
     otherwise.
     """
     return not bool((node_config or {}).get("self_judge", False))
+
+
+# ── the injected verifier (WF2LOO-10) ────────────────────────────────────────
+
+
+async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> bool | None:
+    """Run ONE verification block's command and report the tristate.
+
+    🔴 This is the callable `dispatch_gate` needs for every `verify_command` /
+    `verify_script` gate — and until WF2LOO-10 the gateway wired NOTHING into
+    `EngineServices.verify`, so in production every such gate returned INTERNAL "no
+    verifier wired for this gate". Two shipped templates ended on a verification gate that
+    could not run. The engine-side contract was complete; the last mile was missing.
+
+    The execution itself is delegated to `loop.gates.run_verify_command`, deliberately
+    rather than spawning here: that runner already carries the security screen
+    (`audit_bash_command` refuses a destructive command), the resource ceiling
+    (`PROFILE_TOOL` via the post-exec shim), a bounded timeout, and — most importantly —
+    the same TRISTATE contract, where "the tool is missing" (exit 127) is `None` rather
+    than a failure. A second implementation would be a second set of those decisions to
+    keep in agreement.
+
+    `cwd` comes from the block (a template binds `{{inputs.cwd}}` there) and falls back to
+    the run's own workspace, so a gate never silently verifies a different directory than
+    the one the work happened in.
+    """
+    from personalclaw.loop.gates import run_verify_command
+
+    command = str(block.get("command") or block.get("script") or "").strip()
+    if not command:
+        # No command is NOT a pass: a gate whose verification is blank has verified
+        # nothing, and the caller turns this into an explicit "could not determine".
+        return None
+    cwd = str(block.get("cwd") or default_cwd or "").strip()
+    label = str(block.get("label") or "verify").strip() or "verify"
+    return await run_verify_command(command, cwd or None, label=label)

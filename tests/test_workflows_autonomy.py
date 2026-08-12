@@ -566,5 +566,5 @@ def test_the_plan_tool_ships_the_autonomy_surface():
     assert autonomy.get("offered")
     assert autonomy.get("recommended")
     assert "require_hitl" in body
-    # `code-implementation` uses `bash`, so unattended must not be on the table.
+    # `code-project` uses `bash`, so unattended must not be on the table.
     assert "unattended" not in autonomy["offered"]

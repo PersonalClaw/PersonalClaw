@@ -97,7 +97,7 @@ describe('legacy loop-kind aliases', () => {
   it('tolerates case and whitespace in stored references', () => {
     // These come out of months-old chat transcripts and saved crons.
     expect(templateForKind('GOAL')).toBe('goal-pursuit-open-ended')
-    expect(templateForKind(' code ')).toBe('code-implementation')
+    expect(templateForKind(' code ')).toBe('code-project')
   })
 
   it('reads a verify command as the verifiable variant', () => {

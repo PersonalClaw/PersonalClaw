@@ -33,6 +33,11 @@ LOOP_TEMPLATES = (
     "general-project",
     "design-project",
     "diagnose-run",
+    # The code/SDLC descendant (WF2LOO-10). It joins this suite rather than getting its own
+    # weaker one: it is one of the plan's per-kind templates, so the judge contract, the
+    # runtime_hints split, the loop bounds and the shipping metadata are the SAME contract
+    # for it. Its own R5 structural gates are tested in `test_workflows_code_project.py`.
+    "code-project",
 )
 
 

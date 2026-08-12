@@ -89,7 +89,7 @@ export function belongsToLoop(
 export const KIND_TO_TEMPLATE: Readonly<Record<string, string>> = {
   general: 'general-project',
   goal: 'goal-pursuit-open-ended',
-  code: 'code-implementation',
+  code: 'code-project',
   design: 'design-project',
   research: 'deep-research',
 }

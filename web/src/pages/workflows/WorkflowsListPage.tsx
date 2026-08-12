@@ -128,7 +128,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
 
   // "Start from template" (LOOPS-EVOLUTION criterion 11): a user who knows what they want to
   // DO ("fix a bug", "research a topic") should not have to already know that a coding job is
-  // called `code-implementation` and a research one `deep-research`. Ask for the intent in
+  // called `code-project` and a research one `deep-research`. Ask for the intent in
   // plain language, resolve it to a shipped template through the same alias table the cockpit
   // uses, then fall into the ordinary `start` flow for that template's inputs. Falls back to
   // the browse list — never a wrong workflow — when nothing matches, because starting a run the
