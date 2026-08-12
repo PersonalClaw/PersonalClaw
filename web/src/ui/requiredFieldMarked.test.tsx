@@ -37,7 +37,21 @@ const ADOPTERS = [
   join('pages', 'prompts', 'PromptForm.tsx'),
   join('pages', 'tasks', 'TaskForm.tsx'),
   join('pages', 'agents', 'AgentForm.tsx'),
+  // Added once its mandatory field was positively identified: the FIRST branch of its own
+  // `disabledReason` is `!name.trim() ? 'Name the trigger first'`, and the Name field is the form's
+  // autofocused `TextInput`. (#1150 deferred it because the reason is multi-condition; reading the
+  // branch order settled it.)
+  join('pages', 'triggers', 'TriggerCreatePage.tsx'),
 ]
+
+/** The one create form deliberately NOT here, and why. `KnowledgeCreatePage`'s requirement is
+ *  kind-dependent AND, for the default kind, an EITHER/OR: its `disabledReason` reads
+ *  'Enter a URL starting with http:// or https://' for a bookmark, 'Choose a file first' for a file, and
+ *  **'Add a title or some content'** otherwise. `aria-required` on a single input cannot express "one of
+ *  these two" — marking both would tell a screen-reader user that each is individually mandatory, which is
+ *  false. That needs a group-level pattern (a fieldset with its own instruction), i.e. a design decision,
+ *  not this prop. Recorded so the sweep is CLOSED rather than silently incomplete. */
+const PRINCIPLED_EXCLUSION = join('pages', 'knowledge', 'KnowledgeCreatePage.tsx')
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
@@ -77,6 +91,17 @@ describe('the create forms mark their mandatory field', () => {
     // The button reason is what a sighted user reads; `aria-required` is what a screen reader hears. Both.
     const task = readFileSync(join(SRC, 'pages', 'tasks', 'TaskCreatePage.tsx'), 'utf8')
     expect(task).toMatch(/disabledReason=\{!draft\.title\.trim\(\) \? 'Enter a task title first'/)
+  })
+
+  it('the create-form subset is CLOSED — every one is adopted or excluded with a reason', () => {
+    // The four full-page create flows with a single mandatory identity field are all adopters above.
+    // Knowledge is the fifth and is excluded on purpose; if it ever grows a single required field, this
+    // assertion is where the exclusion gets revisited.
+    const knowledge = readFileSync(join(SRC, PRINCIPLED_EXCLUSION), 'utf8')
+    expect(knowledge, 'the either/or reason is what makes the exclusion principled').toMatch(
+      /Add a title or some content/,
+    )
+    expect(/<TextInput required /.test(knowledge), 'a single required mark would be false here').toBe(false)
   })
 
   it('records the unswept remainder rather than implying it is done', () => {
