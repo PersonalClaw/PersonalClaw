@@ -1,6 +1,6 @@
 # WORKFLOWS-V2-LOOPS-EVOLUTION
 
-**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2LOO.md`](../atomic/WF2LOO.md) as 13 atomic plan(s).
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2LOO.md`](../atomic/WF2LOO.md) as 14 atomic plan(s).
 
 This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
 
@@ -1323,3 +1323,94 @@ Verified load-bearing: removing the rule turns the flagging test red. Gate: `mak
   derived block regenerated with `tools/regen_dag_derived.py` (614 atoms, 847 edges; the 2 cycles
   and 1 unresolved ext-ref are pre-existing and unrelated). The source plan's decomposition count
   moved 11 → 13.
+
+- **2026-08-12 — `WF2LOO-14` DONE (#PENDING): `until_dry` now reads the `progress_field` its
+  templates declare.** `controller._is_dry(output)` — *"Did an iteration surface anything new? Feeds
+  `until_dry` termination"* — returned True only when the output was `None` or `len(output) == 0`.
+  **It never looked at `progress_field`,** and its only other mention in `src/` was
+  `template_lint.py`'s TANGLED-loop comment asserting *"`progress_field` merely names which field it
+  reads"* — behavior that did not exist. So a cycle honestly reporting
+  `{"new_findings_count": 0, "notes": "nothing new"}` is a non-empty dict and counted as PROGRESS;
+  the streak reset, `tick.loop_should_continue`'s `dry_streak < need` never stopped being true, and
+  the run burned every iteration up to its cap paying for a model call each time to learn nothing.
+
+  **SECOND FINDING, sharper than the first.** The output `_advance_loop` measures is
+  `self._outputs[item.node.id]` for the leaf that COMPLETED the iteration. Both declaring templates
+  have `body: sequence[work-stage, judge-stage]`, so that leaf is the **judge**, whose schema
+  (`reasoning`, `verdict`, `scores`, `evidence_refs`, `proof`, `cannot_judge`) carries no progress
+  key and which returns a populated object every time. `until_dry` was therefore dead for these two
+  templates under the OLD rule as well — `dry_streak` could not increment at all, on any output.
+  This is why the fix reads the loop BODY rather than the last leaf: a last-leaf-only read would
+  have shipped inert for exactly the templates that asked for the mode.
+
+  **The rule, one sentence:** a declared progress field is dry when its value is that field's own
+  expression of "nothing" — null, false, zero, blank, or empty. Exhaustively, in
+  `controller._progress_reading`: `None` → dry; `False`/`True` → dry/progress (checked before `int`,
+  since `bool` is an `int` subclass); `0`/`0.0` → dry, any other number → progress **including a
+  negative** (a nonsense count is not evidence that nothing happened); `""`/whitespace → dry,
+  non-blank `str` → progress; empty/non-empty `bytes` → dry/progress; empty/non-empty
+  `list`/`tuple`/`set`/`frozenset`/`dict` → dry/progress; **any other type → `unreadable`**, a real
+  third answer rather than a default branch that guesses.
+
+  **Absence and unreadability fall back to the whole-output rule, deliberately.** `_progress_value`
+  returns `(found?, value)` so a present `None` (a legitimate DRY reading) stays distinguishable
+  from a missing key. Treating a missing key as dryness would end a user's run after `streak`
+  iterations because the body forgot to emit a field — silently truncating real work — where the
+  fallback costs at most one extra iteration and is visible. Same direction for an oversize output
+  whose inline preview is a `result_omitted` stub. The body scan is restricted to nodes whose
+  instance for THIS iteration succeeded: `self._outputs` is keyed by node id, so a body node that
+  did not run this time still holds the PREVIOUS iteration's value, and reading that would report
+  last iteration's progress as this one's. Last match in document order wins. `streak` semantics are
+  untouched — `tick.loop_should_continue` is byte-identical, and `_is_dry` keeps its old body for
+  the loops that declare no field. `_is_dry` has exactly ONE caller, so no non-loop path could
+  change.
+
+  **BLAST RADIUS — exactly two shipped templates.** Census of `until_dry` loops in `bundled/`: four
+  total. `audit-sweep` (`streak 2`, cap 3) and `deep-research` (`streak 2`, cap `{{inputs.rounds}}`)
+  declare no field and are byte-for-byte unchanged. `goal-pursuit-open-ended` (`new_findings_count`,
+  integer, cap 12) now ends after two cycles reporting `0` instead of running to 12;
+  `general-project` (`meaningful_progress`, boolean, cap 6) ends after two `false` cycles instead of
+  running to 6. **Both bodies genuinely CAN emit their field** — `goal-pursuit-open-ended`'s `cycle`
+  declares `schema {summary, key_insight, new_findings_count, evidence}` and its prompt says *"Set
+  new_findings_count to the number of genuinely NEW things this cycle established. Zero is a valid
+  and useful answer"*; `general-project`'s `work` declares `schema {summary, meaningful_progress,
+  evidence}` — so neither declaration was wrong at the template end and **no template needed
+  fixing**.
+
+  **Nothing ships inert.** Driven through a real controller (`test_workflows_loop_wiring.py::
+  TestProgressFieldDecidesDryness`) on a body shaped like the shipped templates — field emitted by
+  the first stage, iteration ended by a judge stage: the loop ENDS at 2 iterations on two
+  zero-progress cycles (`outcome == "dry_streak"`, run COMPLETE); it does NOT end while progress is
+  reported (runs to its cap, no `dry_streak`); a productive cycle RESETS the streak (dry, progress,
+  dry, dry → ends at 4); an absent field runs to the cap. The judge's fake output carries a counter
+  so `check_breaker`'s `identical_output` rule cannot end the loop first and make the test prove
+  nothing. Plus a 19-case table test pinning every per-type reading, `unreadable` included.
+
+  **RAIL + proof it can fail.** `test_workflows_loop_templates.py::
+  test_every_declared_progress_field_can_be_emitted_by_its_body` sweeps EVERY bundled template (not
+  a hand-maintained tuple): a declared `progress_field` must appear in some body node's `schema`
+  AND be named in that node's prompt (a key the prompt never asks for comes back invented or
+  missing), with a vacuity floor asserting at least two loops were actually swept. **Probe 1:** the
+  call site reverted to `_is_dry(output)` → the two ending tests fail (`RunStatus.ESCALATED`, the
+  loop ran on to the breaker) while the two no-regression tests still pass. **Probe 2:**
+  `general-project`'s `progress_field` renamed to a typo → the rail fails naming the loop and the
+  field. Each reverted by a targeted edit; `git diff` on the template is empty.
+
+  **CHANGELOG: yes, under `Fixed`.** This changes when two shipped templates' runs END — a user
+  running `goal-pursuit-open-ended` sees it stop after two quiet cycles instead of twelve, and the
+  cost difference is real money — so it is user-visible behavior, not an internal cleanup.
+  `template_lint.py`'s comment is corrected to describe the behavior that now exists (declared
+  field when a loop names one, whole output when it does not). **No `web/` change:** `until_dry`
+  termination has no frontend surface, and the run widget reads the same ledger events as before.
+
+  **DEVIATION — the atom is filed as `WF2LOO-14` with a dep on `WF2LOO-3` only.** `WF2LOO-7`'s
+  header still says todo, but its wiring is present in code and its test file
+  (`test_workflows_loop_wiring.py`) is where this atom's driven tests live — header stale, log and
+  code win, so claiming a dep on it would be dishonest in both directions. `WF2LOO-13` was not
+  disturbed. The generated inert-surface baseline is untouched: this atom REMOVES an inert control
+  rather than adding a surface.
+
+  Gate: `make lint` green; the loop/dry/tick/controller/template-lint slice green; the roadmap
+  derived block regenerated with `tools/regen_dag_derived.py` (615 atoms, 848 edges; the 2 cycles
+  and 1 unresolved ext-ref are pre-existing and unrelated). The source plan's decomposition count
+  moved 13 → 14.

@@ -27,6 +27,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`until_dry` workflow loops now end when the work reports no progress, instead of always running
+  to their iteration cap.** A loop can declare which field of its iteration output counts as
+  progress (`progress_field`), and two shipped templates do — `goal-pursuit-open-ended`
+  (`new_findings_count`) and `general-project` (`meaningful_progress`) — but the engine never read
+  it. Dryness was measured over the *whole* output of the last node in the iteration, which in both
+  templates is a judge stage returning a populated JSON object; so a cycle that honestly reported
+  `new_findings_count: 0` still counted as progress, the "two clean cycles in a row" streak never
+  completed, and the run paid for a model call per iteration up to `max_iterations` (12 and 6) to
+  learn nothing. A declared field now decides, wherever in the iteration it was emitted: zero,
+  false, blank, empty or null means the cycle surfaced nothing new; anything else is progress. Loops
+  that declare no field — the majority, including `audit-sweep` and `deep-research` — keep the
+  previous whole-output rule unchanged. A declared field an iteration did not emit also falls back
+  to that rule rather than counting as dryness: ending a run because the body forgot a key would
+  silently truncate real work, which is worse than paying for one more iteration. `streak` is
+  unchanged and still means N *consecutive* dry iterations.
 - **Run history no longer says "ran" for automations that did not run.** The run feed translates
   each store's own status word into a typed outcome, and four of the statuses actually being written
   had no entry in that translation — so they landed on a fallback nobody had chosen for them. A
