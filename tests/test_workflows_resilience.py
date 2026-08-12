@@ -496,10 +496,19 @@ class TestArtifactGate:
         assert r.failure.failure_class == FailureClass.INTERNAL
 
 
+#: A contract-shaped judge answer. Since WF2LOO-13 the gate asks for this object rather than one
+#: bare word, so a test that hands back `"PASS"` is testing the protocol the engine no longer
+#: speaks — it now reads as "the judge could not answer", which is a PROTOCOL failure.
+def _answer(verdict: str, **extra) -> str:
+    import json as _json
+
+    return _json.dumps({"verdict": verdict, "proof": "ran the command; exit 0", **extra})
+
+
 class TestJudgeGate:
     async def test_a_pass_verdict_completes_the_gate(self) -> None:
         async def judge(prompt, *, use_case="reasoning", output_type=None):
-            return "PASS"
+            return _answer("PASS")
 
         node = Node.from_dict(
             {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "good?"}}
@@ -507,23 +516,49 @@ class TestJudgeGate:
         r = await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
         assert r.state == InstanceState.DONE
         # The verdict rides out with its evidence chain now (LOOPS-EVOLUTION R3): the controller
-        # emits `judge_verdict` from these fields. Additive — `verdict` is unchanged.
+        # emits `judge_verdict` from these fields.
         assert r.output["verdict"] == "PASS"
         assert r.output["judge_status"] == "kept"
         assert r.output["judge_evidence"]["samples"] == ["PASS"]
+        # And the VALIDATED record, so a template binds engine-computed data (WF2LOO-13).
+        assert r.output["judge_verdict"]["valid"] is True
+        assert r.output["judge_verdict"]["proof"]
+
+    async def test_a_PASS_with_no_cited_proof_is_REFUSED(self) -> None:
+        """The contract's central precondition, on the live path (WF2LOO-13).
+
+        A completion record without proof is a claim, and the whole point of a checker is to
+        stop accepting claims. It is only fair to refuse it because the instruction the gate
+        sends says so in as many words — asserted below.
+        """
+
+        async def judge(prompt, *, use_case="reasoning", output_type=None):
+            return '{"verdict": "PASS", "reasoning": "looks fine to me"}'
+
+        node = Node.from_dict(
+            {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "good?"}}
+        )
+        r = await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
+        assert r.state == InstanceState.FAILED
+        assert "without cited proof" in r.failure.cause_plain
+        assert r.output["judge_verdict"]["valid"] is False
 
     async def test_each_verdict_maps_to_a_distinct_state(self) -> None:
-        """RETRY and ESCALATE are separate because they mean different things to a human."""
+        """The merged enum, exhaustively. RETRY and ESCALATE stay separate because they mean
+        different things to a human; REPLAN and NEEDS_INPUT arrived with the merge and needed a
+        mapping rather than a default branch."""
         expected = {
             "PASS": InstanceState.DONE,
             "RETRY": InstanceState.FAILED,
+            "REPLAN": InstanceState.FAILED,
             "ESCALATE": InstanceState.ESCALATED,
             "REJECT": InstanceState.FAILED,
+            "NEEDS_INPUT": InstanceState.WAITING,
         }
         for verdict, state in expected.items():
 
             async def judge(prompt, *, use_case="reasoning", output_type=None, _v=verdict):
-                return _v
+                return _answer(_v)
 
             node = Node.from_dict(
                 {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "?"}}
@@ -532,10 +567,10 @@ class TestJudgeGate:
             assert r.state == state, verdict
 
     async def test_retry_is_retryable_and_reject_is_not(self) -> None:
-        for verdict, retryable in (("RETRY", True), ("REJECT", False)):
+        for verdict, retryable in (("RETRY", True), ("REPLAN", True), ("REJECT", False)):
 
             async def judge(prompt, *, use_case="reasoning", output_type=None, _v=verdict):
-                return _v
+                return _answer(_v)
 
             node = Node.from_dict(
                 {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "?"}}
@@ -555,22 +590,109 @@ class TestJudgeGate:
         r = await dispatch_gate(node, BindingContext(), now=0.0, completion=waffle)
         assert r.state == InstanceState.FAILED
         assert r.failure.failure_class == FailureClass.PROTOCOL
+        # NAMED and observable: the evidence chain exists even when the judge could not answer,
+        # so the ledger's `judge_verdict` event still has the raw text to read.
+        assert r.output["judge_evidence"]["protocol_error"] is True
+        assert r.output["judge_evidence"]["texts"]
 
-    async def test_the_closed_enum_is_demanded_in_the_prompt(self) -> None:
+    async def test_a_bare_verdict_word_is_no_longer_the_protocol(self) -> None:
+        """The one-word answer used to BE the protocol; it now carries no proof by construction.
+
+        Asserted rather than merely deleted: a bare `PASS` silently reading as a pass again is
+        the exact regression WF2LOO-13 removes, and it would look like a harmless tolerance.
+        """
+
+        async def judge(prompt, *, use_case="reasoning", output_type=None):
+            return "PASS"
+
+        node = Node.from_dict(
+            {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "?"}}
+        )
+        r = await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
+        assert r.state == InstanceState.FAILED
+        assert r.failure.failure_class == FailureClass.PROTOCOL
+
+    async def test_the_contract_shape_is_demanded_in_the_prompt(self) -> None:
         seen = {}
 
         async def judge(prompt, *, use_case="reasoning", output_type=None):
             seen["prompt"] = prompt
             seen["use_case"] = use_case
-            return "PASS"
+            return _answer("PASS")
 
         node = Node.from_dict(
             {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "rubric"}}
         )
         await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
-        assert "PASS, RETRY, ESCALATE, REJECT" in seen["prompt"]
+        # Every member of the closed set, and the proof requirement the engine will enforce. A
+        # contract enforced against a prompt that never stated it is a trap, not a gate.
+        for member in ("PASS", "REJECT", "RETRY", "REPLAN", "ESCALATE", "NEEDS_INPUT"):
+            assert f'"{member}"' in seen["prompt"], member
+        assert "neither `proof` nor `evidence_refs` is REJECTED" in seen["prompt"]
+        assert "ONE JSON object" in seen["prompt"]
         # A judge reasons, so it defaults to the reasoning tier rather than the cheap one.
         assert seen["use_case"] == "reasoning"
+
+    async def test_provenance_is_stripped_from_what_the_judge_reads(self) -> None:
+        """`blind_provenance` on the live path (WF2LOO-13).
+
+        "Attempt 4 of 5" tells a judge how much patience is left, and the controller really does
+        append a retry hint to a node's prompt — so this is reachable text, not a hypothetical.
+        """
+        seen = {}
+
+        async def judge(prompt, *, use_case="reasoning", output_type=None):
+            seen["prompt"] = prompt
+            return _answer("PASS")
+
+        node = Node.from_dict(
+            {
+                "kind": "gate",
+                "id": "g",
+                "config": {
+                    "kind": "judge",
+                    "prompt": "attempt 4 of 5: is this good?",
+                    "evidence": "iteration 3 produced the report",
+                },
+            }
+        )
+        await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
+        assert "attempt 4 of 5" not in seen["prompt"]
+        assert "iteration 3" not in seen["prompt"]
+        assert "[attempt redacted]" in seen["prompt"]
+        # The evidence itself still reaches the judge — blinding must not blind it to the work.
+        assert "produced the report" in seen["prompt"]
+
+    async def test_a_self_judged_gate_may_not_complete_its_own_work(self) -> None:
+        """The actor invariant, on the live path (WF2LOO-13).
+
+        `self_judge: true` makes the producer its own judge, so its `done` is the WORKER actor's
+        claim. `judge_actors.resolve_transition` redirects that to `review`, which the engine
+        realizes as park-and-ask: a request for adjudication rather than the adjudication.
+        """
+
+        async def judge(prompt, *, use_case="reasoning", output_type=None):
+            return _answer("PASS")
+
+        node = Node.from_dict(
+            {
+                "kind": "gate",
+                "id": "g",
+                "config": {"kind": "judge", "prompt": "good?", "self_judge": True},
+            }
+        )
+        r = await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
+        assert r.state == InstanceState.WAITING
+        assert r.ask
+        assert "may not complete its own work" in r.output["actor_note"]
+        # An INDEPENDENT judge is terminal-capable, so the same answer completes the node —
+        # without this half the test could pass on a gate that never completes anything.
+        independent = Node.from_dict(
+            {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "good?"}}
+        )
+        assert (
+            await dispatch_gate(independent, BindingContext(), now=0.0, completion=judge)
+        ).state == InstanceState.DONE
 
     async def test_a_judge_gate_needs_a_rubric(self) -> None:
         node = Node.from_dict({"kind": "gate", "id": "g", "config": {"kind": "judge"}})
@@ -636,3 +758,59 @@ class TestLadderGate:
         )
         r = await dispatch_gate(node, BindingContext(), now=0.0)
         assert r.failure.failure_class == FailureClass.INTERNAL
+
+
+class TestNeedsInputParksRatherThanWedging:
+    """`NEEDS_INPUT` arrived with the verdict-enum merge and needed a mapping, not a default.
+
+    WAITING is the right state — the judge is not rejecting the work, it is saying the run cannot be
+    judged without something only a human has — but a WAITING node with no ask and no deadline is
+    wedged, not waiting. Both parks share the `approval` gate's payload for exactly that reason.
+    """
+
+    async def test_it_parks_with_a_typed_ask_and_a_deadline(self) -> None:
+        async def judge(prompt, *, use_case="reasoning", output_type=None):
+            return '{"verdict": "NEEDS_INPUT", "reasoning": "the brief never states the budget"}'
+
+        node = Node.from_dict(
+            {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "ok?"}}
+        )
+        r = await dispatch_gate(
+            node, BindingContext(), now=1000.0, completion=judge, mode="background"
+        )
+        assert r.state == InstanceState.WAITING
+        assert r.ask, "a park with nothing to answer is a wedge"
+        assert r.wake_at > 1000.0, "a background park with no clock never surfaces"
+        assert r.output["verdict"] == "NEEDS_INPUT"
+
+
+class TestTheEvidenceIsNotDuplicatedIntoThePrompt:
+    """5 of the 7 bundled judge gates bind the SAME node output into `prompt` and `evidence`.
+
+    Appending it unconditionally would double the largest chunk of a prompt on a gate that runs
+    every loop iteration — a silent cost regression in a change about correctness.
+    """
+
+    async def _instruction(self, cfg) -> str:
+        seen = {}
+
+        async def judge(prompt, *, use_case="reasoning", output_type=None):
+            seen["prompt"] = prompt
+            return _answer("PASS")
+
+        node = Node.from_dict({"kind": "gate", "id": "g", "config": {"kind": "judge", **cfg}})
+        await dispatch_gate(node, BindingContext(), now=0.0, completion=judge)
+        return seen["prompt"]
+
+    async def test_evidence_already_in_the_prompt_appears_once(self) -> None:
+        report = "The deliverable report body, long enough to clear the pre-tier screen entirely."
+        text = await self._instruction(
+            {"prompt": f"Judge this.\n\nDeliverable:\n{report}", "evidence": report}
+        )
+        assert text.count(report) == 1
+
+    async def test_evidence_the_prompt_omits_reaches_the_judge(self) -> None:
+        """The other direction: a gate whose evidence is NOT in its prompt now shows it."""
+        report = "A measurement the prompt never quoted, long enough to clear the pre-tier screen."
+        text = await self._instruction({"prompt": "Judge the work.", "evidence": report})
+        assert report in text

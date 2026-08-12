@@ -1,18 +1,16 @@
-"""The rail for `judge_actors`' enforcement claim (WF2LOO-15).
+"""The rail for `judge_actors`' enforcement claim (WF2LOO-15 measured it; WF2LOO-13 wired it).
 
-`judge_actors` opens by describing two invariants. Until this rail, it said the engine
-"ENFORCES" both — and one of them had no production caller at all, because the state
-machine has no ACTOR at a node transition to check. A module that claims a guardrail it
-does not run is worse than one that admits the gap: an auditor reading it stops looking.
+`judge_actors` opens by describing two invariants. It used to say the engine "ENFORCES" both
+while one of them had no production caller at all, because nothing carried an ACTOR to a node
+transition. A module that claims a guardrail it does not run is worse than one that admits the
+gap: an auditor reading it stops looking.
 
-This test pins the claim to the code IN BOTH DIRECTIONS. It fails when:
-
-* the isolation seam loses its live caller (the half that IS enforced), or
-* `check_transition` / `resolve_transition` GAIN one and the docstring still says they
-  have none — i.e. someone wires the rule and forgets to correct the text.
-
-It deliberately does NOT assert that the transition rule stays unwired. Wiring it is
-`WF2LOO-13`'s scope; this rail only requires the prose and the call graph to agree.
+WF2LOO-13 wired the missing half — the judge gate rules on the actor behind its own terminal
+transition, and assembles the judge's evidence through `assemble_judge_evidence` /
+`blind_provenance` — so this rail now holds the OPPOSITE claim in place: every function here has
+a live caller, and the docstring must not carry the unwired disclaimer any more. It stays a rail
+rather than becoming a deletion because "authored, never run" is a state this module has been in
+once already, and from inside the module it is invisible.
 """
 
 from __future__ import annotations
@@ -32,7 +30,9 @@ _AUTHORED = (
     "assemble_judge_evidence",
 )
 
-#: The phrase the docstring must carry while `_AUTHORED` has no caller.
+#: The phrase the docstring carried while `_AUTHORED` had no caller. It must be GONE now — if it
+#: reappears, either the wiring regressed or someone copied the old notice back in, and both mean
+#: the prose and the call graph have parted company again.
 _UNWIRED_MARKER = "AUTHORED, NOT ENFORCED"
 
 
@@ -82,24 +82,21 @@ def test_the_enforced_invariant_still_has_a_live_caller() -> None:
         )
 
 
-def test_the_authored_invariant_and_the_docstring_agree() -> None:
-    """The unwired half: prose and call graph must not drift apart.
+def test_the_once_authored_invariant_is_wired_and_the_docstring_agrees() -> None:
+    """The formerly-unwired half: it must have a caller, and the disclaimer must be gone.
 
-    If a caller appears, the marker must go — that is the direction this rail exists for,
-    because the pleasant version of this bug is someone wiring the rule and leaving a
-    docstring that still calls it unwired.
+    Both halves matter. Without the caller check the module could strand the rule again and read
+    as enforced; without the docstring check someone could wire it and leave prose that tells the
+    next auditor not to bother looking.
     """
     doc = MODULE.read_text(encoding="utf-8")
-    wired = {name: _production_callers(name) for name in _AUTHORED}
-    any_wired = {n: c for n, c in wired.items() if c}
-    if any_wired:
-        assert _UNWIRED_MARKER not in doc, (
-            "judge_actors still says "
-            f"{_UNWIRED_MARKER!r} while these now have production callers: {any_wired}. "
-            "Update the docstring: the rule is enforced now."
-        )
-    else:
-        assert _UNWIRED_MARKER in doc, (
-            f"{_AUTHORED} have no production caller, so the docstring must say "
-            f"{_UNWIRED_MARKER!r} rather than claiming the engine enforces them."
-        )
+    stranded = [name for name in _AUTHORED if not _production_callers(name)]
+    assert not stranded, (
+        f"{stranded} has no production caller — the worker-transition rule or the evidence "
+        "blinding is authored-and-unrun again, which is what WF2LOO-15 measured and WF2LOO-13 "
+        "fixed. Re-wire it, or delete the mechanism rather than leaving a rule nothing applies."
+    )
+    assert _UNWIRED_MARKER not in doc, (
+        f"judge_actors says {_UNWIRED_MARKER!r} while every function here has a production "
+        "caller. Describe what enforces what instead."
+    )

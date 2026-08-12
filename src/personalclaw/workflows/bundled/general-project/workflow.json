@@ -105,7 +105,7 @@
           "kind": "stage",
           "id": "work",
           "config": {
-            "prompt": "Do the next meaningful step on this task, then stop and report.\n\nTask:\n{{inputs.task}}\n\nDone when:\n{{inputs.exit_condition}}\n\nPrevious step:\n{{last.output.summary}}\n\nCite evidence a verifier can check without asking you: paths, commands, their actual output. An independent judge closes every step — it never sees this instruction or anything you say about your own work, only the task and the tool output.\n\nSet meaningful_progress to false when there is genuinely nothing left worth doing. That is how the loop ends, and claiming progress to look busy keeps it running on the user's money.\n\nReturn JSON: {\"summary\": string, \"meaningful_progress\": boolean, \"evidence\": string}",
+            "prompt": "Do the next meaningful step on this task, then stop and report.\n\nTask:\n{{inputs.task}}\n\nDone when:\n{{inputs.exit_condition}}\n\nPrevious step:\n{{last.output.summary}}\n\nWhat the judge ruled on it: {{last.output.verdict}}\nCriteria it scored below target: {{last.output.shortfalls}}\nStart from that critique. Re-arguing a shortfall costs a cycle; fixing it ends one.\n\nCite evidence a verifier can check without asking you: paths, commands, their actual output. An independent judge closes every step — it never sees this instruction or anything you say about your own work, only the task and the tool output.\n\nSet meaningful_progress to false when there is genuinely nothing left worth doing. That is how the loop ends, and claiming progress to look busy keeps it running on the user's money.\n\nReturn JSON: {\"summary\": string, \"meaningful_progress\": boolean, \"evidence\": string}",
             "schema": {
               "summary": "string",
               "meaningful_progress": "boolean",
@@ -119,7 +119,7 @@
           "kind": "stage",
           "id": "judge",
           "config": {
-            "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nTask the step was meant to serve:\n{{inputs.task}}\n\nDone when:\n{{inputs.exit_condition}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the step accomplished something real (target 2)\n  - evidence is checkable (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - work claimed without evidence\n  - exit condition reinterpreted to fit\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+            "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nTask the step was meant to serve:\n{{inputs.task}}\n\nDone when:\n{{inputs.exit_condition}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the step accomplished something real (target 2)\n  - evidence is checkable (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - work claimed without evidence\n  - exit condition reinterpreted to fit\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"RETRY\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {\"the step accomplished something real\": integer, \"evidence is checkable\": integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
             "schema": {
               "reasoning": "string",
               "verdict": "string",
@@ -130,7 +130,8 @@
             },
             "model_tier": "standard",
             "tools_posture": "verify",
-            "isolation": "fresh"
+            "isolation": "fresh",
+            "judge_contract": true
           }
         }
       ]

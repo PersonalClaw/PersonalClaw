@@ -25,6 +25,8 @@ from personalclaw.workflows.engine import (
     DEFAULT_MODEL_TIERS,
     MAX_JUDGE_SAMPLES,
     MAX_WF_DEPTH,
+    NodeResult,
+    apply_judge_contract,
     check_output_contract,
     dispatch,
     dispatch_action,
@@ -37,6 +39,7 @@ from personalclaw.workflows.engine import (
     dispatch_wait,
     resolve_use_case,
 )
+from personalclaw.workflows.judge_contract import hints_from_dict
 from personalclaw.workflows.models import FailureClass, InstanceState, Node, NodeKind
 
 pytestmark = pytest.mark.anyio
@@ -593,7 +596,7 @@ class TestJudgePreTier:
 
         async def completion(instruction, use_case=None, output_type=None):
             calls["n"] += 1
-            return "PASS"
+            return _judge_answer("PASS")
 
         node = _n({"kind": "gate", "id": "j", "config": {"kind": "judge", **cfg}})
         r = await dispatch_gate(node, _ctx(), now=0.0, completion=completion)
@@ -725,6 +728,21 @@ class TestDispatchTable:
         assert "supervisor" in r.failure.cause_plain
 
 
+#: Wrap a bare verdict WORD into the contract object the judge gate asks for since WF2LOO-13.
+#: The gate no longer speaks one-word answers — a bare `PASS` reads as "the judge could not
+#: answer in the required shape", which is a PROTOCOL failure — so these tests state the verdict
+#: they mean and let this add the proof the contract requires of a PASS. Anything that is not a
+#: verdict word passes through untouched, which is how "banana" stays genuinely unparseable.
+def _judge_answer(value: str) -> str:
+    import json as _json
+
+    from personalclaw.workflows.judge_contract import Verdict
+
+    if value in {v.value for v in Verdict}:
+        return _json.dumps({"verdict": value, "proof": "re-ran the command; exit 0"})
+    return value
+
+
 class TestJudgeSamples:
     """`judge_samples` was DECLARED by a shipped template and read by NOTHING (S145).
 
@@ -735,10 +753,12 @@ class TestJudgeSamples:
     gate: ONE sample was taken, and a model returning PASS,REJECT,REJECT accepted the run on the
     first word.
 
-    The aggregation rule is `judge_contract.aggregate_samples`', restated over this gate's own
-    vocabulary rather than imported — `verify.Verdict` is PASS/RETRY/ESCALATE/REJECT while
-    `judge_contract.Verdict` is PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT, and feeding one to the
-    other's aggregator is the cross-vocabulary defect S130 found in the fail-mode classifier.
+    The aggregation rule is `judge_contract.aggregate_samples` — literally, since WF2LOO-13. It
+    used to be RESTATED over a second verdict enum, because `verify.Verdict` was
+    PASS/RETRY/ESCALATE/REJECT while `judge_contract.Verdict` was
+    PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT and feeding one to the other's aggregator is the
+    cross-vocabulary defect S130 found in the fail-mode classifier. The enums were merged and the
+    restatement deleted, so these tests now pin the shared function.
     """
 
     _EVIDENCE = (
@@ -751,7 +771,7 @@ class TestJudgeSamples:
         async def completion(instruction, use_case=None, output_type=None):
             value = seq[min(calls["n"], len(seq) - 1)]
             calls["n"] += 1
-            return value
+            return _judge_answer(value)
 
         node = _n(
             {
@@ -835,3 +855,161 @@ class TestJudgeSamples:
         three, _ = await self._judge({"judge_samples": 3}, ["PASS", "PASS", "PASS"])
         assert one.tokens > 0
         assert three.tokens == one.tokens * 3
+
+
+class TestTheRubricRatchetOnTheLiveGate:
+    """`meets_ratchet` compares a declared `runtime_hints.judge` rubric against its `target_score`
+    for the first time (WF2LOO-13). Before this the criteria reached the judge as PROSE only and no
+    `target_score` was ever compared with anything.
+
+    The hints arrive threaded from the controller, the same split
+    `execution_hints.from_runtime_hints` does for the execution half.
+    """
+
+    _EVIDENCE = "A substantial deliverable, long enough for the pre-tier to allow it through."
+
+    def _hints(self):
+        return hints_from_dict(
+            {
+                "rubric": [
+                    {"criterion": "progress is real and evidenced", "target_score": 2},
+                    {"criterion": "claims cite artifacts, not prose", "target_score": 2},
+                ],
+                "ratchet": "strict",
+            }
+        )
+
+    async def _judge(self, answer, hints):
+        seen = {}
+
+        async def completion(instruction, use_case=None, output_type=None):
+            seen["instruction"] = instruction
+            return answer
+
+        node = _n(
+            {
+                "kind": "gate",
+                "id": "accept",
+                "config": {"kind": "judge", "prompt": "accept?", "evidence": self._EVIDENCE},
+            }
+        )
+        r = await dispatch_gate(node, _ctx(), now=0.0, completion=completion, judge_hints=hints)
+        return r, seen.get("instruction", "")
+
+    async def test_the_declared_criteria_reach_the_judge_as_KEYS(self) -> None:
+        _, instruction = await self._judge(
+            '{"verdict": "REJECT"}',
+            self._hints(),
+        )
+        assert '"progress is real and evidenced" (target 2)' in instruction
+        assert '"claims cite artifacts, not prose" (target 2)' in instruction
+
+    async def test_a_PASS_below_target_is_REJECTED(self) -> None:
+        answer = (
+            '{"verdict": "PASS", "proof": "read the report", '
+            '"scores": {"progress is real and evidenced": 2, '
+            '"claims cite artifacts, not prose": 1}}'
+        )
+        r, _ = await self._judge(answer, self._hints())
+        assert r.state == InstanceState.FAILED
+        assert "below rubric targets" in r.failure.cause_plain
+        assert r.output["judge_evidence"]["shortfalls"] == [
+            "claims cite artifacts, not prose: 1 < 2"
+        ]
+
+    async def test_a_PASS_at_target_completes_and_the_overall_is_engine_computed(self) -> None:
+        answer = (
+            '{"verdict": "PASS", "proof": "read the report", "overall": 99, '
+            '"scores": {"progress is real and evidenced": 2, '
+            '"claims cite artifacts, not prose": 2}}'
+        )
+        r, _ = await self._judge(answer, self._hints())
+        assert r.state == InstanceState.DONE
+        # The model claimed 99. The engine recomputes from the dimension scores and keeps the
+        # model's own number beside it, so the drift is visible instead of resolved in its favour.
+        assert r.output["judge_verdict"]["overall"] == 2.0
+        assert r.output["judge_verdict"]["model_overall"] == 99.0
+
+    async def test_a_gate_whose_run_declares_NO_rubric_is_untouched(self) -> None:
+        """🔴 The anti-outage rule: 6 of the 7 bundled judge gates declare no rubric, so the
+        ratchet has nothing to compare and must not manufacture a shortfall."""
+        r, instruction = await self._judge('{"verdict": "PASS", "proof": "cited"}', None)
+        assert r.state == InstanceState.DONE
+        assert "target" not in instruction
+
+    async def test_a_restated_score_key_still_clears_the_ratchet(self) -> None:
+        """The judge answered with its own wording. Byte-exact matching would call both criteria
+        "not scored" — a REJECT under STRICT — on a judge that did the work."""
+        answer = (
+            '{"verdict": "PASS", "proof": "read the report", '
+            '"scores": {"Progress is real and evidenced!": 2, '
+            '"claims cite artifacts not prose": 2}}'
+        )
+        r, _ = await self._judge(answer, self._hints())
+        assert r.state == InstanceState.DONE
+
+
+class TestTheJudgeStageSeam:
+    """`apply_judge_contract` — the 6 bundled judge STAGES produce this object and nothing read it.
+
+    It validates and BINDS; it does not fail the node. Those stage prompts say in as many words
+    that "reporting real issues is the normal outcome", so a REJECT is expected traffic and failing
+    on it would convert normal operation into a failed run.
+    """
+
+    def _node(self, **cfg) -> Node:
+        return _n({"kind": "stage", "id": "judge", "config": {"prompt": "p", **cfg}})
+
+    def test_a_node_that_does_not_declare_it_is_untouched(self) -> None:
+        result = NodeResult(state=InstanceState.DONE, output={"verdict": "PASS"})
+        assert apply_judge_contract(self._node(), result, None).output == {"verdict": "PASS"}
+
+    def test_an_honest_REJECT_still_succeeds_and_is_bound(self) -> None:
+        result = NodeResult(
+            state=InstanceState.DONE,
+            output={"verdict": "REJECT", "reasoning": "section 3 cites nothing"},
+        )
+        out = apply_judge_contract(self._node(judge_contract=True), result, None).output
+        assert out["verdict"] == "REJECT"
+        assert out["contract_valid"] is True, "a REJECT is a verdict, not a contract violation"
+        assert out["passed"] is False
+
+    def test_a_PASS_with_no_proof_is_bound_as_INVALID(self) -> None:
+        result = NodeResult(state=InstanceState.DONE, output={"verdict": "PASS"})
+        out = apply_judge_contract(self._node(judge_contract=True), result, None).output
+        assert out["valid"] is False
+        assert out["contract_valid"] is False
+        assert "without cited proof" in out["invalid_reason"]
+
+    def test_the_models_own_keys_survive_underneath(self) -> None:
+        """A template may read something the contract does not model, and a loop's
+        `progress_field` may point at any key in the body's output."""
+        result = NodeResult(
+            state=InstanceState.DONE,
+            output={"verdict": "PASS", "proof": "cited", "marginal_value": 1.5},
+        )
+        out = apply_judge_contract(self._node(judge_contract=True), result, None).output
+        assert out["marginal_value"] == 1.5
+        assert out["valid"] is True
+
+    def test_a_non_object_output_becomes_a_REJECT_never_a_pass(self) -> None:
+        result = NodeResult(state=InstanceState.DONE, output="PASS, looks good")
+        out = apply_judge_contract(self._node(judge_contract=True), result, None).output
+        assert out["verdict"] == "REJECT"
+        assert out["protocol_error"] is True
+
+    def test_an_already_failed_node_is_left_alone(self) -> None:
+        failed = NodeResult(state=InstanceState.FAILED, output={"verdict": "PASS"})
+        assert apply_judge_contract(self._node(judge_contract=True), failed, None) is failed
+
+    def test_the_rubric_applies_to_a_stage_too(self) -> None:
+        hints = hints_from_dict(
+            {"rubric": [{"criterion": "the tests pass", "target_score": 2}], "ratchet": "strict"}
+        )
+        result = NodeResult(
+            state=InstanceState.DONE,
+            output={"verdict": "PASS", "proof": "exit 1", "scores": {"the tests pass": 0}},
+        )
+        out = apply_judge_contract(self._node(judge_contract=True), result, hints).output
+        assert out["contract_valid"] is False
+        assert out["shortfalls"] == ["the tests pass: 0 < 2"]

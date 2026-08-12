@@ -5,6 +5,8 @@ than discourages. The distinction matters: prompt doctrine ("be skeptical") is a
 and advice loses to a worker being scored on completion.
 """
 
+import inspect
+
 import pytest
 
 from personalclaw.workflows.judge_contract import (
@@ -23,7 +25,10 @@ from personalclaw.workflows.judge_contract import (
     compute_overall,
     detect_forbidden_modes,
     hints_from_dict,
+    judge_instruction,
     meets_ratchet,
+    parse_judge_json,
+    score_for,
     validate_verdict,
 )
 
@@ -405,22 +410,29 @@ def test_malformed_runtime_hints_do_not_break_a_def():
     assert wf.runtime_hints == {}
 
 
-# ── the unwired-enforcement rail (WF2LOO-12) ──
+# ── the enforcement rail (WF2LOO-12 measured it unwired; WF2LOO-13 wired it) ──
 
-#: The ENFORCEMENT entry points of `judge_contract`. Each carries a rule the module
-#: docstring states as if it were live; none has a production caller. The TYPES are
-#: deliberately absent: `judge_actors` imports `Isolation` and `judge_pretier` imports
-#: `FallbackCheck`, and importing a type enforces nothing.
+#: The ENFORCEMENT entry points production must reach DIRECTLY. The TYPES are deliberately
+#: absent: `judge_actors` imports `Isolation` and `judge_pretier` imports `FallbackCheck`, and
+#: importing a type enforces nothing.
 _ENFORCEMENT_ENTRY_POINTS = (
     "validate_verdict",
-    "meets_ratchet",
-    "compute_overall",
-    "detect_forbidden_modes",
-    "aggregate_samples",
     "hints_from_dict",
+    "aggregate_samples",
+    "judge_instruction",
+    "parse_judge_json",
 )
 
-#: The claim the module docstring must carry for as long as that list has no caller.
+#: Reached THROUGH `validate_verdict` rather than called from outside — so "no production caller"
+#: is the wrong question for them and the right one is "is the chain from the entry point still
+#: intact". Asserted by AST below rather than by grep: a rule that stops being reachable from the
+#: one function production calls is exactly as inert as one with no caller at all, and it looks
+#: fine from every other angle.
+_REACHED_THROUGH_VALIDATION = ("meets_ratchet", "compute_overall", "detect_forbidden_modes")
+
+#: The claim the docstring carried while the list had NO caller. WF2LOO-13 gave every entry point
+#: one, so this phrase reappearing means someone re-stranded the contract — or copied the old
+#: notice back in. Either way the docstring and the call graph have parted company again.
 _UNWIRED_MARKER = "enforcement is not wired"
 
 _OWNER = "workflows/judge_contract.py"
@@ -451,31 +463,16 @@ def _production_callers() -> dict[str, list[str]]:
     return {name: sites for name, sites in found.items() if sites}
 
 
-def test_the_unwired_enforcement_claim_matches_the_live_path():
-    """`judge_contract`'s docstring and the live judge path must move together.
+def test_every_enforcement_entry_point_has_a_production_caller():
+    """The INVERTED WF2LOO-12 rail: it used to prove the contract was stranded, now it holds the
+    wiring in place.
 
-    The module opens by stating rules ("a PASS without cited proof is invalid") that read
-    as descriptions of the running engine. They are not: the live judge gate asks for ONE
-    WORD and `verify.parse_verdict` reads only that word, so no live response can carry the
-    proof the contract demands. The docstring therefore has to SAY it is unenforced — and
-    that admission is itself a claim that can rot.
-
-    So this fails in BOTH directions:
-
-    * enforcement gains a production caller while the docstring still says it has none →
-      the "not wired" section is now the lie, rewrite it to describe what enforces what;
-    * the live gate stops asking for one bare word while enforcement is still unwired →
-      the reason given for not wiring has changed, so re-read the measurement (a
-      structured live gate may make enforcement cheap, or may need the blast radius in
-      `WF2LOO-13` re-measured).
-
-    It does NOT assert that enforcement stays unwired. Wiring it is `WF2LOO-13`; this rail
-    only refuses to let the code and the claim about the code drift apart silently.
+    WF2LOO-12 measured that nothing in `src/` called this module's enforcement and made the
+    docstring say so; WF2LOO-13 wired all six through `engine.dispatch_gate`'s judge branch, the
+    `apply_judge_contract` seam and the controller's `runtime_hints.judge` threading. The rail was
+    inverted rather than deleted, because "the contract is authored but nothing runs it" is a state
+    this module has already been in once, and it is invisible from inside the module.
     """
-    import inspect
-
-    from personalclaw.workflows import engine, judge_contract
-
     source = (_repo_src() / "personalclaw/workflows/judge_contract.py").read_text(encoding="utf-8")
     # Vacuity floor: a rail scanning for names that no longer exist passes forever on an
     # empty match set. Every entry point must still be a function in the owning module.
@@ -485,39 +482,230 @@ def test_the_unwired_enforcement_claim_matches_the_live_path():
         " — retarget the list, do not let it match nothing"
     )
 
-    doc = (judge_contract.__doc__ or "").lower()
     wired = _production_callers()
-
-    if wired:
-        assert _UNWIRED_MARKER not in doc, (
-            f"judge_contract's enforcement now HAS production callers ({wired}) but its "
-            "docstring still says enforcement is not wired — rewrite the measurement "
-            "section to describe what enforces what, and on which path"
-        )
-        return
-
-    assert _UNWIRED_MARKER in doc, (
-        "no production code calls judge_contract's enforcement, and the module docstring no "
-        "longer says so — a contract that reads as live but runs nowhere is the exact defect "
-        f"WF2LOO-12 fixed. Entry points checked: {list(_ENFORCEMENT_ENTRY_POINTS)}"
+    stranded = [name for name in _ENFORCEMENT_ENTRY_POINTS if name not in wired]
+    assert not stranded, (
+        f"{stranded} lost every production caller — the judge contract is authored-and-unrun "
+        "again, which is the exact defect WF2LOO-12 measured and WF2LOO-13 fixed. Re-wire it, or "
+        "if the mechanism is genuinely gone, delete it rather than leaving a rule nothing applies."
     )
-    for named in ("dispatch_gate", "parse_verdict"):
+
+
+def test_the_rules_under_validate_verdict_are_still_reached_from_it():
+    """The chain, not just the entry point.
+
+    `meets_ratchet`, `compute_overall` and `detect_forbidden_modes` have no caller outside this
+    module by design — `validate_verdict` is the one door. That makes them the shape a
+    caller-count audit cannot see: still defined, still tested, and unreachable the moment one
+    call is dropped from the door.
+    """
+    import ast
+
+    tree = ast.parse(
+        (_repo_src() / "personalclaw/workflows/judge_contract.py").read_text(encoding="utf-8")
+    )
+    reached: set[str] = set()
+    for func in ast.walk(tree):
+        if not isinstance(func, ast.FunctionDef):
+            continue
+        if func.name not in ("validate_verdict", "meets_ratchet"):
+            continue
+        for call in ast.walk(func):
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+                reached.add(call.func.id)
+    unreachable = [name for name in _REACHED_THROUGH_VALIDATION if name not in reached]
+    assert not unreachable, (
+        f"{unreachable} is no longer called from validate_verdict/meets_ratchet, so nothing on the "
+        "live path applies it — a rubric ratchet or a forbidden-mode denylist that runs nowhere is "
+        "present, plausible and doing nothing"
+    )
+
+
+def test_the_docstring_describes_the_live_path_rather_than_disclaiming_it():
+    """The docstring is a claim about the code, so it rots the same way the code does.
+
+    Held in both directions by construction: the "not wired" disclaimer must be gone, and the
+    docstring must NAME the seams that enforce — a reader who is told enforcement is live and not
+    told where goes looking for a caller they cannot find.
+    """
+    from personalclaw.workflows import engine, judge_contract
+
+    doc = (judge_contract.__doc__ or "").lower()
+    assert _UNWIRED_MARKER not in doc, (
+        "judge_contract's enforcement has production callers, but its docstring still says "
+        "enforcement is not wired — describe what enforces what, and on which path"
+    )
+    for named in ("dispatch_gate", "validate_verdict", "apply_judge_contract"):
         assert named in doc, (
-            f"the docstring claims enforcement is unwired but no longer names {named!r} as the "
-            "live path that supersedes it — an unwired notice that does not say what runs "
-            "instead sends the next reader looking for a caller that was never there"
+            f"the docstring no longer names {named!r} as part of the live enforcement path — an "
+            "enforcement notice that does not say what runs it is the same dead end as the "
+            "unwired notice it replaced"
         )
 
     gate = inspect.getsource(engine.dispatch_gate)
-    # Vacuity floor #2: confirm we are reading the function that owns the judge branch
-    # before drawing a conclusion from what its text does not contain.
+    # Vacuity floor #2: confirm we are reading the function that owns the judge branch before
+    # drawing a conclusion from what its text does contain.
     assert "GateKind.JUDGE" in gate, (
         "dispatch_gate no longer contains the judge branch — this rail is reading the wrong "
-        "function and its one-word assertion below proves nothing"
+        "function and the assertions below prove nothing"
     )
-    assert "EXACTLY ONE word" in gate, (
-        "the live judge gate no longer demands one bare word, but judge_contract still says "
-        "enforcement is unwired BECAUSE a one-word answer cannot carry proof. Re-measure: if "
-        "the gate now returns structured JSON, the contract may be enforceable there "
-        "(WF2LOO-13), and this docstring's stated reason is stale"
+    assert "EXACTLY ONE word" not in gate, (
+        "the judge gate demands one bare word again. A bare word cannot carry the proof a PASS is "
+        "required to cite, so the contract becomes inexpressible on the live path — that is the "
+        "regression WF2LOO-13 removed, not a simplification"
     )
+    for named in ("judge_instruction", "parse_judge_json", "validate_verdict"):
+        assert named in gate, f"the judge gate no longer calls {named!r}"
+
+
+def test_the_posture_measurement_stays_with_the_code():
+    """done_when: "write down the reasoning where the code lives".
+
+    Enforcement on a live population is only defensible with the population written down. The
+    numbers are the argument, so they live in the module that enforces — not only in a plan log
+    nobody reads from a traceback.
+    """
+    from personalclaw.workflows import judge_contract
+
+    doc = judge_contract.__doc__ or ""
+    for marker in ("7 judge GATES", "13 rubric criteria", "not an outage"):
+        assert marker in doc, f"the WF2LOO-13 posture measurement lost {marker!r}"
+
+
+# ── the wire shape and the anti-outage rules (WF2LOO-13) ──
+
+
+class TestParseJudgeJson:
+    def test_a_bare_object(self):
+        assert parse_judge_json('{"verdict": "PASS"}') == {"verdict": "PASS"}
+
+    def test_a_fenced_block(self):
+        assert parse_judge_json('```json\n{"verdict": "REJECT"}\n```') == {"verdict": "REJECT"}
+
+    def test_prose_either_side(self):
+        raw = 'Here is my assessment:\n{"verdict": "PASS", "proof": "ok"}\nHope that helps.'
+        assert parse_judge_json(raw)["verdict"] == "PASS"
+
+    def test_braces_inside_the_reasoning_do_not_truncate_it(self):
+        """Brace-counted rather than regex-matched: `reasoning` routinely contains braces, and a
+        greedy or lazy regex either swallows the rest of the answer or stops at the first `}`."""
+        raw = '{"reasoning": "the dict {a: 1} was empty", "verdict": "REJECT"}'
+        assert parse_judge_json(raw)["verdict"] == "REJECT"
+
+    def test_a_bare_verdict_word_is_NOT_a_verdict(self):
+        """The old protocol, refused on purpose: a bare word cannot carry the proof a PASS must
+        cite, so accepting it would reopen the hole the contract exists to close."""
+        assert parse_judge_json("PASS") is None
+
+    def test_prose_and_emptiness_are_None(self):
+        for raw in ("", None, "Well, it depends.", "[1, 2, 3]"):
+            assert parse_judge_json(raw) is None, raw
+
+
+class TestScoreLookupTolerance:
+    """🔴 The single measure that keeps the ratchet from being an outage.
+
+    Under STRICT an unscored criterion is a shortfall, so a REJECT. Byte-exact lookup would have
+    made a model that wrote "verify command passes" for the declared "the verify command passes"
+    fail every PASS in the six templates that declare a rubric.
+    """
+
+    def test_an_exact_key(self):
+        assert score_for("the tests pass", {"the tests pass": 2}) == 2
+
+    def test_case_and_punctuation_are_collapsed(self):
+        assert score_for("the tests pass", {"The tests pass!": 1}) == 1
+
+    def test_a_restated_key_still_scores(self):
+        assert score_for("the verify command passes", {"verify command passes": 2}) == 2
+
+    def test_an_AMBIGUOUS_partial_match_stays_unscored(self):
+        """Guessing which of two keys the judge meant is a routing decision made on noise, and
+        "not scored" is the auditable answer."""
+        scores = {"the tests pass quickly": 2, "the tests pass slowly": 0}
+        assert score_for("the tests pass", scores) is None
+
+    def test_a_criterion_nobody_scored(self):
+        assert score_for("coverage held", {"the tests pass": 2}) is None
+
+
+class TestTheRatchetIsScopedToDeclaredRubrics:
+    def test_no_rubric_means_no_shortfall(self):
+        """The rule that protects 6 of the 7 live judge gates: they declare no rubric, so there is
+        nothing to compare and the ratchet is a no-op. A template that never described convergence
+        must not be REJECTed into a dead loop for it."""
+        ok, shortfalls = meets_ratchet({}, JudgeHints())
+        assert ok is True and shortfalls == []
+
+    def test_a_pass_with_no_rubric_and_cited_proof_is_valid(self):
+        v = validate_verdict({"verdict": "PASS", "proof": "exit 0"}, JudgeHints())
+        assert v.passed is True
+
+    def test_a_declared_rubric_scored_below_target_refuses_the_PASS(self):
+        hints = JudgeHints(rubric=[RubricCriterion("the tests pass", target_score=2)])
+        v = validate_verdict(
+            {"verdict": "PASS", "proof": "exit 1", "scores": {"the tests pass": 1}}, hints
+        )
+        assert v.passed is False
+        assert "below rubric targets" in v.invalid_reason
+        assert v.protocol_error is False, "a shortfall is about the WORK, not the answer's shape"
+        assert v.shortfalls == ["the tests pass: 1 < 2"]
+
+    def test_a_PASS_that_scored_NOTHING_is_a_protocol_error(self):
+        """Distinct from a shortfall, because the remediation is different: this one needs the
+        judge's answer fixed, not the deliverable. Reporting both as "below rubric targets" sends
+        an operator to read a deliverable that was never measured."""
+        hints = JudgeHints(rubric=[RubricCriterion("the tests pass")])
+        v = validate_verdict({"verdict": "PASS", "proof": "exit 0"}, hints)
+        assert v.protocol_error is True
+        assert "scored none of the 1 declared rubric criteria" in v.invalid_reason
+
+
+class TestTheInstructionStatesWhatIsEnforced:
+    """A contract enforced against a prompt that never mentioned it is a trap, not a gate."""
+
+    def test_the_exact_rubric_keys_are_named(self):
+        hints = JudgeHints(rubric=[RubricCriterion("the layer is identified", target_score=1)])
+        text = judge_instruction("judge it", hints)
+        assert '"the layer is identified" (target 1)' in text
+        assert "unscored criterion counts as a shortfall" in text
+
+    def test_the_proof_requirement_is_stated(self):
+        text = judge_instruction("judge it", JudgeHints())
+        assert "neither `proof` nor `evidence_refs` is REJECTED" in text
+
+    def test_every_member_of_the_closed_set_is_offered(self):
+        text = judge_instruction("judge it", JudgeHints())
+        for member in Verdict:
+            assert f'"{member.value}"' in text, member
+
+    def test_the_forbidden_modes_and_hidden_checks_are_rendered(self):
+        hints = JudgeHints(
+            forbidden_success_modes=["test deleted or skipped"],
+            hidden_validation_commands=["pytest -q tests/test_secret.py"],
+        )
+        text = judge_instruction("judge it", hints)
+        assert "test deleted or skipped" in text
+        # Rendered ONLY into judge prompts: a worker that can read the hidden checks satisfies
+        # them specifically, which is the same as not having them.
+        assert "pytest -q tests/test_secret.py" in text
+
+
+class TestAggregationAbsorbedTheGateRules:
+    """The engine used to restate these over a second verdict enum. The merge removed the reason,
+    so the rules have to live in the one aggregator — or they are silently gone."""
+
+    def _v(self, verdict: str, **kw) -> JudgeVerdict:
+        return validate_verdict({"verdict": verdict, "proof": "cited", **kw}, JudgeHints())
+
+    def test_a_bare_ESCALATE_verdict_outweighs_a_pass_majority(self):
+        samples = [self._v("PASS"), self._v("PASS"), self._v("ESCALATE")]
+        assert aggregate_samples(samples, JudgeHints()).verdict is Verdict.ESCALATE
+
+    def test_a_split_prefers_the_terminal_REJECT_over_the_spinning_RETRY(self):
+        samples = [self._v("RETRY"), self._v("REJECT")]
+        assert aggregate_samples(samples, JudgeHints()).verdict is Verdict.REJECT
+
+    def test_unanimous_RETRY_stays_RETRY(self):
+        samples = [self._v("RETRY"), self._v("RETRY"), self._v("RETRY")]
+        assert aggregate_samples(samples, JudgeHints()).verdict is Verdict.RETRY

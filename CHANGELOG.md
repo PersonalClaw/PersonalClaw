@@ -72,6 +72,32 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A workflow judge now has to show its work, and a PASS it cannot justify is refused.** A `judge`
+  gate used to be asked for exactly one word — `PASS`, `RETRY`, `ESCALATE` or `REJECT` — which
+  cannot carry a score, a citation or a reason. Every rule the judge contract states ("a PASS
+  without cited proof is invalid", "any rubric criterion below its target fails the stage") was
+  therefore written down and applied to nothing: on `goal-pursuit-open-ended` the template asked
+  for a full verdict object and the engine appended the one-word demand right after it, so the gate
+  shipped two contradictory instructions. Judges are now asked for the verdict object and the
+  engine validates it: a PASS carrying neither `proof` nor `evidence_refs` is refused, the rubric
+  criteria your template declares in `runtime_hints.judge` are compared against their
+  `target_score` for the first time, the overall score is recomputed from the dimension scores
+  (the model's own number is kept beside it so any drift is visible), the judge's evidence has
+  retry/iteration markers stripped before it reads it ("attempt 4 of 5" tells a judge how much
+  patience is left), and a gate that opted into `self_judge` now parks for a human instead of
+  approving its own work. The six templates whose judge STAGE already produced this object have it
+  validated and carried forward — into the review handoff, or into the next cycle's worker prompt
+  as the critique to start from — instead of discarded.
+
+  **What you may notice.** Judge answers cost more than they did (an object instead of a word), and
+  a judge that replies with prose instead of JSON now fails its gate with a named protocol error
+  rather than a guess. Enforcement was deliberately scoped so it cannot break a working template: a
+  run that declares no rubric has nothing to fall short of, the prompt spells out the exact score
+  keys the check will look for, and a restated key still counts. This is a behaviour change to
+  every judge gate and judge stage — `personalclaw snapshot` before upgrading if you have judged
+  runs in flight. Templates you wrote yourself that hand-write a "reply with one word" judge prompt
+  should drop that line; the engine supplies the shape.
+
 - **A workflow plan now tells you which of its stops survive an unattended run.** The autonomy
   offer routinely recommends `per_stage` while still offering `unattended`, and the plan preview
   listed the confirmations for the *recommended* mode only — so choosing "run it unattended" meant

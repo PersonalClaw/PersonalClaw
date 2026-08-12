@@ -2412,13 +2412,15 @@
         {
           "id": "WF2LOO-13",
           "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
-          "status": "todo",
+          "status": "done",
           "scope": "The wiring half of what WF2LOO-1 authored and WF2LOO-12 measured as unwired. The live judge path is taught to speak the contract instead of a bare word, and the 6 judge STAGES' already contract-shaped output stops being discarded. The two verdict vocabularies (judge_contract.Verdict PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT vs verify.Verdict PASS/RETRY/ESCALATE/REJECT) are reconciled to ONE, not bridged - engine.py currently restates the sampling rule precisely to avoid feeding one vocabulary's values to the other's aggregator. Enforcement lands only after the population is measured: giving a never-run control teeth before the population satisfies it is an outage, which is why WF2LOO-12 deliberately did not. — plus (WF2LOO-15) judge_actors' four unwired functions: check_transition/resolve_transition need an actor on the node-transition path, blind_provenance/assemble_judge_evidence need the message-list evidence the one-word gate does not produce.",
           "done_when": "GateKind.JUDGE asks for the contract JSON instead of one bare word; validate_verdict decides the gate, so a PASS without proof/evidence_refs is rejected rather than accepted; meets_ratchet compares the 14 declared runtime_hints.judge rubric criteria against their target_score for the first time; hints_from_dict becomes the parser of the declarations 6 templates already carry; the 6 judge STAGES' output is validated and bound by the templates that produce it (today zero templates bind nodes.judge.output.*); the two verdict enums are reconciled to one closed set with the loser deleted (clean break), keeping the pre-tier, sampling and cross-model isolation seams WF2LOO-6/WF2LOO-11 built. Gated on a prior measurement of how many real judge responses would satisfy the contract - measured blast radius: 7 judge gates in 7 bundled templates change prompt + parse; 6 templates x 14 rubric criteria become live thresholds (an unscored criterion is a 'not scored' shortfall, i.e. a REJECT, under Ratchet.STRICT); every judge answer grows from ~1 token to a JSON object on a gate that runs every loop iteration, plus a more frequent PROTOCOL failure mode on unparseable JSON. WF2LOO-12's rail is retired in the same change, since the docstring stops saying enforcement is not wired.",
           "deps": [
             "WF2LOO-12",
             "WF2LOO-7"
-          ]
+          ],
+          "pr": 1190,
+          "evidence": "MEASURED FIRST (the whole risk of this atom): 7 judge GATES across 7 bundled templates (gap-healing, goal-pursuit-open-ended, knowledge-lint, knowledge-synthesis, publish-article, rich-ingest, thesis-tracker) — only 1 (goal-pursuit-open-ended/accept) already asked for the contract object, and the engine then appended 'Respond with EXACTLY ONE word' straight after it, so that gate shipped two contradictory instructions. 6 templates declare runtime_hints.judge carrying 13 rubric criteria (WF2LOO-12's docstring said 14 — one high), and exactly 1 template has BOTH a judge gate and a rubric, so on 6 of 7 gates the ratchet has nothing to compare. ENUM RECONCILIATION: verify.Verdict (PASS/RETRY/ESCALATE/REJECT) DELETED; judge_contract.Verdict survives as the one closed set with RETRY merged in — the loser was chosen by measured usage (judge_contract.Verdict had 0 production references outside its own module, verify.Verdict had 5; but deleting the contract's would have stranded JudgeVerdict/validate_verdict/aggregate_samples or dropped REPLAN+NEEDS_INPUT, and RETRY was the only live member the merge would otherwise have lost). engine._aggregate_gate_verdicts deleted — its two rules (any ESCALATE wins; a split prefers terminal REJECT over spinning RETRY) moved INTO aggregate_samples, which the gate now calls. POSTURE (written into judge_contract.py's docstring, where the code lives): prompt and enforcement are generated from ONE JudgeHints (judge_instruction names the exact score keys meets_ratchet will look up, the proof requirement, the forbidden modes); an undeclared rubric produces no shortfall; score_for matches exact -> normalized -> unique containment so a restated key still scores. Unparseable JSON is FailureClass.PROTOCOL with the raw text on judge_evidence — never a silent pass — and a PASS that scored none of a declared rubric is flagged protocol_error rather than read as 'below target'. judge_actors' four unwired functions closed: check_transition/resolve_transition rule on the gate's actor (JUDGE, or WORKER when self_judge -> redirected to review, realized as park-and-ask); blind_provenance/assemble_judge_evidence build the judge's blinded role-filtered evidence, which is reachable because the controller appends a retry hint to a node's prompt. Judge STAGES: new apply_judge_contract dispatch seam (opt-in judge_contract: true, on all 6) validates and BINDS but does NOT fail the node — those prompts say 'reporting real issues is the normal outcome', so failing on a REJECT would convert normal operation into a failed run. Both WF2LOO-12's and WF2LOO-15's rails INVERTED (not deleted) to assert the new truth, plus PHF-13's audited-call-site test re-verdicted: Verdict.REPLAN and Actor.WORKER left inert-surface-baseline.json (139->137), Ratchet.RELAXED stays inert and the test now pins that split. DEVIATION: done_when 5's binding half is 4 of 6 templates — code-project binds nodes.judge.output.verdict/.shortfalls into handoff, and general-project / goal-pursuit-open-ended / goal-pursuit-verifiable carry the judge's critique into the next iteration via last.output.*; design-project and diagnose-run have NO node after their terminal judge, so their binding is the validated run output. Adding a node to manufacture a binding site would be inventing template structure this atom has no mandate to design. OUT OF SCOPE (recorded, not fixed): JudgeHints.judge_samples/sample_count stay unwired — the contract's default of 3 would have tripled the model spend of all 7 live gates, so the node's config.judge_samples keeps the say; verified_done.py carries a THIRD Actor enum (ENGINE/USER/AGENT over TaskStatus) which this atom does not reconcile; verify.requires_fresh_judge gained its first caller here but judge_session_key still has none."
         },
         {
           "id": "WF2LOO-14",
@@ -7709,11 +7711,6 @@
         "plan": "WF2LEA"
       },
       {
-        "id": "WF2LOO-13",
-        "title": "Wire the judge contract into the live judge path (blast radius measured by WF2LOO-12)",
-        "plan": "WF2LOO"
-      },
-      {
         "id": "WF2UNI-12",
         "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
         "plan": "WF2UNI"
@@ -9590,9 +9587,9 @@
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
         "total_atoms": 15,
-        "done": 13,
+        "done": 14,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 1
       },
       {

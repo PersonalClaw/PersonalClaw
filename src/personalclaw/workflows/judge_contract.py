@@ -1,15 +1,13 @@
-"""The judge contract — maker/checker teeth, AUTHORED here and not enforced anywhere yet.
+"""The judge contract — maker/checker teeth, and the live judge path that enforces them.
 
-**Read this before trusting a rule below.** Nothing in `src/` calls this module's
-enforcement: `validate_verdict`, `meets_ratchet`, `compute_overall`,
-`detect_forbidden_modes`, `aggregate_samples` and `hints_from_dict` have zero production
-callers. Only the TYPES leave this file — `judge_actors` imports `Isolation`,
-`judge_pretier` imports `FallbackCheck`, and `engine.py` deliberately RESTATES the
-sampling rule rather than importing `aggregate_samples`. So every rule stated here is a
-specification of what a judge SHOULD be held to, not a description of what the running
-engine does. `tests/test_workflows_judge_contract.py` proves the rules work on these
-functions; it cannot prove they run, because they do not. What the live judges do
-instead is measured at the bottom of this docstring.
+**Enforcement is wired (WF2LOO-13).** `engine.dispatch_gate`'s `GateKind.JUDGE` branch asks
+the model for the object `judge_instruction` describes, parses it with `parse_judge_json`,
+and hands it to `validate_verdict` — which is what decides the gate. `meets_ratchet`,
+`compute_overall`, `detect_forbidden_modes` and `aggregate_samples` run underneath it on
+every judge gate; `hints_from_dict` parses the `runtime_hints.judge` block the controller
+threads in. `apply_judge_contract` applies the same validation to a judge STAGE's output at
+the dispatch seam. What is NOT wired is stated in "The seams this does not own" below, so
+this docstring stays a description rather than a wish.
 
 A loop that judges its own work converges on whatever the worker finds easiest to
 claim. Every mechanism here exists to make a specific degenerate pass impossible
@@ -20,11 +18,12 @@ and advice loses to gradient pressure.
 may transition a node to `waiting` or `review` — never to `done`. Only a judge or
 gate actor can. That is a state-machine rule, so no prompt can talk its way past it.
 
-**A PASS without cited proof is invalid — under this contract, which no live judge
-consults.** `validate_verdict` rejects a PASS carrying neither `proof` nor
-`evidence_refs`, because a completion record without proof is a claim and the whole
-point of a checker is to stop accepting claims. That rejection has never fired on a
-real run: see the measurement below for why, and for what it would cost to change.
+**A PASS without cited proof is invalid.** `validate_verdict` rejects a PASS carrying
+neither `proof` nor `evidence_refs`, because a completion record without proof is a claim
+and the whole point of a checker is to stop accepting claims. The rejection is only fair
+because the same object generates the prompt: `judge_instruction` names the field and says
+out loud that a PASS without it will be refused, so no judge is failed for a requirement it
+was never told about.
 
 **The deterministic tier runs BEFORE the model, every cycle.** Regex failure patterns,
 schema checks, existence gates — microseconds each. Loop judges run every iteration,
@@ -45,44 +44,53 @@ and tool outputs — not the worker's prose about its own work. Prose is exactly
 channel a worker would use to influence a judge, including prose that survives
 compaction.
 
-── What the live judges actually do (measured 2026-08-12, `WF2LOO-12`) ──
+── The enforcement posture, and why it is not an outage (WF2LOO-13, measured 2026-08-12) ──
 
-**Enforcement is NOT wired.** Two live judge paths exist, and neither consults this file:
+Giving a never-run control teeth is how a gate becomes an outage, so the population was
+measured first. On this tree:
 
-1. **The judge GATE** — `engine.dispatch_gate`'s `GateKind.JUDGE`, used by 7 gates across 7
-   bundled templates. Its prompt ends `Respond with EXACTLY ONE word, one of: PASS, RETRY,
-   ESCALATE, REJECT. No other text.`, and the answer is read by `verify.parse_verdict`,
-   which extracts the verdict WORD only — over a DIFFERENT four-member enum
-   (`verify.Verdict`, carrying RETRY where this module carries REPLAN/NEEDS_INPUT). A bare
-   word cannot carry proof, scores or a rubric result, so this contract is not merely
-   unused there: it is inexpressible. Enforcing "a PASS without cited proof is invalid"
-   against that prompt would invalidate every judge PASS in all 7 templates, which is an
-   outage rather than a gate.
-2. **The judge STAGE** — 6 bundled templates (`code-project`, `design-project`,
-   `diagnose-run`, `general-project`, `goal-pursuit-open-ended`, `goal-pursuit-verifiable`)
-   carry a `judge` stage that DOES ask for this module's exact shape: `{reasoning, verdict,
-   scores, marginal_value, evidence_refs, proof, cannot_judge}`, with this module's
-   five-verdict vocabulary spelled out in the prompt. `dispatch_infer` really does parse it
-   (a `config.schema` sets `want_json`). But nothing validates it and nothing READS it:
-   `dispatch_infer` returns DONE for any parseable JSON whatever the verdict says, and no
-   shipped template binds `nodes.judge.output.*`. A contract-shaped verdict is produced
-   every loop iteration and discarded.
+* **7 judge GATES across 7 bundled templates** (`gap-healing`, `goal-pursuit-open-ended`,
+  `knowledge-lint`, `knowledge-synthesis`, `publish-article`, `rich-ingest`,
+  `thesis-tracker`). **1** of them (`goal-pursuit-open-ended`'s terminal `accept`) already
+  asked for this module's exact object in its own prompt — and the engine then appended
+  `Respond with EXACTLY ONE word`, contradicting the template. The other 6 asked an open
+  question and relied on that appended word.
+* **6 templates declare `runtime_hints.judge`, carrying 13 rubric criteria** (not 14 — the
+  WF2LOO-12 count was one high). Exactly **1** template has BOTH a judge gate and a rubric,
+  so on 6 of the 7 gates the ratchet has nothing to compare and is a no-op by construction.
 
-The `rubric` in `runtime_hints.judge` (6 templates, 14 criteria) reaches the judge as PROSE
-only — inlined into the prompt text, which is exactly what
-`test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt`
-asserts: the criterion STRING is a substring of some judge prompt. No `target_score` is
-ever compared against a score, because `meets_ratchet` has no caller.
+Three rules keep the teeth off the templates' throat:
 
-Wiring this contract into the live path is its own scoped atom, `WF2LOO-13`, with a
-measured blast radius. Until it lands, `test_workflows_judge_contract.py::
-test_the_unwired_enforcement_claim_matches_the_live_path` fails if this section and the
-live path drift apart in EITHER direction — enforcement gaining a caller while this
-docstring still says it has none, or the live gate leaving its one-word prompt.
+1. **The prompt is generated from the object that enforces it.** `judge_instruction` renders
+   the closed verdict vocabulary, the proof requirement, the EXACT rubric keys the ratchet
+   will look up, and the forbidden modes. A judge is never refused for a requirement it was
+   not given, which is the only honest way to enforce a contract on a live population.
+2. **An undeclared rubric is not a shortfall.** `meets_ratchet` iterates the DECLARED
+   criteria, so a gate whose run declares none returns "ok" with no shortfalls. A template
+   that never described convergence cannot be REJECTed into a dead loop for it.
+3. **A restated key still scores.** `score_for` matches a criterion exactly, then
+   normalized, then by unique containment. Byte-exact key matching would have made
+   "not scored" — i.e. a REJECT under STRICT — the likely outcome of a model that wrote
+   `"verify command passes"` for `"the verify command passes"`.
+
+And the failure mode this adds is NAMED, never a silent pass: a judge whose answer does not
+parse as the contract object fails its gate as `FailureClass.PROTOCOL` with the raw text on
+the node output, and a PASS that scored none of a declared rubric is flagged
+`protocol_error` rather than being read as "below target". Both are visible in the Run
+Ledger's `judge_verdict` event.
+
+── The seams this does not own ──
+
+`JudgeHints.judge_samples` / `sample_count()` are NOT the gate's sample count: the gate reads
+`config.judge_samples` per node (default 1, clamped by `engine.MAX_JUDGE_SAMPLES`).
+Defaulting to this module's `DEFAULT_JUDGE_SAMPLES` of 3 would have tripled the model spend
+of all 7 live gates in a change whose subject is enforcement, so the node keeps the say.
+`marginal_threshold` is read only by `Ratchet.RELAXED`; no bundled template declares it.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -93,7 +101,17 @@ logger = logging.getLogger(__name__)
 
 
 class Verdict(str, Enum):
-    """The CLOSED verdict enum. Loop nodes route on data, never on prose.
+    """The ONE closed verdict enum. Loop nodes route on data, never on prose.
+
+    There used to be two (WF2LOO-13). `verify.Verdict` carried PASS/RETRY/ESCALATE/REJECT for
+    the live gate and the verification ladder; this one carried PASS/REJECT/REPLAN/ESCALATE/
+    NEEDS_INPUT for a contract nothing called. Two vocabularies over one decision meant
+    `engine.py` had to RESTATE the sampling rule rather than import `aggregate_samples`, to
+    avoid feeding one enum's values to the other's aggregator. So the sets were merged HERE —
+    the module that owns the judge contract — and `verify.Verdict` was deleted. `RETRY`
+    survived the merge because it was the only live member this set lacked, and it carries
+    real routing: a recoverable TRANSIENT failure the engine retries, as against `REJECT`,
+    which stops and asks.
 
     `cannot_judge` is deliberately a field rather than a verdict: a refusal still
     has to say why, and folding it into the enum would let "I couldn't tell" be
@@ -102,6 +120,9 @@ class Verdict(str, Enum):
 
     PASS = "PASS"
     REJECT = "REJECT"
+    #: Recoverable: try the producing node again. Kept distinct from REJECT because the
+    #: difference is what a human reads — a hiccup versus a dead end.
+    RETRY = "RETRY"
     #: Produces ONLY the remaining steps given the critique — a typed shape for
     #: mid-flight replanning instead of ad-hoc mutation.
     REPLAN = "REPLAN"
@@ -314,6 +335,14 @@ class JudgeVerdict:
     escalated: bool = False
     escalation_reason: str = ""
     invalid_reason: str = ""
+    #: The rubric criteria that fell short, reported even on a RELAXED pass so a relaxed
+    #: acceptance is never silent about what it let through.
+    shortfalls: list[str] = field(default_factory=list)
+    #: True when the invalidity is about the judge's ANSWER (not an object, unknown verdict,
+    #: a PASS that scored none of a declared rubric) rather than about the WORK. The gate
+    #: reads it to choose `PROTOCOL` over `USER`: "the judge could not answer in the required
+    #: shape" and "the work fell short" send a reader to two different places.
+    protocol_error: bool = False
 
     @property
     def valid(self) -> bool:
@@ -323,6 +352,65 @@ class JudgeVerdict:
     def passed(self) -> bool:
         """A PASS that survived contract validation. Anything else is not a pass."""
         return self.verdict is Verdict.PASS and self.valid and not self.escalated
+
+    def to_dict(self) -> dict[str, Any]:
+        """The record a node output carries, so a template binds VALIDATED data.
+
+        `overall` is the engine-computed aggregate, never the model's — `model_overall`
+        keeps the model's own claim beside it precisely so the drift is visible instead of
+        being resolved silently in the model's favour.
+        """
+        return {
+            "verdict": self.verdict.value,
+            "valid": self.valid,
+            "passed": self.passed,
+            "reasoning": self.reasoning,
+            "scores": dict(self.scores),
+            "overall": self.overall,
+            "model_overall": self.model_overall,
+            "proof": self.proof,
+            "evidence_refs": list(self.evidence_refs),
+            "cannot_judge": self.cannot_judge,
+            "shortfalls": list(self.shortfalls),
+            "invalid_reason": self.invalid_reason,
+            "protocol_error": self.protocol_error,
+            "escalated": self.escalated,
+            "escalation_reason": self.escalation_reason,
+            "fallback_result": self.fallback_result,
+        }
+
+
+def _normalize_key(text: Any) -> str:
+    """Casefold and collapse everything that is not a letter or digit to one space."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+
+
+def score_for(criterion: str, scores: dict[str, int]) -> int | None:
+    """The score a judge gave `criterion`, tolerant of key restatement.
+
+    🔴 This tolerance is what keeps the ratchet from being an outage (WF2LOO-13). Under
+    `Ratchet.STRICT` an unscored criterion is a shortfall, so a REJECT; with byte-exact
+    lookup, a judge answering `"verify command passes"` for the declared
+    `"the verify command passes"` would have failed every PASS in the templates that
+    declare a rubric. Three attempts, narrowest first:
+
+    1. exact key;
+    2. normalized key (case, punctuation and spacing collapsed);
+    3. containment — but ONLY when exactly one key contains the criterion or vice versa.
+       An ambiguous partial match is left unscored on purpose: guessing which of two keys
+       the judge meant is a routing decision made on noise, and "not scored" is the
+       auditable answer.
+    """
+    if criterion in scores:
+        return int(scores[criterion])
+    wanted = _normalize_key(criterion)
+    if not wanted:
+        return None
+    normalized = {_normalize_key(k): v for k, v in scores.items()}
+    if wanted in normalized:
+        return int(normalized[wanted])
+    hits = [v for k, v in normalized.items() if k and (wanted in k or k in wanted)]
+    return int(hits[0]) if len(hits) == 1 else None
 
 
 def compute_overall(scores: dict[str, int], rubric: list[RubricCriterion]) -> float:
@@ -337,7 +425,7 @@ def compute_overall(scores: dict[str, int], rubric: list[RubricCriterion]) -> fl
     total = 0.0
     weight_sum = 0.0
     for criterion in rubric:
-        raw = scores.get(criterion.criterion)
+        raw = score_for(criterion.criterion, scores)
         if raw is None:
             continue
         total += max(SCORE_MIN, min(SCORE_MAX, int(raw))) * criterion.weight
@@ -353,7 +441,7 @@ def meets_ratchet(scores: dict[str, int], hints: JudgeHints) -> tuple[bool, list
     """
     shortfalls: list[str] = []
     for criterion in hints.rubric:
-        actual = scores.get(criterion.criterion)
+        actual = score_for(criterion.criterion, scores)
         if actual is None:
             shortfalls.append(f"{criterion.criterion}: not scored")
             continue
@@ -383,6 +471,7 @@ def validate_verdict(
         return JudgeVerdict(
             verdict=Verdict.REJECT,
             invalid_reason="judge response was not an object",
+            protocol_error=True,
             fallback_result=fallback_result,
         )
 
@@ -393,6 +482,7 @@ def validate_verdict(
             verdict=Verdict.REJECT,
             reasoning=str(raw.get("reasoning", ""))[:2000],
             invalid_reason=f"unknown verdict {raw.get('verdict')!r}",
+            protocol_error=True,
             fallback_result=fallback_result,
         )
 
@@ -432,9 +522,22 @@ def validate_verdict(
     # completion record without proof is just a claim.
     if not (result.proof or result.evidence_refs):
         result.invalid_reason = "PASS without cited proof or evidence refs"
+        result.protocol_error = True
         return result
 
     ok, shortfalls = meets_ratchet(scores, hints)
+    result.shortfalls = list(shortfalls)
+    if hints.rubric and not any(score_for(c.criterion, scores) is not None for c in hints.rubric):
+        # A PASS that scored NOTHING against a declared rubric is a different failure from a
+        # PASS that scored and fell short, and the remediation is different too: the first
+        # needs the judge's answer fixed, the second needs the work fixed. Reporting both as
+        # "below rubric targets" sends an operator to read a deliverable that was never
+        # measured.
+        result.invalid_reason = (
+            f"PASS scored none of the {len(hints.rubric)} declared rubric criteria"
+        )
+        result.protocol_error = True
+        return result
     if not ok:
         result.invalid_reason = "PASS below rubric targets: " + "; ".join(shortfalls[:5])
         return result
@@ -502,6 +605,21 @@ def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeV
     forbidden-mode hit anywhere in the set — one sample spotting a disqualifier
     outweighs two that missed it, because a disqualifier is a fact rather than an
     opinion.
+
+    The four rules, in order — this is the ONE aggregator now. `engine.py` used to restate
+    them over its own verdict enum (`_aggregate_gate_verdicts`, deleted in WF2LOO-13),
+    because the two vocabularies could not share a function; the merged `Verdict` removed
+    the reason for the duplicate:
+
+    1. **Any escalation wins**, whether it came from the contract (`escalated`, i.e. a
+       cannot-judge or a contradicted deterministic check) or from the judge saying ESCALATE
+       outright. It names something the other samples did not see, and outvoting it would
+       discard the one sample that noticed.
+    2. **Any forbidden-mode hit wins**, for the same reason: a disqualifier is a fact.
+    3. **A PASS needs a strict majority** (2 of 3, never 1 of 2).
+    4. **Otherwise the majority rejection stands**, preferring a terminal REJECT over a
+       spinning RETRY when the samples split — the safe reading of a split is the one that
+       stops and asks.
     """
     if not verdicts:
         return JudgeVerdict(verdict=Verdict.REJECT, invalid_reason="no judge samples")
@@ -509,8 +627,8 @@ def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeV
         return verdicts[0]
 
     for candidate in verdicts:
-        if candidate.escalated:
-            return candidate  # any escalation wins: it names a contradiction
+        if candidate.escalated or candidate.verdict is Verdict.ESCALATE:
+            return candidate
     for candidate in verdicts:
         if "forbidden success mode" in candidate.invalid_reason:
             return candidate
@@ -520,4 +638,139 @@ def aggregate_samples(verdicts: list[JudgeVerdict], hints: JudgeHints) -> JudgeV
         winner = sorted(passes, key=lambda v: v.overall)[len(passes) // 2]
         return winner
     rejects = [v for v in verdicts if not v.passed]
-    return sorted(rejects, key=lambda v: v.overall)[len(rejects) // 2]
+    terminal = [v for v in rejects if v.verdict is not Verdict.RETRY]
+    pool = terminal or rejects
+    return sorted(pool, key=lambda v: v.overall)[len(pool) // 2]
+
+
+# ── the wire shape ──
+
+
+def parse_judge_json(text: Any) -> dict[str, Any] | None:
+    """Extract the contract object from a judge's answer, or None.
+
+    None is the PROTOCOL signal: the caller turns it into a named failure. It is never a
+    verdict, because "the judge did not answer in the required shape" and "the judge said
+    REJECT" are different facts and only one of them is about the work.
+
+    Tolerant of the two things models do to JSON and nothing else: a ```json fence, and
+    prose either side of the object. Deliberately NOT tolerant of a bare verdict word — that
+    was the old protocol, and accepting it would let a PASS with no proof through the exact
+    precondition this contract exists to apply.
+    """
+    if text is None:
+        return None
+    body = str(text).strip()
+    if not body:
+        return None
+    fence = re.search(r"```(?:json)?\s*(.+?)```", body, flags=re.DOTALL)
+    if fence:
+        body = fence.group(1).strip()
+    for candidate in (body, _first_object(body)):
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _first_object(text: str) -> str:
+    """The first balanced `{...}` in `text`, brace-counted outside string literals.
+
+    A regex cannot do this: the contract object nests (`scores`), and `reasoning` routinely
+    contains braces and escaped quotes.
+    """
+    start = text.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return ""
+
+
+def judge_instruction(prompt: str, hints: JudgeHints) -> str:
+    """The judge's full instruction: the template's rubric prose plus this contract's shape.
+
+    🔴 Generated from the SAME `JudgeHints` the validation reads. That is the whole
+    anti-outage argument of WF2LOO-13: every requirement `validate_verdict` will refuse a
+    PASS for is stated here first, by name, including the exact `scores` keys `meets_ratchet`
+    will look up. A contract enforced against a prompt that never mentioned it is not a gate,
+    it is a trap — which is why the one-word prompt could not be given teeth in place.
+    """
+    lines = [prompt.rstrip(), ""]
+    if hints.freedom_level is FreedomLevel.LOW:
+        lines.append("Judge per-step compliance: did it do what it was told, step by step?")
+    elif hints.freedom_level is FreedomLevel.HIGH:
+        lines.append("Judge the OUTCOME against the rubric, not the route taken to it.")
+    if hints.ground_truth_sources:
+        lines.append(
+            "These are MEASUREMENTS and outrank any narration about them: "
+            + ", ".join(hints.ground_truth_sources)
+        )
+    if hints.rubric:
+        lines.append("")
+        lines.append(
+            "Score EVERY criterion below 0, 1 or 2, using the key exactly as written — an "
+            "unscored criterion counts as a shortfall:"
+        )
+        for criterion in hints.rubric:
+            lines.append(f'  "{criterion.criterion}" (target {criterion.clamp_target()})')
+        if hints.ratchet is Ratchet.STRICT:
+            lines.append(
+                "Any criterion below its target fails this gate. There is no averaging: a "
+                "broken deliverable does not pass on the strength of its documentation."
+            )
+    if hints.forbidden_success_modes:
+        lines.append("")
+        lines.append("These passes are forbidden. Do not PASS if the work did any of them:")
+        lines.extend(f"  - {mode}" for mode in hints.forbidden_success_modes)
+    if hints.hidden_validation_commands:
+        # Rendered ONLY here. A worker that can read the hidden checks satisfies them
+        # specifically, which is the same as not having them.
+        lines.append("")
+        lines.append("Run these checks yourself and report what they returned:")
+        lines.extend(f"  - {command}" for command in hints.hidden_validation_commands)
+    if hints.proof_command:
+        lines.append("")
+        lines.append(f"Re-run this yourself and cite its output as proof: {hints.proof_command}")
+    lines += [
+        "",
+        "Respond with ONE JSON object and nothing else — no prose either side, no code fence:",
+        "{",
+        '  "reasoning": "what you checked and what you found",',
+        '  "verdict": ' + " | ".join(f'"{v.value}"' for v in Verdict) + ",",
+        '  "scores": {"<criterion exactly as written above>": 0},',
+        '  "proof": "the command you ran, the file you read, the line you checked",',
+        '  "evidence_refs": ["the artifact or output you relied on"],',
+        '  "cannot_judge": "why you could not judge, or an empty string"',
+        "}",
+        "",
+        "A PASS carrying neither `proof` nor `evidence_refs` is REJECTED by the engine: a "
+        "completion record without proof is a claim, not a verdict.",
+        "If you genuinely cannot tell, say why in `cannot_judge` — that escalates to a human, "
+        "which is useful. A coin flip dressed as a verdict is not.",
+    ]
+    return "\n".join(lines)

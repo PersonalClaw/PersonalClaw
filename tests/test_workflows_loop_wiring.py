@@ -136,7 +136,9 @@ class TestJudgeVerdictLedger:
 
     async def test_a_passing_judge_emits_a_verdict_with_evidence(self) -> None:
         async def judge(prompt, *, use_case="reasoning", output_type=None):
-            return "PASS"
+            # The contract object, not a bare word (WF2LOO-13): a PASS must cite proof or the
+            # engine refuses it, and this stub is standing in for a judge that did the work.
+            return '{"verdict": "PASS", "proof": "read the report; 4 sections present"}'
 
         run = _make_run(self._judge_spec())
         c = RunController(run, self._judge_spec(), services=EngineServices(completion=judge))
@@ -152,7 +154,7 @@ class TestJudgeVerdictLedger:
         """Criterion 3: judges reject at least once, with evidence, on the ledger."""
 
         async def judge(prompt, *, use_case="reasoning", output_type=None):
-            return "REJECT"
+            return '{"verdict": "REJECT", "reasoning": "section 3 cites nothing"}'
 
         run = _make_run(self._judge_spec())
         c = RunController(run, self._judge_spec(), services=EngineServices(completion=judge))

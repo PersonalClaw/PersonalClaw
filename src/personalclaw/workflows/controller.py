@@ -67,6 +67,7 @@ from personalclaw.workflows.engine import (
 )
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
+from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
 from personalclaw.workflows.loop_middleware import InterruptQueue
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -2038,6 +2039,16 @@ class RunController:
             # from the run's worker axis; only the JUDGE branch reads it, so a run with no
             # cross_model gate pays nothing.
             worker_model=self._worker_model(),
+            # The spec's `runtime_hints.judge`, parsed by the contract's own lenient parser
+            # (WF2LOO-13) — the same split `execution_hints.from_runtime_hints` does for the
+            # execution half. Parsed per dispatch rather than cached: it is a dict walk over a
+            # handful of keys, and caching it would have to be invalidated by a live mutation of
+            # the spec, which is a correctness risk in exchange for nothing measurable.
+            judge_hints=judge_hints_from_dict(
+                (self.spec.get("runtime_hints") or {}).get("judge")
+                if isinstance(self.spec.get("runtime_hints"), dict)
+                else None
+            ),
             # This node's compaction history (WV-12). `setdefault` so the list IDENTITY is stable
             # across iterations — the ladder appends to it in place, and handing out a fresh copy
             # each call would record saves nobody ever reads, leaving the anti-thrashing rule
