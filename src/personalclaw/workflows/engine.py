@@ -925,6 +925,7 @@ async def dispatch_action(
     get_provider: Any = None,
     timeout: int = 60,
     run_id: str = "",
+    project_id: str = "",
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -969,6 +970,12 @@ async def dispatch_action(
     payload.setdefault("node_id", getattr(node, "id", "") or "")
     if run_id:
         payload.setdefault("run_id", run_id)
+    # The owning project (WORK-CONTAINERS §1.6): `knowledge-persist` files what it writes
+    # under this container, so the project's brief + Knowledge view can find it and another
+    # project cannot see a private item. Absent for a project-less run, which simply leaves
+    # the written item unscoped — global, as it was before.
+    if project_id:
+        payload.setdefault("project_id", project_id)
     context = ActionContext(
         event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
     )
@@ -2006,6 +2013,10 @@ async def dispatch(
     subagents: Any = None,
     depth: int = 0,
     run_id: str = "",
+    #: The run's owning project, threaded for the same reason `run_id` is: an action provider
+    #: attributes what it writes without the template having to restate an id it cannot know
+    #: (WORK-CONTAINERS §1.6). Only the ACTION branch reads it.
+    project_id: str = "",
     cwd: str = "",
     tiers: dict[str, str] | None = None,
     completion: Any = None,
@@ -2048,6 +2059,7 @@ async def dispatch(
         subagents=subagents,
         depth=depth,
         run_id=run_id,
+        project_id=project_id,
         cwd=cwd,
         tiers=tiers,
         completion=completion,
@@ -2077,6 +2089,7 @@ async def _dispatch_inner(
     subagents: Any = None,
     depth: int = 0,
     run_id: str = "",
+    project_id: str = "",
     cwd: str = "",
     tiers: dict[str, str] | None = None,
     completion: Any = None,
@@ -2107,7 +2120,12 @@ async def _dispatch_inner(
         return await dispatch_branch(node, ctx)
     if kind == NodeKind.ACTION:
         return await dispatch_action(
-            node, ctx, get_provider=get_provider, timeout=timeout, run_id=run_id
+            node,
+            ctx,
+            get_provider=get_provider,
+            timeout=timeout,
+            run_id=run_id,
+            project_id=project_id,
         )
     if kind == NodeKind.WAIT:
         return await dispatch_wait(node, ctx, now=clock)

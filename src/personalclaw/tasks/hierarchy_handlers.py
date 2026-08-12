@@ -149,7 +149,10 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     """GET /api/projects/{project_id}/linked — the work units scoped under this
     project: Goal Loops (loop.project_id) + Code projects (code.tasks_project_id).
     Read-only summaries (id/name/status) so the Projects detail page can show the
-    integration — everything the user does on one effort, in one place."""
+    integration — everything the user does on one effort, in one place.
+
+    Also carries the project's ARTIFACTS and its run-written KNOWLEDGE (WORK-CONTAINERS
+    §1.6) — the two "what did work on this project leave behind" surfaces."""
     pid = request.match_info["project_id"]
     if _store().get_project(pid) is None:
         return web.json_response({"error": "not found"}, status=404)
@@ -187,6 +190,22 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     except Exception:
         pass
 
+    # Run-written KNOWLEDGE scoped to this project (WORK-CONTAINERS §1.6): items a run in
+    # this project persisted, plus other projects' items whose `sharing_policy` is `shared`
+    # (carrying `source_project` so the view can say where they came from). Another project's
+    # PRIVATE items never appear — that filter is the whole point of the policy field.
+    # Best-effort, like every other section here: no knowledge store, no section.
+    knowledge: list[dict] = []
+    try:
+        from personalclaw.knowledge import project_scope
+        from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
+
+        knowledge = project_scope.project_items(
+            KnowledgeStore(db_path=str(knowledge_db_path())), project_id=pid, limit=25
+        )
+    except Exception:
+        pass
+
     # Project-bound CHATS (manual sessions scoped to this project) — the vision frames
     # chats as first-class project work ("launch a new loop OR chat about it"), so the
     # detail page can list + resume them, not just loops. Worker sessions (loop-*) are
@@ -209,7 +228,15 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    return web.json_response({"loops": loops, "code": code, "artifacts": artifacts, "chats": chats})
+    return web.json_response(
+        {
+            "loops": loops,
+            "code": code,
+            "artifacts": artifacts,
+            "chats": chats,
+            "knowledge": knowledge,
+        }
+    )
 
 
 # ── Work board (WORK-CONTAINERS §1/§5.2/§6.1) ──

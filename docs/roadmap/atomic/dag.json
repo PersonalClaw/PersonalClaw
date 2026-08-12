@@ -6465,13 +6465,14 @@
         {
           "id": "WF2WOR-11",
           "title": "Project-scoped memory locality + knowledge project tagging",
-          "status": "todo",
+          "status": "done",
           "scope": "§1.6 (memory locality + knowledge tagging R14, adapted to memory_dir_for_cwd + global knowledge seam), Migration Order step 7",
           "done_when": "project-owned sessions run with cwd = project context_dir so their memory lands in the project partition; recall searches the partition first then global with cross-partition hits explicitly source-labeled and fenced (ordering-only, never admission); run-written knowledge items carry project_id + run_id metadata and a sharing_policy:private|shared filter, and the project Artifacts/Knowledge views filter on it",
           "deps": [
             "WF2WOR-6"
           ],
-          "pr": ""
+          "pr": "#1099",
+          "evidence": "New memory_locality.py binds a project-owned run's cwd to the project context_dir in RunController._prepare (after provisioning, so a worktree still wins), making its memory land in workspace/_ext/<slug(context_dir)> instead of _ext/_default — driven by a real controller run in test_project_memory_locality.py. active_recall_block now composes partition-first: local partition, then the GLOBAL partition fenced via fence_untrusted(source=...) and asserted with security.is_fenced; ORDERING ONLY — a global-only hit is returned alone (its own test). knowledge-persist stamps project_id/run_id/sharing_policy (default private, fail-closed on an unknown value) and files the item under session_brief.project_tag — which nothing had ever written, so the project brief was a live reader of an unwritten key and empty for every project; project_id threads controller -> dispatch -> dispatch_action payload. New knowledge/project_scope.py owns the closed SharingPolicy enum + the one visibility filter, served on GET /api/projects/{id}/linked (knowledge section) and rendered by ProjectKnowledgeList in the FE with a source-project label; another project's PRIVATE items never appear."
         },
         {
           "id": "WF2WOR-12",
