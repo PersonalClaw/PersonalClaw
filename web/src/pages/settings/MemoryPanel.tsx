@@ -24,6 +24,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
+import { notify } from '../../app/appSdk'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -1074,7 +1075,11 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
 
   const patch = (p: Partial<MemorySettings>) => {
     setS((prev) => prev && { ...prev, ...p })
-    api.saveMemorySettings(p).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    // Optimistic locally, silent on failure — the switch kept the new value while the server kept the
+    // old one.
+    api.saveMemorySettings(p)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => notify(`Couldn't save your memory settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
   const consolidate = async () => {
     setConsolidating(true); setConsolidateMsg('')

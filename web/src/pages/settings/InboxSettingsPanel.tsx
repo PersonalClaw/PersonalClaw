@@ -4,6 +4,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { FormSkeleton } from '../../ui/ListScaffold'
+import { notify } from '../../app/appSdk'
 
 /** Inbox settings → /api/inbox/settings: auto-cleanup retention for the unified inbox.
  *  Alerting lives in the notification rules matrix now (plan 42 S3). */
@@ -36,7 +37,10 @@ export function InboxSettingsPanel() {
 
   const patch = (p: Partial<InboxSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
-    api.saveInboxSettings(p).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    // The optimistic local update above stays put on failure, so silence read as success.
+    api.saveInboxSettings(p)
+      .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }
