@@ -83,7 +83,7 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
                 return (
                   <button key={task.id} type="button" disabled={cyclic}
                     onClick={() => { onChange([...value, task.id]); setQ(''); }}
-                    className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high disabled:opacity-45 disabled:cursor-not-allowed">
+                    className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high disabled:opacity-40 disabled:cursor-not-allowed">
                     <sm.icon size={14} className="shrink-0" style={{ color: sm.tone }} />
                     <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{task.title}</span>
                     {cyclic && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Would create a dependency cycle"><AlertTriangle size={11} /> cycle</span>}

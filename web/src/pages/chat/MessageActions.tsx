@@ -46,13 +46,13 @@ function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number;
     <div className="inline-flex items-center gap-0.5 rounded-md pr-1 text-on-surface-low" title={`Answer ${idx + 1} of ${count}`}>
       <button type="button" onClick={() => !atStart && onSwitch(idx - 1)} disabled={atStart}
         aria-label="Previous answer" title="Previous answer"
-        className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-default">
+        className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-default">
         <ChevronLeft size={14} />
       </button>
       <span className="min-w-[2.1rem] select-none text-center text-[0.75rem] tabular-nums" aria-live="polite">{idx + 1}/{count}</span>
       <button type="button" onClick={() => !atEnd && onSwitch(idx + 1)} disabled={atEnd}
         aria-label="Next answer" title="Next answer"
-        className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-default">
+        className="inline-flex h-8 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high hover:text-on-surface disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-default">
         <ChevronRight size={14} />
       </button>
     </div>
