@@ -16,8 +16,11 @@ real controller against a temp home with only the model call faked:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from personalclaw.workflows import controller as controller_mod
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import judge_calibration as jc
 from personalclaw.workflows import store
@@ -231,3 +234,159 @@ class TestBreakerNotDoubleRun:
         iters = [r for r in J.ledger(run.id) if r["kind"] == J.ITERATION]
         assert len(iters) < 20
         assert any("breaker" in str(r.get("outcome", "")) for r in iters)
+
+
+# ── until_dry reads the DECLARED progress field (WF2LOO-14) ──
+
+
+def _progress_spec(*, field: str = "new_findings_count", streak: int = 2, cap: int = 6) -> dict:
+    """A loop shaped like the two shipped templates that declare a progress field.
+
+    The shape is the point: the field is emitted by the FIRST stage of a sequence body, and
+    the iteration ENDS on a judge stage whose schema has no such key. A dryness rule that
+    only reads the last leaf's output can never see it.
+    """
+    return {
+        "name": "progress-field",
+        "root": {
+            "kind": "loop",
+            "id": "l",
+            "config": {
+                "mode": "until_dry",
+                "streak": streak,
+                "progress_field": field,
+                "max_iterations": cap,
+            },
+            "body": {
+                "kind": "sequence",
+                "id": "cycle-body",
+                "children": [
+                    {
+                        "kind": "infer",
+                        "id": "cycle",
+                        "config": {
+                            "prompt": "work {{iter}}",
+                            "schema": {"summary": "string", field: "integer"},
+                        },
+                    },
+                    {
+                        "kind": "infer",
+                        "id": "judge",
+                        "config": {
+                            "prompt": "judge {{iter}}",
+                            "schema": {"verdict": "string", "reasoning": "string"},
+                        },
+                    },
+                ],
+            },
+        },
+    }
+
+
+def _cycles(values: list, *, field: str = "new_findings_count", emit: bool = True):
+    """Fake completion: the work stage reports `values` in order, the judge always passes.
+
+    The judge's output carries the iteration counter so it is never byte-identical twice
+    running — otherwise `check_breaker`'s `identical_output` rule ends the loop first and the
+    test would prove nothing about dryness.
+    """
+    seen: list = []
+
+    async def fn(prompt, *, use_case="background", output_type=None):
+        if prompt.startswith("work"):
+            idx = len(seen)
+            seen.append(idx)
+            body: dict = {"summary": f"cycle {idx}"}
+            if emit:
+                body[field] = values[idx] if idx < len(values) else values[-1]
+            return json.dumps(body)
+        return json.dumps({"verdict": "PASS", "reasoning": f"pass {len(seen)}"})
+
+    return fn
+
+
+def _iteration_outcomes(run_id: str) -> list[str]:
+    return [str(r.get("outcome", "")) for r in J.ledger(run_id) if r["kind"] == J.ITERATION]
+
+
+class TestProgressFieldDecidesDryness:
+    """Driven through a real controller, not a unit call on the predicate.
+
+    Before this, `_is_dry` read the whole last output — the judge's non-empty dict — so a
+    cycle reporting `new_findings_count: 0` counted as progress and the loop always ran to
+    its cap, paying for a model call per iteration to learn nothing.
+    """
+
+    async def test_two_zero_progress_iterations_end_the_loop(self) -> None:
+        spec = _progress_spec(streak=2, cap=6)
+        run = _make_run(spec)
+        services = EngineServices(completion=_cycles([0, 0, 0, 0, 0, 0]))
+        c = RunController(run, spec, services=services)
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        outcomes = _iteration_outcomes(run.id)
+        assert len(outcomes) == 2, f"streak 2 must stop at 2 iterations, not the cap: {outcomes}"
+        assert outcomes[-1] == "dry_streak"
+
+    async def test_reported_progress_does_not_end_the_loop(self) -> None:
+        spec = _progress_spec(streak=2, cap=4)
+        run = _make_run(spec)
+        services = EngineServices(completion=_cycles([3, 3, 3, 3]))
+        c = RunController(run, spec, services=services)
+        await c.run_to_completion(timeout=25)
+        outcomes = _iteration_outcomes(run.id)
+        assert len(outcomes) == 4, f"a loop reporting progress runs to its cap: {outcomes}"
+        assert "dry_streak" not in outcomes
+
+    async def test_progress_resets_the_streak(self) -> None:
+        """streak semantics are CONSECUTIVE — one productive cycle clears the count."""
+        spec = _progress_spec(streak=2, cap=6)
+        run = _make_run(spec)
+        services = EngineServices(completion=_cycles([0, 4, 0, 0]))
+        c = RunController(run, spec, services=services)
+        assert await c.run_to_completion(timeout=25) == RunStatus.COMPLETE
+        outcomes = _iteration_outcomes(run.id)
+        assert len(outcomes) == 4, f"dry, progress, dry, dry: {outcomes}"
+        assert outcomes[-1] == "dry_streak"
+
+    async def test_an_absent_field_does_not_cut_the_loop_short(self) -> None:
+        """The body forgot the key. Falling back to the whole-output rule keeps working;
+        reading absence as dryness would end a productive run after `streak` iterations."""
+        spec = _progress_spec(streak=2, cap=4)
+        run = _make_run(spec)
+        services = EngineServices(completion=_cycles([0, 0, 0, 0], emit=False))
+        c = RunController(run, spec, services=services)
+        await c.run_to_completion(timeout=25)
+        outcomes = _iteration_outcomes(run.id)
+        assert len(outcomes) == 4, f"absence must not end the loop early: {outcomes}"
+        assert "dry_streak" not in outcomes
+
+
+class TestProgressReadingTable:
+    """The per-type rule, stated exhaustively — no default branch guesses for anyone."""
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (None, controller_mod._DRY),
+            (False, controller_mod._DRY),
+            (True, controller_mod._PROGRESS),
+            (0, controller_mod._DRY),
+            (0.0, controller_mod._DRY),
+            (7, controller_mod._PROGRESS),
+            (-1, controller_mod._PROGRESS),
+            ("", controller_mod._DRY),
+            ("   \n", controller_mod._DRY),
+            ("two new files", controller_mod._PROGRESS),
+            (b"", controller_mod._DRY),
+            (b"x", controller_mod._PROGRESS),
+            ([], controller_mod._DRY),
+            ([1], controller_mod._PROGRESS),
+            ((), controller_mod._DRY),
+            (set(), controller_mod._DRY),
+            ({}, controller_mod._DRY),
+            ({"a": 1}, controller_mod._PROGRESS),
+            (object(), controller_mod._UNREADABLE),
+        ],
+    )
+    def test_each_type_has_a_stated_reading(self, value, expected) -> None:
+        assert controller_mod._progress_reading(value) == expected

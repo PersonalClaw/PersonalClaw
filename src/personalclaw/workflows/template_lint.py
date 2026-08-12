@@ -417,9 +417,11 @@ def _check_anti_patterns(res: LintResult, spec: dict[str, Any]) -> None:
         has_cap = (isinstance(raw_cap, int) and not isinstance(raw_cap, bool) and raw_cap >= 1) or (
             isinstance(raw_cap, str) and "{{" in raw_cap
         )
-        # `streak` alone is a valid until_dry exit: the engine terminates on N clean
-        # iterations, and `progress_field` merely names which field it reads. Requiring
-        # the field flagged the shipped `audit-sweep` as unbounded when it is not.
+        # `streak` alone is a valid until_dry exit: the engine terminates on N iterations
+        # that surfaced nothing, and `progress_field` only chooses WHAT it reads — the
+        # declared field when a loop names one, the whole iteration output when it does not
+        # (`controller._iteration_is_dry`). Requiring the field flagged the shipped
+        # `audit-sweep` as unbounded when it is not.
         has_exit = bool(
             cfg.get("condition") or cfg.get("progress_field") or cfg.get("streak") or cfg.get("n")
         )

@@ -343,6 +343,43 @@ def test_every_loop_has_a_real_exit_and_a_hard_cap(name):
         assert cfg.get("max_iterations", 0) >= 1, f"{name}:{loop.get('id')} has no cap"
 
 
+def test_every_declared_progress_field_can_be_emitted_by_its_body():
+    """A declared `progress_field` must be a field some node in that loop's body can EMIT.
+
+    Since WF2LOO-14 the engine decides `until_dry` from this field, so a field no body node
+    declares in its `schema` gets the whole-output fallback on every iteration — the template
+    reads as "stops when progress dries up" and is actually bounded only by `max_iterations`,
+    which is what shipped for a year. Naming it in the schema is not enough either: a key the
+    prompt never asks for comes back invented or missing, so the emitting node must also
+    instruct it.
+
+    Swept over EVERY bundled template, not just `LOOP_TEMPLATES` — a new template inherits
+    this rail without joining a hand-maintained tuple. The engine half of the contract (that
+    the field is actually consulted) is railed by
+    `test_workflows_loop_wiring.py::TestProgressFieldDecidesDryness`.
+    """
+    checked = 0
+    for name in template_names():
+        spec = _spec(name)
+        for loop in (n for n in _nodes(spec["root"]) if n.get("kind") == "loop"):
+            field = (loop.get("config") or {}).get("progress_field")
+            if not field:
+                continue
+            checked += 1
+            body = loop.get("body") or {}
+            emitters = [
+                n for n in _nodes(body) if field in ((n.get("config") or {}).get("schema") or {})
+            ]
+            assert emitters, (
+                f"{name}:{loop.get('id')} declares progress_field {field!r} but no node in "
+                "its body declares it in a schema — the engine can never read it"
+            )
+            assert any(
+                field in str((n.get("config") or {}).get("prompt") or "") for n in emitters
+            ), f"{name}:{loop.get('id')} never tells the body what {field!r} means"
+    assert checked >= 2, "the two shipped until_dry templates that declare a field must be swept"
+
+
 @pytest.mark.parametrize("name", LOOP_TEMPLATES)
 def test_every_loop_declares_a_stall_timeout(name):
     """Without one, a wedged iteration holds the run open indefinitely."""

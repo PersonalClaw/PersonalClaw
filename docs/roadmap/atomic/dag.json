@@ -2419,6 +2419,18 @@
             "WF2LOO-12",
             "WF2LOO-7"
           ]
+        },
+        {
+          "id": "WF2LOO-14",
+          "title": "Make until_dry read the progress_field its templates declare",
+          "status": "done",
+          "scope": "An inert-control atom over WF2LOO-3's templates: until_dry termination measured something other than what the templates declare. controller._is_dry(output) returned True only when the output was None or len(output) == 0 and never looked at progress_field, and the output it was handed is the leaf that COMPLETED the iteration - in both declaring templates the judge stage, whose schema carries no progress key and which returns a populated object every time. So for the only two loops that asked for it, the mode's own exit could not fire on either count, and a run burned every iteration up to its cap paying for a model call each time to learn nothing. This atom makes the declared field decide, with one exhaustive per-type rule, and leaves every loop that declares no field byte-for-byte unchanged.",
+          "done_when": "controller._advance_loop decides dryness via _iteration_is_dry: a loop declaring progress_field is judged on THAT field (_progress_reading: None/False/0/blank/empty => dry; anything else including a negative number => progress; an unmapped type => unreadable, never swallowed by a default branch), and _progress_value finds it anywhere in the iteration's body - restricted to nodes whose instance for THIS iteration succeeded, since self._outputs is keyed by node id and holds the previous iteration's value for a node that did not run. Body-wide search is required, not preferred: both declaring templates emit the field from the FIRST stage of a sequence body and end the iteration on a judge stage, so a last-leaf-only read ships inert. A loop declaring no field keeps _is_dry's whole-output rule byte-for-byte; a declared field that is absent or of an unreadable type falls back to that rule rather than counting as dryness, because ending a run over a key the body forgot would silently truncate real work. streak semantics untouched (tick.loop_should_continue unchanged). template_lint.py's comment claiming 'progress_field merely names which field it reads' becomes true. Driven through a real controller on the shipped body shape: ends at 2 iterations on two zero-progress cycles; runs to the cap while progress is reported; a productive cycle resets the streak; an absent field runs to the cap. Rail over EVERY bundled template: a declared progress_field must appear in a body node's schema AND be named in that node's prompt. Both halves proven able to fail by probes (call site reverted to _is_dry => the two ending tests red; one template's field renamed => the rail red), each reverted by a targeted edit. CHANGELOG entry under Fixed: this changes when two shipped templates' runs end.",
+          "deps": [
+            "WF2LOO-3"
+          ],
+          "pr": "#1161",
+          "evidence": "FINDING (re-verified on this tree): controller.py _is_dry - docstring 'Did an iteration surface anything new? Feeds until_dry termination' - returned True only for None or len()==0 and contained no reference to progress_field; its ONLY caller is _advance_loop (one call site, so no non-loop behavior could change). The only other progress_field reference in src/ was template_lint.py's TANGLED-loop comment asserting behavior that did not exist. SECOND FINDING (sharper than the first): the output _advance_loop measures is self._outputs[item.node.id] for the leaf that completed the iteration. In both declaring templates the body is sequence[work-stage, judge-stage], so that leaf is the JUDGE, whose schema is {reasoning, verdict, scores, evidence_refs, proof, cannot_judge} - no progress key, and never empty. until_dry was therefore dead for these two templates under the OLD rule as well, not merely mis-scoped: dry_streak could never increment at all. CENSUS of until_dry loops in bundled/: 4 total - audit-sweep sweep_until_dry (streak 2, cap 3, no field), deep-research investigate (streak 2, cap {{inputs.rounds}}, no field), general-project project (streak 2, meaningful_progress boolean, cap 6), goal-pursuit-open-ended work (streak 2, new_findings_count integer, cap 12). Only the latter two change. BODY-EMITS CHECK (constraint: a body that cannot emit its declared field would make the template wrong): both DO - goal-pursuit-open-ended's cycle stage declares schema {summary, key_insight, new_findings_count, evidence} and its prompt says 'Set new_findings_count to the number of genuinely NEW things this cycle established. Zero is a valid and useful answer'; general-project's work stage declares schema {summary, meaningful_progress, evidence}. So no template needed fixing. PROBE 1: call site reverted to _is_dry(output) => test_two_zero_progress_iterations_end_the_loop and test_progress_resets_the_streak both fail (RunStatus.ESCALATED instead of COMPLETE - the loop ran on to the breaker), while the two no-regression tests still pass; reverted by targeted edit. PROBE 2: general-project's progress_field renamed to a typo => the template rail fails naming the loop and the field; reverted by targeted edit, git diff on the template empty. DISCOVERY: WF2LOO-7's status header says todo, but its wiring is present in code and its test file (test_workflows_loop_wiring.py) is where the driven tests for this atom live - header stale, log and code win. No web/ change: until_dry termination has no frontend surface."
         }
       ]
     },
@@ -8255,6 +8267,7 @@
       "WF2LOO-11",
       "WF2LOO-12",
       "WF2LOO-13",
+      "WF2LOO-14",
       "WF2TAS-1",
       "WF2TAS-2",
       "WF2TAS-3",
@@ -9537,8 +9550,8 @@
       {
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
-        "total_atoms": 13,
-        "done": 11,
+        "total_atoms": 14,
+        "done": 12,
         "in_progress": 0,
         "todo": 1,
         "blocked": 1
@@ -9967,6 +9980,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 847
+    "edge_count": 848
   }
 }
