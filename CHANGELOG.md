@@ -27,6 +27,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A workflow plan now tells you which of its stops survive an unattended run.** The autonomy
+  offer routinely recommends `per_stage` while still offering `unattended`, and the plan preview
+  listed the confirmations for the *recommended* mode only — so choosing "run it unattended" meant
+  giving up an unnamed set of stops. The preview gained an `unattended_interrupts` block naming, per
+  confirmation, whether unattended still stops for it and which interrupt fires (`irreversible`, or
+  `uninferable` for a credential or payment detail nobody can guess). A credential ask now reports
+  as *uninferable* rather than *irreversible* — the same stop, but it tells you to supply a value
+  instead of sending you looking for a blast radius. Advisory only: what an unattended run may
+  actually do is unchanged, and still decided by the engine's gate policy.
 - **A `foreach` with `on_item_error: collect` now has defined behaviour, and it collects.**
   `collect` was accepted by the validator and advertised in the workflow capabilities catalog, but
   no code branched on it: it fell through to the generic container outcome, so it neither halted

@@ -303,13 +303,6 @@
         "enum:DependencyType.REQUIRED_FOR"
       ]
     },
-    "src/personalclaw/workflows/autonomy.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:Interrupt.CONFLICTING",
-        "enum:Interrupt.UNINFERABLE"
-      ]
-    },
     "src/personalclaw/workflows/confirmation.py": {
       "inert": 1,
       "surfaces": [
@@ -359,10 +352,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 21,
+      "enum": 19,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 148
+    "inert": 146
   }
 }

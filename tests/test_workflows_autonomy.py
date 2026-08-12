@@ -10,9 +10,15 @@ destructive action is never auto-approved in any mode, an unattended run still s
 and a single failed run RESETS earned trust rather than averaging it away.
 """
 
+import ast
+import inspect
+from pathlib import Path
+from typing import cast
+
 import pytest
 
 from personalclaw.tool_providers.base import RiskLevel
+from personalclaw.workflows import autonomy as autonomy_mod
 from personalclaw.workflows import bundled_defs
 from personalclaw.workflows.autonomy import (
     MODE_ORDER,
@@ -33,6 +39,7 @@ from personalclaw.workflows.autonomy import (
     scan_risk,
     should_interrupt,
     type_attention,
+    unattended_interrupts,
 )
 
 TEMPLATES = sorted(bundled_defs.template_names())
@@ -434,13 +441,18 @@ def test_confirmations_are_computed_at_plan_time():
     assert len(build_confirmations(spec, Mode.PER_STAGE)) == 2
 
 
-# ── the three interrupts ──
+# ── the two interrupts ──
 
 
-def test_only_three_interrupts_exist():
+def test_only_two_interrupts_exist():
     """ "Anything surprising" is not a taxonomy — it is a licence to stop whenever, which makes
-    unattended mode a slower per-stage mode."""
-    assert {i.value for i in Interrupt} == {"irreversible", "uninferable", "conflicting"}
+    unattended mode a slower per-stage mode.
+
+    Two, not three: WF2UNI-13 deleted `CONFLICTING` because no signal a `ConfirmationRequest`
+    carries says "these requirements contradict each other", and a documented stop nothing can
+    produce reads to an auditor like a stop that exists.
+    """
+    assert {i.value for i in Interrupt} == {"irreversible", "uninferable"}
 
 
 def test_an_irreversible_action_interrupts_an_unattended_run():
@@ -500,6 +512,152 @@ def test_a_non_unattended_mode_stops_regardless():
         question="read?",
     )
     assert should_interrupt(mode=Mode.PER_STAGE, confirmation=request)[0] is True
+
+
+# ── UNINFERABLE has a producer (WF2UNI-13) ──
+
+
+CREDENTIAL_SPEC = {"root": {"kind": "stage", "id": "a", "config": {"prompt": "rotate the api key"}}}
+
+
+def test_a_credential_node_carries_its_signal_name_through_the_confirmation():
+    """The producer's input. `_classify_node` collapses every DESTRUCTIVE signal to the same
+    `(DESTRUCTIVE, DESTRUCTIVE)` pair, so without the signal NAME riding along there is nothing to
+    tell a credential ask apart from a deletion — and text-scanning the question for the word
+    "credential" is a heuristic, not a signal."""
+    [request] = build_confirmations(CREDENTIAL_SPEC, Mode.UNATTENDED)
+    assert "credentials_or_payment" in request.signals
+    assert request.to_dict()["signals"] == ["credentials_or_payment"]
+
+
+def test_an_uninferable_credential_interrupts_an_unattended_run_through_the_real_path():
+    """Driven from a spec through `build_confirmations`, not by hand-building a request: a producer
+    that only fires for inputs a test constructs itself is still inert in production."""
+    confirmations = build_confirmations(CREDENTIAL_SPEC, Mode.UNATTENDED)
+    [verdict] = unattended_interrupts(confirmations)
+    assert verdict["interrupts"] is True
+    assert verdict["interrupt"] == Interrupt.UNINFERABLE.value
+    assert verdict["node_id"] == "a"
+
+
+def test_uninferable_relabels_a_stop_and_never_relaxes_one():
+    """The whole safety argument for the new branch in one assertion: `credentials_or_payment` is a
+    DESTRUCTIVE-level signal, so the request stops on risk alone. Checking the signal first changes
+    WHICH interrupt is reported, never WHETHER the run stops."""
+    [request] = build_confirmations(CREDENTIAL_SPEC, Mode.UNATTENDED)
+    assert request.risk == RiskLevel.DESTRUCTIVE
+    stripped = ConfirmationRequest(
+        request_id=request.request_id,
+        node_id=request.node_id,
+        confirmation_type=request.confirmation_type,
+        risk=request.risk,
+        question=request.question,
+        signals=(),
+    )
+    with_signal = should_interrupt(mode=Mode.UNATTENDED, confirmation=request)
+    without_signal = should_interrupt(mode=Mode.UNATTENDED, confirmation=stripped)
+    assert with_signal[0] is without_signal[0] is True
+    assert with_signal[1] == Interrupt.UNINFERABLE
+    assert without_signal[1] == Interrupt.IRREVERSIBLE
+
+
+def test_the_counterfactual_reports_the_stops_unattended_would_skip():
+    """What the surface is FOR: at `per_stage` a write stops, at `unattended` it does not, and the
+    user picking between the two is choosing exactly that."""
+    spec = {
+        "root": {
+            "kind": "sequence",
+            "id": "root",
+            "children": [
+                {"kind": "action", "id": "w", "config": {"provider": "knowledge-persist"}},
+                {"kind": "action", "id": "s", "config": {"provider": "send-message"}},
+            ],
+        }
+    }
+    verdicts = {
+        v["node_id"]: v for v in unattended_interrupts(build_confirmations(spec, Mode.PER_STAGE))
+    }
+    assert verdicts["w"]["interrupts"] is False
+    assert verdicts["s"]["interrupts"] is True
+    assert verdicts["s"]["interrupt"] == Interrupt.IRREVERSIBLE.value
+
+
+def test_the_plan_surface_carries_the_interrupt_verdicts():
+    """The production reader. `_autonomy_surface` is the only consumer of this module in the run-up
+    to approval; a verdict it does not emit is a verdict nobody sees."""
+    from personalclaw.mcp_workflows import _autonomy_surface
+
+    surface = _autonomy_surface({"inputs": {}, "root": CREDENTIAL_SPEC["root"], "metadata": {}})
+    assert surface["unattended_interrupts"] == [
+        {
+            "request_id": "cr-a",
+            "node_id": "a",
+            "interrupts": True,
+            "interrupt": "uninferable",
+            "reason": surface["confirmations"][0]["question"],
+        }
+    ]
+
+
+class TestInterruptExhaustiveness:
+    """Two ratchets. A new `ConfirmationType` must declare whether an unattended run stops for it,
+    and a new `Interrupt` must have something that produces it — the second is the one WF2UNI-13
+    exists to install, because `UNINFERABLE` and `CONFLICTING` were both documented and
+    unproducible."""
+
+    @pytest.mark.parametrize("kind", list(ConfirmationType), ids=lambda k: k.value)
+    def test_every_confirmation_type_has_a_branch(self, kind: ConfirmationType) -> None:
+        request = ConfirmationRequest(
+            request_id="c1",
+            node_id="a",
+            confirmation_type=kind,
+            risk=RiskLevel.CAUTION,
+            question="?",
+        )
+        stop, _which, reason = should_interrupt(mode=Mode.UNATTENDED, confirmation=request)
+        assert isinstance(stop, bool) and reason
+
+    def test_an_unhandled_confirmation_type_raises_rather_than_proceeding(self) -> None:
+        """Proof the ratchet can fail. The dangerous default here is `return False` — a new type
+        that fell through the old tail would have been waved through an unattended run."""
+        request = ConfirmationRequest(
+            request_id="c1",
+            node_id="a",
+            confirmation_type=cast(ConfirmationType, "future"),
+            risk=RiskLevel.CAUTION,
+            question="?",
+        )
+        with pytest.raises(AssertionError, match="no branch for ConfirmationType"):
+            should_interrupt(mode=Mode.UNATTENDED, confirmation=request)
+
+    def test_the_source_branches_on_every_confirmation_type_by_name(self) -> None:
+        """Read out of the SOURCE: a fallthrough shared by two types would satisfy the parametrized
+        test above while leaving the next type's semantics undeclared."""
+        named = self._attributes_named_in("should_interrupt", "ConfirmationType")
+        assert named == {member.name for member in ConfirmationType}
+
+    def test_every_interrupt_member_is_produced(self) -> None:
+        """The anti-inertness ratchet: an `Interrupt` member no code path returns is a stop that
+        cannot happen, and it is indistinguishable — from the docstring alone — from one that can.
+        """
+        named = self._attributes_named_in("should_interrupt", "Interrupt")
+        assert named == {member.name for member in Interrupt}
+
+    @staticmethod
+    def _attributes_named_in(function: str, enum_name: str) -> set[str]:
+        source = Path(inspect.getsourcefile(autonomy_mod) or "").read_text(encoding="utf-8")
+        fn = next(
+            node
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == function
+        )
+        return {
+            node.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == enum_name
+        }
 
 
 # ── earned trust ──
