@@ -353,9 +353,21 @@ function AppInner() {
   // header). A per-app badge (set via the SDK setNavBadge) lights its own tile.
   const navItems: NavItem[] = []
   for (const n of NAV) {
-    if (n.id === 'projects' && activeLoops > 0) navItems.push({ ...n, badge: String(activeLoops) })
-    else if (n.id === 'apps' && appBadgeTotal > 0) navItems.push({ ...n, badge: String(appBadgeTotal) })
-    else navItems.push(n)
+    // `badgeLabel` says what the number counts. Supplied ONLY where this shell actually knows the
+    // unit: the Projects badge is the active-LOOP count (it read as "1 project" beside five), and
+    // the Store badge is app updates — but only while nothing else is summed into it, since an
+    // SDK-set per-app badge's unit is app-defined and the shell must not invent one for it.
+    if (n.id === 'projects' && activeLoops > 0) {
+      navItems.push({ ...n, badge: String(activeLoops), badgeLabel: `${activeLoops} active loop${activeLoops === 1 ? '' : 's'}` })
+    } else if (n.id === 'apps' && appBadgeTotal > 0) {
+      navItems.push({
+        ...n,
+        badge: String(appBadgeTotal),
+        badgeLabel: appBadgeTotal === updatesCount
+          ? `${updatesCount} app update${updatesCount === 1 ? '' : 's'} available`
+          : undefined,
+      })
+    } else navItems.push(n)
     if (n.id === 'apps') {
       for (const ai of appNavItems) {
         const badge = appBadges[ai.id.slice('app/'.length)]

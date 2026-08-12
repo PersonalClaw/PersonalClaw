@@ -13,6 +13,21 @@ export interface NavItem {
   label: string
   icon: LucideIcon
   badge?: string
+  /** WHAT the badge counts, as a phrase — "1 active loop", "2 app updates available".
+   *
+   *  A bare number on a nav item is read as a count of that destination's CONTENTS, and on
+   *  Projects that reading is simply wrong: the badge is the active-LOOP count, so it showed "1"
+   *  beside a list of five projects.
+   *
+   *  It also fixes a silent loss. The button carries `aria-label={item.label}`, and an aria-label
+   *  OVERRIDES the element's text — so the badge span was announced **nowhere**. Measured on
+   *  #/projects: visible text "Projects1", accessible name "Projects", title null. Sighted users
+   *  got an ambiguous number; screen-reader users got no number at all.
+   *
+   *  Supply it only where the caller genuinely knows the unit. Where it is absent the raw count
+   *  is still announced (see below) — announcing "1" is worse than "1 active loop" but far better
+   *  than dropping the signal, and it claims nothing the shell cannot back up. */
+  badgeLabel?: string
   section?: string
   /** Pinned to the bottom of the rail (rendered after the flex spacer, above the
    *  system widget) instead of inline in scroll order — e.g. Settings. */
@@ -81,6 +96,9 @@ export function NavRail({
     if (withSection) lastSection = item.section
     const active = item.id === activeId
     const Icon = item.icon
+    // What the badge means, if there is one. Falls back to the bare count so an SDK-set app badge
+    // (whose unit is app-defined and unknown to the shell) still reaches assistive tech.
+    const badgeHint = item.badge ? (item.badgeLabel ?? item.badge) : undefined
     return (
       <div key={item.id}>
         {showSection && (
@@ -91,7 +109,16 @@ export function NavRail({
         )}
         <motion.button
           type="button" onClick={() => onSelect(item.id)} whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
-          title={collapsed ? item.label : undefined} aria-label={item.label}
+          // The badge rides the accessible NAME because an aria-label overrides the element's
+          // text, so a badge span inside the button is announced nowhere. Same composition the
+          // notifications bell already uses ("Notifications, 3 unread" + a title spelling it out).
+          // `badgeLabel` when the caller knows the unit; the bare count when it does not — the
+          // fallback still carries the signal instead of silently dropping it.
+          // Collapsed, the label is not visible either, so the title carries both. The collapsed
+          // rail also replaces the number with a bare dot — which conveyed nothing at all until
+          // the hint gave it something to say.
+          title={collapsed ? (badgeHint ? `${item.label}, ${badgeHint}` : item.label) : badgeHint}
+          aria-label={badgeHint ? `${item.label}, ${badgeHint}` : item.label}
           // The active item was distinguished ONLY visually — weight 470 vs 400 and a tinted
           // background. Measured on #/tasks: 18 nav buttons, 1 visually distinct, 0 announcing
           // anything, so a screen-reader user heard eighteen identical buttons with no sense of
