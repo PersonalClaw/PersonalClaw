@@ -110,6 +110,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Inbox's Mentions and Email filters could never match anything.** The dashboard has
+  filtered and counted items by kind for a while, and the inbox stored a kind per row — but the
+  message-source seam every provider builds on had no field for it, so every message a source
+  polled arrived as a plain "message" no matter what it really was. Mail landed
+  indistinguishable from a chat message, and two of the kind chips were unreachable by
+  construction. A source can now state what a message is (`IncomingMessage.kind` — `message`,
+  `mention` or `email`) and that value is what gets stored, filtered and counted. Nothing infers
+  a kind from the text of a message: a mention is something the source knows from its payload,
+  not a guess about whose name appears in a sentence. A source that declares a kind the dashboard
+  cannot render keeps its message — the row still arrives as a plain message — and the mistake is
+  logged with the source that made it rather than silently accepted.
 - **`personalclaw update` was a dead end unless you had installed from git.** If you installed the
   documented way — `pipx install personalclaw`, `pip install personalclaw`, `uv tool install
   personalclaw` — `personalclaw update` printed "❌ PERSONALCLAW_PROJECT_DIR not set — cannot locate

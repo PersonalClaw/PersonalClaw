@@ -37,11 +37,13 @@ from typing import TYPE_CHECKING
 from personalclaw import shutdown_event
 from personalclaw import trace_recorder as _trace
 from personalclaw.inbox import (
+    SOURCE_DECLARABLE_KINDS,
     Classification,
     Confidence,
     InboxItem,
     InboxState,
     InboxStore,
+    ItemKind,
     ItemStatus,
     evaluate_alert,
     notify_inbox_alert,
@@ -68,6 +70,43 @@ def _dashboard_state():
 _MAX_MESSAGE_CHARS = 6000
 _MAX_THREAD_TURNS = 12
 _MAX_DIGEST_MESSAGES = 60
+
+
+def _resolve_source_kind(declared: str, source_name: str) -> str:
+    """The ``item_kind`` to persist for a source-declared *declared* kind.
+
+    Unset (the default, and every source written before the field existed) is a plain
+    ``message`` — the inbox began as a channel-message surface and that is what those rows
+    are. A value inside :data:`SOURCE_DECLARABLE_KINDS` is taken as declared.
+
+    Anything else is REFUSED, and the item is filed as ``message`` with a warning naming
+    the source and the value. The two rejected postures, and why:
+
+    * *Trust it.* A source could then invent a kind the dashboard has no chip, icon or
+      label for — the row would be unfilterable and unreachable behind every kind chip.
+      It could also claim one of core's non-channel attention kinds and render a row with
+      no refs, no deep-link and no reply.
+    * *Drop the message.* One typo (``"mail"`` for ``"email"``) would silently stop a
+      user's mail from arriving at all, and in the filesystem source's case would wedge the
+      poll batch on the offending file forever. Losing a message is a strictly worse
+      outcome than mis-filing one.
+
+    So the row is delivered (never lost) and confined to a kind the UI can render, and the
+    mistake is loud on the one side that can fix it — the provider author's logs. This is
+    NOT a silent fallback: an unknown kind always logs.
+    """
+    if not declared:
+        return ItemKind.MESSAGE.value
+    if declared in SOURCE_DECLARABLE_KINDS:
+        return declared
+    logger.warning(
+        "inbox source %r declared item kind %r, which is not one of %s — filing as %r",
+        source_name,
+        declared,
+        sorted(SOURCE_DECLARABLE_KINDS),
+        ItemKind.MESSAGE.value,
+    )
+    return ItemKind.MESSAGE.value
 
 
 def _fence_message(item: InboxItem) -> str:
@@ -203,6 +242,7 @@ class InboxService:
         operator = self._operator_name()
         dash_state = _dashboard_state()
         can_reply = bool(self._provider is not None and self._provider.source_name != "filesystem")
+        source_name = self._provider.source_name if self._provider else "native"
         count = 0
         for m in messages:
             item_id = f"{m.channel_id}_{m.timestamp}"
@@ -224,8 +264,12 @@ class InboxService:
                 sender_name=m.sender_name or m.sender_id,
                 thread_context=list(m.thread_context or []),
                 created_at=m.timestamp or time.time(),
-                source=self._provider.source_name if self._provider else "native",
+                source=source_name,
                 can_reply=can_reply,
+                # What the source says this IS (mention / email / plain message), validated
+                # against the closed set — the inbox's kind filter is a live reader, so an
+                # unvalidated value here would be a row no chip can reach.
+                item_kind=_resolve_source_kind(m.kind, source_name),
             )
             self.inbox.add(item)
             count += 1
