@@ -8,6 +8,7 @@ import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { kindMeta, relTime, firstLine, unreadRail, toneChipBg } from '../pages/notifications/notificationMeta'
 import { fvs, withWeight } from '../design/fontWeight'
 import { accentChip } from '../design/accent'
+import { notify } from '../app/appSdk'
 
 const MAX_SHADE = 5
 
@@ -21,6 +22,10 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   const [now, setNow] = useState(() => Date.now())
   const ref = useRef<HTMLDivElement>(null)
 
+  // The READ keeps its silent catch on purpose: it polls every 15s (and on every notification WS
+  // frame), so reporting a failed poll would toast every tick. It also does NOT fabricate — the
+  // previous items stay, which is the honest fallback for a badge. The MUTATIONS below are
+  // user-initiated, one toast each, and were the silent ones.
   const load = () => api.notifications().then((d) => setItems(d.notifications)).catch(() => {})
   useVisiblePoll(() => { setNow(Date.now()); load() }, 15000)
   useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) load() })
@@ -38,9 +43,18 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   // newest first, capped to the shade size
   const recent = items ? [...items].reverse().slice(0, MAX_SHADE) : []
 
-  async function ack(n: NotificationItem) { await api.ackNotification(n.ts).catch(() => {}); load() }
-  async function remove(n: NotificationItem) { await api.deleteNotification(n.ts).catch(() => {}); load() }
-  async function ackAll() { await api.ackAllNotifications().catch(() => {}); load() }
+  async function ack(n: NotificationItem) {
+    await api.ackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  async function remove(n: NotificationItem) {
+    await api.deleteNotification(n.ts).catch((e) => notify(`Couldn't delete this notification: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  async function ackAll() {
+    await api.ackAllNotifications().catch((e) => notify(`Couldn't mark all notifications read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
   function openItem(n: NotificationItem) {
     setOpen(false)
     navigate(`notifications?open=${encodeURIComponent(n.ts)}`)
