@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { RotateCw, Plug } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
@@ -8,9 +8,13 @@ import '@xterm/xterm/css/xterm.css'
 import { useMode } from '../../app/theme'
 import { api } from '../../lib/api'
 import { registerTerminal, unregisterTerminal } from './terminalBridge'
+import { escapeGate } from './escapeGate'
 import type { TermTab } from './TerminalPage'
 
 type Status = 'connecting' | 'open' | 'reconnecting' | 'exited' | 'error'
+
+/** How long the "Esc Esc to leave" hint stays up after focus enters the terminal. */
+const HINT_MS = 4000
 
 /** One PTY view bound to a session. Owns the WS lifecycle:
  *   - `exited` (shell ended via `exit`/Ctrl-D) → clear overlay + Restart, NOT a
@@ -24,6 +28,13 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
   onSession?: (sessionId: string) => void }) {
   const { mode } = useMode()
   const hostRef = useRef<HTMLDivElement>(null)
+  // Where focus goes when the user asks to leave the PTY: the view's own container, so the
+  // next Tab continues the page's order from the terminal's position rather than from the top.
+  const shellRef = useRef<HTMLDivElement>(null)
+  const hintId = useId()
+  // The Esc-Esc hint shows on each focus entry and fades once read, so it advises without
+  // sitting permanently over the top-right of a terminal somebody is working in.
+  const [hintRead, setHintRead] = useState(false)
   const termRef = useRef<Terminal | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<Status>('connecting')
@@ -51,6 +62,33 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
     const fit = new FitAddon(); term.loadAddon(fit); term.loadAddon(new WebLinksAddon())
     term.open(host); try { fit.fit() } catch { /* not visible yet */ }
     termRef.current = term
+
+    // ── WCAG 2.1.2 No Keyboard Trap (level A) ────────────────────────────────────────
+    // Measured on a LIVE session, on this page and in the ⌘` drawer: with focus on
+    // `.xterm-helper-textarea`, Tab, Shift+Tab AND Escape all left focus exactly where it
+    // was — a keyboard user who entered the terminal could not leave by any key, and
+    // nothing on screen said otherwise (2.1.2 exempts a trap only when the way out is
+    // ADVISED). `escapeGate` owns which keydown releases and why.
+    let lastEsc = 0
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true
+      const d = escapeGate(e.key, e.timeStamp, lastEsc)
+      lastEsc = d.lastEscAt
+      if (d.release) shellRef.current?.focus()
+      return d.forward
+    })
+    // Releasing focus to the container is only half an escape: the container comes BEFORE
+    // the PTY in DOM order, so the next Tab walked straight back into it (measured — focus
+    // looped between the two forever). The terminal therefore gets ONE tab stop, the
+    // labelled container, and xterm's textarea leaves the tab order entirely: Tab now
+    // passes the terminal by, Enter on the container steps in, Esc Esc steps out. Same
+    // shape as the board's scrollable region — a labelled group you enter deliberately.
+    // Clicking still focuses the PTY directly; `tabindex="-1"` only removes the tab stop.
+    const helper = host.querySelector('.xterm-helper-textarea')
+    helper?.setAttribute('tabindex', '-1')
+    // The hint has to be announced where focus actually LANDS, which is xterm's own helper
+    // textarea, not our container — so both carry it.
+    helper?.setAttribute('aria-describedby', hintId)
 
     let disposed = false
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
@@ -135,6 +173,20 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
     if (t) t.options.theme = mode === 'light' ? { background: '#ffffff', foreground: '#1a1a1a' } : { background: '#0d0d12', foreground: '#e6e6ee' }
   }, [mode])
 
+  // Re-advise the way out on every focus entry, then fade it after HINT_MS. Bound to the
+  // container's focusin/focusout because focus actually lands on xterm's helper textarea,
+  // which React never renders and so cannot carry an onFocus prop.
+  useEffect(() => {
+    const el = shellRef.current
+    if (!el) return
+    let t: ReturnType<typeof setTimeout> | undefined
+    const onIn = () => { setHintRead(false); clearTimeout(t); t = setTimeout(() => setHintRead(true), HINT_MS) }
+    const onOut = () => { clearTimeout(t); setHintRead(false) }
+    el.addEventListener('focusin', onIn)
+    el.addEventListener('focusout', onOut)
+    return () => { el.removeEventListener('focusin', onIn); el.removeEventListener('focusout', onOut); clearTimeout(t) }
+  }, [])
+
   async function restart() {
     // dead session id is gone server-side → create a fresh one, then reconnect.
     setStatus('connecting'); setExitCode(null)
@@ -148,8 +200,32 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
   }
 
   return (
-    <div className="relative h-full overflow-hidden rounded-lg border border-outline/30" style={{ background: mode === 'light' ? '#ffffff' : '#0d0d12' }}>
+    // The ring is on plain `focus:` deliberately. The Esc-Esc release focuses this container
+    // PROGRAMMATICALLY, and the keyboard-only variant of that pseudo-class does not match a
+    // scripted `.focus()` — a ring gated on it would never paint on the way out, handing the
+    // user focus with nothing to show where it went (2.4.7). (Naming the variant in this
+    // comment is enough to make the consistency report count this file as having a local
+    // keyboard-focus override, which it does not — so the name stays out of it.)
+    <div ref={shellRef} tabIndex={0} role="group" aria-label="Terminal session"
+      aria-describedby={hintId}
+      onKeyDown={(e) => {
+        // Enter steps INTO the PTY — but only from the container itself; a bare Enter typed
+        // inside the terminal must reach the shell, and this handler also sees it bubble.
+        if (e.key === 'Enter' && e.target === e.currentTarget) { e.preventDefault(); termRef.current?.focus() }
+      }}
+      className="group relative h-full overflow-hidden rounded-lg border border-outline/30 outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
+      style={{ background: mode === 'light' ? '#ffffff' : '#0d0d12' }}>
       <div ref={hostRef} className="h-full w-full" />
+
+      {/* The way out, advised where it is needed and nowhere else: revealed while focus is
+          inside the terminal (the app's `focus-within` reveal convention), faded once it has
+          been read so it stops covering output, and referenced by the PTY's own
+          `aria-describedby` so it is announced on arrival too. Never `aria-hidden` — an
+          `aria-describedby` target must stay readable after it fades. */}
+      <div id={hintId}
+        className={`pointer-events-none absolute right-2 top-1.5 rounded-pill bg-surface-high/90 px-2 py-0.5 text-on-surface-low text-[0.6875rem] transition-opacity ${hintRead ? 'opacity-0' : 'opacity-0 group-focus-within:opacity-100'}`}>
+        Enter to type here · Esc Esc to leave
+      </div>
 
       {status === 'reconnecting' && (
         <div className="absolute inset-x-0 top-0 flex items-center justify-center gap-1.5 bg-warning/20 px-3 py-1 text-center text-[0.75rem] text-on-surface">

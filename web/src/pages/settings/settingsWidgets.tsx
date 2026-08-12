@@ -5,7 +5,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
-  type SettingsProvider, type InboxSettings, type NotificationSettings, type UpdateCheck,
+  type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
   type SearchProviderInfo, type DoctorReport, type ProjectionRule,
   type ToolsSavings,
@@ -66,7 +66,9 @@ const useSearchEntity = () => useCachedData('settings:search', async () => {
 const useRuntimes = () => useCachedData('settings:agent-runtimes', () => api.agentRuntimes().catch(() => null as AgentRuntime[] | null), { persist: true })
 const useProviders = () => useCachedData('settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true })
 const useDashCfg = () => useCachedData('settings:dashboard-config', () => api.dashboardConfig().catch(() => null as DashboardConfig | null), { persist: true })
-const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings().catch(() => null as InboxSettings | null), { persist: true })
+// The swallow here is what POISONED the shared `'settings:inbox'` key: it resolved with `null`, which the
+// hook then persisted, so both inbox-settings panels seeded `null` from cache and read it as loaded.
+const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings(), { persist: true })
 // 🔴 NO `.catch(() => [])` HERE EITHER, and the reason is subtler than one surface's empty state:
 // `useCachedData` caches by KEY, and this hook shares the `'apps'` key with `#/apps`. Swallowing the
 // rejection made this call RESOLVE with `[]`, which the hook then persisted to sessionStorage — so
@@ -162,7 +164,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {/* Mode is an inline choice; full theme/token editing lives in the subpage. */}
           <div className="mt-2.5 flex items-center justify-between gap-2">
             <span className="text-on-surface-low text-[0.75rem]">Mode</span>
-            <SegToggle value={preference} onPick={(p) => setPreference(p)}
+            <SegToggle value={preference} onPick={(p) => setPreference(p)} ariaLabel="Mode"
               options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }, { key: 'auto', label: 'Auto' }]} />
           </div>
         </BentoCard>
@@ -184,7 +186,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Restore sessions', control: true, v: <Switch on={c.restore_sessions} label="Restore sessions" onToggle={(v) => save({ restore_sessions: v })} /> },
             { k: 'Send on Enter', control: true, v: <Switch on={c.send_on_enter} label="Send on Enter" onToggle={(v) => save({ send_on_enter: v })} /> },
             { k: 'Timestamps', control: true, v: <Switch on={c.show_timestamps} label="Timestamps" onToggle={(v) => save({ show_timestamps: v })} /> },
-            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })}
+            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })} ariaLabel="Density"
               options={[{ key: 'more', label: 'Comfortable' }, { key: 'less', label: 'Compact' }]} /> },
           ]} />}
         </BentoCard>
@@ -386,9 +388,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       // Alert keywords moved to the notification rules matrix (plan 42 S3), so this card
       // now surfaces what the inbox itself still owns: how long items are kept.
-      const { data: s, refresh } = useInbox()
+      const { data: s, error: inboxErr, refresh } = useInbox()
       return (
-        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined} rows={2}>
+        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined && !inboxErr} rows={2}>
+          {/* A tile that shimmers forever is the same lie in miniature — say it failed instead. */}
+          {!s && Boolean(inboxErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load inbox settings.</div>}
           {s && <>
             <div className="flex items-baseline gap-1.5">
               <BigStat value={s.retention_days} caption="day retention" />
@@ -416,7 +420,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Bell} title="Notifications" query={query} onClick={() => go('notifications')} loading={s === undefined} rows={3}>
           {s && <KVList query={query} rows={[
             { k: 'Delivery', control: true, v: <Switch on={!s.mute_all} label="Deliver notifications" onToggle={(v) => save({ mute_all: !v })} /> },
-            { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })}
+            { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })} ariaLabel="Min severity"
               options={[{ key: 'info', label: 'All' }, { key: 'warning', label: 'Warn+' }, { key: 'error', label: 'Errors' }]} /> },
             ...(s.quiet_hours_enabled ? [{ k: 'Quiet hours', v: `${s.quiet_hours_start}–${s.quiet_hours_end}`, vText: `${s.quiet_hours_start}-${s.quiet_hours_end}` }] : []),
           ]} />}

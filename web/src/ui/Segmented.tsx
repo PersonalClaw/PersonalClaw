@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 import { spring, bounce, expr } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
+import { useFieldLabelId } from './forms'
 
 export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
 
@@ -38,6 +39,14 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
 }) {
   const sm = size === 'sm'
   const reduce = useReducedMotion()
+  // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
+  // `ariaLabel` always WINS, otherwise the published label id names the group. Measured before this —
+  // a DOM census of 14 routes found **7 unnamed tablists** (9 named), so a screen-reader user heard
+  // "Critical / High / Medium / Low" with no statement of WHAT was being chosen. Six of those sit
+  // inside a `Field` whose visible label already says it ("Status", "Priority", "When", "Runs",
+  // "Approval mode", "Trigger kind") — the label existed, the group just never claimed it.
+  const fieldLabelId = useFieldLabelId()
+  const claimsFieldLabel = !!fieldLabelId && !ariaLabel
   // Responsive collapse (collapse='menu'): measure the natural strip width against
   // the container and flip to the compact pill when it can't fit. A hidden probe
   // renders the real strip off-flow so we get its true intrinsic width regardless
@@ -113,7 +122,10 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   // job of `collapse` ('scroll' / 'menu'), not of silently crushing every target: a strip that cannot
   // fit should scroll or fold, and a tab that is 15px wide is neither legible nor tappable.
   const strip = (
-    <div role="tablist" aria-label={ariaLabel} className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+    <div role="tablist"
+      aria-labelledby={claimsFieldLabel ? fieldLabelId : undefined}
+      aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       {options.map((o, idx) => {
         const on = o.key === value
         const Icon = o.icon

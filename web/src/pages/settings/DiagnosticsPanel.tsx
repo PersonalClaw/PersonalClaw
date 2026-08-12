@@ -5,6 +5,7 @@ import { SearchField } from '../../ui/SearchField'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
 import { accentChip } from '../../design/accent'
+import { PanelHeader } from './settingsUI'
 
 /** A single streamed log entry (backend emits {level, msg} JSON per SSE frame,
  *  msg already formatted as "<ts> <LEVEL> <logger>: <message>"). */
@@ -90,6 +91,15 @@ export function DiagnosticsPanel() {
 
   return (
     <div className="flex flex-col gap-l">
+      {/* Every other settings sub-route opens with `PanelHeader` — its title is the page's `h1`. These two
+          panels started straight at their first `<section>`, so `#/settings/design` measured **h1s=0** and
+          its outline began at `h2: Color scheme` with nothing above it, while all 26 siblings had exactly
+          one. The PanelHeader-as-h1 change gave every panel that USES it an h1; it could not reach a panel that never rendered one. */}
+      <PanelHeader
+        title="Diagnostics"
+        hint="A live tail of the gateway's own log, plus the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts."
+      />
+
       {/* ── Runtime log level ── */}
       <section>
         <h2 className="text-on-surface text-[1.0625rem] mb-1" style={fvs(600)}>Backend log level</h2>
