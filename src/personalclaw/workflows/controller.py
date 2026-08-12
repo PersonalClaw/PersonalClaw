@@ -75,6 +75,7 @@ from personalclaw.workflows.models import (
     Failure,
     FailureClass,
     InstanceState,
+    ItemErrorPolicy,
     LoopMode,
     Node,
     NodeInstance,
@@ -104,6 +105,7 @@ from personalclaw.workflows.tick import (
     ReadyNode,
     derive_state,
     frontier,
+    item_error_policy,
     loop_should_continue,
     reap_watchers,
 )
@@ -231,6 +233,11 @@ class RunController:
         #: the record it dedupes is a scheduling note, and re-journaling one after a resume is
         #: harmless next to carrying a second persisted set to keep in sync.
         self._wip_logged: set[str] = set()
+        #: `<foreach path>@<epoch>` keys whose collected-failure record is already in the ledger
+        #: (WV-13). Seeded from the ledger on first use rather than left empty like
+        #: `_wip_logged`: this record's payload is a COUNT of failed items, and a resumed run
+        #: that wrote it twice would tell a reader the fan-out failed twice.
+        self._items_collected: set[str] | None = None
         #: Steering (LOOPS-EVOLUTION R14), keyed by the iterated container's path. The durable
         #: queue lives on `run.extra["steering_queue"]` (written by `service.steer_run`); the tick
         #: consumes it at the iteration boundary and parks the rendered re-plan block HERE until
@@ -1550,9 +1557,10 @@ class RunController:
         self._persist_state()
 
     def _frontier(self) -> Frontier:
+        states = {p: i.state for p, i in self.instances.items()}
         fr = frontier(
             self.root,
-            {p: i.state for p, i in self.instances.items()},
+            states,
             limits=self.services.lane_limits,
             declined_edges=self._declined_edges,
             outputs=self._outputs,
@@ -1568,6 +1576,7 @@ class RunController:
             ).single_active_feature,
         )
         self._journal_wip_holds(fr)
+        self._journal_collected_items(states)
         return fr
 
     def _journal_wip_holds(self, fr: Frontier) -> None:
@@ -1592,6 +1601,100 @@ class RunController:
                     "another item of the same fan-out is still in flight"
                 ),
             )
+
+    def _journal_collected_items(self, states: dict[str, InstanceState]) -> None:
+        """Write each `on_item_error: collect` fan-out's per-item failures once it is terminal.
+
+        This is the DATA half of COLLECT (WV-13). The outcome half — run every item, then let the
+        failures fail the run — lives in `tick.foreach_outcome`; on its own it produces a FAILED
+        run whose reader has to know a fan-out's item-path shape to work out WHICH items broke.
+
+        Journaled rather than published as the container's `output`, and that is a deliberate
+        NON-invention: containers have no output surface at all. `self._outputs` is keyed by node
+        id and written only where a LEAF completes (a dispatch result, a resolved `wait`, an
+        answered gate), and a container deliberately has no stored instance — its state is always
+        derived, so a rewind cannot leave a stale verdict behind. Publishing under the foreach's
+        node id would make `{{nodes.<foreach>.output}}` resolve in memory and then resolve to
+        nothing after a restart, because rehydration reads `inst.output_ref` and there is no
+        instance to read. A ledger record is where this run already keeps per-node truth.
+
+        Every collect fan-out is re-examined each tick because a container's state is derived,
+        never stored: there is no "it just became terminal" edge to hook. The spec is re-walked
+        rather than scanned once at construction for the same reason `_frontier` re-reads the WIP
+        hint every tick — a mid-flight mutation can add a fan-out. Deduped by `path@epoch`, so a
+        rewound-and-re-run fan-out gets a second, honest record.
+        """
+        for path, node in _walk(self.root):
+            if node.kind != NodeKind.FOREACH:
+                continue
+            if item_error_policy(node) != ItemErrorPolicy.COLLECT:
+                continue
+            if self._items_collected is None:
+                # Seeded on the first CANDIDATE, not on the first tick: the overwhelming majority
+                # of runs contain no collect fan-out at all, and they must not pay a ledger read
+                # to discover that.
+                self._items_collected = {
+                    str(rec.get("instance_path", "")) + "@" + str(rec.get("epoch", 0))
+                    for rec in journal_mod.ledger(self.run.id, kinds={journal_mod.ITEMS_COLLECTED})
+                }
+            key = f"{path}@{self._run_epoch()}"
+            if key in self._items_collected:
+                continue
+            outcome = derive_state(
+                node,
+                path,
+                states,
+                declined_edges=self._declined_edges,
+                outputs=self._outputs,
+                inputs=self.run.inputs,
+                iterations=self._iterations,
+            )
+            if outcome not in TERMINAL_STATES:
+                continue
+            self._items_collected.add(key)
+            failures = self._item_failures(path)
+            if not failures:
+                continue  # a clean fan-out has nothing to collect
+            self.journal.items_collected(
+                path,
+                node.id,
+                epoch=self._run_epoch(),
+                outcome=outcome.value,
+                failures=failures,
+            )
+
+    def _item_failures(self, container_path: str) -> list[dict[str, Any]]:
+        """Every failed instance inside one fan-out, in item order.
+
+        Read off the instances rather than off the ledger: the instance IS the run's durable
+        per-node state, and it already carries the typed `Failure` and the `item_label` that
+        makes an entry name its item ("auth.py") instead of an index nobody can resolve back to
+        a value. A nested container inside the body contributes its failing leaves under the
+        same item index, which is the right attribution — the item failed because they did.
+        """
+        prefix = f"{container_path}.body#"
+        out: list[dict[str, Any]] = []
+        by_path = dict(_walk(self.root))
+        for path in sorted(self.instances):
+            inst = self.instances[path]
+            if not path.startswith(prefix) or inst.state != InstanceState.FAILED:
+                continue
+            index = path[len(prefix) :].split(".", 1)[0]
+            if not index.isdigit():
+                continue
+            node = by_path.get(_base_path(path))
+            out.append(
+                {
+                    "item_index": int(index),
+                    "item_label": inst.item_label,
+                    "instance_path": path,
+                    "node_id": node.id if node else "",
+                    "failure_class": (inst.failure.failure_class.value if inst.failure else ""),
+                    "cause": inst.failure.cause_plain if inst.failure else "",
+                }
+            )
+        out.sort(key=lambda entry: (entry["item_index"], entry["instance_path"]))
+        return out
 
     def _running_lanes(self) -> dict[str, int]:
         used: dict[str, int] = {}
