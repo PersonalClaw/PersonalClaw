@@ -112,6 +112,13 @@ RUN_FINISHED = "run_finished"
 #: the template, and without the event there is no way to tell the two apart.
 BREAKER_TRIP = "breaker_trip"
 STEERING = "steering"
+#: WV-13: one `foreach` with `on_item_error: collect` finished, and these items failed. A ledger
+#: kind because COLLECT's whole contract is "run everything, then hand me the failures" — the
+#: failures ARE the deliverable, and a fan-out that fails the run without saying which of its
+#: fifty items broke has collected nothing. One record per fan-out per epoch, not one per item:
+#: the point is the set, and a reader that had to reassemble it from fifty `step_failed` records
+#: would have to know the fan-out's item-path shape to do it.
+ITEMS_COLLECTED = "items_collected"
 JUDGE_VERDICT = "judge_verdict"
 JUDGE_DIVERGENCE = "judge_divergence"
 #: KNOWLEDGE-SYNTHESIS §4: long-run watcher mechanics. `watcher_reaped` is a ledger kind
@@ -191,6 +198,7 @@ LEDGER_KINDS = frozenset(
         DECISION,
         BREAKER_TRIP,
         STEERING,
+        ITEMS_COLLECTED,
         JUDGE_VERDICT,
         JUDGE_DIVERGENCE,
         WATCHER_REAPED,
@@ -598,6 +606,33 @@ class Journal:
         was already dismissed.
         """
         self.write(DECISION, instance_path=path, node_id=node_id, epoch=epoch, **decision)
+
+    def items_collected(
+        self,
+        path: str,
+        node_id: str,
+        *,
+        epoch: int,
+        outcome: str,
+        failures: list[dict[str, Any]],
+    ) -> None:
+        """A `collect` fan-out's per-item failures, once it is terminal (WV-13).
+
+        `failures` is the DOCUMENTED shape a later binding would surface: one entry per failed
+        instance inside the fan-out, each carrying `item_index` (so a reader groups by item),
+        `item_label` (the human-readable "auth.py"), `instance_path`, `node_id` and the typed
+        `failure_class`/`cause` off the instance's `Failure`. Redacted like every other journal
+        payload — a cause string can quote a prompt.
+        """
+        self.write(
+            ITEMS_COLLECTED,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            outcome=outcome,
+            failed_items=len(failures),
+            failures=failures,
+        )
 
     def pending_outcome(
         self,

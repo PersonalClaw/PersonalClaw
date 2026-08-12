@@ -27,6 +27,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A `foreach` with `on_item_error: collect` now has defined behaviour, and it collects.**
+  `collect` was accepted by the validator and advertised in the workflow capabilities catalog, but
+  no code branched on it: it fell through to the generic container outcome, so it neither halted
+  early like `halt` nor tolerated failures like `skip` — a mixture nothing had specified. It now
+  means one thing: **run every item to completion, then fail the run if any item failed**, with the
+  per-item failures written to the run ledger as one `items_collected` record (item index, label,
+  node, failure class and cause). `skip` (the default) and `halt` are unchanged. **If you have a
+  spec using `collect`,** its verdict is what it was before — the run still fails when an item
+  fails — but the behaviour is now guaranteed rather than incidental, and you can read which items
+  broke out of the ledger instead of reconstructing it from per-node events. Use `skip` if you want
+  a fan-out's failures tolerated and the run to complete.
+
 - **Security docs now describe what the sandbox actually does — credential-hiding, not
   confinement.** `docs/architecture/security.md` gains an explicit "what the sandbox does and does
   not do" section (no network/process/write confinement beyond `~/.ssh`); the "bounded by

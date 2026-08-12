@@ -111,8 +111,27 @@ class LoopMode(str, Enum):
 
 
 class ItemErrorPolicy(str, Enum):
+    """What a `foreach` does about an item that FAILED. Three genuinely different answers, and
+    the difference is observable at the RUN level — see `tick.foreach_outcome`, which is the
+    single place the choice is made and which must branch on every member.
+
+    The two axes are "how much of the fan-out still runs" and "does the failure count"; the
+    members are the three useful combinations of them.
+    """
+
+    #: Stop starting new items the moment one has failed. The items already in flight finish;
+    #: the un-started ones stay PENDING, so the container never reaches a terminal state and
+    #: the run ends through the frontier's deadlock path — a FAILED run that did the least
+    #: work it could get away with.
     HALT = "halt"
-    SKIP = "skip"  # default: one bad item must not sink the fan-out
+    #: Default: one bad item must not sink the fan-out. Every item runs, and a failure is
+    #: TOLERATED — the container reports DEGRADED, which is a SUCCESS state, so the run
+    #: completes. "I do not care about the failures."
+    SKIP = "skip"
+    #: Every item runs (never halts early, exactly like SKIP), and then the failures COUNT:
+    #: the container reports the worst item verdict, so any failure fails the run. The
+    #: per-item failures are journaled as one `items_collected` ledger record (WV-13).
+    #: "Run everything, then hand me the failures."
     COLLECT = "collect"
 
 

@@ -589,7 +589,10 @@ def _visit_foreach(
         # The items binding does not resolve yet (an upstream node has not produced it).
         # Not an error — the foreach is simply not ready.
         return
-    policy = _item_error_policy(node)
+    # The SCHEDULING half of the item-error policy, and the only half that differs here:
+    # HALT stops starting items, SKIP and COLLECT both run the whole fan-out. What each
+    # policy then makes of the failures is `foreach_outcome`'s decision.
+    policy = item_error_policy(node)
     for idx, value in enumerate(items):
         ipath = f"{path}.body#{idx}"
         ist = _state_of(states, ipath)
@@ -825,12 +828,73 @@ def _max_concurrency(node: Node) -> int:
     return raw if raw > 0 else 0
 
 
-def _item_error_policy(node: Node) -> ItemErrorPolicy:
+def item_error_policy(node: Node) -> ItemErrorPolicy:
+    """One `foreach`'s declared item-error policy. Public because the controller needs it to
+    decide whether a fan-out owes the ledger a collected-failure record (WV-13)."""
     raw = str((node.config or {}).get("on_item_error", "skip") or "skip")
     try:
         return ItemErrorPolicy(raw)
     except ValueError:
         return ItemErrorPolicy.SKIP
+
+
+def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -> InstanceState:
+    """One fan-out's verdict, given its policy and its items' states.
+
+    🔴 The reason this is a named function rather than three lines inside `_derive`: `COLLECT`
+    shipped as a DECLARED STRATEGY WITH NO EXECUTOR. `models.py` declared it, `validator.py`
+    accepted it and the capabilities manifest advertised it to authoring models — while the
+    derivation branched on `HALT` and `SKIP` only and let `collect` fall through to
+    `container_outcome`. The fallthrough happened to produce roughly the right shape, which is
+    exactly why it survived: nothing was visibly broken, and nothing anywhere said what the
+    member meant. A fourth member added tomorrow would have inherited `SKIP`'s wait and
+    `HALT`'s verdict just as silently. So the choice is made HERE, once, exhaustively over the
+    enum, and the unreachable tail RAISES rather than defaulting (WV-13).
+
+    Every member's branch is driven by a test, and the three produce three DIFFERENT run-level
+    observables for the same seeded failure — which is the only proof that the members are
+    worth having:
+
+    * `HALT` → the run FAILS having skipped the rest of the fan-out.
+    * `SKIP` → the run COMPLETES (container DEGRADED) having run all of it.
+    * `COLLECT` → the run FAILS having run all of it.
+
+    `COLLECT` returns `container_outcome` rather than a hard-coded FAILED on purpose: an item
+    that was CANCELLED or BLOCKED outranks a failure in `_worst`'s severity order, and
+    flattening "someone cancelled item 2" into "the fan-out failed" would throw away the more
+    informative half of the verdict.
+    """
+    if policy == ItemErrorPolicy.HALT:
+        # No terminal verdict is invented here. `advance_foreach` has already stopped starting
+        # items, so the un-started ones are PENDING and this derives RUNNING; the run then
+        # terminates through the frontier's deadlock path, which is what makes a halted
+        # fan-out a FAILED run rather than a silent hang.
+        return container_outcome(item_states)
+
+    # Both remaining policies run EVERY item to a terminal state — neither halts the fan-out
+    # early — so they share the wait and differ only in the verdict that follows it.
+    if not all(_is_terminal(st) for st in item_states):
+        return InstanceState.RUNNING
+
+    if policy == ItemErrorPolicy.SKIP:
+        # Tolerated, but never invisible: DEGRADED is a SUCCESS state, so the run completes,
+        # and the container still refuses to claim clean success.
+        if any(st == InstanceState.FAILED for st in item_states):
+            return InstanceState.DEGRADED
+        return container_outcome(item_states)
+
+    if policy == ItemErrorPolicy.COLLECT:
+        # The failures COUNT. `container_outcome` reports the worst item verdict, so any
+        # failure is a FAILED container and `_ROOT_TO_RUN` makes that a FAILED run. Returning
+        # DEGRADED here instead would make COLLECT indistinguishable from SKIP at the run
+        # level, and the one policy whose entire point is "the failures matter" would report
+        # success — the silent-drop shape this program keeps finding.
+        return container_outcome(item_states)
+
+    raise AssertionError(
+        f"no branch for ItemErrorPolicy.{getattr(policy, 'name', policy)} — a new member must "
+        "declare its own behaviour here rather than inherit another policy's"
+    )
 
 
 def _on_error(node: Node) -> str:
@@ -919,18 +983,7 @@ def _derive(
             _derive(node.body, f"{path}.body#{i}", states, edges, iterations, ctx)
             for i in range(len(items))
         ]
-        policy = _item_error_policy(node)
-        if policy == ItemErrorPolicy.SKIP:
-            # One bad item must not sink the fan-out: failures are tolerated as long as
-            # every item reached a terminal state.
-            if all(_is_terminal(st) for st in item_states):
-                return (
-                    InstanceState.DEGRADED
-                    if any(st == InstanceState.FAILED for st in item_states)
-                    else container_outcome(item_states)
-                )
-            return InstanceState.RUNNING
-        return container_outcome(item_states)
+        return foreach_outcome(item_error_policy(node), item_states)
 
     if kind == NodeKind.LOOP:
         if node.body is None:

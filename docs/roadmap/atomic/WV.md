@@ -22,6 +22,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WV-10` | ⬜ | WF2-A3 — FE inspector drawer (run detail + widget node rows) + cached-badge rendering | `WV-9`, `WV-7` | a user can open any node in WorkflowRunDetail + WorkflowProgressCard and read its exact resolved prompt/inputs/output; cached nodes render a visually distinct badge (workflowFold.ts cached? finally read) |
 | `WV-11` | ⬜ | Output-offloading writer + {{nodes.x.artifact}} population + artifact_inspect action provider | `WV-3`, `WV-8` | node outputs over threshold keep head/tail in journal and write body to runs/<id>/artifacts/, populating bindings.node_artifacts so {{nodes.x.artifact}} resolves to a live pointer; artifact_inspect action provider registered (registry + ALLOWED_HOOK_PROVIDERS + validation schema) pulls artifact content on demand |
 | `WV-12` | ✅ | Two-layer context-compaction ladder for LLM-backed nodes | `WV-3`, `WV-8`, `EXT:CONTEXT-ECONOMY:cheap-summarizer/compaction seam (queue records it does not exist yet)` | proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template |
+| `WV-13` | ✅ | Give `on_item_error: collect` an executor + an exhaustiveness ratchet over `ItemErrorPolicy` | `WV-4` | `tick.foreach_outcome` branches on every `ItemErrorPolicy` member and RAISES on an unmapped one; `collect` runs every item then fails the container, and its per-item failures land in the ledger as one `items_collected` record; the three policies produce three DIFFERENT run-level observables for one seeded failing item, driven through the real controller; `enum:ItemErrorPolicy.COLLECT` leaves `inert-surface-baseline.json` |
 
 ## Atom scopes
 
@@ -121,3 +122,79 @@ Amendment (2026-07-26) WF2-A3
 
 **Done when:** proactive compaction at ~80% of the bound model window via a cheap summarizer, then error-triggered aggressive re-compaction before failing the node, degrade-to-drop-with-placeholder if the summarizer fails — driven end to end on a long-horizon template
 
+
+### `WV-13` — Give `on_item_error: collect` an executor + an exhaustiveness ratchet over `ItemErrorPolicy`
+
+**Status:** done
+
+§2 `foreach` item-error policy (Slice 2c's `on_item_error`, completed)
+
+**Done when:** `tick.foreach_outcome` branches on every `ItemErrorPolicy` member and RAISES on an unmapped one; `collect` runs every item then fails the container, and its per-item failures land in the ledger as one `items_collected` record; the three policies produce three DIFFERENT run-level observables for one seeded failing item, driven through the real controller; `enum:ItemErrorPolicy.COLLECT` leaves `inert-surface-baseline.json`
+
+**Design**
+
+`COLLECT` was a declared strategy with no executor, and — unlike most inert surfaces — it was
+*advertised*: `validator.py` accepted `on_item_error: collect` and `service.capabilities`
+published `item_error_policies=[p.value for p in ItemErrorPolicy]`, which is the catalog an
+authoring model reads. Meanwhile `tick.py` compared against `HALT` (stop scheduling) and `SKIP`
+(tolerate → DEGRADED) only, and `collect` fell through to `container_outcome`. So an author who
+took the catalog at its word got behaviour nothing had ever specified.
+
+The semantics, chosen and now implemented: **`COLLECT` = run every item to a terminal state
+(never halt early, like SKIP), then FAIL the container if any item failed (unlike SKIP's
+DEGRADED), with the failures recorded as data.** SKIP means "I do not care about the failures";
+COLLECT means "run everything, then hand me the failures". That is the only reading under which
+the member earns its place beside the other two.
+
+**FAILED, not DEGRADED.** `controller._ROOT_TO_RUN` maps `DEGRADED → COMPLETE` and
+`FAILED → FAILED`. A DEGRADED terminal would make COLLECT's run-level observable *identical* to
+SKIP's, so the one policy whose entire point is that the failures matter would report success —
+the silent-drop shape. The branch returns `container_outcome(item_states)` rather than a
+hard-coded `FAILED`, so a CANCELLED or BLOCKED item still reports the more severe verdict off
+`_worst`'s severity order instead of being flattened into "the fan-out failed".
+
+**Errors-as-data: journal, not a container output.** There is no container output surface to put
+them in. `controller._outputs` is keyed by node id and written only where a LEAF completes (a
+dispatch result, a resolved `wait`, an answered gate), the frontier only ever yields leaves, and
+a container deliberately has NO stored instance — its state is always derived so a rewind cannot
+leave a stale verdict. Publishing under the foreach's node id would make
+`{{nodes.<foreach>.output}}` resolve from memory and then resolve to nothing after a restart
+(rehydration reads `inst.output_ref`; a container has none) — a live reader of an unwritten key.
+Inventing that surface is out of this atom's scope, so the failures go where the run already
+keeps per-node truth: one `items_collected` ledger record per fan-out per epoch, carrying
+`item_index`, `item_label`, `instance_path`, `node_id`, `failure_class` and `cause` per failed
+instance.
+
+**Follow-up for the data half** (deliberately not built here): a downstream node is already
+*reachable* — a sequence continues past a terminal failed child unless it declares
+`on_error: fail_run`, so the node after a collect fan-out runs. What is missing is a way to BIND
+the collected set into it. That needs (1) a durable container-output surface — a container
+instance (or an equivalent persisted container-outputs map) written at the derivation moment and
+restored on rehydrate, so `{{nodes.<fan>.output.failures}}` survives a restart; or (2) a
+read-only ledger action provider, which is the cheaper of the two and reuses an existing shape.
+Either is its own atom, with its own rewind semantics to get right.
+
+**Exhaustiveness.** The decision moves into one named function, `tick.foreach_outcome(policy,
+item_states)`, which enumerates all three members and raises on an unmapped one. Three tests
+hold it: every member driven through the function, the raise asserted, and an AST read of
+`foreach_outcome` asserting it names every member (a behavioural test alone would pass a
+fallthrough shared by two members).
+
+**Implementation plan**
+
+1. `models.py` — document each `ItemErrorPolicy` member (the enum was three bare values); state
+   the two axes and point at the one function that decides.
+2. `tick.py` — add `foreach_outcome(policy, item_states)`: exhaustive over the enum, unreachable
+   tail raises. Promote `_item_error_policy` → `item_error_policy` (the controller needs it).
+   `_derive`'s FOREACH branch becomes one delegating line; `advance_foreach` keeps the
+   scheduling half and says so.
+3. `journal.py` — `ITEMS_COLLECTED` ledger kind + `items_collected(...)` writer, payload shape
+   documented as the contract a later binding would surface.
+4. `controller.py` — `_journal_collected_items(states)` off `_frontier`, mirroring
+   `_journal_wip_holds`: walk collect fan-outs, derive, and on terminal write the record once,
+   deduped by `path@epoch` and seeded from the ledger so a resume cannot double-count.
+   `_item_failures(path)` reads the failed instances under `<path>.body#N`.
+5. `tests/test_workflows_item_error_policy.py` — the three-way behavioural test (one seeded
+   failing item, `max_concurrency: 1` so HALT is observable at all), the ledger-record
+   assertions, and the exhaustiveness ratchet.
+6. Regenerate `inert-surface-baseline.json` (152 → 151; `enum` 25 → 24).
