@@ -7,7 +7,7 @@ import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
   type SettingsProvider, type InboxSettings, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
-  type SearchProviderInfo, type AppSummary, type DoctorReport, type ProjectionRule,
+  type SearchProviderInfo, type DoctorReport, type ProjectionRule,
   type ToolsSavings,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -67,7 +67,13 @@ const useRuntimes = () => useCachedData('settings:agent-runtimes', () => api.age
 const useProviders = () => useCachedData('settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true })
 const useDashCfg = () => useCachedData('settings:dashboard-config', () => api.dashboardConfig().catch(() => null as DashboardConfig | null), { persist: true })
 const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings().catch(() => null as InboxSettings | null), { persist: true })
-const useApps = () => useCachedData('apps', () => api.apps().catch(() => [] as AppSummary[]), { persist: true })
+// 🔴 NO `.catch(() => [])` HERE EITHER, and the reason is subtler than one surface's empty state:
+// `useCachedData` caches by KEY, and this hook shares the `'apps'` key with `#/apps`. Swallowing the
+// rejection made this call RESOLVE with `[]`, which the hook then persisted to sessionStorage — so
+// `#/apps` read `[]` as a successful value and its `data === undefined && error` branch could never
+// fire, even after that surface stopped swallowing. Measured: `{appsUndef: false, appsErr: ApiError,
+// n: 0}` on the failing render. One swallowing caller defeats every other consumer of the same key.
+const useApps = () => useCachedData('apps', () => api.apps(), { persist: true })
 const useNotif = () => useCachedData('settings:notification-settings', () => api.notificationSettings().catch(() => null as NotificationSettings | null), { persist: true })
 const useUpdates = () => useCachedData('settings:update-check', () => api.updateCheck().catch(() => null as UpdateCheck | null), { persist: true })
 const usePromptBindings = () => useCachedData('settings:prompt-bindings', () => api.promptBindings().catch(() => null as PromptBindings | null), { persist: true })

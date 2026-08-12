@@ -16,7 +16,11 @@ import { fvs } from '../../design/fontWeight'
  *  aggregated here so a user reaches every app's settings in one place. */
 export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
   const { data: apps } = useCachedData<AppSummary[]>(
-    'apps', () => api.apps().catch(() => []), { persist: true },
+    // Shares the `'apps'` cache key with `#/apps` and the settings widget. A `.catch(() => [])` here
+    // resolves with an empty list, which `useCachedData` persists — so every OTHER consumer reads `[]`
+    // as a success and can never reach its own error branch. Measured: with all `/api/apps*` calls at
+    // 500, `sessionStorage['cache:apps']` was `"[]"` and `#/apps` still said "No apps installed".
+    'apps', () => api.apps(), { persist: true },
   )
 
   if (!apps) return <AppsSkeleton />
