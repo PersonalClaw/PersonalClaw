@@ -884,9 +884,19 @@ function SuggestMoreSubGoals({ goal, value, onChange }: { goal: string; value: s
     } catch { /* best-effort; leave the list as-is */ }
     finally { setBusy(false) }
   }
+  // The gate, named: 20 characters is the floor the suggest endpoint needs to say anything useful.
+  const tooShort = goal.trim().length < 20
   return (
-    <button type="button" onClick={suggest} disabled={busy || goal.trim().length < 20}
-      className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem] text-primary hover:bg-surface-high transition-colors disabled:opacity-40">
+    // A native `disabled` button is out of the tab order, so a keyboard user tabbed straight past
+    // this and could not learn that the goal is simply too short yet. `aria-disabled` keeps the tab
+    // stop and the title says why — the same contract `Button` implements via `disabledReason`,
+    // applied by hand because this control is bespoke. `busy` keeps the NATIVE attribute: an
+    // in-flight action must not be re-clickable.
+    <button type="button" onClick={tooShort ? undefined : suggest}
+      disabled={busy}
+      aria-disabled={tooShort || undefined}
+      title={tooShort ? 'Describe the goal in a bit more detail first' : undefined}
+      className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem] text-primary hover:bg-surface-high transition-colors disabled:opacity-40 aria-disabled:opacity-40">
       {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Suggest more
     </button>
   )
