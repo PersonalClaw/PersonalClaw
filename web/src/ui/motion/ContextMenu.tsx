@@ -87,6 +87,10 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
               {items.map((it, i) => (
                 <div key={it.label} className={it.danger ? '[&_span]:!text-danger' : undefined} data-active={i === active || undefined}>
                   <MenuRow
+                    // `menuitem`, not `menuitemradio`: these rows are ACTIONS (Peek / Open / Pin),
+                    // so `selected` here means "keyboard-highlighted" and must stay visual — an
+                    // `aria-checked` on an action would claim a state it does not have.
+                    role="menuitem"
                     icon={it.icon}
                     label={it.label}
                     hint={it.hint}
