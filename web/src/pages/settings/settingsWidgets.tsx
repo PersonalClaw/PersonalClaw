@@ -164,7 +164,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {/* Mode is an inline choice; full theme/token editing lives in the subpage. */}
           <div className="mt-2.5 flex items-center justify-between gap-2">
             <span className="text-on-surface-low text-[0.75rem]">Mode</span>
-            <SegToggle value={preference} onPick={(p) => setPreference(p)}
+            <SegToggle value={preference} onPick={(p) => setPreference(p)} ariaLabel="Mode"
               options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }, { key: 'auto', label: 'Auto' }]} />
           </div>
         </BentoCard>
@@ -186,7 +186,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Restore sessions', control: true, v: <Switch on={c.restore_sessions} label="Restore sessions" onToggle={(v) => save({ restore_sessions: v })} /> },
             { k: 'Send on Enter', control: true, v: <Switch on={c.send_on_enter} label="Send on Enter" onToggle={(v) => save({ send_on_enter: v })} /> },
             { k: 'Timestamps', control: true, v: <Switch on={c.show_timestamps} label="Timestamps" onToggle={(v) => save({ show_timestamps: v })} /> },
-            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })}
+            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })} ariaLabel="Density"
               options={[{ key: 'more', label: 'Comfortable' }, { key: 'less', label: 'Compact' }]} /> },
           ]} />}
         </BentoCard>
@@ -420,7 +420,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Bell} title="Notifications" query={query} onClick={() => go('notifications')} loading={s === undefined} rows={3}>
           {s && <KVList query={query} rows={[
             { k: 'Delivery', control: true, v: <Switch on={!s.mute_all} label="Deliver notifications" onToggle={(v) => save({ mute_all: !v })} /> },
-            { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })}
+            { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })} ariaLabel="Min severity"
               options={[{ key: 'info', label: 'All' }, { key: 'warning', label: 'Warn+' }, { key: 'error', label: 'Errors' }]} /> },
             ...(s.quiet_hours_enabled ? [{ k: 'Quiet hours', v: `${s.quiet_hours_start}–${s.quiet_hours_end}`, vText: `${s.quiet_hours_start}-${s.quiet_hours_end}` }] : []),
           ]} />}
