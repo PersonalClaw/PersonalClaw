@@ -92,7 +92,7 @@ def test_an_unknown_kind_resolves_to_nothing():
 def test_stored_references_survive_case_and_whitespace():
     """These come out of months-old transcripts and saved crons."""
     assert resolve_kind("GOAL") == "goal-pursuit-open-ended"
-    assert resolve_kind(" code ") == "code-implementation"
+    assert resolve_kind(" code ") == "code-project"
 
 
 def test_legacy_tool_names_resolve():

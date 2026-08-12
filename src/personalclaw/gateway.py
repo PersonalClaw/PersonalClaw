@@ -2140,11 +2140,19 @@ class GatewayOrchestrator:
             # crashing. `over_vector_store(None)` is itself an inert service, so the `getattr`
             # default is a real no-op, not a workaround.
             from personalclaw.memory_service import MemoryService
+            from personalclaw.workflows.verify import run_verify_block
 
             self.workflow_watchdog = WorkflowWatchdog(
                 self.dashboard_state,
                 EngineServices(
                     subagents=self.subagent_mgr,
+                    # The deterministic verifier every `verify_command` gate runs through
+                    # (WF2LOO-10). Previously UNSET here, which made every verification gate
+                    # in production fail INTERNAL with "no verifier wired" — the engine's
+                    # gate contract was complete and its last mile was missing, so two
+                    # shipped templates ended on a gate that could not run. Screened +
+                    # rlimited + tristate by `loop.gates.run_verify_command`.
+                    verify=run_verify_block,
                     model_tiers=wf_cfg.model_tiers(),
                     lane_limits=Limits(lanes=wf_cfg.lane_caps()),
                     node_timeout_total=wf_cfg.default_node_timeout_total_secs,

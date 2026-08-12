@@ -48,7 +48,7 @@ def anyio_backend() -> str:
 EXPECTED = {
     # The general-purpose library (WF2 Slice 9a).
     "audit-sweep",
-    "code-implementation",
+    "code-project",
     "deep-research",
     "design-review",
     "produce-and-audit",
@@ -235,12 +235,26 @@ class TestConventions:
 
     def test_the_code_template_captures_a_baseline_before_it_mutates(self) -> None:
         """Without it, a failure after the change cannot be told apart from one that was already
-        there — and someone debugs the wrong commit."""
-        root = Node.from_dict(_pipeline(_raw("code-implementation"))["root"])
-        order = [(p, n) for p, n in walk(root)]
-        baseline_at = next(i for i, (_p, n) in enumerate(order) if n.id == "baseline")
-        first_mutating = next(i for i, (_p, n) in enumerate(order) if n.kind.value == "stage")
-        assert baseline_at < first_mutating, "the baseline must precede the first mutating node"
+        there — and someone debugs the wrong commit.
+
+        Asserted against every node that can WRITE rather than against "the first stage": the
+        gated initializer (WF2LOO-10, R5a) deliberately runs BEFORE the baseline, because it is
+        what makes the environment able to run its own checks at all. A baseline captured in a
+        tree whose dependencies are not installed records "everything fails" and classifies
+        nothing afterwards — so init-then-baseline is the correct order, and the initializer is
+        the one writer exempted here. Every other writer must come after.
+        """
+        root = Node.from_dict(_pipeline(_raw("code-project"))["root"])
+        order = [n for _p, n in walk(root)]
+        ids = [n.id for n in order]
+        baseline_at = ids.index("baseline")
+        assert ids.index("init") < baseline_at, "the initializer establishes the baseline's floor"
+        for i, node in enumerate(order):
+            if node.id == "init":
+                continue
+            if str((node.config or {}).get("tools_posture", "")) != "full":
+                continue
+            assert i > baseline_at, f"{node.id} can write and runs before the baseline"
 
     def test_the_triage_first_pattern_drives_a_branch(self) -> None:
         """The blessed opening shape: an `infer` classification whose output selects among entry
@@ -259,7 +273,7 @@ class TestConventions:
     def test_a_verification_gate_is_engine_executed_not_model_declared(self) -> None:
         """The code template's gate runs a COMMAND. A gate that asked the model whether it was
         done would make done-ness self-reported, which is the failure the gate exists for."""
-        root = Node.from_dict(_pipeline(_raw("code-implementation"))["root"])
+        root = Node.from_dict(_pipeline(_raw("code-project"))["root"])
         gates = [n for _p, n in walk(root) if n.kind.value == "gate"]
         assert any(str((g.config or {}).get("kind")) == "verify_command" for g in gates)
 
@@ -365,7 +379,8 @@ def test_the_templates_are_declared_as_package_data() -> None:
 class TestActionArgShape:
     """A real bug this session hit, and the guard that now catches it at authoring time.
 
-    `code-implementation` wrote its bash arguments FLAT beside `provider`. The engine reads a
+    The retired `code-implementation` template wrote its bash arguments FLAT beside `provider`.
+    The engine reads a
     provider's arguments from `config.with` (`dispatch_action`), so bash received an empty config
     and reported "missing 'command' field" — for a command visibly right there in the spec.
 

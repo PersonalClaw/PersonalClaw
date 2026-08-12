@@ -2340,12 +2340,14 @@
         {
           "id": "WF2LOO-10",
           "title": "code-project template (product decision + build)",
-          "status": "todo",
+          "status": "done",
           "scope": "Per-Kind Template Designs 4: Code/SDLC Loop -> code-project (R5); Success Criteria 6",
           "done_when": "The product decision is made (replace the shipped code-implementation template vs. add code-project beside it) and the chosen template ships with the R5 structural gates: gated initializer (4-condition checklist), WIP=1 engine-enforced single_active_feature, reproduction-before-edit with inverted success_when for bug-flavored runs, baseline capture, and dual verify+guard gate. Verified: a 'build a feature' run passes the init-gate, holds WIP=1, and classifies a seeded regression vs a pre-existing failure via the baseline diff (criterion 6).",
           "deps": [
             "WF2LOO-3"
-          ]
+          ],
+          "pr": "#1105",
+          "evidence": "PRODUCT DECISION: evolve `code-implementation` INTO `code-project` (replace, not add) — clean-break tenet forbids two near-duplicate code templates, and loop_aliases.KIND_TO_TEMPLATE already existed to keep legacy `code` references resolving at READ time with zero migration. Shipped: bundled/code-project/workflow.json with all five R5 gates; code-implementation/ deleted and every reference swept (py aliases, FE containerKey.KIND_TO_TEMPLATE + templateSuggest, two bundled when_not_to_use lines, 6 test files). Two NEW engine mechanisms, each with a live writer and a live reader: `success_when` (writer = the repro stage; reader = controller._check_success_when, narrows success only, `output.*` root added to BindingContext) and `single_active_feature` (writer = runtime_hints.execution; readers = tick.frontier's per-fan-out cap 1 + Frontier.wip_held journaled as a DECISION record, AND validator WF_WIP_CONTRADICTION refusing a spec that declares WIP=1 beside max_concurrency>1). New workflows/conditions.py is the ONE boolean dialect (||/&&/!/parens/==/!=) now read by the expression gate, `until` loops and success_when — it also FIXED two shipped gates that could never reject (interpolate-then-truthy made `{{inputs.fix}} == true` the truthy string \"false == true\"). The dual gate classifies via GuardOutcome (clean/pre_existing/regression/undetermined/skipped) against the baseline's guard result: regression FAILS, pre-existing DEGRADES. Also wired EngineServices.verify=verify.run_verify_block in the gateway — it was UNSET, so every verify_command gate in production failed INTERNAL 'no verifier wired'. 78 new tests (test_workflows_code_project.py + test_workflows_conditions.py) drive the SHIPPED spec's own nodes through the real dispatchers; criterion 6 is proven by really running the shipped baseline node in a temp tree (guard red vs green) and asserting the same failing guard yields opposite verdicts."
         },
         {
           "id": "WF2LOO-11",

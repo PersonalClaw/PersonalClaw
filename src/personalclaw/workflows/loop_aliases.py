@@ -32,14 +32,15 @@ logger = logging.getLogger(__name__)
 #: no verify command is open-ended by definition, and mapping it to the verifiable variant
 #: would demand an input the legacy reference never had.
 #:
-#: `code` maps to `code-implementation`, which already shipped in Slice 9a — the plan's
-#: `code-project` design overlaps it and was deferred as a product decision, so pointing
-#: the alias at a template that does not exist would be worse than pointing it at a
-#: working one.
+#: `code` maps to `code-project`, the R5 restructure of what shipped in Slice 9a as
+#: `code-implementation` (WF2LOO-10). That was a product decision — EVOLVE the one code
+#: template rather than ship a second one beside it — and this alias is why it needed no
+#: migration: a stored `kind: code`, a saved cron and a two-year-old transcript all keep
+#: resolving, at READ time, to whatever the current code template is called.
 KIND_TO_TEMPLATE: dict[str, str] = {
     "general": "general-project",
     "goal": "goal-pursuit-open-ended",
-    "code": "code-implementation",
+    "code": "code-project",
     "design": "design-project",
     "research": "deep-research",
 }
@@ -50,7 +51,7 @@ KIND_TO_TEMPLATE: dict[str, str] = {
 TOOL_TO_TEMPLATE: dict[str, str] = {
     "loop_create_general": "general-project",
     "loop_create_goal": "goal-pursuit-open-ended",
-    "loop_create_code": "code-implementation",
+    "loop_create_code": "code-project",
     "loop_create_design": "design-project",
     "loop_create_research": "deep-research",
     "loop_start": "general-project",

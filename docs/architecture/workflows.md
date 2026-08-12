@@ -44,6 +44,8 @@ while not terminal:
 | `controller.py` | the conductor: one per run, the only writer of run state |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |
+| `conditions.py` | the ONE boolean-condition dialect: gate `expr`, loop `until`, `success_when` |
+| `execution_hints.py` | the `runtime_hints.execution` half — today, WIP=1 (`single_active_feature`) |
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
 | `store.py` | persistence — runs, specs, state, outputs |
 | `mutations.py` | the typed edit grammar and its structural rules |

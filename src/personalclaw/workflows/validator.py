@@ -610,5 +610,39 @@ def validate_spec(spec: dict[str, Any], *, strict: bool = False) -> ValidationRe
 
     tree_res = validate_node_tree(root, strict=strict)
     res.issues.extend(tree_res.issues)
+    _validate_wip_invariant(res, spec, root)
     res.levels = tree_res.levels if res.ok else []
     return res
+
+
+def _validate_wip_invariant(res: ValidationResult, spec: dict[str, Any], root: Node) -> None:
+    """Refuse a spec that declares WIP=1 and also declares a wider fan-out (R5b).
+
+    `single_active_feature` is a RUN-level invariant, so the runtime enforces it whatever a
+    `foreach` says for itself (see `tick._visit_foreach`). That leaves one bad outcome:
+    a template that reads `max_concurrency: 3` while the engine runs it one at a time. A
+    reader believes the template, so the contradiction is refused HERE rather than silently
+    clamped at runtime — an author who wants three at a time has to drop the invariant, and
+    an author who wants the invariant has to stop claiming three.
+    """
+    from personalclaw.workflows.execution_hints import from_runtime_hints
+
+    if not from_runtime_hints(spec.get("runtime_hints")).single_active_feature:
+        return
+    for path, node in walk(root):
+        if node.kind is not NodeKind.FOREACH:
+            continue
+        raw = (node.config or {}).get("max_concurrency")
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            continue
+        if raw > 1:
+            _add(
+                res,
+                "WF_WIP_CONTRADICTION",
+                (
+                    f"`single_active_feature` declares WIP=1, but this foreach declares "
+                    f"max_concurrency={raw} — the engine will run one item at a time, so the "
+                    "declaration is false. Drop one of the two."
+                ),
+                path,
+            )

@@ -207,7 +207,7 @@ def library() -> list[TemplateProfile]:
             keywords=["audit", "review", "find issues"],
             example_outputs=["a list of confirmed findings"],
             shapes=["review"],
-            when_not_to_use="not for writing new code — use code-implementation",
+            when_not_to_use="not for writing new code — use code-project",
         ),
         TemplateProfile(
             name="market-monitor",

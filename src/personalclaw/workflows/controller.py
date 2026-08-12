@@ -37,18 +37,18 @@ import contextlib
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from personalclaw import project_context
 from personalclaw.knowledge import session_brief
-from personalclaw.workflows import attention
+from personalclaw.workflows import attention, conditions
 from personalclaw.workflows import context as context_mod
-from personalclaw.workflows import gate_policy
+from personalclaw.workflows import execution_hints, gate_policy
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, revision, store
-from personalclaw.workflows.bindings import BindingContext, node_deps
+from personalclaw.workflows.bindings import BindingContext, BindingError, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
     EffectStatus,
@@ -227,6 +227,10 @@ class RunController:
         self._declined_edges: set[str] = self._collect_declined_edges()
         self._iterations: dict[str, int] = {}
         self._dry_streaks: dict[str, int] = {}
+        #: Item paths whose WIP=1 refusal has already been journaled (R5b). In memory only:
+        #: the record it dedupes is a scheduling note, and re-journaling one after a resume is
+        #: harmless next to carrying a second persisted set to keep in sync.
+        self._wip_logged: set[str] = set()
         #: Steering (LOOPS-EVOLUTION R14), keyed by the iterated container's path. The durable
         #: queue lives on `run.extra["steering_queue"]` (written by `service.steer_run`); the tick
         #: consumes it at the iteration boundary and parks the rendered re-plan block HERE until
@@ -1546,7 +1550,7 @@ class RunController:
         self._persist_state()
 
     def _frontier(self) -> Frontier:
-        return frontier(
+        fr = frontier(
             self.root,
             {p: i.state for p, i in self.instances.items()},
             limits=self.services.lane_limits,
@@ -1555,7 +1559,39 @@ class RunController:
             inputs=self.run.inputs,
             iterations=self._iterations,
             running_lanes=self._running_lanes(),
+            # WIP=1 (LOOPS-EVOLUTION R5b). Read from the spec's `runtime_hints.execution`
+            # every tick rather than cached at construction, because a mid-flight spec edit
+            # can turn the invariant on and a cached flag would keep scheduling under the
+            # old rule while the template said otherwise.
+            single_active_feature=execution_hints.from_runtime_hints(
+                self.spec.get("runtime_hints")
+            ).single_active_feature,
         )
+        self._journal_wip_holds(fr)
+        return fr
+
+    def _journal_wip_holds(self, fr: Frontier) -> None:
+        """Record a WIP=1 refusal once per held item (R5b).
+
+        Written to the ledger because a refusal nobody can read is indistinguishable from a
+        scheduler that lost the item — "why has feature 2 not started?" has to be answerable
+        from the run's own record. Deduped by path: the frontier re-derives every tick, and
+        one held item would otherwise write a record per tick for as long as it waits.
+        """
+        for path in fr.wip_held:
+            if path in self._wip_logged:
+                continue
+            self._wip_logged.add(path)
+            self.journal.write(
+                journal_mod.DECISION,
+                instance_path=path,
+                node_id="",
+                decision="wip_limit_held",
+                detail=(
+                    "single_active_feature is declared: this item was not started while "
+                    "another item of the same fan-out is still in flight"
+                ),
+            )
 
     def _running_lanes(self) -> dict[str, int]:
         used: dict[str, int] = {}
@@ -1923,7 +1959,68 @@ class RunController:
             result = await coro
         if before is not None:
             result = self._check_write_scope(node, result, before, allowed, watched)
-        return result
+        return self._check_success_when(node, result, ctx)
+
+    def _check_success_when(
+        self, node: Node, result: NodeResult, ctx: BindingContext
+    ) -> NodeResult:
+        """Apply a node's declared `success_when` predicate (LOOPS-EVOLUTION R5f).
+
+        **It can only NARROW success, never widen it.** A node that already failed stays
+        failed — otherwise `success_when` would be a way to bless a broken node, and the
+        first template to discover that would use it as one.
+
+        The use it exists for is INVERTED semantics: `code-project`'s reproduction stage
+        must not count as done because it ran. Reproducing the bug (or documenting why it is
+        infeasible) IS the success condition, and a stage that quietly failed to reproduce
+        and moved on to editing is the exact "no repro, straight to a fix" pattern R5c
+        forbids.
+
+        Evaluated against the node's OWN output, bound as `output.*`. Written WITHOUT `{{}}`
+        braces on purpose: `resolve_config` resolves every braced binding in a config
+        *before* the node runs, and at that moment `output` does not exist yet — a braced
+        form would fail the node with a binding error instead of testing it.
+        """
+        raw = (node.config or {}).get("success_when")
+        expr = str(raw or "").strip()
+        if not expr:
+            return result
+        if result.state not in SUCCESS_STATES:
+            return result
+
+        probe = replace(ctx, self_output=result.output, has_self_output=True)
+        try:
+            met = conditions.evaluate(expr, probe)
+        except BindingError as exc:
+            # An unevaluable predicate is a FAILURE, not a pass: "I could not tell whether
+            # this succeeded" must never read as "it succeeded".
+            return NodeResult(
+                state=InstanceState.FAILED,
+                output=result.output,
+                failure=Failure(
+                    failure_class=FailureClass.USER,
+                    cause_plain=f"success_when could not be evaluated: {exc}",
+                    remediation=(
+                        "reference a field the node's schema actually produces, e.g. "
+                        "`output.some_flag`"
+                    ),
+                ),
+            )
+        if met:
+            return result
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=result.output,
+            degraded_reason=result.degraded_reason,
+            failure=Failure(
+                failure_class=FailureClass.PROTOCOL,
+                cause_plain=f"the node ran but its success condition is false: {expr}",
+                remediation=(
+                    "the node did not achieve what it was declared to achieve — read its "
+                    "output and either satisfy the condition or change the declaration"
+                ),
+            ),
+        )
 
     def _check_write_scope(
         self,

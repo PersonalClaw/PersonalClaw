@@ -43,7 +43,7 @@ async function mount(hands_off_to: unknown[] | undefined) {
     api: {
       workflowDef: () => Promise.resolve({
         definition: {
-          name: 'code-implementation',
+          name: 'code-project',
           root: { kind: 'sequence', id: 'root' },
           metadata: hands_off_to === undefined ? {} : { hands_off_to },
         },
@@ -55,7 +55,7 @@ async function mount(hands_off_to: unknown[] | undefined) {
   const { WorkflowDefDetail } = await import('./WorkflowDefDetail')
   let r!: ReturnType<typeof render>
   await act(async () => {
-    r = render(<WorkflowDefDetail name="code-implementation" onBack={() => {}} onStarted={() => {}} />)
+    r = render(<WorkflowDefDetail name="code-project" onBack={() => {}} onStarted={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))
   })
   return r

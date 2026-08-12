@@ -5,17 +5,17 @@ import { availableSuggestions, intentKind, suggestTemplate } from './templateSug
 //
 // The gap this closes: the templates tab lists bundled workflows by NAME, so a user who
 // knows what they want to do ("fix this bug", "research a topic") has to already know that
-// a coding job is called `code-implementation` and a research one `deep-research`. These
+// a coding job is called `code-project` and a research one `deep-research`. These
 // are unit tests over the pure suggestion module — the interesting behaviour is which kind
 // an intent maps to and which shipped template that kind resolves to, none of which needs a
 // rendered picker to assert.
 
-// The templates the bundled set actually ships (the alias targets). `code-project` is
-// deliberately ABSENT — it was deferred and never shipped, and `code` resolves to
-// `code-implementation` instead (see containerKey.KIND_TO_TEMPLATE).
+// The templates the bundled set actually ships (the alias targets). `code-project` replaced
+// `code-implementation` in WF2LOO-10 — one code template, not two overlapping ones — and
+// `code` resolves to it (see containerKey.KIND_TO_TEMPLATE).
 const SHIPPED = new Set([
   'general-project', 'goal-pursuit-open-ended', 'goal-pursuit-verifiable',
-  'code-implementation', 'design-project', 'deep-research',
+  'code-project', 'design-project', 'deep-research',
 ])
 
 describe('intentKind', () => {
@@ -54,11 +54,10 @@ describe('intentKind', () => {
 })
 
 describe('suggestTemplate', () => {
-  it('suggests code-implementation for a coding intent (code-project was never shipped)', () => {
-    // The plan names `code-project`; that template was deferred, and the alias points `code`
-    // at the `code-implementation` template that DID ship. Suggesting the working template is
-    // what keeps the menu entry from being dead.
-    expect(suggestTemplate('fix the failing test', SHIPPED)).toBe('code-implementation')
+  it('suggests code-project for a coding intent (criterion 11)', () => {
+    // The plan names `code-project` and that is now the shipped code template, so the
+    // suggestion and the alias agree — the menu entry resolves to a template that starts.
+    expect(suggestTemplate('fix the failing test', SHIPPED)).toBe('code-project')
   })
 
   it('suggests deep-research for a research intent', () => {
@@ -84,7 +83,7 @@ describe('availableSuggestions', () => {
   it('lists only kind→template pairs whose template ships', () => {
     const pairs = availableSuggestions(SHIPPED)
     const byKind = Object.fromEntries(pairs.map((p) => [p.kind, p.template]))
-    expect(byKind.code).toBe('code-implementation')
+    expect(byKind.code).toBe('code-project')
     expect(byKind.research).toBe('deep-research')
     expect(byKind.design).toBe('design-project')
   })
