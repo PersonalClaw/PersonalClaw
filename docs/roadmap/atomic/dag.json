@@ -4828,14 +4828,16 @@
         {
           "id": "CE-7",
           "title": "build-a-channel-app.md guide (from Telegram) + vendor-completeness section, and the kit's inbox-source check",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 7-8 — Ramp: T7.2 + T7.5; Design §S7-8; Amendment 2026-07-26 (vendor-completeness pattern)",
           "done_when": "guide maps every ChannelDelivery/ChannelTransport method to a must/should/may obligation and documents transport lifecycle, trust integration, linking, conformance-kit usage, packaging; vendor-completeness section spells out the seam checklist (channel + inbox + trigger-source-when-available + contributed UI) and rule-2 'your UI, not core's' doctrine; conformance kit flags a channel-only app that does not also register an inbox source with a warning; S2-6 app tasks cite the checklist",
           "deps": [
             "CE-3",
             "CE-6",
             "CE-8"
-          ]
+          ],
+          "pr": "core (this PR) — guide + kit clause 9 + 8 tests",
+          "evidence": "Shipped docs/guides/build-a-channel-app.md: all 13 ChannelTransportProvider members + all 18 ChannelDelivery methods mapped to must/should/may, written FROM the kit's MUST/SHOULD/MAY tuples and marking the 8 members present in NO tuple as doctrine-not-asserted rather than inventing an obligation; plus lifecycle, trust/pairing/fencing, kit usage with a clause->failure table, packaging, the vendor-completeness checklist + rule-2 'your UI, not core's', ship checklist. Linked from README.md + docs/architecture/inbox-channels.md; T2.1/T4.1/T6.1 cite the checklist. The kit check is clause 9 INSIDE assert_channel_contract (src/personalclaw/testing/channel_conformance.py) rather than a new public helper, so it is live for all four app suites with zero apps-repo change instead of inert on merge: it walks up from inspect.getfile(type(provider)) for the owning app.json (bounded, stops at a repo marker), reads BOTH declaration shapes, warns when channel is declared without inbox, stays silent with no discoverable manifest, and is suppressible via no_inbox_source_reason=. A WARNING not a failure because the population was measured first (telegram+discord channel-only, slack complete, mail-inbox not a channel) - teeth here would red two already-green app suites for a doctrine postdating them. 8 new core tests drive both directions THROUGH the entry point with real temp manifests; kit suite 38 passed."
         },
         {
           "id": "CE-8",

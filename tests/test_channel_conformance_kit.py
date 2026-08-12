@@ -13,6 +13,11 @@ exercises. See the kit's module docstring for the export-path decision.
 
 from __future__ import annotations
 
+import json
+import sys
+import types
+import warnings
+
 import pytest
 
 from personalclaw.channel_transports.base import (
@@ -577,3 +582,170 @@ def test_partial_streaming_trio_fails():
 
     with pytest.raises(ChannelContractError, match=r"\[streaming\].*stop_stream"):
         assert_channel_contract(StreamingTransport(), delivery=NoStop(_FakeBackend()))
+
+
+# ── clause 9: vendor-seam completeness (advisory) ───────────────────────────
+#
+# Driven through `assert_channel_contract`, never by calling the private helper: the whole
+# point of riding the existing entry point is that the four app suites get the advisory
+# with no apps-repo change, and a test that only exercised the helper would prove the
+# mechanism exists without proving anything uses it.
+
+_CHANNEL_PROVIDER = {"type": "channel", "implementation": "fixture_runtime.transport:create"}
+_INBOX_PROVIDER = {"type": "inbox", "implementation": "fixture_runtime.source:create"}
+
+
+def _transport_in_app_bundle(tmp_path, monkeypatch, manifest, *, tag: str):
+    """A `GoodTransport` in a real app bundle directory, reusing the conforming fixture.
+
+    `inspect.getfile(cls)` resolves a class through `sys.modules[cls.__module__].__file__`
+    — the exact mechanism the completeness clause starts its walk from — so pointing a
+    subclass's module at a real file inside a real bundle drives the real discovery walk
+    without writing a second fake transport. `manifest=None` writes no `app.json` at all.
+    """
+    bundle = tmp_path / "apps" / f"{tag}-channel"
+    runtime = bundle / f"{tag}_runtime"
+    runtime.mkdir(parents=True)
+    if manifest is not None:
+        (bundle / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
+    module_file = runtime / "transport.py"
+    module_file.write_text("# fixture bundle module for the completeness clause\n")
+    module_name = f"_conformance_bundle_{tag}"
+    module = types.ModuleType(module_name)
+    module.__file__ = str(module_file)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    cls = type("BundledTransport", (GoodTransport,), {"__module__": module_name})
+    module.BundledTransport = cls
+    return cls()
+
+
+def _completeness_advisories(record) -> list[str]:
+    return [str(w.message) for w in record if "vendor completeness" in str(w.message)]
+
+
+def _run_capturing_warnings(provider, **kwargs) -> list[str]:
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        assert_channel_contract(provider, **kwargs)
+    return _completeness_advisories(record)
+
+
+def test_channel_only_app_warns_about_the_missing_inbox_seam(tmp_path, monkeypatch):
+    """The measured shape of telegram-channel/discord-channel: `channel`, no `inbox`."""
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {"name": "fixture-channel", "version": "0.1.0", "provider": _CHANNEL_PROVIDER},
+        tag="channelonly",
+    )
+    with pytest.warns(UserWarning, match=r"vendor completeness") as record:
+        assert_channel_contract(provider)
+    advisories = _completeness_advisories(record)
+    assert len(advisories) == 1, advisories
+    message = advisories[0]
+    # The advisory must name the MISSING seam and where the checklist lives — a warning
+    # that only says "incomplete" sends the reader nowhere.
+    assert "fixture-channel" in message
+    assert "inbox message source" in message
+    assert "no_inbox_source_reason" in message
+    assert "docs/guides/build-a-channel-app.md" in message
+
+
+def test_channel_only_app_still_passes_every_hard_clause(tmp_path, monkeypatch):
+    """The advisory is a WARNING, never a failure: two already-green app suites must not
+    go red for a doctrine that postdates them."""
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {"name": "fixture-channel", "version": "0.1.0", "provider": _CHANNEL_PROVIDER},
+        tag="stillpasses",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert assert_channel_contract(provider) is None
+
+
+@pytest.mark.parametrize(
+    "manifest,tag",
+    [
+        (
+            # The vendor-completeness shape slack-channel ships: canonical singular
+            # `provider` for the transport + the inbox source in `providers[]`.
+            {
+                "name": "fixture-complete",
+                "version": "0.1.0",
+                "provider": _CHANNEL_PROVIDER,
+                "providers": [_INBOX_PROVIDER],
+            },
+            "complete-singular",
+        ),
+        (
+            # Both seams in the array. Read one declaration shape only and a complete app
+            # gets reported as channel-only.
+            {
+                "name": "fixture-complete-array",
+                "version": "0.1.0",
+                "providers": [_CHANNEL_PROVIDER, _INBOX_PROVIDER],
+            },
+            "complete-array",
+        ),
+    ],
+)
+def test_complete_vendor_app_gets_no_advisory(tmp_path, monkeypatch, manifest, tag):
+    provider = _transport_in_app_bundle(tmp_path, monkeypatch, manifest, tag=tag)
+    assert _run_capturing_warnings(provider) == []
+
+
+def test_declared_reason_suppresses_the_advisory(tmp_path, monkeypatch):
+    """The documented exemption: an app states why the vendor has no message source."""
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {"name": "fixture-channel", "version": "0.1.0", "provider": _CHANNEL_PROVIDER},
+        tag="exempt",
+    )
+    assert (
+        _run_capturing_warnings(
+            provider, no_inbox_source_reason="this vendor has no message-source semantics"
+        )
+        == []
+    )
+
+
+def test_provider_with_no_discoverable_manifest_is_silent(tmp_path, monkeypatch):
+    """No `app.json` in the bundle: an undiscoverable manifest is not evidence of an
+    incomplete app, and an advisory firing on a bare fixture teaches readers to ignore
+    it."""
+    provider = _transport_in_app_bundle(tmp_path, monkeypatch, None, tag="nomanifest")
+    assert _run_capturing_warnings(provider) == []
+
+
+def test_core_fixture_transport_is_silent():
+    """The same claim for core's OWN fixtures: `GoodTransport` lives under `tests/`, whose
+    walk hits the repo root marker before any `app.json`, so core's suite never nags
+    itself."""
+    assert _run_capturing_warnings(GoodTransport()) == []
+
+
+def test_manifest_declaring_no_channel_provider_is_silent(tmp_path, monkeypatch):
+    """This clause only speaks about channel apps. A manifest that registers no `channel`
+    provider is a different shape (and a different defect), not an incomplete vendor."""
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {"name": "fixture-notachannel", "version": "0.1.0", "providers": [_INBOX_PROVIDER]},
+        tag="nochannel",
+    )
+    assert _run_capturing_warnings(provider) == []
+
+
+def test_unreadable_manifest_is_silent(tmp_path, monkeypatch):
+    """Malformed JSON is the install pipeline's red to report, not this clause's."""
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {"name": "fixture-broken", "version": "0.1.0", "provider": _CHANNEL_PROVIDER},
+        tag="broken",
+    )
+    (tmp_path / "apps" / "broken-channel" / "app.json").write_text("{not json", encoding="utf-8")
+    assert _run_capturing_warnings(provider) == []

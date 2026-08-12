@@ -125,7 +125,7 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T2.1 | Bot API client (`api.py`): typed thin wrappers for getUpdates/sendMessage/editMessageText/sendDocument/sendPhoto/answerCallbackQuery/getMe; httpx, timeout+retry/backoff; no SDK | apps repo: create `telegram-channel/{app.json,api.py,settings.py}` | MockTransport tests for each wrapper incl. 429 retry-after handling |
+| T2.1 | Bot API client (`api.py`): typed thin wrappers for getUpdates/sendMessage/editMessageText/sendDocument/sendPhoto/answerCallbackQuery/getMe; httpx, timeout+retry/backoff; no SDK. Manifest follows the vendor-completeness checklist (Amendment 2026-07-26 rule 1; `docs/guides/build-a-channel-app.md` § Vendor completeness): register the `inbox` message source alongside the `channel` transport, plus a trigger source once that seam exists | apps repo: create `telegram-channel/{app.json,api.py,settings.py}` | MockTransport tests for each wrapper incl. 429 retry-after handling |
 | T2.2 | MarkdownV2 escaper (`format.py`): table-driven tests over the full reserved set + code blocks + links | `telegram-channel/format.py`, tests | every reserved char case passes; round-trip of a chat message with code fences renders (manual check in V) |
 | T2.3 | Transport: long-poll loop (offset persistence in app `data/`), ChannelMessage mapping, trust-seam integration (DM pairing flow, group tracked-only, fencing), `capabilities()` honest (edit-streaming, reply-threads) | `telegram-channel/transport.py` | conformance kit passes once T7.1 exists (until then: unit tests for mapping + trust hooks) |
 | T2.4 | Delivery: `ChannelDelivery` implementation — text/rich (MarkdownV2), throttled edit-streaming (≥1.1s + final flush), uploads, `request_approval` inline keyboard wired to the approval answer path (find Slack's `request_approval` → answer plumbing and mirror it), `build_thread_link` | `telegram-channel/delivery.py` | fake-API tests: stream produces ≤1 edit/1.1s and exact final text; approval callback resolves the pending approval |
@@ -136,7 +136,7 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T4.1 | Gateway WS client: identify/heartbeat/ack/resume/dispatch (the four events), intents per Design, clean reconnect with session resume | apps repo: create `discord-channel/{app.json,gateway.py,settings.py}` | fake-WS tests: heartbeat cadence, resume after drop, dispatch routing |
+| T4.1 | Gateway WS client: identify/heartbeat/ack/resume/dispatch (the four events), intents per Design, clean reconnect with session resume. Manifest follows the vendor-completeness checklist (Amendment 2026-07-26 rule 1; `docs/guides/build-a-channel-app.md` § Vendor completeness): register the `inbox` message source alongside the `channel` transport, plus a trigger source once that seam exists | apps repo: create `discord-channel/{app.json,gateway.py,settings.py}` | fake-WS tests: heartbeat cadence, resume after drop, dispatch routing |
 | T4.2 | REST client + delivery (sends/edits/uploads/buttons; 429-bucket respect), streaming edits, `request_approval` buttons | `discord-channel/{api.py,delivery.py}` | fake-API tests incl. bucket backoff; approval round-trip |
 | T4.3 | Transport + trust (DM pairing; guild channels tracked-only; fencing), capabilities honest | `discord-channel/transport.py` | conformance kit passes |
 | T4.4 | Setup/doctor contributions (bot token, application id; probe = gateway hello) | `discord-channel/cli_setup.py`, `cli_doctor.py` | setup configures end to end |
@@ -146,7 +146,7 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T6.1 | IMAP poll transport (executor-threaded, UID-tracked, 60s), address-allowlist trust + code-in-reply pairing, HTML→text via core path | apps repo: create `email-channel/{app.json,transport.py,settings.py}` | fake-IMAP tests: new-mail detection, UID persistence, pairing reply |
+| T6.1 | IMAP poll transport (executor-threaded, UID-tracked, 60s), address-allowlist trust + code-in-reply pairing, HTML→text via core path. Manifest follows the vendor-completeness checklist (Amendment 2026-07-26 rule 1; `docs/guides/build-a-channel-app.md` § Vendor completeness): register the `inbox` message source alongside the `channel` transport, plus a trigger source once that seam exists | apps repo: create `email-channel/{app.json,transport.py,settings.py}` | fake-IMAP tests: new-mail detection, UID persistence, pairing reply |
 | T6.2 | SMTP delivery (threaded), Message-ID threading → session_map, no-streaming capabilities, digest-target registration note for plan 42 | `email-channel/delivery.py` | fake-SMTP tests: headers correct (In-Reply-To/References), thread continuity across three messages |
 | T6.3 | Setup/doctor (IMAP/SMTP hosts + app-password guidance for Gmail/Fastmail; probe = login+select) | `email-channel/cli_setup.py`, `cli_doctor.py` | setup configures end to end |
 | V6 | Validation with a real mailbox (owner task 4): email in → session reply out threads correctly; pairing from an unknown address; digest lands once plan 42 S5 exists (else note deferred) | — | recorded |
@@ -155,7 +155,7 @@ Each transport declares honest `ChannelCapabilities` (§3.5 dataclass). Credenti
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T7.1 | Conformance kit per Design (importable from apps' tests); wire into slack/telegram/discord/email test suites | core: `tests/channel_conformance.py` (+ export path decision recorded), 4 app test files | all four apps pass the kit in apps-repo CI |
+| T7.1 | Conformance kit per Design (importable from apps' tests); wire into slack/telegram/discord/email test suites | core: `src/personalclaw/testing/channel_conformance.py` (export-path DEVIATION from `tests/` recorded in the kit's module docstring), 4 app test files | all four apps pass the kit in apps-repo CI |
 | T7.2 | `docs/guides/build-a-channel-app.md` per Design (must/should/may table for all 18 delivery methods + transport lifecycle + trust + conformance usage) | new guide | a reader can map every ABC/protocol method to an obligation level |
 | T7.3 | Bounty scaffolding: issues for WhatsApp/Signal/Matrix (community tier, risk-policy paragraph, guide + kit links); `channel` template registered with ECOSYSTEM-TOOLING's scaffold (coordinate — file DISCOVERY if scaffold not landed yet) | GitHub issues, cross-plan note | issues live and labeled |
 | V7 | Validation: dry-run the guide as a stranger building a "null channel" against the kit in <2h | — | timed run recorded |
@@ -218,7 +218,7 @@ Extends **Sessions 7-8** (the ramp — the guide/kit are being written there any
 | ID | Task | Files | Done when |
 |---|---|---|---|
 | T7.4 | Slack to full pattern: add the `inbox` provider registration (`MessageSourceProvider` over the existing runtime client) to `providers[]`; move any non-seam Slack-specific surface behind the app's own `ui` block; scrub vendor-name residue from core seam comments | apps repo `slack-channel/app.json` + `slack_runtime/`, core `inbox_providers/` docstrings | Slack messages flow through the generic inbox source seam (no core slack string); manifest registers ≥2 providers; boundary tests green |
-| T7.5 | Guide + kit: vendor-completeness section in `build-a-channel-app.md` (the seam checklist: channel + inbox + trigger-source-when-available + contributed UI; rule 2's "your UI, not core's" doctrine) + a conformance-kit check that a channel app also registers an inbox source (or declares why not) | `docs/guides/build-a-channel-app.md`, `tests/channel_conformance.py` | the checklist is explicit in the guide; telegram/discord/email tasks (S2-6) cite it; kit flags a channel-only app with a warning |
+| T7.5 | Guide + kit: vendor-completeness section in `build-a-channel-app.md` (the seam checklist: channel + inbox + trigger-source-when-available + contributed UI; rule 2's "your UI, not core's" doctrine) + a conformance-kit check that a channel app also registers an inbox source (or declares why not) | `docs/guides/build-a-channel-app.md`, `src/personalclaw/testing/channel_conformance.py` | the checklist is explicit in the guide; telegram/discord/email tasks (S2-6) cite it; kit flags a channel-only app with a warning |
 | T7.6 | Trigger-source forward note: coordination line into WORKFLOWS-V2-AUTOMATION-SUBSTRATE (app-registered trigger source types) so each vendor app adds its trigger-source provider when that seam lands — no early hand-rolled event glue | this plan + substrate plan cross-refs | both plans reference one seam; no vendor app ships bespoke trigger machinery before it exists |
 
 ## Execution log
@@ -415,3 +415,62 @@ Extends **Sessions 7-8** (the ramp — the guide/kit are being written there any
   fixture app; a slack-specific seam test in core would couple core to an app, and the same test in the
   apps repo would sit red until #1090 merges. Adding a red test to apps main to prove a point already
   proven is not worth it — the app's own 17 adapter tests plus INU-8's mechanism test cover both halves.
+
+- **2026-08-11 — DONE: CE-7** (T7.2 + T7.5 — the channel-author guide, the vendor-completeness
+  section, and the kit's inbox-source advisory).
+  Shipped `docs/guides/build-a-channel-app.md`, extracted from the telegram-channel app as the
+  reference channel: **every** `ChannelTransportProvider` member (13) and **every** `ChannelDelivery`
+  method (18 — the count T7.2 names) mapped to must/should/may, plus transport lifecycle (who calls
+  what, when), trust/pairing/linking (`guard_inbound`, the shared `CANNED_PAIRING_REPLY`, the single
+  deduped owner attention item, `verdict.fenced_text` and the `is_fenced`-not-substring rule),
+  conformance-kit usage with a copy-pasteable example and a clause→failure table, packaging/manifest,
+  the vendor-completeness checklist, and a ship checklist. Linked from `README.md` and
+  `docs/architecture/inbox-channels.md`. T2.1 / T4.1 / T6.1 (the rows that create each vendor's
+  manifest) now cite the checklist, satisfying "S2-6 app tasks cite it".
+  **The obligation table is written FROM the kit, not beside it**, and it records the honest gap: four
+  transport members (`connected`, `start_inbound`, `stop_inbound`, `receive`) and four delivery methods
+  (`open_dm`, `resolve_user_name`, `is_tracked_channel`, `channel_info`) appear in **none** of
+  `MUST_TRANSPORT_METHODS` / `SHOULD_DELIVERY_METHODS` / `MAY_DELIVERY_METHODS`. Rather than invent an
+  assertion or silently assign a level, the guide gives each a level derived from the ABC's own
+  contract and marks the Kit column "in no kit tuple — doctrine, not something the kit will catch".
+  The streaming trio is in no tuple either but *is* asserted by clause 8, so it is marked asserted.
+  **Design choice — the check rides the EXISTING entry point.** The completeness check is clause 9
+  inside `assert_channel_contract` (`src/personalclaw/testing/channel_conformance.py`), not a new
+  public helper. A new helper would have been inert on merge: only an apps-repo PR could ever call it,
+  and this program's recurring failure is exactly the declared control with no live call site. Riding
+  the entry point all four app suites already call makes it live in core's own suite the day it merges
+  and in apps CI with **zero** apps-repo change. Implementation: from the live provider it resolves
+  `inspect.getfile(type(provider))`, walks up at most 3 parents for an `app.json`, stops at a
+  `.git`/`pyproject.toml` repo marker (walking past one would attribute a DIFFERENT app's manifest),
+  reads provider types from BOTH declaration shapes (singular `provider` + `providers[]` — reading one
+  shape would report a complete app as channel-only), and warns when `channel` is declared without
+  `inbox`. No manifest discoverable ⇒ SILENT: core fixtures and bare unit tests have no bundle, and an
+  advisory that fires on fixtures teaches readers to ignore it. Rejected alternative: a new `app.json`
+  key for the exemption — it would touch the manifest schema for a value only a test reads; the
+  exemption is the documented `no_inbox_source_reason=` kwarg instead.
+  **A WARNING, never a failure — because the population was measured first.** On apps main today:
+  `telegram-channel` and `discord-channel` are channel-only (singular `provider` = `channel`, empty
+  `providers`), `slack-channel` is complete (CE-8), `mail-inbox` is not a channel. So the advisory
+  flags exactly telegram + discord — the honest flag — but a hard clause would turn two already-green
+  app suites red for a doctrine that postdates their authors. Giving a control teeth before the
+  population satisfies it is an outage, not a gate. `UserWarning` rather than a bespoke subclass: the
+  message is the whole payload, and neither repo sets `filterwarnings = error`, so it stays advisory
+  where the four suites run.
+  **Tests drive the OUTCOME through the entry point**, never the private helper: real temp `app.json`
+  files for channel-only (warns, and the message is asserted to name the missing inbox seam, the app,
+  the kwarg, and the guide), channel+inbox in both declaration shapes (silent), the exemption kwarg
+  (silent), no manifest at all (silent), core's own `GoodTransport` (silent — its walk hits the repo
+  marker), a manifest with no `channel` provider (silent), and a malformed manifest (silent). Plus a
+  test that a channel-only app still passes every hard clause, which is the whole "warning not failure"
+  claim. The bundled fixture transport is the existing `GoodTransport` subclassed into a module whose
+  `__file__` sits in a real bundle dir — no second fake transport.
+  **DEVIATION (path):** T7.5's Files column cited `tests/channel_conformance.py`; the kit's real,
+  packaged home is `src/personalclaw/testing/channel_conformance.py` (`tests/` ships in no wheel, so a
+  kit there is unimportable in apps-repo CI — the DEVIATION was already recorded in the kit's module
+  docstring under T7.1). Both T7.1's and T7.5's rows now cite the real path.
+  **Left for the apps repo (surfaced, not silently deferred):** telegram-channel and discord-channel
+  still need their `inbox` `MessageSourceProvider`. The advisory now says so on every run of their
+  suites, which is the mechanism that keeps it from being forgotten; CE-7's own scope is the guide plus
+  the check. Also corrected an adjacent stale claim in `docs/architecture/inbox-channels.md` ("apps
+  *may* contribute sources, but none do today by decision") — CE-8 shipped one, and the doctrine now
+  expects one per channel app.
