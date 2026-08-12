@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import {
   Clock, RotateCcw, Loader2, Trash2, FileSymlink, History, Tag, Download, ChevronUp, FileWarning,
-  GitCompare,
+  GitCompare, Lock,
 } from 'lucide-react'
 import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
 import { notify } from '../../app/appSdk'
@@ -88,6 +88,13 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
 
   const km = useMemo(() => art ? artifactKindMeta(art.kind) : null, [art])
   const isCurrent = selVersion === null
+  // A frozen record (SM-9: today, a shared chat transcript). The server refuses every
+  // content mutation on it, so the UI must stop OFFERING one — an editor whose save
+  // always 400s is worse than no editor. Folded into the SAME condition that already
+  // governs editing a historical version, so there is one "can this be edited?" answer
+  // rather than two that can drift apart.
+  const frozen = !!art?.readonly
+  const editable = isCurrent && !frozen
   // The registry resolves how this artifact renders/edits/sanitizes — one source
   // of truth (was the ArtifactBody if/else + EDITABLE_KINDS/IFRAME_KINDS Sets).
   const ctype = useMemo(() => art ? resolveContentType({ kind: art.kind }) : null, [art])
@@ -200,13 +207,28 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
           </div>
         </div>
 
+        {/* Why this artifact can't be edited. Without it a read-only artifact just looks
+            like one whose editor is broken — the same reason the historical-version bar
+            below says which version you're on. Also names the redaction, because a
+            transcript that reads as verbatim but isn't would mislead whoever it's shown to. */}
+        {frozen && isCurrent && (
+          <div className="flex items-center gap-2 border-b border-outline/40 px-m py-1.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
+            <Lock size={12} className="text-primary" />
+            <span className="text-on-surface-low">Read-only record — a shared chat transcript with credentials redacted. It can be downloaded or deleted, never edited.</span>
+          </div>
+        )}
+
         {!isCurrent && (
           <div className="flex items-center gap-2 border-b border-outline/40 px-m py-1.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)' }}>
             <Clock size={12} style={{ color: 'var(--color-warning)' }} />
             <span className="text-on-surface-low">Viewing historical v{selVersion} (read-only)</span>
-            <button onClick={revert} disabled={busy} type="button" className="ml-auto inline-flex items-center gap-1 rounded-md px-2 h-6 text-[0.75rem]" style={{ color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)' }}>
-              <RotateCcw size={11} /> Revert to v{selVersion}
-            </button>
+            {/* No revert on a frozen artifact: the server refuses it, so offering the
+                button would only produce an error the user can do nothing about. */}
+            {!frozen && (
+              <button onClick={revert} disabled={busy} type="button" className="ml-auto inline-flex items-center gap-1 rounded-md px-2 h-6 text-[0.75rem]" style={{ color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)' }}>
+                <RotateCcw size={11} /> Revert to v{selVersion}
+              </button>
+            )}
           </div>
         )}
 
@@ -227,10 +249,10 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               title={art.name}
               docId={art.slug}
               path={art.source_path || undefined}
-              readOnly={!isCurrent}
-              onSave={isCurrent ? onSave : undefined}
+              readOnly={!editable}
+              onSave={editable ? onSave : undefined}
               commentTarget={commentTarget}
-              actions={isCurrent ? [{ icon: History, label: 'Snapshot', title: 'Save as a new version snapshot', primary: true, run: snapshot }] : undefined}
+              actions={editable ? [{ icon: History, label: 'Snapshot', title: 'Save as a new version snapshot', primary: true, run: snapshot }] : undefined}
             />
           )}
         </div>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { unavailableWhen } from '../ui/unavailable'
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Coins, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -3570,6 +3570,19 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     a.remove()
     notify('Exporting this chat — credentials are redacted from the file.', 'info')
   }
+  /** Share a chat as a read-only artifact in THIS instance's library (SM-9). Nothing is
+   *  published: no public link, no token — the artifact is reachable only through this
+   *  gateway's auth, same as every other artifact. Lands the user on the created
+   *  artifact, because "it worked" is only credible if you can see the thing. */
+  async function shareSession(s: ChatSessionSummary) {
+    try {
+      const res = await api.shareSession(s.key)
+      notify(`Shared as "${res.name}" — read-only, credentials redacted.`, 'success')
+      navigate(`artifacts/${res.slug}`)
+    } catch (e) {
+      notify(`Couldn't share this chat: ${String((e as Error)?.message || e)}`, 'error')
+    }
+  }
   async function togglePin(key: string, pinned: boolean) {
     setSessions((prev) => prev && prev.map((s) => (s.key === key ? { ...s, pinned } : s)))
     await api.pinChatSession(key, pinned).catch(() => load())
@@ -3652,6 +3665,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       // long transcript is streamed instead of buffered through JS.
       { icon: <Download size={15} />, label: 'Export as Markdown', onSelect: () => downloadExport(s.key, 'md') },
       { icon: <Download size={15} />, label: 'Export as JSON', onSelect: () => downloadExport(s.key, 'json') },
+      // Share sits beside export because it is the same intent one step further: export
+      // hands you the redacted transcript, share keeps that same redacted transcript in
+      // the library as a frozen record. The label says "read-only artifact" rather than
+      // just "Share" so nobody reads a publish-to-the-internet promise into it.
+      { icon: <Share2 size={15} />, label: 'Share as read-only artifact', onSelect: () => shareSession(s) },
       { icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(s) },
     ]
     return (

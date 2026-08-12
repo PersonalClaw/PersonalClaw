@@ -82,6 +82,9 @@ class ArtifactProvider(ABC):
         #: the artifact landed with no record of what produced it. A named parameter, not an
         #: open passthrough.
         event_metadata: dict | None = None,
+        #: Freeze the body at creation (SM-9). A provider that cannot enforce it must
+        #: raise rather than create a mutable artifact that merely claims to be frozen.
+        readonly: bool = False,
     ) -> Artifact: ...
 
     @abstractmethod

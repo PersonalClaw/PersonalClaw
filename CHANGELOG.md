@@ -37,6 +37,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **You can share a chat as a read-only artifact — inside your own instance, never on the
+  internet.** Right-click a chat in Chat History → **Share as read-only artifact** and the
+  conversation is saved into your artifacts library as a Markdown record, then opened for you. The
+  body is the *same* credential-redacted transcript the Export action produces (redaction covers
+  your own messages too, which the chat log itself does not), and the artifact is frozen: it can be
+  read, downloaded, or deleted, but never edited — a record you can point at, not a document that
+  can drift from what happened. It is created only when you ask, on an authenticated request: there
+  is no public link, no share token, and nothing shares a chat automatically. Incognito and
+  temporary chats refuse to be shared, since an artifact is durable and those chats promise not to
+  be. Export is unchanged.
 - **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of
   work.** Settings → Routing & Efficiency lets you pick a use case (chat / code & tools / reasoning)
   and a request kind (short chat, code, summarize, extract structured, long reasoning — both
