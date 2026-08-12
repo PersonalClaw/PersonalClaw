@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
-import { TextArea } from '../../ui/forms'
+import { TextArea, FieldError } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
 import { SOURCE_TONE } from './skillMeta'
@@ -147,7 +147,7 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
       {content === null
         ? <Skeleton className="h-72 w-full" />
         : <TextArea value={content} onChange={setContent} rows={18} mono />}
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s">
         <Button size="sm" variant="ghost" onClick={onBack}><X size={14} /> Cancel</Button>
         <Button size="sm" onClick={save} disabled={busy || content === null}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save</Button>
@@ -166,7 +166,7 @@ function FileView({ name, path, onBack }: { name: string; path: string; onBack: 
       <button onClick={onBack} className="self-start inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem] hover:text-on-surface"><ArrowLeft size={14} /> Back to files</button>
       <div className="font-mono text-on-surface text-[0.8125rem]">{path}</div>
       {content === undefined && !err ? <Skeleton className="h-48 w-full" />
-        : err ? <p className="text-danger text-[0.8125rem]">{err}</p>
+        : err ? <FieldError>{err}</FieldError>
         : isMd ? <Markdown>{content!}</Markdown>
         : <Code text={content!} />}
     </div>

@@ -4,7 +4,7 @@ import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 /** Guardrails — the personal safety floor (AUTONOMY-GUARDRAILS). Four groups:
  *  the incident kill switch, daily spend budgets, the outbound secret/PII scan mode,
@@ -20,12 +20,18 @@ type GuardrailsCfg = {
 export function GuardrailsPanel() {
   const [cfg, setCfg] = useState<GuardrailsCfg | null>(null)
 
-  const { data } = useCachedData('settings:guardrails', () =>
-    api.personalclawConfig().then((c) => (c.guardrails ?? {}) as GuardrailsCfg).catch(() => ({} as GuardrailsCfg)),
+  const { data, error: loadErr, refresh } = useCachedData('settings:guardrails', () =>
+    api.personalclawConfig().then((c) => (c.guardrails ?? {}) as GuardrailsCfg),
     { persist: true },
   )
   useEffect(() => { if (data) setCfg(data) }, [data])
 
+  // 🔴 A settings panel must not present FABRICATED values as saved state. `.catch(() => ({}))` made a
+  // failed config read resolve with an empty section, so every control below rendered at its fallback —
+  // indistinguishable from "this is what you saved" — and the panel offered to edit values it had never
+  // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
+  // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={3} />
 
   const patchNum = (path: string, value: number) =>
@@ -83,7 +89,14 @@ export function GuardrailsPanel() {
 function IncidentSection() {
   const [state, setState] = useState<{ active: boolean; reason: string; started_at: string } | null>(null)
   const [busy, setBusy] = useState(false)
-  useEffect(() => { api.incident().then(setState).catch(() => setState({ active: false, reason: '', started_at: '' })) }, [])
+  // 🔴 A failed read used to substitute `{ active: false }`, i.e. it FABRICATED "no incident is
+  // active" — a claim about a safety control. Measured with `/api/incident` at 500: this row rendered
+  // "Incident mode · Off — automation runs normally", with the toggle ENABLED and pointing the wrong
+  // way, and nothing said anywhere. Now the state stays `null` (unknown), which already disables the
+  // toggle via `!state`, and the hint says what happened instead of guessing.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const load = () => api.incident().then((s) => { setState(s); setLoadErr(null) }).catch(setLoadErr)
+  useEffect(() => { load() }, [])
 
   const toggle = async (on: boolean) => {
     setBusy(true)
@@ -99,7 +112,11 @@ function IncidentSection() {
     <Section title="Incident kill switch" hint="Suspend ALL unattended work — cron jobs, hooks, event triggers, subagent spawns — at once. Interactive chat keeps working. Resume is explicit.">
       <div className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
         <Row label={state?.active ? 'Incident mode is ACTIVE' : 'Incident mode'}
-          hint={state?.active ? `Unattended work suspended${state.reason ? ` — ${state.reason}` : ''}. Turn off to resume.` : 'Off — automation runs normally.'}>
+          hint={loadErr
+            ? `Couldn't check whether incident mode is active: ${String((loadErr as Error)?.message || loadErr)}`
+            : state?.active ? `Unattended work suspended${state.reason ? ` — ${state.reason}` : ''}. Turn off to resume.`
+            : state ? 'Off — automation runs normally.'
+            : 'Checking…'}>
           <Toggle on={Boolean(state?.active)} disabled={busy || !state} onChange={toggle} label="Incident mode" />
         </Row>
       </div>
@@ -110,13 +127,21 @@ function IncidentSection() {
 // ── Provider health (derived) ───────────────────────────────────────────────
 function ProviderHealthSection() {
   const [rows, setRows] = useState<ProviderHealth[] | null>(null)
-  const refresh = () => api.modelsHealth().then((r) => setRows(r.providers)).catch(() => setRows([]))
+  // Same shape as the incident read above: `.catch(() => setRows([]))` turned "we could not check" into
+  // "no background model calls recorded yet" — a reassuring sentence about a health surface, produced by
+  // a failed request. The rows stay `null` and the failure is stated.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const refresh = () => api.modelsHealth().then((r) => { setRows(r.providers); setLoadErr(null) }).catch(setLoadErr)
   useEffect(() => { refresh() }, [])
 
   return (
     <Section title="Provider health" hint="Derived from the model-call audit — breaker state, latency, and recent failures per provider. No data leaves your machine.">
       <div className="rounded-lg bg-surface-container px-4 py-3">
-        {rows === null ? (
+        {loadErr ? (
+          <div role="alert" className="text-on-surface-low text-[0.8125rem]">
+            Couldn't check provider health: {String((loadErr as Error)?.message || loadErr)}
+          </div>
+        ) : rows === null ? (
           <div className="text-on-surface-low text-[0.8125rem]">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="text-on-surface-low text-[0.8125rem]">No background model calls recorded yet.</div>

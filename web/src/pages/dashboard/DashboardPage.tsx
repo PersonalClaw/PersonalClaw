@@ -172,8 +172,17 @@ function Launcher({ navigate }: RouteProps) {
   const [text, setText] = useState('')
   const data = useComposerData()
   const [selection, setSelection] = useState<ComposerValue>({ agent: '', model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
+  // `.catch(() => [])` was worse here than elsewhere because this key is PERSISTED: the
+  // fabricated empty array was written to sessionStorage as if it were an answer, so a failed
+  // load poisoned the cache and the next visit painted "no recent chats" instantly from it.
+  // Without the catch, a rejection leaves `data` undefined and nothing is cached.
+  //
+  // The chip row stays hidden on failure rather than growing an error of its own: it is a
+  // shortcut, not the record, and the dashboard has no slot-level error idiom — inventing one
+  // for a single adopter would be speculative API. The authoritative surface (chat history)
+  // announces the failure, which is where a user goes to look for their chats.
   const { data: sessions } = useCachedData<ChatSessionSummary[]>(
-    'dashboard:recent-sessions', () => api.chatSessions().catch(() => [] as ChatSessionSummary[]), { persist: true },
+    'dashboard:recent-sessions', () => api.chatSessions(), { persist: true },
   )
 
   const launch = () => {

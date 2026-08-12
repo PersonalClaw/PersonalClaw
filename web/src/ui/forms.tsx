@@ -32,6 +32,25 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
 /** Field wrapper — label row (optional right slot for a SoonTag) + control.
  *  The label carries a stable id and is exposed via context so the wrapped
  *  control associates with it for accessibility. */
+/** The one-line failure message under a control or beside an action — the shape 30 call sites
+ *  had hand-rolled as `<p className="text-danger text-[0.8125rem]">{err}</p>`.
+ *
+ *  Byte-identical on screen; what it adds is `role="alert"`. Measured on `#/settings/design`
+ *  with `POST /api/themes` forced to 500: the failure text appeared on screen and the page
+ *  held **zero** live regions, so a screen-reader user pressed Save, watched the button return
+ *  to idle, and was told nothing. The app's other two failure surfaces — `InlineError` (the
+ *  danger band) and `LoadError` — both announce; this line was the family's silent member.
+ *
+ *  `InlineError` stays the choice for a banner ABOVE a body (a tinted, dismissible strip).
+ *  Reach for FieldError for the terse line that belongs to one control or one action. */
+export function FieldError({ children, className }: {
+  children: ReactNode
+  /** Per-site spacing only (e.g. `mt-2`, `mb-m`, `shrink-0`); the tone and size are fixed. */
+  className?: string
+}) {
+  return <p role="alert" className={cx('text-danger text-[0.8125rem]', className)}>{children}</p>
+}
+
 export function Field({ label, hint, right, children }: { label: string; hint?: string; right?: ReactNode; children: ReactNode }) {
   const labelId = useId()
   return (
@@ -95,7 +114,14 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  container / 0.9375rem field exactly, so every existing call-site is byte-
  *  identical. Behavioral/structural props (type, mono, leadingIcon, …) are grown
  *  in lockstep with the first real adopter — never ahead of one. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, ariaLabel, size = 'lg', surface = 'container', type, mono, leadingIcon }: {
+/** `required` publishes `aria-required` and nothing else — no asterisk, no colour, no layout. Measured
+ *  before this: **`aria-required` appeared 0 times in the whole app** and no `<input>`/`<textarea>`
+ *  carried the platform `required`, while **40 buttons** carried a `disabledReason` of the shape "Enter a
+ *  … first". So the app enforced mandatory fields and explained them ONLY at the submit button — a
+ *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
+ *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
+ *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -103,6 +129,8 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
   name?: string
   ariaLabel?: string
+  /** Publishes `aria-required`. Visual treatment is deliberately unchanged. */
+  required?: boolean
   size?: FieldSize
   surface?: FieldSurface
   /** Masks a secret (API keys, tokens). Defaults to a plain text field. */
@@ -131,6 +159,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
   const input = (
     <input value={value} type={type} autoFocus={autoFocus} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      aria-required={required || undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
       className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono')} />
   )

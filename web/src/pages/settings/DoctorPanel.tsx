@@ -49,7 +49,11 @@ export function DoctorPanel() {
 
       <div className="mb-l flex items-center justify-between gap-l">
         {report ? <StatusBanner report={report} /> : (
-          <div className="text-on-surface-low text-[0.8125rem]">Couldn't load the doctor report.</div>
+          // `role="alert"`: on a HEALTH surface, "we could not probe" is unrequested bad news that
+          // changes what the screen means — the same reason `LoadError` announces. Measured before:
+          // the sentence rendered with `[role="alert"]` count 0, so a screen-reader user reading the
+          // panel top-down heard the Doctor's hint and then a Re-run button, with nothing between them.
+          <div role="alert" className="text-on-surface-low text-[0.8125rem]">Couldn't load the doctor report.</div>
         )}
         <Button variant="secondary" size="sm" onClick={refresh} disabled={busy}>
           <RefreshCw size={15} className={busy ? 'animate-spin' : undefined} /> Re-run
@@ -84,7 +88,14 @@ export function DoctorPanel() {
 export function RemediationSection() {
   const [snap, setSnap] = useState<RemediationSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
-  const load = useCallback(() => { api.doctorRemediation().then(setSnap).catch(() => setSnap(null)) }, [])
+  // 🔴 `setSnap(null)` on failure left this section rendering **"Loading…" forever** while **Run now
+  // stayed enabled** — measured with `/api/doctor/remediation` at 500: no error text anywhere on the page
+  // and the maintenance button still armed. Two defects in one line: the fabricated-pendency shape (a
+  // dead end that looks like a slow network) and an action offered against state nobody could read.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const load = useCallback(() => {
+    api.doctorRemediation().then((v) => { setSnap(v); setLoadErr(null) }).catch(setLoadErr)
+  }, [])
   useEffect(() => { load() }, [load])
 
   // `measure_deficits()` returns EVERY source it can read, including the ones currently at zero
@@ -115,9 +126,17 @@ export function RemediationSection() {
       <div className="rounded-lg bg-surface-container px-4 py-3">
         <div className="flex items-center justify-between gap-l">
           <div className="text-on-surface text-[0.8125rem]">
-            {snap ? <>Health score <span className="tabular-nums" style={{ color: snap.score >= snap.target_score ? 'var(--color-success)' : 'var(--color-warning)' }}>{Math.round(snap.score)}</span> / target {snap.target_score}</> : 'Loading…'}
+            {snap
+              ? <>Health score <span className="tabular-nums" style={{ color: snap.score >= snap.target_score ? 'var(--color-success)' : 'var(--color-warning)' }}>{Math.round(snap.score)}</span> / target {snap.target_score}</>
+              : loadErr
+                ? <span role="alert">Couldn't load the health score: {String((loadErr as Error)?.message || loadErr)}</span>
+                : 'Loading…'}
           </div>
-          <Button variant="secondary" size="sm" onClick={run} loading={busy}>
+          {/* Disabled only on a READ FAILURE, not during the initial load: running maintenance whose
+              current score cannot be read means the result is unverifiable. Same reasoning as the
+              incident kill switch staying disabled while its state is unknown. */}
+          <Button variant="secondary" size="sm" onClick={run} loading={busy} disabled={Boolean(loadErr)}
+            disabledReason={loadErr ? 'The health score could not be read' : undefined}>
             <Wrench size={14} /> Run now
           </Button>
         </div>

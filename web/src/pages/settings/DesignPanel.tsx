@@ -3,13 +3,14 @@ import { Sun, Moon, Monitor, Check, Plus, Trash2, ChevronDown, RotateCcw, Slider
 import { Surface } from '../../ui/Surface'
 import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
-import { Field, TextInput } from '../../ui/forms'
+import { Field, TextInput, FieldError } from '../../ui/forms'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
 import { useMode, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
+import { PanelHeader } from './settingsUI'
 
 /** Design subpage. Cleanly separated concerns:
  *   1. COLOR SCHEME — pick a curated scheme (swatches) or fork your own. Colors only.
@@ -30,18 +31,35 @@ export function DesignPanel() {
 
   return (
     <div className="flex flex-col gap-2xl">
+      {/* Every other settings sub-route opens with `PanelHeader` — its title is the page's `h1`. These two
+          panels started straight at their first `<section>`, so `#/settings/design` measured **h1s=0** and
+          its outline began at `h2: Color scheme` with nothing above it, while all 26 siblings had exactly
+          one. The PanelHeader-as-h1 change gave every panel that USES it an h1; it could not reach a panel that never rendered one. */}
+      <PanelHeader
+        title="Design"
+        hint="The system's visual identity — color scheme, light/dark mode, type scale, density and motion. Every control here applies live to the mode you are currently in."
+      />
+
       {/* ── 1. COLOR SCHEME ── */}
       <section>
         <div className="flex items-center justify-between mb-m">
           <div>
             <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>Color scheme</h2>
-            <p className="text-on-surface-low text-[0.8125rem] mt-0.5">A scheme is the system's color identity. Tuning the <strong className="text-on-surface-var">{mode}</strong> theme.</p>
+            <p className="text-on-surface-low text-[0.8125rem] mt-0.5">A scheme is the system's color identity. Tuning the <strong className="text-on-surface-var">{mode}</strong> mode.</p>
           </div>
+          {/* Light/dark, the page's most-used control — and, measured on the live DOM, three
+              buttons announcing "Dark" "Light" "Auto" with no dimension, no role and no
+              selected state, sitting under a heading that says "Color scheme" (which they do
+              not set). Each option now publishes `Mode: <value>` plus its pressed state — the
+              shape WidthPill, HeaderModePill and the composer pills all use. Nothing visible
+              changes; the pill geometry stays hand-rolled because the bento's SegToggle is the
+              compact variant with no icon slot. */}
           <div className="inline-flex rounded-pill bg-surface-container p-1">
             {MODES.map((m) => {
               const on = preference === m.key
               return (
-                <button key={m.key} onClick={() => setPreference(m.key)} title={m.key === 'auto' ? 'Follow the system theme' : undefined}
+                <button key={m.key} onClick={() => setPreference(m.key)} aria-label={`Mode: ${m.label}`} aria-pressed={on}
+                  title={m.key === 'auto' ? "Follow the system's light/dark setting" : undefined}
                   className="inline-flex items-center gap-1.5 rounded-pill px-m h-8 text-[0.8125rem] transition-colors"
                   style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                   <m.icon size={14} /> {m.label}
@@ -245,7 +263,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
               disabledReason={!name.trim() ? 'Name the theme first' : undefined}><Plus size={15} /> {busy === 'save' ? 'Saving…' : 'Save theme'}</Button>
           </div>
         </Field>
-        {err && <p className="mt-s text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError className="mt-s">{err}</FieldError>}
       </Surface>
       {COLOR_GROUPS.map((group) => {
         const tokens = TOKENS.filter((t) => t.group === group)

@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
-import { TextArea, Segmented } from '../../ui/forms'
+import { TextArea, Segmented, FieldError } from '../../ui/forms'
 import { api, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { WorkflowGateActions } from './WorkflowGateActions'
@@ -158,7 +158,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       {channelBacked && (
         <>
           <Section label="Reclassify">
-            <Segmented options={CLASSIFICATIONS.map((c) => ({ key: c.key, label: c.label, tone: c.tone, icon: c.icon }))}
+            <Segmented ariaLabel="Reclassify" options={CLASSIFICATIONS.map((c) => ({ key: c.key, label: c.label, tone: c.tone, icon: c.icon }))}
               value={item.classification} onChange={(v) => patch({ classification: v as InboxClassification }, 'class')} />
           </Section>
 
@@ -185,7 +185,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
         </>
       )}
 
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {/* triage actions */}
       <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/40 pt-l">
@@ -302,7 +302,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
               <ExternalLink size={14} /> Edit first
             </Button>
           </div>
-          {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+          {err && <FieldError>{err}</FieldError>}
         </div>
       )}
     </Section>

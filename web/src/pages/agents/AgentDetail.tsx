@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX } from 'lucide-react'
 import { Button } from '../../ui/Button'
-import { TextArea } from '../../ui/forms'
+import { TextArea, FieldError } from '../../ui/forms'
 import { FormFooter } from '../../ui/FormFooter'
 import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
@@ -51,7 +51,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
     return (
       <div className="flex flex-col gap-l">
         <AgentForm draft={draft} onChange={setDraft} nameLocked compact />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
@@ -74,7 +74,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
         )}
         {isDefault && <span className="ml-auto inline-flex items-center gap-1 text-primary text-[0.75rem]"><Star size={12} fill="currentColor" /> Default</span>}
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {reserved && <p className="text-on-surface-low text-[0.8125rem] leading-relaxed">This is a built-in system agent (the background-chore worker, the goal-loop worker, or the goal-planner). Its definition is fixed, but you can swap which model it runs on.</p>}
 
@@ -265,7 +265,7 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
         <div className="min-w-0 flex-1"><Combobox options={opts} value={model} onChange={setModel} placeholder="Auto — use chat binding" emptyText="No active chat models" /></div>
         {dirty && <Button size="sm" onClick={save} disabled={saving}><Check size={14} /> {saving ? 'Saving…' : 'Save'}</Button>}
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
     </div>
   )
 }

@@ -3,16 +3,9 @@
 // (cookie pc_token_<port> rides along via the dev proxy). See the composer
 // API contract in docs.
 
-const SK = { 'X-Session-Key': 'dashboard:ui' }
+import { errText } from './errText'
 
-/** Read an error response body and surface the backend's {"error": "..."} message as
- *  a readable sentence rather than raw JSON text. Shared by the JSON helpers and any
- *  hand-rolled fetch (file upload, streams) so error UX is uniform. */
-async function errText(r: Response): Promise<string> {
-  const text = await r.text().catch(() => '')
-  try { const parsed = JSON.parse(text); if (parsed && typeof parsed.error === 'string') return parsed.error } catch { /* not JSON */ }
-  return text || `HTTP ${r.status}`
-}
+const SK = { 'X-Session-Key': 'dashboard:ui' }
 
 /** An Error that carries the HTTP status, so callers can distinguish a genuine 404
  *  (resource gone) from a transient network/5xx blip. `.message` is unchanged (the
@@ -467,7 +460,9 @@ export interface ScheduleRun {
   id?: string
   run_id?: string; job_id?: string; job_name?: string
   trigger?: string                          // "manual" | "scheduled"
-  started_at?: number; finished_at?: number; duration_ms?: number
+  // ISO-8601 on `/api/triggers/history`, epoch seconds on the schedule endpoints — the
+  // union is the honest declaration, and every reader goes through `epochSeconds`.
+  started_at?: number | string; finished_at?: number | string; duration_ms?: number
   status?: string                           // "success" | "error"
   summary?: string; error?: string; trace?: string
   // 🔴 The TYPED fire outcome (S163). `/api/triggers/history` returns FireRecord rows, whose

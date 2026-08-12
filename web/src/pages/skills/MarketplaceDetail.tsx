@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { withWeight } from '../../design/fontWeight'
 import { Download, Check, Loader2, FileText, FileDigit, ShieldAlert, ShieldX } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -51,8 +52,8 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
           ? <Button size="sm" variant="secondary" disabled><Check size={15} /> Installed</Button>
           : <Button size="sm" onClick={() => install(false)} disabled={installing}>{installing ? <><Loader2 size={15} className="animate-spin" /> Installing…</> : <><Download size={15} /> Install</>}</Button>}
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
-      {guarded.error && <p className="text-danger text-[0.8125rem]">{guarded.error}</p>}
+      {err && <FieldError>{err}</FieldError>}
+      {guarded.error && <FieldError>{guarded.error}</FieldError>}
 
       {/* Supply-chain scan verdict: a dangerous verdict is a hard block (no override); a
           warning is an overridable, calculated risk with "Install anyway". Findings show

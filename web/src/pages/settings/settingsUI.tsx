@@ -8,10 +8,20 @@ import { FieldLabelProvider, NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
+/** A settings sub-route's page title, and therefore the TOP-LEVEL heading of that page — an `h1`.
+ *  Measured before this: every `#/settings/*` route had **ZERO** `h1`s and its outline began at `h2`
+ *  with nothing above it, while `#/settings` itself (`h1: Settings`) and every other destination
+ *  (`h1: Tasks`, …) had one. 30 call sites, one per panel.
+ *
+ *  No `level` prop: the only settings panel also mounted elsewhere is Inbox, and `#/inbox` renders its
+ *  OWN copy (`pages/inbox/InboxSettingsPanel.tsx`), which does not use this component — so no caller
+ *  needs a lower level, and a prop for a hypothetical one would be speculative.
+ *
+ *  The tag changes; the size does not — `data-type="title-l"` drives that, so this is pixel-identical. */
 export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-l">
-      <h2 className="text-on-surface" data-type="title-l">{title}</h2>
+      <h1 className="text-on-surface" data-type="title-l">{title}</h1>
       {hint && <p className="mt-1 text-on-surface-low text-[0.8125rem]">{hint}</p>}
     </div>
   )
@@ -20,7 +30,9 @@ export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
 export function Section({ title, hint, children }: { title?: string; hint?: string; children: ReactNode }) {
   return (
     <section className="mb-2xl">
-      {title && <h3 className="mb-s text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</h3>}
+      {/* `h2`, not `h3`: the panel title above is an `h1`, so a level-3 section would skip a level
+          (axe `heading-order`). Size is set by the class, not the tag — pixel-identical. */}
+      {title && <h2 className="mb-s text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</h2>}
       {hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>}
       {children}
     </section>

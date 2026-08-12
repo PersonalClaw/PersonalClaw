@@ -4,10 +4,10 @@ import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { spring } from '../../design/motion'
 import { useCachedData } from '../../lib/useCachedData'
-import { api, type DiscoverResponse, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
+import { api, type DiscoverTip, type DiscoverTryIt } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
 import { accentChip } from '../../design/accent'
@@ -23,8 +23,13 @@ import { accentChip } from '../../design/accent'
 export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   // Cached for instant paint on revisit; persist:false so a dismiss made on the
   // dashboard (or another tab) never shows a stale tip after a hard reload.
-  const { data, refresh } = useCachedData(
-    'discover', () => api.discover().catch(() => null as DiscoverResponse | null), { persist: false },
+  // No `.catch(() => null)`. Swallowing the rejection made `data` falsy, which this render reads as
+  // "Discover is off" — so a failed request did not merely say nothing, it made a FALSE CLAIM ABOUT A
+  // SETTING and offered a CTA to "turn them back on in Settings › Legibility", a setting that is
+  // already on. Measured against a 500 on `/api/legibility/discover` with a cold sessionStorage.
+  // Letting the rejection through is what makes `error` — and the branch below — exist at all.
+  const { data, error, refresh } = useCachedData(
+    'discover', () => api.discover(), { persist: false },
   )
 
   // Dismiss persists server-side; on success refetch so the tip drops from every
@@ -54,7 +59,10 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
       }
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {data === undefined ? (
+        {data === undefined && error ? (
+          // Before the loading branch, or a failed fetch spins the skeleton forever.
+          <LoadError what="tips" error={error} onRetry={refresh} />
+        ) : data === undefined ? (
           <ListSkeleton rows={6} />
         ) : !data || !data.enabled ? (
           <EmptyState

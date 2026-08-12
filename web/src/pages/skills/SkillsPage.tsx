@@ -13,7 +13,7 @@ import { Modal } from '../../ui/Modal'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
-import { TextInput, TextArea } from '../../ui/forms'
+import { TextInput, TextArea, FieldError } from '../../ui/forms'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
 import { SOURCE_TONE, sourceLabel, fmtInstalls } from './skillMeta'
@@ -187,7 +187,7 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 'min(680px, 80vw)' }}>
         <div style={{ maxWidth: 280 }}><TextInput value={name} onChange={setName} placeholder="skill-name" autoFocus ariaLabel="Skill name" /></div>
         <TextArea value={content} onChange={setContent} rows={14} mono ariaLabel="Skill definition (SKILL.md)" />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-s">
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           <Button size="sm" onClick={create} disabled={busy}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create skill</Button>

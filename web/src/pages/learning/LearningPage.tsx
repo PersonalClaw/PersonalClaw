@@ -123,6 +123,7 @@ export function LearningPage() {
             </div>
             {kindChips.length > 1 && (
               <Segmented
+                ariaLabel="Proposal kind"
                 options={kindChips.map((c) => ({ key: c.key, label: c.label }))}
                 value={kind}
                 onChange={setKind}

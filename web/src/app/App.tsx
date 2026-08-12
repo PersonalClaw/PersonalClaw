@@ -197,7 +197,14 @@ function AppInner() {
   // navApps. Only enabled, UI-bearing, user-pinned apps get a nav target
   // (id `app/<name>`) beneath the Store tile. Re-read live on pin changes.
   const { data: installedApps } = useCachedData<AppSummary[]>(
-    'apps', () => api.apps().catch(() => [] as AppSummary[]), { persist: true },
+    // 🔴 THE POISONER, and the reason this fix spans four files. This hook lives in the SHELL, so it
+    // runs on every route before any page mounts. `useCachedData` caches by KEY, and `.catch(() => [])`
+    // made a failed fetch RESOLVE with an empty list, which the hook then persisted — so
+    // `sessionStorage['cache:apps']` read `"[]"` and every other consumer of `'apps'` saw a successful
+    // empty result. Measured: with all `/api/apps*` calls at 500, `#/apps` still rendered "No apps
+    // installed" even after that surface itself stopped swallowing, because its `data` was `[]` and not
+    // `undefined`. The badge below already tolerates `undefined` (it is the pre-fetch state).
+    'apps', () => api.apps(), { persist: true },
   )
   const [navAppSet, setNavAppSet] = useState<string[]>(() => getNavApps())
   useEffect(() => onNavAppsChange(() => setNavAppSet(getNavApps())), [])

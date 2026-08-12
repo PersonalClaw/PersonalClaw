@@ -3,6 +3,7 @@ import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalS
 import type { LucideIcon } from 'lucide-react'
 import { api, type ScheduleJob, type HookItem, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
+import { epochSeconds } from '../../lib/epoch'
 
 // ── Trigger kind: schedule (a tick fires), lifecycle (an agent-loop event fires),
 //    event (a data event — an inbox message or a memory write — fires), or store (a
@@ -305,9 +306,10 @@ export function eventMatcherValue(t: WireTrigger, field: EventMatcherField): str
   return String((t as unknown as Record<string, unknown>)[field] ?? '')
 }
 
-export function relPast(ts?: number | null): string {
-  if (!ts) return 'never'
-  const s = Date.now() / 1000 - ts
+export function relPast(ts?: number | string | null): string {
+  const t = epochSeconds(ts)
+  if (t == null) return 'never'
+  const s = Date.now() / 1000 - t
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`

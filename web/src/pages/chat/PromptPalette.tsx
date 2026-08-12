@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { Loader2, Search, ChevronLeft, FileText, CornerDownLeft } from 'lucide-react'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
@@ -72,7 +73,7 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
               }}
               trailingSlot={loadingDetail ? <Loader2 size={14} className="shrink-0 animate-spin text-on-surface-low" /> : null} />
           </div>
-          {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+          {err && <FieldError>{err}</FieldError>}
           <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-outline-variant/40">
             {filtered === null ? (
               <div className="flex h-40 items-center justify-center"><Loader2 size={18} className="animate-spin text-on-surface-low" /></div>
@@ -170,7 +171,7 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
         <pre className="max-h-44 overflow-y-auto rounded-md bg-surface-container px-3 py-2 text-on-surface-var text-[0.8125rem] whitespace-pre-wrap break-words">{preview || '…'}</pre>
       </div>
 
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       <div className="flex items-center justify-end gap-2 border-t border-outline-variant/40 pt-3">
         <Button variant="ghost" size="sm" onClick={onBack}>Cancel</Button>

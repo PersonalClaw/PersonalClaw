@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 import { spring, bounce, expr } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
+import { useFieldLabelId } from './forms'
 
 export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
 
@@ -38,6 +39,14 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
 }) {
   const sm = size === 'sm'
   const reduce = useReducedMotion()
+  // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
+  // `ariaLabel` always WINS, otherwise the published label id names the group. Measured before this —
+  // a DOM census of 14 routes found **7 unnamed tablists** (9 named), so a screen-reader user heard
+  // "Critical / High / Medium / Low" with no statement of WHAT was being chosen. Six of those sit
+  // inside a `Field` whose visible label already says it ("Status", "Priority", "When", "Runs",
+  // "Approval mode", "Trigger kind") — the label existed, the group just never claimed it.
+  const fieldLabelId = useFieldLabelId()
+  const claimsFieldLabel = !!fieldLabelId && !ariaLabel
   // Responsive collapse (collapse='menu'): measure the natural strip width against
   // the container and flip to the compact pill when it can't fit. A hidden probe
   // renders the real strip off-flow so we get its true intrinsic width regardless
@@ -113,7 +122,10 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   // job of `collapse` ('scroll' / 'menu'), not of silently crushing every target: a strip that cannot
   // fit should scroll or fold, and a tab that is 15px wide is neither legible nor tappable.
   const strip = (
-    <div role="tablist" aria-label={ariaLabel} className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+    <div role="tablist"
+      aria-labelledby={claimsFieldLabel ? fieldLabelId : undefined}
+      aria-label={claimsFieldLabel ? undefined : ariaLabel}
+      className={`inline-flex items-center gap-0.5 rounded-pill ${sm ? 'p-0.5 bg-surface-container/60' : 'p-1 bg-surface-container'} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       {options.map((o, idx) => {
         const on = o.key === value
         const Icon = o.icon
@@ -200,6 +212,9 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} disabled={disabled}
           aria-label={ariaLabel ?? active?.label ?? active?.key} aria-expanded={open}
+          // Matches `ProjectPicker`, the sibling whose popup is also a listbox: the trigger says
+          // a listbox is coming, not just that something expanded.
+          aria-haspopup="listbox"
           title={bare ? `${ariaLabel ? `${ariaLabel}: ` : ''}${active?.label ?? active?.key}` : undefined}
           className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
           style={fvs(550)}>
@@ -212,7 +227,7 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
       {(close) => (
         <div role="listbox" aria-label={ariaLabel}>
           {options.map((o) => (
-            <MenuRow key={o.key} icon={o.icon ? <o.icon size={15} /> : undefined}
+            <MenuRow key={o.key} role="option" icon={o.icon ? <o.icon size={15} /> : undefined}
               label={o.label ?? o.key} selected={o.key === value}
               onClick={() => { onChange(o.key); close() }} />
           ))}
