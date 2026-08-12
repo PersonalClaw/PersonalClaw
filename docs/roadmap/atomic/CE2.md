@@ -16,6 +16,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `CE2-4` | ✅ | Dynamic tool-group activation core: ToolGroup derivation, reset_tools meta-tool, assembly-seam group filter, per-surface defaults | — | SC#7 (background session carries only core+memory; stub + tool_search names inactive group; one reset_tools activates it with instructions) + SC#8 (reset_tools(groups={}) leaves always_on core present, all tools still dispatchable) + SC#10 (groups-off byte-identical schema, snapshot-locked) met; measured 56% smaller background surface; groups_enabled default False; log [2026-07-27][S4] DONE, gate green (8235 passed) |
 | `CE2-5` | ✅ | Declaration surfaces: per-capability gating, groups API endpoints, config-wiring completion + Tools-page FE | `CE2-4` | SC#9 met: app-contributed tool provider appears as its own group with zero app-side code, unbound capability group (subagents with no model) never renders + reset_tools refuses it; flag PATCH round-trips + persists; perf regression from unconditional offerability probe found & fixed (probe only when grouping active); log [2026-07-28][S5] DONE, gate green (8243 passed) |
 | `CE2-6` | ✅ | Codebase graph: tree-sitter indexer + SQLite store + code_map tools + SDLC planning + @-mention centrality | — | As-a-user validation: both tools in GET /api/tools (group=workflows), code_map_overview returns real repo shape, @-mention search centrality-ranked; measured 3.9s full index / 37ms incremental on 1,467-file repo; fail-soft verified with tree_sitter imports forced to fail; centrality distinct-file + name-rarity fix locked by test; log [2026-07-28][S6] DONE 'completes CONTEXT-ECONOMY', gate green (8575 passed) |
+| `CE2-7` | ✅ | Grammar availability is a capability, not an assertion: reason-recording + a skip gate for the codegraph suite | `CE2-6` | parser_status() returns (available, reason) and records WHY a grammar would not load once per language with the remedy; parser_available keeps its bool contract; tests/test_codegraph.py probes the capability once and SKIPS the 35 grammar-dependent tests naming the recorded reason instead of failing, while an unimportable tree_sitter_language_pack still hard-fails as the packaging regression it is; the self-contradicting test_parser_available_is_a_question_not_an_assertion tests the contract it names; a failing loader is proven to skip (37 passed / 35 skipped / 0 failed) and a working one to pass 72/72 |
 
 ## Atom scopes
 
@@ -67,3 +68,37 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 **Done when:** As-a-user validation: both tools in GET /api/tools (group=workflows), code_map_overview returns real repo shape, @-mention search centrality-ranked; measured 3.9s full index / 37ms incremental on 1,467-file repo; fail-soft verified with tree_sitter imports forced to fail; centrality distinct-file + name-rarity fix locked by test; log [2026-07-28][S6] DONE 'completes CONTEXT-ECONOMY', gate green (8575 passed)
 
+### `CE2-7` — Grammar availability is a capability, not an assertion
+
+**Status:** done
+
+**Design.** `codegraph/parse.py` already treated a missing grammar as normal ("False is a normal answer, not an
+error"), and `tests/test_codegraph.py` asserted the opposite: `assert parser_available("python") is True`, in a test
+named `test_parser_available_is_a_question_not_an_assertion`. On 2026-08-12 that self-contradiction reddened two
+unrelated PRs — #1144 with 2 failures and #1162 with 21, every one of them in this file — because a GitHub runner
+could not load the python grammar. The grammars are not shipped in the wheels: `tree_sitter_language_pack` fetches
+each one into a per-user cache on first use, so a cold cache without network yields no grammar. That is a capability
+absence, not a defect, and it must not red a whole suite.
+
+Three moving parts, in order of importance. **(1) The reason is recorded.** `parser_status()` returns
+`(language, available, reason)` and `_record_load_failure` logs `"<ExceptionType>: <message>"` once per language —
+with the grammar cache path and a fixed remedy — at WARNING for a language the indexer actually asks for and DEBUG
+otherwise. Before this, CI reported only the absence, so there was nothing to diagnose from. `parser_available`
+keeps its `bool` contract; callers who need the reason ask `parser_status`. **(2) The test posture matches the
+product.** The suite probes the capability once at module scope and skips the 35 grammar-dependent tests naming the
+recorded reason; the other 37 — every fail-soft path, the path/key math, tool wiring, budget caps — keep running,
+which is the property this file exists to assert. The floor that never skips is `test_the_parser_dependency_is_installed`:
+the wheels are declared in `pyproject.toml`, so an unimportable package is a packaging regression and stays a hard
+red. **(3) No caching.** The language pack already memoizes the loaded grammar (measured: 5.8 ms first load, 0.1 ms
+for the next 200), so a local cache would save microseconds while sharing one `Parser` across the gateway's threads,
+and a `Parser` is not safe to drive from two threads at once.
+
+**Implementation plan.**
+1. `ParserStatus` dataclass + `parser_status()`; keep `parser_available()` as the bool projection.
+2. `_record_load_failure()` — idempotent per `(language, reason)`, cleared on a later success, WARNING only for
+   `LANGUAGE_BY_SUFFIX` languages so a caller probing an exotic grammar does not spam the log.
+3. `PARSER_REMEDY` naming the pre-fetch command, and the grammar cache dir in the warning.
+4. `parse_source` names the reason on the per-file path instead of swallowing it.
+5. Test file: module-scope probe, `needs_grammar` skipif, 35 marks, the dependency floor, the contract test, and a
+   monkeypatched-loader test that the reason is non-empty.
+6. Prove both postures: 72/72 with a grammar, 37 passed / 35 skipped / 0 failed with the loader raising.

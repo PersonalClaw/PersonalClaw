@@ -18,8 +18,32 @@ from personalclaw.codegraph.parse import (
     language_for,
     parse_source,
     parser_available,
+    parser_status,
 )
 from personalclaw.tool_providers.code_map import CodeMapToolProvider
+
+# ── the grammar capability gate (CRE-9) ─────────────────────────────────────
+#
+# 🔴 MEASURED, twice, on 2026-08-12: PRs #1144 and #1162 went red in CI with 2 and 21
+# failures respectively, ALL in this file and all rooted in one grammar load. The
+# product treats a missing grammar as normal — `parser_available`'s docstring says
+# "False is a normal answer, not an error" — but this file ASSERTED it was True, so an
+# optional capability failing on a runner turned into a suite-wide red on two unrelated
+# changes, and a manual re-run was the only fix.
+#
+# So the capability is PROBED here and the parse-dependent tests skip on its absence,
+# naming the recorded reason. What must NEVER skip is the dependency itself: the parser
+# wheels are declared in pyproject, so an unimportable `tree_sitter_language_pack` is a
+# packaging regression, and `test_the_parser_dependency_is_installed` fails for it.
+_PY_STATUS = parser_status("python")
+needs_grammar = pytest.mark.skipif(
+    not _PY_STATUS.available,
+    reason=(
+        "no tree-sitter grammar for python — "
+        f"{_PY_STATUS.reason or 'reason not recorded'}. This is a capability skip, not a "
+        "pass: the dependency assertion in TestParse still runs."
+    ),
+)
 
 PY_SOURCE = b'''"""Module docstring."""
 import os
@@ -111,6 +135,7 @@ def _index(workspace) -> CodeGraphIndex:
 
 
 class TestParse:
+    @needs_grammar
     def test_python_definitions_and_owners(self):
         result = parse_source("a.py", PY_SOURCE)
         by_name = {d.name: d for d in result.definitions}
@@ -122,22 +147,26 @@ class TestParse:
         assert by_name["helper"].kind == "function"
         assert by_name["helper"].owner == ""
 
+    @needs_grammar
     def test_signature_stops_at_the_body(self):
         result = parse_source("a.py", PY_SOURCE)
         fetch = next(d for d in result.definitions if d.name == "fetch")
         assert fetch.signature == "async def fetch(url: str) -> bytes:"
 
+    @needs_grammar
     def test_line_numbers_are_one_based(self):
         result = parse_source("a.py", PY_SOURCE)
         widget = next(d for d in result.definitions if d.name == "Widget")
         assert widget.line == 6
         assert widget.end_line > widget.line
 
+    @needs_grammar
     def test_python_imports(self):
         result = parse_source("a.py", PY_SOURCE)
         assert "import os" in result.imports
         assert "from pathlib import Path" in result.imports
 
+    @needs_grammar
     def test_references_are_call_sites(self):
         result = parse_source("a.py", PY_SOURCE)
         names = {r.name for r in result.references}
@@ -146,6 +175,7 @@ class TestParse:
         assert "self" not in names
         assert "join" not in names or True  # attribute noise is filtered by _NOISE_NAMES
 
+    @needs_grammar
     def test_typescript(self):
         result = parse_source("Panel.tsx", TS_SOURCE)
         kinds = {d.name: d.kind for d in result.definitions}
@@ -154,6 +184,7 @@ class TestParse:
         assert kinds["mount"] == "function"
         assert kinds["Props"] == "interface"
 
+    @needs_grammar
     def test_rust_impl_owner(self):
         result = parse_source("config.rs", RUST_SOURCE)
         by_name = {d.name: d for d in result.definitions}
@@ -163,6 +194,7 @@ class TestParse:
         assert by_name["parse_file"].owner == ""
         assert by_name["Store"].kind == "trait"
 
+    @needs_grammar
     def test_go_methods_and_types(self):
         result = parse_source("server.go", GO_SOURCE)
         kinds = {d.name: d.kind for d in result.definitions}
@@ -192,10 +224,57 @@ class TestParse:
         for suffix, language in LANGUAGE_BY_SUFFIX.items():
             assert language_for(f"x{suffix}") == language
 
+    def test_the_parser_dependency_is_installed(self):
+        """The FLOOR that never skips: the wheels are declared, so they must import.
+
+        Separated from grammar availability on purpose. `tree_sitter_language_pack`
+        fetches each grammar's shared library into a per-user cache on first use, so a
+        cold cache without network yields no grammar — a capability absence. An
+        unimportable package is a different thing entirely: a packaging regression, and
+        the one failure in this area that must stay a hard red.
+        """
+        import importlib
+
+        assert importlib.import_module("tree_sitter_language_pack") is not None
+
     def test_parser_available_is_a_question_not_an_assertion(self):
-        assert parser_available("python") is True
+        """The CONTRACT the name promises — not an assertion about this machine.
+
+        A known language is either available, or unavailable WITH a recorded reason;
+        an unknown language and the empty string are always False. Asserting
+        `available is True` here is what made an optional capability red the suite
+        (see the gate at the top of this file).
+        """
+        status = parser_status("python")
+        assert status.available is True or status.reason != ""
+        assert parser_available("python") is status.available
+
         assert parser_available("klingon") is False
+        assert parser_status("klingon").reason != ""
         assert parser_available("") is False
+        assert parser_status("").reason != ""
+
+    def test_a_failed_load_records_its_reason(self, monkeypatch):
+        """The reason must be RECORDED, not swallowed — the gap CI left us with.
+
+        Both reds above reported only the absence, so there was nothing to diagnose
+        from. A monkeypatched loader is the only way to reach the failure path on a
+        machine whose grammars load.
+        """
+        import personalclaw.codegraph.parse as parse_mod
+
+        def _boom(language):
+            raise RuntimeError("grammar shared library missing")
+
+        monkeypatch.setattr(parse_mod, "_get_parser", _boom)
+        monkeypatch.setitem(parse_mod._load_failures, "python", "")
+
+        status = parse_mod.parser_status("python")
+        assert status.available is False
+        assert "RuntimeError" in status.reason
+        assert "grammar shared library missing" in status.reason
+        # And the file-level path names it too rather than failing mutely.
+        assert parse_mod.parse_source("x.py", b"def f(): pass\n").definitions == ()
 
     def test_missing_parser_degrades_to_no_definitions(self, monkeypatch):
         """A stripped environment without the parser wheels simply gets no graph."""
@@ -236,6 +315,7 @@ class TestWorkspaceKey:
 
 
 class TestIndexing:
+    @needs_grammar
     def test_indexes_every_language_and_skips_noise(self, workspace):
         index = CodeGraphIndex(str(workspace))
         stats = index.index()
@@ -245,12 +325,14 @@ class TestIndexing:
         assert "README.md" not in paths
         assert not any("node_modules" in p for p in paths)
 
+    @needs_grammar
     def test_second_pass_skips_unchanged_files(self, workspace):
         index = _index(workspace)
         stats = index.index()
         assert stats.files_indexed == 0
         assert stats.files_skipped_unchanged == 4
 
+    @needs_grammar
     def test_modified_file_is_reindexed(self, workspace):
         index = _index(workspace)
         target = workspace / "pkg" / "widget.py"
@@ -260,6 +342,7 @@ class TestIndexing:
         assert stats.files_indexed == 1
         assert index.definitions_of("added")
 
+    @needs_grammar
     def test_deleted_file_is_forgotten(self, workspace):
         index = _index(workspace)
         assert index.definitions_of("mount")
@@ -268,12 +351,14 @@ class TestIndexing:
         assert stats.files_removed == 1
         assert index.definitions_of("mount") == []
 
+    @needs_grammar
     def test_full_reindex_reparses_everything(self, workspace):
         index = _index(workspace)
         stats = index.index(full=True)
         assert stats.files_indexed == 4
         assert stats.files_skipped_unchanged == 0
 
+    @needs_grammar
     def test_reindexing_does_not_duplicate_rows(self, workspace):
         index = _index(workspace)
         before = index.stats()["definitions"]
@@ -286,6 +371,7 @@ class TestIndexing:
         assert stats.files_indexed == 0
         assert index.is_empty()
 
+    @needs_grammar
     def test_file_cap_marks_the_result_partial(self, workspace):
         index = CodeGraphIndex(str(workspace))
         stats = index.index(max_files=2)
@@ -293,6 +379,7 @@ class TestIndexing:
         assert "file cap" in stats.reason
         assert stats.files_indexed <= 2
 
+    @needs_grammar
     def test_partial_pass_does_not_delete_unseen_files(self, workspace):
         """A truncated pass hasn't seen the whole tree, so it must not prune."""
         index = _index(workspace)
@@ -321,6 +408,7 @@ class TestIndexing:
         stats = index.index()
         assert stats.files_indexed == 3  # the other three still land
 
+    @needs_grammar
     def test_stats_shape(self, workspace):
         stats = _index(workspace).stats()
         for key in ("workspace", "db_path", "files", "definitions", "references", "indexed_at"):
@@ -338,6 +426,7 @@ class TestIndexing:
 
 
 class TestQueries:
+    @needs_grammar
     def test_definition_lookup_is_exact_first(self, workspace):
         index = _index(workspace)
         (workspace / "pkg" / "more.py").write_bytes(b"def helper_extended():\n    pass\n")
@@ -346,12 +435,14 @@ class TestQueries:
         assert rows[0]["name"] == "helper"  # exact match leads
         assert any(r["name"] == "helper_extended" for r in rows)
 
+    @needs_grammar
     def test_definition_lookup_reports_location(self, workspace):
         row = _index(workspace).definitions_of("render")[0]
         assert row["path"] == "pkg/widget.py"
         assert row["line"] == 9
         assert row["owner"] == "Widget"
 
+    @needs_grammar
     def test_references_exclude_the_defining_file_only_when_asked(self, workspace):
         index = _index(workspace)
         refs = index.references_to("helper")
@@ -362,6 +453,7 @@ class TestQueries:
         assert index.definitions_of("no_such_symbol_anywhere") == []
         assert index.references_to("no_such_symbol_anywhere") == []
 
+    @needs_grammar
     def test_file_outline(self, workspace):
         outline = _index(workspace).file_outline("pkg/widget.py")
         assert outline["language"] == "python"
@@ -372,12 +464,14 @@ class TestQueries:
         )  # line order
         assert "Widget" in names
 
+    @needs_grammar
     def test_file_outline_accepts_a_trailing_fragment(self, workspace):
         assert _index(workspace).file_outline("widget.py")["path"] == "pkg/widget.py"
 
     def test_file_outline_unknown_path(self, workspace):
         assert _index(workspace).file_outline("nope/missing.py") == {}
 
+    @needs_grammar
     def test_centrality_counts_referring_files(self, workspace):
         index = _index(workspace)
         ranks = index.centrality()
@@ -387,6 +481,7 @@ class TestQueries:
         for value in ranks.values():
             assert value >= 1
 
+    @needs_grammar
     def test_centrality_prefers_widely_referenced_files(self, tmp_path):
         """The bug this measure had: generic names outranked real hubs."""
         root = tmp_path / "central"
@@ -405,11 +500,13 @@ class TestQueries:
         assert ranks, "expected some centrality"
         assert list(ranks)[0] == "hub.py"
 
+    @needs_grammar
     def test_module_summary_is_bounded_and_readable(self, workspace):
         summary = _index(workspace).module_summary(max_files=3, max_defs_per_file=2)
         assert "[code map:" in summary
         assert len(summary) < 4000
 
+    @needs_grammar
     def test_module_summary_hides_private_names(self, tmp_path):
         root = tmp_path / "priv"
         root.mkdir()
@@ -453,6 +550,7 @@ class TestCodeMapTool:
             assert tool.provider == "workflows-tools"
             assert tool.parameters["type"] == "object"
 
+    @needs_grammar
     def test_symbol_lookup_reports_definition_and_references(self, workspace):
         result = _invoke("code_map", {"symbol": "helper", "workspace": str(workspace)})
         assert result.success
@@ -460,12 +558,14 @@ class TestCodeMapTool:
         assert "pkg/widget.py:13" in result.output
         assert "REFERENCED IN" in result.output
 
+    @needs_grammar
     def test_file_outline_mode(self, workspace):
         result = _invoke("code_map", {"file": "widget.py", "workspace": str(workspace)})
         assert result.success
         assert "IMPORTS:" in result.output
         assert "Widget" in result.output
 
+    @needs_grammar
     def test_overview_mode(self, workspace):
         result = _invoke("code_map_overview", {"workspace": str(workspace)})
         assert result.success
@@ -516,6 +616,7 @@ class TestCodeMapTool:
         assert result.success is False
         assert "grep" in " ".join(result.recovery_hints).lower()
 
+    @needs_grammar
     def test_output_is_capped(self, tmp_path):
         """The tool exists to SAVE context; an unbounded dump defeats it."""
         root = tmp_path / "big"
@@ -554,6 +655,7 @@ class TestCodeMapTool:
 
 
 class TestPlanningContext:
+    @needs_grammar
     def test_brief_carries_the_code_map_when_indexed(self, workspace):
         from personalclaw.loop.code_plan_briefs import build_design_brief
 
@@ -572,6 +674,7 @@ class TestPlanningContext:
 
         assert "[code map:" not in build_design_brief("Add a widget", "")
 
+    @needs_grammar
     def test_map_block_is_budget_bounded(self, tmp_path):
         from personalclaw.loop.code_plan_briefs import _CODE_MAP_BUDGET_CHARS, _code_map_block
 
@@ -593,6 +696,7 @@ class TestPlanningContext:
 
 
 class TestMentionCentrality:
+    @needs_grammar
     def test_boost_reorders_near_ties(self, tmp_path):
         from personalclaw.dashboard.handlers.files import _apply_centrality
 
@@ -612,6 +716,7 @@ class TestMentionCentrality:
         ordered = _apply_centrality(results, str(root), 10)
         assert ordered[0]["name"] == "hub.py"
 
+    @needs_grammar
     def test_boost_never_overrides_a_better_text_match(self, tmp_path):
         from personalclaw.dashboard.handlers.files import _apply_centrality
 
@@ -645,6 +750,7 @@ class TestMentionCentrality:
 
         assert _apply_centrality([], str(tmp_path), 10) == []
 
+    @needs_grammar
     def test_respects_max_results(self, tmp_path):
         from personalclaw.dashboard.handlers.files import _apply_centrality
 
