@@ -3,7 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { AnimatePresence, motion, LayoutGroup } from 'framer-motion'
 import { MessageSquare, GripVertical } from 'lucide-react'
 import type { TaskItem } from '../../lib/api'
-import { STATUSES, priorityMeta, dueMeta, exitDoneCount } from './taskMeta'
+import { STATUSES, signalPriority, dueMeta, exitDoneCount } from './taskMeta'
 import { prereqIds } from './dag'
 import { spring, bounce, expr } from '../../design/motion'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../../ui/BoardCollapse'
@@ -117,7 +117,7 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
   t: TaskItem; tone: string; onOpen: () => void
   onDragStart: (e: React.DragEvent) => void; onDragEnd: () => void; dragging: boolean
 }) {
-  const pm = priorityMeta(t.priority)
+  const pm = signalPriority(t.priority)
   const due = dueMeta(t.due)
   const exit = t.exit_criteria ?? []
   const readOnly = t.provider === 'project'
@@ -156,7 +156,7 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
       <div className="pl-1.5">
         <div className="text-on-surface text-[0.8125rem] leading-snug line-clamp-2 pr-4" style={fvs(500)}>{t.title}</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>
+          {pm && <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>}
           {due && <span className="inline-flex items-center rounded-pill px-2 h-5 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
           {(t.labels ?? []).slice(0, 1).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
         </div>

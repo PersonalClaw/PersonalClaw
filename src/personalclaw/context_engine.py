@@ -194,6 +194,11 @@ def active_recall_block(
     user's latest message. Bounded by the configured timeout; trips a circuit
     breaker after repeated timeouts (then stays off this process). Any failure →
     "" (the turn proceeds ungrounded rather than stalling).
+
+    **Partition-first for a project-local session (WORK-CONTAINERS §1.6).** A session whose
+    cwd is a project's ``context_dir`` recalls from its OWN memory partition first, then
+    from the global partition, whose hits are source-labeled and fenced by
+    ``memory_locality.compose_recall``. Ordering only — a global-only hit still surfaces.
     """
     global _recall_consecutive_timeouts
     enabled, timeout_ms = _active_recall_enabled()
@@ -205,10 +210,17 @@ def active_recall_block(
     import concurrent.futures
 
     def _recall() -> str:
+        from personalclaw import memory_locality
         from personalclaw.memory_service import service_for
 
         memory = builder.get_memory_for(cwd, memory_store)
-        return service_for(memory).active_recall(text, cap=2000)
+        local = service_for(memory).active_recall(text, cap=2000)
+        # Both halves run inside the SAME bounded worker, so the cross-partition search
+        # shares the one timeout + circuit breaker the recall path already enforces —
+        # locality must not be able to double a turn's recall budget.
+        return memory_locality.compose_recall(
+            builder, text, cwd=cwd, local=local, cap=2000, memory_store=memory_store
+        )
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:

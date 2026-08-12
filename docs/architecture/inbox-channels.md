@@ -18,9 +18,12 @@ against core protocols). Paths are relative to
 - **AI drafts** write on behalf of the operator (the `dashboard.user_name`
   identity), not the bot.
 - **Sources** — `inbox_providers/` ships native push + filesystem sources;
-  the seam is entry-point discoverable (`provider_registry.py`) so apps *may*
-  contribute sources, but none do today by decision: channels are channel
-  providers, not inbox sources.
+  the seam is entry-point discoverable (`provider_registry.py`) and apps
+  contribute their own. A **channel app is expected to register one**: the
+  vendor-completeness pattern makes the channel transport and the inbox message
+  source two seams of one bundle, so messages arriving while no session is live
+  still reach the Inbox. See
+  [build-a-channel-app.md](../guides/build-a-channel-app.md) for the checklist.
 - **Settings** live solely in
   `~/.personalclaw/entity_settings/inbox.json` (`auto_cleanup_enabled`,
   `retention_days`) with type- and range-guarded PUTs in
@@ -149,6 +152,9 @@ remain in core — is covered in [provider-boundary.md](provider-boundary.md).
 
 ## Related docs
 
+- Building a new channel (the must/should/may obligation tables, trust and
+  pairing, the conformance kit, vendor completeness):
+  [build-a-channel-app.md](../guides/build-a-channel-app.md)
 - Session model & memory modes on channel threads:
   [chat-sessions.md](chat-sessions.md)
 - The boundary judgments behind the channel split:

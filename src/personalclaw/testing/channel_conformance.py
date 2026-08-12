@@ -33,6 +33,12 @@ provider instance it drives the clauses the plan's §C4 names:
    one edit per ``min_edit_interval``, and ``stop_stream`` force-flushes the exact final
    text. A transport declaring ``edits=False`` (email) is asserted the other way: its
    ``start_stream`` must return ``""`` so core skips animation entirely.
+9. **vendor-seam completeness (ADVISORY)** — the only clause that WARNS instead of
+   failing: a provider whose owning ``app.json`` registers a ``channel`` provider but no
+   ``inbox`` message source gets a ``UserWarning`` naming the missing seam (amendment
+   2026-07-26 rule 1). Suppress it with ``no_inbox_source_reason=`` when the vendor has no
+   message-source semantics. See ``_warn_on_incomplete_vendor_seams`` for why an advisory
+   rather than a failure, and ``docs/guides/build-a-channel-app.md`` for the checklist.
 
 Failures name the violated obligation, not just the expression, because the reader is
 usually an app author who has never seen this file.
@@ -76,7 +82,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import itertools
+import json
+import warnings
 from dataclasses import fields
+from pathlib import Path
 from typing import Any
 
 from personalclaw.channel_transports.base import (
@@ -210,6 +219,7 @@ def assert_channel_contract(
     min_edit_interval: float | None = None,
     clock: Any = None,
     inbound_via: str = "",
+    no_inbox_source_reason: str = "",
 ) -> None:
     """Assert ``provider`` honours the channel contract. Raises on the first violation.
 
@@ -235,6 +245,11 @@ def assert_channel_contract(
         ``_dispatch`` instead of implementing ``receive()``, so the kit accepts a named
         method on the provider as proof of the inbound path rather than demanding the
         ``receive()`` shape none of them use.
+    :param no_inbox_source_reason: why this vendor app registers no ``inbox`` message
+        source (e.g. the vendor has no message-source semantics at all). Supplying it
+        suppresses clause 9's advisory and *is* the documented exemption — the guide's
+        "Vendor completeness" section names it, so the reason lives in the app's own test
+        rather than as a manifest key nothing else reads.
     """
     _assert_identity(provider)
     _assert_capabilities(provider)
@@ -252,6 +267,11 @@ def assert_channel_contract(
             clock=clock,
             fake_backend=fake_backend,
         )
+    # Last, and advisory-only: a contract VIOLATION is the urgent signal, and prefacing a
+    # red with a doctrine nag buries it. Runs through this entry point rather than as a
+    # helper an apps-repo PR would have to adopt, so it is live for all four app suites
+    # the day it merges instead of waiting on a second repo.
+    _warn_on_incomplete_vendor_seams(provider, no_inbox_source_reason=no_inbox_source_reason)
 
 
 # ── clause 1: identity + info ────────────────────────────────────────────────
@@ -829,3 +849,113 @@ def _stream_edit_counter(delivery: Any, fake_backend: Any) -> Any:
         "throttle clause would pass vacuously.",
     )
     return None  # pragma: no cover - _fail always raises
+
+
+# ── clause 9: vendor-seam completeness (ADVISORY — warns, never fails) ──────
+
+#: How far ABOVE a provider's own module the kit looks for the owning app's manifest.
+#: Bounded deliberately: an unbounded walk reaches the filesystem root, where a stray
+#: ``app.json`` in some ancestor would make the advisory lie about an app it has never
+#: seen. Installed apps live at ``$PERSONALCLAW_HOME/apps/<name>/`` and in the apps repo
+#: at ``<repo>/<name>/``, so a provider module sits 0-3 levels below its own manifest in
+#: every real layout.
+_MANIFEST_SEARCH_DEPTH = 3
+
+
+def _owning_app_manifest(provider: ChannelTransportProvider) -> dict[str, Any] | None:
+    """The parsed ``app.json`` of the bundle that owns ``provider``, or ``None``.
+
+    ``None`` means "no manifest was discoverable", which is NOT evidence of an incomplete
+    app: core's own fixture transports, a bare unit test and an ad-hoc script have no
+    bundle at all. Returning an option instead of a verdict is the whole point — an
+    advisory that fires on core's fixtures trains readers to ignore it.
+    """
+    try:
+        start = Path(inspect.getfile(type(provider))).resolve().parent
+    except (TypeError, OSError):
+        return None
+    for directory in (start, *list(start.parents)[:_MANIFEST_SEARCH_DEPTH]):
+        manifest = directory / "app.json"
+        if manifest.is_file():
+            try:
+                loaded = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                # An unreadable manifest is not evidence either way, and the install
+                # pipeline already reds on it — this clause must not double-report it.
+                return None
+            return loaded if isinstance(loaded, dict) else None
+        # A repo/venv root ends the bundle. Walking past it would find a DIFFERENT app's
+        # manifest (or an unrelated project's) and attribute it to this provider.
+        if (directory / ".git").exists() or (directory / "pyproject.toml").is_file():
+            return None
+    return None
+
+
+def _declared_provider_types(manifest: dict[str, Any]) -> set[str]:
+    """Every provider ``type`` the manifest declares, across BOTH declaration shapes.
+
+    A manifest may carry the canonical singular ``provider`` object, a ``providers``
+    array, or — the vendor-completeness shape — both. Reading one shape would report a
+    complete app as channel-only.
+    """
+    entries: list[Any] = []
+    single = manifest.get("provider")
+    if isinstance(single, dict):
+        entries.append(single)
+    listed = manifest.get("providers")
+    if isinstance(listed, list):
+        entries.extend(listed)
+    return {
+        entry["type"]
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("type"), str)
+    }
+
+
+def _warn_on_incomplete_vendor_seams(
+    provider: ChannelTransportProvider, *, no_inbox_source_reason: str
+) -> None:
+    """Advise when a channel app registers no ``inbox`` message source.
+
+    The obligation is CHANNEL-EXPANSION's vendor-completeness pattern (amendment
+    2026-07-26, rule 1): ONE vendor app registers EVERY seam that vendor touches. A
+    channel-only app can converse but its messages never reach the Inbox, so nothing
+    that arrives while no session is live is ever surfaced to the owner.
+
+    A WARNING and never a failure, on purpose. The doctrine postdates the shipped channel
+    apps: when this clause landed the measured population was telegram-channel and
+    discord-channel channel-only, slack-channel complete (its inbox source landed with
+    the pattern), mail-inbox not a channel at all. Giving the clause teeth would turn two
+    already-green app suites red for an obligation their authors were never told — giving
+    a control teeth before the population satisfies it is an outage, not a gate.
+    """
+    if no_inbox_source_reason:
+        return
+    manifest = _owning_app_manifest(provider)
+    if manifest is None:
+        return
+    declared = _declared_provider_types(manifest)
+    # A manifest with no `channel` declaration is a different shape entirely (a transport
+    # its own bundle does not register); this clause only speaks about channel apps.
+    if "channel" not in declared or "inbox" in declared:
+        return
+    name = manifest.get("name") or type(provider).__name__
+    warnings.warn(
+        f"vendor completeness: the app {name!r} registers a channel transport but no "
+        f"inbox message source — its manifest declares provider types {sorted(declared)}. "
+        "One vendor app owns EVERY seam that vendor touches (channel + inbox + a trigger "
+        "source once that seam exists + contributed UI), so a channel-only app's messages "
+        'never reach the Inbox. Add a {"type": "inbox"} MessageSourceProvider to the '
+        "manifest's providers[] array, or pass assert_channel_contract(..., "
+        "no_inbox_source_reason='<why this vendor has no message-source semantics>') to "
+        "record the exemption. See docs/guides/build-a-channel-app.md, section 'Vendor "
+        "completeness'.",
+        # UserWarning rather than a bespoke subclass: the message is the entire payload,
+        # and a new public warning class would be one more symbol every app has to import
+        # just to filter an advisory. Neither core nor the apps repo sets
+        # `filterwarnings = error`, so this stays advisory wherever the four suites run.
+        UserWarning,
+        # 3 = the caller of `assert_channel_contract` (this frame -> the entry point ->
+        # the app's own test), so the advisory points at the app, not at core's kit.
+        stacklevel=3,
+    )
