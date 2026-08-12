@@ -140,6 +140,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
 - `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.
 - `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
+- `POST /api/chat/sessions/{session}/share` — a redacted, read-only artifact of a chat.
 - `POST /api/chat/sessions/{session}/side/close` — drop the buffer + destroy
 - `POST /api/chat/sessions/{session}/side/open` — open (or reset) the side buffer.
 - `POST /api/chat/sessions/{session}/side/turn` — ask one side question.

@@ -2525,14 +2525,25 @@
         },
         {
           "id": "SM-8",
-          "title": "Export + share: credential-redacted Markdown/JSON export and read-only artifact",
+          "title": "Export: credential-redacted Markdown/JSON transcript download",
           "status": "done",
           "scope": "Session 3 (T3.3); Contracts §C3 (export)",
-          "done_when": "GET /api/chat/sessions/{session}/export?format=md|json returns a download with correct Content-Disposition/nosniff; redaction re-runs over ALL roles + title (PREMISE CORRECTED — user/system roles are stored raw, not redacted by history.py); content emitted as blockquote; share produces a redacted read-only artifact only on explicit owner action, never auto-published. Shipped 2026-07-30 (dashboard/session_export.py).",
+          "done_when": "GET /api/chat/sessions/{session}/export?format=md|json returns a download with correct Content-Disposition/nosniff; redaction re-runs over ALL roles + title (PREMISE CORRECTED — user/system roles are stored raw, not redacted by history.py); content emitted as blockquote. Shipped 2026-07-30 (dashboard/session_export.py). RECORD CORRECTED 2026-08-11: this row also claimed \"share produces a redacted read-only artifact only on explicit owner action, never auto-published\" — that half never shipped (no route, no share verb, no frontend affordance; the plan's execution-log entry is headed \"T3.3 — export.\"). Export only here; share is SM-9.",
           "deps": []
+        },
+        {
+          "id": "SM-9",
+          "title": "Share: one chat as a redacted, read-only artifact in the owner's own library",
+          "status": "done",
+          "pr": "#1118",
+          "scope": "Session 3 (T3.3, second half); Design §S3 + Integration points (\"the artifacts system (share)\")",
+          "done_when": "POST /api/chat/sessions/{session}/share creates a `markdown` artifact whose body is session_export.render_markdown's output VERBATIM (one redactor, two callers — `_redact` promoted to the public `redact_field`), readonly=True, tagged shared-chat, with the source chat + redacted recorded on the creation event; NativeArtifactProvider.update / update_binary / revert refuse a readonly artifact in the STORE (so the MCP tools and workflow actions hit the same wall as the route) while delete stays allowed; restricted (incognito/temporary) chats are refused 403 while export still works; the ChatHistory row menu carries \"Share as read-only artifact\" beside the two Export items and lands the user on the created artifact; ArtifactViewer/ArtifactsSection read `readonly` so no refused affordance is offered; never auto-published, proven by an AST census of every share_session call site in src/personalclaw plus a poisoned-source test proving the census can fail. NOT a publish: no public URL, no share token, no auth bypass — external exposure stays EXTERNAL-ACCESS's decision. Shipped 2026-08-11 (dashboard/session_share.py, tests/test_session_share.py, 22 cases); reference regenerated (632→633 agent-callable routes).",
+          "deps": [
+            "SM-8"
+          ]
         }
       ],
-      "summary": "Decomposed SESSION-MANAGEMENT into 8 atoms: 7 done (search index, search UI, windowing re-scope, bulk+lifecycle+auto-archive, retention surface, templates, export) and 1 todo — SM-5 (T2.1 suggested organization), the plan's one unbuilt task, now unblocked since its cross-plan dependency on INBOX-NOTIFICATIONS-UNIFICATION's proposal contract has landed."
+      "summary": "Decomposed SESSION-MANAGEMENT into 9 atoms, all done: search index, search UI, windowing re-scope, bulk+lifecycle+auto-archive, suggested organization, retention surface, templates, export (SM-8) and share (SM-9). SM-9 exists because T3.3 asked for two halves — export AND an optional read-only shared artifact — and only export shipped, while SM-8's evidence line already claimed both."
     },
     {
       "plan": "CONTEXT-ECONOMY",

@@ -61,6 +61,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _refuse_if_readonly(art: Artifact) -> None:
+    """Guard every content-mutating store method against a frozen artifact (SM-9).
+
+    Enforced in the STORE, not the route, because the route is not the only caller: the
+    MCP artifact tools and the workflow action providers reach the provider directly, so a
+    check in ``handlers.py`` would leave the model an unguarded door to the same edit. The
+    three mutating methods are enumerated exhaustively — ``update``, ``update_binary``,
+    ``revert`` — rather than inferred, so adding a fourth means adding a guard here.
+
+    ``PermissionError`` specifically: ``handlers.py`` already maps it (and ``ValueError``)
+    to a 400 with the message, so a refusal surfaces as "this artifact is read-only"
+    instead of the misleading 404 a ``None`` return would produce.
+    """
+    if art.readonly:
+        raise PermissionError(
+            f"artifact {art.slug!r} is read-only — it is a frozen record, not a document"
+        )
+
+
 class NativeArtifactProvider(ArtifactProvider):
     """Filesystem-backed artifact provider (the bundled default)."""
 
@@ -555,6 +574,7 @@ class NativeArtifactProvider(ArtifactProvider):
             art = self._read_meta(slug)
             if art is None or not is_binary_kind(art.kind):
                 return None
+            _refuse_if_readonly(art)
             if mime:
                 art.mime = mime
             art.version += 1
@@ -595,6 +615,7 @@ class NativeArtifactProvider(ArtifactProvider):
             art = self._read_meta(slug)
             if art is None:
                 return None
+            _refuse_if_readonly(art)
             if is_binary_kind(art.kind):
                 src = self._binary_version_path(slug, from_version)
                 if src is None:
@@ -649,6 +670,7 @@ class NativeArtifactProvider(ArtifactProvider):
         project_id: str = "",
         collection: str = "",
         event_metadata: dict | None = None,
+        readonly: bool = False,
     ) -> Artifact:
         name = (name or "").strip()[:MAX_NAME_LEN] or "Untitled"
         # Binary kinds (image) must go through create_binary — their body is bytes,
@@ -684,6 +706,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 source_path=source_path or "",
                 project_id=project_id or "",
                 collection=(collection or "").strip()[:MAX_NAME_LEN],
+                readonly=bool(readonly),
                 events=[event],
             )
             d = self._artifact_dir(final_slug)
@@ -723,6 +746,7 @@ class NativeArtifactProvider(ArtifactProvider):
             art = self._read_meta(slug)
             if art is None:
                 return None
+            _refuse_if_readonly(art)
 
             # Metadata-only updates never bump a version or snapshot.
             meta_changed = False

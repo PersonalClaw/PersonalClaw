@@ -2058,6 +2058,10 @@ export interface Artifact {
   source_path: string; live_dirty: boolean; project_id?: string
   // Optional library collection label (ARTIFACTS S1). "" = uncollected.
   collection?: string
+  /** Frozen record: the server refuses every content mutation on it (SM-9 — today only
+   *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
+   *  letting the user type into an editor whose save always 400s. */
+  readonly: boolean
 }
 
 // One usage-ledger aggregate (COST-AND-TOKEN-OBSERVABILITY). `priced` is false when
@@ -2494,6 +2498,13 @@ export const api = {
    *  rather than this client buffering the transcript in memory. */
   sessionExportUrl: (key: string, format: 'md' | 'json') =>
     `/api/chat/sessions/${encodeURIComponent(key)}/export?format=${format}`,
+  /** Share a chat as a redacted, READ-ONLY artifact in this instance's own library
+   *  (SM-9). POST because it creates durable state, and nothing publishes it anywhere:
+   *  there is no public link and no token — an artifact the owner can open, and nobody
+   *  else can reach without this gateway's session auth. */
+  shareSession: (key: string) =>
+    post<{ ok: boolean; slug: string; name: string; kind: ArtifactKind; readonly: boolean; redacted: boolean }>(
+      `/api/chat/sessions/${encodeURIComponent(key)}/share`, {}),
   createChatSession: (opts: { name?: string; agent?: string; model?: string; memory_mode?: MemoryMode; mode?: string; project_id?: string } = {}) =>
     post<ChatSession>('/api/chat/sessions', opts),
   setSessionAgent: (session: string, agent: string) => post(`/api/chat/sessions/${session}/agent`, { agent }),

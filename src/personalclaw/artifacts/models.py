@@ -183,6 +183,14 @@ class Artifact:
     # artifacts library — ARTIFACTS S1). "" = uncollected. Tolerant read: pre-existing
     # meta.json without the key loads as "" (clean break under the pre-1.0 banner).
     collection: str = ""
+    # Frozen at creation: this body is a RECORD of something, not a working document, so
+    # every content-mutating store method refuses it (SESSION-MANAGEMENT SM-9). The one
+    # writer today is the session-share path — a shared chat transcript that could be
+    # edited and then re-read as "the transcript" would be a forgery surface, and a
+    # redacted export that can be edited back toward the unredacted original defeats the
+    # redaction. Delete is deliberately still allowed: read-only is not undeletable, and
+    # trapping the owner's own artifact in their library would be a worse bargain.
+    readonly: bool = False
 
     def to_dict(self, *, persist: bool = False) -> dict[str, Any]:
         """Serialize. ``persist=True`` (meta.json) drops the transient/derived
@@ -202,6 +210,10 @@ class Artifact:
             "project_id": self.project_id,
             "collection": self.collection,
             "mime": self.mime,
+            # Persisted AND on the wire: the store reads it to refuse a mutation, the
+            # dashboard reads it to stop offering one. A flag enforced only server-side
+            # would render an edit affordance that always errors.
+            "readonly": self.readonly,
             "events": [e.to_dict() for e in self.events],
         }
         if not persist:
@@ -228,6 +240,7 @@ class Artifact:
             project_id=str(d.get("project_id", "")),
             collection=str(d.get("collection", "")),
             mime=str(d.get("mime", "")),
+            readonly=bool(d.get("readonly", False)),
         )
 
 

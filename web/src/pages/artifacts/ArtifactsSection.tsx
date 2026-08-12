@@ -106,6 +106,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   }
 
   const initialVersion = vParam ? Number(vParam) || undefined : undefined
+  // A read-only artifact (SM-9) refuses every update, collection included — it is a frozen
+  // record, not a filing target — so the control is absent rather than
+  // present-and-always-failing.
+  const canFile = !!slug && !!active && !active.readonly
 
   return (
     <div className="flex h-full flex-col">
@@ -117,10 +121,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
             : <PageTitle className="shrink-0">Artifacts</PageTitle>}
           {slug && active && <span className="truncate text-on-surface" data-type="title-l">{active.name}</span>}
         </div>}
-        right={slug ? (
+        right={canFile ? (
           <HeaderActions>
             <QuietButton onClick={assignCollection} title="Group this artifact under a library collection">
-              <FolderInput size={13} /> {active?.collection || 'Set collection'}
+              <FolderInput size={13} /> {active.collection || 'Set collection'}
             </QuietButton>
           </HeaderActions>
         ) : undefined}
