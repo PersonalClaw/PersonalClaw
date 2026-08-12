@@ -228,6 +228,7 @@ def _render_ambient(
     voice: str = "",
     persona: str = "",
     self_model: str = "",
+    procedural: str = "",
     query: str = "",
 ) -> str:
     """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
@@ -247,7 +248,7 @@ def _render_ambient(
     would be strictly worse than an over-long prompt, so the fallback is the raw
     lesson block — the most authoritative content, ungoverned rather than absent.
     """
-    if not any((lessons, skill_index, voice, persona, self_model)):
+    if not any((lessons, skill_index, voice, persona, self_model, procedural)):
         return ""
     try:
         from personalclaw.config.loader import AppConfig
@@ -261,6 +262,7 @@ def _render_ambient(
             voice=voice,
             persona=persona,
             self_model=self_model,
+            procedural=procedural,
             query=query,
             budget_tokens=budget,
             window=active_chat_model_window(),
@@ -276,6 +278,7 @@ def _render_ambient(
                 "voice": voice,
                 "persona": persona,
                 "self_model": self_model,
+                "procedural": procedural,
                 "query": query,
                 "budget_tokens": alloc.budget_tokens,
             },
@@ -1008,6 +1011,7 @@ class ContextBuilder:
         _voice = ""
         _skill_index = ""
         _self_model = ""
+        _procedural = ""
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
@@ -1058,6 +1062,18 @@ class ContextBuilder:
             if getattr(AppConfig.load().learning, "self_model_enabled", True):
                 _self_model = _self_model_snapshot(_svc)
 
+            # How-to-work priors (M5d — WF2LEA-13): the READ side of procedural memory.
+            # `record_procedural` had two live writers (this module's after-turn review
+            # and learning/run_end) and `procedural_priors()` had no production caller
+            # at all, so every turn paid to capture priors that nothing ever used.
+            # Global scope only, capped at 5, and raw failure rows are excluded — those
+            # are failure-SYNTHESIS input, and surfacing them beside the one prior that
+            # replaces them is how this class becomes a tool-call log.
+            try:
+                _procedural = _svc.procedural_block()
+            except Exception:
+                logger.debug("procedural prior block render failed", exc_info=True)
+
         # Skills: personalclaw-only (custom agents load their own). Pass the agent
         # so its agent-local skill tier (skill-agent-local-tier) overrides global
         # for this turn when present.
@@ -1100,6 +1116,7 @@ class ContextBuilder:
             voice=_voice,
             persona=_persona,
             self_model=_self_model,
+            procedural=_procedural,
         )
         if _ambient:
             parts.append(_ambient)

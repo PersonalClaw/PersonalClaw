@@ -80,13 +80,28 @@ MAX_BUDGET_MULTIPLE = 5.0
 #: workflow def, and nothing persists `user.selfmodel.*` (S72 built the decisions, not the store).
 #: They are mapped anyway, and `test_every_named_block_has_a_slot` asserts it, so whoever builds
 #: those producers finds a budgeted slot waiting instead of appending a sixth independent block.
+#: `procedural` maps onto the EXISTING `lesson` kind (WF2LEA-13). A how-to-work prior is a learned
+#: lesson — the difference is only who taught it — so it belongs in the same slot rather than in a
+#: sixth kind that would need a sixth slot. It competes there at a lower score than a stored lesson
+#: and as ONE all-or-nothing candidate, and `render`'s crowd-out rail discriminates the two by KEY,
+#: so "nothing may crowd out a lesson" stays true against the block that now shares its kind.
 SLOT_KINDS: dict[str, str] = {
     "lessons": "lesson",
     "skill_index": "skill",
     "template": "template",
     "voice": "memory",
     "self_model": "memory",
+    "procedural": "lesson",
 }
+
+#: Score for the procedural block, below `lesson_candidates`' 1.0. Deliberate: at equal query
+#: overlap the user's own correction outranks an observation the system made about itself.
+PROCEDURAL_SCORE = 0.8
+
+#: Key prefix of a stored-lesson candidate. `render`'s "no lesson was crowded out" retry needs to
+#: tell a real lesson from the procedural block now that both enter as kind `lesson`; a check on
+#: kind alone would read a surviving procedural block as "a lesson survived" and never retry.
+LESSON_KEY_PREFIX = "lesson:"
 
 #: Cap on an index entry's description at the middle tier. From §2's R12 note ("an 80-char hint
 #: cap on the agent-side index") — the plan's own number, so the middle degradation step is not one
@@ -255,6 +270,31 @@ def block_candidate(name: str, block: str, *, score: float = 0.85) -> Candidate 
     return Candidate(kind=kind, key=name, score=score, l0=text, l1=text, l2=text, arm=name)
 
 
+def procedural_candidate(block: str) -> Candidate | None:
+    """The how-to-work priors as ONE all-or-nothing candidate, or None.
+
+    ONE candidate rather than one per prior, unlike lessons. Two reasons, and they are the same
+    reason: `lesson` is the one kind EXEMPT from the diversification cap (`UNCAPPED_KINDS`), so N
+    per-prior candidates would enter the lesson slot unrationed and could push the user's own
+    corrections down the ranking — and the block is already capped at its producer
+    (`MemoryService.procedural_block`), which is where a bound on observed-about-itself content
+    belongs. `l0 == l1 == l2` for the same reason `block_candidate` is all-or-nothing: half a prior
+    list is not a shorter prior list.
+    """
+    text = (block or "").strip()
+    if not text:
+        return None
+    return Candidate(
+        kind=SLOT_KINDS["procedural"],
+        key="procedural",
+        score=PROCEDURAL_SCORE,
+        l0=text,
+        l1=text,
+        l2=text,
+        arm="procedural",
+    )
+
+
 def sources_for(
     *,
     lessons: str = "",
@@ -263,6 +303,7 @@ def sources_for(
     persona: str = "",
     self_model: str = "",
     template: str = "",
+    procedural: str = "",
 ) -> dict[str, list[Candidate]]:
     """The candidate pool for one ambient render, keyed by slot family.
 
@@ -274,6 +315,12 @@ def sources_for(
     lesson_cands = lesson_candidates(lessons)
     if lesson_cands:
         sources["lessons"] = lesson_cands
+    # Its OWN source key, not appended to `lessons`: the ablation sweep and the per-arm precision
+    # report are both keyed by source, and a prior the system inferred about itself reported under
+    # the lesson store's name would credit the wrong path for its hits.
+    proc = procedural_candidate(procedural)
+    if proc is not None:
+        sources["procedural"] = [proc]
     skills: list[Candidate] = []
     # The always-loaded bodies rank ABOVE the index (0.95 vs 0.9): the user marked them
     # never-optional, so under pressure the pointer list yields before the content does.
@@ -313,6 +360,18 @@ def sources_for(
     return sources
 
 
+def _kept_a_lesson(alloc: Allocation) -> bool:
+    """Whether a STORED LESSON survived this allocation.
+
+    Not "did anything of kind `lesson` survive": the procedural block shares that kind by design
+    (see `SLOT_KINDS`), and it is not a substitute for the user's own correction.
+    """
+    return any(
+        kind == SLOT_KINDS["lessons"] and key.startswith(LESSON_KEY_PREFIX)
+        for kind, key, _text in alloc.included
+    )
+
+
 def render(
     *,
     lessons: str = "",
@@ -321,6 +380,7 @@ def render(
     persona: str = "",
     self_model: str = "",
     template: str = "",
+    procedural: str = "",
     query: str = "",
     budget_tokens: int = 4000,
     window: int | None = None,
@@ -345,6 +405,7 @@ def render(
         persona=persona,
         self_model=self_model,
         template=template,
+        procedural=procedural,
     )
     header_cost = 0
     lesson_cands = sources.get("lessons", [])
@@ -379,16 +440,21 @@ def render(
     # lesson survived, retry with the framing released — the header reservation returned and the
     # preamble suppressed. A lesson with no header is still the user's rule; a header with no
     # lessons is a promise of rules the model then cannot find.
-    if lesson_cands and not any(kind == SLOT_KINDS["lessons"] for kind, _k, _t in alloc.included):
+    #
+    # The check is on the KEY, not the kind: WF2LEA-13's procedural block enters as kind `lesson`
+    # too, so `kind == "lesson"` would report "a lesson survived" for a turn where the only survivor
+    # was the system's observation about itself — the retry would never fire and the rail would read
+    # green while doing nothing.
+    if lesson_cands and not _kept_a_lesson(alloc):
         retry = allocate(sources, query=query, budget_tokens=ceiling, include_preamble=False)
-        if any(kind == SLOT_KINDS["lessons"] for kind, _k, _t in retry.included):
+        if _kept_a_lesson(retry):
             alloc = retry
             header_cost = 0
 
     # Report against the CEILING, with the reserved header counted as spent. The caller's audit
     # question is "did the ambient render stay inside the configured budget", and an Allocation that
     # reported the post-reservation budget would answer a different, easier question.
-    if header_cost and any(kind == SLOT_KINDS["lessons"] for kind, _k, _t in alloc.included):
+    if header_cost and _kept_a_lesson(alloc):
         alloc.used_tokens += header_cost
     alloc.budget_tokens = ceiling
     return alloc
@@ -420,8 +486,7 @@ def frame(alloc: Allocation, *, lessons_block: str = "") -> str:
     text = alloc.text
     if not text:
         return ""
-    kept_lesson = any(kind == SLOT_KINDS["lessons"] for kind, _key, _tier in alloc.included)
-    if not kept_lesson:
+    if not _kept_a_lesson(alloc):
         return text
     header = lesson_header(lessons_block)
     if not header or header in text:
@@ -451,12 +516,18 @@ def frame(alloc: Allocation, *, lessons_block: str = "") -> str:
 
 
 def _is_lesson_block(part: str, alloc: Allocation) -> bool:
-    """Whether this rendered chunk is the lessons slot's output."""
-    first = part.strip().split("\n", 1)[0]
-    return any(
-        kind == SLOT_KINDS["lessons"] and first.startswith(key.split(":", 1)[0])
-        for kind, key, _tier in alloc.included
-    )
+    """Whether this rendered chunk is the lessons slot's output.
+
+    "Contains a bullet line", not "starts with one": the allocator renders a whole slot as ONE
+    chunk, and once WF2LEA-13's procedural block shares the lesson slot the chunk can OPEN with that
+    block's header while the lessons follow below it. Keying on the first line alone sent the header
+    to `frame`'s append-at-the-end fallback — an authority statement printed after the rules it
+    governs. The lessons slot has priority 2, so it is still the FIRST rendered chunk with bullets
+    (the preamble has none, skills come after), which is what makes the broader test safe.
+    """
+    if not any(kind == SLOT_KINDS["lessons"] for kind, _key, _tier in alloc.included):
+        return False
+    return any(line.lstrip().startswith("- ") for line in part.split("\n"))
 
 
 def report(alloc: Allocation) -> dict[str, object]:

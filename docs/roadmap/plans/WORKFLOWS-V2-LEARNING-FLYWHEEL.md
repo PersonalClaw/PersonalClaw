@@ -1488,3 +1488,106 @@ checkout**, and this diff touches nothing under `harness/`.
 delta from `test_learning_routes.py` as a whole is the file's PRE-EXISTING leak — its accept/reject
 tests call `_audit` → `sel().log_api_access` without home isolation. Every test added here isolates
 the home (`PERSONALCLAW_HOME` + `config_dir`).
+
+### WF2LEA-13 — Close the procedural-memory loop (`procedural_priors` reader + the outcome contract) — DONE
+
+Picks up exactly what WF2LEA-9's Part 4 recorded as "left undone deliberately, and worth its own
+atom". Atom row + scope: `docs/roadmap/atomic/WF2LEA.md`.
+
+**The finding: capture without readback, and two members nobody wrote.**
+`MemoryService.record_procedural` had TWO live writers — `after_turn_review.record_procedural_outcomes`
+(dashboard turn path, via `chat_runner`) and `learning/run_end.py`'s terminal-failure pass — while
+`MemoryService.procedural_priors()` had **zero production callers** (repo-wide grep: 1 definition, 2
+test references, no call site), and its own docstring named a consumer that did not exist ("for
+recall-gated injection"). So every significant turn paid to capture how-to-work priors and used none
+of them. The same docstring declared `Outcome ∈ {success, denied, corrected, failed}` while only
+`success` and `failed` were ever written.
+
+**Premise correction — how a procedural record actually reaches GLOBAL.** The reader returns global
+records only, so the loop needs a promotion. That promotion is **not** the human-approved
+`Kind.TIER_MIGRATION` path: `curator.file_promotion_suggestions` files those for learned-library
+*entities*, and `dashboard/handlers/learning.py::_installer_for` dispatches only project-context,
+skill-promotion and self-model proposals — there is **no tier_migration branch**, so accepting one
+records a decision and moves no record's scope. The live promoters for a memory RECORD are
+`MemoryService.promote_by_heat()` (heat ≥ 1.0 and recall_count ≥ 2, run from
+`history._maybe_consolidate`'s maintenance tick) and `synthesize_failures()`, which writes its
+collapsed prior at GLOBAL directly. Both are driven in the test; nothing is hand-promoted.
+
+**Design, and what was rejected.** The reader joins the EXISTING allocator pool: `SLOT_KINDS` gains
+`procedural → lesson`, because a how-to-work prior IS a learned lesson (only the teacher differs) and
+because `ambient.py`'s own note is explicit that "a sixth kind would need a sixth slot, which is how
+'one budget' becomes six again". Rejected: a sixth kind (that warning); the `memory` family, which
+would have dodged the crowd-out question by ranking priors under the skills index rather than
+answering it; and one candidate per prior, because `lesson` is the one kind EXEMPT from the
+diversification cap, so N prior candidates would enter a non-sacrificial slot unrationed. It enters
+as ONE all-or-nothing candidate at score 0.8 against a stored lesson's 1.0.
+
+**Sharing the lesson kind broke two rails, and both are fixed rather than tolerated.**
+(a) `render`'s "NOTHING MAY CROWD OUT A LESSON" retry tested `kind == "lesson"`. Measured: one
+100-token lesson plus a short prior block at a 60-token budget drops the lesson as oversized and keeps
+the priors — a kind-only check reads that as "a lesson survived", never retries, and `frame` then
+prints "[Learned corrections — ALWAYS follow these]" over machine-observed priors, which is precisely
+the "header asserting rules the model cannot find" that rail exists to prevent. It now discriminates by
+KEY (`lesson:*`) via `_kept_a_lesson`. (b) The allocator renders a whole slot as ONE newline-joined
+chunk, so a prior block outranking the second lesson makes the chunk OPEN with the priors' header:
+`_is_lesson_block` now recognises the lessons chunk by "contains a bullet line" (it is still the first
+bulleted chunk — priority 2, preamble has no bullets) instead of by its first line, and the block
+carries an explicit `[End of how-to-work priors]` footer, the same device `[End of skills]` already is.
+
+**What may be surfaced — the anti-noise mechanism is honoured, not routed around.** Only `success`
+priors and `failure_synthesis` rows. A raw `→ failed`/`→ denied` row is `synthesize_failures` INPUT:
+below the cluster threshold one failure is not evidence, and above it the synthesized "prefer an
+alternative" prior is the durable form — printing both would defeat the mechanism and contradict it in
+the same render. The filter lives inside `procedural_priors` (one definition, so a second caller cannot
+bypass it), maps the closed vocabulary EXHAUSTIVELY with no default branch, and applies
+`is_environment_failure_claim` on the READ side too, because `record_procedural` accepts a `detail`
+that lands in the prior text and a promoted world-condition would be durable guidance telling the agent
+a working tool does not work. The block is capped at 5 lines by its producer.
+
+**Per-member decision.**
+- **`denied` — WIRED.** It was the worst inert shape available: `synthesize_failures` has always
+  clustered on `"→ failed" in text or "→ denied" in text`, so this was a **live reader of a value no
+  writer produced**. The clean seam is the native runtime's outcome record, which derived `failed`
+  from `result_str.startswith("Error:")` — and all five denial paths (hard deny-list, task-mode gate,
+  PreToolUse hook, the user's reject, the unattended auto-decline) return an observation authored by
+  `security.classify_denial`. So that function got the recogniser beside it
+  (`is_denial_observation`, over a table of its own four wording fragments) and the runtime asks it
+  rather than re-authoring the strings; the accumulator became `(tool, outcome)`. This is a
+  correctness fix: labelling the user's refusal `failed` is what let failure synthesis publish "this
+  tool is unreliable — prefer an alternative" about a tool that works fine and is merely not allowed
+  here. The failure breaker still sees `failed` — a denial IS a reason to stop repeating the call.
+- **`corrected` — REMOVED from the contract.** `after_turn_review` does detect corrections, but its
+  `correction` flag is this turn's user message read as a reaction to the **previous** turn's work
+  (`chat_runner` says so where it feeds the self-model observer), and nothing carries the previous
+  turn's tool set forward — so any writer here would attribute the correction to whichever tools
+  happened to run this turn. Nothing anywhere reads `→ corrected`, and the correction itself is
+  already captured as a lesson in the block that ranks ABOVE this one. A wrong prior is worse than a
+  missing one, so the member is deleted rather than documented-and-unwritten. `PROCEDURAL_OUTCOMES` is
+  now a closed frozenset: `record_procedural` RAISES on anything else and the drain drops+logs (a turn
+  must not fail over a label).
+
+**Doctrine.** Rank stays heat, which WF2LEA-9's kernel note permits (heat weights usage above
+recency, so recency may break a tie but never create one); *strength* alone and the prune/review
+VERDICT never enter rank. Asserted through the new block: a 400-day-idle prior with 9 uses renders
+above a fresh unused one, and `memory_service.py` contains no `DecayVerdict`.
+
+**The chain is proven end to end, not just the reader.**
+`tests/test_learning_procedural_loop.py` (25 tests) drives
+`record_procedural_outcomes` ×5 (the live writer) → `promote_by_heat()` (the live promoter) →
+`procedural_priors()` → `procedural_block()` → **`ContextBuilder.build_session_context()`**, asserting
+the prior text appears in the real assembled context; plus the synthesis leg (3 scattered failures →
+nothing surfaced → `synthesize_failures` → the collapsed prior surfaces), the `denied` leg (3 denials
+→ the same collapse), a real `NativeAgentRuntime` driven three times for `success`/`failed`/`denied`,
+`classify_denial` recognised over every declared `DENY_KIND_*` constant, the exhaustive-vocabulary
+rail, the measured non-vacuity case for the key-based crowd-out rail, and a budget sweep
+(20→4000 tokens) proving `used_tokens` never exceeds the ceiling.
+
+**Gate.** `make lint` clean (black/isort/flake8 + mypy 802 files). Targeted
+`-k "procedural or ambient or memory or learning or after_turn"` = **1617 passed, 2 skipped, 1
+xfailed**. Full-suite-only ratchets (`inert_surface_baseline`, `agent_reference`, `docs_lint_baseline`,
+`config_roundtrip`) = **35 passed** — no baseline needed regeneration (no new inert surface, no new
+route, no new config key: the block rides the budget knob that already exists). Full suite:
+**18407 passed / 3 failed / 30 skipped / 12 xfailed in 122s**; the 3 are the known worktree-only
+`test_harness_validate.py` failures (`.venv/bin/python` relative path, 11/11 green in the main
+checkout; nothing here touches `harness/`). No `web/` change. **Real-home rail:
+`/Users/golani/.personalclaw` unchanged by this run.**

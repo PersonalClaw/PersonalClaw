@@ -38,6 +38,25 @@ logger = logging.getLogger(__name__)
 # raised by editing config.json.
 HARD_CAP_RECORDS = 5
 
+#: The CLOSED procedural outcome vocabulary (M5d). Every member has a live writer:
+#: `success`/`failed` from `after_turn_review.record_procedural_outcomes` and
+#: `learning/run_end.py`, `denied` from the same drain now that the native runtime
+#: distinguishes a refused call from a broken one. `record_procedural` rejects
+#: anything else, and `MemoryService._is_surfaceable_prior` maps every member — so a
+#: sixth outcome cannot be captured-and-never-read the way `corrected` was.
+PROCEDURAL_OUTCOMES: frozenset[str] = frozenset({"success", "failed", "denied"})
+
+#: The ambient procedural block's header. Named "how you have worked" rather than
+#: "rules": these are observed priors, not user instructions, and a header that
+#: overstates them competes with the lesson block's genuine authority.
+PROCEDURAL_HEADER = "[Learned how-to-work priors — observed from your own tool history]"
+
+#: …and its explicit END, like the skills block's `[End of skills]`. Load-bearing rather than
+#: decorative: the allocator renders the whole `lesson` slot as ONE chunk joined by newlines, so a
+#: prior list that outranked the second lesson would leave that lesson sitting under this block's
+#: header. The footer is what closes the block wherever the ranking puts it.
+PROCEDURAL_FOOTER = "[End of how-to-work priors]"
+
 
 def _push_text(row: dict) -> str:
     """The readable claim inside a semantic row, for the volunteered block.
@@ -755,10 +774,18 @@ class MemoryService:
 
     # ── procedural memory (M5d — O-A3) ────────────────────────────────────────
     # How the agent learns to WORK: tool/source outcomes → priors. A procedural
-    # record captures "tool X on task-shape Y succeeded / was denied / needed
-    # correction", mined at the after-turn-review seam, promoted into priors via
-    # the heat gate. Failure-pattern synthesis collapses ≥N same-root-cause records
-    # into ONE prior so the class never becomes tool-call-log noise.
+    # record captures "tool X on task-shape Y succeeded / failed / was denied",
+    # mined at the after-turn-review seam, promoted into priors via the heat gate.
+    # Failure-pattern synthesis collapses ≥N same-root-cause records into ONE prior
+    # so the class never becomes tool-call-log noise.
+    #
+    # The outcome vocabulary is CLOSED (`PROCEDURAL_OUTCOMES`) and enforced by
+    # `record_procedural`. It used to be a docstring set of four that included
+    # `corrected`, which no writer produced and no reader consumed — WF2LEA-13
+    # dropped that member (a correction's tool attribution is not observable at the
+    # seam that detects it: the correction signal is the user's reaction to the
+    # PREVIOUS turn, whose tool set nothing carries forward) and gave `denied` the
+    # live writer that `synthesize_failures` had always been reading for.
 
     @staticmethod
     def _procedural_key(tool: str, task_shape: str, outcome: str) -> str:
@@ -778,12 +805,21 @@ class MemoryService:
     ) -> str | None:
         """Record a how-to-work observation (tool X on task-shape Y → outcome).
 
-        Outcome ∈ {success, denied, corrected, failed}. Stored as a procedural
-        record at scope=session by default (the heat gate promotes recurring ones
-        to global priors). Reinforces the visit_count when the same observation
-        recurs. Returns the record key, or None when no record store."""
+        ``outcome`` must be one of :data:`PROCEDURAL_OUTCOMES` — an unknown value
+        RAISES rather than storing a row no reader can classify: the surfacing side
+        maps the vocabulary exhaustively, and a fifth spelling would be captured
+        forever and read by nothing (which is the state this contract was found in).
+
+        Stored at scope=session (the heat gate promotes recurring ones to global
+        priors). Reinforces the visit_count when the same observation recurs.
+        Returns the record key, or None when no record store."""
         from personalclaw.memory_record import MemoryKind, MemoryRecord, MemoryScope, MemoryTier
 
+        if outcome not in PROCEDURAL_OUTCOMES:
+            raise ValueError(
+                f"unknown procedural outcome {outcome!r} — expected one of "
+                f"{sorted(PROCEDURAL_OUTCOMES)}"
+            )
         if self._vs is None or not tool or not task_shape:
             return None
         key = self._procedural_key(tool, task_shape, outcome)
@@ -809,17 +845,75 @@ class MemoryService:
         return key
 
     def procedural_priors(self, *, limit: int = 12) -> list[dict]:
-        """The learned how-to-work priors (global procedural records), for
-        recall-gated injection. Highest-heat first."""
+        """The learned how-to-work priors that may be SURFACED. Highest-heat first.
+
+        Global scope only — a session-scoped observation is one turn's evidence, and
+        the heat gate (`promote_by_heat`) is what turns recurrence into a prior.
+
+        **A raw failure/denial row is never a prior.** It is
+        :meth:`synthesize_failures` INPUT: below the cluster threshold one failure is
+        not evidence, and above it the synthesized "prefer an alternative" row is the
+        durable form. Surfacing the raw rows too would both defeat the anti-noise
+        mechanism (the block becomes a tool-call log) and contradict it (N scattered
+        "→ failed" lines beside the one line that replaces them). So exactly two
+        shapes reach the prompt: a `success` prior, and a `failure_synthesis` row.
+
+        The environment-failure guardrail applies on the READ side as well as the
+        write side — a world condition that got promoted before synthesis could
+        collapse it must not become durable guidance either.
+
+        Ranked by heat, which is permitted: `learning/decay.py`'s doctrine bars
+        *strength* (the bare recency curve) from rank, and heat weights its usage
+        term above its recency term precisely so recency can break a tie but never
+        create one. The kernel's prune/review VERDICT is not consulted here at all.
+        """
+        from personalclaw.after_turn_review import is_environment_failure_claim
         from personalclaw.memory_record import MemoryKind, MemoryScope
 
         recs = [
             r
             for r in self.get_records(kinds={MemoryKind.PROCEDURAL.value})
             if r.scope == MemoryScope.GLOBAL
+            and self._is_surfaceable_prior(r)
+            and not is_environment_failure_claim(r.text)
         ]
         recs.sort(key=lambda r: r.heat(), reverse=True)
         return [{"key": r.id, "text": r.text, "heat": round(r.heat(), 3)} for r in recs[:limit]]
+
+    @staticmethod
+    def _is_surfaceable_prior(rec) -> bool:
+        """Whether one procedural record is guidance (vs. synthesis input).
+
+        The outcome vocabulary is closed and mapped EXHAUSTIVELY — there is no
+        default branch, so a member added to `PROCEDURAL_OUTCOMES` without a
+        surfacing decision fails `test_learning_procedural_loop.py`'s vocabulary rail
+        instead of quietly inheriting one.
+        """
+        if rec.source == "failure_synthesis":
+            return True  # already collapsed; this IS the durable form
+        surfaceable = {"success": True, "failed": False, "denied": False}
+        for outcome, allowed in surfaceable.items():
+            if f"→ {outcome}" in rec.text:
+                return allowed
+        return False
+
+    def procedural_block(self, *, limit: int = 5) -> str:
+        """The how-to-work priors as one ambient block, or ``""``.
+
+        The reader that closes M5d's loop (WF2LEA-13): `record_procedural` had two
+        live writers and `procedural_priors` had no production caller at all, so the
+        system paid to capture priors every turn and used none of them.
+
+        Deliberately SMALL (`limit` 5, one line each) and pre-capped here rather
+        than in the allocator: it enters the budget as ONE all-or-nothing candidate
+        (`learning.ambient.procedural_candidate`), and a block that could grow with
+        the store is how a prior class turns into per-call noise.
+        """
+        priors = self.procedural_priors(limit=max(0, limit))
+        if not priors:
+            return ""
+        lines = "\n".join(f"- {p['text']}" for p in priors)
+        return f"{PROCEDURAL_HEADER}\n{lines}\n{PROCEDURAL_FOOTER}"
 
     def synthesize_failures(self, *, min_cluster: int = 3) -> int:
         """Failure-pattern synthesis (the load-bearing anti-noise mechanism): when

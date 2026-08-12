@@ -22,7 +22,7 @@ from personalclaw.vector_memory import VectorMemoryStore
 
 
 class _FakeProvider:
-    """Stands in for the native runtime — accumulates + drains tool outcomes."""
+    """Stands in for the native runtime — accumulates + drains (tool, outcome) pairs."""
 
     def __init__(self, outcomes):
         self._outcomes = list(outcomes)
@@ -65,7 +65,9 @@ def test_procedural_capture_fires_from_passed_provider(svc, monkeypatch):
     """A >=4-tool turn drains the provider and writes procedural records."""
     # service_for must wrap OUR vector store, not a fresh one
     monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
-    provider = _FakeProvider([("bash", False), ("fs_read", False), ("web_search", True)])
+    provider = _FakeProvider(
+        [("bash", "success"), ("fs_read", "success"), ("web_search", "failed")]
+    )
     _maybe_after_turn_review(
         _state_for(svc),
         _session(),
@@ -103,7 +105,7 @@ def test_session_provider_attr_is_not_consulted(svc, monkeypatch):
     when the explicit provider arg is None (the arg is the only source now)."""
     monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
     sess = _session()
-    sess.provider = _FakeProvider([("bash", False)])  # a red herring
+    sess.provider = _FakeProvider([("bash", "success")])  # a red herring
     _maybe_after_turn_review(
         _state_for(svc),
         sess,
