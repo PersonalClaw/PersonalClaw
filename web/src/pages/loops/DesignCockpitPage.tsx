@@ -16,6 +16,7 @@ import { useRunStream } from './useRunStream'
 import { CockpitPromptBar } from './CockpitPromptBar'
 import type { RouteProps } from '../../app/useQueryState'
 import { promptInput } from '../../ui/dialog'
+import { accentChip } from '../../design/accent'
 
 export type Scheme = 'light' | 'dark'
 type Tab = 'tokens' | 'canvas' | 'palette' | 'contrast' | 'exports'
@@ -250,7 +251,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         {(loop.project_id || loop.tasks_project_id) && projName && (
           <button type="button" onClick={() => onOpenProject?.((loop.project_id || loop.tasks_project_id)!)} title={`Project: ${projName} — open`}
             className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] hover:brightness-110"
-            style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>
+            style={accentChip}>
             <FolderKanban size={11} /><span className="truncate max-w-[14rem]">{projName}</span>
           </button>
         )}
@@ -321,8 +322,11 @@ function DesignPhaseTrail({ plan, phaseStatus, cycle, active, complete }: {
             <div key={i} className="flex items-center gap-1 shrink-0">
               {i > 0 && <span className="w-3 h-px bg-outline-variant/50" />}
               <span title={obj ? `${title} — ${obj}` : title}
-                className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] ${isActive ? 'bg-primary/15 text-primary' : done ? 'text-on-surface-low' : 'text-on-surface-low/70'}`}>
-                <Icon size={12} className="shrink-0" style={isActive ? { color: 'var(--color-primary)' } : done ? { color: 'var(--color-ok)' } : undefined} />
+                className={`inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] ${isActive ? 'bg-primary-container text-on-primary-container' : done ? 'text-on-surface-low' : 'text-on-surface-low/70'}`}>
+                {/* The active branch drops its inline coral: the chip is a container fill now, so the icon
+                    inherits `text-on-primary-container` and matches the label beside it. Coral ink on the
+                    container would be the same too-close pair, one element smaller. */}
+                <Icon size={12} className="shrink-0" style={!isActive && done ? { color: 'var(--color-ok)' } : undefined} />
                 <span className="truncate max-w-[10rem]">{title}</span>
               </span>
             </div>
@@ -398,7 +402,7 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
     <div className="flex flex-col gap-2xl max-w-[64rem]">
       <div className="flex items-center gap-2">
         <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{readOnly ? `PersonalClaw default design system · ${scheme}` : `Resolved design system · ${scheme}`}</span>
-        {!readOnly && (overrideCount ?? 0) > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
+        {!readOnly && (overrideCount ?? 0) > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{overrideCount} override group{(overrideCount ?? 0) > 1 ? 's' : ''}</span>}
         {!readOnly && onRefresh && <button type="button" onClick={onRefresh} className="ml-auto inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface text-[0.75rem]"><RefreshCw size={12} /> Refresh</button>}
       </div>
 
@@ -466,12 +470,24 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
           {!readOnly && <div className="text-on-surface-low text-[0.75rem] mb-1">Click a radius to override it.</div>}
           <div className="flex flex-wrap gap-3">
             {Object.entries(radius).map(([k, v]) => (
-              <button key={k} type="button" disabled={readOnly} title={readOnly ? `radius.${k} · ${v}` : `Override radius.${k} (now ${v})`}
-                onClick={readOnly ? undefined : async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
-                className="flex flex-col items-center gap-1 group">
-                <span className={`size-12 bg-surface-high border border-outline-variant/40 transition-colors ${readOnly ? '' : 'group-hover:border-primary'}`} style={{ borderRadius: v }} />
-                <span className={`text-on-surface-low text-[0.75rem] font-mono ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
-              </button>
+              // Read-only is not "a disabled action" — there is no action. A natively disabled
+              // button is out of the tab order, and this one carried the token's VALUE in its
+              // `title`, so in read-only mode the value was reachable by hover and by nothing
+              // else. When there is nothing to press, render a plain tile and put the value on
+              // screen where everyone can read it.
+              readOnly ? (
+                <div key={k} className="flex flex-col items-center gap-1">
+                  <span className="size-12 bg-surface-high border border-outline-variant/40" style={{ borderRadius: v }} />
+                  <span className="text-on-surface-low text-[0.75rem] font-mono">{k} · {String(v)}</span>
+                </div>
+              ) : (
+                <button key={k} type="button" title={`Override radius.${k} (now ${v})`}
+                  onClick={async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
+                  className="flex flex-col items-center gap-1 group">
+                  <span className="size-12 bg-surface-high border border-outline-variant/40 transition-colors group-hover:border-primary" style={{ borderRadius: v }} />
+                  <span className="text-on-surface-low text-[0.75rem] font-mono group-hover:text-on-surface">{k}</span>
+                </button>
+              )
             ))}
           </div>
           <div className="flex flex-wrap gap-4 mt-3">
@@ -490,12 +506,19 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
           {!readOnly && <div className="text-on-surface-low text-[0.75rem]">Click a font family to override its stack.</div>}
           <div className="flex flex-col gap-2">
             {Object.entries(families).map(([k, v]) => (
-              <button key={k} type="button" disabled={readOnly} title={readOnly ? `typography.family.${k}` : `Override typography.family.${k}`}
-                onClick={readOnly ? undefined : async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
-                className="flex items-baseline gap-3 text-left group">
-                <span className={`w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
-                <span className={`truncate text-on-surface text-[0.9375rem] ${readOnly ? '' : 'group-hover:text-primary'}`} style={{ fontFamily: String(v) }}>The quick brown fox</span>
-              </button>
+              readOnly ? (
+                <div key={k} className="flex items-baseline gap-3 text-left">
+                  <span className="w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize">{k}</span>
+                  <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontFamily: String(v) }}>The quick brown fox</span>
+                </div>
+              ) : (
+                <button key={k} type="button" title={`Override typography.family.${k}`}
+                  onClick={async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
+                  className="flex items-baseline gap-3 text-left group">
+                  <span className="w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize group-hover:text-on-surface">{k}</span>
+                  <span className="truncate text-on-surface text-[0.9375rem] group-hover:text-primary" style={{ fontFamily: String(v) }}>The quick brown fox</span>
+                </button>
+              )
             ))}
             {Object.keys(weights).length > 0 && (
               <div className="flex flex-wrap gap-3 mt-1">

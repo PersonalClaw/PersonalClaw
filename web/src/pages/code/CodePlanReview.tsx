@@ -292,7 +292,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                     enabled and relabel it to OPEN the picker, so the missing binding is
                     fixable in one click. dup-collision still hard-disables. */}
                 <span title={dupStages.length > 0 ? `Resolve the colliding stage${dupStages.length === 1 ? '' : 's'} (${dupStages.join(', ')}) before launching — each needs a distinct type or title.` : needsWorkspace ? 'This brownfield project needs a workspace folder — choosing one starts it.' : undefined}>
-                  <Button size="md" onClick={launch} disabled={launching || dupStages.length > 0}>
+                  <Button size="md" onClick={launch} disabled={launching || dupStages.length > 0} disabledReason={dupStages.length > 0 && !launching ? 'Two stages share a name — rename one first' : undefined}>
                     {launching ? <Loader2 size={15} className="animate-spin" /> : needsWorkspace ? <FolderOpen size={15} /> : <Rocket size={15} />} {launching ? 'Launching…' : needsWorkspace ? 'Choose workspace & launch' : 'Launch'}
                   </Button>
                 </span>
@@ -468,7 +468,7 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
         className="flex w-fit items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide hover:text-on-surface-var">
         <Gauge size={12} className={on ? 'text-primary' : ''} />
         <span>Quality bar</span>
-        <span className={`rounded-pill px-1.5 py-0.5 text-[0.75rem] normal-case tracking-normal ${on ? 'bg-primary/15 text-primary' : 'bg-surface-high text-on-surface-low'}`}>
+        <span className={`rounded-pill px-1.5 py-0.5 text-[0.75rem] normal-case tracking-normal ${on ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-low'}`}>
           {on ? 'on' : 'off'}
         </span>
       </button>

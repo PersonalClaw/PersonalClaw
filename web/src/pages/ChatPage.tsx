@@ -25,7 +25,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { DotGlow } from '../ui/DotGlow'
-import { EmptyState, ListSkeleton, Skeleton } from '../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError, Skeleton } from '../ui/ListScaffold'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
 import { Spark } from '../ui/Spark'
@@ -208,7 +208,10 @@ function relTimeShort(iso?: string): string {
  *  full chat-history page. Reuses the same `chat:sessions` cache the history page
  *  paints from (instant, no extra fetch). */
 function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) => void; onOpen: (key: string) => void }) {
-  const { data } = useCachedData<ChatSessionSummary[]>('chat:sessions', () => api.chatSessions().catch(() => []), { persist: false })
+  // No `.catch(() => [])`: swallowing the rejection makes a 500 indistinguishable from
+  // "you have no chats", and this panel then says exactly that. The error rides through so
+  // the ladder below can tell the two apart.
+  const { data, error: sessionsError, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>('chat:sessions', () => api.chatSessions(), { persist: false })
   const recent = useMemo(() => {
     const all = data ?? []
     return all
@@ -218,7 +221,9 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
   }, [data])
   return (
     <div className="flex flex-col gap-1">
-      {data === undefined ? (
+      {data === undefined && sessionsError ? (
+        <LoadError what="chats" error={sessionsError} onRetry={refreshSessions} />
+      ) : data === undefined ? (
         <div className="px-2 py-6 text-center text-on-surface-low text-[0.8125rem]">Loading…</div>
       ) : recent.length === 0 ? (
         <div className="px-2 py-6 text-center text-on-surface-low text-[0.8125rem]">No chats yet.</div>
@@ -3338,9 +3343,13 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // NB: the cache key carries the archived flag. Sharing one key across both views
   // would paint the active list while the archive loaded (and vice versa).
   const archivedView = (query.archived ?? '') === '1'
-  const { data: cachedSessions, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>(
+  // The rejection is NOT swallowed here either. Measured with `/api/chat/sessions` forced to
+  // 500 and a cold cache: `.catch(() => [])` made `sessions` an empty array, so this page told
+  // an account with 31 sessions "No chats yet" and offered to start its first — with nothing in
+  // a live region. An empty list and a failed load are different facts and now render as such.
+  const { data: cachedSessions, error: sessionsError, refresh: refreshSessions } = useCachedData<ChatSessionSummary[]>(
     archivedView ? 'chat:sessions:archived' : 'chat:sessions',
-    () => api.chatSessions(archivedView).catch(() => []),
+    () => api.chatSessions(archivedView),
     { persist: false },
   )
   const { data: foldersData, refresh: refreshFolders } = useCachedData<ChatFolder[]>('chat:folders', () => api.chatFolders().catch(() => []), { persist: true })
@@ -3882,7 +3891,8 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           </>)}
         </div>
 
-        {sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} /></div>
+        {sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
+          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} /></div>
           : sessions.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={MessageSquare} title="No chats yet" hint="Start a conversation — your sessions will appear here to search and revisit." action={{ label: 'New chat', onClick: () => navigate('chat/new'), icon: Edit3 }} /></div>
           : filtered.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={Search} title="No matches" hint="Try a different search or tag filter." /></div>
           : view === 'board' ? (

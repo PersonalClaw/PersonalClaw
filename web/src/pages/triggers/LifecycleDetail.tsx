@@ -4,11 +4,12 @@ import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type HookItem, type ActionProvider } from '../../lib/api'
-import { Field, TextInput } from '../../ui/forms'
+import { Field, TextInput, FieldError } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, seedActionConfig } from './ActionConfig'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
+import { accentChip } from '../../design/accent'
 
 /** Lifecycle-trigger inspector for the SidePanel: view ↔ in-panel edit, plus a
  *  Test button that fires the action with a sample context. Backed by the hooks
@@ -79,7 +80,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
           <TextInput value={matcher} onChange={setMatcher} placeholder={eventTakesToolMatcher(event) ? 'write_file' : '*'} />
         </Field>
         <ActionConfig providers={providers} provider={provider} config={config} onProvider={pickProvider} onConfig={setConfig} vars={em.vars} />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !name.trim()}
@@ -100,11 +101,11 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
           <Toggle on={hook.enabled} onChange={() => toggle()} disabled={busy} label="Toggle enabled" size="sm" />
         </label>
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
       {testOut && <p className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] break-words">{testOut}</p>}
 
       <div className="flex flex-wrap items-center gap-s">
-        <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{em.label}</span>
+        <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={accentChip}>{em.label}</span>
         {/* S67: an existing trigger on a dormant event looks identical to a working one — same
             Enabled toggle, same "Ran 0×" stat, which reads as "hasn't happened yet" rather than
             "cannot happen". This chip is the difference. */}

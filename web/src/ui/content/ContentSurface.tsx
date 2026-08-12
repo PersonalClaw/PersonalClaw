@@ -281,9 +281,15 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                     inherit its loading→aria-busy wiring. The spinner below is the only
                     in-flight signal and it is decorative, so without this a save announces
                     nothing while it runs. */}
-                <button onClick={save} disabled={!dirty || saving} type="button" aria-busy={saving || undefined}
-                  className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 text-[0.75rem] disabled:opacity-40"
-                  style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }} title="Save (⌘S)">
+                {/* `saving` stays NATIVE — an in-flight save must not be re-clickable. `!dirty` is a
+                    state the user can fix, so it keeps the tab stop and says so; Button does the
+                    same thing via `disabledReason`. Both dimming selectors, because
+                    `disabled:opacity-40` cannot match an `aria-disabled` element. */}
+                <button onClick={dirty ? save : undefined} disabled={saving} type="button"
+                  aria-busy={saving || undefined} aria-disabled={(!dirty && !saving) || undefined}
+                  className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 text-[0.75rem] disabled:opacity-40 aria-disabled:opacity-40"
+                  style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}
+                  title={dirty ? 'Save (⌘S)' : 'Save (⌘S) — no changes to save'}>
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {!compact && 'Save'}
                 </button>
                 {actions?.map((a) => (

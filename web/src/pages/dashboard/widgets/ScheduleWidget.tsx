@@ -1,20 +1,25 @@
 import { useState } from 'react'
 import { CalendarClock, ChevronDown, ChevronRight } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
-import { statusMeta } from '../../schedule/scheduleMeta'
+import { statusMeta, relPast, relFuture } from '../../schedule/scheduleMeta'
+import { epochSeconds } from '../../../lib/epoch'
 import { SlotEmptyState, WidgetRow, StatusDot } from './kit'
 import { partitionRuns } from './scheduleFold'
 import { Button } from '../../../ui/Button'
 import type { RouteProps } from '../../../app/useQueryState'
 
-/** Compact "time ago / from now" for an epoch-seconds timestamp. */
-function rel(secs?: number): string {
-  if (!secs) return ''
-  const now = Date.now() / 1000
-  const d = Math.abs(now - secs)
-  const past = secs <= now
-  const unit = d < 60 ? `${Math.round(d)}s` : d < 3600 ? `${Math.round(d / 60)}m` : d < 86400 ? `${Math.round(d / 3600)}h` : `${Math.round(d / 86400)}d`
-  return past ? `${unit} ago` : `in ${unit}`
+/** Compact "time ago / from now" for a timestamp in EITHER wire shape.
+ *
+ *  This used to own a fourth copy of the thresholds and do arithmetic on `secs` directly,
+ *  typed `number`. `/api/triggers/history` — the endpoint that feeds this widget — sends
+ *  ISO-8601 strings, so every comparison was false and the last branch rendered its unit
+ *  with NaN in front of it: six rows of **"in NaNd"** on the home dashboard, the first
+ *  thing a user sees. It now composes the shared pair, which coerces and has an honest
+ *  empty value. */
+function rel(ts?: number | string | null): string {
+  const secs = epochSeconds(ts)
+  if (secs == null) return ''
+  return secs <= Date.now() / 1000 ? relPast(secs) : relFuture(secs)
 }
 
 /** Schedule Timeline — recent trigger run outcomes (cross-trigger history index).

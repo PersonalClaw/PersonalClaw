@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX } from 'lucide-react'
 import { Button } from '../../ui/Button'
-import { TextArea } from '../../ui/forms'
+import { TextArea, FieldError } from '../../ui/forms'
 import { FormFooter } from '../../ui/FormFooter'
 import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
@@ -13,6 +13,7 @@ import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type 
 import { useActiveChatModelOptions } from '../../lib/agents'
 import { providerMeta, isReservedAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
+import { accentChip } from '../../design/accent'
 
 /** Native agent inspector: view ↔ in-panel edit (full builder), set-as-default,
  *  delete. */
@@ -50,7 +51,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
     return (
       <div className="flex flex-col gap-l">
         <AgentForm draft={draft} onChange={setDraft} nameLocked compact />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
@@ -73,14 +74,14 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
         )}
         {isDefault && <span className="ml-auto inline-flex items-center gap-1 text-primary text-[0.75rem]"><Star size={12} fill="currentColor" /> Default</span>}
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {reserved && <p className="text-on-surface-low text-[0.8125rem] leading-relaxed">This is a built-in system agent (the background-chore worker, the goal-loop worker, or the goal-planner). Its definition is fixed, but you can swap which model it runs on.</p>}
 
       {reserved && <ReservedModelEditor agent={agent} onSaved={onSaved} />}
 
       <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : 'Native'}</span>
+        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : 'Native'}</span>
         {!reserved && agent.model && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{agent.model}</span>}
         {agent.approval_mode && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var">{agent.approval_mode}</span>}
       </div>
@@ -150,7 +151,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
           <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
             placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={!dirty || busy}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
+            <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
           </div>
         </div>
@@ -264,7 +265,7 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
         <div className="min-w-0 flex-1"><Combobox options={opts} value={model} onChange={setModel} placeholder="Auto — use chat binding" emptyText="No active chat models" /></div>
         {dirty && <Button size="sm" onClick={save} disabled={saving}><Check size={14} /> {saving ? 'Saving…' : 'Save'}</Button>}
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
     </div>
   )
 }

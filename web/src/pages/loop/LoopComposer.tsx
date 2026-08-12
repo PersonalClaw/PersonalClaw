@@ -208,6 +208,13 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
     // granularity dial) self-collapses to a compact pill+menu (Segmented collapse='menu'),
     // so the row stops needing a horizontal scroll; min-w-0 makes the flex bound bite and
     // shrink-0 keeps each control its natural size.
+    //
+    // 🪤 ONE control collapsing was not enough. Measured at 390px: this row rendered **691px**
+    // of content into a 390px viewport, so `ux-audit` reported clipped text (691>390), the
+    // "Unattended" label at **1.48:1** where it ran under the frosted shell-corner chrome, and
+    // axe `[serious] target-size` on the granularity dial. Every control here is `shrink-0` by
+    // design (they must keep their natural size), so the row can only fit by each wide control
+    // having its OWN collapse strategy — which only the granularity dial had.
     <div className="flex min-w-0 items-center gap-s [&>*]:shrink-0">
       <ProjectPicker value={projectId} onChange={(id) => { setProjectId(id); setActiveProject(id) }} disabled={busy} />
       {/* Goal-only: the stop-granularity dial. 4 options → collapses to a menu when narrow. */}
@@ -217,16 +224,29 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       )}
       {/* Code-only: greenfield vs an existing codebase (workspace is picked on Plan Review). */}
       {kind === 'code' && (
-        <Segmented ariaLabel="Project kind" disabled={busy} value={projectKind} onChange={(v) => setProjectKind(v as 'greenfield' | 'brownfield')}
+        <Segmented ariaLabel="Project kind" disabled={busy} collapse="menu" value={projectKind} onChange={(v) => setProjectKind(v as 'greenfield' | 'brownfield')}
           options={[{ key: 'greenfield', label: 'New project' }, { key: 'brownfield', label: 'Existing codebase' }]} />
       )}
-      <Segmented ariaLabel="Mode" disabled={busy} value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
+      <Segmented ariaLabel="Mode" disabled={busy} collapse="menu" value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
         options={[{ key: 'unattended', label: 'Unattended' }, { key: 'attended', label: 'Attended' }]} />
-      <label className="inline-flex cursor-pointer items-center gap-1.5 text-[0.75rem] text-on-surface-low"
+      {/* The qualifier is the widest thing in this row and the least load-bearing — the title
+          already explains it in full. It drops below `lg`, where the header is fighting for
+          room. The checkbox carries an EXPLICIT aria-label so its accessible name is the same
+          sentence at every viewport: a name that changes with screen width is worse than a long
+          one, because "Scratch" and "Scratch (auto-clean when done)" are different controls to
+          anyone searching by name. */}
+      {/* `min-h-6` (24px) is the HIT AREA, not the look: the box stays 14px. Measured on `#/loop`, the
+          label — which is the real pointer target, since it is natively associated — was **204x18**, so
+          the 24px SC 2.5.8 minimum failed on the height axis even counting the whole label. The
+          undersized-target spacing exception does not rescue it either: the nearest other target sits
+          0px away, so the 24px circles intersect. Same move as the small Toggle: grow the target, leave
+          the control's drawn size alone. */}
+      <label className="inline-flex min-h-6 cursor-pointer items-center gap-1.5 text-[0.75rem] text-on-surface-low"
         title="When done, reclaim this loop's scratch dir. Its report is saved to Artifacts first, so nothing is lost.">
         <input type="checkbox" disabled={busy} checked={scratch} onChange={(e) => setScratch(e.target.checked)}
+          aria-label="Scratch (auto-clean when done)"
           className="size-3.5 accent-[var(--color-primary)]" />
-        Scratch (auto-clean when done)
+        Scratch<span className="hidden lg:inline"> (auto-clean when done)</span>
       </label>
     </div>
   )

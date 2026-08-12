@@ -96,20 +96,144 @@ const walk = (d: string): string[] =>
   })
 
 describe('the migrated surfaces read the error', () => {
-  const ADOPTERS = ['pages/projects/ProjectsSection.tsx', 'pages/code/CodeSection.tsx']
+  // `#/learning` joined after a measured failure: with both learning endpoints returning 500 and a
+  // COLD sessionStorage (a warm cache masks this entirely), the page rendered "Nothing to review —
+  // proposals appear here when the system notices a pattern worth offering" with **no error text
+  // anywhere**, and its capture-week panel — the whole point of the surface, the days capture never
+  // ran — simply vanished. The most confident possible way to say the opposite of what happened.
+  const ADOPTERS = [
+    'pages/projects/ProjectsSection.tsx',
+    'pages/code/CodeSection.tsx',
+    'pages/learning/LearningPage.tsx',
+    // `#/prompts` is the harsher variant: its fetchers carried `.catch(() => [])`, so the rejection
+    // never reached the hook and `error` could not have been read even if someone tried. Measured
+    // against a 500 with a cold sessionStorage, it rendered "No user prompts — user prompts are
+    // invoked in chat with filled-in {{variables}}" plus a New-prompt CTA, with no error text and no
+    // live region. Removing the swallow is half the fix; the branch is the other half.
+    'pages/prompts/PromptsListPage.tsx',
+    // `#/workflows` does not use the hook at all — it hand-rolls `useState` + `Promise.all` with a
+    // `.catch` per read. Measured with all three workflow endpoints at 500: "No workflow runs yet —
+    // start one from the Definitions tab", no error text, no live region. Its THIRD read keeps its
+    // fallback on purpose (surfacing is a freshness column; a startable list beats an error for it),
+    // which is why the swallow check below is scoped to the hook's own fetchers.
+    'pages/workflows/WorkflowsListPage.tsx',
+    // `#/discover` is the sharpest instance of the family so far: its `.catch(() => null)` made `data`
+    // falsy, which the render reads as "Discover is off" — so a 500 did not merely stay silent, it made
+    // a FALSE CLAIM ABOUT A SETTING and offered "Open Settings" to turn tips back on. Measured against
+    // a 500 on `/api/legibility/discover`: "Discover is off — … Turn them back on in Settings ›
+    // Legibility." A confident wrong answer beats a silent one for damage.
+    'pages/discover/DiscoverPage.tsx',
+    // `#/apps` swallowed TWICE — the installed list (`() => []`) and the Store catalog (`() => null`).
+    // Measured against a 500 on `/api/apps*`: "No apps installed — Browse the Store to add apps, or
+    // install one from a local path or git URL" plus a Browse Store CTA, and the Store tab renders as
+    // an empty shelf. Both guards are per-fetch, so a catalog outage never claims your Library is empty.
+    'pages/apps/AppsSection.tsx',
+    // `#/settings/inbox` swallowed to `null`, which the hook PERSISTED — `sessionStorage
+    // ['cache:settings:inbox'] === "null"` — so all THREE consumers of that key seeded null from cache and
+    // read it as loaded. Its own gate then rendered `<FormSkeleton>` forever: measured with the GET at 500,
+    // 0 editable controls, 22 shimmering skeleton nodes, no error, no retry. Adding it here also puts the
+    // key-poisoning check below over `'settings:inbox'`.
+    'pages/settings/InboxSettingsPanel.tsx',
+  ]
 
   for (const rel of ADOPTERS) {
     it(`${rel} branches on the load error before the empty state`, () => {
       const src = readFileSync(join(SRC, rel), 'utf8')
       expect(src, 'must render the shared primitive').toMatch(/<LoadError\b/)
-      // Reading `error` off the hook is what makes the branch possible at all.
-      expect(src, 'must destructure the hook error').toMatch(/error:\s*loadErr/)
+      // The property that makes the branch possible is that the rejection is CAPTURED rather than
+      // discarded. Two shapes qualify, and both ship here:
+      //   • `useCachedData` consumers destructure it — `error: somethingErr` (the alias is free-form
+      //     because a surface can guard more than one fetch; `#/learning` has two and cannot name both
+      //     `loadErr`);
+      //   • a hand-rolled loader catches into state — `.catch((e) => { setSomethingErr(e); … })`, which
+      //     is what `#/workflows` does with its `Promise.all`;
+      //   • or it is destructured plainly as `error` — the most direct form, and the one a surface with
+      //     a single fetch should use (`#/discover`).
+      // Substituting data (`.catch(() => [])` / `(() => null)`) satisfies none of them, which is the point.
+      //
+      // ⚠️ THIRD WIDENING. This matcher has now been wrong about three separate adopters: it demanded the
+      // alias `loadErr` (#1127 widened it), then an alias containing "err" at all (#1132's plain `error`),
+      // and its sibling reachability check demanded source order (#1129 replaced it). Each time it had
+      // encoded an accident of whoever adopted first. **When a rail rejects a new adopter, check the rail
+      // before the adopter.**
+      expect(src, 'must capture the rejection, not discard it').toMatch(
+        /\berror\s*[,}]|error:\s*\w*(?:err|Err)\w*|catch\(\(\w+\)\s*=>\s*\{[^}]*[Ee]rr\w*\(/,
+      )
       // And the error branch must precede the skeleton/empty branches, or it never runs.
+      // REACHABILITY, not source order. The first two adopters put `<LoadError>` textually before their
+      // skeleton, so an earlier version of this rail asserted exactly that — and it rejected
+      // `#/workflows`, whose error branch is perfectly reachable while sitting AFTER its `<Loading />`
+      // because a separate `loading` flag is cleared in a `finally` and therefore opens on failure.
+      // Source order was a proxy for the real property; these are the two shapes that satisfy it:
       const errAt = src.search(/<LoadError\b/)
-      const skelAt = src.search(/<ListSkeleton\b/)
-      expect(errAt, 'the error branch must come before the skeleton branch').toBeLessThan(skelAt)
+      // Three loading primitives ship: `ListSkeleton` (a shaped list placeholder), `Loading` (a spinner)
+      // and `FormSkeleton` (a shaped form placeholder, used by the settings panels). The rail knew the
+      // first two because the first adopters used them — the same accident this file has now corrected
+      // four times. The vocabulary is what widens; the property being checked does not.
+      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\s*\/>/, /<FormSkeleton\b/].map((re) => {
+        const i = src.search(re)
+        return i === -1 ? Number.POSITIVE_INFINITY : i
+      }))
+      expect(loadAt, 'the surface must have a loading state at all').toBeLessThan(Number.POSITIVE_INFINITY)
+      const errorBranchFirst = errAt < loadAt
+      const loadingClearedOnFailure = /finally\s*\{[^}]*setLoading\(false\)/.test(src)
+      expect(
+        errorBranchFirst || loadingClearedOnFailure,
+        'the error branch must be reachable: either it precedes the loading branch, or the loading flag is cleared in a finally so a failure gets past it',
+      ).toBe(true)
     })
   }
+
+  it('no OTHER consumer of an adopter\'s cache key swallows either', () => {
+    // 🔴 THE ONE THAT ACTUALLY BIT. `useCachedData` caches by KEY, so a swallow at ANY call site
+    // resolves with a substitute value that the hook then persists — and every other consumer of that
+    // key reads it as a success, making their own `data === undefined && error` branch unreachable.
+    // Measured on `#/apps`: the `'apps'` key has FOUR consumers (the shell's nav badge, two settings
+    // panels, and the Store), three of which swallowed. With all `/api/apps*` calls at 500 and the
+    // Store's own swallow already removed, `sessionStorage['cache:apps']` was `"[]"` and the page still
+    // rendered "No apps installed". Fixing one file was not enough; fixing the key was.
+    const files: string[] = []
+    for (const abs of walk(SRC)) files.push(abs)
+    // key → [file:line, swallows?]
+    const consumers = new Map<string, { at: string; swallows: boolean }[]>()
+    for (const abs of files) {
+      const src = readFileSync(abs, 'utf8')
+      for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(\s*(?:\/\/[^\n]*\n\s*)*(?:\/\*[\s\S]*?\*\/\s*)*'([^']+)'\s*,([\s\S]{0,260}?)\)\s*(?:,|;|\n)/g)) {
+        const key = m[1]
+        const body = m[2]
+        const swallows = /\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/.test(body)
+        const at = `${abs.slice(SRC.length + 1)}:${src.slice(0, m.index).split('\n').length}`
+        consumers.set(key, [...(consumers.get(key) ?? []), { at, swallows }])
+      }
+    }
+    // Sanity: the scan must actually see the multi-consumer key it was written for.
+    const appsConsumers = consumers.get('apps') ?? []
+    expect(appsConsumers.length, "the scan must find the 'apps' key's consumers").toBeGreaterThanOrEqual(3)
+
+    const adopterKeys = new Set<string>()
+    for (const rel of ADOPTERS) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      for (const m of src.matchAll(/useCachedData(?:<[^>]*>)?\(\s*(?:\/\/[^\n]*\n\s*)*(?:\/\*[\s\S]*?\*\/\s*)*'([^']+)'/g)) adopterKeys.add(m[1])
+    }
+    expect(adopterKeys.size, 'the adopters must declare at least one cache key').toBeGreaterThan(0)
+
+    const poisoners: string[] = []
+    for (const key of adopterKeys) {
+      for (const c of consumers.get(key) ?? []) if (c.swallows) poisoners.push(`${c.at} (key '${key}')`)
+    }
+    expect(poisoners, 'a swallow here makes every other consumer of the key unable to see the failure').toEqual([])
+  })
+
+  it('no adopter swallows the rejection inside its fetcher', () => {
+    // `.catch(() => [])` inside the fetcher makes the error branch unreachable by construction: the
+    // hook is handed a successful empty list. A surface that renders LoadError while still swallowing
+    // is asserting a state it can never enter.
+    for (const rel of ADOPTERS) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      const swallowing = [...src.matchAll(/useCachedData[\s\S]{0,220}?\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/g)]
+      expect(swallowing.map((m) => m[0].slice(0, 60)), `${rel} swallows a fetch rejection`).toEqual([])
+    }
+  })
 
   it('the primitive is exported from the list kit, beside EmptyState', () => {
     // Co-located on purpose: the two are alternative answers to the same condition, and a

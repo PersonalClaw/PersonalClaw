@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
-import { Loading } from '../../ui/ListScaffold'
+import { Loading, LoadError } from '../../ui/ListScaffold'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
 import { NumberField } from '../../ui/forms'
+import { notify } from '../../app/appSdk'
 
 /** Inbox settings → GET/PUT /api/inbox/settings (alert keywords, name-mention
  *  alerts, auto-cleanup, retention). Lives in the Inbox SidePanel. */
@@ -16,7 +17,11 @@ export function InboxSettingsPanel() {
   const [engagementOn, setEngagementOn] = useState<boolean | null>(null)
   const [sourcesOn, setSourcesOn] = useState<boolean | null>(null)
 
-  useEffect(() => { api.inboxSettings().then(setS).catch(() => setS(null)) }, [])
+  // `setS(null)` on failure left `!s` true, and the gate below rendered `<Loading />` FOREVER. Capture the
+  // rejection instead so the drawer can say what happened; `load` lets the user retry without reopening.
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const load = () => api.inboxSettings().then((v) => { setS(v); setLoadErr(null) }).catch(setLoadErr)
+  useEffect(() => { load() }, [])
   useEffect(() => {
     api.personalclawConfig()
       .then((c) => {
@@ -28,7 +33,11 @@ export function InboxSettingsPanel() {
 
   const patch = (p: Partial<InboxSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
-    api.saveInboxSettings(p).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    // The drawer copy of the settings panel — same optimistic-then-silent shape, same fix, so the two
+    // copies stay in parity (`settings/inboxSettingsParity.test.ts` guards their fields).
+    api.saveInboxSettings(p)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
   const setEngagement = (v: boolean) => {
@@ -46,6 +55,7 @@ export function InboxSettingsPanel() {
       .catch(() => setSourcesOn(!v))
   }
 
+  if (!s && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={load} />
   if (!s) return <Loading />
   return (
     <div className="flex flex-col gap-l">

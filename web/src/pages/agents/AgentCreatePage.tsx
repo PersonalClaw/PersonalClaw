@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ArrowLeft, Check } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -11,6 +11,13 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
   const [draft, setDraft] = useState<AgentDraft>(emptyDraft)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
+  // button lives in a sticky footer. Measured on `#/tasks/new` at 1440x900: the button sat at y=848 and
+  // the message at y=1744 — 844px BELOW the fold — with `role` null and no live region, so clicking
+  // Create produced no observable effect at all. The role announces it; the ref scrolls it into view,
+  // using the `scrollIntoView({ block: 'nearest' })` idiom this app already uses in 13 places.
+  const errRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => { if (err) errRef.current?.scrollIntoView({ block: 'nearest' }) }, [err])
 
   async function create() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
@@ -25,7 +32,7 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           <AgentForm draft={draft} onChange={setDraft} />
-          {err && <p className="mt-l text-danger text-[0.8125rem]">{err}</p>}
+          {err && <p ref={errRef} role="alert" className="mt-l text-danger text-[0.8125rem]">{err}</p>}
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">

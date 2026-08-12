@@ -146,7 +146,17 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
           {/* toolbar — URL-backed filter state (shareable) */}
           <div className="flex flex-wrap items-center gap-m border-b border-outline/40 px-l py-2.5">
             <div className="w-64"><SearchField size="sm" value={q} onChange={setQ} placeholder="Search artifacts…" ariaLabel="Search artifacts" name="artifacts-search" /></div>
-            <Segmented value={kind} onChange={setKind}
+            {/* `ARTIFACT_KINDS` is 16 kinds, so this strip renders 17 tabs at a measured 1152px —
+                nearly 3x the next-largest registry feeding a Segmented anywhere in the app (6). With
+                no collapse strategy the strip could not shrink and the row it sits in is
+                `overflow: hidden`, so the tail was simply CUT OFF and unreachable: 7 of 17 tabs off
+                screen at 834px (tablet), 12 of 17 at 390px — 'SVG' through 'Video' had no way to be
+                picked at all. `collapse="scroll"` is the primitive's own form of what the Files
+                root-tab strip hand-rolls for the same reason (a variable-count strip in a bounded
+                slot), and what the inbox strip already declares; the strip is untouched at any width
+                where it fits, so desktop is byte-identical. Keyboard reach is unaffected — the
+                roving-tabindex arrow nav scrolls each tab into view as it takes focus. */}
+            <Segmented ariaLabel="Artifact kind" value={kind} onChange={setKind} collapse="scroll"
               options={[{ key: '', label: 'All kinds' }, ...ARTIFACT_KINDS.map((k) => ({ key: k.key, label: k.label }))]} />
             <FilterMenu label={src ? `via ${src}` : 'Any source'} value={src} onPick={setSrc}
               options={[{ key: '', label: 'Any source' }, ...SOURCES.map((s) => ({ key: s, label: `via ${s}` }))]} />
@@ -154,7 +164,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
               <FilterMenu label={col || 'All collections'} value={col} onPick={setCol}
                 options={[{ key: '', label: 'All collections' }, ...collections.map((c) => ({ key: c, label: c }))]} />
             )}
-            <div className="ml-auto"><Segmented value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
+            <div className="ml-auto"><Segmented ariaLabel="Sort artifacts" value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && artifacts.length === 0

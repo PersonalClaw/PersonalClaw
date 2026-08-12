@@ -16,7 +16,11 @@ import { fvs } from '../../design/fontWeight'
  *  aggregated here so a user reaches every app's settings in one place. */
 export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
   const { data: apps } = useCachedData<AppSummary[]>(
-    'apps', () => api.apps().catch(() => []), { persist: true },
+    // Shares the `'apps'` cache key with `#/apps` and the settings widget. A `.catch(() => [])` here
+    // resolves with an empty list, which `useCachedData` persists — so every OTHER consumer reads `[]`
+    // as a success and can never reach its own error branch. Measured: with all `/api/apps*` calls at
+    // 500, `sessionStorage['cache:apps']` was `"[]"` and `#/apps` still said "No apps installed".
+    'apps', () => api.apps(), { persist: true },
   )
 
   if (!apps) return <AppsSkeleton />
@@ -79,7 +83,7 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
           {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span className="flex items-center gap-1 text-ok text-[0.75rem]"><Check size={13} /> Saved</span>}
-            <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty} onClick={() => cfg.save()}>
+            <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty} disabledReason={!cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>
               {cfg.busy ? <Loader2 size={14} className="animate-spin" /> : null} Save
             </Button>
           </div>

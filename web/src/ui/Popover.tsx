@@ -172,13 +172,29 @@ function portalPos(anchor: DOMRect, placement: 'top' | 'bottom', align: 'left' |
  *  presses on tap (spring) — a light physical touch on a high-frequency surface,
  *  kept restrained (menus are dense). The `group` lets the icon shift on hover. */
 export function MenuRow({
-  icon, label, hint, selected, onClick,
+  icon, label, hint, selected, onClick, role,
 }: {
   icon?: ReactNode; label: string; hint?: string; selected?: boolean; onClick?: () => void
+  /** The ITEM role required by the popup's container role, when it declares one.
+   *
+   *  A bare `<button>` is right inside a role-less popover — 28 of the 30 call sites — but a
+   *  container that says `role="menu"` or `role="listbox"` promises children of a matching type,
+   *  and this row is what those two containers are made of. Measured before this prop existed:
+   *  the collapsed `Segmented` announced "View, list box" with **0 options** and the row context
+   *  menu a `menu` with **0 menuitems**, while every popup NOT built from this row
+   *  (`ProjectPicker`, `SlashMenu`, `HeaderActions`, `MentionMenu`) marked its items correctly.
+   *  The shared row was the reason those two were the outliers. */
+  role?: 'menuitem' | 'menuitemradio' | 'option'
 }) {
   return (
     <motion.button
       onClick={onClick}
+      role={role}
+      // The selected state goes in the vocabulary the role actually supports: `aria-selected`
+      // for an option, `aria-checked` for a radio item. A plain `menuitem` has neither, which is
+      // correct for an action row (Peek / Open / Pin) — nothing there is "on".
+      aria-selected={role === 'option' ? !!selected : undefined}
+      aria-checked={role === 'menuitemradio' ? !!selected : undefined}
       whileTap={{ scale: 0.97 }}
       transition={spring.spatialFast}
       className="group flex items-center gap-s w-full rounded-md px-m py-2 text-left text-on-surface hover:bg-surface-high transition-colors"

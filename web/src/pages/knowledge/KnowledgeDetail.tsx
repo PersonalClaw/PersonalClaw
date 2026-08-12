@@ -5,7 +5,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
-import { ChipInput } from '../../ui/forms'
+import { ChipInput, FieldError } from '../../ui/forms'
 import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
@@ -300,7 +300,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     return (
       <>
       <div className="flex h-full min-h-0 flex-col gap-l">
-        {err && <p className="shrink-0 text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError className="shrink-0">{err}</FieldError>}
         {titleEditable && (
           <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} autoFocus placeholder="Title"
             className="shrink-0 w-full bg-transparent text-on-surface outline-none border-b border-outline-variant/40 pb-1.5 text-[1.0625rem] focus:border-primary" data-type="title-l" />
@@ -359,7 +359,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     <div className="flex h-full min-h-0 flex-col gap-l">
       {/* The title + wand + action cluster live in the dedicated page's header bar
           (published via onHeader) — not inline here, so there's a single header. */}
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {/* Metadata row: provider/size/shape/words/age on the left, the live ingestion
           status DAG floated to the right of the same row. */}
@@ -742,9 +742,12 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
               already reads "No insights yet" (below), and `aria-expanded` is dropped when
               `!hasMore` so it stops claiming to be a disclosure. A tab stop here would be a dead
               stop announcing a fact the visible text carries. */}
-          <button type="button" onClick={onToggle} disabled={!hasMore}
+          {/* Nothing more to show is worth SAYING: natively disabled, this row left the tab order
+              and a keyboard user could not tell an empty section from a broken one. */}
+          <button type="button" onClick={hasMore ? onToggle : undefined} aria-disabled={!hasMore || undefined}
             aria-expanded={hasMore ? open : undefined}
-            className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default">
+            title={!hasMore ? 'Nothing more to show' : undefined}
+            className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default aria-disabled:cursor-default">
             <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10">
               <Sparkles size={14} className={`text-primary ${genning || processing ? 'animate-pulse' : ''}`} />
             </span>

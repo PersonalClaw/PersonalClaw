@@ -139,9 +139,18 @@ export function Switch({ on, onToggle, label, disabled }: {
   )
 }
 
-/** A compact segmented toggle for a small set of choices. */
-export function SegToggle<T extends string>({ value, options, onPick }: {
-  value: T; options: { key: T; label: string }[]; onPick: (v: T) => void | Promise<void>
+/** A compact segmented toggle for a small set of choices.
+ *
+ *  `ariaLabel` is the DIMENSION the choices belong to, and it is required: of the three
+ *  control primitives in this file, `Switch` takes `label` and `InlineSelect` takes
+ *  `ariaLabel`, and this one took nothing — so its options announced a bare value ("Light",
+ *  "Comfortable", "Warn+") with no axis and, because the active option is marked only by an
+ *  inline background, no way to tell which one is on. Each option publishes
+ *  `<dimension>: <value>` plus its pressed state, the shape `WidthPill`, `HeaderModePill`
+ *  and the composer pills already use. Pass the row's VISIBLE label so screen and speech
+ *  agree. */
+export function SegToggle<T extends string>({ value, options, onPick, ariaLabel }: {
+  value: T; options: { key: T; label: string }[]; onPick: (v: T) => void | Promise<void>; ariaLabel: string
 }) {
   const [busy, setBusy] = useState(false)
   const pick = async (e: React.MouseEvent, k: T) => {
@@ -154,6 +163,7 @@ export function SegToggle<T extends string>({ value, options, onPick }: {
     <div className="pointer-events-auto inline-flex rounded-pill bg-surface-high p-0.5" style={{ opacity: busy ? 0.7 : 1 }}>
       {options.map((o) => (
         <button key={o.key} type="button" onClick={(e) => pick(e, o.key)}
+          aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={o.key === value}
           className="rounded-pill px-2 h-[22px] text-[0.75rem] transition-colors"
           style={o.key === value ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
           {o.label}

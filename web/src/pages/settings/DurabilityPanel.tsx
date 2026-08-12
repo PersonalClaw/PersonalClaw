@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { epochSeconds } from '../../lib/epoch'
 import { HardDriveDownload, Loader2, ShieldCheck } from 'lucide-react'
 import { api, type DurabilitySnapshots, type DurabilityStatus } from '../../lib/api'
 import { notify } from '../../app/appSdk'
@@ -272,7 +273,12 @@ function JobLine({ label, when, due }: { label: string; when: number; due: boole
 
 /** Epoch seconds → a coarse "3 hours ago". Coarse on purpose: the useful question
  *  is "recently or not", and a live-ticking timestamp in settings is noise. */
-function relativeTime(epochSecs: number): string {
+function relativeTime(ts: number | string | null | undefined): string {
+  // The only formatter in the tree with no guard at all: a required `number` that nothing
+  // validates, so an unreadable value printed "NaN days ago". Not observed live — its field
+  // is numeric today — which is exactly why it is worth closing while the class is in hand.
+  const epochSecs = epochSeconds(ts)
+  if (epochSecs == null) return ''
   const secs = Math.max(0, Date.now() / 1000 - epochSecs)
   if (secs < 90) return 'just now'
   const mins = Math.round(secs / 60)
