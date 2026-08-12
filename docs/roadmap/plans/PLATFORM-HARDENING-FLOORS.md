@@ -488,3 +488,52 @@ Rows 1-4 are roughly one focused session between them.
   plan re-homes them rather than creating parallel machinery (§0). `SafetyProfile` (§5) and the
   app-env inheritance (§2.2 / `D1`) were **already recorded as inert or open** by their owning
   plans — the code audit independently re-derived both, which is corroboration, not new scope.
+- [2026-08-12][PHF-12] DONE: the §3.2 census violated the invariant its own detector documents.
+  `_inert_enum_surfaces` stated the rule and the error direction explicitly — *"An enum member
+  whose name is never accessed as an attribute anywhere in `src/` is declared and never
+  referenced […] Iteration-only consumption (`for m in E:`) is not detected; that is the accepted
+  under-reporting direction (**never a false red**)"* — and then produced exactly that false red.
+  `workflows/publish.py` declares `Lineage` = `SOURCE`/`INFORMED_BY`/`RELATED` and `parse_publish`
+  (publish.py:136) validates author-supplied edges **by iterating the enum**
+  (`if edge not in {e.value for e in Lineage}`, with `{[e.value for e in Lineage]}` in the error
+  string); `flatten_lineage` (publish.py:433) then persists the edge as a `lineage_informed_by`
+  scalar and `upsert_plan` (publish.py:240-246) only adds the `SOURCE` run marker on top. Both
+  members reachable and functional, both listed inert. That matters because five recent atoms were
+  picked straight off this baseline, so a false red spends a session "wiring up" working code.
+  FIX: whole-enum iteration now clears every member of the iterated class. Detected shapes —
+  `for`/`async for`, all four comprehension forms, and `list`/`tuple`/`set`/`frozenset`/`sorted`/
+  `iter`/`reversed`/`enumerate` applied to the class — each matched bare (`E`) or module-qualified
+  (`mutations.OpKind` at workflows/service.py:1748, `detectors.Skip` at learning/template_gate.py:119,
+  `grill_mod.Channel` at mcp_workflows.py:1078, the three real qualified shapes in this tree).
+  Deliberately NOT detected, each on the under-reporting side: `E.__members__` walks and
+  `value in E` (both measured at zero occurrences), `getattr(E, name)`, value-lookup `E(value)`,
+  local aliases, out-of-repo consumers; `isinstance(x, E)` was excluded after a first pass wrongly
+  counted it. Resolution is IMPORT-AWARE, not name-based: `src/` declares seven distinct `Verdict`
+  enums and `workflows/verify.py:76` iterates its OWN, so a name-only index would have cleared
+  `workflows/judge_contract.py`'s `Verdict.REPLAN` on an unrelated namesake and deleted a real
+  finding. DELTA (145 → 140 total, enum 18 → 13, all other kinds unchanged): five surfaces left,
+  **zero entered**, each departure verified reachable at a named iteration site —
+  `LoopKind.DESIGN`/`.GENERAL`/`.GOAL` via loop/loop.py:39 `frozenset(k.value for k in LoopKind)`,
+  whose `KINDS` is a live validator at loop/store.py:279; `Lineage.INFORMED_BY`/`.RELATED` via
+  publish.py:136-137. The forbidden-to-raise ratchet is untouched and proven to still bite (a
+  temporary `Completeness.PHF12_RATCHET_PROBE` in workflows/containers.py reds the rise check
+  naming file + surface, 2 failed / 13 passed; reverted by a targeted edit). The documented cost is
+  proven too: an unreferenced member added to the *iterated* `Lineage` is NOT reported. No
+  CHANGELOG entry — a repo audit tool plus its committed baseline is not a user-visible surface.
+- [2026-08-12][PHF-12] DISCOVERY: a SECOND, distinct false-red class remains and is deliberately
+  left unfixed. Value-lookup construction `E(value)` also makes every member reachable when the
+  value is externally supplied: `workflows/judge_contract.py:342` does
+  `Verdict(str(raw.get("verdict", "")).upper())` on **model-emitted** text, so `Verdict.REPLAN` is
+  reachable and still reported. Six of the thirteen surviving enum surfaces sit on classes
+  constructed that way (`MemoryTier`/`MemoryScope` memory_record.py:216/218, `DependencyType`
+  tasks/models.py:74, `Status` workflows/confirmation.py:177, `Actor` workflows/judge_actors.py:84,
+  `Verdict` judge_contract.py:342). Unlike iteration, `E(value)` does not prove reachability on its
+  own — a deserializer fed only from internally-written state proves nothing — so telling an
+  author/model-supplied value apart from our own round-trip is a judgment call worth its own atom
+  rather than a widening of `PHF-12` (§3.2's stated risk is exactly "resist widening the definition
+  mid-session"). Named in the detector docstring and LEFT IN THE BASELINE rather than blessed away.
+- [2026-08-12][PHF-12] DEVIATION: `PHF-6`'s docstring instructs "do not 'fix' any surface this
+  census reports here" and reserves count-driving for SH3.3. This atom changes no `src/` behaviour
+  and fixes no reported surface — it corrects the CLASSIFIER, so five lines leave because they were
+  never inert. Regeneration is therefore legitimate under the shrink-only rule (the population
+  genuinely shrank) and happens in the same commit, by the tool, never by hand.
