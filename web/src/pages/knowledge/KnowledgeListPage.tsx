@@ -914,11 +914,33 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
   )
 }
 
+/** One filter/collection chip. Selected chips carry the accent; the rest are neutral.
+ *
+ *  🪤 A SELECTED CHIP PUT THE ACCENT IN BOTH THE TEXT AND THE BACKGROUND, which is what broke it:
+ *  coral text on a 20% coral tint measured **3.33:1** in light mode — below the 4.5 floor and
+ *  reported `[serious] color-contrast` by axe. The tint raises the backdrop's luminance toward the
+ *  text it sits under, so the two converge. Dark mode was never affected (6.99:1) because there the
+ *  tint darkens the backdrop *away* from the light accent.
+ *
+ *  The selected state now uses the token pair the design system provides for exactly this — an
+ *  accent-tinted container with ink chosen to sit on it (`--color-primary-container` /
+ *  `--color-on-primary-container`, 13.1:1 in light, 10.43:1 in dark) — instead of hand-rolling a
+ *  `color-mix` tint and reusing the accent as ink.
+ *
+ *  A per-type `tone` (the Note/Bookmark/Gist hues) is left EXACTLY as it was. There is no
+ *  `<tone>-container` sibling to pair it with, and putting a type's hue on the coral container
+ *  would be both a new contrast risk and visually wrong. Those chips do not render selected on this
+ *  surface in any state measured here; if one ever fails, it needs its own container value, not a
+ *  guess made from this one. */
 function FilterChip({ active, onClick, tone, children }: { active: boolean; onClick: () => void; tone?: string; children: React.ReactNode }) {
+  const selected = tone
+    // Untouched: a type-toned chip keeps its own tint + ink.
+    ? { background: `color-mix(in srgb, ${tone} 20%, transparent)`, color: tone }
+    : { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-container)' }
   return (
     <button type="button" onClick={onClick}
       className="inline-flex items-center gap-1 rounded-pill px-m h-8 text-[0.8125rem] transition-colors"
-      style={active ? { background: `color-mix(in srgb, ${tone ?? 'var(--color-primary)'} 20%, transparent)`, color: tone ?? 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
+      style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
       {children}
     </button>
   )
