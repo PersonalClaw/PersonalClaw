@@ -22,6 +22,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2UNI-10` | ⬜ | Frontend review surface: QuestionSlider/ask() stepper widget + streaming multi-view render + new SSE events into RUN_LIFECYCLE + small-model naming call | `WF2UNI-4`, `WF2UNI-6` | the deep-rigor Round renders as a QuestionSlider stepper (typed kinds, one-at-a-time, custom-answer escape hatch, single Submit); plan review streams progressively (buffer-append re-parse, shimmer on in-flight steps) across proposal cards + read-only graph + JSON; new plan-streaming/revision/confirmation/demotion SSE events are added to the RUN_LIFECYCLE union in web/src/pages/loops/useRunStream.ts; the {title,description,per-step labels} naming call is wired with deterministic fallbacks. |
 | `WF2UNI-11` | ⬜ | Populate the grounding inputs: brownfield context pass (UP-R17), entity/topic preamble (UP-R14), and wire T4/T5 embedding tie-break to a live embedder/model | `WF2UNI-1`, `WF2UNI-2` | generation.py's codebase_context is populated by a depth-filtered tree + README head + project-metadata synthesis cached per (project_id, tree-hash) with 7d TTL; workflow_plan emits an entity-resolution first node (deterministic lookup + degraded fallback) plus topic extraction feeding the grill; matcher T4 (cached match_embedding, workflows.match_threshold 0.62 tie-breaker) and T5 (summarize-then-rematch re-entering the deterministic scorer) are wired to a live embedder/model in workflow_plan. |
 | `WF2UNI-12` | ⬜ | Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers | `WF2UNI-1`, `WF2UNI-6`, `EXT:LOOPS-EVOLUTION:loop drain / retirement before planning-module deletion` | plan_memory.py and its live call sites (history.py, dashboard/chat_title.py) are removed now that this plan replaces the format (keeping only the live subagent context-budget half); planning/ (runner.py, session.py), loop/plan_walkthrough.py, loop/*_plan_briefs.py, and loop/classify.py + loop/code_classify.py are deleted as loops drain, with their example intents already seeding the eval fixtures. |
+| `WF2UNI-13` | ✅ | Give the unattended-interrupt taxonomy a producer and a reader, delete the member that had no signal, and ratchet both enums | `WF2UNI-5` | `should_interrupt` has a live production caller (`unattended_interrupts`, emitted by `_autonomy_surface` as the plan preview's `unattended_interrupts` key); `UNINFERABLE` is produced from the `credentials_or_payment` registry signal now carried by name on `ConfirmationRequest.signals`; `CONFLICTING` is DELETED (no signal a `ConfirmationRequest` carries says "requirements contradict") and both "only three interrupts" claims are corrected; `should_interrupt` names every `ConfirmationType` member and RAISES on an unmapped one; an AST ratchet fails when any `Interrupt` member has no producer; `enum:Interrupt.UNINFERABLE` and `enum:Interrupt.CONFLICTING` both leave `inert-surface-baseline.json`; enforcement is UNCHANGED and the relaxation this atom refused is recorded as an owner decision |
 
 ## Atom scopes
 
@@ -120,4 +121,119 @@ Architecture: Grounding Preamble (UP-R14); Brownfield Context Pass (UP-R17); Tie
 Planning Surfaces Collapsed by This Plan; Execution log S40 DEVIATION (plan_memory still imported live)
 
 **Done when:** plan_memory.py and its live call sites (history.py, dashboard/chat_title.py) are removed now that this plan replaces the format (keeping only the live subagent context-budget half); planning/ (runner.py, session.py), loop/plan_walkthrough.py, loop/*_plan_briefs.py, and loop/classify.py + loop/code_classify.py are deleted as loops drain, with their example intents already seeding the eval fixtures.
+
+### `WF2UNI-13` — Give the unattended-interrupt taxonomy a producer and a reader, delete the member that had no signal, and ratchet both enums
+
+**Status:** done
+
+Architecture: the confirmation matrix + the three interrupts (shipped by `WF2UNI-5`, which this atom corrects); `autonomy.py`'s "Three interrupts, and only three" module claim
+
+**Done when:** `should_interrupt` has a live production caller (`unattended_interrupts`, emitted by `_autonomy_surface` as the plan preview's `unattended_interrupts` key); `UNINFERABLE` is produced from the `credentials_or_payment` registry signal now carried by name on `ConfirmationRequest.signals`; `CONFLICTING` is DELETED and both "only three interrupts" claims are corrected; `should_interrupt` names every `ConfirmationType` member and RAISES on an unmapped one; an AST ratchet fails when any `Interrupt` member has no producer; `enum:Interrupt.UNINFERABLE` and `enum:Interrupt.CONFLICTING` both leave `inert-surface-baseline.json`; enforcement is UNCHANGED and the relaxation this atom refused is recorded as an owner decision
+
+**Design**
+
+`Interrupt`'s docstring called its members "the only three things that stop an unattended run", and
+**nothing in production consulted any of them.** `should_interrupt` was the only producer, it had no
+caller outside tests, and it could only ever return `IRREVERSIBLE` — `UNINFERABLE` and `CONFLICTING`
+were produced nowhere and `inert-surface-baseline.json` listed both. So the taxonomy documented three
+stops of which two could not happen and one never ran.
+
+**The measurement came first, because wiring a guardrail may only ADD stops.** What stops an
+unattended run today, at the only seam that enforces anything:
+
+| Gate's declared `risk` | `gate_policy.decide` verdict for a trigger-origin run |
+|---|---|
+| `safe` | `AUTO_APPROVED` — proceeds |
+| `caution` | `AUTO_APPROVED` — proceeds |
+| `destructive` | `ASK` — stops |
+| absent / unparseable | `gate_risk` defaults to `DESTRUCTIVE` ⇒ `ASK` — stops |
+
+So today's answer is neither "stop for everything" nor "stop for nothing": **an unattended run stops
+for a DESTRUCTIVE-risk gate node and proceeds through everything else.** That decision is
+`gate_policy.decide`, called once from `controller._apply`'s `WAITING` branch, on the engine's
+`RiskLevel` × `OriginKind` vocabulary.
+
+**The two layers never meet, and that is deliberate.** `autonomy.py` speaks `Mode` ×
+`ConfirmationType`; the engine speaks `RiskLevel` × `OriginKind`. `autonomy.Mode` never reaches the
+run path at all — `run.mode` is `blocking | background`, an unrelated axis. The whole autonomy
+compilation chain (`scan_risk` → `type_attention` → `compile_require_hitl` → `build_confirmations`)
+terminates in `_autonomy_surface`'s plan-preview payload; `require_hitl`, described in-module as "the
+ONE uniform engine target", has no engine reader either. `_autonomy_surface`'s own docstring already
+states the asymmetry: "the ENGINE's own gate policy still governs what actually runs, so a failure
+here loses advice, never enforcement."
+
+**So this atom wires the taxonomy where it belongs — the advisory chain — and does NOT give it
+teeth.** The reasoning, in the failure direction:
+
+* *As a replacement for `gate_policy.decide`:* a **severe relaxation, refused.** `gate_risk` defaults
+  an undeclared gate to DESTRUCTIVE (⇒ ASK), while `_classify_node` types a `gate` node as
+  `READ`/`SAFE` (its `kind` matches none of action/transform/stage/infer), so `should_interrupt`
+  would return `False` and **every unclassified gate in an unattended run would newly
+  auto-approve.** That is precisely the failure `gate_risk`'s deny-by-default exists to prevent.
+* *As an additive veto layered after `gate_policy` (approve → ask only, never the reverse):* safe in
+  direction but **inert by construction** — gate nodes classify as `READ`, so the veto never fires. A
+  live reader of a signal nothing writes is the worst available shape.
+* *At the action-dispatch seam, stopping unattended runs before outward actions:* the one genuine
+  behavioural delta in the taxonomy (`should_interrupt` stops for `OUTWARD` at CAUTION; `gate_policy`
+  auto-approves CAUTION). Additive, and real. **But it is an owner decision, not an implementer's** —
+  it contradicts this module's own rule that autonomy machinery must not grow a second enforcement
+  path, and it changes unattended semantics for every user template that posts or notifies on a
+  schedule: those runs would newly park for an approval nobody is watching for. Zero bundled
+  templates use an outward provider, so the shipped library measures clean, but user templates are
+  not measurable from here. Recorded as an E4 owner decision instead of taken.
+
+**What ships is the counterfactual the offer surface was missing.** Every risk signal caps autonomy
+at `per_stage`, so `offer_autonomy` routinely *recommends* `per_stage` while still *offering*
+`unattended` — and `build_confirmations` is computed at the recommended mode. The preview therefore
+listed the stops for a mode the user might not pick and said nothing about the one being offered.
+`unattended_interrupts` answers it per confirmation: which of these stops survive at unattended, and
+which become journaled assumptions. That is the informed consent the rest of the module insists on,
+and being advisory it cannot relax anything — it reports on confirmations the plan already raises and
+changes no verdict.
+
+**`UNINFERABLE` gets an honest producer; `CONFLICTING` is deleted.**
+
+* `UNINFERABLE` ("a credential or a product decision nobody can guess") — the registry already has
+  `credentials_or_payment`, which *is* "a credential". The obstacle was that `_classify_node`
+  collapses every DESTRUCTIVE-level signal into the same `(DESTRUCTIVE, DESTRUCTIVE)` pair, so the
+  request reaching `should_interrupt` no longer knew which signal fired. Fixed by carrying the
+  registry signal names on `ConfirmationRequest.signals` — a canonical registry value threaded
+  through, not a text scan of the question. **Label-only and provably non-relaxing:**
+  `credentials_or_payment` is DESTRUCTIVE-level, so such a request already stopped on risk alone;
+  checking the signal first changes which interrupt is reported, never whether the run stops. Worth
+  the distinction anyway — "this cannot be undone" tells a user to review the blast radius, "nobody
+  can guess this value" tells them to supply it, and reporting the second as irreversible sends them
+  looking for a blast radius that is not the problem.
+* `CONFLICTING` ("requirements that contradict each other") — **deleted.** Nothing a
+  `ConfirmationRequest` carries expresses it, and manufacturing one by scanning question text is a
+  heuristic, not a signal. The one real contradiction this module detects — a template
+  `autonomy_floor` above the risk ceiling, in `offer_autonomy` — is resolved at PLAN time by letting
+  the floor win and recording it in `capped_by`, so it never reaches a run to stop it and would be
+  the wrong semantics for an interrupt. Both "only three" claims (the module docstring and the enum
+  docstring) are corrected to two rather than left describing a stop that cannot happen.
+
+**Two ratchets, because this atom's whole subject is a declared-but-unproducible member.**
+`should_interrupt` is exhaustive over `ConfirmationType` with a raising tail — the dangerous default
+there is `return False`, so a new type that fell through the old tail would have been waved through
+an unattended run. And an AST read asserts every `Interrupt` member is named in `should_interrupt`,
+which is the ratchet that would have caught this finding at birth.
+
+**Implementation plan**
+
+1. `autonomy.py`: add `ConfirmationRequest.signals: tuple[str, ...]`, surfaced in `to_dict()`;
+   populate it in `build_confirmations` from the node's `RiskHit`s.
+2. `autonomy.py`: delete `Interrupt.CONFLICTING`; correct the module docstring's "Three interrupts,
+   and only three" and the enum docstring; state the advise-vs-enforce split in the module docstring
+   pointing at `gate_policy` and `compile_require_hitl`.
+3. `autonomy.py`: in `should_interrupt`, add the `UNINFERABLE` branch keyed on
+   `credentials_or_payment` (before the risk check — label-only), give `DESTRUCTIVE`/`OUTWARD`/
+   `SPEND`/`READ`/`WRITE` each an explicit named branch, and replace the permissive tail with a
+   raising one.
+4. `autonomy.py`: add `unattended_interrupts(confirmations)` running the taxonomy at
+   `Mode.UNATTENDED` over the confirmations the plan already raises.
+5. `mcp_workflows.py`: emit `unattended_interrupts` from `_autonomy_surface`.
+6. Tests: drive the producer from a spec through `build_confirmations` (not a hand-built request),
+   assert the payload through `_autonomy_surface`, pin the non-relaxation with a
+   signals-stripped comparison, and add the two ratchets plus a proof each can fail.
+7. Regenerate `inert-surface-baseline.json` with `scripts/generate_inert_surface_baseline.py`.
 
