@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, RotateCcw } from 'lucide-react'
 import { api, type NotificationRuleRow, type NotificationRulesDoc, type NotificationMode, type NotificationTarget } from '../../lib/api'
 import { Field, Row, SegPills, Section } from './settingsUI'
-import { ChipInput, Checkbox, TextInput } from '../../ui/forms'
+import { ChipInput, Checkbox, TextInput, FieldError } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
 
@@ -57,7 +57,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
   return (
     <Section title="Per-kind delivery"
       hint="What happens to each kind of notification once it passes the settings above. Never = dropped; Badge = kept in the list without interrupting; Notify = a toast; Digest = batched into the daily summary.">
-      {err && <p className="mb-m text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError className="mb-m">{err}</FieldError>}
       <div className="flex flex-col gap-l">
         {bySource.map(([source, rows]) => (
           <div key={source}>
@@ -161,7 +161,7 @@ export function DigestSchedule({ schedule, onSaved }: { schedule: string; onSave
           {dirty && <Button size="sm" variant="ghost" onClick={() => { setValue(schedule); setErr('') }} disabled={busy}>Cancel</Button>}
         </div>
       </Field>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
     </Section>
   )
 }

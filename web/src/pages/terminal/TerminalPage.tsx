@@ -124,8 +124,21 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
         left={<PageTitle>Terminal</PageTitle>}
         right={<HeaderActions>
           {persist !== null && (
+            /* The label names WHAT THE CLICK DOES, and the explanation moves to `hint`. It used to be a
+               status sentence — "Persistent sessions off — enable tmux-backed survival" — which made this
+               the widest header control in the app by 3x (measured 387px against the widest sibling's
+               129px: `Sync agents`), so it was the first thing the header's degradation ladder had to
+               demote. Worse, `label` IS the accessible name and the icon-tier tooltip, so a screen-reader
+               user heard the current state and an instruction instead of an action, and "Persistent
+               sessions on" does not say whether clicking turns it off. `active` already carries the state
+               visually; `Hide explorer` / `Show explorer` on the Files header is the same shape done
+               right. `hint` is where the tmux detail belongs — it is what the overflow menu shows as its
+               secondary line. */
             <HeaderControl icon={Anchor}
-              label={persist ? 'Persistent sessions on — survive a restart (tmux)' : 'Persistent sessions off — enable tmux-backed survival'}
+              label={persist ? 'Disable persistent sessions' : 'Enable persistent sessions'}
+              hint={persist
+                ? 'Sessions are tmux-backed, so they survive a restart.'
+                : 'Sessions are lost on restart. Enabling keeps them alive with tmux.'}
               active={persist} priority="low" onClick={togglePersist} />
           )}
           {tabs.length > 0 && (

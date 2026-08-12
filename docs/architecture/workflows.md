@@ -44,6 +44,8 @@ while not terminal:
 | `controller.py` | the conductor: one per run, the only writer of run state |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |
+| `conditions.py` | the ONE boolean-condition dialect: gate `expr`, loop `until`, `success_when` |
+| `execution_hints.py` | the `runtime_hints.execution` half — today, WIP=1 (`single_active_feature`) |
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
 | `store.py` | persistence — runs, specs, state, outputs |
 | `mutations.py` | the typed edit grammar and its structural rules |
@@ -60,9 +62,9 @@ while not terminal:
 | `resilience.py` | retries, circuit breaker, budgets |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
 | `audit.py` | the `workflow_audit` maintenance op (diagnose / heal) |
-| `judge_contract.py` | the typed verdict enum, rubric ratchet, engine-computed overall, forbidden-mode denylist |
+| `judge_contract.py` | the ONE closed verdict enum (`verify.Verdict` was merged into it and deleted), the judge's wire shape (`judge_instruction` renders it, `parse_judge_json` reads it), the rubric ratchet with tolerant score lookup, the engine-computed overall, and the forbidden-mode denylist. Enforced on the live path: the judge gate validates every answer here, and `engine.apply_judge_contract` validates a judge STAGE's output at the dispatch seam |
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
-| `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`) and judge isolation |
+| `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`; a `self_judge` gate's PASS is redirected to review), judge isolation, and the blinded role-filtered evidence a judge is allowed to read |
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
@@ -76,7 +78,7 @@ while not terminal:
 | `generation.py` | the generated planning prompt, the mechanical self-check, repair-not-regenerate, and the decline path |
 | `contracts.py` | derived parameter schemas, per-stage done-means contracts and their lint, and blocking-vs-open decision typing |
 | `revision.py` | typed merge-by-id patches, the NO_UPDATE sentinel, TTL'd draft sketches, and the announce-block review surface |
-| `autonomy.py` | the risk-signal registry, autonomy floors and offers, HITL/AFK typing compiled to `require_hitl`, the confirmation matrix, the three interrupts, earned trust |
+| `autonomy.py` | the risk-signal registry, autonomy floors and offers, HITL/AFK typing compiled to `require_hitl`, the confirmation matrix, the two interrupts, earned trust |
 | `grill_protocol.py` | the structured `rigor: deep` protocol: recommendation-bearing questions, the facts-vs-decisions channel split, adaptive pacing, stress probes, the Step-0 schema, frozen prohibitions |
 | `rigor.py` | the cheap end of the axis: `rigor: fast` + its auto-scheduled refinement gate, Specify's one-stage rewrite, the append-only acceptance ratchet, revise-spec-from-artifact |
 | `template_pipeline.py` | chat-session mining, discover-then-freeze candidates on the scope ladder, the `suggest_template` nudge with its anti-nag rules, entity scrubbing |
@@ -106,6 +108,7 @@ while not terminal:
 | `settings.py` | The config knobs the runtime actually reads: one resolver per live-editable `WorkflowsConfig` field (`surface_mode_default`, `max_materialized_per_foreach`, `confirmation_ttl_secs`, `lease_ttl_secs`), each with the module constant as a fail-safe fallback, clamped to the bounds the records enforce, and deliberately uncached so a PATCH takes effect without a restart |
 | `scope.py` | filesystem write-scope enforcement by post-hoc diff |
 | `watchdog.py` | the supervisor: adoption, reaping, per-run publishing |
+| `overlap.py` | `on_overlap`: the exhaustive policy decision with a raising tail, the queued-vs-hand-made-draft marker on `run.extra`, the coalesce-to-one cap, and the single-flight drain called from the terminal writer and the watchdog poll |
 
 ## Containers do not execute
 

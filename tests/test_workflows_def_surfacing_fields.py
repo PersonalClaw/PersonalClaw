@@ -153,6 +153,68 @@ def test_the_adapter_does_NOT_re_implement_tolerance():
     assert sc.meta_from_def(_meta(surface_mode="nonsense")).surface_mode is SurfaceMode.OFF
 
 
+def _carried_kwargs(source: str, function: str, cls: str) -> set[str]:
+    """Keyword names the given function passes when constructing `cls`, read from the SOURCE.
+
+    Read out of the source rather than by calling the adapter: a field the adapter forgot arrives at
+    its dataclass DEFAULT, which is a legal value. So a behavioural assertion cannot tell "carried
+    and happened to equal the default" from "silently dropped" — only the call site can.
+    """
+    import ast
+
+    fn = next(
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name == function
+    )
+    return {
+        kw.arg
+        for call in ast.walk(fn)
+        if isinstance(call, ast.Call) and getattr(call.func, "id", "") == cls
+        for kw in call.keywords
+        if kw.arg
+    }
+
+
+def test_the_ONE_conversion_point_carries_every_field_a_def_can_SUPPLY():
+    """The anti-inertness rail for this seam: a field on BOTH dataclasses that `meta_from_def` does
+    not name is a field an author can set and no surfacing path will ever see.
+
+    This is the shape WF2TAS-12 measured on `lifecycle` from the other side — there the field was on
+    `SurfacingMeta` with no `DefMetadata` twin, so nothing could write it. Same defect, one seam:
+    the adapter is the only place the two shapes meet, and its own docstring calls itself the ONE
+    conversion point. This asserts that claim instead of trusting it.
+    """
+    import dataclasses as dc
+    import inspect
+    from pathlib import Path
+
+    from personalclaw.workflows.surfacing import SurfacingMeta
+
+    shared = {f.name for f in dc.fields(SurfacingMeta)} & {f.name for f in dc.fields(DefMetadata)}
+    # Vacuity guard: a rail over an empty intersection passes forever and measures nothing. Seven is
+    # the population measured at WF2TAS-12 (match_text, summary, when_to_use, agent_digest,
+    # surface_mode, requirements, cadence_days) — a DROP below it means fields left the seam.
+    assert len(shared) >= 7, f"the seam shrank to {sorted(shared)} — is the rail still measuring?"
+
+    source = Path(inspect.getsourcefile(sc) or "").read_text(encoding="utf-8")
+    carried = _carried_kwargs(source, "meta_from_def", "SurfacingMeta")
+    assert shared <= carried, f"meta_from_def silently drops {sorted(shared - carried)}"
+
+
+def test_the_conversion_rail_can_FAIL():
+    """Proof the rail has teeth. An adapter that dropped `cadence_days` would still return a valid
+    `SurfacingMeta` (cadence 0 = "no cadence"), so nothing downstream would raise — the def would
+    just never appear overdue, which is the quiet half of this defect class."""
+    doctored = (
+        "def meta_from_def(metadata):\n"
+        "    return SurfacingMeta(match_text=metadata.match_text, summary=metadata.summary)\n"
+    )
+    carried = _carried_kwargs(doctored, "meta_from_def", "SurfacingMeta")
+    assert "cadence_days" not in carried
+    assert carried == {"match_text", "summary"}
+
+
 def test_the_def_drives_the_CADENCE_record():
     state = sc.cadence_from_def(
         "backup", _meta(cadence_days=7, escalation="auto"), last_completed_at=100.0

@@ -137,7 +137,8 @@ function UseCaseVoiceSection({
         <Row label={enableLabel} hint={bound ? undefined : 'No model bound for this use case — bind one in Models to use this.'}>
           <div className="flex items-center gap-2">
             <AvailChip available={bound} okLabel="model bound" missLabel="no model" />
-            <Toggle on={enabled} onChange={(v) => saveSettings({ enabled: v })} label={enableLabel} disabled={!bound} />
+            <Toggle on={enabled} onChange={(v) => saveSettings({ enabled: v })} label={enableLabel} disabled={!bound}
+              disabledReason="No model is bound for this use case — bind one in Models first" />
           </div>
         </Row>
 
@@ -186,7 +187,7 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   graph: { label: 'graph', cls: 'bg-surface-high text-on-surface-low' },
-  manual: { label: 'manual', cls: 'bg-primary/15 text-primary' },
+  manual: { label: 'manual', cls: 'bg-primary-container text-on-primary-container' },
   learned: { label: 'learned', cls: 'bg-ok/15' },
 }
 

@@ -61,7 +61,9 @@ export function useBoardCollapse(storageKey: string) {
  *  (a brand-new affordance hidden behind hover is undiscoverable) but quiet. */
 export function CollapseColumnButton({ onCollapse }: { onCollapse: () => void }) {
   return (
-    <button type="button" aria-label="Collapse column" title="Collapse column"
+    // `aria-expanded` pairs this with the collapsed rail's `aria-expanded={false}`, so the two
+    // halves of one disclosure announce the same state model instead of only one of them doing so.
+    <button type="button" aria-label="Collapse column" title="Collapse column" aria-expanded
       onClick={(e) => { e.stopPropagation(); onCollapse() }}
       className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors">
       <ChevronsRightLeft size={13} />
@@ -81,11 +83,37 @@ export function CollapsedBoardColumn({ icon: Icon, label, count, tone, onExpand,
   /** Click-to-expand (manual collapse toggle). */
   onExpand?: () => void
 } & HTMLAttributes<HTMLDivElement>) {
+  // 🪤 `role="button"` IS A PROMISE OF KEYBOARD OPERABILITY, AND THIS DIV DID NOT KEEP IT.
+  // Measured on #/tasks?view=board: a **44×739px** rail — one of the largest targets on the board —
+  // with `tabIndex: -1`, `focusable: false`, no key handler, and matching no natively-tabbable
+  // selector. A keyboard user could not reach it or activate it at all, so a column collapsed by the
+  // empty-column default (or by an earlier click) was unrecoverable without a mouse. WCAG 2.1.1
+  // Keyboard, level A.
+  //
+  // No axe rule covers "role=button without a tab stop", which is why five clean audits of this
+  // board's sibling views never surfaced it.
+  //
+  // Space must `preventDefault` or the page scrolls under the activation, and the name has to carry
+  // the count itself: an `aria-label` OVERRIDES the element's text, so the visible "0" would
+  // otherwise be dropped from the accessible name (the same trap the nav count badge hit).
+  const activate = onExpand
+    ? (e: React.KeyboardEvent) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        onExpand()
+      }
+    : undefined
   return (
     <div title={`${label} · ${count}${onExpand ? ' — click to expand' : ''}`} {...rest}
       onClick={onExpand}
+      onKeyDown={activate}
       role={onExpand ? 'button' : undefined}
-      className={`flex min-h-0 flex-col items-center gap-1.5 rounded-xl px-1 py-2 transition-colors ${onExpand ? 'cursor-pointer hover:bg-surface-high' : ''}`}>
+      tabIndex={onExpand ? 0 : undefined}
+      // A collapsed rail IS the collapsed half of a disclosure — say so, and pair it with the
+      // expanded column's collapse control.
+      aria-expanded={onExpand ? false : undefined}
+      aria-label={onExpand ? `${label}, ${count} — expand column` : undefined}
+      className={`flex min-h-0 flex-col items-center gap-1.5 rounded-xl px-1 py-2 transition-colors ${onExpand ? 'cursor-pointer hover:bg-surface-high focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary' : ''}`}>
       <Icon size={13} style={{ color: tone || 'var(--color-on-surface-low)' }} />
       <span className="text-on-surface-low tabular-nums text-[0.75rem]">{count}</span>
       <span className="min-h-0 flex-1 truncate text-on-surface-low text-[0.75rem]"

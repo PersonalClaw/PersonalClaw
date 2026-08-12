@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { Trash2, Play, FlaskConical, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
@@ -166,7 +167,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
         <div className="text-on-surface-low text-[0.75rem]">Created for you automatically. Manage it here or ask in chat to change it.</div>
       )}
 
-      {err && <div className="text-danger text-[0.8125rem]">{err}</div>}
+      {err && <FieldError>{err}</FieldError>}
       {runFlash && !err && <div className="text-on-surface-low text-[0.8125rem]">{runFlash}</div>}
 
       <div className="flex flex-wrap items-center gap-2 pt-1">

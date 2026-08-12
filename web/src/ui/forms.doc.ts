@@ -25,6 +25,22 @@ const docs: UiDoc[] = [
     anatomy: ['FieldLabelCtx provider', 'label row (uppercase label id + right slot)', 'wrapped control', 'optional hint paragraph'],
   },
   {
+    name: 'FieldError',
+    keywords: ['error', 'failure', 'validation', 'alert', 'form', 'inline', 'announce'],
+    description:
+      "The one-line failure message under a control or beside an action. Renders identically to the `<p className=\"text-danger …\">` line that 35 call sites had hand-rolled, and adds the one thing every one of them was missing: role=alert, so a failed save is announced and not merely coloured. Measured on #/settings/design with the theme POST forced to 500 — the failure text appeared on screen and the page held zero live regions.",
+    props: [
+      { name: 'children', description: 'The message. Keep it one line; use InlineError for a multi-line or dismissible banner.' },
+      { name: 'className', description: 'Per-site spacing only (mt-2, mb-m, shrink-0). The danger tone and the 0.8125rem size are fixed so every failure line reads the same.' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Reach for FieldError for the terse failure line that belongs to one control or one action, and InlineError for a tinted, dismissible banner above a body.' },
+      { guidance: false, description: 'Do not use it for a stored status field (a finished run\'s recorded error, say) — role=alert interrupts, and historical data should not.' },
+      { guidance: false, description: 'Do not re-tone or resize it per site; that drift is exactly what the 35 hand-rolled copies were.' },
+    ],
+    anatomy: ['<p role="alert"> (danger tone, 0.8125rem, optional per-site spacing)'],
+  },
+  {
     name: 'TextInput',
     keywords: ['input', 'text', 'field', 'form', 'password', 'mono', 'icon', 'controlled'],
     description:
@@ -38,6 +54,7 @@ const docs: UiDoc[] = [
       { name: 'onChange', description: 'Fires with the new string on each keystroke.' },
       { name: 'onKeyDown', description: 'Key handler on the input (e.g. Enter to submit).' },
       { name: 'placeholder', description: 'Placeholder text shown when empty.' },
+      { name: 'required', description: 'Publishes `aria-required` and nothing else — no asterisk, no colour, no layout change. Mark the field a form actually enforces: the app already explains mandatory fields at the submit button (40 `disabledReason` sites read "Enter a … first"), which a screen-reader user tabbing the field never hears. A VISIBLE required marker is a separate design decision; this is the invisible half.' },
       { name: 'size', description: "Height/text tier — 'sm' h-8 (dense in-panel), 'md' h-9 (rows/side panels), 'lg' h-10 (page forms; DEFAULT, the DESIGN.md canonical Input)." },
       { name: 'surface', description: "Fill token — 'container' (default, sits in a panel), 'high' (on a panel/toolbar), 'base' (on the raw surface)." },
       { name: 'type', description: "'text' (default) or 'password' to mask a secret (API keys, tokens)." },

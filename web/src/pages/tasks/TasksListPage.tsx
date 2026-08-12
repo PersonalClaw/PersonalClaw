@@ -9,6 +9,7 @@ import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { SearchField } from '../../ui/SearchField'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
 import { confirmDelete } from '../../ui/dialog'
 import { SidePanel } from '../../ui/SidePanel'
@@ -22,6 +23,7 @@ import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
 import { PageTitle } from '../../ui/PageTitle'
+import { accentChip } from '../../design/accent'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
 // views that ignore the status filter (they present all statuses themselves)
@@ -368,6 +370,12 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               </div>
             )}
             <FilterMenu sections={filterSections} />
+            {/* Typing here rewrites the list under the user, and nothing said so. Same idiom the
+                `ListControls` adopters render — this page lays its own bar out, so it renders the
+                extracted piece rather than a second copy of it. `active` is the SEARCH being
+                non-empty, not `filter !== 'all'`: the status filter's own default is a preset, and a
+                flag that is true at rest would announce a count to a user who has done nothing. */}
+            <ResultAnnouncement count={filtered?.length ?? 0} noun="tasks" active={query.trim().length > 0} />
           </div>
         </div>
       }
@@ -556,10 +564,17 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
       onClick={onOpen} className="group flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high"
       style={selected ? { outline: '1.5px solid var(--color-primary)', outlineOffset: -1.5 } : undefined}>
       {/* Selection checkbox — visible on hover, or always once a selection is active. */}
+      {/* 20x20 painted, 24x24 CLICKED. Measured 30 of these on `#/tasks`, and SC 2.5.8's spacing
+          exception cannot rescue them: each sits INSIDE this row's own 1212x47 clickable surface, so
+          the 24px circle is inside another target by construction (cycle 72's trap, from the
+          `sm` Toggle). The button is now a transparent 24px box with the painted 20px control inside
+          it, and `-m-0.5` returns the 4px so no row reflows — the fix is the hit box, not the design. */}
       <button type="button" aria-label={selected ? 'Deselect task' : 'Select task'}
         onClick={(e) => { e.stopPropagation(); onToggleSelect?.() }}
-        className={`shrink-0 grid size-5 place-items-center rounded-md border transition-all ${selected ? 'border-primary bg-primary text-on-primary' : `border-outline-variant text-transparent ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}`}>
-        <Check size={13} />
+        className="shrink-0 grid size-6 -m-0.5 place-items-center">
+        <span className={`grid size-5 place-items-center rounded-md border transition-all ${selected ? 'border-primary bg-primary text-on-primary' : `border-outline-variant text-transparent ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}`}>
+          <Check size={13} />
+        </span>
       </button>
       <sm.icon size={20} className="shrink-0" style={{ color: sm.tone }} />
       <div className="flex-1 min-w-0">
@@ -594,7 +609,7 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
         {pm && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>}
-        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] hover:brightness-125" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}><FolderKanban size={10} /> {t.project}</button>}
+        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] hover:brightness-125" style={accentChip}><FolderKanban size={10} /> {t.project}</button>}
         {due && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
         {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
       </div>

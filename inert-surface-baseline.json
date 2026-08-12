@@ -2,10 +2,8 @@
   "generated_from": "scripts/generate_inert_surface_baseline.py",
   "per_file": {
     "src/personalclaw/inbox.py": {
-      "inert": 3,
+      "inert": 1,
       "surfaces": [
-        "enum:ItemKind.EMAIL",
-        "enum:ItemKind.MENTION",
         "enum:ItemStatus.SENT"
       ]
     },
@@ -22,18 +20,9 @@
         "enum:PromptCache.AUTOMATIC"
       ]
     },
-    "src/personalclaw/loop/loop.py": {
-      "inert": 3,
-      "surfaces": [
-        "enum:LoopKind.DESIGN",
-        "enum:LoopKind.GENERAL",
-        "enum:LoopKind.GOAL"
-      ]
-    },
     "src/personalclaw/memory_record.py": {
-      "inert": 2,
+      "inert": 1,
       "surfaces": [
-        "enum:MemoryScope.WORKSPACE",
         "enum:MemoryTier.SEGMENT"
       ]
     },
@@ -305,20 +294,6 @@
         "enum:DependencyType.REQUIRED_FOR"
       ]
     },
-    "src/personalclaw/triggers/dispatch.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:DrainAction.SKIP_CYCLE",
-        "enum:DrainAction.SKIP_DUPLICATE"
-      ]
-    },
-    "src/personalclaw/workflows/autonomy.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:Interrupt.CONFLICTING",
-        "enum:Interrupt.UNINFERABLE"
-      ]
-    },
     "src/personalclaw/workflows/confirmation.py": {
       "inert": 1,
       "surfaces": [
@@ -331,38 +306,16 @@
         "enum:Completeness.INFERRED"
       ]
     },
-    "src/personalclaw/workflows/judge_actors.py": {
+    "src/personalclaw/workflows/judge_contract.py": {
       "inert": 1,
       "surfaces": [
-        "enum:Actor.WORKER"
-      ]
-    },
-    "src/personalclaw/workflows/judge_contract.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:Ratchet.RELAXED",
-        "enum:Verdict.REPLAN"
+        "enum:Ratchet.RELAXED"
       ]
     },
     "src/personalclaw/workflows/models.py": {
-      "inert": 3,
-      "surfaces": [
-        "enum:ItemErrorPolicy.COLLECT",
-        "enum:OverlapPolicy.QUEUE",
-        "enum:SessionMode.CONTINUOUS"
-      ]
-    },
-    "src/personalclaw/workflows/publish.py": {
-      "inert": 2,
-      "surfaces": [
-        "enum:Lineage.INFORMED_BY",
-        "enum:Lineage.RELATED"
-      ]
-    },
-    "src/personalclaw/workflows/surfacing.py": {
       "inert": 1,
       "surfaces": [
-        "enum:Lifecycle.UNTIL_DEACTIVATED"
+        "enum:SessionMode.CONTINUOUS"
       ]
     }
   },
@@ -370,10 +323,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 27,
+      "enum": 10,
       "sdk_export": 127,
       "trigger_kind": 0
     },
-    "inert": 154
+    "inert": 137
   }
 }

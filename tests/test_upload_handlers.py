@@ -17,8 +17,10 @@ def _make_app(tmp_path, monkeypatch) -> web.Application:
     store = UploadStore(tmp_path / ".parts")
     app = web.Application(client_max_size=64 * _MB)
     app["upload_store"] = store
-    # Attachment finalize moves into _UPLOAD_DIR + kicks extraction — point both at tmp.
-    monkeypatch.setattr("personalclaw.dashboard.handlers.files._UPLOAD_DIR", tmp_path / "uploads")
+    # Attachment finalize moves into the upload dir + kicks extraction — point both at tmp.
+    monkeypatch.setattr(
+        "personalclaw.dashboard.handlers.files._upload_dir", lambda: tmp_path / "uploads"
+    )
     monkeypatch.setattr(
         "personalclaw.dashboard.attachment_extract.get_extractor",
         lambda: type("E", (), {"start": lambda self, *a, **k: None})(),

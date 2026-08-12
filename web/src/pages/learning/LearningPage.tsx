@@ -5,15 +5,16 @@ import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
 import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useCachedData } from '../../lib/useCachedData'
-import { api, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
+import { api, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
+import { HealthPanel } from './HealthPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
-import { WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { HEALTH_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
@@ -32,13 +33,20 @@ export function LearningPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
 
-  const { data: inbox, loading, refresh: refreshProposals } = useCachedData<LearningInbox>(
+  const { data: inbox, loading, error: inboxError, refresh: refreshProposals } = useCachedData<LearningInbox>(
     proposalsKey(kind),
     () => api.learningProposals(kind ? { kind } : undefined),
   )
-  const { data: week, refresh: refreshWeek } = useCachedData<StagingWeek>(
+  const { data: week, error: weekError, refresh: refreshWeek } = useCachedData<StagingWeek>(
     WEEK_KEY,
     () => api.learningStagingWeek(7),
+  )
+  // `error` is READ, not discarded. This panel's subject is "is the flywheel working?", so a
+  // swallowed fetch failure would render as "nothing has happened" — the one answer that is
+  // never true and never actionable.
+  const { data: health, error: healthError, refresh: refreshHealth } = useCachedData<LearningHealth>(
+    HEALTH_KEY,
+    () => api.learningHealth(7),
   )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
@@ -80,7 +88,7 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => refreshEverything(refreshProposals, refreshWeek)}
+            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth)}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -90,7 +98,15 @@ export function LearningPage() {
         <div className="mx-auto flex flex-col gap-xl px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           {err && <InlineError icon onDismiss={() => setErr('')}>{err}</InlineError>}
 
-          {week && <WeekPanel week={week} />}
+          {/* A failed fetch is not a quiet week. Without this the panel simply VANISHED, and the
+              page's whole reason for existing — showing the days capture never ran — disappeared
+              silently along with it. */}
+          {week === undefined && weekError
+            ? <LoadError what="capture week" error={weekError} onRetry={refreshWeek} />
+            : week && <WeekPanel week={week} />}
+
+          <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
+
 
           <div className="flex flex-col gap-m">
             <div className="flex flex-wrap items-center gap-s">
@@ -107,12 +123,20 @@ export function LearningPage() {
             </div>
             {kindChips.length > 1 && (
               <Segmented
+                ariaLabel="Proposal kind"
                 options={kindChips.map((c) => ({ key: c.key, label: c.label }))}
                 value={kind}
                 onChange={setKind}
               />
             )}
-            {loading && !inbox ? (
+            {/* THE one condition that separates "you have none" from "we could not ask":
+                measured against a 500 on both learning endpoints, this surface rendered
+                "Nothing to review — proposals appear here when the system notices a pattern worth
+                offering", with no error text anywhere on the page. That is the most confident
+                possible way to say the opposite of what happened. */}
+            {inbox === undefined && inboxError ? (
+              <LoadError what="proposals" error={inboxError} onRetry={refreshProposals} />
+            ) : loading && !inbox ? (
               <ListSkeleton rows={4} />
             ) : rows.length === 0 ? (
               <EmptyState

@@ -293,8 +293,11 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
             continue
 
         # The procedural prior is recorded even when the lesson proposal is quota-suppressed:
-        # it is free, has no injection surface (no text, just a tool×outcome counter), and its
-        # ≥3-failure synthesis is what surfaces the prior next time the template is planned.
+        # it is cheap, and its ≥3-failure synthesis is what surfaces the prior next time the
+        # template is planned. The row itself still has no injection surface — WF2LEA-13 gave
+        # procedural memory a reader, but a raw `→ failed` row is deliberately NOT surfaceable
+        # (only the synthesized "prefer an alternative" prior is), so one workflow step failing
+        # once cannot reach the prompt.
         try:
             if service.record_procedural(
                 tool=f"workflow:{template}/{node}",

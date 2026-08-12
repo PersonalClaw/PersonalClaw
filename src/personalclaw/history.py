@@ -1395,6 +1395,7 @@ class HistoryConsolidator:
 
         store = UsageStore()
         try:
+            records = [rec for kind in ("skill", "template") for rec in store.list_kind(kind)]
             candidates = [
                 curator_mod.Candidate(
                     kind=rec.kind,
@@ -1405,15 +1406,25 @@ class HistoryConsolidator:
                     pinned=rec.pinned,
                     source_type=rec.source_type,
                 )
-                for kind in ("skill", "template")
-                for rec in store.list_kind(kind)
+                for rec in records
             ]
             if not candidates:
                 return "; ".join(p for p in (outcomes_note, attribution_note) if p)
-            report = curator_mod.run_aging(candidates, active_dates=store.active_days(), mode="")
+            active_dates = store.active_days()
+            report = curator_mod.run_aging(candidates, active_dates=active_dates, mode="")
             curator_mod.file_review_proposals(report)
+            # LEARN-R6f: heat-earned promotion. The multi-gate (`usage.promotion_ready`) had no
+            # caller anywhere in the tree — a gate nothing runs is a gate that never refuses
+            # anything, and the bare "surfaced ≥2×" it replaced was still what the ladder
+            # effectively used. This is its live cadence: the same verified tick as the aging
+            # pass, filing SUGGESTIONS into the shared queue and promoting nothing itself.
+            promo_note = ""
+            suggestions = curator_mod.promotion_suggestions(records, active_dates=active_dates)
+            filed = curator_mod.file_promotion_suggestions(suggestions)
+            if filed:
+                promo_note = f"promotion suggestions filed={filed}"
             summary = report.summary() if (report.changed or report.review_proposals) else ""
-            return "; ".join(p for p in (summary, outcomes_note, attribution_note) if p)
+            return "; ".join(p for p in (summary, promo_note, outcomes_note, attribution_note) if p)
         finally:
             store.close()
 

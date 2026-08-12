@@ -18,7 +18,7 @@ import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, type Trigger } from './triggerMeta'
-import { statusMeta, triggerHealthMeta } from '../schedule/scheduleMeta'
+import { statusMeta, triggerHealthMeta, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
@@ -240,12 +240,3 @@ function EventTriggerSummary({ t }: { t: Trigger }) {
   )
 }
 
-function relFuture(ts?: number | null): string {
-  if (!ts) return ''
-  const s = ts - Date.now() / 1000
-  if (s < 0) return 'overdue'
-  if (s < 60) return 'in <1m'
-  if (s < 3600) return `in ${Math.floor(s / 60)}m`
-  if (s < 86400) return `in ${Math.floor(s / 3600)}h`
-  return `in ${Math.floor(s / 86400)}d`
-}

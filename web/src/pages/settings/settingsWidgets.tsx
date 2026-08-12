@@ -5,9 +5,9 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
-  type SettingsProvider, type InboxSettings, type NotificationSettings, type UpdateCheck,
-  type PromptBindings, type SessionArchive, type SelVerify, type SavedAgent,
-  type SearchProviderInfo, type AppSummary, type DoctorReport, type ProjectionRule,
+  type SettingsProvider, type NotificationSettings, type UpdateCheck,
+  type PromptBindings, type SelVerify, type SavedAgent,
+  type SearchProviderInfo, type DoctorReport,
   type ToolsSavings,
 } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -66,8 +66,16 @@ const useSearchEntity = () => useCachedData('settings:search', async () => {
 const useRuntimes = () => useCachedData('settings:agent-runtimes', () => api.agentRuntimes().catch(() => null as AgentRuntime[] | null), { persist: true })
 const useProviders = () => useCachedData('settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true })
 const useDashCfg = () => useCachedData('settings:dashboard-config', () => api.dashboardConfig().catch(() => null as DashboardConfig | null), { persist: true })
-const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings().catch(() => null as InboxSettings | null), { persist: true })
-const useApps = () => useCachedData('apps', () => api.apps().catch(() => [] as AppSummary[]), { persist: true })
+// The swallow here is what POISONED the shared `'settings:inbox'` key: it resolved with `null`, which the
+// hook then persisted, so both inbox-settings panels seeded `null` from cache and read it as loaded.
+const useInbox = () => useCachedData('settings:inbox', () => api.inboxSettings(), { persist: true })
+// 🔴 NO `.catch(() => [])` HERE EITHER, and the reason is subtler than one surface's empty state:
+// `useCachedData` caches by KEY, and this hook shares the `'apps'` key with `#/apps`. Swallowing the
+// rejection made this call RESOLVE with `[]`, which the hook then persisted to sessionStorage — so
+// `#/apps` read `[]` as a successful value and its `data === undefined && error` branch could never
+// fire, even after that surface stopped swallowing. `{appsUndef: false, appsErr: ApiError,
+// n: 0}` on the failing render. One swallowing caller defeats every other consumer of the same key.
+const useApps = () => useCachedData('apps', () => api.apps(), { persist: true })
 const useNotif = () => useCachedData('settings:notification-settings', () => api.notificationSettings().catch(() => null as NotificationSettings | null), { persist: true })
 const useUpdates = () => useCachedData('settings:update-check', () => api.updateCheck().catch(() => null as UpdateCheck | null), { persist: true })
 const usePromptBindings = () => useCachedData('settings:prompt-bindings', () => api.promptBindings().catch(() => null as PromptBindings | null), { persist: true })
@@ -78,7 +86,15 @@ const useDurability = () => useCachedData('settings:durability-card', async () =
   ])
   return { status, snaps }
 }, { persist: true })
-const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives().catch(() => [] as SessionArchive[]), { persist: true })
+// 🔴 SAME KEY-POISONING SHAPE AS `'apps'` ABOVE, and it made a fix on another surface INERT.
+// `#/settings/archive` now branches on the load error — but this tile shares its key, so while this
+// caller swallowed, the hub primed `cache:settings:archives` with `[]` and the panel read a success.
+// A cold-cache probe missed it entirely (navigating straight to the panel never runs this hook); the
+// key-consumer rail in `ui/loadErrorState.test.tsx` is what caught it.
+// Consequence, stated: on failure this tile now stays in its `loading` shimmer instead of claiming
+// "0 archived sessions". Every hub tile turns a failure into a permanent shimmer — one idiom, ~30
+// tiles, logged as its own family rather than fixed inside this change.
+const useArchives = () => useCachedData('settings:archives', () => api.sessionArchives(), { persist: true })
 const useAudit = () => useCachedData('settings:audit-verify', () => api.selVerify().catch(() => null as SelVerify | null), { persist: false })
 const useLogLevel = () => useCachedData('settings:log-level', () => api.logLevel().catch(() => null as string | null), { persist: true }).data
 const useVoice = () => useCachedData('settings:voice', async () => {
@@ -93,7 +109,8 @@ const useLegibility = () => useCachedData('settings:legibility', () =>
   api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)), { persist: true })
 const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catch(() => null as DoctorReport | null), { persist: false })
 const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
-const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules().catch(() => [] as ProjectionRule[]), { persist: true })
+// Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
+const useProjectionRules = () => useCachedData('settings:projection-rules', () => api.projectionRules(), { persist: true })
 const useToolsSavings = () => useCachedData('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
 const useFeedbackProducers = () => useCachedData('settings:feedback-producers', () => api.feedbackProducers().catch(() => null), { persist: false })
 const useAgentDefaults = () => useCachedData('settings:agent-defaults', async () => {
@@ -156,7 +173,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {/* Mode is an inline choice; full theme/token editing lives in the subpage. */}
           <div className="mt-2.5 flex items-center justify-between gap-2">
             <span className="text-on-surface-low text-[0.75rem]">Mode</span>
-            <SegToggle value={preference} onPick={(p) => setPreference(p)}
+            <SegToggle value={preference} onPick={(p) => setPreference(p)} ariaLabel="Mode"
               options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }, { key: 'auto', label: 'Auto' }]} />
           </div>
         </BentoCard>
@@ -178,7 +195,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Restore sessions', control: true, v: <Switch on={c.restore_sessions} label="Restore sessions" onToggle={(v) => save({ restore_sessions: v })} /> },
             { k: 'Send on Enter', control: true, v: <Switch on={c.send_on_enter} label="Send on Enter" onToggle={(v) => save({ send_on_enter: v })} /> },
             { k: 'Timestamps', control: true, v: <Switch on={c.show_timestamps} label="Timestamps" onToggle={(v) => save({ show_timestamps: v })} /> },
-            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })}
+            { k: 'Density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })} ariaLabel="Density"
               options={[{ key: 'more', label: 'Comfortable' }, { key: 'less', label: 'Compact' }]} /> },
           ]} />}
         </BentoCard>
@@ -380,9 +397,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       // Alert keywords moved to the notification rules matrix (plan 42 S3), so this card
       // now surfaces what the inbox itself still owns: how long items are kept.
-      const { data: s, refresh } = useInbox()
+      const { data: s, error: inboxErr, refresh } = useInbox()
       return (
-        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined} rows={2}>
+        <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined && !inboxErr} rows={2}>
+          {/* A tile that shimmers forever is the same lie in miniature — say it failed instead. */}
+          {!s && Boolean(inboxErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load inbox settings.</div>}
           {s && <>
             <div className="flex items-baseline gap-1.5">
               <BigStat value={s.retention_days} caption="day retention" />
@@ -410,7 +429,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Bell} title="Notifications" query={query} onClick={() => go('notifications')} loading={s === undefined} rows={3}>
           {s && <KVList query={query} rows={[
             { k: 'Delivery', control: true, v: <Switch on={!s.mute_all} label="Deliver notifications" onToggle={(v) => save({ mute_all: !v })} /> },
-            { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })}
+            { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })} ariaLabel="Min severity"
               options={[{ key: 'info', label: 'All' }, { key: 'warning', label: 'Warn+' }, { key: 'error', label: 'Errors' }]} /> },
             ...(s.quiet_hours_enabled ? [{ k: 'Quiet hours', v: `${s.quiet_hours_start}–${s.quiet_hours_end}`, vText: `${s.quiet_hours_start}-${s.quiet_hours_end}` }] : []),
           ]} />}
@@ -427,11 +446,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `apps installed extensions settings configure ${nonProvider.map((a) => a.displayName).join(' ')}`
     },
     render(query, go) {
-      const { data } = useApps()
+      const { data, error: appsErr } = useApps()
       const nonProvider = (data ?? []).filter((a) => !a.isProvider)
       const configurable = nonProvider.filter((a) => a.hasConfig).length
       return (
-        <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined}>
+        <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined && !appsErr}>
+          {/* Same shape as the Inbox tile: a tile that shimmers forever is the same lie in miniature. */}
+          {!data && Boolean(appsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your apps.</div>}
           {data && <>
             <BigStat value={nonProvider.length} caption={nonProvider.length === 1 ? 'installed app' : 'installed apps'} />
             <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
@@ -560,12 +581,15 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `tool output projection rules trim shrink token juice tokenjuice savings saved tokens compressor regex marker strategy ${saved} ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}`
     },
     render(query, go) {
-      const { data: rules } = useProjectionRules()
+      const { data: rules, error: rulesErr } = useProjectionRules()
       const { data: savings } = useToolsSavings()
       const list = rules ?? []
       const savedTokens = savings?.saved_tokens_estimated ?? 0
       return (
-        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined}>
+        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined && !rulesErr}>
+          {/* The savings meter is a SEPARATE read that keeps its own fallback, so it can still headline
+              here while the rules read has failed — the failure line only speaks for the rules. */}
+          {!rules && Boolean(rulesErr) && savedTokens === 0 && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your projection rules.</div>}
           {/* Headline the savings meter once there's data (the feature's whole point);
               fall back to the rule count / builtin-projectors hint otherwise so the card
               is never empty and the feature is always discoverable from the grid. */}
@@ -636,9 +660,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Browse and inspect archived chat sessions.',
     useSearchText() { return 'archive archived chat sessions transcripts browse' },
     render(query, go) {
-      const { data: a } = useArchives()
+      const { data: a, error: archErr } = useArchives()
       return (
-        <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined}>
+        <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined && !archErr}>
+          {!a && Boolean(archErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your archives.</div>}
           {a && <BigStat value={a.length} caption={a.length === 1 ? 'archived session' : 'archived sessions'} />}
         </BentoCard>
       )

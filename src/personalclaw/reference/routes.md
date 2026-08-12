@@ -140,6 +140,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/reasoning-effort` — set reasoning effort.
 - `POST /api/chat/sessions/{session}/regenerate` — regenerate the last assistant reply.
 - `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
+- `POST /api/chat/sessions/{session}/share` — a redacted, read-only artifact of a chat.
 - `POST /api/chat/sessions/{session}/side/close` — drop the buffer + destroy
 - `POST /api/chat/sessions/{session}/side/open` — open (or reset) the side buffer.
 - `POST /api/chat/sessions/{session}/side/turn` — ask one side question.
@@ -286,6 +287,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/knowledge/tags/{id}` — remove a tag from the taxonomy and every item.
 - `PATCH /api/knowledge/tags/{id}` — rename, or re-parent via `parent_id`.
 - `POST /api/knowledge/tags/{id}/merge` — {into} — fold this tag into another.
+- `GET /api/learning/health` — the flywheel observability panel (LEARN-R14b).
 - `GET /api/learning/proposals` — the inbox across all six kinds.
 - `DELETE /api/learning/proposals/{id}` — dismiss it, and REMEMBER the decision.
 - `GET /api/learning/proposals/{id}` — one full record.

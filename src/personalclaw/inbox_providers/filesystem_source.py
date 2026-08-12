@@ -11,7 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 class FilesystemSourceProvider(MessageSourceProvider):
-    """Polls JSON files from disk for incoming messages."""
+    """Polls JSON files from disk for incoming messages.
+
+    Each ``*.json`` dropped in ``<home>/inbox/incoming/`` carries a ``messages`` list whose
+    entries map 1:1 onto :class:`~personalclaw.inbox_providers.base.IncomingMessage`,
+    including its ``kind`` — this is core's own seam for a local producer (a mail fetcher, a
+    channel bridge) to state that a message is an ``email`` or a ``mention`` rather than a
+    plain ``message``. The value is passed through as declared and validated once, at
+    ingestion, against the closed set; this provider never guesses a kind from the text.
+    """
 
     @property
     def source_name(self) -> str:
@@ -44,6 +52,7 @@ class FilesystemSourceProvider(MessageSourceProvider):
                             timestamp=raw.get("timestamp", time.time()),
                             thread_context=raw.get("thread_context", []),
                             is_dm=raw.get("is_dm", False),
+                            kind=str(raw.get("kind") or ""),
                         )
                         messages.append(msg)
                     f.rename(processed_dir / f.name)

@@ -221,7 +221,7 @@ def _maybe_after_turn_review(
     # would see an empty list. Procedural memory and the self-model observer both need this turn's
     # (tool, failed) tuples, so they read the one drained copy.
     drain = getattr(provider, "drain_tool_outcomes", None)
-    tool_outcomes: list[tuple[str, bool]] = []
+    tool_outcomes: list[tuple[str, str]] = []
     if callable(drain):
         try:
             tool_outcomes = list(drain() or [])
@@ -257,8 +257,11 @@ def _maybe_after_turn_review(
                 svc,
                 session_key=str(getattr(session, "key", "") or ""),
                 route=_agent_label(session),
-                tools=tuple(sorted({t for t, _failed in tool_outcomes})),
-                succeeded=not any(failed for _t, failed in tool_outcomes),
+                tools=tuple(sorted({t for t, _outcome in tool_outcomes})),
+                # A turn SUCCEEDED when every tool outcome was `success`. Same verdict
+                # the `not any(failed)` form gave: a denial used to arrive as
+                # failed=True, and being refused is still not a clean success.
+                succeeded=all(outcome == "success" for _t, outcome in tool_outcomes),
                 correction=correction,
             )
         except Exception:

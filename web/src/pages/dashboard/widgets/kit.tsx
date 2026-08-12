@@ -72,7 +72,12 @@ export function RowAction({
       whileTap={{ scale: 0.92 }}
       transition={spring.spatialFast}
       onClick={onClick}
-      className={cx('inline-flex items-center gap-xs rounded-pill px-m py-xs transition-colors', toneCls)}
+      // 24px HIT BOX, 22px painted. Measured on `#/dashboard`: `px-m py-xs` rendered **38×22**, and
+      // sibling actions sit `gap-xs` (4px) apart — so SC 2.5.8's undersized-target exception cannot
+      // rescue it either, the 24px circles overlap. `min-h-6` raises the box and `-my-px` returns the
+      // 2px to the layout, so the row keeps its height: the fix is the hit box, not the design. Same
+      // resolution as the `sm` Toggle's 36×20 → 36×24.
+      className={cx('inline-flex min-h-6 -my-px items-center gap-xs rounded-pill px-m py-xs transition-colors', toneCls)}
       data-type="label-m"
     >
       {children}

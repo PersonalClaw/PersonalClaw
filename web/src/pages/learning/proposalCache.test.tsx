@@ -47,11 +47,16 @@ const learningProposals = vi.fn<() => Promise<LearningInbox>>()
 const learningStagingWeek = vi.fn<() => Promise<StagingWeek>>()
 const acceptLearningProposal = vi.fn<() => Promise<{ ok: boolean }>>()
 const rejectLearningProposal = vi.fn<() => Promise<void>>()
+// The page gained a third read (the flywheel health panel, LEARN-R14b). Mocked here because a
+// double that omits a fetch the page makes throws inside a passive effect — which surfaces as
+// five unrelated failures about rows and cache keys, and hides which fetch is missing.
+const learningHealth = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
     learningProposals: () => learningProposals(),
     learningStagingWeek: () => learningStagingWeek(),
+    learningHealth: () => learningHealth(),
     acceptLearningProposal: () => acceptLearningProposal(),
     rejectLearningProposal: () => rejectLearningProposal(),
   },
@@ -63,6 +68,10 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     sessionStorage.clear()
     vi.clearAllMocks()
     learningStagingWeek.mockResolvedValue(WEEK)
+    // Rejected on purpose: this suite is about the proposal list, and a health panel that
+    // fails to load must not change what the list does. `HealthPanel.test.tsx` owns the
+    // panel's own error rendering.
+    learningHealth.mockRejectedValue(new Error('not under test'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

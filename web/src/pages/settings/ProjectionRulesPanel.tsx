@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
-import { Scissors, Plus, X, AlertTriangle, Gauge } from 'lucide-react'
+import { Scissors, Plus, X, AlertTriangle, Gauge, RotateCcw } from 'lucide-react'
 import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { Button } from '../../ui/Button'
+import { InlineError } from '../../ui/InlineError'
+import { ListSkeleton } from '../../ui/ListScaffold'
 import { NumberField, TextInput } from '../../ui/forms'
 import { PanelHeader, Section } from './settingsUI'
 
@@ -26,8 +28,8 @@ const STRATEGIES: { id: ProjectionStrategy; label: string; blurb: string }[] = [
  *  maps a regex marker (matched against the output head) to a builtin strategy —
  *  declarative, so no user code runs, and a bad regex is rejected on save. */
 export function ProjectionRulesPanel() {
-  const { data: rules, refresh } = useCachedData(
-    'settings:projection-rules', () => api.projectionRules().catch(() => [] as ProjectionRule[]),
+  const { data: rules, error: loadErr, refresh } = useCachedData(
+    'settings:projection-rules', () => api.projectionRules(),
     { persist: true },
   )
   const [busy, setBusy] = useState(false)
@@ -57,11 +59,23 @@ export function ProjectionRulesPanel() {
               onChange={(next) => save(list.map((x, j) => (j === i ? next : x)))}
               onRemove={() => save(list.filter((_, j) => j !== i))} />
           ))}
-          {list.length === 0 && (
+          {/* Failed → loading → genuinely empty, in that order. `rules` is undefined for all three,
+              so a later test placed first can never be reached. This panel had NO loading branch at
+              all (`rules ?? []`), so on a cold open it asserted "No custom rules" before the config
+              had arrived — and its `.catch(() => [])` made a 500 say the same thing, permanently,
+              into a `{ persist: true }` cache. */}
+          {rules === undefined && loadErr ? (
+            <InlineError icon>
+              <span className="flex-1">Couldn't load your projection rules{(loadErr as Error)?.message ? `: ${(loadErr as Error).message}` : '.'}</span>
+              <Button variant="secondary" size="sm" onClick={refresh}><RotateCcw size={14} /> Retry</Button>
+            </InlineError>
+          ) : rules === undefined ? (
+            <ListSkeleton rows={2} />
+          ) : list.length === 0 ? (
             <div className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low text-[0.8125rem]">
               No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
             </div>
-          )}
+          ) : null}
           <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />
           {err && <div className="flex items-center gap-1.5 text-danger text-[0.8125rem]"><AlertTriangle size={13} /> {err}</div>}
         </div>

@@ -48,17 +48,38 @@ export function ListControls({
         )}
         {children}
       </div>
-      {/* sr-only: the count is already visible as the list itself, so printing it would
-          duplicate what a sighted user can see and add a shifting element to the bar.
-          Always MOUNTED (rendered empty when idle) — a live region created at the same
-          moment its content appears is not reliably observed. */}
-      <div role="status" aria-live="polite" className="sr-only">
-        {results?.active
-          ? (results.count === 0
-              ? `No matching ${results.noun}`
-              : `${results.count} ${results.count === 1 ? results.noun.replace(/s$/, '') : results.noun}`)
-          : ''}
-      </div>
+      <ResultAnnouncement {...(results ?? { count: 0, noun: '', active: false })} />
+    </div>
+  )
+}
+
+/** The sr-only live region that says what a list filter just did — extracted from `ListControls`
+ *  so a page whose controls bar is hand-laid can render the SAME idiom instead of a second one.
+ *
+ *  sr-only on purpose: the count is already visible as the list itself, so printing it would
+ *  duplicate what a sighted user can see and add a shifting element to the bar. Always MOUNTED
+ *  (rendered empty when idle) — a live region created at the same moment its content appears is
+ *  not reliably observed.
+ *
+ *  🪤 `active` MUST BE THE SURFACE'S OWN DEFINITION OF NARROWED, compared against its own defaults.
+ *  A flag like `filter !== 'all'` is true at rest on a surface whose default filter is not `all`,
+ *  and the region then announces "39 items" to a user who has done nothing.
+ */
+export function ResultAnnouncement({ count, noun, active }: {
+  /** How many rows the current search/filter leaves. */
+  count: number
+  /** Plural noun for the rows ("tasks", "artifacts", "matches") — singularised at count 1. */
+  noun: string
+  /** True only while the user has actually narrowed the list. */
+  active: boolean
+}) {
+  return (
+    <div role="status" aria-live="polite" className="sr-only">
+      {active
+        ? (count === 0
+            ? `No matching ${noun}`
+            : `${count} ${count === 1 ? noun.replace(/s$/, '') : noun}`)
+        : ''}
     </div>
   )
 }

@@ -111,8 +111,27 @@ class LoopMode(str, Enum):
 
 
 class ItemErrorPolicy(str, Enum):
+    """What a `foreach` does about an item that FAILED. Three genuinely different answers, and
+    the difference is observable at the RUN level — see `tick.foreach_outcome`, which is the
+    single place the choice is made and which must branch on every member.
+
+    The two axes are "how much of the fan-out still runs" and "does the failure count"; the
+    members are the three useful combinations of them.
+    """
+
+    #: Stop starting new items the moment one has failed. The items already in flight finish;
+    #: the un-started ones stay PENDING, so the container never reaches a terminal state and
+    #: the run ends through the frontier's deadlock path — a FAILED run that did the least
+    #: work it could get away with.
     HALT = "halt"
-    SKIP = "skip"  # default: one bad item must not sink the fan-out
+    #: Default: one bad item must not sink the fan-out. Every item runs, and a failure is
+    #: TOLERATED — the container reports DEGRADED, which is a SUCCESS state, so the run
+    #: completes. "I do not care about the failures."
+    SKIP = "skip"
+    #: Every item runs (never halts early, exactly like SKIP), and then the failures COUNT:
+    #: the container reports the worst item verdict, so any failure fails the run. The
+    #: per-item failures are journaled as one `items_collected` ledger record.
+    #: "Run everything, then hand me the failures."
     COLLECT = "collect"
 
 
@@ -412,10 +431,24 @@ class OriginKind(str, Enum):
 
 
 class OverlapPolicy(str, Enum):
-    """What a trigger-origin start does when the previous run is still going."""
+    """What a trigger-origin start does when the previous run is still going.
 
-    SKIP = "skip"  # default — a per-minute trigger must not stack runs
+    🔴 The branch is `workflows.overlap.decide`, exhaustive with a raising tail, and it is
+    the ONLY place that decides. `QUEUE` shipped as a member nothing branched on: the
+    run-workflow provider compared against `SKIP` and `CANCEL_PREVIOUS` and let `queue` fall
+    through to create+launch, so the one policy whose name promises ordering started a
+    CONCURRENT run — the exact behaviour `SKIP`'s comment below says the default exists to
+    prevent (WV-14). A new member must add its own branch there rather than inherit one.
+    """
+
+    #: Default. A prior is still going ⇒ nothing is created and nothing starts. A per-minute
+    #: trigger must not stack runs.
+    SKIP = "skip"
+    #: A prior is still going ⇒ the start is PERSISTED as an unlaunched run and started when
+    #: that prior ends. Ordering, not concurrency. Capped at `overlap.MAX_QUEUE_DEPTH`; a
+    #: start dropped by the cap says so in its outcome rather than reading as queued.
     QUEUE = "queue"
+    #: A prior is still going ⇒ cancel it, then start now. The newest fire wins.
     CANCEL_PREVIOUS = "cancel_previous"
 
 

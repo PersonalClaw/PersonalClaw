@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -92,7 +93,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
               ))}
             </div>
           )}
-          {formErr && <p className="text-danger text-[0.8125rem]">{formErr}</p>}
+          {formErr && <FieldError>{formErr}</FieldError>}
 
           {!confirming ? (
             <Button size="sm" onClick={() => setConfirming(true)} disabled={running}><Play size={15} /> Run tool</Button>

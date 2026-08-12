@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   Plus, Cpu, Wifi, Pencil, Trash2, X, Eye, EyeOff, Loader2,
-  CheckCircle2, AlertTriangle, ChevronRight,
+  CheckCircle2, AlertTriangle, ChevronRight, RotateCcw,
 } from 'lucide-react'
 import { api, type ModelProvider, type AvailableModel, type ProviderTestResult, type ModelProviderTypeField } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
@@ -9,6 +9,7 @@ import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Skeleton } from '../../ui/ListScaffold'
+import { InlineError } from '../../ui/InlineError'
 import { TextInput } from '../../ui/forms'
 import { OllamaModelManager } from './OllamaModelManager'
 import { fvs } from '../../design/fontWeight'
@@ -45,9 +46,13 @@ export function RemoteModelProviders() {
   // Cached + session-persisted: revisiting Providers (or reloading) paints the
   // remote-provider list instantly from cache and revalidates in the background,
   // instead of re-flashing "Loading…" on every open.
-  const { data, refresh } = useCachedData('settings:remote-model-providers', async () => {
+  const { data, error, refresh } = useCachedData('settings:remote-model-providers', async () => {
     const [provs, rows] = await Promise.all([
-      api.modelProviders().catch(() => [] as ModelProvider[]),
+      // NOT `.catch(() => [])` — this list IS the panel, so a failed read has to reach the hook or
+      // "No remote model providers yet." becomes the app's answer to a 500 (and `{ persist: true }`
+      // caches it). The models call KEEPS its catch: it only decorates each card with a model count,
+      // so losing it degrades a card rather than inventing an empty list.
+      api.modelProviders(),
       api.modelsAvailable().catch(() => [] as { name: string; models?: AvailableModel[] }[]),
     ])
     // Merge (don't overwrite) models from rows sharing the same provider name:
@@ -61,6 +66,14 @@ export function RemoteModelProviders() {
   const reload = () => { invalidateCache('settings:remote-model-providers'); refresh() }
   const available = data?.available ?? {}
 
+  // A region inside the Providers panel, not a page body — so the failure is the canonical
+  // `InlineError` band with a retry, not the full-bleed `LoadError` the page-scale lists use.
+  if (!data?.providers && error) return (
+    <InlineError icon className="mb-3">
+      <span className="flex-1">Couldn't load your remote model providers{(error as Error)?.message ? `: ${(error as Error).message}` : '.'}</span>
+      <Button variant="secondary" size="sm" onClick={reload}><RotateCcw size={14} /> Retry</Button>
+    </InlineError>
+  )
   if (!data?.providers) return <RemoteProvidersSkeleton />
   // Ollama is a LOCAL downloadable provider (searchable) — it renders in the Native
   // (bundled) section with the unified download card, NOT here. Filter it out so it

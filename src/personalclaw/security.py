@@ -981,6 +981,33 @@ DENY_KIND_SENSITIVE = "sensitive"  # sensitive-path access (HARD)
 
 _HARD_DENY_KINDS = frozenset({DENY_KIND_POLICY, DENY_KIND_SENSITIVE})
 
+#: One fragment per branch of :func:`classify_denial` — every observation it can
+#: produce contains exactly one of these. It lives beside the function that WRITES
+#: the text so a consumer can recognise a denial without re-authoring the wording;
+#: a caller-side regex would drift silently the first time a branch is reworded.
+#: ``test_security_denial_observation.py`` drives every declared ``DENY_KIND_*``
+#: through ``classify_denial`` and asserts the fragment survives, so adding a kind
+#: (or rewording a branch) without updating this table reds CI.
+_DENIAL_FRAGMENTS: tuple[str, ...] = (
+    "blocked by a security policy",
+    "blocked by the read-only gate",
+    "blocked by a policy hook",
+    "was declined (",
+)
+
+
+def is_denial_observation(text: str) -> bool:
+    """True when ``text`` is an observation :func:`classify_denial` produced.
+
+    A DENIAL and a FAILURE are both fed back to the model as ``Error: …``, but they
+    are different priors: "the user/policy refuses this" is not "this tool does not
+    work". Procedural memory needs to tell them apart (a denial labelled ``failed``
+    teaches "prefer an alternative tool" for what is really a standing policy), and
+    this is the only structural signal available at the seam that records the
+    outcome — the runtime already derives ``failed`` from the same string.
+    """
+    return bool(text) and any(frag in text for frag in _DENIAL_FRAGMENTS)
+
 
 def classify_denial(kind: str, reason: str, tool_name: str = "") -> tuple[bool, str]:
     """Map a denial to ``(recoverable, observation)`` for the model.

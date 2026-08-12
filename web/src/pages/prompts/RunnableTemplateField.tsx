@@ -1,5 +1,6 @@
 import { Rocket } from 'lucide-react'
 import type { LaunchSpec, LoopKind } from '../../lib/api'
+import { accentChip } from '../../design/accent'
 
 // The loop kinds a template can launch (research/design excluded — they need their own
 // multi-modal/step intake, not a fill-and-launch; goal is the natural default).
@@ -21,7 +22,7 @@ export function RunnableTemplateField({ spec, onChange }: { spec?: LaunchSpec; o
     <div className="flex flex-col gap-2">
       <button type="button" onClick={() => onChange(on ? undefined : { kind: 'goal', intake_rigor: 'minimal' })}
         className="inline-flex items-center gap-1.5 self-start rounded-pill px-3 h-8 text-[0.8125rem] transition-colors"
-        style={on ? { background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-container)', color: 'var(--color-on-surface-var)' }}>
+        style={on ? accentChip : { background: 'var(--color-surface-container)', color: 'var(--color-on-surface-var)' }}>
         <Rocket size={14} /> {on ? 'Runnable — launches a loop' : 'Make runnable'}
       </button>
       {on && (

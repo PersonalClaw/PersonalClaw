@@ -8,6 +8,18 @@ import { spring, bounce, expr } from '../design/motion'
 import type { RouteProps } from '../app/useQueryState'
 
 const MIN_W = 320, MAX_W = 720, DEFAULT_W = 420
+// A docked panel must never be WIDER THAN THE SCREEN. The dock is `shrink-0` inside
+// a shell whose overflow is `hidden` (not `auto`), so a stored width larger than the
+// viewport is CLIPPED rather than scrolled — and the clipped part is the panel's own
+// header cluster, which is where Expand and Close live. Measured at the width WCAG
+// 2.1 SC 1.4.10 Reflow names (320px), with the default 420px dock: Close and Expand
+// both landed fully off-screen (`elementsFromPoint` → nothing) while the content
+// column beside the panel was 0px wide, so the panel could not be dismissed by
+// pointer at all and there was nothing else on screen. `dockW` clamps the RENDERED
+// width; the stored width is deliberately left untouched so a wide screen restores
+// the user's chosen size. The peek keeps a sliver of the content column visible so
+// the dock still reads as a dock rather than a full-screen sheet.
+const EDGE_PEEK = 32
 
 /** Reusable right-docked side panel (design-language building block, used across
  *  pages). Three modes via two controls:
@@ -57,6 +69,17 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   })
   const [expanded, setExpanded] = useState(false)
   useEffect(() => { localStorage.setItem(storeKey, String(width)) }, [width, storeKey])
+  // Track the viewport so the clamp follows a resize / rotation instead of only
+  // applying at mount — a phone rotated to portrait must re-clamp, and a desktop
+  // window dragged narrow must too.
+  const [viewportW, setViewportW] = useState(() => window.innerWidth)
+  useEffect(() => {
+    const onResize = () => setViewportW(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  // Rendered dock width: the stored width until it stops fitting, then the screen.
+  const dockW = Math.min(width, Math.max(0, viewportW - EDGE_PEEK))
   // While a panel is DOCKED open, the screen's top-right shell corner floats
   // over the sidebar (not the page header), so the page TopBar no longer needs
   // to reserve right-padding for it. Publish a ref-counted flag on :root that
@@ -111,7 +134,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // sits) and sweeps leftward to claim the viewport, so it reads as the SAME
     // panel growing rather than a new surface. Reverse on collapse via the exit
     // wipe. Wipe speed/overshoot scale with expressiveness; reduced-motion → no clip.
-    const furled = `inset(0px 0px 0px calc(100dvw - ${width}px))`
+    const furled = `inset(0px 0px 0px calc(100dvw - ${dockW}px))`
     return createPortal(
       <motion.div className="fixed inset-0 z-50 flex flex-col bg-surface"
         initial={reduce ? { opacity: 0 } : { clipPath: furled }}
@@ -144,7 +167,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // outer (right) edge stays flush to the browser edge (square).
     <motion.div ref={focusReturnRef} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
       style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
-      initial={{ width: 0, opacity: 0 }} animate={{ width, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
+      initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
       {/* left-edge resize handle — the visible seam springs thicker + brighter on
           hover (scaled by expr) so it telegraphs "drag to resize" with a little
           life instead of a bare 1px color swap. */}
@@ -159,7 +182,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
       </div>
       {/* flex column: the header stays PINNED (shrink-0) while only the content
           region scrolls — the panel title/close never scroll away. */}
-      <div className="flex h-full flex-col" style={{ width }}>
+      <div className="flex h-full flex-col" style={{ width: dockW }}>
         {header}
         <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">{children}</div>
       </div>

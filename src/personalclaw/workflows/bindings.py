@@ -85,6 +85,13 @@ class BindingContext:
     #: Resolver for `{{secret:KEY}}`. Injected so nothing here reads the credential
     #: store directly — that also keeps secrets out of unit tests by default.
     secret_resolver: Any = None
+    #: The node's OWN output, exposed as `output.*` — for `success_when` only, which is
+    #: evaluated AFTER the node produced it (LOOPS-EVOLUTION R5f). Deliberately absent
+    #: everywhere else: a prompt that could read its own output does not have one yet, and
+    #: `has_self_output` keeps "the node produced nothing" distinguishable from "this root
+    #: is not available here" instead of resolving to a silent empty string.
+    self_output: Any = None
+    has_self_output: bool = False
 
     def as_root(self) -> dict[str, Any]:
         root: dict[str, Any] = {
@@ -109,6 +116,8 @@ class BindingContext:
             }
         if self.has_previous:
             root["previous"] = {"output": self.previous_output}
+        if self.has_self_output:
+            root["output"] = self.self_output
         if self.brief is not None:
             # `text` is pre-fenced and citation-instructed, so a template writes
             # `{{brief.text}}` and cannot accidentally interpolate raw knowledge into a prompt.

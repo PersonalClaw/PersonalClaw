@@ -97,7 +97,12 @@ def test_synthesize_ignores_successes(svc):
 def test_record_procedural_outcomes_dedupes_per_tool_outcome(svc):
     from personalclaw import after_turn_review as atr
 
-    outcomes = [("grep", False), ("grep", False), ("bash", True), ("bash", True)]
+    outcomes = [
+        ("grep", "success"),
+        ("grep", "success"),
+        ("bash", "failed"),
+        ("bash", "failed"),
+    ]
     n = atr.record_procedural_outcomes(svc, outcomes)
     # one record per DISTINCT (tool, outcome): grep/success + bash/failed
     assert n == 2
@@ -106,5 +111,5 @@ def test_record_procedural_outcomes_dedupes_per_tool_outcome(svc):
 def test_record_procedural_outcomes_noop_without_service(svc):
     from personalclaw import after_turn_review as atr
 
-    assert atr.record_procedural_outcomes(None, [("x", False)]) == 0
+    assert atr.record_procedural_outcomes(None, [("x", "success")]) == 0
     assert atr.record_procedural_outcomes(svc, []) == 0

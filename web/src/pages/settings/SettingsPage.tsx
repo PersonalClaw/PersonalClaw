@@ -128,9 +128,16 @@ export function SettingsPage({ sub, navigate, query, setQuery }: RouteProps) {
         left={
           <div className="flex items-center gap-1 min-w-0">
             <IconButton icon={ArrowLeft} label="Back to Settings" size={36} onClick={() => go('')} />
-            <button type="button" onClick={() => go('')}
-              className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={fvs(470)}>Settings</button>
-            <ChevronRight size={16} className="shrink-0 text-on-surface-low/60" />
+            {/* The "Settings" crumb and its chevron drop below `sm`. They are the one duplicate in this
+                row — the arrow to their left already goes to Settings and is already NAMED "Back to
+                Settings" — and at 390px they were eating the width the section name needs: the truncating
+                label measured 20px before the arrow stopped being squeezed and 4px after. Dropping them
+                returns that width to the thing that says where you are. Desktop is untouched. */}
+            <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
+              <button type="button" onClick={() => go('')}
+                className="text-on-surface-low text-[1.0625rem] transition-colors hover:text-on-surface" style={fvs(470)}>Settings</button>
+              <ChevronRight size={16} className="shrink-0 text-on-surface-low/60" />
+            </span>
             <span className="flex items-center gap-1.5 min-w-0 text-on-surface text-[1.0625rem]" style={fvs(470)}>
               <current.icon size={16} className="shrink-0 text-on-surface-low" />
               <span className="truncate">{current.label}</span>

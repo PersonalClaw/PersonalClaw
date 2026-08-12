@@ -7,6 +7,7 @@ import { Button } from './Button'
 import { TextLink } from './TextLink'
 import { fvs } from '../design/fontWeight'
 import { spring, bounce } from './../design/motion'
+import { accentChip } from '../design/accent'
 
 /** One selectable choice within a filter section. */
 export interface FilterOption {
@@ -57,7 +58,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="Filter & sort" title="Filter & sort" aria-expanded={open}
           className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 text-[0.8125rem] transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}
-          style={activeCount > 0 || open ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' } : undefined}>
+          style={activeCount > 0 || open ? accentChip : undefined}>
           <SlidersHorizontal size={14} />
           <span className="hidden sm:inline">{label}</span>
           {/* active-filter count badge pops in on a playful spring (and out) so a

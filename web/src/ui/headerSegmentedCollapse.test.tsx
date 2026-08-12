@@ -124,3 +124,43 @@ describe('the collapsed Segmented pill', () => {
     } finally { restore() }
   })
 })
+
+// ── A tab may not be crushed below its own size ──────────────────────────────
+//
+// `size-8` / `px-m` set a tab's size but NOT its floor: as a flex child with the default
+// `flex-shrink: 1`, a tab in a slot narrower than the strip is squeezed instead of overflowing.
+// Measured at 390×844 on `#/skills`, where `ModeToggle` deliberately drops to `iconOnly` on mobile —
+// the honest, documented intent — and the two icon tabs still came out **15.3 × 32** rather than
+// 32 × 32, inside a 107px slot the strip needed ~74px for:
+//
+//     before   Skills view · 2 tabs · 15.3px wide  → under the 24px SC 2.5.8 minimum, a 15px glyph
+//                                                    filling its box edge to edge
+//     after    Skills view · 2 tabs · 32px wide    → 834px and 1440px unchanged (97.7 / 88.8)
+//
+// Overflow is the job of `collapse` ('scroll' / 'menu'), not of silently crushing every target.
+// Blast radius measured across 11 surfaces at 390px, before vs after: `#/skills` UNDERSIZED → clean,
+// and every other surface byte-for-byte the same verdict — `#/artifacts` and `#/inbox` still
+// scrollable, `#/tasks` and `#/loops` still carrying their own (separately recorded) overflow
+// defects, nothing newly clipped and no new page overflow.
+
+describe('Segmented tabs do not shrink', () => {
+  const src = readFileSync(join(process.cwd(), 'src', 'ui', 'Segmented.tsx'), 'utf8')
+
+  it('the tab button declares shrink-0', () => {
+    const tab = src.slice(src.indexOf('role="tab"'), src.indexOf('role="tab"') + 1200)
+    expect(tab, 'a tab crushed to 15px is neither legible nor tappable').toMatch(/inline-flex shrink-0 items-center/)
+  })
+
+  it('renders it on every option, both densities', () => {
+    for (const size of ['md', 'sm'] as const) {
+      const { container, unmount } = render(
+        <Segmented ariaLabel="t" size={size} value="a" onChange={() => {}}
+          options={[{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }]} />,
+      )
+      const tabs = [...container.querySelectorAll('[role="tab"]')]
+      expect(tabs.length).toBe(2)
+      for (const t of tabs) expect(t.className, `size=${size}`).toMatch(/\bshrink-0\b/)
+      unmount()
+    }
+  })
+})

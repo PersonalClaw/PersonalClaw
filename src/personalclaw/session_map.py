@@ -27,15 +27,24 @@ logger = logging.getLogger(__name__)
 
 _SESSION_MAP_FILE = "session_map.json"
 
-# ACP agent session file directory
-_SESSIONS_DIR = _path_home_pclaw() / "sessions"
+
+def _sessions_dir():
+    """ACP agent session file directory, resolved on EVERY call.
+
+    This was a module-level ``_SESSIONS_DIR`` bound at import time, for which
+    ``transcript_path`` below already carried the workaround and the reason. The two
+    remaining readers were worse off than a stale path: both decide whether a session still
+    exists, so a frozen real-home path made ``prune()`` delete map entries based on the
+    contents of the developer's real ``~/.personalclaw/sessions`` (CRE-8).
+    """
+    return _path_home_pclaw() / "sessions"
 
 
 def transcript_path(session_id: str):
     """Resolve a session id to its ``sessions/<sid>.jsonl`` transcript, or None.
 
-    Resolves the home dir on EVERY call rather than reusing the module-level
-    ``_SESSIONS_DIR``, which is bound at import time: a caller that set
+    Resolves the home dir on EVERY call, like ``_sessions_dir`` above and for the same
+    reason (it was a module-level constant bound at import time): a caller that set
     ``PERSONALCLAW_HOME`` after this module was first imported — every test, and any
     process that boots the gateway lazily — would otherwise be handed a path under the
     real home. Returns None for an empty/traversing id or a missing file, so a caller
@@ -147,8 +156,9 @@ class SessionMap:
         if not entry:
             return None
         sid = entry["sid"]
-        if sid and (_SESSIONS_DIR / f"{sid}.json").exists():
-            jsonl = _SESSIONS_DIR / f"{sid}.jsonl"
+        sessions_dir = _sessions_dir()
+        if sid and (sessions_dir / f"{sid}.json").exists():
+            jsonl = sessions_dir / f"{sid}.jsonl"
             try:
                 jsonl_size = jsonl.stat().st_size
             except FileNotFoundError:
@@ -209,10 +219,11 @@ class SessionMap:
 
     def prune(self) -> int:
         """Remove entries whose session files no longer exist."""
+        sessions_dir = _sessions_dir()
         stale = [
             k
             for k, entry in self._data.items()
-            if (entry.get("sid") and not (_SESSIONS_DIR / f"{entry['sid']}.json").exists())
+            if (entry.get("sid") and not (sessions_dir / f"{entry['sid']}.json").exists())
             or (not entry.get("sid") and not entry.get("thread_ts"))
         ]
         for k in stale:

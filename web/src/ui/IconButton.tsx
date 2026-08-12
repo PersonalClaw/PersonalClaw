@@ -64,7 +64,13 @@ export function IconButton({
       animate={bloom ? { scale: [1, 1.18, 1] } : undefined}
       transition={bloom ? bounce.playful : spring.spatialFast}
       className={cx(
-        'group relative inline-flex items-center justify-center rounded-pill transition-colors duration-100',
+        // `shrink-0`: the size below is set via inline `width`/`height`, and an inline width is NOT a
+        // floor for a flex child. Measured at 390px on the settings sub-routes, where this button sits in
+        // a breadcrumb row, `size={36}` rendered **20x36** — under the 24px SC 2.5.8 minimum, with the
+        // next target 4px away so the undersized-target spacing exception does not apply either. Same
+        // shape as the `Segmented` tab fix: a declared size means nothing until something says it cannot
+        // be taken away. Census at 390px across 12 surfaces: 2 squeezed sites, both this control.
+        'group relative inline-flex shrink-0 items-center justify-center rounded-pill transition-colors duration-100',
         disabled
           ? 'text-on-surface-var opacity-40 cursor-not-allowed'
           : filled

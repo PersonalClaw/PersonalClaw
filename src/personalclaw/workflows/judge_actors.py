@@ -1,8 +1,29 @@
-"""Actor-based transitions and judge isolation — self-approval made structurally impossible.
+"""Actor-based transitions and judge isolation — both invariants ENFORCED.
 
-Two invariants the engine ENFORCES rather than suggests. Both exist because the
-alternative — telling the model not to approve its own work — is advice, and advice
-does not survive a worker that is being scored on completion.
+Two invariants live here. Both exist because the alternative — telling the model not to
+approve its own work — is advice, and advice does not survive a worker that is being
+scored on completion. WF2LOO-15 measured that only one of them ran; WF2LOO-13 wired the
+other, and every function in this module now has a live caller in `engine.dispatch_gate`'s
+judge branch:
+
+* **Judge isolation.** `plan_judge_session` / `validate_judge_model` refuse a `cross_model`
+  gate whose candidate judge shares the worker's model family. That seam was itself dead
+  once and was wired at S146; the comment there records it.
+* **The worker-transition rule.** `check_transition` / `resolve_transition` rule on the actor
+  behind the judge gate's terminal transition. An independent judge is `Actor.JUDGE` and may
+  complete the node; a gate that opted into `self_judge` is the producer grading itself, so it
+  is `Actor.WORKER`, and its `done` is REDIRECTED to `review` — realized by the engine as
+  park-and-ask, because "I think I'm done" is a request for adjudication rather than the
+  adjudication. It is an opt-in nobody in the bundled set declares, which is precisely why
+  giving it teeth could not break a live template.
+* **Blinded evidence.** `assemble_judge_evidence` / `blind_provenance` build what the judge
+  reads: the rubric prose as `spec`, the gate's bound `evidence` as `tool_output`, with
+  retry/iteration markers stripped. It matters because the controller appends a retry hint to a
+  node's prompt — so "attempt 3 of 5" really can reach a judge, and that is the pressure that
+  produces a lenient pass.
+
+`tests/test_workflows_judge_actors_claims.py` holds this text to the call graph in both
+directions, so a future session cannot strand the claim on either side.
 
 **The worker actor may never transition a node to `done`.** It can reach `waiting`
 (work parked) or `review` (work submitted). The terminal transition belongs to a judge

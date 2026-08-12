@@ -83,7 +83,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
               <t.icon size={13} /> {t.label}
               {t.count > 0 && (
                 <span className={`rounded-pill px-[5px] text-[0.75rem] tabular-nums ${
-                  tab === t.key ? 'bg-primary/14 text-primary' : 'bg-surface-highest'
+                  tab === t.key ? 'bg-primary-container text-on-primary-container' : 'bg-surface-highest'
                 }`}>{t.count}</span>
               )}
             </button>

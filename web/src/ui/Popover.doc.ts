@@ -15,9 +15,11 @@ const docs: UiDoc[] = [
       { name: 'hint', description: 'Optional muted second line beneath the label.' },
       { name: 'selected', description: 'Marks the row as the current choice — heavier label weight + a trailing primary dot.' },
       { name: 'onClick', description: 'Activation handler for the row.' },
+      { name: 'role', description: "The ITEM role required by the popup container's role, when it declares one: `option` inside a role=listbox, `menuitem` for an action row inside a role=menu, `menuitemradio` for a pick-one row. Omit inside a role-less popover, where a bare button is correct (28 of the 30 call sites). Passing it also publishes the selected state in that role's vocabulary — `aria-selected` for an option, `aria-checked` for a radio item, and deliberately nothing for a plain menuitem." },
     ],
     bestPractices: [
       { guidance: true, description: 'Use MenuRow for options inside a Popover rather than styling a raw <button> — the press spring, hover icon-nudge, and selected treatment stay consistent across every menu.' },
+      { guidance: true, description: "Pass `role` whenever the enclosing popup declares role=menu or role=listbox. Measured before it existed: the collapsed Segmented announced a list box with 0 options and the row context menu a menu with 0 menuitems, because this row rendered a bare button." },
       { guidance: false, description: 'Do not hardcode colors or px — tone, surface, and radius route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
     anatomy: ['motion.button (press spring, group hover)', 'leading icon span (hover-nudge)', 'label + optional hint', 'trailing selected dot'],

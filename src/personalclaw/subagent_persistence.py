@@ -31,7 +31,18 @@ def _path_home_pclaw():
 
 logger = logging.getLogger(__name__)
 
-_SUBAGENTS_DIR: Path = config_dir() / "subagents"
+
+def _subagents_dir() -> Path:
+    """Resolve ``<home>/subagents`` at CALL time.
+
+    This was a module-level constant (``_SUBAGENTS_DIR = config_dir() / "subagents"``),
+    which froze the home at first import. Two consequences, one of each kind: a
+    ``$PERSONALCLAW_HOME`` established after this module was imported was ignored for the
+    rest of the process, and under pytest no fixture could redirect it — a full suite wrote
+    147 entries into the developer's real ``~/.personalclaw/subagents`` (CRE-8). Resolving
+    per call means the active home always wins.
+    """
+    return config_dir() / "subagents"
 
 
 def _agent_dir(agent_id: str) -> Path:
@@ -44,8 +55,9 @@ def _agent_dir(agent_id: str) -> Path:
         or "\0" in agent_id
     ):
         raise ValueError(f"Invalid agent_id: {agent_id!r}")
-    resolved = (_SUBAGENTS_DIR / agent_id).resolve()
-    parent = _SUBAGENTS_DIR.resolve()
+    root = _subagents_dir()
+    resolved = (root / agent_id).resolve()
+    parent = root.resolve()
     if resolved == parent or not resolved.is_relative_to(parent):
         raise ValueError(f"Path traversal blocked for agent_id: {agent_id!r}")
     return resolved
@@ -179,7 +191,7 @@ def list_orphans() -> list[dict]:
     """Return parsed state for all non-tombstoned agent folders."""
     results: list[dict] = []
     try:
-        dirs = sorted(_SUBAGENTS_DIR.iterdir())
+        dirs = sorted(_subagents_dir().iterdir())
     except (FileNotFoundError, OSError):
         return results
     for d in dirs:
@@ -203,7 +215,7 @@ def prune_stale_tombstones(max_age_days: int = 7) -> int:
     cutoff = time.time() - (max_age_days * 86400)
     pruned = 0
     try:
-        dirs = sorted(_SUBAGENTS_DIR.iterdir())
+        dirs = sorted(_subagents_dir().iterdir())
     except (FileNotFoundError, OSError):
         return 0
     for d in dirs:

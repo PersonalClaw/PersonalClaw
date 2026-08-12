@@ -5,7 +5,7 @@ import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
-import { Checkbox } from '../../ui/forms'
+import { Checkbox, FieldError } from '../../ui/forms'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
 import { SidePanel } from '../../ui/SidePanel'
@@ -797,12 +797,16 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
       <p className="text-on-surface text-[0.9375rem]">{intent.goal}</p>
       <div className="flex flex-wrap items-center gap-s">
         <Button size="sm" variant="secondary" onClick={run} disabled={running}><Play size={14} className={running ? 'animate-pulse' : ''} /> {running ? 'Running…' : 'Run on existing items'}</Button>
+        {/* The blocked reason used to live on a WRAPPING span's title, where a hover finds it and
+            a keyboard user never can — the button inside stayed natively disabled and out of the
+            tab order. Both strings now ride the button: `title` explains the action,
+            `disabledReason` explains the block, and Button joins them when it is soft-off. */}
         {intent.propose_skill && (
-          <span title={hasOutcomes ? 'Synthesize a reusable skill from what this intent has gathered' : 'Gather some matches first'}>
-            <Button size="sm" variant="secondary" onClick={generateSkill} disabled={genning || !hasOutcomes}>
-              <Sparkles size={14} className={genning ? 'animate-pulse' : ''} /> {genning ? 'Generating…' : 'Generate skill'}
-            </Button>
-          </span>
+          <Button size="sm" variant="secondary" onClick={generateSkill}
+            title="Synthesize a reusable skill from what this intent has gathered"
+            disabled={genning || !hasOutcomes} disabledReason={!hasOutcomes && !genning ? 'Gather some matches first' : undefined}>
+            <Sparkles size={14} className={genning ? 'animate-pulse' : ''} /> {genning ? 'Generating…' : 'Generate skill'}
+          </Button>
         )}
         <span onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="ghost" onClick={() => api.deleteKnowledgeIntent(intent.id).then(() => { onChanged(); onClose() })}><Trash2 size={14} /> Delete</Button>
@@ -908,7 +912,7 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
         <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
         <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
       </label>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button><Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save intent'}</Button></div>
     </div>
   )

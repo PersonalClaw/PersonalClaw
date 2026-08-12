@@ -8,7 +8,7 @@ import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } fro
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (types + ranges are the server's truth; we surface the same bounds).
@@ -26,9 +26,9 @@ export function AgentDefaultsPanel() {
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. The editable form state (cfg/defaultAgent) is seeded and
   // rehydrated from this read-only `data`; mutations stay optimistic below.
-  const { data } = useCachedData('settings:agent-defaults', async () => {
+  const { data, error: loadErr, refresh } = useCachedData('settings:agent-defaults', async () => {
     const [plaw, agents] = await Promise.all([
-      api.personalclawConfig().then((c) => (c.agent ?? {}) as AgentCfg).catch(() => ({} as AgentCfg)),
+      api.personalclawConfig().then((c) => (c.agent ?? {}) as AgentCfg),
       api.agents().then((d) => d.default_agent).catch(() => ''),
     ])
     return { cfg: plaw, defaultAgent: agents }
@@ -38,6 +38,12 @@ export function AgentDefaultsPanel() {
     if (data) { setCfg(data.cfg); setDefaultAgent(data.defaultAgent) }
   }, [data])
 
+  // 🔴 A settings panel must not present FABRICATED values as saved state. `.catch(() => ({}))` made a
+  // failed config read resolve with an empty section, so every control below rendered at its fallback —
+  // indistinguishable from "this is what you saved" — and the panel offered to edit values it had never
+  // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
+  // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg || agentsLoading) return <FormSkeleton sections={3} />
 
   // Selecting a discovered ACP agent materializes a saved profile for it first,

@@ -41,9 +41,14 @@ _ROLE_LABELS = {
 }
 
 
-def _redact(text: str) -> str:
+def redact_field(text: str) -> str:
     """Both redaction passes over one field. Applied to EVERY role — see the module
-    docstring for why the write path's role exemption can't be inherited here."""
+    docstring for why the write path's role exemption can't be inherited here.
+
+    Public because ``session_share`` needs the SAME redaction for the artifact name it
+    derives (SM-9). One implementation with two callers, never a second pass that redacts
+    slightly less.
+    """
     if not text:
         return ""
     safe, _ = redact_exfiltration_urls(str(text))
@@ -60,7 +65,7 @@ def _content_messages(messages: list[dict]) -> list[dict]:
         role = str(msg.get("role", "") or "")
         if role not in _CONTENT_ROLES:
             continue
-        content = _redact(msg.get("content", ""))
+        content = redact_field(msg.get("content", ""))
         if not content.strip():
             continue
         entry: dict[str, Any] = {"role": role, "content": content}
@@ -79,14 +84,14 @@ def render_markdown(*, title: str, key: str, meta: dict, messages: list[dict]) -
     would otherwise produce an export whose outline is the chat's content, not the
     conversation.
     """
-    safe_title = _redact(title or key or "Conversation")
+    safe_title = redact_field(title or key or "Conversation")
     lines = [f"# {safe_title}", ""]
 
     header: list[str] = []
     for label, field in (("Agent", "agent"), ("Model", "model"), ("Created", "created_at")):
         value = meta.get(field)
         if value:
-            header.append(f"- **{label}:** {_redact(str(value))}")
+            header.append(f"- **{label}:** {redact_field(str(value))}")
     exported = _content_messages(messages)
     header.append(f"- **Messages:** {len(exported)}")
     header.append("- **Redacted:** credentials and suspicious URLs are removed from this export.")
@@ -109,9 +114,9 @@ def render_json(*, title: str, key: str, meta: dict, messages: list[dict]) -> st
     """A transcript as JSON: the same redacted messages, plus declared provenance."""
     payload = {
         "key": key,
-        "title": _redact(title or key),
-        "agent": _redact(str(meta.get("agent", "") or "")),
-        "model": _redact(str(meta.get("model", "") or "")),
+        "title": redact_field(title or key),
+        "agent": redact_field(str(meta.get("agent", "") or "")),
+        "model": redact_field(str(meta.get("model", "") or "")),
         "created_at": meta.get("created_at", ""),
         # Stated in the artifact itself so a consumer never mistakes a redacted export
         # for a verbatim transcript.

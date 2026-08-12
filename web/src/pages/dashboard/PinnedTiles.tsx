@@ -84,7 +84,7 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
           {artifact?.name || slug}
         </span>
         {isProposal && (
-          <span data-type="label-s" className="inline-flex items-center gap-1 rounded-pill bg-primary/15 px-2 py-0.5 text-primary">
+          <span data-type="label-s" className="inline-flex items-center gap-1 rounded-pill bg-primary-container px-2 py-0.5 text-on-primary-container">
             <Sparkles size={11} /> Proposed
           </span>
         )}

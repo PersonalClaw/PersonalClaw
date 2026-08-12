@@ -9,6 +9,7 @@ import { Toggle } from './settingsUI'
 import { SchemaField, schemaDefaults } from './ProviderConfigForm'
 import { TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 
 /** A multiInstance=true provider rendered as a frame for N named instances.
  *  Each instance has its own schema-driven config (test / edit / delete); an
@@ -50,7 +51,7 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{ext.displayName || ext.name}</span>
             {ext.version && <span className="text-on-surface-low text-[0.75rem]">v{ext.version}</span>}
-            <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}>multi-instance</span>
+            <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem]" style={accentChip}>multi-instance</span>
             {ext.enabled && <span className="text-on-surface-low text-[0.75rem]">{count} {count === 1 ? 'instance' : 'instances'}</span>}
           </div>
           {ext.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{ext.description}</p>}

@@ -102,8 +102,14 @@ export function FindBar({ turns, scrollRef, turnNodes, onClose }: {
       <span className="min-w-[3.2rem] select-none text-center text-on-surface-low text-[0.75rem] tabular-nums" aria-live="polite">
         {debounced.trim() ? (matchTurns.length ? `${active + 1}/${matchTurns.length}` : '0/0') : ''}
       </span>
-      <IconButton icon={ChevronUp} label="Previous match" onClick={() => go(-1)} disabled={!matchTurns.length} size={28} iconSize={14} />
-      <IconButton icon={ChevronDown} label="Next match" onClick={() => go(1)} disabled={!matchTurns.length} size={28} iconSize={14} />
+      {/* The 0/0 counter beside these announces the count, but the BUTTONS said nothing — a keyboard
+          user lands on them (this primitive keeps its tab stop) and hears only "Previous match". */}
+      <IconButton icon={ChevronUp} label="Previous match" onClick={() => go(-1)} disabled={!matchTurns.length}
+        disabledReason={debounced.trim() ? 'Nothing matches this search yet' : 'Type something to search for'}
+        size={28} iconSize={14} />
+      <IconButton icon={ChevronDown} label="Next match" onClick={() => go(1)} disabled={!matchTurns.length}
+        disabledReason={debounced.trim() ? 'Nothing matches this search yet' : 'Type something to search for'}
+        size={28} iconSize={14} />
       <IconButton icon={X} label="Close find" onClick={onClose} size={28} iconSize={14} />
     </motion.div>
   )

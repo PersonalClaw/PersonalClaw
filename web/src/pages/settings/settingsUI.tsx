@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { spring, bounce } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
@@ -8,20 +9,61 @@ import { FieldLabelProvider, NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
+/** A settings sub-route's page title, and therefore the TOP-LEVEL heading of that page — an `h1`.
+ *  Measured before this: every `#/settings/*` route had **ZERO** `h1`s and its outline began at `h2`
+ *  with nothing above it, while `#/settings` itself (`h1: Settings`) and every other destination
+ *  (`h1: Tasks`, …) had one. 30 call sites, one per panel.
+ *
+ *  No `level` prop: the only settings panel also mounted elsewhere is Inbox, and `#/inbox` renders its
+ *  OWN copy (`pages/inbox/InboxSettingsPanel.tsx`), which does not use this component — so no caller
+ *  needs a lower level, and a prop for a hypothetical one would be speculative.
+ *
+ *  The tag changes; the size does not — `data-type="title-l"` drives that, so this is pixel-identical. */
 export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-l">
-      <h2 className="text-on-surface" data-type="title-l">{title}</h2>
+      <h1 className="text-on-surface" data-type="title-l">{title}</h1>
       {hint && <p className="mt-1 text-on-surface-low text-[0.8125rem]">{hint}</p>}
     </div>
   )
 }
 
-export function Section({ title, hint, children }: { title?: string; hint?: string; children: ReactNode }) {
+export function Section({ title, hint, icon: Icon, right, children }: {
+  title?: string
+  /** ReactNode, not string: `DiagnosticsPanel`'s "Live logs" hint carries a live connection dot and
+   *  a count, which is why that panel hand-rolled its heading rather than adopt this. */
+  hint?: ReactNode
+  /** Leading glyph inside the heading — `DesignPanel`'s three control sections each have one. */
+  icon?: LucideIcon
+  /** Trailing slot on the title row (a mode switcher, a log toolbar). Keeps a bespoke header row
+   *  from being the reason a panel opts out of the primitive. */
+  right?: ReactNode
+  children: ReactNode
+}) {
+  // `h2`, not `h3`: the panel title above is an `h1`, so a level-3 section would skip a level
+  // (axe `heading-order`). Size is set by the class, not the tag — pixel-identical.
+  //
+  // 🪤 The three new slots must not disturb the 23 panels that already use this. Measured while
+  // adding them: wrapping the header in a flex row unconditionally and moving the title→hint gap
+  // from the h2's `mb-s` to the hint's `mt-0.5` moved `#/settings/chat` by 8% and
+  // `#/settings/guardrails` by 13.5%. So the extra markup appears ONLY when its slot is used —
+  // no `right`, no wrapper; no `icon`, no flex on the heading — and those two panels went back to
+  // 0%. A primitive gaining an option must be inert for everyone who does not pass it.
+  const heading = title && (
+    <h2 className={`mb-s text-on-surface text-[0.9375rem]${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
+      {Icon && <Icon size={16} className="shrink-0 text-primary" />}
+      {title}
+    </h2>
+  )
+  const hintEl = hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>
   return (
     <section className="mb-2xl">
-      {title && <h3 className="mb-s text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</h3>}
-      {hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>}
+      {right ? (
+        <div className="flex items-start justify-between gap-s">
+          <div className="min-w-0">{heading}{hintEl}</div>
+          <div className="shrink-0">{right}</div>
+        </div>
+      ) : (<>{heading}{hintEl}</>)}
       {children}
     </section>
   )

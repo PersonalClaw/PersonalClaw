@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill } from './controls'
+import { ProjectPicker } from '../ProjectPicker'
 
 // ── A value pill that never says what it controls ──────────────────────────────────────
 //
@@ -66,6 +67,49 @@ describe('every composer pill announces its dimension', () => {
     render(<ReasoningPill value="" efforts={[{ value: 'low', label: 'Low' }]} onSelect={vi.fn()} />)
     // The pill still shows just the value on screen; only the accessible name gained the axis.
     expect(screen.getByRole('button').textContent).toBe('Default')
+  })
+})
+
+describe('the THIRD pill family — the project picker — agrees', () => {
+  // `ProjectPicker` is the same kind of control (icon + current value + chevron, opening a listbox)
+  // in a different file, so neither the primitive above nor its rail reached it. Measured on `#/code`
+  // at 1440px, where the loop composer renders it beside the Project-kind Segmented:
+  //
+  //     ProjectPicker trigger      role=button  name "New project"      x 240..372
+  //     Project-kind tab (active)  role=tab     name "New project"      x 384..483
+  //
+  // Two controls, one row, 8px apart, identical accessible names, different jobs — one chooses WHICH
+  // project the work attaches to, the other chooses greenfield vs brownfield. The tablist itself is
+  // correctly named "Project kind", so the group context exists on that side; the picker had no
+  // dimension anywhere in its name, only in a `title` that a button with text content does not use.
+  it('names the dimension and the value', () => {
+    render(<ProjectPicker value="" onChange={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Project: New project' })).toBeTruthy()
+  })
+
+  it('follows the caller\'s empty label rather than inventing one', () => {
+    render(<ProjectPicker value="" onChange={() => {}} emptyLabel="No project" />)
+    expect(screen.getByRole('button', { name: 'Project: No project' })).toBeTruthy()
+  })
+
+  it('says just "Project" when the value would repeat the dimension', () => {
+    // Not theoretical: `label` falls back to the bare word "Project" when a bound id is missing from
+    // the fetched list, which would otherwise announce "Project: Project".
+    render(<ProjectPicker value="missing-id" onChange={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Project' })).toBeTruthy()
+  })
+
+  it('leaves the VISIBLE label alone (a naming fix, not a redesign)', () => {
+    const { container } = render(<ProjectPicker value="" onChange={() => {}} />)
+    expect(container.querySelector('button')!.textContent!.trim()).toBe('New project')
+  })
+
+  it('the trigger carries no aria-label-shaped title fallback confusion', () => {
+    // The `title` stays — it is the sighted user's explanation — but it must not be the only place the
+    // dimension lives, which was the defect.
+    const src = readFileSync(join(process.cwd(), 'src/ui/ProjectPicker.tsx'), 'utf8')
+    expect(src).toMatch(/aria-label=\{label === 'Project' \? 'Project' : `Project: \$\{label\}`\}/)
+    expect(src).toMatch(/title="Choose the project this work scopes under"/)
   })
 })
 

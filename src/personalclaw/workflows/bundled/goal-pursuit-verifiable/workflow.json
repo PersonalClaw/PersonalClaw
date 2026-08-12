@@ -140,7 +140,7 @@
               "kind": "stage",
               "id": "fix",
               "config": {
-                "prompt": "Make the smallest change that moves the verify command toward passing, then stop.\n\nGoal:\n{{inputs.task}}\n\nApproach:\n{{nodes.plan.output.approach}}\n\nLast attempt:\n{{last.output.summary}}\n\nDo NOT change the verify command, delete tests, or skip them. Those make the command pass without making the goal true, and an independent judge checks for exactly that.\n\nIf the same fix has failed twice, your diagnosis is wrong rather than your execution — say so and try a different one.\n\nReturn JSON: {\"summary\": string, \"command_passed\": boolean, \"evidence\": string}",
+                "prompt": "Make the smallest change that moves the verify command toward passing, then stop.\n\nGoal:\n{{inputs.task}}\n\nApproach:\n{{nodes.plan.output.approach}}\n\nLast attempt:\n{{last.output.summary}}\n\nWhat the judge ruled on it: {{last.output.verdict}}\nCriteria it scored below target: {{last.output.shortfalls}}\nStart from that critique. Re-arguing a shortfall costs a cycle; fixing it ends one.\n\nDo NOT change the verify command, delete tests, or skip them. Those make the command pass without making the goal true, and an independent judge checks for exactly that.\n\nIf the same fix has failed twice, your diagnosis is wrong rather than your execution — say so and try a different one.\n\nReturn JSON: {\"summary\": string, \"command_passed\": boolean, \"evidence\": string}",
                 "schema": {
                   "summary": "string",
                   "command_passed": "boolean",
@@ -154,7 +154,7 @@
               "kind": "stage",
               "id": "judge",
               "config": {
-                "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nGoal:\n{{inputs.task}}\n\nThe command that decides it:\n{{inputs.verify_command}}\n\nBaseline before any edit:\n{{nodes.baseline.output}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the verify command passes (target 2)\n  - the change is minimal and scoped (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - test deleted or skipped\n  - verify command weakened or replaced\n  - output stubbed or placeholder\n\nRun the verify command yourself. Compare against the baseline: a failure that was already there is not this change's fault, and blaming it for one is how a correct change gets rejected.\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {criterion: integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
+                "prompt": "You are verifying work you did not do. Assume it produced nothing until the artifacts prove otherwise.\n\nDo not talk yourself into approving. Your job is not to be agreeable to the worker — it is to be right on behalf of the user, who is not reading this and cannot check it themselves.\n\nGoal:\n{{inputs.task}}\n\nThe command that decides it:\n{{inputs.verify_command}}\n\nBaseline before any edit:\n{{nodes.baseline.output}}\n\nRubric — score each 0, 1 or 2, citing evidence for each:\n  - the verify command passes (target 2)\n  - the change is minimal and scoped (target 2)\n\nThese passes are forbidden. Actively check they did NOT happen:\n  - test deleted or skipped\n  - verify command weakened or replaced\n  - output stubbed or placeholder\n\nRun the verify command yourself. Compare against the baseline: a failure that was already there is not this change's fault, and blaming it for one is how a correct change gets rejected.\n\nRe-run any command the evidence cites; read the artifacts yourself. A claim you did not verify is not evidence, however plausible it reads.\n\nIf you genuinely cannot tell — artifacts missing, command will not run — say so in cannot_judge rather than guessing. A refusal is useful; a coin-flip dressed as a verdict is not.\n\nExpect two or three revision cycles on real work. Reporting real issues is the normal outcome, and zero issues on a first pass is itself worth a second look.\n\nReturn JSON: {\"reasoning\": string, \"verdict\": \"PASS\"|\"REJECT\"|\"RETRY\"|\"REPLAN\"|\"ESCALATE\"|\"NEEDS_INPUT\", \"scores\": {\"the verify command passes\": integer, \"the change is minimal and scoped\": integer}, \"evidence_refs\": [string], \"proof\": string, \"cannot_judge\": string}",
                 "schema": {
                   "reasoning": "string",
                   "verdict": "string",
@@ -165,7 +165,8 @@
                 },
                 "model_tier": "reasoning",
                 "tools_posture": "verify",
-                "isolation": "fresh"
+                "isolation": "fresh",
+                "judge_contract": true
               }
             }
           ]

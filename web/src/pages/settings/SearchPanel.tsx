@@ -5,6 +5,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
 // one provider per use-case; an unbound one falls back to the general binding.
@@ -78,7 +79,7 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
         <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
         <span className="grid size-7 shrink-0 place-items-center rounded-md"
           style={activeProviders.length > 0
-            ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }
+            ? accentChip
             : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
           <meta.icon size={14} />
         </span>

@@ -8,10 +8,11 @@ import { Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type PromptItem, type PromptVariable } from '../../lib/api'
-import { Field } from '../../ui/forms'
+import { Field, FieldError } from '../../ui/forms'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues } from './promptMeta'
 import { toDraft, draftToPayload, type PromptDraft } from './PromptForm'
 import { PromptEditFields } from './PromptEditFields'
+import { accentChip } from '../../design/accent'
 
 /** Substitute each variable's default into the template so the rendered view
  *  reads naturally (e.g. {{bot_name}} → "PersonalClaw"). Placeholders without a
@@ -78,7 +79,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
           <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Pencil size={13} /> Editing</span>
           <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
         </div>
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
@@ -118,11 +119,11 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         )}
         {full.kind && <span className="inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>{full.kind} prompt</span>}
         {full.launch_spec && Object.keys(full.launch_spec).length > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}><Rocket size={11} /> runnable</span>
+          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={accentChip}><Rocket size={11} /> runnable</span>
         )}
         <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(prompt.source)} 16%, transparent)`, color: sourceTone(prompt.source) }}>{sourceLabel(prompt.source)}</span>
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {full.title && <h2 data-type="title-m" className="text-on-surface">{full.title}</h2>}
       {full.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{full.description}</p>}
@@ -218,7 +219,7 @@ function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name:
           )}
         </div>
       </div>
-      {err && <p className="mt-2 text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError className="mt-2">{err}</FieldError>}
       {out != null && (
         <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{out}</Markdown></div>
       )}

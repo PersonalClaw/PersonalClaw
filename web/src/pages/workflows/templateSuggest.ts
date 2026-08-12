@@ -5,7 +5,7 @@ import { KIND_TO_TEMPLATE, templateForKind } from './containerKey'
  *
  *  The gap this closes: the templates tab lists a dozen bundled workflows by name, and a
  *  user who knows what they want to DO ("fix this bug", "research a topic") should not have
- *  to already know that a coding job is called `code-implementation` and a research job
+ *  to already know that a coding job is called `code-project` and a research job
  *  `deep-research`. The picker offering names only makes the taxonomy the user's problem.
  *
  *  A pure module rather than inline in the page, because the interesting behaviour is which
@@ -14,10 +14,10 @@ import { KIND_TO_TEMPLATE, templateForKind } from './containerKey'
  *
  *  Resolution goes intent → legacy loop-kind → template through the SAME alias table the
  *  cockpit uses (`KIND_TO_TEMPLATE`, drift-tested against the backend manifest). The plan
- *  names `code-project` as the coding suggestion; that template was deferred as a product
- *  decision and never shipped, and the alias deliberately points `code` at the
- *  `code-implementation` template that DID ship — so honouring the intent means suggesting
- *  the working template the alias resolves to, not a name no provider can start. */
+ *  names `code-project` as the coding suggestion, and since WF2LOO-10 that IS the shipped
+ *  code template: the product decision was to evolve `code-implementation` into it rather
+ *  than ship two overlapping code templates, and `KIND_TO_TEMPLATE` was repointed in the
+ *  same change so every legacy `code` reference resolves to it at read time. */
 
 /** Keyword cues per legacy loop-kind, matched case-insensitively as whole words.
  *

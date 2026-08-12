@@ -12,12 +12,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **App backends now authenticate inbound requests, closing a direct-to-port bypass.**
 
+### Fixed
+
+- **A lesson saved for one project no longer becomes a rule for every project.**
+
+- **`until_dry` workflow loops now end when the work reports no progress, instead of always running to their iteration cap.**
+- **Run history no longer says "ran" for automations that did not run.**
+
 ### Changed
+
+- **A workflow judge now has to show its work, and a PASS it cannot justify is refused.**
+
+- **A workflow plan now tells you which of its stops survive an unattended run.**
+- **A `foreach` with `on_item_error: collect` now has defined behaviour, and it collects.**
 
 - **Security docs now describe what the sandbox actually does — credential-hiding, not confinement.**
 
 ### Added
 
+- **You can share a chat as a read-only artifact — inside your own instance, never on the internet.**
 - **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of work.**
 - **A Usage panel in Settings shows what you're spending.**
 - **The chat header shows what the whole conversation has cost.**
@@ -30,6 +43,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An automation fired from a background write could be dropped without a trace when the retry it was owed was skipped.**
+- **A workflow set to `on_overlap: queue` started a second run alongside the first instead of queueing it.**
+- **The Inbox's Mentions and Email filters could never match anything.**
+- **`personalclaw update` was a dead end unless you had installed from git.**
+- **`personalclaw update` could run `git reset --hard` without anyone agreeing to it.**
+- **A detached-HEAD update fetched a branch that does not exist.**
 - **Deleting a knowledge item mid-enrichment crashed its background pipeline with a noisy error.**
 - **Renaming the built-in Personal or Repeatable project quietly broke your projects.**
 - **"Run now" did nothing for almost every automation, while reporting success.**

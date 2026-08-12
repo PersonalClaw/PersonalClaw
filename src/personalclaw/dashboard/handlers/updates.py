@@ -15,7 +15,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import __version__ as _local_version
-from personalclaw import shutdown_event
+from personalclaw import self_update, shutdown_event
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import AppConfig, config_path
 from personalclaw.dashboard.state import DashboardState
@@ -45,12 +45,10 @@ async def api_update_check(request: web.Request) -> web.Response:
     compatibility with the existing panel. The git kind still runs the
     commits-behind probe; every kind gets the release-tag comparison.
     """
-    from personalclaw.dashboard.handlers.updates_kind import build_update_status
-
     await _do_update_check()
     cfg = AppConfig.load()
     try:
-        status = await build_update_status(_local_version)
+        status = await self_update.build_update_status(_local_version)
     except Exception:
         logger.debug("build_update_status failed; returning legacy view", exc_info=True)
         status = {}
@@ -63,14 +61,6 @@ async def api_update_check(request: web.Request) -> web.Response:
     merged["update_dev_mode"] = cfg.dashboard.update_dev_mode
     merged["version"] = _local_version
     return web.json_response(merged)
-
-
-def _version_tuple(v: str) -> tuple[int, ...]:
-    """Parse version string to tuple for safe numeric comparison."""
-    try:
-        return tuple(int(x) for x in v.split("."))
-    except (ValueError, AttributeError):
-        return (0,)
 
 
 async def _do_update_check() -> None:
@@ -180,7 +170,8 @@ async def _do_update_check() -> None:
             if m:
                 remote_version = m.group(1)
             available = (
-                _version_tuple(remote_version) > _version_tuple(_local_version)
+                self_update.version_tuple(remote_version)
+                > self_update.version_tuple(_local_version)
                 if remote_version
                 else False
             )
@@ -295,111 +286,12 @@ async def api_changelog(request: web.Request) -> web.Response:
     return web.json_response({"content": content})
 
 
-def _package_root(proj: str) -> str:
-    """Resolve the directory ``pip install -e .`` and the frontend build run
-    from. Git operations run at the repo root (``proj`` =
-    ``PERSONALCLAW_PROJECT_DIR``), but the installable package may live one
-    level down: a standalone checkout has ``pyproject.toml`` at the top,
-    while the monorepo layout nests it at ``<repo>/PersonalClaw``. Falls
-    back to ``proj`` unchanged when neither probe hits."""
-    root = Path(proj)
-    if (root / "pyproject.toml").is_file():
-        return str(root)
-    nested = root / "PersonalClaw"
-    if (nested / "pyproject.toml").is_file():
-        return str(nested)
-    return proj
-
-
-async def _commits_behind_upstream(proj: str) -> int | None:
-    """How many commits the configured upstream is ahead of HEAD, or ``None``
-    when no upstream exists (or the probe fails) — i.e. a ``git pull`` cannot
-    produce anything. Runs a best-effort ``git fetch`` first (short timeout,
-    failure tolerated — offline, the count then reflects the last-fetched
-    view, which is also what drove the "update available" signal)."""
-    try:
-        fetch = await asyncio.create_subprocess_exec(
-            "git",
-            "fetch",
-            "--quiet",
-            cwd=proj,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            await asyncio.wait_for(fetch.communicate(), timeout=15)
-        except asyncio.TimeoutError:
-            try:
-                fetch.kill()
-            except ProcessLookupError:
-                pass
-            await fetch.communicate()
-    except Exception:
-        pass  # no git / no remote — the rev-list probe below decides
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-list",
-            "--count",
-            "HEAD..@{u}",
-            cwd=proj,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.communicate()
-            return None
-        if proc.returncode != 0:
-            return None  # no upstream configured (or not a git checkout)
-        try:
-            return int(out.decode(errors="replace").strip())
-        except ValueError:
-            return None
-    except Exception:
-        return None
-
-
 # In-flight guard: only one update apply may run at a time. A plain bool is
 # race-free here because the handler sets it synchronously (no await between
 # check and set) on the single-threaded event loop; the background task clears
 # it in a finally. Concurrent POST /api/update returns 409 instead of spawning
 # a second pull/build/restart pipeline against the same working tree.
 _apply_in_flight = False
-
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-
-
-def _installer_error_summary(stderr: str, *, limit: int = 200) -> str:
-    """One UI-safe line describing why an install failed.
-
-    Two things the raw text can't do (both found by driving the real panel):
-
-    * **Strip ANSI.** uv colorizes its diagnostics, so the raw bytes carry SGR
-      escapes. Rendered in the browser they show up literally (``\x1b[31m``),
-      making the message look corrupted.
-    * **Take the FIRST meaningful line, not the last.** uv's resolver error is a
-      multi-line tree whose headline comes first ("No solution found when
-      resolving dependencies") and whose last line is a fragment ("unsatisfiable.")
-      that says nothing on its own. pip's single-line ``ERROR:`` output is
-      unaffected either way.
-    """
-    clean = _ANSI_RE.sub("", stderr or "")
-    lines = [ln.strip(" \t│╰─▶×") for ln in clean.splitlines()]
-    lines = [ln for ln in lines if ln.strip()]
-    if not lines:
-        return ""
-    # Prefer an explicit error line when one exists (pip), else the headline (uv).
-    head = next((ln for ln in lines if ln.lower().startswith(("error", "error:"))), lines[0])
-    # Fold the following continuation lines in so a wrapped reason stays readable.
-    joined = " ".join([head, *[ln for ln in lines[lines.index(head) + 1 :]]])
-    return joined[:limit].strip()
 
 
 async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
@@ -419,14 +311,11 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     _apply_in_flight = True
     state.push_refresh("updating")
 
-    from personalclaw.dashboard.handlers.updates_kind import build_update_status
-
     try:
-        status = await build_update_status(_local_version)
+        status = await self_update.build_update_status(_local_version)
     except Exception:
         status = {}
-    latest = str(status.get("latest") or "")
-    spec = f"personalclaw=={latest}" if latest else "personalclaw"
+    spec = self_update.upgrade_spec(str(status.get("latest") or ""))
     auth_mode = _live_auth_mode(request)
 
     async def _apply() -> None:
@@ -467,7 +356,7 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 # captured and logged but never sent to the UI, so the panel said
                 # only "pip upgrade failed" and the user had to read gateway.log
                 # to learn anything actionable (issue #51).
-                summary = _installer_error_summary(detail)
+                summary = self_update.installer_error_summary(detail)
                 state.push_update_progress(
                     "error", f"Upgrade failed: {summary}" if summary else "Upgrade failed"
                 )
@@ -508,19 +397,14 @@ async def api_update_apply(request: web.Request) -> web.Response:
     global _apply_in_flight
     state: DashboardState = request.app["state"]
 
-    from personalclaw.dashboard.handlers.updates_kind import (
-        build_update_status,
-        detect_install_kind,
-    )
-
-    kind = detect_install_kind()
+    kind = self_update.detect_install_kind()
 
     # Container / desktop: no in-place apply. Return the structured instructions
     # (honest commands beat pretending) — the panel renders them. No in-flight
     # slot is claimed because nothing runs here.
     if kind in ("container", "desktop"):
         try:
-            status = await build_update_status(_local_version)
+            status = await self_update.build_update_status(_local_version)
         except Exception:
             status = {"kind": kind, "instructions": [], "apply_method": ""}
         return web.json_response(
@@ -560,14 +444,12 @@ async def api_update_apply(request: web.Request) -> web.Response:
     _on_latest_tag = False
     if not _dev_mode:
         try:
-            from personalclaw.dashboard.handlers.updates_kind import (
-                _normalize_version,
-                _read_cache,
-                _version_tuple,
+            _cached_tag = self_update.normalize_version(
+                str(self_update.read_release_cache().get("tag") or "")
             )
-
-            _cached_tag = _normalize_version(str(_read_cache().get("tag") or ""))
-            if _cached_tag and _version_tuple(_cached_tag) <= _version_tuple(_local_version):
+            if _cached_tag and self_update.version_tuple(_cached_tag) <= self_update.version_tuple(
+                _local_version
+            ):
                 _on_latest_tag = True
         except Exception:
             _on_latest_tag = False
@@ -591,7 +473,7 @@ async def api_update_apply(request: web.Request) -> web.Response:
     # to a plain restart instead of 409ing on tree state that can't matter.
     # When dev mode is off and we're already on the latest release tag, take the
     # same restart-only path even if new commits exist (ride tags, not commits).
-    behind = await _commits_behind_upstream(proj)
+    behind = await self_update.commits_behind_upstream(proj)
     if behind is None or behind == 0 or _on_latest_tag:
         if _on_latest_tag and behind:
             note = (
@@ -683,7 +565,7 @@ async def api_update_apply(request: web.Request) -> web.Response:
             # dependencies land before the re-exec (sys.executable is the venv
             # python the gateway was launched with). Git ran at the repo root;
             # pip + the frontend build run at the package root (may be nested).
-            pkg_root = _package_root(proj)
+            pkg_root = self_update.package_root(proj)
             state.push_update_progress("installing", "Installing package…")
             pip_install = await asyncio.create_subprocess_exec(
                 sys.executable,

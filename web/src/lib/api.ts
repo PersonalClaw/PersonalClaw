@@ -3,16 +3,9 @@
 // (cookie pc_token_<port> rides along via the dev proxy). See the composer
 // API contract in docs.
 
-const SK = { 'X-Session-Key': 'dashboard:ui' }
+import { errText } from './errText'
 
-/** Read an error response body and surface the backend's {"error": "..."} message as
- *  a readable sentence rather than raw JSON text. Shared by the JSON helpers and any
- *  hand-rolled fetch (file upload, streams) so error UX is uniform. */
-async function errText(r: Response): Promise<string> {
-  const text = await r.text().catch(() => '')
-  try { const parsed = JSON.parse(text); if (parsed && typeof parsed.error === 'string') return parsed.error } catch { /* not JSON */ }
-  return text || `HTTP ${r.status}`
-}
+const SK = { 'X-Session-Key': 'dashboard:ui' }
 
 /** An Error that carries the HTTP status, so callers can distinguish a genuine 404
  *  (resource gone) from a transient network/5xx blip. `.message` is unchanged (the
@@ -467,7 +460,9 @@ export interface ScheduleRun {
   id?: string
   run_id?: string; job_id?: string; job_name?: string
   trigger?: string                          // "manual" | "scheduled"
-  started_at?: number; finished_at?: number; duration_ms?: number
+  // ISO-8601 on `/api/triggers/history`, epoch seconds on the schedule endpoints — the
+  // union is the honest declaration, and every reader goes through `epochSeconds`.
+  started_at?: number | string; finished_at?: number | string; duration_ms?: number
   status?: string                           // "success" | "error"
   summary?: string; error?: string; trace?: string
   // 🔴 The TYPED fire outcome. `/api/triggers/history` returns FireRecord rows, whose
@@ -1106,6 +1101,69 @@ export interface StagingWeek {
   days: number; buckets: StagingDay[]
   silent_days: string[]; error_days: string[]
   produced_total: number; cost_usd: number
+}
+
+// The flywheel observability panel (GET /api/learning/health — LEARN-R14b).
+//
+// EVERY score and rate here is `number | null`, and null means UNMEASURED, not zero. The
+// backend refuses to score silence: a component with no data is excluded from the
+// composite and says so, because reporting an un-instrumented subsystem as 0% is
+// indistinguishable from reporting a broken one and the user's only apparent fix would
+// be to generate traffic.
+/** LEARN-R16's five-way verdict plus its honest not-yet state. Closed — the FE maps every
+ *  member explicitly rather than falling back, because a default branch would render a
+ *  verdict nobody defined as whatever the fallback said. */
+export type AttributionVerdict =
+  | 'EFFECTIVE' | 'PARTIALLY_EFFECTIVE' | 'INEFFECTIVE' | 'MIXED' | 'HARMFUL' | 'PENDING'
+
+export interface HealthComponent {
+  name: 'precision' | 'capture' | 'utilization' | 'judge'
+  score: number | null
+  weight: number
+  detail: string
+}
+export interface MaeBucket {
+  bucket: string
+  /** Verdicts that landed in this confidence band. */
+  n: number
+  /** …of which a human actually labelled. `mae` is null until at least one did. */
+  labelled: number
+  mae: number | null
+}
+export interface LearningHealth {
+  days: number
+  composite: {
+    score: number | null
+    components: HealthComponent[]
+    measured: number
+    of: number
+    ideal_band: [number, number]
+  }
+  utilization: { samples: number; mean: number | null; ideal_band: [number, number] }
+  capture: { days: number; passes: number; errors: number; cost_usd: number; all_ok_streak: number }
+  surfacing: { surfaced: number; used: number; precision: number | null }
+  cost_by_op: { op: string; passes: number; cost_usd: number }[]
+  judge: {
+    runs_scanned: number
+    verdicts: number
+    divergences: number
+    false_pass_rate: number | null
+    nodding_gates: { template: string; node: string; detail: string }[]
+    mae: { buckets: MaeBucket[]; labelled: number; unlabelled: number; no_confidence: number }
+  }
+  attribution: {
+    proposers: {
+      source: string
+      counts: Record<string, number>
+      total: number
+      decided: number
+      harm_rate: number
+      effective_rate: number
+    }[]
+    history: { source: string; verdict: AttributionVerdict }[]
+  }
+  /** The last ablation-delta sweep, or `{}` when none has run yet. */
+  ablation: { at?: string; rows?: { heuristic: string; delta: number; verdict: string; items: number }[] }
 }
 
 // One projected fire in the week grid (GET /api/triggers/week — AUTO-A3). `suppressed_by` is "" for
@@ -1995,6 +2053,10 @@ export interface Artifact {
   source_path: string; live_dirty: boolean; project_id?: string
   // Optional library collection label (ARTIFACTS S1). "" = uncollected.
   collection?: string
+  /** Frozen record: the server refuses every content mutation on it (SM-9 — today only
+   *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
+   *  letting the user type into an editor whose save always 400s. */
+  readonly: boolean
 }
 
 // One usage-ledger aggregate. `priced` is false when
@@ -2431,6 +2493,13 @@ export const api = {
    *  rather than this client buffering the transcript in memory. */
   sessionExportUrl: (key: string, format: 'md' | 'json') =>
     `/api/chat/sessions/${encodeURIComponent(key)}/export?format=${format}`,
+  /** Share a chat as a redacted, READ-ONLY artifact in this instance's own library
+   *  (SM-9). POST because it creates durable state, and nothing publishes it anywhere:
+   *  there is no public link and no token — an artifact the owner can open, and nobody
+   *  else can reach without this gateway's session auth. */
+  shareSession: (key: string) =>
+    post<{ ok: boolean; slug: string; name: string; kind: ArtifactKind; readonly: boolean; redacted: boolean }>(
+      `/api/chat/sessions/${encodeURIComponent(key)}/share`, {}),
   createChatSession: (opts: { name?: string; agent?: string; model?: string; memory_mode?: MemoryMode; mode?: string; project_id?: string } = {}) =>
     post<ChatSession>('/api/chat/sessions', opts),
   setSessionAgent: (session: string, agent: string) => post(`/api/chat/sessions/${session}/agent`, { agent }),
@@ -2782,6 +2851,8 @@ export const api = {
     del(`/api/learning/proposals/${encodeURIComponent(id)}`),
   learningStagingWeek: (days = 7) =>
     get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
+  learningHealth: (days = 7) =>
+    get<LearningHealth>(`/api/learning/health?days=${days}`),
   skillProposals: () => get<{ proposals: SkillProposal[] }>('/api/skills/proposals').then((d) => d.proposals),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>

@@ -1,4 +1,5 @@
 import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle } from 'lucide-react'
+import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
 
@@ -135,26 +136,34 @@ export function triggerHealthMeta(health?: string | null, state?: string | null)
 }
 
 // ── time helpers ──
-export function relFuture(ts?: number | null): string {
-  if (!ts) return ''
-  const s = ts - Date.now() / 1000
+// Every one of these takes `number | string`, because the endpoints disagree: the schedule
+// fields (`next_run_ts`, `last_run_ts`) are epoch seconds while `/api/triggers/history`
+// sends ISO-8601. `epochSeconds` is the ONE place that reconciles them, and it returns
+// `undefined` for anything it cannot read so these render their empty form instead of
+// arithmetic on a string. See `lib/epoch.ts` for the six rows of "in NaNd" that earned it.
+export function relFuture(ts?: number | string | null): string {
+  const t = epochSeconds(ts)
+  if (t == null) return ''
+  const s = t - Date.now() / 1000
   if (s < 0) return 'overdue'
   if (s < 60) return 'in <1m'
   if (s < 3600) return `in ${Math.floor(s / 60)}m`
   if (s < 86400) return `in ${Math.floor(s / 3600)}h`
   return `in ${Math.floor(s / 86400)}d`
 }
-export function relPast(ts?: number | null): string {
-  if (!ts) return 'never'
-  const s = Date.now() / 1000 - ts
+export function relPast(ts?: number | string | null): string {
+  const t = epochSeconds(ts)
+  if (t == null) return 'never'
+  const s = Date.now() / 1000 - t
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return `${Math.floor(s / 86400)}d ago`
 }
-export function absTime(ts?: number | null): string {
-  if (!ts) return ''
-  return new Date(ts * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+export function absTime(ts?: number | string | null): string {
+  const t = epochSeconds(ts)
+  if (t == null) return ''
+  return new Date(t * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 /** Flatten markdown to a clean single-line plain-text snippet for a row title.

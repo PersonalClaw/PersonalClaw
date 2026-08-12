@@ -77,7 +77,7 @@ export function PromptForm({ draft, onChange, compact, nameLocked, registerInser
   return (
     <div className={`flex flex-col ${compact ? 'gap-l' : 'gap-xl'}`}>
       <Field label="Name" hint="The stable id — referenced by @name and {{> name}}.">
-        <TextInput value={draft.name} onChange={(v) => set('name', nameLocked ? draft.name : v)} placeholder="summarize-thread" autoFocus={!nameLocked} />
+        <TextInput required value={draft.name} onChange={(v) => set('name', nameLocked ? draft.name : v)} placeholder="summarize-thread" autoFocus={!nameLocked} />
       </Field>
       <Field label="Title" hint="A human-readable label (optional — defaults from the name)."><TextInput value={draft.title} onChange={(v) => set('title', v)} placeholder="Summarize Thread" /></Field>
       <Field label="Description"><TextInput value={draft.description} onChange={(v) => set('description', v)} placeholder="One line: what this prompt does" /></Field>

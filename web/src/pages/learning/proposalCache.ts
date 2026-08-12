@@ -10,6 +10,7 @@ import { invalidateCache } from '../../lib/useCachedData'
 
 export const PROPOSALS_KEY_PREFIX = 'learning:proposals:'
 export const WEEK_KEY = 'learning:week'
+export const HEALTH_KEY = 'learning:health'
 
 /** The cache key for one facet of the proposal list. `kind` is `''` for the All tab. */
 export function proposalsKey(kind: string): string {
@@ -43,10 +44,19 @@ export function refreshAfterDecision(refreshProposals: () => void): void {
  *
  *  Unlike a decision this carries no claim about what changed — the user is asking for current
  *  server state, and a capture pass may well have run since the page mounted. So the week IS worth
- *  re-reading here, which is exactly the difference from `refreshAfterDecision`. */
-export function refreshEverything(refreshProposals: () => void, refreshWeek: () => void): void {
+ *  re-reading here, which is exactly the difference from `refreshAfterDecision`. The health panel
+ *  moves for the same reason and on the same evidence: every one of its inputs (allocation samples,
+ *  flush costs, judge verdicts, attribution grades) is written by a background cadence, so it is
+ *  precisely the section most likely to be stale on a page that has been open a while. */
+export function refreshEverything(
+  refreshProposals: () => void,
+  refreshWeek: () => void,
+  refreshHealth: () => void = () => {},
+): void {
   invalidateCache(PROPOSALS_KEY_PREFIX, true)
   invalidateCache(WEEK_KEY)
+  invalidateCache(HEALTH_KEY)
   refreshProposals()
   refreshWeek()
+  refreshHealth()
 }

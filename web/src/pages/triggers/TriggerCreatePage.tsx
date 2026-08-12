@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { ArrowLeft, Check, Zap, Settings2, AlertTriangle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -40,6 +40,13 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
+  // button lives in a sticky footer. Measured on `#/tasks/new` at 1440x900: the button sat at y=848 and
+  // the message at y=1744 — 844px BELOW the fold — with `role` null and no live region, so clicking
+  // Create produced no observable effect at all. The role announces it; the ref scrolls it into view,
+  // using the `scrollIntoView({ block: 'nearest' })` idiom this app already uses in 13 places.
+  const errRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => { if (err) errRef.current?.scrollIntoView({ block: 'nearest' }) }, [err])
 
   // shared across both trigger types
   const [name, setName] = useState('')
@@ -147,7 +154,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">New trigger</span></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl flex flex-col gap-xl" style={{ maxWidth: 'var(--content-width)' }}>
-          <Field label="Name" hint="A short label for this trigger."><TextInput value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
+          <Field label="Name" hint="A short label for this trigger."><TextInput required value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
 
           {/* ── SECTION 1 · TRIGGER ── */}
           <SectionHeader icon={Zap} title="Trigger" subtitle="When this fires" />
@@ -240,7 +247,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
             </div>
           )}
 
-          {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+          {err && <p ref={errRef} role="alert" className="text-danger text-[0.8125rem]">{err}</p>}
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">

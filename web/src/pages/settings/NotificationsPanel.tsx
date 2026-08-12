@@ -4,6 +4,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { FormSkeleton } from '../../ui/ListScaffold'
 import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
+import { notify } from '../../app/appSdk'
 
 const SEVERITIES = [
   { key: 'info', label: 'All' },
@@ -34,7 +35,11 @@ export function NotificationsPanel() {
 
   const patch = (p: Partial<NotificationSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
-    api.saveNotificationSettings(p).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    // Optimistic locally, silent on failure. A notification setting that did not save while the UI says
+    // it did is the worst member of this family: the next missed alert has no explanation.
+    api.saveNotificationSettings(p)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => notify(`Couldn't save your notification settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
   if (!s) return <FormSkeleton sections={2} />

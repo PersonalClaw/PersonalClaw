@@ -37,18 +37,18 @@ import contextlib
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from personalclaw import project_context
 from personalclaw.knowledge import session_brief
-from personalclaw.workflows import attention
+from personalclaw.workflows import attention, conditions
 from personalclaw.workflows import context as context_mod
-from personalclaw.workflows import gate_policy
+from personalclaw.workflows import execution_hints, gate_policy
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import judge_calibration, longrun, mutations, ownership, revision, store
-from personalclaw.workflows.bindings import BindingContext, node_deps
+from personalclaw.workflows.bindings import BindingContext, BindingError, node_deps
 from personalclaw.workflows.effects import (
     EffectRecord,
     EffectStatus,
@@ -67,6 +67,7 @@ from personalclaw.workflows.engine import (
 )
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
+from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
 from personalclaw.workflows.loop_middleware import InterruptQueue
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -75,6 +76,7 @@ from personalclaw.workflows.models import (
     Failure,
     FailureClass,
     InstanceState,
+    ItemErrorPolicy,
     LoopMode,
     Node,
     NodeInstance,
@@ -104,6 +106,7 @@ from personalclaw.workflows.tick import (
     ReadyNode,
     derive_state,
     frontier,
+    item_error_policy,
     loop_should_continue,
     reap_watchers,
 )
@@ -227,6 +230,15 @@ class RunController:
         self._declined_edges: set[str] = self._collect_declined_edges()
         self._iterations: dict[str, int] = {}
         self._dry_streaks: dict[str, int] = {}
+        #: Item paths whose WIP=1 refusal has already been journaled (R5b). In memory only:
+        #: the record it dedupes is a scheduling note, and re-journaling one after a resume is
+        #: harmless next to carrying a second persisted set to keep in sync.
+        self._wip_logged: set[str] = set()
+        #: `<foreach path>@<epoch>` keys whose collected-failure record is already in the ledger
+        #: (WV-13). Seeded from the ledger on first use rather than left empty like
+        #: `_wip_logged`: this record's payload is a COUNT of failed items, and a resumed run
+        #: that wrote it twice would tell a reader the fan-out failed twice.
+        self._items_collected: set[str] | None = None
         #: Steering, keyed by the iterated container's path. The durable
         #: queue lives on `run.extra["steering_queue"]` (written by `service.steer_run`); the tick
         #: consumes it at the iteration boundary and parks the rendered re-plan block HERE until
@@ -1546,16 +1558,144 @@ class RunController:
         self._persist_state()
 
     def _frontier(self) -> Frontier:
-        return frontier(
+        states = {p: i.state for p, i in self.instances.items()}
+        fr = frontier(
             self.root,
-            {p: i.state for p, i in self.instances.items()},
+            states,
             limits=self.services.lane_limits,
             declined_edges=self._declined_edges,
             outputs=self._outputs,
             inputs=self.run.inputs,
             iterations=self._iterations,
             running_lanes=self._running_lanes(),
+            # WIP=1 (LOOPS-EVOLUTION R5b). Read from the spec's `runtime_hints.execution`
+            # every tick rather than cached at construction, because a mid-flight spec edit
+            # can turn the invariant on and a cached flag would keep scheduling under the
+            # old rule while the template said otherwise.
+            single_active_feature=execution_hints.from_runtime_hints(
+                self.spec.get("runtime_hints")
+            ).single_active_feature,
         )
+        self._journal_wip_holds(fr)
+        self._journal_collected_items(states)
+        return fr
+
+    def _journal_wip_holds(self, fr: Frontier) -> None:
+        """Record a WIP=1 refusal once per held item (R5b).
+
+        Written to the ledger because a refusal nobody can read is indistinguishable from a
+        scheduler that lost the item — "why has feature 2 not started?" has to be answerable
+        from the run's own record. Deduped by path: the frontier re-derives every tick, and
+        one held item would otherwise write a record per tick for as long as it waits.
+        """
+        for path in fr.wip_held:
+            if path in self._wip_logged:
+                continue
+            self._wip_logged.add(path)
+            self.journal.write(
+                journal_mod.DECISION,
+                instance_path=path,
+                node_id="",
+                decision="wip_limit_held",
+                detail=(
+                    "single_active_feature is declared: this item was not started while "
+                    "another item of the same fan-out is still in flight"
+                ),
+            )
+
+    def _journal_collected_items(self, states: dict[str, InstanceState]) -> None:
+        """Write each `on_item_error: collect` fan-out's per-item failures once it is terminal.
+
+        This is the DATA half of COLLECT (WV-13). The outcome half — run every item, then let the
+        failures fail the run — lives in `tick.foreach_outcome`; on its own it produces a FAILED
+        run whose reader has to know a fan-out's item-path shape to work out WHICH items broke.
+
+        Journaled rather than published as the container's `output`, and that is a deliberate
+        NON-invention: containers have no output surface at all. `self._outputs` is keyed by node
+        id and written only where a LEAF completes (a dispatch result, a resolved `wait`, an
+        answered gate), and a container deliberately has no stored instance — its state is always
+        derived, so a rewind cannot leave a stale verdict behind. Publishing under the foreach's
+        node id would make `{{nodes.<foreach>.output}}` resolve in memory and then resolve to
+        nothing after a restart, because rehydration reads `inst.output_ref` and there is no
+        instance to read. A ledger record is where this run already keeps per-node truth.
+
+        Every collect fan-out is re-examined each tick because a container's state is derived,
+        never stored: there is no "it just became terminal" edge to hook. The spec is re-walked
+        rather than scanned once at construction for the same reason `_frontier` re-reads the WIP
+        hint every tick — a mid-flight mutation can add a fan-out. Deduped by `path@epoch`, so a
+        rewound-and-re-run fan-out gets a second, honest record.
+        """
+        for path, node in _walk(self.root):
+            if node.kind != NodeKind.FOREACH:
+                continue
+            if item_error_policy(node) != ItemErrorPolicy.COLLECT:
+                continue
+            if self._items_collected is None:
+                # Seeded on the first CANDIDATE, not on the first tick: the overwhelming majority
+                # of runs contain no collect fan-out at all, and they must not pay a ledger read
+                # to discover that.
+                self._items_collected = {
+                    str(rec.get("instance_path", "")) + "@" + str(rec.get("epoch", 0))
+                    for rec in journal_mod.ledger(self.run.id, kinds={journal_mod.ITEMS_COLLECTED})
+                }
+            key = f"{path}@{self._run_epoch()}"
+            if key in self._items_collected:
+                continue
+            outcome = derive_state(
+                node,
+                path,
+                states,
+                declined_edges=self._declined_edges,
+                outputs=self._outputs,
+                inputs=self.run.inputs,
+                iterations=self._iterations,
+            )
+            if outcome not in TERMINAL_STATES:
+                continue
+            self._items_collected.add(key)
+            failures = self._item_failures(path)
+            if not failures:
+                continue  # a clean fan-out has nothing to collect
+            self.journal.items_collected(
+                path,
+                node.id,
+                epoch=self._run_epoch(),
+                outcome=outcome.value,
+                failures=failures,
+            )
+
+    def _item_failures(self, container_path: str) -> list[dict[str, Any]]:
+        """Every failed instance inside one fan-out, in item order.
+
+        Read off the instances rather than off the ledger: the instance IS the run's durable
+        per-node state, and it already carries the typed `Failure` and the `item_label` that
+        makes an entry name its item ("auth.py") instead of an index nobody can resolve back to
+        a value. A nested container inside the body contributes its failing leaves under the
+        same item index, which is the right attribution — the item failed because they did.
+        """
+        prefix = f"{container_path}.body#"
+        out: list[dict[str, Any]] = []
+        by_path = dict(_walk(self.root))
+        for path in sorted(self.instances):
+            inst = self.instances[path]
+            if not path.startswith(prefix) or inst.state != InstanceState.FAILED:
+                continue
+            index = path[len(prefix) :].split(".", 1)[0]
+            if not index.isdigit():
+                continue
+            node = by_path.get(_base_path(path))
+            out.append(
+                {
+                    "item_index": int(index),
+                    "item_label": inst.item_label,
+                    "instance_path": path,
+                    "node_id": node.id if node else "",
+                    "failure_class": (inst.failure.failure_class.value if inst.failure else ""),
+                    "cause": inst.failure.cause_plain if inst.failure else "",
+                }
+            )
+        out.sort(key=lambda entry: (entry["item_index"], entry["instance_path"]))
+        return out
 
     def _running_lanes(self) -> dict[str, int]:
         used: dict[str, int] = {}
@@ -1899,6 +2039,16 @@ class RunController:
             # from the run's worker axis; only the JUDGE branch reads it, so a run with no
             # cross_model gate pays nothing.
             worker_model=self._worker_model(),
+            # The spec's `runtime_hints.judge`, parsed by the contract's own lenient parser
+            # — the same split `execution_hints.from_runtime_hints` does for the
+            # execution half. Parsed per dispatch rather than cached: it is a dict walk over a
+            # handful of keys, and caching it would have to be invalidated by a live mutation of
+            # the spec, which is a correctness risk in exchange for nothing measurable.
+            judge_hints=judge_hints_from_dict(
+                (self.spec.get("runtime_hints") or {}).get("judge")
+                if isinstance(self.spec.get("runtime_hints"), dict)
+                else None
+            ),
             # This node's compaction history. `setdefault` so the list IDENTITY is stable
             # across iterations — the ladder appends to it in place, and handing out a fresh copy
             # each call would record saves nobody ever reads, leaving the anti-thrashing rule
@@ -1923,7 +2073,68 @@ class RunController:
             result = await coro
         if before is not None:
             result = self._check_write_scope(node, result, before, allowed, watched)
-        return result
+        return self._check_success_when(node, result, ctx)
+
+    def _check_success_when(
+        self, node: Node, result: NodeResult, ctx: BindingContext
+    ) -> NodeResult:
+        """Apply a node's declared `success_when` predicate (LOOPS-EVOLUTION R5f).
+
+        **It can only NARROW success, never widen it.** A node that already failed stays
+        failed — otherwise `success_when` would be a way to bless a broken node, and the
+        first template to discover that would use it as one.
+
+        The use it exists for is INVERTED semantics: `code-project`'s reproduction stage
+        must not count as done because it ran. Reproducing the bug (or documenting why it is
+        infeasible) IS the success condition, and a stage that quietly failed to reproduce
+        and moved on to editing is the exact "no repro, straight to a fix" pattern R5c
+        forbids.
+
+        Evaluated against the node's OWN output, bound as `output.*`. Written WITHOUT `{{}}`
+        braces on purpose: `resolve_config` resolves every braced binding in a config
+        *before* the node runs, and at that moment `output` does not exist yet — a braced
+        form would fail the node with a binding error instead of testing it.
+        """
+        raw = (node.config or {}).get("success_when")
+        expr = str(raw or "").strip()
+        if not expr:
+            return result
+        if result.state not in SUCCESS_STATES:
+            return result
+
+        probe = replace(ctx, self_output=result.output, has_self_output=True)
+        try:
+            met = conditions.evaluate(expr, probe)
+        except BindingError as exc:
+            # An unevaluable predicate is a FAILURE, not a pass: "I could not tell whether
+            # this succeeded" must never read as "it succeeded".
+            return NodeResult(
+                state=InstanceState.FAILED,
+                output=result.output,
+                failure=Failure(
+                    failure_class=FailureClass.USER,
+                    cause_plain=f"success_when could not be evaluated: {exc}",
+                    remediation=(
+                        "reference a field the node's schema actually produces, e.g. "
+                        "`output.some_flag`"
+                    ),
+                ),
+            )
+        if met:
+            return result
+        return NodeResult(
+            state=InstanceState.FAILED,
+            output=result.output,
+            degraded_reason=result.degraded_reason,
+            failure=Failure(
+                failure_class=FailureClass.PROTOCOL,
+                cause_plain=f"the node ran but its success condition is false: {expr}",
+                remediation=(
+                    "the node did not achieve what it was declared to achieve — read its "
+                    "output and either satisfy the condition or change the declaration"
+                ),
+            ),
+        )
 
     def _check_write_scope(
         self,
@@ -2495,7 +2706,7 @@ class RunController:
             # iteration's path — where nothing had produced its inputs.
             return
         output = self._outputs.get(item.node.id)
-        if _is_dry(output):
+        if self._iteration_is_dry(node, parent_path, iteration, output):
             self._dry_streaks[parent_path] = self._dry_streaks.get(parent_path, 0) + 1
         else:
             self._dry_streaks[parent_path] = 0
@@ -2599,6 +2810,73 @@ class RunController:
             iterations=self._iterations,
         )
         return state in TERMINAL_STATES
+
+    # ── until_dry dryness ──
+
+    def _iteration_is_dry(self, node: Node, parent_path: str, iteration: int, output: Any) -> bool:
+        """Did this iteration surface nothing new? Feeds the `until_dry` streak.
+
+        TWO rules, and which applies is the TEMPLATE's declaration, not the engine's guess:
+
+        * the loop declares `progress_field` → **that field decides**, wherever inside the
+          iteration it was emitted (`_progress_reading` states the per-type rule);
+        * it declares none → the whole last output decides (`_is_dry`), byte-for-byte what
+          every loop did before this. Most loops declare none, and none of them change.
+
+        A declared field this iteration did not emit falls back to the whole-output rule
+        instead of counting as dryness. Deliberate direction: treating an absent field as
+        "nothing new" would end the user's loop after `streak` iterations because the body
+        forgot a key — silently truncating real work. Paying for one more iteration and
+        learning nothing is the cheaper mistake, and it is visible; a truncated run is not.
+        """
+        field = str((node.config or {}).get("progress_field", "") or "")
+        if not field:
+            return _is_dry(output)
+        found, value = self._progress_value(node, parent_path, iteration, field)
+        if not found:
+            return _is_dry(output)
+        reading = _progress_reading(value)
+        if reading == _UNREADABLE:
+            # A type with no rule is not evidence of dryness (e.g. an oversize output whose
+            # inline preview is a `result_omitted` stub). Same direction as absence.
+            return _is_dry(output)
+        return reading == _DRY
+
+    def _progress_value(
+        self, node: Node, parent_path: str, iteration: int, field: str
+    ) -> tuple[bool, Any]:
+        """This iteration's value for `field` as `(found?, value)`.
+
+        `found` is separate from the value because ``None`` is a legitimate DRY reading —
+        "the body said nothing" — and absence is not; collapsing them would make a missing
+        key end the loop.
+
+        Scans the loop BODY, not just the output `_advance_loop` is holding. That output is
+        the last leaf to finish, and both shipped templates that declare a progress field
+        put it on the FIRST stage of a sequence body and end each iteration on a judge stage
+        whose schema has no such key — so reading only the last leaf would leave this control
+        inert for exactly the templates that asked for it.
+
+        Restricted to nodes whose instance for THIS iteration succeeded: `self._outputs` is
+        keyed by node id, so a body node that did not run this time still holds the PREVIOUS
+        iteration's value, and reading that would report last iteration's progress as this
+        one's. The last match in document order wins — the iteration's latest word on its
+        own progress.
+        """
+        if node.body is None:
+            return False, None
+        base = f"{parent_path}.body@{iteration}"
+        found, value = False, None
+        for sub, child in _walk(node.body):
+            if not child.id:
+                continue
+            inst = self.instances.get(base if sub == "root" else f"{base}{sub[len('root'):]}")
+            if inst is None or inst.state not in SUCCESS_STATES:
+                continue
+            out = self._outputs.get(child.id)
+            if isinstance(out, dict) and field in out:
+                found, value = True, out[field]
+        return found, value
 
     # ── long-run watcher state ──
 
@@ -3148,6 +3426,32 @@ class RunController:
                 self._revise_project_overview()
             self._capture_run_end()
         self._publish("workflow_run_update", {"status": status.value, "error": error})
+        if status in TERMINAL_RUN_STATUSES:
+            await self._drain_overlap_queue()
+
+    async def _drain_overlap_queue(self) -> None:
+        """Start the next `on_overlap: queue` run for this def, now that this one has ended.
+
+        The live call site for the queue (WV-14). It belongs here because this is the moment
+        the def stops being busy: `_save_run` above has already written the terminal status,
+        so `store.active_runs()` no longer counts this run and the drain's own re-check sees
+        a free def.
+
+        Awaited inline rather than fired as a task, deliberately: a floating task makes the
+        handoff untestable ("did it start?" becomes a race) and can outlive the loop that
+        created it. Fully guarded, because `_finish` is the single terminal writer (WF2-R10)
+        and MUST NOT raise — a failure here costs the NEXT run's start, never this run's
+        recorded outcome, and the watchdog's poll re-drains what this missed.
+        """
+        supervisor = getattr(self.services, "supervisor", None)
+        if supervisor is None:
+            return
+        try:
+            from personalclaw.workflows import overlap
+
+            await overlap.drain(self.run.workflow_name, supervisor)
+        except Exception:
+            logger.debug("run %s: overlap drain failed", self.run.id, exc_info=True)
 
     def _capture_run_end(self) -> None:
         """Route a terminal run through the LearningGate → run-end learner (LEARNING-FLYWHEEL §3.3).
@@ -3859,12 +4163,62 @@ def _loop_parent(path: str) -> tuple[str | None, int]:
 
 
 def _is_dry(output: Any) -> bool:
-    """Did an iteration surface anything new? Feeds `until_dry` termination."""
+    """Did an iteration surface anything new, judged by its WHOLE output?
+
+    The rule for a loop that declares no `progress_field`. Unchanged: an empty or absent
+    output is dry, anything else is progress.
+    """
     if output is None:
         return True
     if isinstance(output, (list, dict, str)):
         return len(output) == 0
     return False
+
+
+#: One reading of a loop's declared `progress_field`. A CLOSED set of three — `_progress_
+#: reading` returns exactly one of them, and `unreadable` exists precisely so that no value
+#: falls into a default branch that guesses.
+_DRY = "dry"
+_PROGRESS = "progress"
+_UNREADABLE = "unreadable"
+
+
+def _progress_reading(value: Any) -> str:
+    """Classify ONE value of a loop's declared `progress_field`: dry, progress, unreadable.
+
+    The rule, stated once: **a declared progress field is dry when its value is the field's
+    own expression of "nothing"** — zero, blank, empty, false, or null. Per type, exhaustively:
+
+    * ``None`` → dry. The body answered the question with "nothing".
+    * ``bool`` → ``False`` dry, ``True`` progress. A boolean field IS the answer; checked
+      before ``int`` because ``bool`` is an ``int`` subclass and would otherwise be read as
+      "1 finding" / "0 findings" by accident.
+    * ``int`` / ``float`` → dry iff ``== 0``. This is the shipped `new_findings_count: 0`
+      case. A NEGATIVE count is progress, not dryness: a nonsensical count is not evidence
+      that nothing happened, and reading it as dryness would cut the loop short.
+    * ``str`` → dry iff blank after ``strip()``. A whitespace-only summary of what is new
+      says nothing is new.
+    * ``bytes`` / ``bytearray`` → dry iff empty.
+    * ``list`` / ``tuple`` / ``set`` / ``frozenset`` / ``dict`` → dry iff empty. Nothing
+      collected.
+    * any other type → **unreadable**. There is no rule for it, so this refuses to call it
+      dry and hands the decision back to the whole-output fallback. Not swallowed as
+      "progress": the caller can tell "I read the field and it said nothing" from "I could
+      not read the field", and only the first may end a loop.
+    """
+    if value is None:
+        return _DRY
+    if isinstance(value, bool):
+        return _PROGRESS if value else _DRY
+    if isinstance(value, (int, float)):
+        return _DRY if value == 0 else _PROGRESS
+    if isinstance(value, str):
+        return _DRY if not value.strip() else _PROGRESS
+    if isinstance(value, (bytes, bytearray)):
+        return _DRY if len(value) == 0 else _PROGRESS
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        return _DRY if len(value) == 0 else _PROGRESS
+    return _UNREADABLE
 
 
 def _preview(value: Any, limit: int = 500) -> Any:

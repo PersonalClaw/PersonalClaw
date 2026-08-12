@@ -57,7 +57,7 @@
     "shapes": [
       "review"
     ],
-    "when_not_to_use": "not for writing new code — use code-implementation"
+    "when_not_to_use": "not for writing new code — use code-project"
   },
   "root": {
     "kind": "loop",

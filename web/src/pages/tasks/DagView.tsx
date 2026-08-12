@@ -1,6 +1,7 @@
 import { useMemo, useRef, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { expr, exprHeavy } from '../../design/motion'
+import { accentChip } from '../../design/accent'
 
 /** A reusable, presentational SVG DAG renderer (P17). It draws ALREADY-POSITIONED
  *  nodes + edges — layout stays in the caller (`dag.ts` for tasks) so this component
@@ -204,7 +205,7 @@ export function DagView({
                 <div className="flex items-center gap-1.5 pt-1.5">
                   <button type="button" onClick={(ev) => { ev.stopPropagation(); onApprove(n.id) }}
                     className="inline-flex h-6 items-center gap-1 rounded-pill px-2 text-[0.75rem]"
-                    style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>
+                    style={accentChip}>
                     Approve
                   </button>
                   <button type="button" onClick={(ev) => { ev.stopPropagation(); onDeny(n.id) }}

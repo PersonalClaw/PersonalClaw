@@ -34,6 +34,7 @@ import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
+import { accentChip } from '../../design/accent'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
@@ -139,7 +140,7 @@ function MetaPill({ icon, text, tone, title }: { icon?: React.ReactNode; text: s
     <span title={title}
       className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] max-w-[14rem] truncate"
       style={tone === 'primary'
-        ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }
+        ? accentChip
         : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
       {icon}<span className="truncate">{text}</span>
     </span>
@@ -513,7 +514,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       {projId && projName && (onOpenProject
         ? <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
             className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] max-w-[14rem] hover:brightness-110"
-            style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>
+            style={accentChip}>
             <FolderKanban size={11} className="shrink-0" /><span className="truncate">{projName}</span>
           </button>
         : <MetaPill icon={<FolderKanban size={11} />} text={projName} tone="primary" title="Project" />)}

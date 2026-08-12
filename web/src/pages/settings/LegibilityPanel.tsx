@@ -3,7 +3,7 @@ import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, ToggleRow } from './settingsUI'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 // The editable legibility.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py LegibilityConfig). Both are runtime-editable booleans.
@@ -20,13 +20,19 @@ export function LegibilityPanel() {
 
   // Stale-while-revalidate + persist: paint instantly on revisit, revalidate in
   // the background. Editable form state is seeded/rehydrated from this snapshot.
-  const { data } = useCachedData('settings:legibility', () =>
-    api.personalclawConfig().then((c) => (c.legibility ?? {}) as LegibilityCfg).catch(() => ({} as LegibilityCfg)),
+  const { data, error: loadErr, refresh } = useCachedData('settings:legibility', () =>
+    api.personalclawConfig().then((c) => (c.legibility ?? {}) as LegibilityCfg),
     { persist: true },
   )
 
   useEffect(() => { if (data) setCfg(data) }, [data])
 
+  // 🔴 A settings panel must not present FABRICATED values as saved state. `.catch(() => ({}))` made a
+  // failed config read resolve with an empty section, so every control below rendered at its fallback —
+  // indistinguishable from "this is what you saved" — and the panel offered to edit values it had never
+  // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
+  // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={1} />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the

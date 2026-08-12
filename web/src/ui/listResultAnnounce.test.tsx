@@ -21,6 +21,31 @@ import { ListControls } from './ListControls'
 // with `aria-live="polite"` on the `n/total` counter. This brings the 13 `ListControls`
 // consumers onto that pattern instead of inventing one.
 //
+// ── The three that could not adopt it, and now can ───────────────────────────────────
+//
+// The coherence `layout` lens flagged `tasks`, `artifacts` and `files` as `ListControls`
+// non-adopters. They are: each lays out its own controls bar and uses `SearchField` directly, so
+// the announcement lived somewhere they could not reach. Re-measured with a probe that types into
+// each list's own filter and diffs every live region, against `#/knowledge` as a KNOWN-adopter
+// control (which proves the probe can see an announcement at all):
+//
+//   #/knowledge   "" → "No matching items"    ✅ announced   ← control
+//   #/tasks       "" → ""                     🔴 silent
+//   #/artifacts   "" → ""                     🔴 silent
+//   #/files       "" → ""                     🔴 silent
+//
+// 🔑 SO THE FIX IS AN EXTRACTION, NOT A SECOND IMPLEMENTATION. `ResultAnnouncement` is the region
+// `ListControls` always rendered, lifted out and exported beside it; `ListControls` now renders the
+// extracted piece, and the three hand-laid bars render the same one. Migrate the IDIOM, not the page
+// — copying the markup into three files is what turns one shared behaviour into four that drift.
+//
+// After, driven the same way: `"No matching tasks"` · `"No matching artifacts"` ·
+// `"No matching lines"`.
+//
+// 🪤 THE NOUN IS PART OF THE COPY, AND `files` GOT IT WRONG FIRST: `noun="matches"` made the zero
+// branch read **"No matching matches"**. A `ContentMatch` is one matching LINE (file + line + col +
+// preview), so the honest noun is "lines" — which also reads correctly at 1 ("1 line").
+//
 // Verified live after the change:
 //
 //   idle                  ""                      (region MOUNTED, empty)
@@ -28,6 +53,20 @@ import { ListControls } from './ListControls'
 //   25 of 26 rows         "25 items"
 //   1 row                 "1 item"                (singularised)
 //   query cleared         ""
+
+/** The `active:` expression under test — FOLLOWED THROUGH A NAMED CONST when the surface hoists it.
+ *
+ *  🪤 FOURTH WIDENING OF THIS FAMILY, and the same lesson each time: the rail was checking the
+ *  SPELLING on one line, not the property. `#/inbox` now derives `narrowed` once and shares it between
+ *  the announcement and its empty state — strictly better code, since the two can no longer disagree
+ *  about which state the list is in — and the line-scoped matcher rejected it. The property is
+ *  "derived from the query or from a filter compared against THIS surface's own default"; where that
+ *  expression is written is not the property. */
+function activeExpr(src: string, line: string): string {
+  const raw = line.match(/active:\s*([^,}]+)/)?.[1]?.trim() ?? ''
+  if (!/^[A-Za-z_$][\w$]*$/.test(raw)) return raw
+  return src.match(new RegExp(`const ${raw}\\s*=\\s*([^\n]+)`))?.[1] ?? raw
+}
 
 const opts = { value: '', onChange: () => {}, options: [] }
 
@@ -148,7 +187,7 @@ describe('the migrated list surfaces pass a result count', () => {
       // query (`!!q.trim()`); filter-only ones compare against their own default value.
       const line = src.split('\n').find((l) => l.includes('results={{'))!
       expect(line, 'active must be derived, not hardcoded').not.toMatch(/active:\s*true/)
-      expect(line, 'active must reference the query or the filter').toMatch(/active:\s*(!!|\w+\s*!==)/)
+      expect(activeExpr(src, line), 'active must reference the query or the filter').toMatch(/(!!|\w+\s*!==)/)
     })
   }
 
@@ -164,7 +203,50 @@ describe('the migrated list surfaces pass a result count', () => {
     for (const [rel, dflt] of Object.entries(defaults)) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       const line = src.split('\n').find((l) => l.includes('results={{'))!
-      expect(line, `${rel} defaults its filter to '${dflt}'`).toContain(`!== '${dflt}'`)
+      expect(activeExpr(src, line), `${rel} defaults its filter to '${dflt}'`).toContain(`!== '${dflt}'`)
+    }
+  })
+
+  // ── The hand-laid bars: same idiom, reached through the extracted component ──────────
+  const DIRECT: [string, string, RegExp][] = [
+    // file, noun, the `active` expression that must be the surface's OWN definition of narrowed
+    ['pages/tasks/TasksListPage.tsx', 'tasks', /active=\{query\.trim\(\)\.length > 0\}/],
+    ['pages/artifacts/ArtifactsSection.tsx', 'artifacts', /active=\{!!\(q\.trim\(\) \|\| kind \|\| src \|\| col\)\}/],
+    ['pages/files/FilesSection.tsx', 'lines', /active=\{showResults\}/],
+  ]
+
+  for (const [rel, noun, active] of DIRECT) {
+    it(`${rel} renders the extracted announcement, not a copy of it`, () => {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      expect(src, 'must import the shared piece from the canonical module').toMatch(
+        /import \{ ResultAnnouncement \} from '(\.\.\/)+ui\/ListControls'/,
+      )
+      const tag = src.match(/<ResultAnnouncement[\s\S]{0,200}?\/>/)?.[0] ?? ''
+      expect(tag, `${rel} must render it`).toMatch(/<ResultAnnouncement/)
+      expect(tag, `the noun must be "${noun}"`).toContain(`noun="${noun}"`)
+      expect(tag, 'active must be this surface\'s own definition of narrowed').toMatch(active)
+      expect(tag, 'active must never be hardcoded — it would announce at idle').not.toMatch(/active=\{true\}/)
+      // And no second copy of the region: the whole point of the extraction.
+      expect(src, 'a hand-rolled region here would be the drift this change removes')
+        .not.toMatch(/role="status" aria-live="polite" className="sr-only"/)
+    })
+  }
+
+  it('ListControls itself routes through the extracted component', () => {
+    // If it kept its own inline copy, the two would drift the moment either changed — which is
+    // exactly what "converge onto what already exists" is meant to prevent.
+    const src = readFileSync(join(SRC, 'ui/ListControls.tsx'), 'utf8')
+    expect(src).toMatch(/<ResultAnnouncement /)
+    expect(src).toMatch(/export function ResultAnnouncement\b/)
+    const body = src.slice(0, src.indexOf('export function ResultAnnouncement'))
+    expect(body, 'the bar must not still hold an inline region').not.toMatch(/role="status" aria-live="polite"/)
+  })
+
+  it('the zero branch reads correctly for every noun in use', () => {
+    // 🪤 "No matching matches" is what `files` printed first. The copy already carries the word
+    // "matching", so a noun that repeats it is wrong — pinned per noun rather than per file.
+    for (const noun of ['tasks', 'artifacts', 'lines', 'items']) {
+      expect(`No matching ${noun}`, `"${noun}" must not restate the copy`).not.toMatch(/matching match/)
     }
   })
 

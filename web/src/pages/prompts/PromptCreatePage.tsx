@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { ArrowLeft, Check } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -23,6 +23,13 @@ export function PromptCreatePage({ onBack, onCreated, mode = 'user' }: {
   const [snipDraft, setSnipDraft] = useState<SnippetDraft>(() => emptySnippetDraft())
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // A failed create used to render its message at the BOTTOM OF THE SCROLLING BODY while the Create
+  // button lives in a sticky footer. Measured on `#/tasks/new` at 1440x900: the button sat at y=848 and
+  // the message at y=1744 — 844px BELOW the fold — with `role` null and no live region, so clicking
+  // Create produced no observable effect at all. The role announces it; the ref scrolls it into view,
+  // using the `scrollIntoView({ block: 'nearest' })` idiom this app already uses in 13 places.
+  const errRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => { if (err) errRef.current?.scrollIntoView({ block: 'nearest' }) }, [err])
   const [rail, setRail] = useState<'preview' | 'reference'>('preview')
   // Insert-at-cursor handle the editor registers; the reference palette calls it.
   const insertRef = useRef<(text: string) => void>(() => {})
@@ -65,7 +72,7 @@ export function PromptCreatePage({ onBack, onCreated, mode = 'user' }: {
             {isSnippet
               ? <SnippetForm draft={snipDraft} onChange={setSnipDraft} registerInsert={(fn) => { insertRef.current = fn }} />
               : <PromptForm draft={draft} onChange={setDraft} registerInsert={(fn) => { insertRef.current = fn }} />}
-            {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+            {err && <p ref={errRef} role="alert" className="text-danger text-[0.8125rem]">{err}</p>}
           </div>
 
           <aside className="flex shrink-0 flex-col lg:w-[400px] lg:overflow-hidden">

@@ -621,9 +621,29 @@ async def api_upload(request: web.Request) -> web.Response:
     return web.json_response({"paths": paths})
 
 
-_SCREENSHOT_DIR = _path_home_pclaw() / "screenshots"
+def _screenshot_dir() -> Path:
+    """Where a captured screenshot lands, resolved AT CALL TIME (CRE-8).
 
-_UPLOAD_DIR = _path_home_pclaw() / "uploads"
+    This was a module-level ``_SCREENSHOT_DIR`` bound at import, and that is the whole
+    defect: a constant is already a value, so no test fixture can redirect it and a
+    ``$PERSONALCLAW_HOME`` set after first import is ignored for the life of the process.
+    MEASURED in CI, which is where the difference shows: with no ``~/.personalclaw`` to
+    begin with, the capture handler created the developer's real home just by resolving
+    this path — the real-home rail below caught it as `dir-entries-changed screenshots`.
+    """
+    return _path_home_pclaw() / "screenshots"
+
+
+def _upload_dir() -> Path:
+    """Where an upload lands, resolved AT CALL TIME (CRE-8).
+
+    Same shape as :func:`_screenshot_dir` and fixed with it rather than after it: the two
+    constants sat on adjacent lines, so leaving one frozen would have left the same bug
+    waiting for whichever test writes an upload first.
+    """
+    return _path_home_pclaw() / "uploads"
+
+
 _MAX_UPLOAD_FILES = 20  # max files per request
 # Per-file size is gated by the shared filetype policy (personalclaw.uploads),
 # not an extension allowlist — see _upload_check.
@@ -658,7 +678,7 @@ async def api_upload_file(request: web.Request) -> web.Response:
     that ACP's _send_prompt() can detect for image inlining.
     """
 
-    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    _upload_dir().mkdir(parents=True, exist_ok=True)
     ctype = request.headers.get("Content-Type", "")
     if not ctype.lower().startswith("multipart/"):
         return web.json_response(
@@ -712,8 +732,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
             _limit = _upload_check(safe_name, part_mime).limit
             # Stream to a tempfile, enforcing the category cap as bytes arrive — never
             # buffer the whole file in memory (a 2 GB video would OOM otherwise).
-            dest = _UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
-            if not dest.resolve().is_relative_to(_UPLOAD_DIR.resolve()):
+            dest = _upload_dir() / f"{uuid.uuid4().hex}_{safe_name}"
+            if not dest.resolve().is_relative_to(_upload_dir().resolve()):
                 _cleanup()
                 _sel().log_api_access(
                     caller=caller,
@@ -811,7 +831,7 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
     if not raw:
         return web.json_response({"error": "path is required"}, status=400)
     path = os.path.realpath(os.path.expanduser(raw))
-    uploads = str(_UPLOAD_DIR.resolve())
+    uploads = str(_upload_dir().resolve())
     if not path.startswith(uploads + os.sep):
         _sel().log_api_access(
             caller=caller,
@@ -845,9 +865,9 @@ async def api_screenshot(request: web.Request) -> web.Response:
     if sys.platform != "darwin":
         return web.json_response({"error": "Screenshot is only available on macOS"}, status=400)
 
-    _SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    _screenshot_dir().mkdir(parents=True, exist_ok=True)
     ts = int(time.time())
-    dest = _SCREENSHOT_DIR / f"screenshot_{ts}.png"
+    dest = _screenshot_dir() / f"screenshot_{ts}.png"
 
     proc = await asyncio.create_subprocess_exec(
         "screencapture",

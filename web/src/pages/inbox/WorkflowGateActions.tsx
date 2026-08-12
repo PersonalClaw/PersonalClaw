@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { api, type WorkflowContinuation } from '../../lib/api'
 import { WorkflowAsk } from '../workflows/WorkflowAsk'
 
@@ -85,7 +86,7 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
       {conts.map((c) => (
         <WorkflowAsk key={c.resume_token} continuation={c} busy={busy} onAnswer={answer} />
       ))}
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
     </div>
   )
 }

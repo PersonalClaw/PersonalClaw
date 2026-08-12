@@ -4,6 +4,8 @@
 // + cancel. Small files (below the server's single-POST threshold) still use the
 // simple single-POST path the callers pass in, so the common case is unchanged.
 
+import { errText } from './errText'
+
 const SK = { 'X-Session-Key': 'dashboard:ui' }
 
 export interface UploadProgress {
@@ -167,8 +169,3 @@ export function humanBytes(n: number): string {
   return `${n} B`
 }
 
-async function errText(r: Response): Promise<string> {
-  const text = await r.text().catch(() => '')
-  try { const p = JSON.parse(text); if (p && typeof p.error === 'string') return p.error } catch { /* not JSON */ }
-  return text || `HTTP ${r.status}`
-}

@@ -19,6 +19,7 @@ import sys
 import pytest
 
 from personalclaw import _installer
+from personalclaw import self_update as su
 from personalclaw.dashboard.handlers import updates as upd
 
 
@@ -71,9 +72,7 @@ async def _run_apply(state, monkeypatch, *, latest="0.1.2"):
     async def _fake_status(_cur):
         return {"latest": latest}
 
-    monkeypatch.setattr(
-        "personalclaw.dashboard.handlers.updates_kind.build_update_status", _fake_status
-    )
+    monkeypatch.setattr("personalclaw.self_update.build_update_status", _fake_status)
 
     async def _fake_reexec(_state, **kw):
         state.progress.append(("reexec", ""))
@@ -154,7 +153,7 @@ def test_summary_strips_ansi_and_leads_with_uvs_headline():
         "\x1b[31m      \x1b[0mpersonalclaw==99.9.9, we can conclude that your requirements are\n"
         "\x1b[31m      \x1b[0munsatisfiable."
     )
-    out = upd._installer_error_summary(raw)
+    out = su.installer_error_summary(raw)
     assert "\x1b" not in out and "[31m" not in out
     assert out.startswith("No solution found when resolving dependencies")
     assert out != "unsatisfiable."
@@ -162,19 +161,19 @@ def test_summary_strips_ansi_and_leads_with_uvs_headline():
 
 def test_summary_prefers_pips_explicit_error_line():
     raw = "Collecting personalclaw==9.9.9\nERROR: Could not find a version that satisfies it"
-    out = upd._installer_error_summary(raw)
+    out = su.installer_error_summary(raw)
     assert out.startswith("ERROR: Could not find a version")
 
 
 def test_summary_keeps_the_no_module_named_pip_case_readable():
     """The original #46/#51 symptom must still come through intact."""
-    out = upd._installer_error_summary("/x/.venv/bin/python: No module named pip")
+    out = su.installer_error_summary("/x/.venv/bin/python: No module named pip")
     assert "No module named pip" in out
 
 
 def test_summary_is_bounded_and_empty_safe():
-    assert upd._installer_error_summary("") == ""
-    assert len(upd._installer_error_summary("x" * 5000)) <= 200
+    assert su.installer_error_summary("") == ""
+    assert len(su.installer_error_summary("x" * 5000)) <= 200
 
 
 @pytest.mark.asyncio

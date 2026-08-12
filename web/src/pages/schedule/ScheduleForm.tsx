@@ -241,7 +241,7 @@ function CronField({ value, onChange }: { value: string; onChange: (v: string) =
       <div className="flex flex-wrap gap-1.5">
         {CRON_PRESETS.map((p) => (
           <button key={p.expr} type="button" onClick={() => onChange(p.expr)}
-            className={`rounded-pill px-m h-7 text-[0.75rem] transition-colors ${value.trim() === p.expr ? 'bg-primary/20 text-primary' : 'bg-surface-high text-on-surface-var hover:bg-surface-highest'}`}>{p.label}</button>
+            className={`rounded-pill px-m h-7 text-[0.75rem] transition-colors ${value.trim() === p.expr ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-var hover:bg-surface-highest'}`}>{p.label}</button>
         ))}
       </div>
       {!valid && <p className="text-danger text-[0.75rem]">Cron needs five fields: minute hour day-of-month month day-of-week.</p>}

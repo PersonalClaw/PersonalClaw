@@ -65,10 +65,10 @@ export function PortabilityPanel() {
             <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
               <FileArchive size={15} /> {file ? file.name : 'Choose archive…'}
             </Button>
-            <Button variant="secondary" size="sm" onClick={runPreview} disabled={busy !== null || !file}>
+            <Button variant="secondary" size="sm" onClick={runPreview} disabled={busy !== null || !file} disabledReason={!file && busy === null ? 'Choose a file first' : undefined}>
               {busy === 'preview' ? <><Loader2 size={15} className="animate-spin" /> Previewing…</> : 'Preview'}
             </Button>
-            <Button size="sm" onClick={runImport} disabled={busy !== null || !file}>
+            <Button size="sm" onClick={runImport} disabled={busy !== null || !file} disabledReason={!file && busy === null ? 'Choose a file first' : undefined}>
               {busy === 'import' ? <><Loader2 size={15} className="animate-spin" /> Importing…</> : <><Upload size={15} /> Import</>}
             </Button>
             {msg && <span className="text-on-surface-low text-[0.75rem]">{msg}</span>}

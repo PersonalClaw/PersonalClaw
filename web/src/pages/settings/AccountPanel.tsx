@@ -89,8 +89,13 @@ export function AccountPanel() {
         <Field label="Your name" hint="Used in greetings and where the system refers to you. Saved on the server, so it follows you across browsers and machines.">
           <div className="flex items-center gap-s">
             <div className="flex-1" style={{ maxWidth: 280 }}><TextInput value={draft} onChange={setDraft} placeholder="Your name" /></div>
-            <button type="button" onClick={save} disabled={!dirty}
-              className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40"
+            {/* `aria-disabled` rather than the native attribute: a natively disabled button leaves
+                the tab order, so a keyboard user tabbed past this Save without learning there is
+                nothing to save. The dimming has to name BOTH selectors — `disabled:opacity-40`
+                cannot match an element that is no longer natively disabled. */}
+            <button type="button" onClick={dirty ? save : undefined} aria-disabled={!dirty || undefined}
+              title={!dirty ? 'No changes to save' : undefined}
+              className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40"
               style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
               {saved ? <Check size={14} /> : null} {saved ? 'Saved' : 'Save'}
             </button>
@@ -105,7 +110,7 @@ export function AccountPanel() {
             {/* The shared Button primitive — the two older Save buttons in this
                 panel are hand-rolled, but new chrome adopts the kit. */}
             <Button size="sm" variant={handleDirty ? 'primary' : 'secondary'}
-              disabled={!handleDirty} onClick={saveHandle}>
+              disabled={!handleDirty} disabledReason={!handleDirty ? 'No changes to save' : undefined} onClick={saveHandle}>
               {handleSaved ? <Check size={14} /> : null} {handleSaved ? 'Saved' : 'Save'}
             </Button>
           </div>
@@ -113,8 +118,9 @@ export function AccountPanel() {
         <Field label="Assistant name" hint="What the assistant calls itself in prompts and greetings ({{bot_name}}). Empty uses the default, PersonalClaw.">
           <div className="flex items-center gap-s">
             <div className="flex-1" style={{ maxWidth: 280 }}><TextInput value={botDraft} onChange={setBotDraft} placeholder="PersonalClaw" /></div>
-            <button type="button" onClick={saveBot} disabled={!botDirty}
-              className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40"
+<button type="button" onClick={botDirty ? saveBot : undefined} aria-disabled={!botDirty || undefined}
+              title={!botDirty ? 'No changes to save' : undefined}
+              className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40"
               style={{ background: botDirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: botDirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
               {botSaved ? <Check size={14} /> : null} {botSaved ? 'Saved' : 'Save'}
             </button>
@@ -240,7 +246,11 @@ function LoginSection() {
         hint={state.credential_configured
           ? 'Adds a sign-in page as another way in. Your token link keeps working — it stays the way back in if you ever forget the password.'
           : 'Set a password first. Turning this on without one would show a form nobody can pass.'}>
+        {/* The precondition lives in the row hint above, which a keyboard user never reaches while the
+            switch is natively disabled — they tab past a SECURITY control without learning it exists.
+            With a reason it keeps its tab stop and announces what would unlock it. */}
         <Toggle on={state.login_enabled} onChange={toggleLogin} disabled={!state.credential_configured}
+          disabledReason="Set a password first — a sign-in form nobody can pass is worse than none"
           label="Offer password sign-in" />
       </Row>
 
@@ -249,6 +259,7 @@ function LoginSection() {
           ? 'Also ask for a time-based code at sign-in.'
           : 'Enroll an authenticator first with `personalclaw auth totp setup`, then turn this on — verify a code works before requiring it.'}>
         <Toggle on={state.totp_required} onChange={toggleTotp} disabled={!state.totp_enabled}
+          disabledReason="Enroll an authenticator first with `personalclaw auth totp setup`"
           label="Require a 2FA code" />
       </Row>
 

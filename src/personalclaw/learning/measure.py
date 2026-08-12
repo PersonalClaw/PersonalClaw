@@ -506,3 +506,118 @@ def build_report(
         proposals=propose_thresholds(arms),
         trusted=rank_by_trust(posteriors)[: max(1, top)],
     )
+
+
+# ── The flywheel health composite (LEARN-R14b) ──
+
+#: The ideal budget-utilization band. Below `LOW` the allocator is starving a budget the
+#: user is paying for; above `HIGH` it is crowding out on every turn and the sacrificial
+#: slot is doing all the work. §6.2 names this band explicitly — 50-80%.
+UTILIZATION_IDEAL_LOW = 0.50
+UTILIZATION_IDEAL_HIGH = 0.80
+
+#: Component weights. Precision is heaviest because "does surfacing land?" is the
+#: flywheel's whole claim; capture is next because a flywheel that never captures has
+#: nothing to surface. They sum to 1.0 so the composite is a real 0-100.
+HEALTH_WEIGHTS: dict[str, float] = {
+    "precision": 0.4,
+    "capture": 0.3,
+    "utilization": 0.2,
+    "judge": 0.1,
+}
+
+
+def _band_score(value: float) -> float:
+    """Score a utilization figure against the ideal band. 1.0 inside, falling outside.
+
+    Falls off LINEARLY toward each end rather than dropping to zero: 45% is nearly
+    ideal and 5% is not, and a cliff at the band edge would report those as the same
+    failure.
+    """
+    if UTILIZATION_IDEAL_LOW <= value <= UTILIZATION_IDEAL_HIGH:
+        return 1.0
+    if value < UTILIZATION_IDEAL_LOW:
+        return max(0.0, value / UTILIZATION_IDEAL_LOW)
+    return max(0.0, (1.0 - value) / (1.0 - UTILIZATION_IDEAL_HIGH))
+
+
+def health_composite(
+    *,
+    precision: float | None,
+    capture_passes: int,
+    capture_errors: int,
+    utilization: float | None,
+    judge_false_pass_rate: float | None,
+) -> dict[str, Any]:
+    """One 0-100 number, plus every component that produced it. Pure.
+
+    **Unmeasured is not zero.** Any component with no data is EXCLUDED and its weight
+    redistributed, and the response says which. A composite that scored silence as 0
+    would report a fresh install as critically unhealthy and a healthy install with one
+    un-instrumented subsystem as mediocre — and the user's only available fix would be
+    to generate traffic, which is not a fix.
+    """
+    components: list[dict[str, Any]] = []
+
+    def _add(name: str, value: float | None, detail: str) -> None:
+        components.append(
+            {
+                "name": name,
+                "score": None if value is None else round(max(0.0, min(1.0, value)) * 100, 1),
+                "weight": HEALTH_WEIGHTS[name],
+                "detail": detail,
+            }
+        )
+
+    _add(
+        "precision",
+        precision,
+        (
+            "unmeasured — nothing surfaced yet"
+            if precision is None
+            else f"{precision:.0%} of surfacings were used"
+        ),
+    )
+    if capture_passes <= 0:
+        _add("capture", None, "unmeasured — no capture pass has run")
+    else:
+        ok = capture_passes - capture_errors
+        _add(
+            "capture",
+            max(0.0, ok / capture_passes),
+            f"{ok} of {capture_passes} pass(es) clean",
+        )
+    _add(
+        "utilization",
+        None if utilization is None else _band_score(utilization),
+        (
+            "unmeasured — no ambient render recorded"
+            if utilization is None
+            else f"{utilization:.0%} of the context budget used "
+            f"(ideal {UTILIZATION_IDEAL_LOW:.0%}-{UTILIZATION_IDEAL_HIGH:.0%})"
+        ),
+    )
+    _add(
+        "judge",
+        None if judge_false_pass_rate is None else 1.0 - judge_false_pass_rate,
+        (
+            "unmeasured — no judge verdicts with human labels"
+            if judge_false_pass_rate is None
+            else f"{judge_false_pass_rate:.0%} of judged work was wrongly passed"
+        ),
+    )
+
+    scored = [c for c in components if c["score"] is not None]
+    total_weight = sum(float(c["weight"]) for c in scored)
+    score = (
+        round(sum(float(c["score"]) * float(c["weight"]) for c in scored) / total_weight, 1)
+        if total_weight > 0
+        else None
+    )
+    return {
+        "score": score,
+        "components": components,
+        "measured": len(scored),
+        "of": len(components),
+        "ideal_band": [UTILIZATION_IDEAL_LOW, UTILIZATION_IDEAL_HIGH],
+    }

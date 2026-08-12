@@ -11,7 +11,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Markdown } from '../../ui/Markdown'
-import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { confirm } from '../../ui/dialog'
@@ -22,6 +22,8 @@ import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, fir
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
+import { accentChip } from '../../design/accent'
+import { notify } from '../../app/appSdk'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
@@ -35,7 +37,11 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
 
   // Cached feed (instant paint on revisit) that still polls — persist:false so the
   // live read-state never goes stale across a hard reload.
-  const { data: items, refresh } = useCachedData('notifications', () => api.notifications().then((d) => d.notifications).catch(() => [] as NotificationItem[]), { persist: false })
+  // No `.catch(() => [])`. An empty list is a CLAIM, and this page states it out loud: with the feed at
+  // 500 the surface rendered "You're all caught up", a reassuring sentence produced by a failed request.
+  // The read POLLS every 10s, so the failure belongs in the render (once) rather than in a toast (every
+  // tick) — hence `LoadError` below rather than `notify`.
+  const { data: items, error: loadErr, refresh } = useCachedData('notifications', () => api.notifications().then((d) => d.notifications), { persist: false })
   // A mutation reloads against the changed feed; the WS + interval just revalidate.
   const load = () => { invalidateCache('notifications'); refresh() }
   useEffect(() => {
@@ -63,11 +69,34 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
 
   const open = items?.find((n) => n.ts === openTs) ?? null
 
-  async function ack(n: NotificationItem) { await api.ackNotification(n.ts).catch(() => {}); load() }
-  async function unack(n: NotificationItem) { await api.unackNotification(n.ts).catch(() => {}); load() }
-  async function remove(n: NotificationItem) { await api.deleteNotification(n.ts).catch(() => {}); if (openTs === n.ts) setOpenTs(""); load() }
-  async function ackAll() { await api.ackAllNotifications().catch(() => {}); load() }
-  async function clearAll() { if (!(await confirm({ title: 'Clear all notifications?', danger: true, confirmLabel: 'Clear all' }))) return; await api.clearNotifications().catch(() => {}); setOpenTs(""); load() }
+  // Every mutation below is followed by `load()`, so a swallowed failure REVERTS the row and the click
+  // reads as a no-op — the user marks something read, it stays unread, and nothing explains why. Same
+  // `notify` shape the settings panels use.
+  async function ack(n: NotificationItem) {
+    await api.ackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  async function unack(n: NotificationItem) {
+    await api.unackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification unread: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  async function remove(n: NotificationItem) {
+    await api.deleteNotification(n.ts).catch((e) => notify(`Couldn't delete this notification: ${String((e as Error)?.message || e)}`, 'error'))
+    if (openTs === n.ts) setOpenTs("")
+    load()
+  }
+  async function ackAll() {
+    await api.ackAllNotifications().catch((e) => notify(`Couldn't mark all notifications read: ${String((e as Error)?.message || e)}`, 'error'))
+    load()
+  }
+  // The worst member of the family: the user CONFIRMS a destructive action, it fails, the list comes
+  // back unchanged, and silence reads as "cleared".
+  async function clearAll() {
+    if (!(await confirm({ title: 'Clear all notifications?', danger: true, confirmLabel: 'Clear all' }))) return
+    await api.clearNotifications().catch((e) => notify(`Couldn't clear notifications: ${String((e as Error)?.message || e)}`, 'error'))
+    setOpenTs("")
+    load()
+  }
 
   const filterSection: FilterSectionDef = useMemo(() => ({
     title: 'Show', value: filter, defaultKey: 'all', onChange: setFilter,
@@ -83,7 +112,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
       topBar={
         <TopBar
           keepCornerPadding
-          left={<PageTitle className="flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-primary)' }}>{unread}</span>}</PageTitle>}
+          left={<PageTitle className="flex items-center gap-s">Notifications {unread > 0 && <span className="rounded-pill px-2 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{unread}</span>}</PageTitle>}
           right={items && items.length > 0 ? (
             // Direct header actions (the header is otherwise empty now that the
             // filter lives on the page); each collapses to an icon when tight.
@@ -129,7 +158,10 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
       )}
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {filtered === null ? <ListSkeleton rows={6} /> : items && items.length === 0 ? (
+        {items === undefined && loadErr ? (
+          // Before the skeleton branch, or a failed first read spins it forever.
+          <LoadError what="notifications" error={loadErr} onRetry={load} />
+        ) : filtered === null ? <ListSkeleton rows={6} /> : items && items.length === 0 ? (
           <EmptyState icon={Bell} title="You're all caught up" hint="Schedule runs, trigger fires, agent updates, and task results surface here for you to review." />
         ) : (
           <>

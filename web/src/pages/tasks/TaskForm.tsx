@@ -32,7 +32,7 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
     <div className={`flex flex-col ${gap}`}>
       <Section title="Basics" compact={compact}>
         <Field label="Title">
-          <TextInput value={draft.title} onChange={(v) => set('title', v)} placeholder="What needs to happen?" autoFocus />
+          <TextInput required value={draft.title} onChange={(v) => set('title', v)} placeholder="What needs to happen?" autoFocus />
         </Field>
         <Field label="Description">
           <TextArea value={draft.description ?? ''} onChange={(v) => set('description', v)} placeholder="Context, acceptance notes, links… (markdown)" rows={compact ? 4 : 6} />

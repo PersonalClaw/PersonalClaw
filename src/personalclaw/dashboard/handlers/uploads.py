@@ -38,9 +38,9 @@ def _store(request: web.Request) -> UploadStore:
     if st is None:
         # Sub-app + main app share the same DashboardState; root the store under
         # the same uploads dir the single-POST paths use.
-        from personalclaw.dashboard.handlers.files import _UPLOAD_DIR
+        from personalclaw.dashboard.handlers.files import _upload_dir
 
-        st = UploadStore(Path(_UPLOAD_DIR) / ".parts")
+        st = UploadStore(Path(_upload_dir()) / ".parts")
         request.app["upload_store"] = st
     return st
 
@@ -238,13 +238,13 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
 
     if sess.target == "attachment":
         from personalclaw.dashboard.attachment_extract import get_extractor
-        from personalclaw.dashboard.handlers.files import _UPLOAD_DIR
+        from personalclaw.dashboard.handlers.files import _upload_dir
 
-        _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        _upload_dir().mkdir(parents=True, exist_ok=True)
         import re
 
         safe = re.sub(r"[^\w.\-]", "_", Path(sess.filename).name)
-        dest = _UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe}"
+        dest = _upload_dir() / f"{uuid.uuid4().hex}_{safe}"
         shutil.move(str(final_path), str(dest))
         os.chmod(dest, 0o600)
         # Kick content extraction now (mirrors api_upload_file), so the attachment's

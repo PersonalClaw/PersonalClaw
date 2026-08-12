@@ -177,11 +177,23 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     # Write through the memory service onto memory.db ``lesson.*``. The store is
     # always present (see module docstring), so no JSONL fallback is needed; a
     # store with no embedder still persists the lesson (vector optional).
-    from personalclaw.memory_service import service_for
+    from personalclaw.memory_service import resolve_lesson_scope, service_for
+
+    # REACH axis. Resolved HERE and not trusted from the caller: `mcp_memory`'s
+    # memory_remember advertises scope=global|workspace and validates the pair
+    # itself, but this endpoint is reachable without it, and for a while it simply
+    # dropped both fields — a caller that carefully asked for a workspace lesson got
+    # a global one and was told "ok". An unresolvable pair is refused, never widened:
+    # storing a different scope than the one asked for is the defect, wherever it
+    # happens.
+    try:
+        scope, scope_ref = resolve_lesson_scope(body.get("scope"), body.get("workspace"))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
 
     negative = body.get("negative") or None
     svc = service_for(_get_memory(state))
-    svc.write_lesson(rule, category, negative)
+    svc.write_lesson(rule, category, negative, scope=scope, scope_ref=scope_ref)
     state.push_refresh("lessons")
     return web.json_response({"ok": True})
 
@@ -237,14 +249,36 @@ async def api_lessons(request: web.Request) -> web.Response:
         )
         return web.json_response({"lessons": []})
     # Read through the memory service onto memory.db ``lesson.*``.
-    from personalclaw.memory_service import service_for
+    from personalclaw.memory_service import resolve_lesson_scope, service_for
 
     svc = service_for(_get_memory(state))
+    # `?workspace=` makes this the VISIBILITY view (global + that workspace); absent, it
+    # is the full inventory across every scope. The list path takes the workspace
+    # explicitly because the dashboard has no ambient working directory to infer one
+    # from — the caller is the only thing that knows. Each row carries its own scope so
+    # a workspace lesson never reads as a global one in a management surface.
+    ws_param = request.query.get("workspace", "").strip()
+    if ws_param:
+        try:
+            _scope, ws_ref = resolve_lesson_scope("workspace", ws_param)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        rows = svc.lessons_visible_in(ws_ref)
+    else:
+        rows = svc.get_lessons()
     data = []
-    for e in svc.get_lessons()[-50:]:
+    for e in rows[-50:]:
         try:
             rule = json.loads(e["value_json"])
         except (json.JSONDecodeError, TypeError):
             continue
-        data.append({"rule": rule, "category": "knowledge", "ts": e.get("updated_at", "")})
+        data.append(
+            {
+                "rule": rule,
+                "category": "knowledge",
+                "ts": e.get("updated_at", ""),
+                "scope": e.get("scope") or "global",
+                "workspace": e.get("scope_ref") or "",
+            }
+        )
     return web.json_response({"lessons": data})

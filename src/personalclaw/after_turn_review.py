@@ -111,17 +111,27 @@ def is_environment_failure_claim(text: str) -> bool:
 
 
 def record_procedural_outcomes(service, outcomes, *, scope_ref: str | None = None) -> int:
-    """Mine this turn's (tool, failed) outcomes into procedural memory (M5d).
+    """Mine this turn's ``(tool, outcome)`` pairs into procedural memory (M5d).
+
+    ``outcome`` comes from the runtime's drain and must be a member of
+    ``memory_service.PROCEDURAL_OUTCOMES``; an unknown value is DROPPED and logged
+    rather than stored, because a row no surfacing rule classifies is a row nothing
+    will ever read.
 
     Records one observation per DISTINCT (tool, outcome) — successes become
-    'tool X works for this shape' priors, failures feed failure-synthesis. Returns
-    the count recorded. Best-effort; never raises into the turn."""
+    'tool X works for this shape' priors, while failures and denials feed
+    failure-synthesis (they are never surfaced raw). Returns the count recorded.
+    Best-effort; never raises into the turn."""
+    from personalclaw.memory_service import PROCEDURAL_OUTCOMES
+
     if service is None or not getattr(service, "has_vector", False) or not outcomes:
         return 0
     seen: set[tuple[str, str]] = set()
     n = 0
-    for tool, failed in outcomes:
-        outcome = "failed" if failed else "success"
+    for tool, outcome in outcomes:
+        if outcome not in PROCEDURAL_OUTCOMES:
+            logger.warning("procedural capture: unknown outcome %r for %s", outcome, tool)
+            continue
         sig = (tool, outcome)
         if sig in seen:
             continue

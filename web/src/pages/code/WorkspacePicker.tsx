@@ -232,7 +232,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 : <span className="ml-1.5 text-on-surface-low/70">· not a git repo (changes won’t be version-tracked)</span>
             )}
           </span>
-          <Button size="sm" onClick={() => path && onPick(path)} disabled={!path || loading}>
+          <Button size="sm" onClick={() => path && onPick(path)} disabled={!path || loading} disabledReason={!path && !loading ? 'Choose a folder first' : undefined}>
             <Check size={14} /> Use this folder
           </Button>
         </div>

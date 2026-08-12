@@ -13,8 +13,13 @@ Three mechanisms enforce it:
 fails the gate outright. Deliberately NOT averaged: averaging lets a confident model pass a
 gate it structurally failed, which is precisely the failure being prevented.
 
-**A closed verdict enum.** A judge returns `PASS|RETRY|ESCALATE|REJECT` and nothing else,
-so the scheduler routes on DATA rather than parsing prose. Parsing "I think this looks
+**A closed verdict enum**, owned by `judge_contract` and imported here. This
+module used to define a SECOND `Verdict` — PASS/RETRY/ESCALATE/REJECT against the contract's
+PASS/REJECT/REPLAN/ESCALATE/NEEDS_INPUT — and two vocabularies over one decision is why the
+engine had to restate the judge aggregation rule instead of importing it. The sets were
+merged into the contract's and this one deleted; `RETRY` moved across because it was the only
+member the merge would otherwise have lost. A judge returns one of those values and nothing
+else, so the scheduler routes on DATA rather than parsing prose. Parsing "I think this looks
 mostly fine?" into a control-flow decision is how an engine becomes unpredictable.
 
 **The fresh-judge invariant.** A gate judging output runs in a session distinct from the
@@ -32,27 +37,12 @@ import fnmatch
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from personalclaw.workflows.judge_contract import Verdict
+
 logger = logging.getLogger(__name__)
-
-
-class Verdict(str, Enum):
-    """The CLOSED set a judge may return. Closed so the scheduler branches on data.
-
-    `RETRY` and `ESCALATE` are separate because they mean different things to a human:
-    retry says "try again, this is recoverable", escalate says "stop, a person must
-    decide". Collapsing them loses the only signal that distinguishes a hiccup from a
-    dead end.
-    """
-
-    PASS = "PASS"
-    RETRY = "RETRY"
-    ESCALATE = "ESCALATE"
-    REJECT = "REJECT"
-
 
 #: Ladder rungs, in mandatory order. Static checks are cheapest and catch the most, so
 #: they run first — reaching an expensive system check on code that does not parse wastes
@@ -64,8 +54,13 @@ def parse_verdict(value: Any) -> Verdict | None:
     """Extract a verdict from a judge's response.
 
     Tolerant of shape (a bare string, or a dict with a `verdict` key) but STRICT about
-    vocabulary: an unrecognized word returns None rather than being guessed at. A guessed
-    verdict is a routing decision made on noise.
+    vocabulary — the contract's six members, since the merge — so an unrecognized word returns
+    None rather than being guessed at. A guessed verdict is a routing decision made on noise.
+
+    This is the LADDER's reader now, not the judge gate's: a ladder criterion may be evaluated
+    to a verdict word, and `_score` asks here what it means. The judge gate parses the whole
+    contract object (`judge_contract.parse_judge_json`), because a bare word cannot carry the
+    proof a PASS is required to cite.
     """
     raw = value
     if isinstance(value, dict):
@@ -288,3 +283,39 @@ def requires_fresh_judge(node_config: dict[str, Any]) -> bool:
     otherwise.
     """
     return not bool((node_config or {}).get("self_judge", False))
+
+
+# ── the injected verifier ────────────────────────────────────────────────────
+
+
+async def run_verify_block(block: dict[str, Any], *, default_cwd: str = "") -> bool | None:
+    """Run ONE verification block's command and report the tristate.
+
+    🔴 This is the callable `dispatch_gate` needs for every `verify_command` /
+    `verify_script` gate — and until WF2LOO-10 the gateway wired NOTHING into
+    `EngineServices.verify`, so in production every such gate returned INTERNAL "no
+    verifier wired for this gate". Two shipped templates ended on a verification gate that
+    could not run. The engine-side contract was complete; the last mile was missing.
+
+    The execution itself is delegated to `loop.gates.run_verify_command`, deliberately
+    rather than spawning here: that runner already carries the security screen
+    (`audit_bash_command` refuses a destructive command), the resource ceiling
+    (`PROFILE_TOOL` via the post-exec shim), a bounded timeout, and — most importantly —
+    the same TRISTATE contract, where "the tool is missing" (exit 127) is `None` rather
+    than a failure. A second implementation would be a second set of those decisions to
+    keep in agreement.
+
+    `cwd` comes from the block (a template binds `{{inputs.cwd}}` there) and falls back to
+    the run's own workspace, so a gate never silently verifies a different directory than
+    the one the work happened in.
+    """
+    from personalclaw.loop.gates import run_verify_command
+
+    command = str(block.get("command") or block.get("script") or "").strip()
+    if not command:
+        # No command is NOT a pass: a gate whose verification is blank has verified
+        # nothing, and the caller turns this into an explicit "could not determine".
+        return None
+    cwd = str(block.get("cwd") or default_cwd or "").strip()
+    label = str(block.get("label") or "verify").strip() or "verify"
+    return await run_verify_command(command, cwd or None, label=label)

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Pause, Play, Trash2, ArrowDownToLine } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
 import { SearchField } from '../../ui/SearchField'
-import { fvs, withWeight } from '../../design/fontWeight'
+import { withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
+import { accentChip } from '../../design/accent'
+import { PanelHeader, Section } from './settingsUI'
 
 /** A single streamed log entry (backend emits {level, msg} JSON per SSE frame,
  *  msg already formatted as "<ts> <LEVEL> <logger>: <message>"). */
@@ -88,13 +90,20 @@ export function DiagnosticsPanel() {
   }
 
   return (
-    <div className="flex flex-col gap-l">
+    <div>
+      {/* Every other settings sub-route opens with `PanelHeader` — its title is the page's `h1`. These two
+          panels started straight at their first `<section>`, so `#/settings/design` measured **h1s=0** and
+          its outline began at `h2: Color scheme` with nothing above it, while all 26 siblings had exactly
+          one. The PanelHeader-as-h1 change gave every panel that USES it an h1; it could not reach a panel that never rendered one. */}
+      <PanelHeader
+        title="Diagnostics"
+        hint="A live tail of the gateway's own log, plus the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts."
+      />
+
       {/* ── Runtime log level ── */}
-      <section>
-        <h2 className="text-on-surface text-[1.0625rem] mb-1" style={fvs(600)}>Backend log level</h2>
-        <p className="text-on-surface-low text-[0.8125rem] mb-m">
-          Change how verbose the gateway logs are, live. Persists across restarts.
-        </p>
+      {/* `Section` like the other 23 panels: this page and Design were the pair still rendering
+          section titles at `text-[1.0625rem]`, 17px beside a sibling page's 15px. */}
+      <Section title="Backend log level" hint="Change how verbose the gateway logs are, live. Persists across restarts.">
         <Surface tone="container" radius="lg" className="px-l py-m">
           <div className="flex items-center gap-s">
             <div className="inline-flex rounded-pill bg-surface-container p-1">
@@ -112,18 +121,18 @@ export function DiagnosticsPanel() {
             {level && <span className="text-on-surface-low text-[0.75rem]">Current: <strong className="text-on-surface-var">{level}</strong></span>}
           </div>
         </Surface>
-      </section>
+      </Section>
 
       {/* ── Live log stream ── */}
-      <section>
-        <div className="flex items-center justify-between mb-m gap-s flex-wrap">
-          <div>
-            <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>Live logs</h2>
-            <p className="text-on-surface-low text-[0.8125rem] mt-0.5 flex items-center gap-1.5">
-              <span className="inline-block size-1.5 rounded-pill" style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
-              {connected ? 'Streaming' : 'Connecting…'} · {visible.length} shown{entries.length !== visible.length ? ` of ${entries.length}` : ''}
-            </p>
-          </div>
+      <Section
+        title="Live logs"
+        hint={
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block size-1.5 rounded-pill" style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
+            {connected ? 'Streaming' : 'Connecting…'} · {visible.length} shown{entries.length !== visible.length ? ` of ${entries.length}` : ''}
+          </span>
+        }
+        right={
           <div className="flex items-center gap-s">
             {/* min-level floor for the VIEW (distinct from the backend level) */}
             <div className="inline-flex rounded-pill bg-surface-container p-1">
@@ -140,7 +149,7 @@ export function DiagnosticsPanel() {
             </div>
             <button onClick={() => setAutoscroll((v) => !v)} title={autoscroll ? 'Autoscroll on' : 'Autoscroll off'}
               className="inline-flex items-center justify-center size-8 rounded-lg transition-colors"
-              style={autoscroll ? { background: 'color-mix(in srgb, var(--color-primary) 18%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+              style={autoscroll ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
               <ArrowDownToLine size={15} />
             </button>
             <button onClick={() => setPaused((v) => !v)} title={paused ? 'Resume' : 'Pause'}
@@ -152,7 +161,8 @@ export function DiagnosticsPanel() {
               <Trash2 size={15} />
             </button>
           </div>
-        </div>
+        }
+      >
 
         {/* search within the tail */}
         <div className="mb-s">
@@ -184,7 +194,7 @@ export function DiagnosticsPanel() {
             )}
           </div>
         </Surface>
-      </section>
+      </Section>
     </div>
   )
 }

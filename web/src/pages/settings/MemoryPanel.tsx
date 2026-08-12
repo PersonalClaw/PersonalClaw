@@ -14,7 +14,7 @@ import {
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
-import { ListSkeleton, FormSkeleton } from '../../ui/ListScaffold'
+import { ListSkeleton, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput, Select, ChipInput, NumberField } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -23,6 +23,8 @@ import { TextLink } from '../../ui/TextLink'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
+import { notify } from '../../app/appSdk'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -285,7 +287,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
               return (
                 <button key={k} type="button" onClick={() => setKindFilter(k)}
                   className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] transition-colors"
-                  style={on ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+                  style={on ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
                   {meta && <meta.icon size={11} />}{k === 'all' ? 'All' : meta!.label}<span className="tabular-nums">{counts[k]}</span>
                 </button>
               )
@@ -465,7 +467,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
         className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={!dirty || busy}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
         {dirty && <span className="text-on-surface-low text-[0.75rem]">Unsaved changes</span>}
         {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
       </div>
@@ -543,12 +545,15 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
 
 // ── Audit ────────────────────────────────────────────────────────────────────
 function AuditTab() {
-  const { data: events, refresh } = useCachedData(
-    'settings:memory-events', () => api.memoryEvents({ limit: 100 }).catch(() => [] as MemoryEvent[]),
+  const { data: events, error, refresh } = useCachedData(
+    'settings:memory-events', () => api.memoryEvents({ limit: 100 }),
   )
   const [filter, setFilter] = useState('')
   const reload = () => { invalidateCache('settings:memory-events'); refresh() }
 
+  // Was `.catch(() => [] as MemoryEvent[])`: a failed read of the memory audit log rendered
+  // "No matching events." — indistinguishable from a memory that has genuinely recorded nothing.
+  if (!events && error) return <LoadError what="memory audit log" error={error} onRetry={reload} />
   if (!events) return <ListSkeleton rows={8} />
   const q = filter.trim().toLowerCase()
   const shown = q ? events.filter((e) => `${e.event_type} ${e.memory_type} ${e.memory_key ?? ''}`.toLowerCase().includes(q)) : events
@@ -1073,7 +1078,11 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
 
   const patch = (p: Partial<MemorySettings>) => {
     setS((prev) => prev && { ...prev, ...p })
-    api.saveMemorySettings(p).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    // Optimistic locally, silent on failure — the switch kept the new value while the server kept the
+    // old one.
+    api.saveMemorySettings(p)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => notify(`Couldn't save your memory settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
   const consolidate = async () => {
     setConsolidating(true); setConsolidateMsg('')
@@ -1117,7 +1126,8 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
           <Toggle on={s.graph_enabled !== false} onChange={(v) => patch({ graph_enabled: v })} label="Entity graph" />
         </Row>
         <Row label="Volunteer related memory" hint="When a message mentions someone or something the entity graph knows, offer up to 3 linked memories for that turn — including ones that share no words with what you typed. Needs the entity graph. Off by default: it puts context in front of the model you didn't ask for. The Health tab reports how often what it volunteered was actually used.">
-          <Toggle on={Boolean(s.push_context)} onChange={(v) => patch({ push_context: v })} label="Volunteer related memory" disabled={s.graph_enabled === false} />
+          <Toggle on={Boolean(s.push_context)} onChange={(v) => patch({ push_context: v })} label="Volunteer related memory" disabled={s.graph_enabled === false}
+            disabledReason="Turn on the entity graph first — volunteering follows its links" />
         </Row>
         {s.push_context && s.graph_enabled !== false && (
           <Row label="Volunteer confidence" hint="How sure the match must be before memory is volunteered. 0.9 = declared aliases only · 0.8 also admits exact names · 0.6 admits looser matches (more offered, more of it irrelevant).">

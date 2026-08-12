@@ -24,7 +24,7 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 /** Feedback tone → token classes. A tone the model didn't recognize falls back to
  *  the neutral surface treatment (never a null hole). */
 const TONES: Record<string, string> = {
-  info: 'bg-primary/10 text-primary',
+  info: 'bg-primary-container text-on-primary-container',
   ok: 'bg-primary/10 text-on-surface',
   warn: 'text-warn',
   danger: 'text-danger',

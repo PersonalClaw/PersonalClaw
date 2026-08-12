@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
 import { ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -95,7 +96,7 @@ function EgressPolicyEditor() {
             <span className="block text-on-surface-low text-[0.8125rem]">Permit egress to any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN.</span>
           </span>
         </label>
-        {err && <div className="text-danger text-[0.8125rem]">{err}</div>}
+        {err && <FieldError>{err}</FieldError>}
       </div>
     </Section>
   )
@@ -228,7 +229,7 @@ function DeniedCommandsEditor({ builtin, user, onChange }: { builtin: string[]; 
                 <Plus size={15} /> Add
               </button>
             </div>
-            {err && <div className="text-danger text-[0.8125rem]">{err}</div>}
+            {err && <FieldError>{err}</FieldError>}
           </div>
         </div>
       </div>

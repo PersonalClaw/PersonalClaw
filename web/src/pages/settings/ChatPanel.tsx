@@ -194,7 +194,14 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
   const [saved, flash] = useSavedFlash()
   const save = (patch: Partial<DashboardConfig>) => {
     setCfg({ ...cfg, ...patch })
-    api.saveDashboardConfig(patch).then(flash).catch(() => {})
+    // A settings toggle updates locally FIRST, so a failed save leaves the switch showing a value the
+    // server rejected — and this said nothing: measured with the PUT at 500, the toggle went
+    // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
+    // confirmation simply never appearing. Reported the way the eight sibling panels already report it
+    // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
+    api.saveDashboardConfig(patch).then(flash).catch((e) => {
+      notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
+    })
   }
   return (
     <Section title="Sessions" hint="What happens to your chats on restart, and while the agent is busy.">
@@ -223,7 +230,14 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
   const [saved, flash] = useSavedFlash()
   const save = (patch: Partial<DashboardConfig>) => {
     setCfg({ ...cfg, ...patch })
-    api.saveDashboardConfig(patch).then(flash).catch(() => {})
+    // A settings toggle updates locally FIRST, so a failed save leaves the switch showing a value the
+    // server rejected — and this said nothing: measured with the PUT at 500, the toggle went
+    // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
+    // confirmation simply never appearing. Reported the way the eight sibling panels already report it
+    // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
+    api.saveDashboardConfig(patch).then(flash).catch((e) => {
+      notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
+    })
   }
   return (
     <Section title="Messages" hint="How messages and tool activity render in the chat.">

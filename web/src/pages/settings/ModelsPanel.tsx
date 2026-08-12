@@ -15,6 +15,7 @@ import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section } from './settingsUI'
 import { ListSkeleton } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
@@ -363,7 +364,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
         <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
         <span className="grid size-7 shrink-0 place-items-center rounded-md"
           style={activeModels.length > 0
-            ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }
+            ? accentChip
             : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
           <meta.icon size={14} />
         </span>
@@ -386,7 +387,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, onChanged }: {
         <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
           <p className="text-on-surface-low text-[0.8125rem]">{meta.description}</p>
           <div className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem]"
-            style={meta.chain ? { background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+            style={meta.chain ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
             <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
             {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
           </div>

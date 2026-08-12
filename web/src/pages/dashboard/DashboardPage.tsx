@@ -172,8 +172,17 @@ function Launcher({ navigate }: RouteProps) {
   const [text, setText] = useState('')
   const data = useComposerData()
   const [selection, setSelection] = useState<ComposerValue>({ agent: '', model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' })
+  // `.catch(() => [])` was worse here than elsewhere because this key is PERSISTED: the
+  // fabricated empty array was written to sessionStorage as if it were an answer, so a failed
+  // load poisoned the cache and the next visit painted "no recent chats" instantly from it.
+  // Without the catch, a rejection leaves `data` undefined and nothing is cached.
+  //
+  // The chip row stays hidden on failure rather than growing an error of its own: it is a
+  // shortcut, not the record, and the dashboard has no slot-level error idiom — inventing one
+  // for a single adopter would be speculative API. The authoritative surface (chat history)
+  // announces the failure, which is where a user goes to look for their chats.
   const { data: sessions } = useCachedData<ChatSessionSummary[]>(
-    'dashboard:recent-sessions', () => api.chatSessions().catch(() => [] as ChatSessionSummary[]), { persist: true },
+    'dashboard:recent-sessions', () => api.chatSessions(), { persist: true },
   )
 
   const launch = () => {
@@ -234,7 +243,10 @@ function Launcher({ navigate }: RouteProps) {
               key={s.key}
               type="button"
               onClick={() => navigate(`chat/${encodeURIComponent(s.key)}`)}
-              className="inline-flex items-center gap-xs text-on-surface-var transition-colors hover:text-on-surface"
+              // 20px tall with 16px between chips: under SC 2.5.8's 24px minimum, and the spacing
+              // exception needs 24px of clearance. `min-h-6` + `-my-0.5` grows the target and hands
+              // the 4px back, so the row does not reflow — the Toggle fix's shape.
+              className="inline-flex min-h-6 -my-0.5 items-center gap-xs text-on-surface-var transition-colors hover:text-on-surface"
               data-type="body-m"
             >
               <MessageSquare size={12} className="shrink-0 text-on-surface-low" /> <span className="max-w-[16rem] truncate">{s.title}</span>

@@ -5,6 +5,7 @@ GET    /api/learning/proposals/{id}       one proposal, full record
 POST   /api/learning/proposals/{id}/accept   install (human reviewers only)
 DELETE /api/learning/proposals/{id}       reject (human reviewers only)
 GET    /api/learning/staging/week         the week-at-a-glance capture panel
+GET    /api/learning/health               the flywheel observability panel (LEARN-R14b)
 
 The plan's success criterion 1 says "One Proposal Inbox SHOWS all six proposal kinds with
 provenance,
@@ -265,6 +266,155 @@ async def api_learning_staging_week(request: web.Request) -> web.Response:
         store.close()
 
 
+#: Runs whose ledgers the judge-calibration read scans. Bounded because this is a panel:
+#: `service._default_eligibility` reads 200 per template, and doing that unbounded on a
+#: page load would make the health view the most expensive request in the app.
+_CALIBRATION_RUNS = 50
+
+
+def _precision_from_usage() -> tuple[float | None, int, int]:
+    """Surfaced-vs-used precision from the usage store. `(precision, surfaced, used)`.
+
+    From the USAGE store rather than `measure.per_arm_precision`: the per-arm report
+    needs a `surfacing_events` table that nothing writes yet, and a panel reading it
+    would render an empty state that looks like "surfacing never lands". The
+    surfaced/used counters, by contrast, have a live writer per session flush.
+    """
+    from personalclaw.learning.usage import TRACKED_KINDS, UsageStore
+
+    store = UsageStore()
+    try:
+        rows = [rec for kind in TRACKED_KINDS for rec in store.list_kind(kind)]
+    finally:
+        store.close()
+    surfaced = sum(int(r.surfaced) for r in rows)
+    used = sum(int(r.used) for r in rows)
+    return ((used / surfaced) if surfaced else None), surfaced, used
+
+
+def _judge_calibration() -> dict:
+    """MAE buckets + false-pass rate over recent run ledgers (LEARN-R10d)."""
+    from personalclaw.workflows import journal as journal_mod
+    from personalclaw.workflows import judge_calibration as jc
+    from personalclaw.workflows import store as run_store
+
+    verdicts: list = []
+    divergences: list = []
+    runs, _total = run_store.list_runs(limit=_CALIBRATION_RUNS)
+    for run in runs:
+        run_id = getattr(run, "id", "")
+        if not run_id:
+            continue
+        entries = journal_mod.ledger(
+            run_id, kinds={journal_mod.JUDGE_VERDICT, journal_mod.JUDGE_DIVERGENCE}
+        )
+        # `verdicts_from_journal` stamps no run_id (the ledger row does not carry one), and
+        # the MAE label join is keyed on (run_id, node_id) — so it is set here, where the
+        # run being read is known. Without it every label would join to ("", node) and a
+        # divergence on one run would label a verdict on another.
+        for rec in jc.verdicts_from_journal(entries):
+            rec.run_id = rec.run_id or run_id
+            verdicts.append(rec)
+        for div in jc.divergences_from_journal(entries):
+            div.run_id = div.run_id or run_id
+            divergences.append(div)
+
+    summary = jc.calibration_summary(verdicts, divergences)
+    return {
+        "runs_scanned": len(runs),
+        "verdicts": len(verdicts),
+        "divergences": len(divergences),
+        "false_pass_rate": summary.get("false_pass_rate"),
+        "nodding_gates": summary.get("nodding_gates", []),
+        "mae": jc.mae_buckets(verdicts, divergences),
+    }
+
+
+async def api_learning_health(request: web.Request) -> web.Response:
+    """GET /api/learning/health — the flywheel observability panel (LEARN-R14b).
+
+    Everything here already had a live writer and no reader. The four additions §6.2
+    names — the 0-100 composite with the 50-80% utilization band, R10d's judge MAE
+    buckets, R16's attribution verdict history, R19e's per-op cost aggregates — were
+    each computed or recorded somewhere and rendered nowhere.
+
+    Every section degrades to a stated "unmeasured" rather than a zero. A panel that
+    reports an un-instrumented subsystem as 0% is worse than one that says nothing:
+    the user cannot tell it apart from a broken one, and the only apparent fix is to
+    generate traffic.
+    """
+    if not _enabled():
+        return web.json_response({"error": "learning is disabled"}, status=404)
+
+    from personalclaw.learning import measure
+    from personalclaw.learning.staging import StagingStore
+
+    try:
+        days = max(1, min(int(request.query.get("days", "7")), 31))
+    except ValueError:
+        return web.json_response({"error": "days must be an integer"}, status=400)
+
+    store = StagingStore()
+    try:
+        capture = store.health(days=days)
+        utilization = store.utilization(days=days)
+        cost_by_op = store.cost_by_op(days=days)
+        ablation = store.latest_ablation()
+    finally:
+        store.close()
+
+    precision, surfaced, used = _precision_from_usage()
+
+    try:
+        judge = _judge_calibration()
+    except Exception:
+        # A run store that cannot be read must not 500 the whole panel — the other three
+        # sections are independent, and losing all of them to one is the worse outcome.
+        logger.warning("judge calibration read failed", exc_info=True)
+        judge = {
+            "runs_scanned": 0,
+            "verdicts": 0,
+            "divergences": 0,
+            "false_pass_rate": None,
+            "nodding_gates": [],
+            "mae": {"buckets": [], "labelled": 0, "unlabelled": 0, "no_confidence": 0},
+        }
+
+    try:
+        from personalclaw.learning import attribution
+
+        attribution_rows = attribution.proposer_trust_report()
+        verdict_history = [
+            {"source": source, "verdict": verdict}
+            for source, verdict in attribution.verdict_history()
+        ]
+    except Exception:
+        logger.warning("attribution history read failed", exc_info=True)
+        attribution_rows, verdict_history = [], []
+
+    composite = measure.health_composite(
+        precision=precision,
+        capture_passes=int(capture.get("passes", 0) or 0),
+        capture_errors=int(capture.get("errors", 0) or 0),
+        utilization=utilization.get("mean"),
+        judge_false_pass_rate=judge.get("false_pass_rate"),
+    )
+
+    return web.json_response(
+        {
+            "days": days,
+            "composite": composite,
+            "utilization": {**utilization, "ideal_band": composite["ideal_band"]},
+            "capture": capture,
+            "surfacing": {"surfaced": surfaced, "used": used, "precision": precision},
+            "cost_by_op": cost_by_op,
+            "judge": judge,
+            "attribution": {"proposers": attribution_rows, "history": verdict_history},
+            "ablation": ablation,
+        }
+    )
+
+
 def _audit(request: web.Request, operation: str, outcome: str, resources: str) -> None:
     """SEL-audit a review action.
 
@@ -294,6 +444,7 @@ def register_learning_routes(app: web.Application) -> None:
     id — the ordering landmine S67 and S70 each paid for once.
     """
     app.router.add_get("/api/learning/staging/week", api_learning_staging_week)
+    app.router.add_get("/api/learning/health", api_learning_health)
     app.router.add_get("/api/learning/proposals", api_learning_proposals)
     app.router.add_get("/api/learning/proposals/{id}", api_learning_proposal)
     app.router.add_post("/api/learning/proposals/{id}/accept", api_learning_proposal_accept)

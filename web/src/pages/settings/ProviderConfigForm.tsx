@@ -58,7 +58,7 @@ export function ProviderConfigForm({ name }: { name: string }) {
     <div className="mt-3 flex flex-col gap-3 border-t border-outline-variant/30 pt-3">
       {props.map(([key, prop]) => <SchemaField key={key} fieldKey={key} prop={prop} value={values[key]} onChange={(v) => set(key, v)} />)}
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} disabled={!dirty || saving} disabledReason={!dirty && !saving ? 'No changes to save' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
         <SavedToast show={saved} />
         {dirty && !saved && <span className="text-on-surface-low text-[0.75rem]">Unsaved changes</span>}
         {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FieldError } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
@@ -13,6 +14,7 @@ import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/a
 import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount, blockKindMeta } from './taskMeta'
 import { prereqIds } from './dag'
 import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
+import { accentChip } from '../../design/accent'
 
 /** Body for the task SidePanel. Owns the view↔edit toggle (edit reuses the same
  *  panel, per the directive) and the comment thread. Project-provider tasks are
@@ -75,7 +77,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
     return (
       <div className="flex flex-col gap-l">
         <TaskForm draft={draft} onChange={setDraft} compact allTasks={allTasks} />
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} disabled={saving || !draft.title.trim()}
@@ -114,13 +116,13 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         </span>
       </div>
 
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {/* chips */}
       <div className="flex flex-wrap gap-s">
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 18%, transparent)`, color: sm.tone }}><sm.icon size={13} /> {sm.label}</span>
         <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>
-        {task.project && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)', color: 'var(--color-primary)' }}><FolderKanban size={13} /> {task.project}</span>}
+        {task.project && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={accentChip}><FolderKanban size={13} /> {task.project}</span>}
         {task.assignee && <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem] bg-surface-high text-on-surface-var">@{task.assignee}</span>}
         {due && <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
       </div>

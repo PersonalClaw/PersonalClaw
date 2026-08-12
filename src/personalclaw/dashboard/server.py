@@ -64,10 +64,10 @@ async def _upload_sweep_loop() -> None:
     A partial 2 GB upload the client never finishes would otherwise pin disk
     forever. Sweeps sessions idle past the store TTL, at startup then hourly."""
     from personalclaw import shutdown_event
-    from personalclaw.dashboard.handlers.files import _UPLOAD_DIR
+    from personalclaw.dashboard.handlers.files import _upload_dir
     from personalclaw.uploads.store import UploadStore
 
-    store = UploadStore(Path(_UPLOAD_DIR) / ".parts")
+    store = UploadStore(Path(_upload_dir()) / ".parts")
     first = True
     while not shutdown_event.is_set():
         if not first:

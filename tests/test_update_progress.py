@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiohttp import web
 
+from personalclaw import self_update as su
 from personalclaw.dashboard.state import DashboardState
 
 
@@ -456,11 +457,11 @@ class TestUpdateApplyPipeline:
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
         # Upstream is ahead (commits exist to pull) …
-        monkeypatch.setattr(upd, "_commits_behind_upstream", AsyncMock(return_value=3))
+        monkeypatch.setattr(su, "commits_behind_upstream", AsyncMock(return_value=3))
         # … but the cached release tag == our running version (on the latest tag).
-        import personalclaw.dashboard.handlers.updates_kind as uk
+        import personalclaw.self_update as uk
 
-        monkeypatch.setattr(uk, "_read_cache", lambda: {"tag": f"v{_ver}"})
+        monkeypatch.setattr(uk, "read_release_cache", lambda: {"tag": f"v{_ver}"})
         # update_dev_mode defaults OFF (no config file).
         state = _make_state(monkeypatch, tmp_path)
         steps_seen: list[str] = []
@@ -623,28 +624,28 @@ class TestUpdateApplyPipeline:
 
 
 class TestPackageRoot:
-    """_package_root: git runs at PERSONALCLAW_PROJECT_DIR (repo root), but
+    """package_root: git runs at PERSONALCLAW_PROJECT_DIR (repo root), but
     pip/frontend need the dir with pyproject.toml — top-level on a standalone
     checkout, nested at <repo>/PersonalClaw in the monorepo layout."""
 
     def test_standalone_checkout_top_level(self, tmp_path) -> None:
-        from personalclaw.dashboard.handlers.updates import _package_root
+        from personalclaw.self_update import package_root
 
         (tmp_path / "pyproject.toml").write_text("[project]\n")
-        assert _package_root(str(tmp_path)) == str(tmp_path)
+        assert package_root(str(tmp_path)) == str(tmp_path)
 
     def test_monorepo_nested_package(self, tmp_path) -> None:
-        from personalclaw.dashboard.handlers.updates import _package_root
+        from personalclaw.self_update import package_root
 
         nested = tmp_path / "PersonalClaw"
         nested.mkdir()
         (nested / "pyproject.toml").write_text("[project]\n")
-        assert _package_root(str(tmp_path)) == str(nested)
+        assert package_root(str(tmp_path)) == str(nested)
 
     def test_no_pyproject_falls_back_to_proj(self, tmp_path) -> None:
-        from personalclaw.dashboard.handlers.updates import _package_root
+        from personalclaw.self_update import package_root
 
-        assert _package_root(str(tmp_path)) == str(tmp_path)
+        assert package_root(str(tmp_path)) == str(tmp_path)
 
 
 class TestReexecPreservesAuthMode:

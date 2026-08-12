@@ -20,7 +20,7 @@ from personalclaw.subagent_persistence import (
 @pytest.fixture()
 def agent_root(tmp_path, monkeypatch):
     """Point persistence at a temp directory."""
-    monkeypatch.setattr("personalclaw.subagent_persistence._SUBAGENTS_DIR", tmp_path)
+    monkeypatch.setattr("personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path)
     return tmp_path
 
 

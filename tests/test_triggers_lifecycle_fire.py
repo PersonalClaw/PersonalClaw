@@ -238,7 +238,19 @@ def _fake_service(*, writes: bool, blocked: bool = False):
     from personalclaw.memory_service import MemoryService
 
     class _VS:
-        def write_lesson(self, rule, category="knowledge", negative=None, source=""):
+        # Signature mirrors `VectorMemoryStore.write_lesson`, scope keywords included:
+        # the service passes them through, and a fake that drops them would only prove
+        # the fake's own shape.
+        def write_lesson(
+            self,
+            rule,
+            category="knowledge",
+            negative=None,
+            source="",
+            *,
+            scope=None,
+            scope_ref=None,
+        ):
             return writes
 
     class _Svc(MemoryService):

@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve_expr
+from personalclaw.workflows.conditions import evaluate as evaluate_condition
 from personalclaw.workflows.models import (
     LANE_COMPUTE,
     LANE_IO,
@@ -127,6 +128,12 @@ class Frontier:
     ready: list[ReadyNode] = field(default_factory=list)
     #: Ready but lane-capped. Not an error — the next tick admits them.
     deferred: list[ReadyNode] = field(default_factory=list)
+    #: Item paths a `single_active_feature` run REFUSED to start because another item of
+    #: the same fan-out is still in flight (WIP=1). Separate from `deferred`, which is
+    #: lane pressure: this one is a declared invariant being enforced, and the controller
+    #: journals it so "why is item 2 not running" is answerable from the ledger rather
+    #: than from reading the scheduler.
+    wip_held: list[str] = field(default_factory=list)
     running: list[str] = field(default_factory=list)
     waiting: list[str] = field(default_factory=list)
     #: Paths on a path the run did not take. The controller marks these SKIPPED, which is
@@ -277,11 +284,18 @@ def frontier(
     inputs: dict[str, Any] | None = None,
     iterations: dict[str, int] | None = None,
     running_lanes: dict[str, int] | None = None,
+    single_active_feature: bool = False,
 ) -> Frontier:
     """Compute what may run now. Pure: no I/O, no clock, no mutation of the arguments.
 
     `outputs` is node-id keyed and only used to evaluate `branch` selectors and loop
     conditions — the frontier reads data to make ROUTING decisions, never to execute.
+
+    `single_active_feature` is the run's declared WIP=1 invariant
+    (`runtime_hints.execution.single_active_feature`, parsed by `execution_hints`). It caps
+    every fan-out in the run to ONE in-flight item, whatever each `foreach` declares for
+    itself — a run-level invariant that a per-node knob could quietly contradict is not an
+    invariant. Held items land in `Frontier.wip_held` rather than being dropped silently.
     """
     lim = limits or Limits()
     edges = set(declined_edges or ())
@@ -297,6 +311,7 @@ def frontier(
         ctx=ctx_base,
         fr=fr,
         enabled=True,
+        wip=single_active_feature,
     )
 
     # Lane admission. Sorting by path keeps admission deterministic when a lane is
@@ -341,6 +356,7 @@ def _visit(
     item: Any = None,
     has_item: bool = False,
     iter_index: int | None = None,
+    wip: bool = False,
 ) -> None:
     """Walk the tree collecting ready leaves. `enabled` is how a container gates its
     children without mutating their state — a sequence's later children are simply not
@@ -378,6 +394,7 @@ def _visit(
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
+                wip=wip,
             )
             # A sequence admits exactly one unfinished child at a time. Stop at the
             # first child that has not reached a terminal state.
@@ -399,17 +416,20 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
+            wip=wip,
         )
         return
 
     if kind == NodeKind.FOREACH:
         _visit_foreach(
-            node, path, states=states, edges=edges, iterations=iterations, ctx=ctx, fr=fr
+            node, path, states=states, edges=edges, iterations=iterations, ctx=ctx, fr=fr, wip=wip
         )
         return
 
     if kind == NodeKind.LOOP:
-        _visit_loop(node, path, states=states, edges=edges, iterations=iterations, ctx=ctx, fr=fr)
+        _visit_loop(
+            node, path, states=states, edges=edges, iterations=iterations, ctx=ctx, fr=fr, wip=wip
+        )
         return
 
     if kind == NodeKind.BRANCH:
@@ -424,6 +444,7 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
+            wip=wip,
         )
         return
 
@@ -452,6 +473,7 @@ def _visit_parallel(
     item: Any,
     has_item: bool,
     iter_index: int | None,
+    wip: bool = False,
 ) -> None:
     """Fan-out with intra-block `needs` edges, honouring declined edges (WF2-R18)."""
     by_id: dict[str, tuple[str, Node]] = {}
@@ -500,6 +522,7 @@ def _visit_parallel(
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
+                wip=wip,
             )
 
 
@@ -528,6 +551,7 @@ def _visit_foreach(
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
+    wip: bool = False,
 ) -> None:
     """One body instance per item. Item paths are `<path>.body#<i>` — the `#i` suffix is
     what lets many instances of one body node coexist in a flat state map.
@@ -550,6 +574,13 @@ def _visit_foreach(
     An item counts against the cap from its first launched node until its whole body is terminal:
     the point of the cap is usually a scarce resource an item holds for its duration (a checkout, a
     lock, a rate-limited endpoint), and releasing it between stages would defeat that.
+
+    **`wip` is the run-level WIP=1 invariant** (`single_active_feature`, LOOPS-EVOLUTION R5b:
+    +37% feature completion). It forces the cap to 1 and OVERRIDES whatever this node declared:
+    a run-level invariant a per-node knob can contradict is not an invariant, and clamping
+    silently is what makes a control look enforced while a `max_concurrency: 3` quietly wins.
+    The contradiction is refused at authoring time by the validator (`WF_WIP_CONTRADICTION`);
+    this is the runtime half, and the items it refuses to start are named in `fr.wip_held`.
     """
     if node.body is None:
         return
@@ -558,14 +589,17 @@ def _visit_foreach(
         # The items binding does not resolve yet (an upstream node has not produced it).
         # Not an error — the foreach is simply not ready.
         return
-    policy = _item_error_policy(node)
+    # The SCHEDULING half of the item-error policy, and the only half that differs here:
+    # HALT stops starting items, SKIP and COLLECT both run the whole fan-out. What each
+    # policy then makes of the failures is `foreach_outcome`'s decision.
+    policy = item_error_policy(node)
     for idx, value in enumerate(items):
         ipath = f"{path}.body#{idx}"
         ist = _state_of(states, ipath)
         if ist == InstanceState.FAILED and policy == ItemErrorPolicy.HALT:
             return
 
-    cap = _max_concurrency(node)
+    cap = 1 if wip else _max_concurrency(node)
 
     # Which items are ALREADY under way. Counted from the state map rather than tracked, so a
     # resumed run re-derives the same answer instead of restarting a fan-out it had half-finished.
@@ -600,6 +634,13 @@ def _visit_foreach(
                 # Slot exhausted. NOT recorded as deferred: `deferred` means "ready but the lane is
                 # full", and an unstarted item of a capped foreach is not ready — the cap is a
                 # property of the container, not of lane pressure.
+                #
+                # A WIP=1 refusal IS recorded, under its own name: the run declared the invariant,
+                # so "the engine refused to start feature 2" is a decision worth being able to read
+                # back, and an unrecorded refusal is indistinguishable from a scheduler that simply
+                # forgot the item.
+                if wip:
+                    fr.wip_held.append(ipath)
                 continue
             in_flight += 1
         _visit(
@@ -614,6 +655,7 @@ def _visit_foreach(
             item=value,
             has_item=True,
             iter_index=idx,
+            wip=wip,
         )
 
 
@@ -626,6 +668,7 @@ def _visit_loop(
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
+    wip: bool = False,
 ) -> None:
     """Sequential iteration: exactly one body instance in flight at a time. Iteration
     paths are `<path>.body@<n>`, so a rewind can invalidate one iteration by prefix."""
@@ -646,6 +689,7 @@ def _visit_loop(
         fr=fr,
         enabled=True,
         iter_index=current,
+        wip=wip,
     )
 
 
@@ -661,6 +705,7 @@ def _visit_branch(
     item: Any,
     has_item: bool,
     iter_index: int | None,
+    wip: bool = False,
 ) -> None:
     """Route: dispatch the branch itself, then visit only the taken case.
 
@@ -721,6 +766,7 @@ def _visit_branch(
         item=item,
         has_item=has_item,
         iter_index=iter_index,
+        wip=wip,
     )
 
 
@@ -782,12 +828,73 @@ def _max_concurrency(node: Node) -> int:
     return raw if raw > 0 else 0
 
 
-def _item_error_policy(node: Node) -> ItemErrorPolicy:
+def item_error_policy(node: Node) -> ItemErrorPolicy:
+    """One `foreach`'s declared item-error policy. Public because the controller needs it to
+    decide whether a fan-out owes the ledger a collected-failure record (WV-13)."""
     raw = str((node.config or {}).get("on_item_error", "skip") or "skip")
     try:
         return ItemErrorPolicy(raw)
     except ValueError:
         return ItemErrorPolicy.SKIP
+
+
+def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -> InstanceState:
+    """One fan-out's verdict, given its policy and its items' states.
+
+    🔴 The reason this is a named function rather than three lines inside `_derive`: `COLLECT`
+    shipped as a DECLARED STRATEGY WITH NO EXECUTOR. `models.py` declared it, `validator.py`
+    accepted it and the capabilities manifest advertised it to authoring models — while the
+    derivation branched on `HALT` and `SKIP` only and let `collect` fall through to
+    `container_outcome`. The fallthrough happened to produce roughly the right shape, which is
+    exactly why it survived: nothing was visibly broken, and nothing anywhere said what the
+    member meant. A fourth member added tomorrow would have inherited `SKIP`'s wait and
+    `HALT`'s verdict just as silently. So the choice is made HERE, once, exhaustively over the
+    enum, and the unreachable tail RAISES rather than defaulting (WV-13).
+
+    Every member's branch is driven by a test, and the three produce three DIFFERENT run-level
+    observables for the same seeded failure — which is the only proof that the members are
+    worth having:
+
+    * `HALT` → the run FAILS having skipped the rest of the fan-out.
+    * `SKIP` → the run COMPLETES (container DEGRADED) having run all of it.
+    * `COLLECT` → the run FAILS having run all of it.
+
+    `COLLECT` returns `container_outcome` rather than a hard-coded FAILED on purpose: an item
+    that was CANCELLED or BLOCKED outranks a failure in `_worst`'s severity order, and
+    flattening "someone cancelled item 2" into "the fan-out failed" would throw away the more
+    informative half of the verdict.
+    """
+    if policy == ItemErrorPolicy.HALT:
+        # No terminal verdict is invented here. `advance_foreach` has already stopped starting
+        # items, so the un-started ones are PENDING and this derives RUNNING; the run then
+        # terminates through the frontier's deadlock path, which is what makes a halted
+        # fan-out a FAILED run rather than a silent hang.
+        return container_outcome(item_states)
+
+    # Both remaining policies run EVERY item to a terminal state — neither halts the fan-out
+    # early — so they share the wait and differ only in the verdict that follows it.
+    if not all(_is_terminal(st) for st in item_states):
+        return InstanceState.RUNNING
+
+    if policy == ItemErrorPolicy.SKIP:
+        # Tolerated, but never invisible: DEGRADED is a SUCCESS state, so the run completes,
+        # and the container still refuses to claim clean success.
+        if any(st == InstanceState.FAILED for st in item_states):
+            return InstanceState.DEGRADED
+        return container_outcome(item_states)
+
+    if policy == ItemErrorPolicy.COLLECT:
+        # The failures COUNT. `container_outcome` reports the worst item verdict, so any
+        # failure is a FAILED container and `_ROOT_TO_RUN` makes that a FAILED run. Returning
+        # DEGRADED here instead would make COLLECT indistinguishable from SKIP at the run
+        # level, and the one policy whose entire point is "the failures matter" would report
+        # success — the silent-drop shape this program keeps finding.
+        return container_outcome(item_states)
+
+    raise AssertionError(
+        f"no branch for ItemErrorPolicy.{getattr(policy, 'name', policy)} — a new member must "
+        "declare its own behaviour here rather than inherit another policy's"
+    )
 
 
 def _on_error(node: Node) -> str:
@@ -876,18 +983,7 @@ def _derive(
             _derive(node.body, f"{path}.body#{i}", states, edges, iterations, ctx)
             for i in range(len(items))
         ]
-        policy = _item_error_policy(node)
-        if policy == ItemErrorPolicy.SKIP:
-            # One bad item must not sink the fan-out: failures are tolerated as long as
-            # every item reached a terminal state.
-            if all(_is_terminal(st) for st in item_states):
-                return (
-                    InstanceState.DEGRADED
-                    if any(st == InstanceState.FAILED for st in item_states)
-                    else container_outcome(item_states)
-                )
-            return InstanceState.RUNNING
-        return container_outcome(item_states)
+        return foreach_outcome(item_error_policy(node), item_states)
 
     if kind == NodeKind.LOOP:
         if node.body is None:
@@ -957,16 +1053,17 @@ def loop_should_continue(
         expr = str(cfg.get("condition", "") or "")
         if not expr:
             return False, "missing_condition"
-        inner = expr.strip()
-        if inner.startswith("{{") and inner.endswith("}}"):
-            inner = inner[2:-2].strip()
         try:
-            value = resolve_expr(inner, ctx or BindingContext())
+            # ONE dialect (`conditions.evaluate`), shared with the expression gate and
+            # `success_when`. A bare `{{ref}}` evaluates exactly as it did before this was
+            # centralised; what is new is that `a && b` / `x == 'done'` now mean what they
+            # read as, instead of being interpolated into a always-truthy string.
+            met = evaluate_condition(expr, ctx or BindingContext())
         except BindingError:
             # An unresolvable exit condition must not spin forever. Stopping is the safe
             # reading: a loop that cannot evaluate its own exit test is broken.
             return False, "condition_unresolvable"
-        return (not _truthy(value), "" if not _truthy(value) else "condition_met")
+        return (not met, "" if not met else "condition_met")
 
     if mode == LoopMode.UNTIL_CANCELLED:
         # No self-terminating condition by definition: a watcher stops when something
@@ -1058,11 +1155,3 @@ def _derive_child_state(
     `sequence` would read PENDING from the raw map and the watcher would never be reaped.
     """
     return _derive(node, path, states, set(), iterations, BindingContext())
-
-
-def _truthy(value: Any) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() not in ("", "false", "0", "no", "null", "none")
-    if isinstance(value, (list, dict)):
-        return bool(value)
-    return bool(value)

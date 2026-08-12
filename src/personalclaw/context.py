@@ -187,6 +187,40 @@ def _self_model_snapshot(svc) -> str:
         return ""
 
 
+def _record_ambient_measurements(alloc, *, sweep_args: dict) -> None:
+    """Persist what this render measured (LEARN-R14b / §2.5). Never raises.
+
+    Two things, one write path:
+
+    - **Budget utilization**, every render. `ambient.report()` already computed it and
+      sent it to a debug log, which means the flywheel health composite's
+      50-80%-utilization band had no source of truth — it would have rendered from a
+      key nothing wrote.
+    - **The ablation-delta sweep**, on a cadence (default daily). Run here because this
+      is the only place that holds the real candidate pool; a sweep over reconstructed
+      inputs would measure a different assembly and report the delta as if it were
+      this one. Cadence-gated because it costs one extra allocation per heuristic.
+    """
+    try:
+        from personalclaw.learning.staging import get_store
+
+        store = get_store()
+        store.record_allocation(used_tokens=alloc.used_tokens, budget_tokens=alloc.budget_tokens)
+        if not store.ablation_due():
+            return
+        from personalclaw.learning import ambient
+        from personalclaw.learning.surfacing import ablation_deltas
+
+        budget = int(sweep_args.pop("budget_tokens", 0) or 0)
+        query = str(sweep_args.pop("query", "") or "")
+        sources = ambient.sources_for(**sweep_args)
+        if not sources or budget <= 0:
+            return
+        store.record_ablation(ablation_deltas(sources, query=query, budget_tokens=budget))
+    except Exception:
+        logger.debug("ambient measurement recording failed", exc_info=True)
+
+
 def _render_ambient(
     *,
     lessons: str = "",
@@ -194,6 +228,7 @@ def _render_ambient(
     voice: str = "",
     persona: str = "",
     self_model: str = "",
+    procedural: str = "",
     query: str = "",
 ) -> str:
     """Render the named ambient blocks under ONE token budget (§2.4 / §7 crit 5).
@@ -213,7 +248,7 @@ def _render_ambient(
     would be strictly worse than an over-long prompt, so the fallback is the raw
     lesson block — the most authoritative content, ungoverned rather than absent.
     """
-    if not any((lessons, skill_index, voice, persona, self_model)):
+    if not any((lessons, skill_index, voice, persona, self_model, procedural)):
         return ""
     try:
         from personalclaw.config.loader import AppConfig
@@ -227,6 +262,7 @@ def _render_ambient(
             voice=voice,
             persona=persona,
             self_model=self_model,
+            procedural=procedural,
             query=query,
             budget_tokens=budget,
             window=active_chat_model_window(),
@@ -234,6 +270,19 @@ def _render_ambient(
         text = ambient.frame(alloc, lessons_block=lessons)
         if text:
             logger.debug("ambient allocation: %s", ambient.report(alloc))
+        _record_ambient_measurements(
+            alloc,
+            sweep_args={
+                "lessons": lessons,
+                "skill_index": skill_index,
+                "voice": voice,
+                "persona": persona,
+                "self_model": self_model,
+                "procedural": procedural,
+                "query": query,
+                "budget_tokens": alloc.budget_tokens,
+            },
+        )
         return text
     except Exception:
         logger.debug("ambient allocation failed; falling back to lessons", exc_info=True)
@@ -962,6 +1011,7 @@ class ContextBuilder:
         _voice = ""
         _skill_index = ""
         _self_model = ""
+        _procedural = ""
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
@@ -1012,6 +1062,18 @@ class ContextBuilder:
             if getattr(AppConfig.load().learning, "self_model_enabled", True):
                 _self_model = _self_model_snapshot(_svc)
 
+            # How-to-work priors (M5d): the READ side of procedural memory.
+            # `record_procedural` had two live writers (this module's after-turn review
+            # and learning/run_end) and `procedural_priors()` had no production caller
+            # at all, so every turn paid to capture priors that nothing ever used.
+            # Global scope only, capped at 5, and raw failure rows are excluded — those
+            # are failure-SYNTHESIS input, and surfacing them beside the one prior that
+            # replaces them is how this class becomes a tool-call log.
+            try:
+                _procedural = _svc.procedural_block()
+            except Exception:
+                logger.debug("procedural prior block render failed", exc_info=True)
+
         # Skills: personalclaw-only (custom agents load their own). Pass the agent
         # so its agent-local skill tier (skill-agent-local-tier) overrides global
         # for this turn when present.
@@ -1039,7 +1101,12 @@ class ContextBuilder:
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
-            lessons_ctx = service_for(memory).lessons_context() or ""
+            # `workspace=cwd` is what makes a workspace-scoped lesson visible, and this
+            # is the ONE read path that can supply it: a workspace IS the working
+            # directory (see the workspace-identity block above, which tells the agent
+            # exactly that). Global lessons come back regardless; a lesson scoped to a
+            # different directory does not.
+            lessons_ctx = service_for(memory).lessons_context(cwd) or ""
 
         # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
         # independent per-block character caps that summed to ~9× the budget the
@@ -1054,6 +1121,7 @@ class ContextBuilder:
             voice=_voice,
             persona=_persona,
             self_model=_self_model,
+            procedural=_procedural,
         )
         if _ambient:
             parts.append(_ambient)

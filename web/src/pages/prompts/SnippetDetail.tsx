@@ -3,7 +3,7 @@ import { Pencil, Trash2, Check, X, Play, Loader2, Lock } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { Markdown } from '../../ui/Markdown'
-import { Field } from '../../ui/forms'
+import { Field, FieldError } from '../../ui/forms'
 import { confirmDelete } from '../../ui/dialog'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type PromptSnippet, type PromptVariable } from '../../lib/api'
@@ -56,7 +56,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
         <div className="flex items-center gap-s">
           <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Pencil size={13} /> Editing</span>
         </div>
-        {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+        {err && <FieldError>{err}</FieldError>}
         <SnippetForm draft={draft} onChange={setDraft} nameLocked />
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { if (full) setDraft(toSnippetDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
@@ -87,7 +87,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
         )}
         <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sourceTone(snippet.source)} 16%, transparent)`, color: sourceTone(snippet.source) }}>{sourceLabel(snippet.source)}</span>
       </div>
-      {err && <p className="text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError>{err}</FieldError>}
 
       {full.title && <h2 data-type="title-m" className="text-on-surface">{full.title}</h2>}
       {full.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{full.description}</p>}
@@ -165,7 +165,7 @@ function SnippetRenderPanel({ name, vars }: { name: string; vars: PromptVariable
         ))}
         <Button size="sm" onClick={render} disabled={loading} className="self-start">{loading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Render</Button>
       </div>
-      {err && <p className="mt-2 text-danger text-[0.8125rem]">{err}</p>}
+      {err && <FieldError className="mt-2">{err}</FieldError>}
       {out != null && (
         <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{out}</Markdown></div>
       )}

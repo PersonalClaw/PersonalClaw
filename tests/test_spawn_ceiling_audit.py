@@ -141,7 +141,10 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "cli_server.py::_spawn_detached_gateway::subprocess.Popen": (
         "operator: launch the gateway itself"
     ),
-    "cli_server.py::_update::subprocess.run": "operator: self-update git/pip",
+    "cli_server.py::_install::subprocess.run": "operator: self-update package install",
+    "cli_server.py::_refresh_agent_config::subprocess.run": (
+        "operator: post-update `setup --agent-only` re-run"
+    ),
     "cli_server.py::_logs_cmd::subprocess.run": "operator: logs source probe",
     "cli_server.py::_logs_cmd::os.execvp": "operator: exec journalctl/tail for `logs`",
     # Dashboard marketplace/skills CLI shellouts — operator actions via the UI.
@@ -178,11 +181,16 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "operator: list user's tmux sessions"
     ),
     # Update machinery — operator/service; re-execs the gateway itself (must not be capped).
+    # The install-kind decision + the shared git/pip primitives live in core self_update.py
+    # (DIST-13); the dashboard and the CLI both drive them.
+    "self_update.py::_run_git::subprocess.run": (
+        "service: the one git seam every sync self-update probe funnels through"
+    ),
+    "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec": (
+        "service: update git fetch + rev-list"
+    ),
     "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": (
         "service: update check git"
-    ),
-    "dashboard/handlers/updates.py::_commits_behind_upstream::asyncio.create_subprocess_exec": (
-        "service: update git rev-list"
     ),
     "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
         "service: self pip update"

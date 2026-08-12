@@ -52,7 +52,16 @@ function classAttributes(): Array<{ file: string; line: number; value: string }>
 
 // The measured surfaces. Adding a file here is a claim that its dimmed-ink text was checked on the
 // live DOM — not a guess from the class name.
-const MEASURED = new Set(['pages/projects/ProjectsSection.tsx'])
+const MEASURED = new Set([
+  'pages/projects/ProjectsSection.tsx',
+  // Added by measuring, per the rule above — not by reading the class name. `#/tasks?view=dag`'s
+  // critical-path legend carried `text-on-surface-low/70` on 12px explanatory copy and axe reported
+  // `[serious] color-contrast` in ALL THREE configs: **3.84:1** dark (#727374 on #151516) and
+  // **3.95:1** light (#797c7c on #f6f8fb). Undimmed it measures 6.88:1 dark / 8.50:1 light, and the
+  // surface goes 1 blocking → 0 in every config. Its sibling legend members were already full-alpha
+  // `text-warn` / `text-danger`; this was the only dimmed one.
+  'pages/tasks/TaskGraph.tsx',
+])
 const DIMMED_LOW_INK = /\btext-on-surface-low\/\d+\b/
 // An ICON is not text: 1.4.3 governs text contrast, and a decorative glyph falls under 1.4.11
 // non-text contrast instead. `ProjectsSection` keeps one `text-on-surface-low/40` on a `<Circle>`
@@ -60,10 +69,10 @@ const DIMMED_LOW_INK = /\btext-on-surface-low\/\d+\b/
 // hint. Written as a RULE in the filter below (not a line-number allowlist) so it stays true as the
 // file moves.
 
-describe('the measured surface keeps its ink undimmed', () => {
-  it('ProjectsSection has no dimmed low-ink TEXT', () => {
+describe('the measured surfaces keep their ink undimmed', () => {
+  it.each([...MEASURED])('%s has no dimmed low-ink TEXT', (file) => {
     const hits = classAttributes()
-      .filter((c) => MEASURED.has(c.file) && DIMMED_LOW_INK.test(c.value))
+      .filter((c) => c.file === file && DIMMED_LOW_INK.test(c.value))
       // Skip the icon case — see ICON_CLASS above. Checked on the live DOM: axe flags the four TEXT
       // spans on the project detail page and not the <Circle> bullet.
       .filter((c) => !/\bsize-\d|<Circle|mt-0\.5 shrink-0/.test(c.value))
@@ -89,7 +98,9 @@ describe('the rail is not vacuously green', () => {
     // reported a clean sweep, so pin a floor.
     const all = classAttributes()
     expect(all.length, 'the extractor must find the tree\'s className strings').toBeGreaterThan(2000)
-    expect(all.some((c) => MEASURED.has(c.file)), 'the measured file must be in scope').toBe(true)
+    for (const f of MEASURED) {
+      expect(all.some((c) => c.file === f), `${f} must be in scope`).toBe(true)
+    }
   })
 
   it('it still FLAGS the shape it guards', () => {

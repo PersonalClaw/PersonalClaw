@@ -439,6 +439,110 @@ def file_review_proposals(report: CuratorReport, *, dry_run: bool = False) -> in
     return filed
 
 
+# ── Heat-earned promotion (LEARN-R6f) ──
+
+
+@dataclass
+class PromotionSuggestion:
+    """One entity that has EARNED a scope-widening suggestion, with the evidence.
+
+    The evidence travels with the suggestion because widening scope is a trust
+    decision: "used 4 times across 3 contexts, last used 2 active days ago" is
+    reviewable, and "promote this?" is not.
+    """
+
+    kind: str
+    entity: str
+    why: str
+    uses: int
+    contexts: int
+    idle_days: float
+
+    def body(self) -> str:
+        return (
+            f"{self.entity} was captured session-scoped and has earned wider scope: "
+            f"{self.uses} use(s) across {self.contexts} distinct context(s), last used "
+            f"{self.idle_days:.0f} active day(s) ago. Multi-gate evidence, so this is a "
+            "suggestion and not a promotion — scope widening is yours to decide."
+        )
+
+
+def promotion_suggestions(
+    records: list[Any],
+    *,
+    active_dates: list[str] | None = None,
+    now: datetime | None = None,
+) -> list[PromotionSuggestion]:
+    """Which usage records pass the multi-gate. Pure — decides, writes nothing.
+
+    The gate itself is `usage.promotion_ready` (uses AND context diversity AND
+    recency AND success rate). This adds only the curator's own two exemptions:
+    pinned and user-authored entities are already scope decisions somebody made
+    deliberately, and re-offering them is nagging about a settled question.
+    """
+    from personalclaw.learning.usage import promotion_ready
+
+    now = now or datetime.now(timezone.utc)
+    out: list[PromotionSuggestion] = []
+    for rec in records:
+        if getattr(rec, "pinned", False) or getattr(rec, "source_type", "agent") == "user":
+            continue
+        idle = active_days_between(
+            active_dates or [],
+            getattr(rec, "last_used_at", "") or getattr(rec, "first_seen_at", ""),
+            now.isoformat(),
+        )
+        ready, why = promotion_ready(rec, active_days_idle=idle)
+        if not ready:
+            continue
+        out.append(
+            PromotionSuggestion(
+                kind=str(getattr(rec, "kind", "")),
+                entity=str(getattr(rec, "entity", "")),
+                why=why,
+                uses=int(getattr(rec, "used", 0) or 0),
+                contexts=int(getattr(rec, "context_diversity", 0) or 0),
+                idle_days=idle,
+            )
+        )
+    return out
+
+
+def file_promotion_suggestions(
+    suggestions: list[PromotionSuggestion], *, dry_run: bool = False
+) -> int:
+    """File each suggestion as a TIER_MIGRATION proposal. Returns how many landed.
+
+    NEVER auto-promotes — the plan is explicit that scope widening is a trust
+    decision, so the whole mechanism ends at the queue. Repeat ticks are safe: the
+    queue's fingerprint reinforces a pending row and silently skips a rejected one,
+    which is what stops a daily cadence from turning a suggestion into nagging.
+    """
+    if dry_run or not suggestions:
+        return 0
+    from personalclaw.learning.proposals import Kind, enqueue
+
+    filed = 0
+    for sug in suggestions:
+        _verdict, prop = enqueue(
+            kind=Kind.TIER_MIGRATION.value,
+            title=f"Widen {sug.entity}'s scope — it earned it",
+            body=sug.body(),
+            target=sug.entity,
+            provenance="inferred",
+            source_cadence="curator",
+            tags=["promotion", sug.kind],
+            # The multi-gate IS the evidence floor: three uses across two contexts is
+            # already more than the generic occurrence count would ask for, and
+            # re-gating it here would discard exactly the entities that passed.
+            occurrences=max(1, sug.uses),
+            min_evidence=1,
+        )
+        if prop is not None:
+            filed += 1
+    return filed
+
+
 # ── Optimizer detectors ──
 
 
