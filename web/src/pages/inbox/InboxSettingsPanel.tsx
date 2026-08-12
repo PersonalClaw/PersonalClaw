@@ -3,6 +3,7 @@ import { api, type InboxSettings } from '../../lib/api'
 import { Loading } from '../../ui/ListScaffold'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
 import { NumberField } from '../../ui/forms'
+import { notify } from '../../app/appSdk'
 
 /** Inbox settings → GET/PUT /api/inbox/settings (alert keywords, name-mention
  *  alerts, auto-cleanup, retention). Lives in the Inbox SidePanel. */
@@ -28,7 +29,11 @@ export function InboxSettingsPanel() {
 
   const patch = (p: Partial<InboxSettings>) => {
     setS((prev) => prev && { ...prev, ...p })
-    api.saveInboxSettings(p).then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) }).catch(() => {})
+    // The drawer copy of the settings panel — same optimistic-then-silent shape, same fix, so the two
+    // copies stay in parity (`settings/inboxSettingsParity.test.ts` guards their fields).
+    api.saveInboxSettings(p)
+      .then(() => { setSaved(true); setTimeout(() => setSaved(false), 1600) })
+      .catch((e) => notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
   const setEngagement = (v: boolean) => {
