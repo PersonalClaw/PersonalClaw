@@ -105,6 +105,12 @@ describe('the migrated surfaces read the error', () => {
     'pages/projects/ProjectsSection.tsx',
     'pages/code/CodeSection.tsx',
     'pages/learning/LearningPage.tsx',
+    // `#/prompts` is the harsher variant: its fetchers carried `.catch(() => [])`, so the rejection
+    // never reached the hook and `error` could not have been read even if someone tried. Measured
+    // against a 500 with a cold sessionStorage, it rendered "No user prompts — user prompts are
+    // invoked in chat with filled-in {{variables}}" plus a New-prompt CTA, with no error text and no
+    // live region. Removing the swallow is half the fix; the branch is the other half.
+    'pages/prompts/PromptsListPage.tsx',
   ]
 
   for (const rel of ADOPTERS) {
@@ -121,6 +127,17 @@ describe('the migrated surfaces read the error', () => {
       expect(errAt, 'the error branch must come before the skeleton branch').toBeLessThan(skelAt)
     })
   }
+
+  it('no adopter swallows the rejection inside its fetcher', () => {
+    // `.catch(() => [])` inside the fetcher makes the error branch unreachable by construction: the
+    // hook is handed a successful empty list. A surface that renders LoadError while still swallowing
+    // is asserting a state it can never enter.
+    for (const rel of ADOPTERS) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      const swallowing = [...src.matchAll(/useCachedData[\s\S]{0,220}?\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\})/g)]
+      expect(swallowing.map((m) => m[0].slice(0, 60)), `${rel} swallows a fetch rejection`).toEqual([])
+    }
+  })
 
   it('the primitive is exported from the list kit, beside EmptyState', () => {
     // Co-located on purpose: the two are alternative answers to the same condition, and a
