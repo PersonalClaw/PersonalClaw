@@ -470,12 +470,24 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
           {!readOnly && <div className="text-on-surface-low text-[0.75rem] mb-1">Click a radius to override it.</div>}
           <div className="flex flex-wrap gap-3">
             {Object.entries(radius).map(([k, v]) => (
-              <button key={k} type="button" disabled={readOnly} title={readOnly ? `radius.${k} · ${v}` : `Override radius.${k} (now ${v})`}
-                onClick={readOnly ? undefined : async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
-                className="flex flex-col items-center gap-1 group">
-                <span className={`size-12 bg-surface-high border border-outline-variant/40 transition-colors ${readOnly ? '' : 'group-hover:border-primary'}`} style={{ borderRadius: v }} />
-                <span className={`text-on-surface-low text-[0.75rem] font-mono ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
-              </button>
+              // Read-only is not "a disabled action" — there is no action. A natively disabled
+              // button is out of the tab order, and this one carried the token's VALUE in its
+              // `title`, so in read-only mode the value was reachable by hover and by nothing
+              // else. When there is nothing to press, render a plain tile and put the value on
+              // screen where everyone can read it.
+              readOnly ? (
+                <div key={k} className="flex flex-col items-center gap-1">
+                  <span className="size-12 bg-surface-high border border-outline-variant/40" style={{ borderRadius: v }} />
+                  <span className="text-on-surface-low text-[0.75rem] font-mono">{k} · {String(v)}</span>
+                </div>
+              ) : (
+                <button key={k} type="button" title={`Override radius.${k} (now ${v})`}
+                  onClick={async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
+                  className="flex flex-col items-center gap-1 group">
+                  <span className="size-12 bg-surface-high border border-outline-variant/40 transition-colors group-hover:border-primary" style={{ borderRadius: v }} />
+                  <span className="text-on-surface-low text-[0.75rem] font-mono group-hover:text-on-surface">{k}</span>
+                </button>
+              )
             ))}
           </div>
           <div className="flex flex-wrap gap-4 mt-3">
@@ -494,12 +506,19 @@ export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverrid
           {!readOnly && <div className="text-on-surface-low text-[0.75rem]">Click a font family to override its stack.</div>}
           <div className="flex flex-col gap-2">
             {Object.entries(families).map(([k, v]) => (
-              <button key={k} type="button" disabled={readOnly} title={readOnly ? `typography.family.${k}` : `Override typography.family.${k}`}
-                onClick={readOnly ? undefined : async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
-                className="flex items-baseline gap-3 text-left group">
-                <span className={`w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize ${readOnly ? '' : 'group-hover:text-on-surface'}`}>{k}</span>
-                <span className={`truncate text-on-surface text-[0.9375rem] ${readOnly ? '' : 'group-hover:text-primary'}`} style={{ fontFamily: String(v) }}>The quick brown fox</span>
-              </button>
+              readOnly ? (
+                <div key={k} className="flex items-baseline gap-3 text-left">
+                  <span className="w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize">{k}</span>
+                  <span className="truncate text-on-surface text-[0.9375rem]" style={{ fontFamily: String(v) }}>The quick brown fox</span>
+                </div>
+              ) : (
+                <button key={k} type="button" title={`Override typography.family.${k}`}
+                  onClick={async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
+                  className="flex items-baseline gap-3 text-left group">
+                  <span className="w-16 shrink-0 text-on-surface-low text-[0.75rem] font-mono capitalize group-hover:text-on-surface">{k}</span>
+                  <span className="truncate text-on-surface text-[0.9375rem] group-hover:text-primary" style={{ fontFamily: String(v) }}>The quick brown fox</span>
+                </button>
+              )
             ))}
             {Object.keys(weights).length > 0 && (
               <div className="flex flex-wrap gap-3 mt-1">
