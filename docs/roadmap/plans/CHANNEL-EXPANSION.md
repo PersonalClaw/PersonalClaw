@@ -390,3 +390,28 @@ Extends **Sessions 7-8** (the ramp — the guide/kit are being written there any
   **Test-hygiene fix that belongs in the record:** the kit drives the REAL core trust store (resolved through `config_dir()`), and `slack-channel`'s conftest isolates the session map but not `PERSONALCLAW_HOME` — so an unisolated run would have written the developer's own `~/.personalclaw/entity_settings/channel_trust.json`. The Slack conformance test sets `PERSONALCLAW_HOME` itself and also clears the bot/app tokens, because with a token present `SlackTransport.send` builds a real client and posts to `chat.postMessage` for real (observed as a live `invalid_auth`).
   **Gate.** Core: black/isort clean (1486 files), flake8 clean, `mypy src/personalclaw harness` clean on 784 files, 76 passed / 1 skipped on the independent re-run (new kit suite 29/29, plus `test_inert_surface_baseline` and `test_provider_boundary_residue` green — the new sdk exports have in-repo consumers, so the ratchet did not move; the one skip is `test_apps_import_boundary.py:27` "workspace apps/ dir not present", environmental and pre-existing). Apps: 45/45 manifests valid, boundary lint clean, telegram 111 passed, discord 201 passed, email 309 passed, slack 352 passed / 1 xfailed.
   **DISCOVERY — a second, unreported cross-repo break, 101 failures wide.** `slack-channel` has **105** pre-existing failures (proven pre-existing: identical 105 with the new file excluded, `350 passed` → `352 passed` with it). Only 8 are the known `_CRON_MSG_LIMIT` import; the rest are `AttributeError: 'Stats' object has no attribute 'inc_message_received'` from the apps repo's `slack-channel/slack_runtime/handler.py` (line 1647 there — an apps-repo path, named without a `file.py:NNN` citation because this repo's docs-lint resolves citations against THIS repo's tracked files), a method core deleted in #1003 ("surface the measured runtime counters, delete the unmeasured"). `grep -c inc_message_received src/personalclaw/stats.py` → 0. Apps CI installs core from `main`, so the apps repo's `main` is almost certainly red on this today. Both breaks are the same shape — an app reaching for a core private that core removed — and both want their own fix.
+
+- **[2026-08-11][CE-8 / T7.4] DONE — part 1 unblocked and verified; the atom is complete.** The
+  twice-recorded BLOCKED-E1 was correct at the time: core's inbox seam could not resolve an
+  app-declared `inbox` provider, so the Slack adapter would have shipped declared-but-inert. That
+  blocker is gone — INU-8 (core #1090) graduated `inbox` off `EntitySeamHandler`'s no-op `register()`
+  and gave `get_default_provider` an app-instance precedence step. This entry closes CE-8 rather than
+  re-scoping it, because nothing in its done_when changed.
+  **Verified by OUTCOME with the REAL app, not a fixture and not a source grep** (the discipline this
+  program keeps relearning): the `slack-channel` app from apps main was installed into a throwaway
+  `PERSONALCLAW_HOME` against INU-8's core, then enabled. Result: install ok → enable ok →
+  `list_source_names() == ['slack']` → `get_default_provider('slack')` returns `SlackInboxSource` with
+  `source_name == 'slack'`. That is the "Slack messages flow through the generic inbox source seam"
+  clause, demonstrated end to end.
+  **The two-provider clause holds as designed:** the canonical singular `provider` still carries the
+  `channel` transport and the new `providers` array carries the inbox source — so the interactive chat
+  path is untouched and the inbox source is an ADAPTER over the existing `RealSlackClient`, not a second
+  client. Parts 2-4 landed earlier (#1009, #1032): `grep -i slack` over the inbox seam is empty and the
+  non-seam Slack surface lives behind the app's own `ui` block.
+  **Ordering note for the reader:** this status flip rides a PR stacked ABOVE INU-8's implementation, so
+  by the time CE-8 reads `done` on main, the seam it depends on is on main too. Verified against the
+  code under review rather than asserted ahead of it.
+  **No new app-side test was added.** INU-8's own end-to-end already pins the generic mechanism with a
+  fixture app; a slack-specific seam test in core would couple core to an app, and the same test in the
+  apps repo would sit red until #1090 merges. Adding a red test to apps main to prove a point already
+  proven is not worth it — the app's own 17 adapter tests plus INU-8's mechanism test cover both halves.
