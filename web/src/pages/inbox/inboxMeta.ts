@@ -1,4 +1,5 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2 } from 'lucide-react'
+import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
 
@@ -109,9 +110,10 @@ export function sourceLabel(source?: string): string {
   return source
 }
 
-export function relPast(ts?: number | null): string {
-  if (!ts) return ''
-  const s = Date.now() / 1000 - ts
+export function relPast(ts?: number | string | null): string {
+  const t = epochSeconds(ts)
+  if (t == null) return ''
+  const s = Date.now() / 1000 - t
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
