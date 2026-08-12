@@ -9,6 +9,7 @@ import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { SearchField } from '../../ui/SearchField'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
 import { confirmDelete } from '../../ui/dialog'
 import { SidePanel } from '../../ui/SidePanel'
@@ -369,6 +370,12 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               </div>
             )}
             <FilterMenu sections={filterSections} />
+            {/* Typing here rewrites the list under the user, and nothing said so. Same idiom the
+                `ListControls` adopters render — this page lays its own bar out, so it renders the
+                extracted piece rather than a second copy of it. `active` is the SEARCH being
+                non-empty, not `filter !== 'all'`: the status filter's own default is a preset, and a
+                flag that is true at rest would announce a count to a user who has done nothing. */}
+            <ResultAnnouncement count={filtered?.length ?? 0} noun="tasks" active={query.trim().length > 0} />
           </div>
         </div>
       }

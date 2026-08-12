@@ -4,6 +4,7 @@ import { TopBar } from '../../ui/TopBar'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Loading } from '../../ui/ListScaffold'
 import { SearchField } from '../../ui/SearchField'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { Segmented } from '../../ui/forms'
 import { QuietButton } from '../../ui/QuietButton'
 import { Popover, MenuRow } from '../../ui/Popover'
@@ -165,6 +166,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
                 options={[{ key: '', label: 'All collections' }, ...collections.map((c) => ({ key: c, label: c }))]} />
             )}
             <div className="ml-auto"><Segmented ariaLabel="Sort artifacts" value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
+            {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
+                already uses it to tell an empty library from a filtered-to-nothing one, so the
+                announcement rides the same flag rather than inventing a second rule. */}
+            <ResultAnnouncement count={filtered.length} noun="artifacts" active={!!(q.trim() || kind || src || col)} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && artifacts.length === 0

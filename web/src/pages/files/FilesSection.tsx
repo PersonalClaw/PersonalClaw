@@ -8,6 +8,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, Loading } from '../../ui/ListScaffold'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
+import { ResultAnnouncement } from '../../ui/ListControls'
 import { Segmented, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
@@ -305,6 +306,13 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
               <div className="flex flex-col gap-2 border-b border-outline/40 p-m">
                 <SearchField inputRef={searchRef} value={grep} onChange={setGrep} size="sm"
                   placeholder="Search contents…  ⌘F" name="workspace-grep" ariaLabel="Search file contents" />
+                {/* Content search replaces the whole explorer body with hits, and said nothing about
+                    how many. `showResults` is the surface's own threshold (>= 2 chars), so a
+                    one-character query does not announce a count for a search that has not run.
+                    🪤 The noun is "lines", not "matches": a `ContentMatch` is one matching LINE
+                    (file + line + col + preview), and "No matching matches" is what the zero branch
+                    printed when the noun restated the word the copy already carries. */}
+                <ResultAnnouncement count={results.length} noun="lines" active={showResults} />
                 {showResults && (
                   <input value={include} onChange={(e) => setInclude(e.target.value)} placeholder="include glob e.g. *.py"
                     name="workspace-grep-include" aria-label="Restrict search to files matching glob"
