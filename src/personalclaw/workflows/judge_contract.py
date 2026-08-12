@@ -1,4 +1,15 @@
-"""The judge contract — maker/checker with teeth.
+"""The judge contract — maker/checker teeth, AUTHORED here and not enforced anywhere yet.
+
+**Read this before trusting a rule below.** Nothing in `src/` calls this module's
+enforcement: `validate_verdict`, `meets_ratchet`, `compute_overall`,
+`detect_forbidden_modes`, `aggregate_samples` and `hints_from_dict` have zero production
+callers. Only the TYPES leave this file — `judge_actors` imports `Isolation`,
+`judge_pretier` imports `FallbackCheck`, and `engine.py` deliberately RESTATES the
+sampling rule rather than importing `aggregate_samples`. So every rule stated here is a
+specification of what a judge SHOULD be held to, not a description of what the running
+engine does. `tests/test_workflows_judge_contract.py` proves the rules work on these
+functions; it cannot prove they run, because they do not. What the live judges do
+instead is measured at the bottom of this docstring.
 
 A loop that judges its own work converges on whatever the worker finds easiest to
 claim. Every mechanism here exists to make a specific degenerate pass impossible
@@ -9,9 +20,11 @@ and advice loses to gradient pressure.
 may transition a node to `waiting` or `review` — never to `done`. Only a judge or
 gate actor can. That is a state-machine rule, so no prompt can talk its way past it.
 
-**A PASS without cited proof is invalid.** Not "discouraged": the verdict is rejected
-by the contract. A completion record without proof is a claim, and the whole point of
-a checker is to stop accepting claims.
+**A PASS without cited proof is invalid — under this contract, which no live judge
+consults.** `validate_verdict` rejects a PASS carrying neither `proof` nor
+`evidence_refs`, because a completion record without proof is a claim and the whole
+point of a checker is to stop accepting claims. That rejection has never fired on a
+real run: see the measurement below for why, and for what it would cost to change.
 
 **The deterministic tier runs BEFORE the model, every cycle.** Regex failure patterns,
 schema checks, existence gates — microseconds each. Loop judges run every iteration,
@@ -31,6 +44,41 @@ Otherwise the two drift and the drift is invisible.
 and tool outputs — not the worker's prose about its own work. Prose is exactly the
 channel a worker would use to influence a judge, including prose that survives
 compaction.
+
+── What the live judges actually do (measured 2026-08-12, `WF2LOO-12`) ──
+
+**Enforcement is NOT wired.** Two live judge paths exist, and neither consults this file:
+
+1. **The judge GATE** — `engine.dispatch_gate`'s `GateKind.JUDGE`, used by 7 gates across 7
+   bundled templates. Its prompt ends `Respond with EXACTLY ONE word, one of: PASS, RETRY,
+   ESCALATE, REJECT. No other text.`, and the answer is read by `verify.parse_verdict`,
+   which extracts the verdict WORD only — over a DIFFERENT four-member enum
+   (`verify.Verdict`, carrying RETRY where this module carries REPLAN/NEEDS_INPUT). A bare
+   word cannot carry proof, scores or a rubric result, so this contract is not merely
+   unused there: it is inexpressible. Enforcing "a PASS without cited proof is invalid"
+   against that prompt would invalidate every judge PASS in all 7 templates, which is an
+   outage rather than a gate.
+2. **The judge STAGE** — 6 bundled templates (`code-project`, `design-project`,
+   `diagnose-run`, `general-project`, `goal-pursuit-open-ended`, `goal-pursuit-verifiable`)
+   carry a `judge` stage that DOES ask for this module's exact shape: `{reasoning, verdict,
+   scores, marginal_value, evidence_refs, proof, cannot_judge}`, with this module's
+   five-verdict vocabulary spelled out in the prompt. `dispatch_infer` really does parse it
+   (a `config.schema` sets `want_json`). But nothing validates it and nothing READS it:
+   `dispatch_infer` returns DONE for any parseable JSON whatever the verdict says, and no
+   shipped template binds `nodes.judge.output.*`. A contract-shaped verdict is produced
+   every loop iteration and discarded.
+
+The `rubric` in `runtime_hints.judge` (6 templates, 14 criteria) reaches the judge as PROSE
+only — inlined into the prompt text, which is exactly what
+`test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt`
+asserts: the criterion STRING is a substring of some judge prompt. No `target_score` is
+ever compared against a score, because `meets_ratchet` has no caller.
+
+Wiring this contract into the live path is its own scoped atom, `WF2LOO-13`, with a
+measured blast radius. Until it lands, `test_workflows_judge_contract.py::
+test_the_unwired_enforcement_claim_matches_the_live_path` fails if this section and the
+live path drift apart in EITHER direction — enforcement gaining a caller while this
+docstring still says it has none, or the live gate leaving its one-word prompt.
 """
 
 from __future__ import annotations

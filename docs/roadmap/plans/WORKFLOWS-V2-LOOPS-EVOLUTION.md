@@ -1,6 +1,6 @@
 # WORKFLOWS-V2-LOOPS-EVOLUTION
 
-**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2LOO.md`](../atomic/WF2LOO.md) as 11 atomic plan(s).
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2LOO.md`](../atomic/WF2LOO.md) as 13 atomic plan(s).
 
 This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
 
@@ -1241,3 +1241,85 @@ Verified load-bearing: removing the rule turns the flagging test red. Gate: `mak
   loop or bundled"` green; `web`: `npm run typecheck` clean, FULL `npm test` **144 files / 1368
   tests** green, `npm run build` clean. `docs/architecture/workflows.md`'s module table gained the two
   new modules in the same commit (its bidirectional drift test demands it).
+
+- **2026-08-12 — DONE — `WF2LOO-12`: the judge contract's enforcement claim is now honest, and
+  railed against drift.** Branch `feature-judge-contract-claims`. `judge_contract.py` opened by
+  stating *"**A PASS without cited proof is invalid.** Not 'discouraged': the verdict is rejected by
+  the contract"* as a description of the running engine. **It never has been.**
+
+  **Measured.** The live judge gate (`engine.dispatch_gate`, `GateKind.JUDGE`) sends
+  `f"{prompt}\n\nRespond with EXACTLY ONE word, one of: PASS, RETRY, ESCALATE, REJECT. No other
+  text."` and reads the answer with `verify.parse_verdict` (`verify.py:63`), which extracts the
+  verdict WORD only — over a DIFFERENT four-member enum (`verify.Verdict` carries RETRY where the
+  contract carries REPLAN/NEEDS_INPUT). A bare word cannot carry proof, scores or a rubric result,
+  so the contract is not merely unused there: it is inexpressible. And nothing calls it —
+  `validate_verdict`, `meets_ratchet`, `compute_overall`, `detect_forbidden_modes`,
+  `aggregate_samples` and `hints_from_dict` have **zero** production callers. The only things that
+  leave the module are TYPES (`judge_actors.py:26` imports `Isolation`; `judge_pretier.py:246`
+  imports `FallbackCheck`), plus two comments (`models.py:712`, `engine.py:1510-1511`) recording
+  that `engine.py` deliberately RESTATES the sampling rule rather than importing it. Population:
+  **7 judge gates in 7 bundled templates**, so enforcing the headline would invalidate every judge
+  PASS in all of them — an outage, not a gate.
+
+  **DISCOVERY — a live structured judge path DOES exist, and it already emits the contract shape.**
+  The `judge` STAGE in 6 bundled templates (`code-project`, `design-project`, `diagnose-run`,
+  `general-project`, `goal-pursuit-open-ended`, `goal-pursuit-verifiable`) declares
+  `config.schema` = `{reasoning, verdict, scores, marginal_value, evidence_refs, proof,
+  cannot_judge}`, and its prompt spells out this module's own five-verdict vocabulary verbatim.
+  `dispatch_infer` really parses it — `want_json = bool(cfg.get("schema"))` (`engine.py:409`). So a
+  `validate_verdict`-shaped response is produced on every loop iteration, and then **discarded**:
+  `dispatch_infer` returns DONE for any parseable JSON whatever the verdict says, and **zero**
+  shipped templates bind `nodes.judge.output.*`. That is what settled the option. Enforcing on that
+  path could not change any outcome (nothing consumes the verdict) so it would ship INERT; making
+  it decide the node instead would fail work that passes today. Both are barred by this program's
+  rules, so **option A (docs honesty) is forced, not preferred.** A third live structured judge,
+  `loop/judge.py`, speaks yet another vocabulary (`CycleVerdict{done, done_reason, marginal_value,
+  quality_score, regressed}`) with no proof field, so the contract is not expressible there either.
+
+  **DISCOVERY — what the rubric declarations actually reach.** 6 templates declare
+  `runtime_hints.judge.rubric` (14 criteria total). `hints_from_dict` is the only parser and has no
+  caller, so as DATA the rubric is inert. As PROSE it does arrive: `WF2LOO-3`'s log claims "a test
+  asserting every declared criterion reaches a judge", and that test is
+  `test_workflows_loop_templates.py::test_every_rubric_criterion_appears_in_a_judge_prompt` — it
+  asserts the criterion STRING is a substring of some judge node's `prompt`. Text inlining, not
+  scoring. No `target_score` is ever compared against a returned score, because `meets_ratchet` has
+  no caller. The claim is literally true and much weaker than it reads.
+
+  **What shipped.** The module docstring now says enforcement has no caller, and carries a measured
+  "what the live judges actually do" section naming both live paths, the rubric's prose-only
+  reachability, and the wiring atom. **No function was deleted** (they are authored contract), and
+  **nothing became stricter**: `engine.py` and `verify.py` are byte-identical to `HEAD`, so a
+  user's judge gate does exactly what it did before this change — one-word prompt, `parse_verdict`,
+  same verdict→state mapping. No `web/` change.
+
+  **The rail.** `test_workflows_judge_contract.py::test_the_unwired_enforcement_claim_matches_the_live_path`
+  fails in BOTH drift directions: (a) any of the six entry points gains a production caller while
+  the docstring still says enforcement is unwired; (b) the live gate stops demanding one bare word
+  while the docstring still gives that as the reason for not wiring. Two vacuity floors keep it from
+  matching nothing — every entry point must still be `def`ined in `judge_contract.py`, and
+  `GateKind.JUDGE` must be found inside `dispatch_gate` before any conclusion is drawn from what its
+  text lacks. **Proven able to fail by three probes, each reverted with a targeted edit:** deleting
+  the `Enforcement is NOT wired` marker (1 failed), injecting a `validate_verdict` caller into
+  `verify.py` (1 failed, naming the caller), and switching the gate prompt to JSON (1 failed). It
+  deliberately does NOT assert enforcement stays unwired — wiring it is `WF2LOO-13`.
+
+  **`WF2LOO-13` recorded (todo) with the measured blast radius** so the wiring is a scoped decision
+  rather than a surprise: 7 judge gates in 7 templates change prompt + parse; 6 templates × 14
+  rubric criteria become live thresholds for the first time (an unscored criterion is a
+  `not scored` shortfall — a REJECT — under `Ratchet.STRICT`); every judge answer grows from ~1
+  token to a JSON object on a gate that runs every loop iteration, with a more frequent PROTOCOL
+  failure mode on unparseable JSON; and the two verdict enums must converge to one closed set
+  rather than be bridged. Its first step is measuring how many real judge responses would satisfy
+  the contract BEFORE it gets teeth — which is why it depends on `WF2LOO-7` (the tick that actually
+  emits `judge_verdict` ledger events; `judge_calibration.VerdictRecord` is the reader).
+
+  **DEVIATION — the rail lives in `tests/test_workflows_judge_contract.py`, not in
+  `tests/test_inert_surface_baseline.py`.** `PHF-13` already pins `validate_verdict` and
+  `hints_from_dict` as caller-free there, and that rail belongs to the census. This one is about
+  the DOCSTRING's honesty versus the live path, which is WF2LOO's contract, so it sits with the
+  module's own tests and the generated inert-surface baseline is untouched (no regeneration needed).
+
+  Gate: `make lint` green; `pytest -k "judge or verdict or gate or rubric"` green; the roadmap
+  derived block regenerated with `tools/regen_dag_derived.py` (614 atoms, 847 edges; the 2 cycles
+  and 1 unresolved ext-ref are pre-existing and unrelated). The source plan's decomposition count
+  moved 11 → 13.
