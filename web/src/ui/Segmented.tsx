@@ -212,6 +212,9 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} disabled={disabled}
           aria-label={ariaLabel ?? active?.label ?? active?.key} aria-expanded={open}
+          // Matches `ProjectPicker`, the sibling whose popup is also a listbox: the trigger says
+          // a listbox is coming, not just that something expanded.
+          aria-haspopup="listbox"
           title={bare ? `${ariaLabel ? `${ariaLabel}: ` : ''}${active?.label ?? active?.key}` : undefined}
           className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
           style={fvs(550)}>
@@ -224,7 +227,7 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
       {(close) => (
         <div role="listbox" aria-label={ariaLabel}>
           {options.map((o) => (
-            <MenuRow key={o.key} icon={o.icon ? <o.icon size={15} /> : undefined}
+            <MenuRow key={o.key} role="option" icon={o.icon ? <o.icon size={15} /> : undefined}
               label={o.label ?? o.key} selected={o.key === value}
               onClick={() => { onChange(o.key); close() }} />
           ))}
