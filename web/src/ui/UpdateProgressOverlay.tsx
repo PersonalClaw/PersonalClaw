@@ -6,6 +6,7 @@ import { spring, bounce } from '../design/motion'
 import { useChatSocket } from '../lib/useChatSocket'
 import { api } from '../lib/api'
 import { useFocusTrap } from './useFocusTrap'
+import { accentChip } from '../design/accent'
 
 // ── Update progress overlay ────────────────────────────────────────────────
 // The self-update pipeline (POST /api/update) broadcasts `update_progress` WS
@@ -138,7 +139,7 @@ function StepRow({ label, status }: { label: string; status: 'done' | 'active' |
     <div className="flex items-center gap-3">
       <span className="grid size-6 shrink-0 place-items-center rounded-full"
         style={status === 'done' ? { background: 'color-mix(in srgb, var(--color-success) 18%, transparent)', color: 'var(--color-success)' }
-          : status === 'active' ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }
+          : status === 'active' ? accentChip
           : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
         {status === 'done' ? <Check size={13} />
           : status === 'active' ? <Loader2 size={13} className="animate-spin" />

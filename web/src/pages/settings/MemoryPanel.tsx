@@ -23,6 +23,7 @@ import { TextLink } from '../../ui/TextLink'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 
 // Two-level tab model (MEM-i3): the exploration surfaces — every "look at what's
 // stored" view — nest under Browse; the top level keeps the distinct destinations
@@ -285,7 +286,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
               return (
                 <button key={k} type="button" onClick={() => setKindFilter(k)}
                   className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] transition-colors"
-                  style={on ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+                  style={on ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
                   {meta && <meta.icon size={11} />}{k === 'all' ? 'All' : meta!.label}<span className="tabular-nums">{counts[k]}</span>
                 </button>
               )

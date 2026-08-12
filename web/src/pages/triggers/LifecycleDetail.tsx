@@ -9,6 +9,7 @@ import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, seedActionConfig } from './ActionConfig'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
+import { accentChip } from '../../design/accent'
 
 /** Lifecycle-trigger inspector for the SidePanel: view ↔ in-panel edit, plus a
  *  Test button that fires the action with a sample context. Backed by the hooks
@@ -104,7 +105,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
       {testOut && <p className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] break-words">{testOut}</p>}
 
       <div className="flex flex-wrap items-center gap-s">
-        <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', color: 'var(--color-primary)' }}>{em.label}</span>
+        <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={accentChip}>{em.label}</span>
         {/* S67: an existing trigger on a dormant event looks identical to a working one — same
             Enabled toggle, same "Ran 0×" stat, which reads as "hasn't happened yet" rather than
             "cannot happen". This chip is the difference. */}
