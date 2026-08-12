@@ -154,7 +154,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">New trigger</span></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl flex flex-col gap-xl" style={{ maxWidth: 'var(--content-width)' }}>
-          <Field label="Name" hint="A short label for this trigger."><TextInput value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
+          <Field label="Name" hint="A short label for this trigger."><TextInput required value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
 
           {/* ── SECTION 1 · TRIGGER ── */}
           <SectionHeader icon={Zap} title="Trigger" subtitle="When this fires" />
