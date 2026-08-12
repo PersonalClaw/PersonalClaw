@@ -446,11 +446,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `apps installed extensions settings configure ${nonProvider.map((a) => a.displayName).join(' ')}`
     },
     render(query, go) {
-      const { data } = useApps()
+      const { data, error: appsErr } = useApps()
       const nonProvider = (data ?? []).filter((a) => !a.isProvider)
       const configurable = nonProvider.filter((a) => a.hasConfig).length
       return (
-        <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined}>
+        <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined && !appsErr}>
+          {/* Same shape as the Inbox tile: a tile that shimmers forever is the same lie in miniature. */}
+          {!data && Boolean(appsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your apps.</div>}
           {data && <>
             <BigStat value={nonProvider.length} caption={nonProvider.length === 1 ? 'installed app' : 'installed apps'} />
             <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
@@ -579,12 +581,15 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return `tool output projection rules trim shrink token juice tokenjuice savings saved tokens compressor regex marker strategy ${saved} ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}`
     },
     render(query, go) {
-      const { data: rules } = useProjectionRules()
+      const { data: rules, error: rulesErr } = useProjectionRules()
       const { data: savings } = useToolsSavings()
       const list = rules ?? []
       const savedTokens = savings?.saved_tokens_estimated ?? 0
       return (
-        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined}>
+        <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined && !rulesErr}>
+          {/* The savings meter is a SEPARATE read that keeps its own fallback, so it can still headline
+              here while the rules read has failed — the failure line only speaks for the rules. */}
+          {!rules && Boolean(rulesErr) && savedTokens === 0 && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your projection rules.</div>}
           {/* Headline the savings meter once there's data (the feature's whole point);
               fall back to the rule count / builtin-projectors hint otherwise so the card
               is never empty and the feature is always discoverable from the grid. */}
@@ -655,9 +660,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Browse and inspect archived chat sessions.',
     useSearchText() { return 'archive archived chat sessions transcripts browse' },
     render(query, go) {
-      const { data: a } = useArchives()
+      const { data: a, error: archErr } = useArchives()
       return (
-        <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined}>
+        <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined && !archErr}>
+          {!a && Boolean(archErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your archives.</div>}
           {a && <BigStat value={a.length} caption={a.length === 1 ? 'archived session' : 'archived sessions'} />}
         </BentoCard>
       )
