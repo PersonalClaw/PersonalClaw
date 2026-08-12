@@ -1,6 +1,8 @@
 # CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
 # Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
-# lint · test · web · rails · harness · client · dco (PR-only). Heavier matrix/coverage/audit live in full.yml (main + nightly).
+# lint · test · web · rails · harness · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
+# `dco` lives in its own workflow (dco.yml) — it needs pull_request_target so it is not
+# gated behind first-time-contributor run approval.
 name: CI
 
 on:
@@ -242,91 +244,7 @@ jobs:
           uv pip install --python .venv-client "packages/personalclaw-client-py[dev]"
           .venv-client/bin/python -m pytest packages/personalclaw-client-py/tests
 
-  dco:
-    # Every commit in a PR must carry a Signed-off-by trailer (DCO — plan 37).
-    # Pure-git check (no external action): diff the PR range against its base and
-    # fail on any commit missing sign-off. PR-only — a feature-branch push has no
-    # base to diff, and the merge to main preserves the signed commits.
-    # Dependabot is exempt: its bot commits cannot carry a Signed-off-by trailer,
-    # and dependency bumps are provenance-clear by construction. The exemption is
-    # per-COMMIT (skip commits authored by dependabot), not gated on the run's
-    # triggering actor — so it still holds after a maintainer pushes a fix onto a
-    # dependabot branch (rebase, lockfile regen), which changes github.actor to a
-    # human and would otherwise re-fail on dependabot's own unsigned commit.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write   # post the remediation comment on failure
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Verify DCO sign-off on every commit
-        id: verify
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          missing=0
-          unsigned=""
-          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
-            email="$(git show -s --format='%ae' "$sha")"
-            # Skip dependabot's own commits — a bot can't sign off, and bumps are
-            # provenance-clear. Maintainer commits on the same branch still checked.
-            case "$email" in
-              *dependabot*@users.noreply.github.com) continue ;;
-            esac
-            author="$(git show -s --format='%an <%ae>' "$sha")"
-            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$author"; then
-              echo "::error::commit $sha is missing a matching 'Signed-off-by: $author' trailer — run: git commit -s (or git rebase --signoff)"
-              unsigned="${unsigned}- \`${sha}\` — ${author}"$'\n'
-              missing=1
-            fi
-          done
-          {
-            echo "unsigned<<EOF"
-            printf '%s' "$unsigned"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          [ "$missing" -eq 0 ] && echo "DCO: all commits signed off."
-          exit "$missing"
-      # On failure, post the exact fix as a PR comment (find-and-update a single
-      # marked comment, so re-runs don't stack). The buried ::error:: annotation
-      # is easy to miss; contributors need the remediation in the PR conversation.
-      - name: Explain how to fix DCO
-        if: failure() && steps.verify.outputs.unsigned != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const marker = '<!-- dco-help -->';
-            const body = [
-              marker,
-              "### ✍️ This PR needs a DCO sign-off",
-              "",
-              "Every commit must carry a `Signed-off-by` trailer whose name/email match the commit author. These don't:",
-              "",
-              process.env.UNSIGNED.trim(),
-              "",
-              "**Fix — sign off every commit and re-push:**",
-              "```bash",
-              "git rebase --signoff origin/" + context.payload.pull_request.base.ref,
-              "git push --force-with-lease",
-              "```",
-              "For a single commit, `git commit --amend --signoff --no-edit && git push --force-with-lease` also works.",
-              "",
-              "If your author identity is wrong (e.g. a placeholder email), set `git config user.name`/`user.email` to your real GitHub identity first, then rebase with `--signoff --exec 'git commit --amend --no-edit --reset-author'`.",
-              "",
-              "More: [CONTRIBUTING.md → DCO](../blob/" + context.payload.pull_request.base.ref + "/CONTRIBUTING.md#developer-certificate-of-origin-dco).",
-            ].join("\n");
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }
-        env:
-          UNSIGNED: ${{ steps.verify.outputs.unsigned }}
+  # dco: moved to its own workflow (.github/workflows/dco.yml). It needs
+  # `pull_request_target` so a first-time contributor's PR is checked without a
+  # maintainer approving the run first — this workflow's `pull_request` trigger is
+  # held pending for new contributors, which is exactly when sign-off is missing.
