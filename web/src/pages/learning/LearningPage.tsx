@@ -7,13 +7,14 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { useCachedData } from '../../lib/useCachedData'
-import { api, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
+import { api, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
+import { HealthPanel } from './HealthPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
-import { WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { HEALTH_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
@@ -39,6 +40,13 @@ export function LearningPage() {
   const { data: week, refresh: refreshWeek } = useCachedData<StagingWeek>(
     WEEK_KEY,
     () => api.learningStagingWeek(7),
+  )
+  // `error` is READ, not discarded. This panel's subject is "is the flywheel working?", so a
+  // swallowed fetch failure would render as "nothing has happened" — the one answer that is
+  // never true and never actionable.
+  const { data: health, error: healthError, refresh: refreshHealth } = useCachedData<LearningHealth>(
+    HEALTH_KEY,
+    () => api.learningHealth(7),
   )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
@@ -80,7 +88,7 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => refreshEverything(refreshProposals, refreshWeek)}
+            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth)}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -91,6 +99,9 @@ export function LearningPage() {
           {err && <InlineError icon onDismiss={() => setErr('')}>{err}</InlineError>}
 
           {week && <WeekPanel week={week} />}
+
+          <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
+
 
           <div className="flex flex-col gap-m">
             <div className="flex flex-wrap items-center gap-s">

@@ -8,6 +8,13 @@ memory heat (`memory_record.heat`, `0.7·log1p(visits)/ln10 + 0.5·e^(−days/30
 relevant?" means three different answers for the same entity depending on which
 code path asked.
 
+All three now run on this kernel. `memory_record.heat` keeps its SHAPE — a combined
+usage-and-recency score — but its recency term is this kernel's `strength()` rather
+than a private `e^(−days/30)`, and its per-kind rate comes from `KIND_MULTIPLIERS`.
+That changes numbers (a 30-day-old semantic row's recency term rises from 0.368 to
+0.812, because the private curve had no importance axis and no per-kind rate), which
+is the point: it was a different curve, not a different spelling of the same one.
+
 This is the one kernel. Its form:
 
     strength = exp(−baseλ × entityMultiplier × activeDaysSinceUse)
@@ -26,6 +33,18 @@ dropping when it stops being touched.
 is doctrine, not preference: if strength ranked results, a thing would surface
 because it surfaced recently — a feedback loop that buries anything not already
 popular, which is the opposite of what a personal system should do.
+
+Concretely, and testably (`test_learning_decay_heat.py`), the doctrine means two
+things once memory heat rides this kernel:
+
+- **The VERDICT is never a ranking input.** `evaluate()`'s prune/review decision does
+  not reach any retrieval path. A record the kernel would prune ranks exactly where
+  its heat puts it — eviction is a separate question asked by a separate caller.
+- **Strength alone cannot win a rank.** `heat` weights the usage term above the
+  recency term on purpose, so a maximally-fresh record with no usage evidence ranks
+  BELOW a decayed one that has been used. Recency may break a tie; it may not create
+  one. That is what stops the feedback loop while still letting one curve serve both
+  questions.
 
 **The clock counts ACTIVE days.** Wall-clock decay punishes a single user for
 taking a holiday: come back after three weeks and the whole library has gone
@@ -50,13 +69,27 @@ BASE_LAMBDA = math.log(2) / 30.0
 #: Per-kind multipliers. Higher decays faster. The spread encodes what endures: a
 #: strategy that worked is still worth knowing next year, while a specific failure
 #: is usually about a version of the world that no longer exists.
+#:
+#: The memory kinds sit in the SAME table rather than a parallel one. Three of them
+#: (`preference`/`lesson`/`procedural`) already collide by string value with the
+#: learned-entity kinds, and that collision is the point: one kernel means one answer
+#: to "is this still relevant?", so a preference facet and a preference memory row
+#: cannot age at different rates depending on which code path asked.
 KIND_MULTIPLIERS: dict[str, float] = {
     "strategy": 0.4,  # endures — how to approach a class of problem
     "preference": 0.5,  # the user's tastes change slowly
+    "semantic": 0.5,  # a distilled fact is as durable as a preference
+    "self_persona": 0.5,  # who the agent is becoming changes slowly
     "lesson": 0.7,
+    "commitment": 0.7,  # live until met; a missed obligation is still evidence
     "skill": 1.0,  # the reference point
     "template": 1.0,
+    "note": 1.0,
     "procedural": 1.2,  # tool-level priors churn with tooling
+    #: 1.3, not a round number: the episodic formula this replaces was
+    #: `e^(−0.03·days)`, and 0.03 / BASE_LAMBDA ≈ 1.299. Carrying the measured rate
+    #: over is what makes the migration a change of MECHANISM and not of meaning.
+    "episodic": 1.3,
     "failure": 2.0,  # goes stale fast — usually about a world that moved on
     "speculative": 3.0,  # a hedged claim decays fastest of all
 }

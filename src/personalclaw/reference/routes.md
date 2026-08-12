@@ -286,6 +286,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/knowledge/tags/{id}` — remove a tag from the taxonomy and every item.
 - `PATCH /api/knowledge/tags/{id}` — rename, or re-parent via `parent_id`.
 - `POST /api/knowledge/tags/{id}/merge` — {into} — fold this tag into another.
+- `GET /api/learning/health` — the flywheel observability panel (LEARN-R14b).
 - `GET /api/learning/proposals` — the inbox across all six kinds.
 - `DELETE /api/learning/proposals/{id}` — dismiss it, and REMEMBER the decision.
 - `GET /api/learning/proposals/{id}` — one full record.

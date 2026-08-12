@@ -314,6 +314,82 @@ def test_a_bad_days_value_is_400(store):
     assert resp.status == 400
 
 
+# ── the flywheel health panel (LEARN-R14b — WF2LEA-9) ──
+
+
+@pytest.fixture
+def health_home(tmp_path, monkeypatch):
+    """An isolated home for the health route.
+
+    Explicit because the route opens `StagingStore()` and `UsageStore()` on the DEFAULT
+    home, and the run store reads the workflows tree — three real-home reads on a test
+    that exists to prove the panel renders nothing when nothing has happened.
+    """
+    from personalclaw.config import loader
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def test_the_health_panel_reports_unmeasured_rather_than_zero(health_home, store):
+    """A fresh install has no data, and must not read as a broken flywheel."""
+    body = _body(_run(L.api_learning_health(_req("GET", "/api/learning/health", user="me"))))
+    assert body["composite"]["score"] is None
+    assert body["composite"]["measured"] == 0
+    assert body["utilization"]["mean"] is None
+    assert body["surfacing"]["precision"] is None
+    assert body["cost_by_op"] == []
+    assert body["ablation"] == {}
+
+
+def test_the_health_panel_carries_all_four_sections_the_plan_names(health_home, store):
+    """§6.2's list: composite + ideal band, MAE buckets, attribution history, per-op cost."""
+    body = _body(_run(L.api_learning_health(_req("GET", "/api/learning/health", user="me"))))
+    assert body["composite"]["ideal_band"] == [0.5, 0.8]
+    assert [b["bucket"] for b in body["judge"]["mae"]["buckets"]] == [
+        "0.00-0.25",
+        "0.25-0.50",
+        "0.50-0.75",
+        "0.75-1.00",
+    ]
+    assert "history" in body["attribution"] and "proposers" in body["attribution"]
+    assert isinstance(body["cost_by_op"], list)
+
+
+def test_the_health_panel_renders_what_the_writers_wrote(health_home, store):
+    """The wire, end to end: two live writers, one response."""
+    from personalclaw.learning.staging import FlushOutcome, StagingStore
+
+    live = StagingStore()
+    try:
+        live.record_allocation(used_tokens=2600, budget_tokens=4000)
+        live.record_flush(cadence="session_end", outcome=FlushOutcome.FLUSH_OK, cost_usd=0.05)
+    finally:
+        live.close()
+
+    body = _body(_run(L.api_learning_health(_req("GET", "/api/learning/health", user="me"))))
+    assert body["utilization"] == {"samples": 1, "mean": 0.65, "ideal_band": [0.5, 0.8]}
+    assert body["cost_by_op"] == [{"op": "session_end", "passes": 1, "cost_usd": 0.05}]
+    # 65% is inside the ideal band, so the utilization component scores 100 …
+    band = next(c for c in body["composite"]["components"] if c["name"] == "utilization")
+    assert band["score"] == 100.0
+    # … and the composite is now measurable where it was None.
+    assert body["composite"]["score"] is not None
+
+
+def test_the_health_window_is_bounded(health_home, store):
+    body = _body(
+        _run(L.api_learning_health(_req("GET", "/api/learning/health?days=9999", user="me")))
+    )
+    assert body["days"] == 31
+
+
+def test_a_bad_health_days_value_is_400(health_home, store):
+    resp = _run(L.api_learning_health(_req("GET", "/api/learning/health?days=nope", user="me")))
+    assert resp.status == 400
+
+
 # ── the kill switch and route registration ──
 
 

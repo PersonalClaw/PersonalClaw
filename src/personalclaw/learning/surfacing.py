@@ -44,6 +44,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -214,14 +215,48 @@ def query_overlap(query: str, text: str) -> float:
     return len(qa & ta) / len(qa)
 
 
-def score_candidate(cand: Candidate, query: str, intent: str = "default") -> float:
-    """Salience: relevance, rank-decayed, nudged by prior and path match."""
+#: The heuristics an ablation sweep can switch off, one at a time (§2.5's ablation-delta
+#: rule: "every surfacing heuristic ships with a measured delta and is removed if ~0").
+#:
+#: Closed, and validated on the way in. A typo'd ablation name that silently ablated
+#: nothing would report a delta of 0.0 — indistinguishable from a heuristic that does
+#: nothing, which is the exact conclusion the sweep exists to draw.
+ABLATABLE: tuple[str, ...] = (
+    "intent",
+    "path_bonus",
+    "entity_prior",
+    "rank_decay",
+    "diversification",
+)
+
+
+def _check_ablate(ablate: str) -> str:
+    if ablate and ablate not in ABLATABLE:
+        raise ValueError(f"unknown ablation {ablate!r} — expected one of {ABLATABLE}")
+    return ablate
+
+
+def score_candidate(
+    cand: Candidate, query: str, intent: str = "default", *, ablate: str = ""
+) -> float:
+    """Salience: relevance, rank-decayed, nudged by prior and path match.
+
+    ``ablate`` switches ONE named heuristic off so its contribution can be measured.
+    Threaded as a parameter rather than patched onto module globals because the sweep
+    runs beside live traffic — a monkeypatched global would change the ranking of
+    whatever turn happened to be in flight.
+    """
+    _check_ablate(ablate)
+    if ablate == "intent":
+        intent = "default"
     weights = INTENT_WEIGHTS.get(intent, INTENT_WEIGHTS["default"])
     overlap = query_overlap(query, f"{cand.l0} {cand.l1}")
     base = weights["overlap"] * overlap + weights["score"] * max(0.0, min(1.0, cand.score))
-    decayed = base * (RANK_DECAY ** max(0, cand.source_rank))
-    salience = decayed * ENTITY_PRIORS.get(cand.kind, 1.0)
-    if cand.path_match:
+    decay = 1.0 if ablate == "rank_decay" else RANK_DECAY
+    decayed = base * (decay ** max(0, cand.source_rank))
+    prior = 1.0 if ablate == "entity_prior" else ENTITY_PRIORS.get(cand.kind, 1.0)
+    salience = decayed * prior
+    if cand.path_match and ablate != "path_bonus":
         # A candidate naming a file this turn touched is deterministically relevant;
         # no similarity score should be able to argue with that.
         salience += weights["path_bonus"]
@@ -247,12 +282,13 @@ def _stronger_arm(left: str, right: str) -> str:
     return left if arm_confidence(left) >= arm_confidence(right) else right
 
 
-def fuse(sources: dict[str, list[Candidate]]) -> list[Candidate]:
+def fuse(sources: dict[str, list[Candidate]], *, ablate: str = "") -> list[Candidate]:
     """Reciprocal-rank fusion across sources, then per-source diversification.
 
     Diversification runs BEFORE trimming, deliberately: trimming first lets a rich
     source fill every slot and the diversification cap then has nothing to spread.
     """
+    _check_ablate(ablate)
     scored: list[tuple[float, Candidate]] = []
     for _source, candidates in sources.items():
         for rank, cand in enumerate(candidates):
@@ -283,7 +319,7 @@ def fuse(sources: dict[str, list[Candidate]]) -> list[Candidate]:
     per_source: dict[str, int] = {}
     out: list[Candidate] = []
     for _rrf, cand in ordered:
-        if cand.kind in UNCAPPED_KINDS:
+        if cand.kind in UNCAPPED_KINDS or ablate == "diversification":
             out.append(cand)
             continue
         count = per_source.get(cand.kind, 0)
@@ -355,19 +391,24 @@ def allocate(
     budget_tokens: int = 4000,
     slot_order: tuple[tuple[str, int, bool], ...] = SLOT_ORDER,
     include_preamble: bool = True,
+    ablate: str = "",
 ) -> Allocation:
     """Rank, tier, and fit — the one place prompt weight is decided.
 
     The order is load-bearing: score, fuse+diversify, assign to slots by priority,
     then degrade tier before dropping anything, and only ever trim the sacrificial
     slot. Reordering these produces a budget that is a token counter again.
+
+    ``ablate`` names one heuristic to switch off, for `ablation_deltas`. Default "" is
+    the live path and pays nothing for the parameter's existence.
     """
+    _check_ablate(ablate)
     intent = classify_intent(query)
     for candidates in sources.values():
         for cand in candidates:
-            cand.salience = score_candidate(cand, query, intent)
+            cand.salience = score_candidate(cand, query, intent, ablate=ablate)
 
-    pool = fuse(sources)
+    pool = fuse(sources, ablate=ablate)
     if not pool:
         return Allocation(text="", used_tokens=0, budget_tokens=budget_tokens)
 
@@ -461,3 +502,65 @@ def allocate(
     allocation.text = "\n\n".join(p for p in rendered if p)
     allocation.used_tokens = used
     return allocation
+
+
+# ── Ablation-delta sweep (§2.5) ──
+
+#: Below this, a heuristic changed nothing about what got injected. §2.5: "every
+#: surfacing heuristic ships with a measured delta and is removed if ~0 — honest
+#: reporting of null results is a feature." Not exactly zero: a delta of one position
+#: in a twenty-item render is noise, not evidence of value.
+NULL_DELTA = 0.02
+
+
+def _signature(alloc: Allocation) -> list[tuple[str, str, str]]:
+    """What this allocation injected, in order — the thing a delta compares."""
+    return [(kind, key, tier.value) for kind, key, tier in alloc.included]
+
+
+def _delta(baseline: list[tuple[str, str, str]], ablated: list[tuple[str, str, str]]) -> float:
+    """Disagreement in [0, 1] between two injected sequences.
+
+    Position-sensitive, because §2.4's position policy makes ORDER part of the
+    outcome: the same items in a different order is a different render, and a
+    set-difference metric would score that change as zero.
+    """
+    span = max(len(baseline), len(ablated), 1)
+    agree = sum(1 for i in range(min(len(baseline), len(ablated))) if baseline[i] == ablated[i])
+    return round(1.0 - agree / span, 6)
+
+
+def ablation_deltas(
+    sources: dict[str, list[Candidate]],
+    *,
+    query: str = "",
+    budget_tokens: int = 4000,
+) -> list[dict[str, Any]]:
+    """Measure each heuristic's contribution by switching it off. Pure.
+
+    Returns one row per heuristic in `ABLATABLE`, worst-earning first, each with the
+    measured `delta` and a `verdict` of "earns_its_place" or "no_effect". A sweep that
+    reports "no_effect" for a heuristic on real inputs is the evidence for deleting it
+    — which is the point, and why the null result is reported rather than hidden.
+
+    Deliberately NOT a per-turn measurement. Running five extra allocations on every
+    turn to learn something that changes monthly is a cost with no matching benefit;
+    the caller runs this on a cadence.
+    """
+    baseline = _signature(allocate(sources, query=query, budget_tokens=budget_tokens))
+    rows: list[dict[str, Any]] = []
+    for name in ABLATABLE:
+        ablated = _signature(
+            allocate(sources, query=query, budget_tokens=budget_tokens, ablate=name)
+        )
+        delta = _delta(baseline, ablated)
+        rows.append(
+            {
+                "heuristic": name,
+                "delta": delta,
+                "verdict": "no_effect" if delta <= NULL_DELTA else "earns_its_place",
+                "items": len(baseline),
+            }
+        )
+    rows.sort(key=lambda row: row["delta"])
+    return rows

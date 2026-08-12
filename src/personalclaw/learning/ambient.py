@@ -255,7 +255,7 @@ def block_candidate(name: str, block: str, *, score: float = 0.85) -> Candidate 
     return Candidate(kind=kind, key=name, score=score, l0=text, l1=text, l2=text, arm=name)
 
 
-def render(
+def sources_for(
     *,
     lessons: str = "",
     skill_index: str = "",
@@ -263,40 +263,17 @@ def render(
     persona: str = "",
     self_model: str = "",
     template: str = "",
-    query: str = "",
-    budget_tokens: int = 4000,
-    window: int | None = None,
-) -> Allocation:
-    """Rank the named blocks into ONE budget and render them. The criterion's mechanism.
+) -> dict[str, list[Candidate]]:
+    """The candidate pool for one ambient render, keyed by slot family.
 
-    `window` scales the budget when given; pass None to use `budget_tokens` as-is.
-
-    Empty in, empty out — and deliberately not an empty PREAMBLE. A render asserting that the
-    context below is authoritative, with nothing below it, is overhead that also teaches a model to
-    discount the assertion.
+    Extracted so `render` and `surfacing.ablation_deltas` measure the SAME pool. A
+    sweep built from its own reconstruction of these blocks would be measuring a
+    second, drifting assembly — and reporting the delta as if it were the live one.
     """
-    budget = budget_for_window(window, budget_tokens) if window is not None else budget_tokens
-    if budget <= 0:
-        return Allocation(text="", used_tokens=0, budget_tokens=0)
-
-    ceiling = budget
     sources: dict[str, list[Candidate]] = {}
-    header_cost = 0
     lesson_cands = lesson_candidates(lessons)
     if lesson_cands:
         sources["lessons"] = lesson_cands
-        # RESERVE the header's cost before allocating. Found by driving a 600-token budget: the
-        # framed output came back at 622 tokens, because `frame` restores the header AFTER the
-        # allocator has spent the budget. A budget that a later step can add to is not a budget —
-        # and this is the one block whose frame is mandatory, so its cost belongs inside.
-        # The `+ 2` covers the blank-line separator `frame` joins the header on with. Measured: the
-        # framed text ran 3 tokens above `used_tokens` without it: the separator is real text
-        # that no candidate paid for. Reserving slightly more than the header costs is the safe
-        # direction — the alternative is a budget that is right on average and exceeded in practice.
-        header_cost = count_tokens(lesson_header(lessons)) + 2
-        budget = max(0, budget - header_cost)
-        if budget <= 0:
-            return Allocation(text="", used_tokens=0, budget_tokens=ceiling)
     skills: list[Candidate] = []
     # The always-loaded bodies rank ABOVE the index (0.95 vs 0.9): the user marked them
     # never-optional, so under pressure the pointer list yields before the content does.
@@ -333,6 +310,57 @@ def render(
             memory.append(cand)
     if memory:
         sources["memory"] = memory
+    return sources
+
+
+def render(
+    *,
+    lessons: str = "",
+    skill_index: str = "",
+    voice: str = "",
+    persona: str = "",
+    self_model: str = "",
+    template: str = "",
+    query: str = "",
+    budget_tokens: int = 4000,
+    window: int | None = None,
+) -> Allocation:
+    """Rank the named blocks into ONE budget and render them. The criterion's mechanism.
+
+    `window` scales the budget when given; pass None to use `budget_tokens` as-is.
+
+    Empty in, empty out — and deliberately not an empty PREAMBLE. A render asserting that the
+    context below is authoritative, with nothing below it, is overhead that also teaches a model to
+    discount the assertion.
+    """
+    budget = budget_for_window(window, budget_tokens) if window is not None else budget_tokens
+    if budget <= 0:
+        return Allocation(text="", used_tokens=0, budget_tokens=0)
+
+    ceiling = budget
+    sources = sources_for(
+        lessons=lessons,
+        skill_index=skill_index,
+        voice=voice,
+        persona=persona,
+        self_model=self_model,
+        template=template,
+    )
+    header_cost = 0
+    lesson_cands = sources.get("lessons", [])
+    if lesson_cands:
+        # RESERVE the header's cost before allocating. Found by driving a 600-token budget: the
+        # framed output came back at 622 tokens, because `frame` restores the header AFTER the
+        # allocator has spent the budget. A budget that a later step can add to is not a budget —
+        # and this is the one block whose frame is mandatory, so its cost belongs inside.
+        # The `+ 2` covers the blank-line separator `frame` joins the header on with. Measured: the
+        # framed text ran 3 tokens above `used_tokens` without it: the separator is real text
+        # that no candidate paid for. Reserving slightly more than the header costs is the safe
+        # direction — the alternative is a budget that is right on average and exceeded in practice.
+        header_cost = count_tokens(lesson_header(lessons)) + 2
+        budget = max(0, budget - header_cost)
+        if budget <= 0:
+            return Allocation(text="", used_tokens=0, budget_tokens=ceiling)
 
     if not sources:
         return Allocation(text="", used_tokens=0, budget_tokens=ceiling)

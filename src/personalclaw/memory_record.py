@@ -59,6 +59,42 @@ class MemoryKind(str, Enum):
     SELF_PERSONA = "self_persona"  # the agent's positive self-model
 
 
+#: MemoryKind → the decay kernel's profile name (LEARN-R6f).
+#:
+#: Exhaustive on purpose, with no fallback. `decay.KIND_MULTIPLIERS.get(kind, 1.0)`
+#: would silently give an unmapped kind the reference rate, and a new memory class
+#: aging like a skill by accident is exactly the kind of drift the one-kernel
+#: consolidation exists to end — so an unmapped kind raises instead.
+#:
+#: Three kinds map to their own name because the kernel already carries that profile;
+#: that is the collision working, not a coincidence to tidy away.
+_DECAY_PROFILES: dict["MemoryKind", str] = {
+    MemoryKind.SEMANTIC: "semantic",
+    MemoryKind.EPISODIC: "episodic",
+    MemoryKind.LESSON: "lesson",
+    MemoryKind.PREFERENCE: "preference",
+    MemoryKind.NOTE: "note",
+    MemoryKind.PROCEDURAL: "procedural",
+    MemoryKind.COMMITMENT: "commitment",
+    MemoryKind.SELF_PERSONA: "self_persona",
+}
+
+
+def decay_profile(kind: "MemoryKind") -> str:
+    """The decay profile for a memory kind. Raises for an unmapped kind.
+
+    Raising is the whole contract: a memory class added without a decay decision has
+    no defensible rate, and inventing one for it would make the omission invisible.
+    """
+    try:
+        return _DECAY_PROFILES[MemoryKind(kind)]
+    except (KeyError, ValueError) as exc:
+        raise ValueError(
+            f"no decay profile for memory kind {kind!r} — add it to "
+            "memory_record._DECAY_PROFILES and learning.decay.KIND_MULTIPLIERS"
+        ) from exc
+
+
 class MemoryTier(str, Enum):
     """DURABILITY axis — deepens via SEALING (§3.5). Independent of SCOPE."""
 
@@ -256,6 +292,25 @@ class MemoryRecord:
         """This record's embedding as the store's on-disk float32 blob."""
         return embedding_to_blob(self.embedding)
 
+    def idle_days(self, *, now: datetime | None = None) -> float | None:
+        """Days since this record was last touched, or None when it has no timestamp.
+
+        None rather than 0.0 for an unstamped record: "never touched" and "touched
+        just now" are opposite claims, and collapsing them would hand a row with no
+        provenance the maximum recency term.
+        """
+        stamp = self.last_accessed_at or self.updated_at or self.created_at
+        if not stamp:
+            return None
+        try:
+            last = datetime.fromisoformat(stamp)
+        except (ValueError, TypeError):
+            return None
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        ref = now or datetime.now(tz=timezone.utc)
+        return max(0.0, (ref - last).total_seconds() / 86400.0)
+
     def heat(self, *, now: datetime | None = None) -> float:
         """Operational heat — how 'hot' this record is for promotion + boost
         (memory-architecture.md §3.6: heat = α·visit + β·interaction + γ·recency).
@@ -263,25 +318,37 @@ class MemoryRecord:
         A bounded [0, ~1.5] signal combining how often the record has been
         recalled/visited and how recently it was touched. Drives the two-stage
         retrieval boost (M5b) and the heat-gated global promotion (M5c). Pure
-        function of the record's own fields — no DB access."""
+        function of the record's own fields — no DB access.
+
+        **The recency term is the one decay kernel** (LEARN-R6f), not a private
+        `e^(−days/30)`. That private curve was a third answer to "is this still
+        relevant?": it had no per-kind rate (an episodic fragment aged exactly like a
+        distilled fact) and no importance axis, so the same record could be hot here
+        and prunable to the curator. Migrating it changes numbers — a 30-day-old
+        semantic row's recency term goes 0.368 → 0.812 — which is why this is a
+        behaviour change and not a rename.
+
+        The WEIGHTS are unchanged, and that is load-bearing: usage is weighted above
+        recency (0.7 vs 0.5) so strength can break a ranking tie but never create one.
+        See `learning/decay.py`'s doctrine note.
+        """
         import math as _math
+
+        from personalclaw.learning.decay import strength as _strength
 
         visits = float(self.recall_count + self.visit_count)
         # diminishing-returns visit term (log) so a runaway counter can't dominate
         visit_term = _math.log1p(visits) / _math.log(10)  # ~1.0 at 9 visits
-        # recency term: 1.0 today, decaying ~30-day half-life
-        recency_term = 0.0
-        stamp = self.last_accessed_at or self.updated_at or self.created_at
-        if stamp:
-            try:
-                ref = now or datetime.now(tz=timezone.utc)
-                last = datetime.fromisoformat(stamp)
-                if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
-                days = max(0.0, (ref - last).total_seconds() / 86400.0)
-                recency_term = _math.exp(-days / 30.0)
-            except (ValueError, TypeError):
-                recency_term = 0.0
+        idle = self.idle_days(now=now)
+        recency_term = (
+            0.0
+            if idle is None
+            else _strength(
+                kind=decay_profile(self.kind),
+                active_days_since_use=idle,
+                importance=self.importance,
+            )
+        )
         return 0.7 * visit_term + 0.5 * recency_term
 
     def to_public_dict(self) -> dict:
