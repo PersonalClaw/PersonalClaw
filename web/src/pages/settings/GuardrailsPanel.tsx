@@ -4,7 +4,7 @@ import { notify } from '../../app/appSdk'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 /** Guardrails — the personal safety floor (AUTONOMY-GUARDRAILS). Four groups:
  *  the incident kill switch, daily spend budgets, the outbound secret/PII scan mode,
@@ -20,12 +20,18 @@ type GuardrailsCfg = {
 export function GuardrailsPanel() {
   const [cfg, setCfg] = useState<GuardrailsCfg | null>(null)
 
-  const { data } = useCachedData('settings:guardrails', () =>
-    api.personalclawConfig().then((c) => (c.guardrails ?? {}) as GuardrailsCfg).catch(() => ({} as GuardrailsCfg)),
+  const { data, error: loadErr, refresh } = useCachedData('settings:guardrails', () =>
+    api.personalclawConfig().then((c) => (c.guardrails ?? {}) as GuardrailsCfg),
     { persist: true },
   )
   useEffect(() => { if (data) setCfg(data) }, [data])
 
+  // 🔴 A settings panel must not present FABRICATED values as saved state. `.catch(() => ({}))` made a
+  // failed config read resolve with an empty section, so every control below rendered at its fallback —
+  // indistinguishable from "this is what you saved" — and the panel offered to edit values it had never
+  // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
+  // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={3} />
 
   const patchNum = (path: string, value: number) =>
