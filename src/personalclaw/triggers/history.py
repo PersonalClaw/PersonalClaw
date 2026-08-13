@@ -132,6 +132,14 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
     # and lifts on its own. NOT `DEFERRED` either — deferred work still starts, and this fire is
     # dropped, never retried.
     "skipped_incident": Outcome.SKIPPED_GATE.value,
+    # 🔴 THE RUNG LADDER (AUTONOMY-GUARDRAILS §5.2). `hooks.py` writes this when the action's
+    # declared rung resolves below `auto_with_undo` — the provider is never called, and a
+    # durable inbox row now carries the decision. `SKIPPED_GATE` for exactly the reasons
+    # `skipped_incident` above gives: nothing ran and nothing was spent, it is not a verdict
+    # on this action (`blocked`/REFUSED is), and it is not deferred work that still starts.
+    # Mapped in the SAME change that writes it — an unmapped status falls to the `RAN if
+    # last_run` default and would report a held action as one that succeeded.
+    "held_for_rung": Outcome.SKIPPED_GATE.value,
 }
 
 

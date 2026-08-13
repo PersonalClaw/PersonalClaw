@@ -317,11 +317,76 @@ class SearchTypeHandler(_TypeHandler):
         unregister_provider(getattr(instance, "name", ext.name))
 
 
+def _app_action_type_key(app_name: str, action_name: str) -> str:
+    """The action-type key for an app-contributed action (AUTONOMY-GUARDRAILS §5.2)."""
+    return f"app:{app_name}.{action_name}"
+
+
+def _register_app_action_type(ext: RegisteredProvider, instance: Any) -> None:
+    """Declare an app-contributed action's rung bounds from its manifest.
+
+    The app supplies ``floor``/``ceiling``; CORE supplies ``leaves_machine``, derived from
+    the app's own ``permissions.network`` declaration. An app cannot self-certify that its
+    effect stays on this machine — that claim is what gates the top of the ladder, so it is
+    not the app's to make. The ceiling an app asks for is then clamped (loudly, with a SEL
+    row) when the action reaches the network.
+
+    No ``autonomy`` block → no declaration → the action keeps exactly its pre-ladder
+    behaviour. That is the additive property the manifest change promises.
+    """
+    from personalclaw.guardrails.autonomy import (
+        RUNG_DRAFT_ONLY,
+        RUNG_ONE_TAP,
+        ActionTypeSpec,
+        clamp_untrusted_ceiling,
+        register_action_type,
+        rung_rank,
+    )
+
+    declared = ext.provider_config.autonomy
+    action = str(getattr(instance, "name", "") or "")
+    if not action or (not declared.floor and not declared.ceiling):
+        return
+    key = _app_action_type_key(ext.name, action)
+    leaves_machine = bool(ext.manifest.permissions.network)
+    ceiling = clamp_untrusted_ceiling(
+        key, declared.ceiling or RUNG_ONE_TAP, leaves_machine=leaves_machine
+    )
+    floor = declared.floor or RUNG_DRAFT_ONLY
+    if rung_rank(floor) > rung_rank(ceiling):
+        # The clamp already said why the ceiling moved; a floor left above it would be a
+        # declaration that cannot be satisfied, and `_clamp` would silently resolve it here
+        # anyway. Store the honest spec instead so the ladder panel shows what applies.
+        floor = ceiling
+    register_action_type(
+        ActionTypeSpec(
+            key=key,
+            floor=floor,
+            ceiling=ceiling,
+            leaves_machine=leaves_machine,
+            providers=(action,),
+        )
+    )
+    logger.info(
+        "autonomy: %s declared floor=%s ceiling=%s (leaves_machine=%s)",
+        key,
+        floor,
+        ceiling,
+        leaves_machine,
+    )
+
+
 class ActionTypeHandler(_TypeHandler):
     """Handler for ``provider.type == 'action'`` extensions.
 
     Builds an ActionProvider via the manifest factory, then registers it in
     the action_providers registry so triggers can dispatch to it by name.
+
+    Registration and DEclaration move together (AUTONOMY-GUARDRAILS §5.2): the app's
+    ``autonomy`` block becomes an ``ActionTypeSpec`` keyed ``app:<app>.<action>`` here, and
+    disabling the app drops both. A declaration outliving its provider would keep claiming a
+    dispatch name a different app could later take — which is how one app would inherit
+    another's earned rung.
     """
 
     def create(self, ext: RegisteredProvider) -> Any:
@@ -336,11 +401,16 @@ class ActionTypeHandler(_TypeHandler):
         from personalclaw.action_providers.registry import register_action_provider
 
         register_action_provider(instance)
+        _register_app_action_type(ext, instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.action_providers.registry import _providers
+        from personalclaw.guardrails.autonomy import unregister_action_type
 
-        _providers.pop(getattr(instance, "name", ""), None)
+        name = getattr(instance, "name", "")
+        _providers.pop(name, None)
+        if name:
+            unregister_action_type(_app_action_type_key(ext.name, str(name)))
 
 
 class DutyGateTypeHandler(_TypeHandler):

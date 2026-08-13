@@ -578,7 +578,39 @@ async def execute_event_action(
         reason = getattr(decision, "reason", "") or "blocked by a guardrail rule"
         return FireOutcome(False, f"denylist: {matched} — {reason}" if matched else reason)
 
+    # Rung routing (AUTONOMY-GUARDRAILS §5.2), composed with the denylist gate above. Same
+    # two calls as the hook seam, and for the same reason: the provider NAME is all either
+    # seam holds, and the name→type mapping lives on the declaration, so an app-contributed
+    # action inherits its declared floor/ceiling without a line of its own here.
+    #
+    # `session_key=""` for the same reason the denylist call above uses it: an event trigger
+    # fires from a memory/inbox write, not a run, so there is no session identity to resolve
+    # a SafetyProfile from — the type's own ceiling is the only bound that applies.
+    from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+    from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+    route = _route_action(t.action_provider, session_key="")
+    if not route.executes:
+        announce_withheld(
+            route,
+            title=f"{t.action_provider} is waiting for you",
+            body=(
+                f"The {t.action_provider!r} action on trigger {t.id} did not run: "
+                f"{route.reason}."
+            ),
+            refs={"trigger": t.id, "provider": t.action_provider},
+            dedup_key=f"autonomy_hold:{route.key}:trigger:{t.id}",
+        )
+        return FireOutcome(False, f"held for your approval: {route.reason}")
+
     result = await provider.execute(t.action_config, ctx)
+    if route.records_reversal and getattr(result, "success", False):
+        record_reversal(
+            route,
+            result,
+            label=t.action_provider,
+            refs={"trigger": t.id, "provider": t.action_provider},
+        )
     return FireOutcome(True, "", result)
 
 

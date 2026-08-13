@@ -65,10 +65,17 @@ class CreateTaskActionProvider(ActionProvider):
             task = await create_task(provider_name, **fields)
         except Exception as exc:  # noqa: BLE001 - error result, never raise
             return ActionResult(success=False, error=f"create-task failed: {exc}")
+        task_id = str(getattr(task, "id", "") or "")
         return ActionResult(
             success=True,
             exit_code=0,
-            stdout=f"created task {getattr(task, 'id', '?')}: {title[:80]}",
+            stdout=f"created task {task_id or '?'}: {title[:80]}",
+            # The reversal handle for the `auto_with_undo` rung (AUTONOMY-GUARDRAILS
+            # §5.2): the row this action filed is exactly what "undo" has to delete, and
+            # the id is the only thing that identifies it. Empty when the provider gave
+            # back no id — then the seam records the run and offers no undo, rather than
+            # offering one that would have nothing to act on.
+            reversal=f"task:{provider_name}:{task_id}" if task_id else "",
         )
 
 

@@ -1,0 +1,416 @@
+"""Rung ROUTING — what each earned-autonomy rung actually does at a dispatch seam
+(AUTONOMY-GUARDRAILS §5.2).
+
+:mod:`~personalclaw.guardrails.autonomy` is the decision layer: it holds the ladder, the
+declarations, the grants and the derived track record. It shipped with **no call sites**,
+which makes it a decision object nothing consults. This module is the other half — the
+one the dispatch seams call — and it answers one question:
+
+    given a provider-dispatched action, may it run right now, and what does the user see?
+
+**The four rungs, as behaviour:**
+
+======================  ==========================================================
+``draft_only``          Do not execute. File a PROPOSAL inbox item describing what
+                        the action would have done.
+``one_tap``             Do not execute. File an agent-request inbox item so the
+                        user can decide. (The one-tap CARD is AG-8's frontend; the
+                        durable row it renders is raised here.)
+``auto_with_undo``      Execute, then persist the provider's reversal handle (SEL +
+                        the notification's ``meta``) and passively notify — but only
+                        when there IS a handle. A notification offering an undo that
+                        cannot happen is worse than silence.
+``autonomous``          Execute. The SEL row the action already writes is the record.
+======================  ==========================================================
+
+**How a declaration reaches a seam with no per-action branching.** A seam holds a
+provider NAME (``hook.provider`` / ``trigger.action_provider``) and nothing else. The
+name→type mapping lives on the DECLARATION (``ActionTypeSpec.providers``), so
+:func:`route_provider_action` is the same three lines for ``bash`` and for an
+app-contributed provider nobody in core has heard of. There is no ``if key == …`` at
+either seam, and adding a governed action is data.
+
+**An UNDECLARED provider keeps its pre-ladder behaviour.** ``route`` is ``execute`` and
+``governed`` is False. This is deliberate and is not a hole: the denylist, the incident
+kill switch, the injection screen and the creation-time capability grant all still run —
+they are the floor this ladder sits on top of. Treating every undeclared provider as
+``draft_only`` would withhold every hook and trigger in the tree, which is an outage
+wearing a safety control's clothes. What DOES fail closed is a *declared* key with no
+registration and a *granted* rung that cannot be proven: ``resolve_rung`` answers
+``draft_only`` for both.
+
+**Two levels, tightest wins** (PLATFORM-HARDENING-FLOORS §5). Level one is the type's own
+ceiling, enforced by ``resolve_rung``. Level two is
+:func:`~personalclaw.guardrails.policy.rung_ceiling_for_profile`, which may only NARROW —
+so an unattended run cannot reach ``autonomous`` and go silent, whatever the type's
+declaration says. Neither level can widen the other.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from personalclaw.guardrails.autonomy import (
+    RUNG_AUTO_WITH_UNDO,
+    RUNG_AUTONOMOUS,
+    RUNG_DRAFT_ONLY,
+    RUNG_ONE_TAP,
+    RUNGS,
+    ActionTypeSpec,
+    action_type_for_provider,
+    register_action_type,
+    resolve_rung,
+    rung_rank,
+)
+
+logger = logging.getLogger(__name__)
+
+# ── routes (what a seam DOES) ─────────────────────────────────────────────────
+
+#: Execute now; the action's own SEL row is the record.
+ROUTE_EXECUTE = "execute"
+#: Execute now, then persist the reversal handle + passively notify.
+ROUTE_EXECUTE_WITH_UNDO = "execute_with_undo"
+#: Withhold; raise an agent-request row for the user to decide.
+ROUTE_ASK = "ask"
+#: Withhold; raise a proposal row describing what would have happened.
+ROUTE_DRAFT = "draft"
+
+_ROUTE_BY_RUNG: dict[str, str] = {
+    RUNG_DRAFT_ONLY: ROUTE_DRAFT,
+    RUNG_ONE_TAP: ROUTE_ASK,
+    RUNG_AUTO_WITH_UNDO: ROUTE_EXECUTE_WITH_UNDO,
+    RUNG_AUTONOMOUS: ROUTE_EXECUTE,
+}
+
+
+@dataclass(frozen=True)
+class RungRoute:
+    """One routing decision: the rung that applies and what the seam should do with it."""
+
+    route: str = ROUTE_EXECUTE
+    key: str = ""
+    rung: str = ""
+    reason: str = ""
+
+    @property
+    def governed(self) -> bool:
+        """Whether a declaration claimed this action at all."""
+        return bool(self.key)
+
+    @property
+    def executes(self) -> bool:
+        return self.route in (ROUTE_EXECUTE, ROUTE_EXECUTE_WITH_UNDO)
+
+    @property
+    def records_reversal(self) -> bool:
+        return self.route == ROUTE_EXECUTE_WITH_UNDO
+
+
+# ── core declarations ─────────────────────────────────────────────────────────
+
+# Every built-in provider-dispatched action, one spec each, keyed ``action.<provider>``.
+#
+# 🔴 READ THIS BEFORE CHANGING A FLOOR. These actions ALREADY run unattended today: their
+# authority is the creation-time grant on the hook/trigger plus the decision-7 capability
+# fence (`triggers/screen.py`), and the ladder was added ON TOP of that floor, never under
+# it. So the honest floor for an action that runs today is the rung that matches today's
+# behaviour, and declaring one lower would not "harden" anything — it would stop a user's
+# existing automations. The recorded lesson is `enforcing a dead control is an outage`.
+#
+# What the declarations therefore buy is the other three columns: the CEILING (a bound a
+# grant can never pass), `leaves_machine` (which keeps `promotion_eligibility` from ever
+# proposing `autonomous` for an effect that escapes this machine), and the inventory the
+# ladder panel enumerates. A machine-leaving core action that declares
+# `ceiling=autonomous` below is making the deliberate, in-tree ceiling raise the ladder
+# asks for — the same claim from an app manifest is clamped (`clamp_untrusted_ceiling`).
+_PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
+    # Read-only / observe: nothing to reverse and nothing to tell.
+    ActionTypeSpec(
+        key="action.notify",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("notify",),
+    ),
+    ActionTypeSpec(
+        key="action.knowledge_read",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("knowledge-retrieve", "knowledge-health", "knowledge-gaps"),
+    ),
+    ActionTypeSpec(
+        key="action.artifact_inspect",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("artifact_inspect",),
+    ),
+    # Local writes: the effect stays on this machine, where the user can see and undo it.
+    ActionTypeSpec(
+        key="action.create_task",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("create-task",),
+    ),
+    ActionTypeSpec(
+        key="action.knowledge_write",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("knowledge-persist", "knowledge-consolidate", "knowledge-propose"),
+    ),
+    ActionTypeSpec(
+        key="action.artifact_write",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("artifact-update", "render-report"),
+    ),
+    ActionTypeSpec(
+        key="action.digest",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("notification-digest",),
+    ),
+    # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
+    # network — the profile it runs under bounds that, not this declaration.
+    ActionTypeSpec(
+        key="action.spawn_turn",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        leaves_machine=True,
+        providers=("run-prompt", "invoke-agent", "run-workflow"),
+    ),
+    # Executes author-supplied code: arbitrary shell / sandboxed Python. The denylist and
+    # the capability fence are what license these; the ladder does not add a gate.
+    ActionTypeSpec(
+        key="action.execute_code",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        leaves_machine=True,
+        providers=("bash", "run-script"),
+    ),
+    # Delivers to somewhere the user does not control: a channel, or an app route whose
+    # own permissions decide where it lands.
+    ActionTypeSpec(
+        key="action.send_message",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        leaves_machine=True,
+        providers=("send-message",),
+    ),
+    ActionTypeSpec(
+        key="action.call_app_route",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        leaves_machine=True,
+        providers=("call-app-route",),
+    ),
+)
+
+# The AI affordances (`inbox_service.draft_reply` / `.classify`,
+# `dashboard.chat_title._apply_auto_tags`). No `providers`: nothing dispatches these
+# through the action-provider registry, so they are named directly.
+#
+# `inbox.reply_draft` is the one core type whose floor is genuinely the BOTTOM rung, and
+# its declaration is the whole control: an AI-drafted reply is written and shown, never
+# sent, and its `one_tap` ceiling plus `leaves_machine` mean no accumulated track record
+# can ever propose sending one by itself. The send affordance that turns an earned
+# `one_tap` into a card — and the approval verdict that would be its evidence — is AG-8.
+_AFFORDANCE_SPECS: tuple[ActionTypeSpec, ...] = (
+    ActionTypeSpec(
+        key="inbox.reply_draft",
+        floor=RUNG_DRAFT_ONLY,
+        ceiling=RUNG_ONE_TAP,
+        leaves_machine=True,
+    ),
+    ActionTypeSpec(
+        key="inbox.classify",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+    ),
+    ActionTypeSpec(
+        key="sessions.auto_tag",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+    ),
+)
+
+#: Every core declaration, in one tuple, so the ladder panel can enumerate the governed
+#: inventory without importing the dashboard or the inbox service.
+CORE_ACTION_TYPES: tuple[ActionTypeSpec, ...] = (*_PROVIDER_SPECS, *_AFFORDANCE_SPECS)
+
+
+def ensure_core_action_types() -> None:
+    """Register every core declaration. Idempotent — registration replaces by key.
+
+    Called from the provider-registration seam
+    (``action_providers.registry._ensure_default_providers_registered``) and from the
+    inbox AI affordances, so the governed inventory is complete in any process that can
+    dispatch an action, not only in one that already has.
+    """
+    for spec in CORE_ACTION_TYPES:
+        register_action_type(spec)
+
+
+# ── routing ───────────────────────────────────────────────────────────────────
+
+
+def route_action_type(key: str, *, session_key: str = "") -> RungRoute:
+    """The route for a declared action type, composed with the run's SafetyProfile.
+
+    ``resolve_rung`` gives the type's own answer (floor + accepted grant, clamped to its
+    ceiling, clamped again to ``one_tap`` during an incident). The profile then NARROWS it
+    and can never widen it — the lower of the two wins.
+    """
+    from personalclaw.guardrails.policy import profile_for_session, rung_ceiling_for_profile
+
+    rung = resolve_rung(key)
+    profile = profile_for_session(session_key)
+    ceiling = rung_ceiling_for_profile(profile)
+    effective = RUNGS[min(max(rung_rank(rung), 0), max(rung_rank(ceiling), 0))]
+    reason = f"{key} resolves {rung}"
+    if effective != rung:
+        reason = f"{key} resolves {rung}, narrowed to {effective} by the {profile.name} profile"
+    return RungRoute(
+        route=_ROUTE_BY_RUNG.get(effective, ROUTE_DRAFT),
+        key=key,
+        rung=effective,
+        reason=reason,
+    )
+
+
+def route_provider_action(provider_name: str, *, session_key: str = "") -> RungRoute:
+    """The route for a provider-dispatched action — the seam-facing entry point.
+
+    An UNDECLARED provider routes to ``execute`` with ``governed`` False: the ladder
+    governs what a declaration claimed, and the pre-ladder floor (denylist, incident,
+    capability fence, creation-time grant) governs the rest.
+
+    Core declarations are (re)registered here rather than assumed. The seams reach this
+    function from paths that do NOT all go through provider registration — an event
+    trigger resolves an already-registered provider directly — and a missing declaration
+    reads as "ungoverned", which is the one fail-OPEN this function could have. Making it
+    self-sufficient costs a dozen dict writes per dispatch and removes that whole class.
+    """
+    ensure_core_action_types()
+    spec = action_type_for_provider(provider_name)
+    if spec is None:
+        return RungRoute(
+            route=ROUTE_EXECUTE,
+            reason=f"no action type declares provider {provider_name!r}",
+        )
+    return route_action_type(spec.key, session_key=session_key)
+
+
+# ── the withhold surface (draft_only / one_tap) ────────────────────────────────
+
+# The registered notification pairs a withheld action borrows. Neither is new on purpose:
+# a `proposal` and an `agent_request` are concepts the user already has one delivery rule
+# for, and registering a third would hand them two switches for one idea (the reasoning
+# `session_organize` recorded when it reused the proposal pair).
+_WITHHOLD_SURFACE: dict[str, tuple[str, str, str]] = {
+    # route → (notification source, notification kind, inbox item_kind)
+    ROUTE_DRAFT: ("skills", "proposal", "proposal"),
+    ROUTE_ASK: ("system", "agent_request", "agent_request"),
+}
+
+
+def announce_withheld(
+    route: RungRoute,
+    *,
+    title: str,
+    body: str = "",
+    refs: dict | None = None,
+    dedup_key: str = "",
+) -> str:
+    """Raise the durable row for an action the ladder withheld. Returns the item id.
+
+    ``draft_only`` files a proposal ("here is what it would have done"); ``one_tap`` files
+    an agent request ("decide"). Both carry the action-type key in ``refs`` so AG-8's card
+    and the ladder panel can find every held action of one type.
+
+    Deduped per action type by default: a trigger that matches every thirty seconds must
+    not stack a hundred identical rows, and a held action is one standing request however
+    many times it was attempted.
+
+    Best-effort. A withheld action is already withheld — failing to *announce* it must not
+    turn into an exception at the seam, which would be a strictly worse outcome than a
+    missing row.
+    """
+    surface = _WITHHOLD_SURFACE.get(route.route)
+    if surface is None:
+        return ""
+    source, kind, item_kind = surface
+    try:
+        from personalclaw.inbox import emit_attention_item
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        try:
+            state = get_dashboard_state()
+        except Exception:  # noqa: BLE001 - headless: the row still persists
+            state = None
+            logger.debug("withheld action: no dashboard state", exc_info=True)
+        return emit_attention_item(
+            state,
+            source=source,
+            kind=kind,
+            item_kind=item_kind,
+            title=title,
+            body=body,
+            refs={"action_type": route.key, "rung": route.rung, **dict(refs or {})},
+            dedup_key=dedup_key or f"autonomy_hold:{route.key}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("withheld action: could not raise an inbox row", exc_info=True)
+        return ""
+
+
+# ── the undo surface (auto_with_undo) ─────────────────────────────────────────
+
+
+def record_reversal(route: RungRoute, result: Any, *, label: str, refs: dict | None = None) -> str:
+    """Persist the reversal handle an ``auto_with_undo`` action came back with.
+
+    The handle itself is the PROVIDER's: only it knows what "undo" means for its own
+    effect (``ActionResult.reversal``, e.g. the task row a ``create-task`` filed). This
+    persists it where a user and AG-8's undo affordance can both find it — the SEL row and
+    the notification's ``meta`` — and returns the handle it recorded.
+
+    **No handle, no notification.** A provider that cannot reverse itself leaves
+    ``reversal`` empty, and then the passive notify is skipped entirely: an "undo
+    available" notice for an action that cannot be undone is a promise the product cannot
+    keep, and it would also mean every unattended fire in the tree grew a notification
+    overnight. The SEL row is still written, so the execution is auditable either way.
+    """
+    handle = str(getattr(result, "reversal", "") or "")
+    meta = {"action_type": route.key, "rung": route.rung, **dict(refs or {})}
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller=f"autonomy:{route.key}",
+            operation="guardrails.autonomy_executed",
+            outcome="ok",
+            source="guardrails",
+            resources=f"rung={route.rung} reversal={handle or 'none'}"[:200],
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("reversal SEL audit failed", exc_info=True)
+    if not handle:
+        return ""
+    try:
+        from personalclaw import notification_kinds
+        from personalclaw.action_providers.services import get_action_services
+
+        services = get_action_services()
+        state = getattr(services, "state", None) if services is not None else None
+        if state is not None:
+            state.notify(
+                notification_kinds.INFO,
+                "An automatic action ran",
+                f"{label} ran on its own. You can still undo it.",
+                meta={**meta, "reversal": handle},
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("reversal notify failed", exc_info=True)
+    return handle

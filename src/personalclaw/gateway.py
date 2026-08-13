@@ -85,6 +85,7 @@ from personalclaw.subagent import (
     ToolApprovalCallback,
     resolve_max_subagents,
 )
+from personalclaw.triggers.models import Outcome
 
 if TYPE_CHECKING:
     from personalclaw.channel_delivery import ChannelDelivery
@@ -128,6 +129,15 @@ _CYCLE_REPROMPT_MSG = (
 
 # Conservative per-message chunk limit for channel delivery (fits Slack's
 # 3000-char Block Kit section.text bound, the tightest known transport).
+
+
+#: The only statuses a pre-dispatch REFUSAL may record (``_record_refused_fire``). Both are
+#: keys `triggers.history.SCHEDULE_STATUS_TO_OUTCOME` resolves, and the guard that reads this
+#: tuple is what stops a caller inventing a third: an unmapped status falls to that table's
+#: silent FAILED fallback, so a defended fire would appear in the user's history as a broken
+#: automation. `test_triggers_status_vocabulary` reads this same tuple to enumerate what this
+#: writer can produce — keeping it a module constant is what keeps that rail able to see it.
+_REFUSAL_STATUSES: tuple[str, ...] = ("blocked_injection", Outcome.SKIPPED_GATE.value)
 
 
 # Tool-name prefixes treated as read-only by the --approval reads flag.
@@ -912,6 +922,42 @@ class GatewayOrchestrator:
             self._push_trigger_refresh()
             return
 
+        # 🔴 RUNG ROUTING, at the seam the retired one became (AUTONOMY-GUARDRAILS §5.2). The plan
+        # names `_run_action_job` as the third dispatch seam; that method retired with
+        # `ScheduleService` (S112) and, per the note at its old site, "the substrate GENERALIZED
+        # both: action dispatch is `_fire_store_trigger`". So this IS the third seam, under a new
+        # name — and it is the one every clock / file / webhook / chained trigger passes through.
+        # Wiring only the hook and event-trigger seams would honour a declared floor at two of
+        # three dispatch points, which is the same shape as not honouring it at all.
+        #
+        # The route comes from the provider NAME; the name→type mapping lives on the declaration
+        # (`ActionTypeSpec.providers`), so an app-contributed action inherits its declared bounds
+        # here with no branch of its own.
+        from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+        from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+        route = _route_action(provider_name, session_key="")
+        if not route.executes:
+            announce_withheld(
+                route,
+                title=f"{provider_name} is waiting for you",
+                body=(
+                    f"The {provider_name!r} action on trigger {trigger.id} did not run: "
+                    f"{route.reason}."
+                ),
+                refs={"trigger": str(getattr(trigger, "id", "") or ""), "provider": provider_name},
+                dedup_key=f"autonomy_hold:{route.key}:trigger:{getattr(trigger, 'id', '')}",
+            )
+            from personalclaw.triggers.models import Outcome as _Outcome
+
+            await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=f"held for your approval: {route.reason}",
+            )
+            self._push_trigger_refresh()
+            return
+
         try:
             ctx = ActionContext(event=event, context="", payload=payload)
             # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
@@ -975,6 +1021,18 @@ class GatewayOrchestrator:
                     get_meter().end_run(run_key)
                 except Exception:  # noqa: BLE001 - bookkeeping must not mask a fire's outcome
                     logger.debug("end_run failed for %s", run_key, exc_info=True)
+            # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only
+            # for an action that succeeded — a failed action has nothing to take back.
+            if route.records_reversal and bool(getattr(result, "success", False)):
+                record_reversal(
+                    route,
+                    result,
+                    label=provider_name,
+                    refs={
+                        "trigger": str(getattr(trigger, "id", "") or ""),
+                        "provider": provider_name,
+                    },
+                )
             await self._record_fire_outcome(trigger, result=result)
             self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
@@ -1412,6 +1470,30 @@ class GatewayOrchestrator:
         matched GROUPS name the pattern class, which is what tells a real attack from a false
         positive.
         """
+        await self._record_refused_fire(
+            trigger,
+            status="blocked_injection",
+            error=f"payload blocked by the injection screen ({groups}); never retried",
+        )
+
+    async def _record_refused_fire(self, trigger: Any, *, status: str, error: str) -> None:
+        """Write ONE ledger row for a fire a gate refused before the provider was called.
+
+        Shared by every pre-dispatch refusal on this path (the injection screen, the rung
+        ladder), because a refusal only a log knows about is a silent drop — and two copies
+        of this row would be two chances to write a `status` no projection maps, which reads
+        in the user's history as a genuine failure.
+
+        ``status`` must be one of :data:`_REFUSAL_STATUSES`. Refused rather than written,
+        because the projection table reads statuses with a `.get(status, FAILED)` — a status
+        nobody mapped is indistinguishable from one somebody decided about, and it lands in
+        the user's history as a genuine failure.
+        """
+        if status not in _REFUSAL_STATUSES:
+            logger.error(
+                "refusing to record fire status %r: not one of %s", status, _REFUSAL_STATUSES
+            )
+            return
         try:
             import time as _time
 
@@ -1421,17 +1503,17 @@ class GatewayOrchestrator:
             now = _time.time()
             await ScheduleRunStore(config_dir()).append(
                 ScheduleRun(
-                    run_id=f"blocked-{int(now * 1000)}",
+                    run_id=f"{status}-{int(now * 1000)}",
                     job_id=str(getattr(trigger, "id", "") or ""),
-                    trigger="blocked_injection",
+                    trigger=status,
                     started_at=now,
                     finished_at=now,
-                    status="blocked_injection",
-                    error=f"payload blocked by the injection screen ({groups}); never retried",
+                    status=status,
+                    error=error,
                 )
             )
         except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
-            logger.debug("could not record the blocked-fire row for %s", trigger, exc_info=True)
+            logger.debug("could not record the refused-fire row for %s", trigger, exc_info=True)
 
     async def _fire_chained_triggers(self, trigger: Any, payload: dict[str, Any]) -> None:
         """Fire every `run_completed` trigger waiting on the run that just finished (S122).

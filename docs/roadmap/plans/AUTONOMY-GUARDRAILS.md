@@ -648,6 +648,107 @@ block, and no FE. `leaves_machine` is nonetheless load-bearing here rather than 
 `promotion_eligibility` never *proposes* `autonomous` for a type that leaves the machine,
 however permissive its ceiling — that rung has to be an explicit owner grant.
 
+### 2026-08-12 — Atom AG-7 / Session 5.2 (declarations + rung routing at the seams) — DONE
+
+AG-6 shipped the ladder with **no call sites**. This closes that: `resolve_rung` now decides
+whether a real hook fire, a real data-event fire and a real store-trigger fire execute.
+
+`src/personalclaw/guardrails/rungs.py` is the seam-facing half (autonomy.py stays the decision
+layer): route constants + `RungRoute`, the `CORE_ACTION_TYPES` declaration table with
+`ensure_core_action_types()`, `route_action_type` / `route_provider_action`,
+`announce_withheld` (the durable row a withheld action leaves) and `record_reversal` (the
+`auto_with_undo` handle + passive notify). `autonomy.py` gains `ActionTypeSpec.providers` and
+the `_PROVIDER_INDEX` it feeds, `action_type_for_provider`, `unregister_action_type`, and
+`clamp_untrusted_ceiling`. `guardrails/policy.py` gains `rung_ceiling_for_profile`, giving
+`SafetyProfile.approval` its second production reader.
+
+**How a declaration reaches a seam with no per-action branching.** A seam holds a provider
+NAME and nothing else, so the name→type mapping lives ON the declaration
+(`ActionTypeSpec.providers`), indexed once at registration. Every seam is the same two calls;
+`test_the_seams_carry_no_per_action_branch` asserts no seam source mentions an action-type key
+at all. Registering an app's action provider and DECLARING its rung bounds happen in one place
+(`ActionTypeHandler.register` → `app:<app>.<action>`), and disabling the app drops both — a
+declaration outliving its provider would let a later app inherit its earned rung.
+
+**Rung → behaviour at a seam:** `draft_only` withholds and files a PROPOSAL row; `one_tap`
+withholds and files an AGENT-REQUEST row; `auto_with_undo` executes, records the provider's
+`ActionResult.reversal` handle (SEL + the notification `meta`) and passively notifies;
+`autonomous` executes. Both withhold routes dedupe per (type, trigger/hook) so a
+thirty-second trigger cannot stack a hundred rows. `create_task_provider` populates
+`ActionResult.reversal` (`task:<provider>:<id>`), so the new field has a production writer
+rather than being an unwritten key.
+
+**DEVIATION — the plan's third seam is `_fire_store_trigger`, not `_run_action_job`.** §5's
+"three dispatch seams" names `gateway._run_action_job`, which retired with `ScheduleService`
+(S112). Only TWO `enforce_action` call sites exist (`hooks.py`, `event_triggers.py`) — but the
+comment left at the retired method's old site says the substrate GENERALIZED it: "action
+dispatch is `_fire_store_trigger`". That method executes providers for every clock, file,
+webhook and chained trigger and is already listed as an execution site by
+`test_action_provider_chokepoints`. Routing two of three seams would honour a declared floor
+at two dispatch points and ignore it at the busiest one, which reads to a user exactly like
+not honouring it at all — so the third seam is wired under its current name.
+`dashboard/handlers/triggers._dispatch_store_action` (the manual Run button) is deliberately
+NOT routed: a user pressing Run *is* the approval a rung withholds for.
+
+**DEVIATION — `one_tap` raises a durable row, not `ApprovalGate.request`.** `ApprovalGate` is
+a per-native-session in-process `asyncio.Future` resolved by the chat runner's approve/reject
+plumbing; no unattended seam has one, so awaiting it would park the seam for 300s and then
+fail closed to REJECT. The honest, complete-in-itself behaviour is: withhold, and leave a
+standing attention row carrying `action_type`, `rung` and the trigger/hook id. AG-8 renders
+that row as the one-tap card and supplies the approval verdict that becomes the type's SEL
+evidence — until then `inbox.reply_draft` cannot climb, which is why no `one_tap` branch was
+built at the affordance (a branch nothing can reach is the dead code this project forbids).
+
+**DECISION — core declarations state today's rung, and buy the ceiling.** Every built-in
+action provider already runs unattended, licensed by the creation-time grant plus decision-7's
+capability fence; the ladder was added ON TOP of that floor. So each core spec declares
+`floor = ceiling = autonomous` with its honest `leaves_machine`, and a machine-leaving core
+action (`bash`/`run-script`, `send-message`, `call-app-route`, the spawn providers) is making
+the deliberate in-tree ceiling raise §5 asks for. Declaring them lower would not harden
+anything — it would stop a user's existing automations and grow a notification per fire.
+`enforcing a dead control is an outage` is the recorded lesson. What the declarations do buy:
+`promotion_eligibility` can never propose `autonomous` for them, the ladder panel gets its
+inventory, and an app's declaration is bounded by the same vocabulary.
+
+**DECISION (security) — an app cannot declare `leaves_machine`, and its ceiling is clamped
+LOUDLY.** Core derives `leaves_machine` from the app's own `permissions.network`: an app that
+could self-certify "my effect stays here" would be self-certifying its way to the top of the
+ladder. A manifest asking for `ceiling: autonomous` on a network-reaching action is clamped to
+`auto_with_undo` with a `logger.warning` AND a `guardrails.autonomy_ceiling_clamped` SEL row
+naming both the declared and the granted ceiling — a silent downgrade is a recorded finding in
+this tree (`_validate_agent`), and it would leave the manifest claiming a rung it never had.
+
+**DECISION — an UNDECLARED provider keeps its pre-ladder behaviour** (`governed=False`,
+route `execute`). Fail-closed applies to a *declared* key with no registration and to a grant
+that cannot be proven — both resolve `draft_only`. Treating every undeclared provider as
+withheld would stop every hook and trigger in the tree.
+
+**DECISION — the profile may only NARROW** (PLATFORM-HARDENING-FLOORS §5, tightest wins).
+`rung_ceiling_for_profile` reads `profile.approval`: `hook_based` (the unattended posture)
+caps at `auto_with_undo`, because `autonomous` means an action ran silently with no handle and
+nothing a user would notice. `ask`/`auto` add no bound. The incident clamp in `resolve_rung`
+outranks both. SH5.1's `Ceiling` object and SH5.2's path matcher stay plan 67's rows.
+
+**DISCOVERY — `net/policy.egress_policy_for_tier` still has no production caller**, so
+`SafetyProfile.egress_tier` never reaches real egress. Untouched: that is SH5.3's scope, and
+this atom's `done_when` says nothing about egress. Recorded so it is not re-found as new.
+
+**Collateral fix — `_record_refused_fire`.** The rung refusal needs a ledger row for the same
+criterion-8 reason a screened payload does, so `gateway._record_blocked_fire` was generalized
+into one refusal recorder. That first made the write's status uninferable and reddened
+`test_triggers_status_vocabulary` — root-caused rather than exempted, by pinning the status to
+a module-level `_REFUSAL_STATUSES` tuple with an early-return guard, which both restores the
+rail's inference and refuses a status the projection table cannot map. That writer's
+`min_values` floor was RAISED 3 → 4.
+
+Full gate: `make lint` clean (black/isort/flake8/mypy), `pytest tests/` **18793 passed, 30
+skipped, 12 xfailed**, plus the 3 pre-existing `test_harness_validate.py` failures that red in
+any worktree. 29 new tests in `tests/test_guardrails_rung_routing.py`, every behavioural one
+driven through a production fire path. `inert-surface-baseline.json`, `config-baseline.json`,
+the manifest reference and the dag derived block all regenerate byte-identical (the inert
+baseline tracks enum / sdk-export / config surfaces, not call sites, so wiring a resolver is
+invisible to it). No `web/` changes — the rung chip, ladder panel and undo click are AG-8.
+
 ---
 
 ## Status: all four sessions COMPLETE (2026-07-25)
@@ -689,7 +790,7 @@ def promotion_eligibility(key: str) -> Eligibility   # DERIVED, never stored-as-
 def demote(key: str, cause: str) -> None     # automatic + immediate; starts cooldown_days
 ```
 
-- **Enforcement at the existing chokepoints, no new seam:** `resolve_rung` composes with `enforce_action` at the three dispatch seams (`hooks.run_script_hook`, `gateway._run_action_job`, `event_triggers._fire`) and with `profile_for_session` for unattended spawns. Routing per rung: `draft_only` → proposals inbox (plan 42's `kind=proposal` via `emit_attention_item` once 42 lands; pre-42, the `skills/proposals.py` pending-item + `notify` pattern); `one_tap` → approval card (the `ApprovalGate.request` surface, `agents/native/approval.py`); `auto_with_undo` → execute + persist a reversal handle on the `ActionResult` + passive notify; `autonomous` → execute under SEL.
+- **Enforcement at the existing chokepoints, no new seam:** `resolve_rung` composes with `enforce_action` at the three dispatch seams (`hooks.run_script_hook`, ~~`gateway._run_action_job`~~ → **`gateway._fire_store_trigger`**, the successor it was generalized into when `ScheduleService` retired in S112 — corrected by AG-7, see the log; `event_triggers._fire` → `event_triggers.execute_event_action`, extracted in S67) and with `profile_for_session` for unattended spawns. Routing per rung: `draft_only` → proposals inbox (plan 42's `kind=proposal` via `emit_attention_item` once 42 lands; pre-42, the `skills/proposals.py` pending-item + `notify` pattern); `one_tap` → approval card (the `ApprovalGate.request` surface, `agents/native/approval.py`); `auto_with_undo` → execute + persist a reversal handle on the `ActionResult` + passive notify; `autonomous` → execute under SEL.
 - **Track record DERIVED, not stored:** eligibility computes from SEL `tool_approved`/`tool_rejected` outcomes plus FEEDBACK-SIGNAL records (plan 58, created this same rev — its store is the 👍/👎 source). Only *grants* and *demotions* persist (`~/.personalclaw/autonomy_rungs.json`, atomic_write, joins snapshot CORE_FILES): `{key: {rung, granted_at, evidence_window, demotions: [{at, cause, cooldown_until}]}}`.
 - **Asymmetric by design:** promotion is ALWAYS a user click — eligibility files a *proposal*, never auto-promotes. Demotion is automatic + immediate on ANY rejection, undo, or 👎 for that type, with a cooldown before re-eligibility. Thresholds per-type configurable via a new `guardrails.autonomy` config subsection (four wiring points, §7).
 - **Kill switch:** `personalclaw incident on` (existing `guardrails/incident.py`) additionally clamps every resolution above `one_tap` — during an incident nothing executes-with-undo or runs autonomous, even attended-adjacent actions.
