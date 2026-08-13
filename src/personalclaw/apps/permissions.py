@@ -30,6 +30,11 @@ sandbox). Enforcement status of each method:
 * ``can_use_app_messaging`` — the gateway broker (apps/messaging.send_message) refuses
   an undeclared sender→target pair 403 + SEL, and it is the only app-to-app path, so
   this is the whole gate. Enforced, and (APE-12) disclosed at install consent as such.
+* ``can_use_desktop`` — the desktop seam (``handlers/desktop.py``) refuses an app
+  identity that did not declare the capability, 403 + SEL ``desktop.capability_denied``.
+  Apps have no other path to the shell (Electron IPC is renderer-only and the
+  gateway mediates every call), so this is the whole gate. Enforced, and disclosed
+  at install consent among the enforced bullets.
 * ``can_use_network`` — **DECLARATION-ONLY (unenforced by design)**, and the consent
   surface says so rather than implying otherwise (EI-12 D2). There is no per-app
   egress chokepoint to enforce at: an app's provider code is imported **in-process**
@@ -95,6 +100,19 @@ class PermissionChecker:
         (``POST /api/apps/message``) is the only app-to-app path, so this is the sole
         gate on the sender→target edge; an undeclared pair is refused there."""
         return _matches_any(target_app, self.permissions.appMessaging)
+
+    # -- native desktop capabilities (DC-2) ------------------------------
+    def can_use_desktop(self, capability: str) -> bool:
+        """Whether this app may reach ``capability`` on the desktop shell.
+
+        Deny-by-default and EXACT-match only: unlike ``api``/``events`` there is no
+        prefix or ``*`` wildcard here, because the capability vocabulary is closed
+        (``dashboard.desktop_registry.CAPABILITIES``) and "everything native this
+        host can do" is not a grant a user should be able to click through. An app
+        must name each capability it wants, and the Store consent surface names
+        them back. The gateway is the only path — apps never reach Electron IPC —
+        so ``/api/desktop/*`` consulting this is the whole gate."""
+        return bool(capability) and capability in self.permissions.desktop
 
     # -- coarse capability flags -----------------------------------------
     def can_use_memory(self, scope: str = "app-scoped") -> bool:

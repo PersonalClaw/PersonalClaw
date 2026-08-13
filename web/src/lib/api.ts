@@ -297,6 +297,31 @@ export interface AppPermissionsWire {
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
   // no app at all (deny by default), which the consent UI states rather than implies.
   appMessaging?: string[]
+  // DC-2: native desktop capabilities this app may reach THROUGH the gateway (apps
+  // never touch Electron IPC). Enforced — `/api/desktop/*` refuses an undeclared
+  // capability 403 + SEL `desktop.capability_denied`. Exact names only, no wildcard.
+  // Absent = no native reach at all, which the consent UI states rather than implies.
+  desktop?: string[]
+}
+// DC-2. One native capability's state as the desktop shell reported it. `granted`
+// mirrors macOS's own vocabulary so nothing is translated on the way through.
+// `requestable` is false when THIS PROCESS cannot raise the OS prompt (macOS exposes
+// no API to ask for Screen Recording, and none to read notification authorization) —
+// the UI must then point at System Settings instead of offering a dead button.
+export interface DesktopCapabilityWire {
+  available: boolean
+  granted: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unavailable'
+  requestable: boolean
+  reason: string
+}
+export interface DesktopStateWire {
+  connected: boolean
+  shell: { version: string; platform: string } | null
+  // Empty whenever `connected` is false. Absence is the honest answer: a browser tab
+  // must not read as "these exist, just not granted yet".
+  capabilities: Record<string, DesktopCapabilityWire>
+  registered_at: string
+  last_seen: string
 }
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
@@ -3310,6 +3335,11 @@ export const api = {
   deniedCommands: () => get<DeniedCommands>('/api/security/denied-commands'),
   setUserDeniedCommands: (patterns: string[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.denied_commands', value: patterns }),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  // DC-2. The desktop shell's pushed capability manifest. In a browser tab this is
+  // `{connected: false, capabilities: {}}` — an EMPTY map, not the capability names
+  // with a placeholder state, so no surface can render a grant control for something
+  // the gateway cannot deliver.
+  desktopState: () => get<DesktopStateWire>('/api/desktop/state'),
   setSecurityEgress: (cfg: EgressPolicyConfig) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.egress', value: cfg }),
   // Tool-output projection rules (TokenJuice OP6). Read from the whole-config GET
   // (tools.projection_rules); written via the config PATCH allowlist.

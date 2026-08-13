@@ -184,6 +184,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/dashboard/views/{view_id}/tiles` — {slug, size?} — pin an artifact tile.
 - `POST /api/dashboard/views/{view_id}/tiles/resolve` — {ref, keep} — accept/dismiss/unpin.
 - `GET /api/design/tokens/default` — PersonalClaw's canonical
+- `GET /api/desktop/capabilities/{cap}` — one capability, gateway-mediated.
+- `POST /api/desktop/register` — the shell announces itself, gets a session token.
+- `GET /api/desktop/state` — what the desktop shell can actually do, right now.
+- `POST /api/desktop/state` — the shell pushes a refreshed capability manifest.
+- `POST /api/desktop/unregister` — the shell is quitting; forget its capabilities.
 - `GET /api/doctor` — all probes, grouped by capability, cached 30s.
 - `GET /api/doctor/crash/{filename}` — the full JSON of one crash artifact.
 - `POST /api/doctor/fix/{fix_id}` — apply a confirm-gated fix.

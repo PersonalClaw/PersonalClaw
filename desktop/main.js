@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification } = require("electron");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFileSync } = require("child_process");
@@ -6,6 +6,7 @@ const path = require("path");
 const http = require("http");
 const { findPersonalclawBin } = require("./find-bin");
 const { attachContextMenu } = require("./context-menu");
+const { IPC_CHANNELS, makeCapabilities, registerCapabilityIpc } = require("./capabilities");
 
 /**
  * Resolve the user's real login-shell PATH.
@@ -163,6 +164,141 @@ function stopGateway() {
     gatewayProcess.kill("SIGTERM");
     gatewayProcess = null;
   }
+}
+
+// ── Capability bridge ↔ gateway registration (DC-2) ──
+
+/**
+ * The per-session `shell_token` the gateway mints for us.
+ *
+ * It lives in MAIN-process module scope and nowhere else: never written to disk,
+ * never logged, never handed to a renderer. `preload.js` exposes probe/request/on
+ * and no token accessor, so page JS has no path to this value even if a page is
+ * compromised. It dies with the process, and re-registering rotates it server-side
+ * so a stale shell cannot keep writing capability state.
+ */
+let shellToken = null;
+
+const capabilities = makeCapabilities({
+  platform: process.platform,
+  systemPreferences,
+  notification: Notification,
+  // A grant changes two consumers at once: the renderer (so a panel re-renders
+  // without polling) and the gateway (so a browser tab and any app with a
+  // `desktop` permission see the same truth).
+  onChange: (cap, state) => {
+    try {
+      mainWindow?.webContents?.send(IPC_CHANNELS.state, { capability: cap, state });
+    } catch {
+      /* window may be gone mid-grant */
+    }
+    pushCapabilityState();
+  },
+});
+
+/** Read the gateway's per-session local secret. Same-user filesystem access is the
+ * claim being proved: "I am a process running as this user on this machine". */
+function readLocalSecret() {
+  try {
+    return fs.readFileSync(path.join(PERSONALCLAW_HOME, ".local_secret"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** POST JSON to the loopback gateway. Resolves the parsed body, or null on any
+ * failure — capability registration must never be able to break app startup. */
+function postGateway(pathname, body, headers = {}) {
+  return new Promise((resolve) => {
+    if (!backendUrl) return resolve(null);
+    const payload = Buffer.from(JSON.stringify(body));
+    let url;
+    try {
+      url = new URL(pathname, backendUrl);
+    } catch {
+      return resolve(null);
+    }
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: "POST",
+        timeout: 5000,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": payload.length,
+          ...headers,
+        },
+      },
+      (res) => {
+        let buf = "";
+        res.on("data", (c) => (buf += c));
+        res.on("end", () => {
+          if (res.statusCode !== 200) {
+            // Log the STATUS only. An error body could quote a credential.
+            console.warn(`desktop ${pathname} → HTTP ${res.statusCode}`);
+            return resolve(null);
+          }
+          try {
+            resolve(JSON.parse(buf));
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on("error", (err) => {
+      console.warn(`desktop ${pathname} failed: ${err.message}`);
+      resolve(null);
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
+/** Announce the shell to the gateway and remember the token it mints. */
+async function registerWithGateway() {
+  const secret = readLocalSecret();
+  if (!secret) {
+    console.warn("desktop: no local secret; capabilities stay unregistered");
+    return false;
+  }
+  const res = await postGateway(
+    "/api/desktop/register",
+    {
+      shell: { version: app.getVersion(), platform: process.platform },
+      capabilities: capabilities.snapshot(),
+    },
+    { "X-Local-Secret": secret }
+  );
+  if (!res || !res.shell_token) return false;
+  shellToken = res.shell_token;
+  console.log("desktop: capability manifest registered with the gateway");
+  return true;
+}
+
+/** Push a refreshed manifest after a grant/deny. No token → no push (fail closed). */
+async function pushCapabilityState() {
+  if (!shellToken) return;
+  await postGateway(
+    "/api/desktop/state",
+    { capabilities: capabilities.snapshot() },
+    { "X-Shell-Token": shellToken }
+  );
+}
+
+/** Tell the gateway the shell is going away, so a still-open tab stops claiming
+ * the desktop can do anything. Best-effort: quit does not wait on it. */
+function unregisterFromGateway() {
+  if (!shellToken) return;
+  const token = shellToken;
+  shellToken = null;
+  postGateway("/api/desktop/unregister", {}, { "X-Shell-Token": token });
 }
 
 function checkBackend(healthUrl) {
@@ -551,6 +687,11 @@ if (!app.requestSingleInstanceLock()) {
     ]);
     Menu.setApplicationMenu(appMenu);
 
+    // The capability bridge's main-process half. Registered before any window
+    // loads so a renderer's first `pclawDesktop.capabilities.probe()` always has
+    // a handler waiting.
+    registerCapabilityIpc(ipcMain, capabilities);
+
     createTray();
     const win = createWindow();
 
@@ -559,6 +700,10 @@ if (!app.requestSingleInstanceLock()) {
     } catch (err) {
       console.error("Gateway did not start:", err.message);
     }
+    // Needs backendUrl from the READY line, so it follows the gateway start. A
+    // failure here leaves the gateway reporting "not connected" — degraded but
+    // honest — and never blocks the window.
+    await registerWithGateway();
     await showLoadingThenConnect(win);
 
     app.on("activate", () => {
@@ -573,6 +718,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  unregisterFromGateway();
   stopGateway();
 });
 

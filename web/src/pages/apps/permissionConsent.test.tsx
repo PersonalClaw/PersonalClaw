@@ -123,3 +123,38 @@ describe('PermissionList — appMessaging is disclosed as the enforced grant it 
     expect(container.textContent ?? '').not.toMatch(/App messaging: none/)
   })
 })
+
+// DC-2. `desktop` is the same shape of enforced grant as `appMessaging`: the gateway
+// mediates every app→shell call and refuses an undeclared capability 403 + SEL
+// `desktop.capability_denied` (handlers/desktop.py), so it belongs in the enforced
+// bullets and its copy must not hedge. The two-sided key rail lives in
+// `tests/test_app_permissions.py::test_consent_wire_declares_exactly_the_permissions_
+// the_server_emits`; this is the rendering half.
+const DESKTOP_PAYLOAD: AppPermissionsWire = {
+  desktop: ['audio_capture', 'native_notifications'],
+}
+
+describe('PermissionList — desktop capabilities are disclosed as enforced', () => {
+  it('names every capability the server sent, inside the ENFORCED bullets', () => {
+    const { container } = render(<PermissionList perms={DESKTOP_PAYLOAD} />)
+    const row = enforcedRows(container).find((r) => /Desktop capabilities/.test(r))
+    expect(row).toBeDefined()
+    expect(row).toContain('audio capture')
+    expect(row).toContain('native notifications')
+    expect(row).not.toMatch(/advisory|does not confine/i)
+  })
+
+  it('states the deny-by-default case instead of staying silent', () => {
+    for (const perms of [{}, { api: ['/api/tasks'] }, { storage: true }]) {
+      const { container } = render(<PermissionList perms={perms} />)
+      const text = container.textContent ?? ''
+      expect(text).toMatch(/Desktop capabilities: none/)
+      expect(text).toMatch(/reach nothing native/)
+    }
+  })
+
+  it('does not claim "reaches nothing native" for a declaring app', () => {
+    const { container } = render(<PermissionList perms={DESKTOP_PAYLOAD} />)
+    expect(container.textContent ?? '').not.toMatch(/Desktop capabilities: none/)
+  })
+})

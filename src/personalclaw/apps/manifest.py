@@ -319,6 +319,14 @@ class Permissions:
     # consent surface that did not exist; ``test_app_messaging.py`` now pins the
     # server leg and ``permissionConsent.test.tsx`` the rendering.
     appMessaging: list[str] = field(default_factory=list)  # noqa: N815
+    # DC-2: native desktop capabilities this app may read/use through the gateway
+    # (``["audio_capture", "native_notifications"]``). Names come from
+    # ``dashboard.desktop_registry.CAPABILITIES``; anything else never matches, so a
+    # typo denies rather than widens. Empty → the app may reach NO desktop
+    # capability (deny by default) and ``/api/desktop/*`` refuses it 403 + SEL
+    # ``desktop.capability_denied``. Apps never touch Electron IPC — the gateway
+    # mediates every call — so this list plus ``api`` is the whole reach.
+    desktop: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -340,6 +348,8 @@ class Permissions:
             d["agent"] = True
         if self.appMessaging:
             d["appMessaging"] = self.appMessaging
+        if self.desktop:
+            d["desktop"] = self.desktop
         return d
 
     @classmethod
@@ -354,6 +364,7 @@ class Permissions:
             cron=bool(data.get("cron", False)),
             agent=bool(data.get("agent", False)),
             appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
+            desktop=[str(c) for c in data.get("desktop", []) if c],
         )
 
 

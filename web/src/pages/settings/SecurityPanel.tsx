@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { FieldError } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
-import { ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe } from 'lucide-react'
+import { ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe, MonitorOff } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type EgressPolicyConfig } from '../../lib/api'
+import { api, type DesktopCapabilityWire, type EgressPolicyConfig } from '../../lib/api'
+import { requestDesktopCapability } from '../../lib/desktopBridge'
+import { Button } from '../../ui/Button'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section } from './settingsUI'
 import { CardGridSkeleton } from '../../ui/ListScaffold'
@@ -55,7 +57,122 @@ export function SecurityPanel() {
         <DeniedCommandsEditor builtin={denied.builtin} user={denied.user} onChange={onDeniedChange} />
       )}
       <EgressPolicyEditor />
+      <DesktopCapabilitiesPanel />
     </div>
+  )
+}
+
+/** Human labels for the native capability vocabulary (DC-2). An UNMAPPED name still
+ *  renders — humanized from its own id — because silently dropping a capability the
+ *  gateway reported would make this panel less truthful than the API behind it. */
+const DESKTOP_CAPABILITY_LABELS: Record<string, string> = {
+  audio_capture: 'Microphone',
+  screen_capture: 'Screen recording',
+  native_notifications: 'Native notifications',
+  global_hotkey: 'Global hotkey',
+  tray: 'Menu-bar item',
+  login_item: 'Open at login',
+}
+
+const capabilityLabel = (cap: string) =>
+  DESKTOP_CAPABILITY_LABELS[cap] ?? cap.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+/** How each grant state reads to a user, and how it looks. `unavailable` and
+ *  `not-determined` are deliberately NOT styled as failures — neither is a problem.
+ *  `granted` uses `text-success`, not `text-primary`: the brand primary is a coral in
+ *  this theme, so a granted row was rendering the same colour as a denied one — a
+ *  security state a user cannot tell apart at a glance is not rendering truth. */
+const GRANT_PRESENTATION: Record<DesktopCapabilityWire['granted'], { label: string; tone: string }> = {
+  granted: { label: 'Granted', tone: 'text-success' },
+  denied: { label: 'Denied', tone: 'text-error' },
+  restricted: { label: 'Restricted by policy', tone: 'text-error' },
+  'not-determined': { label: 'Not requested yet', tone: 'text-on-surface-low' },
+  unavailable: { label: 'Unavailable', tone: 'text-on-surface-low' },
+}
+
+/** Settings → Security → Desktop capabilities (DC-2 T2.3).
+ *
+ *  Renders what the shell actually reported through `GET /api/desktop/state`, and
+ *  nothing else. With no shell the state is `{connected: false, capabilities: {}}`, so
+ *  this panel says the desktop app is not connected instead of listing six
+ *  capabilities a browser tab could never grant. A Request button appears ONLY where
+ *  the shell said `requestable` — where macOS exposes no prompt (screen recording,
+ *  notification authorization) the row states where to grant it instead of offering a
+ *  control that would do nothing. */
+function DesktopCapabilitiesPanel() {
+  const { data: ds, refresh } = useCachedData(
+    'settings:desktop-state', () => api.desktopState().catch(() => null),
+  )
+  const [busyCap, setBusyCap] = useState('')
+  const [err, setErr] = useState('')
+  if (!ds) return null
+
+  const caps = Object.entries(ds.capabilities)
+
+  const request = async (cap: string) => {
+    setBusyCap(cap); setErr('')
+    const res = await requestDesktopCapability(cap)
+    // A null result means the page is not running inside the shell — the same
+    // condition the "not connected" state below describes, reached from a stale view.
+    if (!res) setErr('The desktop app is no longer connected.')
+    else if (!res.granted && res.reason) setErr(res.reason)
+    setBusyCap('')
+    refresh()
+  }
+
+  return (
+    <Section
+      title="Desktop capabilities"
+      hint="Native permissions the PersonalClaw desktop app holds on this machine. Each one is granted by macOS, not by PersonalClaw — revoking it in System Settings takes effect immediately, and nothing here can grant itself."
+    >
+      {!ds.connected || caps.length === 0 ? (
+        <div className="rounded-lg bg-surface-container px-4 py-3">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-surface-high">
+              <MonitorOff size={17} className="text-on-surface-low" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>Desktop app not connected</div>
+              <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
+                You are viewing this in a browser tab. Native capabilities — microphone, notifications, the menu-bar item — exist only while the PersonalClaw desktop app is running, so there is nothing to show or grant here.
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {caps.map(([cap, state]) => {
+            const p = GRANT_PRESENTATION[state.granted] ?? GRANT_PRESENTATION.unavailable
+            const label = capabilityLabel(cap)
+            return (
+              <div key={cap} className="flex items-start justify-between gap-3 rounded-lg bg-surface-container px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</div>
+                  <div className={`mt-0.5 text-[0.8125rem] ${p.tone}`}>{p.label}</div>
+                  {state.reason && (
+                    <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{state.reason}</div>
+                  )}
+                </div>
+                {state.requestable && (
+                  <Button variant="secondary" size="sm" loading={busyCap === cap}
+                    onClick={() => request(cap)}>
+                    {/* The capability is IN the name, so six buttons on one panel are
+                        not six identically-named controls. */}
+                    Allow {label.toLowerCase()}
+                  </Button>
+                )}
+              </div>
+            )
+          })}
+          {ds.shell && (
+            <div className="text-on-surface-low text-[0.75rem]">
+              Reported by the desktop app {ds.shell.version} on {ds.shell.platform}.
+            </div>
+          )}
+          {err && <FieldError>{err}</FieldError>}
+        </div>
+      )}
+    </Section>
   )
 }
 

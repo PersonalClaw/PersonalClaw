@@ -1474,6 +1474,15 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
   if (messaging.length) {
     rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)
   }
+  // DC-2. Native desktop capabilities belong in the ENFORCED bullets: the gateway
+  // mediates every app→shell call and refuses an undeclared capability 403 + SEL
+  // (handlers/desktop.py). Unlike `appMessaging` there is no wildcard to explain —
+  // the vocabulary is closed and each entry is an exact capability — so the names are
+  // rendered as-is, humanized.
+  const desktopCaps = perms.desktop ?? []
+  if (desktopCaps.length) {
+    rows.push(`Desktop capabilities: ${desktopCaps.map((c) => c.replace(/_/g, ' ')).join(', ')}`)
+  }
   return (
     <div>
       <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
@@ -1486,6 +1495,15 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
         <div data-type="body-s" className="mt-1 text-on-surface-low">
           App messaging: none — it declared no target, and the gateway broker is the only
           way one app can reach another, so it can message no other app.
+        </div>
+      )}
+      {/* DC-2. Same reasoning as the messaging caption above: deny-by-default is the
+          real behaviour, and staying silent about it would let absence read as
+          "unrestricted" rather than "no native reach at all". */}
+      {desktopCaps.length === 0 && (
+        <div data-type="body-s" className="mt-1 text-on-surface-low">
+          Desktop capabilities: none — it declared no native capability, and the gateway
+          mediates every app→desktop call, so it can reach nothing native on this machine.
         </div>
       )}
       <div className="mt-2 flex gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
