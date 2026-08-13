@@ -60,6 +60,14 @@ class ActionResult:
     # three dispatch seams wrap an uncaught provider exception into one, so
     # app-contributed providers inherit the envelope without knowing it exists.
     agent_error: "AgentError | None" = None
+    # AUTONOMY-GUARDRAILS §5.2: an opaque handle that identifies what this action
+    # created, so it can be taken back — the ``auto_with_undo`` rung's whole point.
+    # Provider-supplied because only the provider knows what "undo" means for its own
+    # effect (``create-task`` returns the task row it filed). A provider that cannot
+    # reverse itself leaves it EMPTY, and the seam then records the execution without
+    # offering an undo: `guardrails.rungs.record_reversal` skips the notification
+    # entirely rather than promise a reversal that cannot happen.
+    reversal: str = ""
 
 
 def provider_failure(provider_name: str, exc: BaseException) -> AgentError:

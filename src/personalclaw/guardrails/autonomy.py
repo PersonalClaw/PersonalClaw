@@ -146,6 +146,12 @@ class ActionTypeSpec:
     *proposed* for ``autonomous`` by :func:`promotion_eligibility`, however permissive
     its ceiling — reaching that rung has to be an explicit owner decision, not the
     tail end of a derived ladder.
+
+    ``providers`` names the action-provider identities this type governs — the ONE
+    thing a dispatch seam actually holds (``hook.provider`` / ``trigger.action_provider``).
+    Carrying it on the DECLARATION is what keeps the seams free of per-action branching:
+    a seam asks :func:`action_type_for_provider` and gets whatever the declaration said,
+    so an app-contributed action is routed by the same three lines that route ``bash``.
     """
 
     key: str
@@ -153,12 +159,18 @@ class ActionTypeSpec:
     ceiling: str = RUNG_ONE_TAP
     leaves_machine: bool = False
     promotion: PromotionRule = field(default_factory=PromotionRule)
+    providers: tuple[str, ...] = ()
 
 
 # Process-global registry, the ``_PROFILES`` pattern from ``policy.py``. Populated at
 # declaration sites (provider registration, inbox affordances, app manifests) — see
 # ``register_action_type``. Reset between tests by ``reset_action_types``.
 _REGISTRY: dict[str, ActionTypeSpec] = {}
+
+# Dispatch identity → type key, derived from ``ActionTypeSpec.providers``. A pure index
+# over the registry (never a second source of truth): every write goes through
+# ``register_action_type`` and every stale entry is dropped when a key re-registers.
+_PROVIDER_INDEX: dict[str, str] = {}
 
 
 def register_action_type(spec: ActionTypeSpec) -> None:
@@ -168,6 +180,11 @@ def register_action_type(spec: ActionTypeSpec) -> None:
     unusable declaration: an unknown rung name in a registration is a programming
     error at the declaration site, and silently coercing it would hide which types are
     actually governed.
+
+    A provider name may be claimed by at most one type. A second claim REPLACES the
+    first and says so in the log: two declarations for one dispatch identity means one
+    of them is silently ungoverned, and the quiet version of that is the shape a seam
+    can never tell apart from "nothing declared it".
     """
     if not spec.key:
         raise ValueError("action type key must be non-empty")
@@ -177,11 +194,49 @@ def register_action_type(spec: ActionTypeSpec) -> None:
                 f"{spec.key}: unknown {label} rung {value!r} (expected one of {RUNGS})"
             )
     _REGISTRY[spec.key] = spec
+    # Drop this key's previous claims first, so a re-registration that narrowed its
+    # ``providers`` list does not leave the dropped name pointing at it.
+    for name in [n for n, k in _PROVIDER_INDEX.items() if k == spec.key]:
+        del _PROVIDER_INDEX[name]
+    for name in spec.providers:
+        held = _PROVIDER_INDEX.get(name)
+        if held is not None and held != spec.key:
+            logger.warning(
+                "action provider %r was governed by %s — %s now claims it", name, held, spec.key
+            )
+        _PROVIDER_INDEX[name] = spec.key
 
 
 def action_type(key: str) -> ActionTypeSpec | None:
     """The registered spec for ``key``, or ``None`` when nothing declared it."""
     return _REGISTRY.get(key)
+
+
+def action_type_for_provider(provider_name: str) -> ActionTypeSpec | None:
+    """The spec governing a provider-dispatched action, or ``None`` when undeclared.
+
+    The seam-facing lookup: a dispatch point holds a provider NAME, not a type key.
+    ``None`` means no declaration claims this provider — the caller keeps the
+    pre-ladder behaviour (the creation-time grant, denylist and capability fence still
+    apply). It deliberately does NOT mean "draft_only": treating every undeclared
+    provider as withheld would stop every hook and trigger in the tree, which is an
+    outage dressed as a safety control.
+    """
+    key = _PROVIDER_INDEX.get((provider_name or "").strip())
+    return _REGISTRY.get(key) if key else None
+
+
+def unregister_action_type(key: str) -> None:
+    """Drop a declaration and every provider claim it held.
+
+    The mirror of an app being disabled or uninstalled: its provider leaves the dispatch
+    registry in the same breath, and a declaration that outlived it would keep claiming a
+    name a DIFFERENT app could later register — which is how one app inherits another's
+    earned rung. Unknown key is a no-op.
+    """
+    _REGISTRY.pop(key, None)
+    for name in [n for n, k in _PROVIDER_INDEX.items() if k == key]:
+        del _PROVIDER_INDEX[name]
 
 
 def registered_action_types() -> tuple[ActionTypeSpec, ...]:
@@ -193,6 +248,7 @@ def reset_action_types() -> None:
     """Drop every registration — invoked by an autouse test fixture so a type declared
     by one test never leaks into the next (the SEL/breaker/incident discipline)."""
     _REGISTRY.clear()
+    _PROVIDER_INDEX.clear()
 
 
 # ── the store (grants + demotions ONLY) ───────────────────────────────────────
@@ -382,6 +438,44 @@ def _clamp(rung: str, floor: str, ceiling: str) -> str:
     if ri < 0:
         ri = fi
     return RUNGS[min(max(ri, fi), ci)]
+
+
+#: The highest ceiling an UNTRUSTED declaration (an app manifest) may ask for when the
+#: action leaves the machine. ``autonomous`` means "executes silently, no undo handle,
+#: no notification" — for an effect the user cannot take back from this machine that has
+#: to be an in-tree decision, not a line in a manifest the installer skimmed.
+MAX_UNTRUSTED_CEILING = RUNG_AUTO_WITH_UNDO
+
+
+def clamp_untrusted_ceiling(key: str, ceiling: str, *, leaves_machine: bool) -> str:
+    """The ceiling an app-supplied declaration actually gets, clamped and AUDITED.
+
+    Core's own specs are reviewed in-tree, so a core type that declares
+    ``ceiling=autonomous`` for a machine-leaving action has made the explicit raise the
+    ladder asks for. An app's manifest has had no such review, so the same claim is
+    clamped to :data:`MAX_UNTRUSTED_CEILING`.
+
+    **The clamp is loud on purpose.** A silent downgrade is a recorded finding in this
+    tree (``_validate_agent``): the app keeps working, nobody learns its declaration was
+    overruled, and the manifest goes on claiming a rung it never had. So a clamp warns
+    AND writes a SEL row naming both the asked-for and the granted ceiling.
+    """
+    if not leaves_machine:
+        return ceiling
+    if rung_rank(ceiling) <= rung_rank(MAX_UNTRUSTED_CEILING):
+        return ceiling
+    logger.warning(
+        "autonomy: %s declares ceiling %r but its app reaches the network — clamped to %s",
+        key,
+        ceiling,
+        MAX_UNTRUSTED_CEILING,
+    )
+    _audit(
+        "autonomy_ceiling_clamped",
+        key=key,
+        detail=f"declared={ceiling} granted={MAX_UNTRUSTED_CEILING} reason=leaves_machine",
+    )
+    return MAX_UNTRUSTED_CEILING
 
 
 def _cooldown_until(grant: RungGrant | None) -> str:

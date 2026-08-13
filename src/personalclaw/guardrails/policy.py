@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS
 from personalclaw.guardrails.budgets import Budget
 
 if TYPE_CHECKING:
@@ -179,6 +180,32 @@ def profile_for_session(session_key: str) -> SafetyProfile:
     branch. Operator config is layered in via ``safety_profile_for``."""
     base = HEADLESS if is_unattended_session(session_key) else INTERACTIVE
     return safety_profile_for(base)
+
+
+def rung_ceiling_for_profile(profile: SafetyProfile) -> str:
+    """The highest autonomy rung a run under ``profile`` may reach (AUTONOMY-GUARDRAILS
+    §5.2, layered per PLATFORM-HARDENING-FLOORS §5).
+
+    **Two levels, one rule — tightest wins.** The action type's own ceiling is level one;
+    this is level two, and it may only NARROW. The composition lives in
+    :func:`~personalclaw.guardrails.rungs.route_action_type`, which takes the lower of the
+    two, so a profile can never hand a type a rung its declaration refused.
+
+    The ordinal is read off ``profile.approval``, the one profile field that describes how
+    much the run may decide alone:
+
+    * ``auto`` — the operator pre-approved this posture, so nothing here narrows it.
+    * ``ask`` — a human is watching the run and sees the result as it lands, so the
+      type's own ceiling is the only bound that matters.
+    * ``hook_based`` — the UNATTENDED posture: there is no human to ask and no one
+      watching. ``autonomous`` (silent, no undo handle) would mean an action ran and left
+      no trace a user would notice, so it narrows to ``auto_with_undo`` — execute, but
+      keep the reversal handle and the passive notification that let the user find it.
+
+    The INCIDENT posture is not expressed here: ``resolve_rung`` clamps every resolution
+    to ``one_tap`` while an incident is active, which outranks both levels.
+    """
+    return RUNG_AUTONOMOUS if profile.approval in ("auto", "ask") else RUNG_AUTO_WITH_UNDO
 
 
 def approval_policy_for_session(session_key: str) -> "ToolApprovalPolicy":

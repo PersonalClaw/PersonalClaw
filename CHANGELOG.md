@@ -146,6 +146,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   grants and demotions are saved to `autonomy_rungs.json` and travel with `personalclaw snapshot`,
   and an unreadable or unrecognized entry grants nothing. This release ships the mechanism; the
   action types that use it, and the ladder panel that shows it, follow.
+- **The autonomy ladder now actually decides whether an automated action runs.** Every built-in
+  action declares its rung, and an app can declare one for its own action with an `autonomy:
+  {floor, ceiling}` block on its provider — which the lifecycle-hook, data-event and
+  clock/file/webhook trigger paths all honour. An action held at **draft only** files a proposal
+  saying what it would have done; held at **one tap** it files a request for you to decide; at
+  **run with undo** it runs and tells you quietly, keeping a handle on what it created; at
+  **autonomous** it just runs. Held actions leave a real row in your inbox and a typed entry in the
+  automation's history, never a silent stop. Two things an app cannot do: it cannot claim its action
+  stays on your machine (PersonalClaw decides that from the network permission the app already
+  declares), and it cannot claim the top rung for an action that reaches the network — that request
+  is lowered to "run with undo", and both your log and the security event log say so rather than
+  quietly overruling the app. Actions that carry no declaration behave exactly as before: the
+  denylist, the kill switch and the permission you granted when you created the automation are
+  unchanged, and nothing you already run stops running.
 - **You can share a chat as a read-only artifact — inside your own instance, never on the
   internet.** Right-click a chat in Chat History → **Share as read-only artifact** and the
   conversation is saved into your artifacts library as a Markdown record, then opened for you. The
