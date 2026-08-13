@@ -72,6 +72,21 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
 
   const bind = {
     onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); open(e.clientX, e.clientY) },
+    // 🔴 THE MENU WAS POINTER-ONLY. Right-click and long-press opened it; nothing on the keyboard did,
+    // on all 14 surfaces that use it — and some of its rows are the ONLY route to their action
+    // ("Complete" on a task, "Open full page" on a prompt or knowledge item). WCAG 2.1.1.
+    //
+    // Shift+F10 and the ContextMenu key are what AT and power users press, and the platform convention
+    // is to open NEAR THE FOCUSED ELEMENT rather than at the pointer's last position — so the anchor is
+    // the focused row's own rect, inset slightly so the menu overlaps it the way a right-click would.
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return
+      const el = (document.activeElement as HTMLElement | null) ?? (e.currentTarget as HTMLElement)
+      const r = (el.closest('[data-ctx-anchor]') ?? el).getBoundingClientRect()
+      e.preventDefault()
+      e.stopPropagation()
+      open(Math.round(r.left + 24), Math.round(r.top + Math.min(r.height, 32)))
+    },
     onTouchStart: (e: React.TouchEvent) => {
       const t = e.touches[0]
       longPress.current = window.setTimeout(() => open(t.clientX, t.clientY), 500)
