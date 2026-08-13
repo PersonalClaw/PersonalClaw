@@ -5,7 +5,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, SavedToast, ToggleRow } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 // The editable packs.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py PacksConfig). A fingerprint toggle + a catalog-refresh URL, each
@@ -22,8 +22,8 @@ type PacksCfg = Record<string, unknown>
 export function PacksPanel() {
   const [cfg, setCfg] = useState<PacksCfg | null>(null)
 
-  const { data } = useCachedData('settings:packs', () =>
-    api.personalclawConfig().then((c) => (c.packs ?? {}) as PacksCfg).catch(() => ({} as PacksCfg)),
+  const { data, error: loadErr, refresh } = useCachedData('settings:packs', () =>
+    api.personalclawConfig().then((c) => (c.packs ?? {}) as PacksCfg),
     { persist: true },
   )
   const { data: installed } = useCachedData('settings:packs:installed', () =>
@@ -33,6 +33,9 @@ export function PacksPanel() {
 
   useEffect(() => { if (data) setCfg(data) }, [data])
 
+  // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
+  // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={2} />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error.
