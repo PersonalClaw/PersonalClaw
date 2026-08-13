@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-13T14:10:49.849Z",
+  "generatedAt": "2026-08-13T16:04:20.880Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 451,
+    "filesScanned": 454,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -321,11 +321,6 @@
     "pages/artifacts/ArtifactViewer.tsx": {
       "raw-button": 3,
       "raw-input": 1,
-      "raw-dialog": 0
-    },
-    "pages/chat/ApprovalCard.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/chat/ChatActivityPanel.tsx": {

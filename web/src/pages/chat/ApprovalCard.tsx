@@ -1,7 +1,6 @@
-import { motion } from 'framer-motion'
-import { fvs, withWeight } from '../../design/fontWeight'
-import { ShieldQuestion, Check, Ban, Clock, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
-import { messageEnter } from '../../design/motion'
+import { withWeight } from '../../design/fontWeight'
+import { Check, Ban, Clock, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
+import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
 import { approvalOutcome } from './approvalOutcome'
 import type { ApprovalSegment } from './chatTypes'
 
@@ -42,7 +41,13 @@ type Action = 'approved' | 'rejected' | 'trust' | 'trust_agent'
  *  Offers a SCOPE picker (how long the permission lasts) rather than a set of trust
  *  modes: Allow once · Allow for this chat · Always for this agent · Deny. Wires to
  *  POST /api/chat/sessions/{s}/approve {action, request_id}. Once resolved it
- *  collapses to a quiet outcome line. */
+ *  collapses to a quiet outcome line.
+ *
+ *  The card CHROME (warn-tinted shell, the role=group/role=alert announcement, the tool +
+ *  argument line, the action row) is `ui/ApprovalPrompt` — shared with the phone companion's
+ *  approvals queue so the two surfaces that ask for permission cannot drift. What stays here
+ *  is what is genuinely chat's: the transcript segment shape, the settled-outcome collapse,
+ *  the risk chip, and the chat-scoped trust vocabulary. */
 export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id: string, action: Action) => void }) {
   if (seg.resolved) {
     // Every outcome the backend persists is mapped EXPLICITLY (approvalOutcome), not
@@ -58,46 +63,20 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
     )
   }
   return (
-    // role=alert + aria-label so a screen reader is interrupted to announce that a
-    // blocking permission decision is required (the agent halts until acted on);
-    // role=group ties the scope buttons to this prompt.
-    <motion.div variants={messageEnter} initial="initial" animate="animate"
-      role="group" aria-label={`Permission needed to run ${seg.tool}`}
-      className="my-1.5 overflow-hidden rounded-xl border" style={{ borderRadius: 'var(--radius-md)', borderColor: 'color-mix(in srgb, var(--color-warn) 40%, transparent)', background: 'color-mix(in srgb, var(--color-warn) 8%, transparent)' }}>
-      <div className="flex items-start gap-2 px-3 pt-2.5">
-        <ShieldQuestion size={15} className="mt-0.5 shrink-0" aria-hidden style={{ color: 'var(--color-warn)' }} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div role="alert" className="text-on-surface text-[0.8125rem]" style={fvs(500)}>Permission needed</div>
-            {seg.risk && <RiskChip risk={seg.risk} />}
-          </div>
-          <div className="mt-0.5 truncate font-mono text-on-surface-var text-[0.75rem]">{seg.tool}{seg.input ? `(${seg.input.replace(/\s+/g, ' ').slice(0, 60)})` : ''}</div>
-          {seg.purpose && <p className="mt-1 text-on-surface-low text-[0.75rem]">{seg.purpose}</p>}
-        </div>
-      </div>
-      {/* Scope picker: allow-once is the primary (least-privilege default); the two
-          broader grants carry a "how long" icon so the durability is legible; Deny is
-          the destructive edge. One row, wraps on a narrow chat column. */}
-      <div className="flex flex-wrap items-center gap-1.5 px-3 py-2.5">
-        <ApprBtn icon={Check} label="Allow once" primary onClick={() => onAct(seg.id, 'approved')} />
-        <ApprBtn icon={Clock} label="Allow for this chat" onClick={() => onAct(seg.id, 'trust')} />
-        <ApprBtn icon={ShieldCheck} label="Always for this agent" onClick={() => onAct(seg.id, 'trust_agent')} />
-        <ApprBtn icon={Ban} label="Deny" danger onClick={() => onAct(seg.id, 'rejected')} />
-      </div>
-    </motion.div>
-  )
-}
-
-function ApprBtn({ icon: Icon, label, primary, danger, onClick }: { icon: typeof Check; label: string; primary?: boolean; danger?: boolean; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} title={label}
-      className="inline-flex items-center gap-1 rounded-pill px-2.5 h-7 text-[0.75rem] transition-colors"
-      style={primary
-        ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' }
-        : danger
-          ? { background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }
-          : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
-      <Icon size={12} aria-hidden /> {label}
-    </button>
+    // Scope picker: allow-once is the primary (least-privilege default); the two
+    // broader grants carry a "how long" icon so the durability is legible; Deny is
+    // the destructive edge. One row, wraps on a narrow chat column.
+    <ApprovalPrompt
+      tool={seg.tool}
+      args={seg.input}
+      purpose={seg.purpose}
+      badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
+      choices={[
+        { key: 'approved', icon: Check, label: 'Allow once', tone: 'primary', onClick: () => onAct(seg.id, 'approved') },
+        { key: 'trust', icon: Clock, label: 'Allow for this chat', onClick: () => onAct(seg.id, 'trust') },
+        { key: 'trust_agent', icon: ShieldCheck, label: 'Always for this agent', onClick: () => onAct(seg.id, 'trust_agent') },
+        { key: 'rejected', icon: Ban, label: 'Deny', tone: 'danger', onClick: () => onAct(seg.id, 'rejected') },
+      ]}
+    />
   )
 }

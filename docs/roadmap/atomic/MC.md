@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `MC-1` | ⬜ | S1 remote-access story: Tailscale-first guide + doctor reachability probe | — | A reader on cell data reaches their dashboard via tailnet following docs/guides/remote-access.md verbatim; `doctor` detects the tailscale interface and prints the phone-ready tokenized URL, and warns when the bind host exposes beyond loopback without auth (tailnet + misconfig fixtures pass). |
 | `MC-2` | ⬜ | S2 device-session consumption + Devices list in Settings | `EXT:COMPANION-APPS:device-session model + unified pairing contract`, `EXT:REMOTE-USER-AUTH:durable session store (auth/sessions.json)` | A roaming-IP phone keeps its device session valid per the plan-54 contract; the Settings > Devices list renders name/minted/last-seen and Revoke; revoking kills the device session on the next request. No new claim added to token_auth.py — the device session comes from plan 54. |
-| `MC-3` | ⬜ | S2 approvals-first companion route + approve/reject wiring | — | On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds. |
+| `MC-3` | ✅ | S2 approvals-first companion route + approve/reject wiring | — | On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds. |
 | `MC-4` | ⬜ | S3 PWA installability: manifest + service worker (app-shell precache, /api never cached) | `MC-3` | Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle). |
 | `MC-5` | ⬜ | S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval | `MC-3`, `MC-4`, `MC-2`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:rules-engine push target must exist` | VAPID keypair generated via `personalclaw push init` (keys in credential store), per-device subscription endpoint, and a content-free {kind,item_id} sender are wired as plan-42's `push` target; ntfy topic-URL adapter is an alternative backend (config mobile.push_backend/ntfy_topic_url); a locked-phone push → tap opens #/companion?approval=<id> with the correct card focused → approve → the paused run proceeds, <30s on cell data (timed); payload inspection shows ids only. |
 | `MC-6` | ⬜ | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping | `MC-3`, `MC-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:per-(source,kind) sound/badge rules field + inbox resolve API` | Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI). |
@@ -41,11 +41,27 @@ Session 2 T2.3/T2.4 + C1 Device token (SUPERSEDED — consumes COMPANION-APPS §
 
 ### `MC-3` — S2 approvals-first companion route + approve/reject wiring
 
-**Status:** todo
+**Status:** done
 
 Amendment §Session placement S2 — Approvals-first companion (T2.1r) + C2 Companion route API map
 
-**Done when:** On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds.
+**Done when:** On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds. — DONE 2026-08-13.
+
+**Landed:** `#/companion`, a full-screen no-NavRail hash route (`web/src/pages/companion/CompanionPage.tsx`,
+registered in `App.tsx` beside the `#/onboarding` early return, deliberately outside `NAV`/`ROUTABLE`).
+Full-context approval cards from `GET /api/approvals` — tool, UNTRUNCATED arguments (JSON pretty-printed),
+purpose, session, requesting source, time waited — resolving through `POST /api/approvals/{id}/{action}`
+(the resolved route map is recorded in the plan's Execution log; the plan's C2 line named the chat route,
+which is wrong for this queue). The card chrome was EXTRACTED to `web/src/ui/ApprovalPrompt.tsx` and the
+in-chat card now renders it too, so there is one permission-prompt renderer, not two. A failed first
+fetch renders `LoadError` (announced, retryable) instead of the "nothing waiting" empty state; a failed
+resolve puts the card back and toasts. Running/Inbox/Recent are named as not-yet-built under a
+"Not on the phone yet" heading — never as empty data.
+
+**Remains (later atoms, not gaps here):** PWA manifest + service worker (`MC-4`), push and the
+`?approval=<id>` deep link (`MC-5`), the loops/tasks/inbox/notifications sections (`MC-6`). The
+plan-43 decision-brief is still absent upstream, so the raw-argument fallback is what ships — as the
+done-when directs.
 
 ### `MC-4` — S3 PWA installability: manifest + service worker (app-shell precache, /api never cached)
 

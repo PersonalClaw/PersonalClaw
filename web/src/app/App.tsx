@@ -51,6 +51,7 @@ const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => (
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
 const DashboardPage = lazy(() => import('../pages/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })))
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
+const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
 
 const NAV: NavItem[] = [
   // Primary group (no section header): the Dashboard is the home, then Chat,
@@ -297,6 +298,28 @@ function AppInner() {
   // Wait for the server identity before deciding — don't flash onboarding.
   if (!loaded) return <div className="grid h-full place-items-center" style={{ background: 'var(--color-canvas)' }}><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
   if (route === 'onboarding' || !onboarded) return <Onboarding />
+
+  // `#/companion` — the phone companion (MOBILE-COMPANION S2), full-screen with NO NavRail:
+  // the whole viewport belongs to the approval waiting on the owner. Same shape as
+  // `#/onboarding` above, and deliberately NOT in `ROUTABLE`/`NAV` — it is a deep-link and a
+  // PWA start_url, not a desktop nav destination (adding it to NAV would also demand an
+  // e2e route-manifest entry per routeManifestParity). Not gated on `useIsMobile`: that is a
+  // max-width media query, not a touch test, so gating would make the route undebuggable
+  // from a desktop browser without making it any more correct for a phone.
+  if (route === 'companion') {
+    return (
+      <>
+        <ErrorBoundary resetKey="companion">
+          <Suspense fallback={<PageFallback />}>
+            <CompanionPage sub={sub} navigate={navigate} navEpoch={navEpoch} query={query} setQuery={setQuery} />
+          </Suspense>
+        </ErrorBoundary>
+        {/* Outside the boundary: a resolve failure is announced through the toast host, so it
+            must survive a page-level crash rather than being replaced by the fallback. */}
+        <Toaster />
+      </>
+    )
+  }
 
   // Embed mode (`?embed=1`): render ONLY the page content — no NavRail, no shell
   // corners — so an app's ChatEmbed gets just the chat surface, not a nested copy
