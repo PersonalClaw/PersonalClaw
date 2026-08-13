@@ -175,10 +175,14 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
       <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs">
         Bind the {kind} model in Models
       </TextLink>
-      <button type="button" onClick={() => go('providers')}
-        className="inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface hover:underline">
-        Add or download models in Providers <ArrowRight size={13} />
-      </button>
+      {/* 🔑 ITS OWN SIBLING WAS THE ANSWER. This row already ships a `TextLink` two lines up — same job
+          (navigate to another settings sub-view), same `xs` size, same trailing arrow — and it measured
+          181.13×26.00 while this hand-rolled twin measured 224.73×**18.00**. So the fix is not a colour
+          judgement, it is convergence onto what the row already renders: the primitive carries cycle
+          115's `py-1 -my-1` hit box, so adopting it fixes SC 2.5.8 and deletes the drift in one move. */}
+      <TextLink onClick={() => go('providers')} icon={ArrowRight} iconPosition="trailing" size="xs">
+        Add or download models in Providers
+      </TextLink>
     </div>
   )
 }
