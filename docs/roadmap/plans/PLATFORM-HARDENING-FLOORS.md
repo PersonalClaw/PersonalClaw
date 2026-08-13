@@ -736,3 +736,111 @@ Rows 1-4 are roughly one focused session between them.
   does NOT buy — OS-level immutability against a process running as the operator — is stated in
   the module header and in `docs/architecture/security.md`, with the root-owned `0444` +
   `PERSONALCLAW_CEILING_FILE` recipe as the real trust root.
+- [2026-08-13][PHF-9] DONE: SH6.2 + SH6.3 + the scheduler decision (SH6.1). All three of this
+  atom's premises were checked against the tree first, and two needed correcting.
+  **SH6.2 (knowledge-merge / unclosed sqlite).** The row scopes this to "close the
+  `KnowledgeStore` connection in fixture teardown", but the measured population is far wider: one
+  baseline run printed **1,596** `ResourceWarning: unclosed database` lines attributed to **95 test
+  files** — knowledge, memory, durability, codegraph, learning, lexicon, session-search, snapshot,
+  loop — all the same shape (a fixture builds a store, returns it, nothing closes it, and the
+  connection is finalized whenever a later `gc.collect()` reaches it, so the warning lands on a
+  bystander test). Fixed at the one seam every store shares instead of ~95 fixtures:
+  `tests/conftest.py::_close_sqlite_connections` wraps `connect` on BOTH sqlite driver bindings
+  (the stdlib module, which six stores still import directly, and the one `sqlite_compat`
+  resolved) and closes what each test opened at that test's teardown. Population **1,596 → 0**.
+  Only `ProgrammingError` is passed over on close (a connection opened with the default
+  `check_same_thread=True` inside a worker thread may only be closed by that thread); nothing else.
+  **DISCOVERY, found by driving the fix rather than reading:** with connections actually being
+  closed, `test_inbound_mcp.py::TestToolBehavior::test_empty_stores_answer_honestly` failed with
+  `Cannot operate on a closed database` — `knowledge.get_knowledge_store()` memoizes one store in a
+  module global resolved from `config_dir()` on FIRST use, so the first test in a worker to touch it
+  pinned every later test in that worker to the first test's tmp home. That test had been searching
+  an earlier test's knowledge DB all along and passing only because that DB happened not to contain
+  its query string. Second fixture, `_reset_knowledge_store_singleton`, clears the global around
+  every test (the `_reset_sel_singleton` discipline).
+  **SH6.3 (subagent SEL flake) — premise partly wrong.** The row and the flake memory both say the
+  SEL call in `_force_reap` *and* `_spawn_with_approval` sit inside a swallowing
+  `except Exception`. Only the first does: `_spawn_with_approval`'s audit write
+  (`subagent.py:1528`) is already unguarded, and its enclosing `except` covers the approval
+  callback, not the write. Fixed the one that is real — the `except Exception:
+  logger.exception("Reaper: SEL audit failed…")` around `_force_reap`'s
+  `sel().log_tool_invocation` is DELETED, so a genuine audit-write failure raises to
+  `_reaper_loop`, which logs it per-agent and continues with the other agents. This also makes the
+  file self-consistent: 13 of the 17 `sel()` audit writes in `subagent.py` were already unguarded.
+  Proven both ways by `test_a_failed_reaper_audit_write_raises` (SEL raises `OSError` → the reap
+  raises): with the swallow restored the new test fails `DID NOT RAISE OSError`, and the pin was
+  driven in that failing state before the fix was kept. The row's "give the two tests an isolated
+  home" was NOT re-implemented: CRE-8's `_isolate_real_home_writers` already gives every test its
+  own tmp home suite-wide, and both tests patch `personalclaw.subagent.sel`, so a third mechanism
+  would be duplicate machinery.
+  **DISCOVERY (deliberately NOT fixed here).** Three sibling audit-write swallows remain in
+  `subagent.py`: `_reconcile_orphans` (line 533), `_note_child_outcome` (1368) and
+  `_charge_child_and_check_budget` (1413). Each is nested inside a DELIBERATE fail-open (the budget
+  one is caught again by its own outer `except` at 1418, so removing the inner swallow changes
+  nothing on its own), so making them raise is a behavioural ruling about whether an unauditable
+  guardrail decision should abort the guardrail — a bigger call than this atom, and one for
+  AUTONOMY-GUARDRAILS' owner.
+  **DEVIATION — the third flake, fixed because `done_when` #1 is otherwise unreachable.** This
+  atom names two flakes; a worktree also fails three of eleven tests in
+  `tests/test_harness_validate.py` on EVERY branch, so "5 consecutive clean runs" was impossible
+  without it. Root cause: `harness/profiles.py` set `VENV_PY = ".venv/bin/python"` — a
+  **cwd-relative** interpreter. A worktree has no `.venv`, so `collect_test_ids` could not launch
+  (`[Errno 2]`), `validate_refs` reported one "could not collect the test suite" error, and the
+  dangling-node-id test could not tell a bad node-id from a failed collection. Replaced with
+  `profiles.resolve_python()` (renamed export `HARNESS_PY`): this tree's own `.venv/bin/python`
+  when it exists, else `sys.executable`, always ABSOLUTE, never cwd-relative — with an injectable
+  root so both branches are pinned by tests. `python -m harness validate` now exits 0 in the
+  worktree (`✅ 15 specs valid`), and the trio passes there. Every session in this repo has been
+  paying a manual "those three are pre-existing" justification for this; that ends here.
+- [2026-08-13][PHF-9] DISCOVERY + the fix that actually closed `done_when` #1: the teardown fixture
+  alone left **12** warnings, and they were a PRODUCTION leak, not a test one. Five sites used
+  `with sqlite3.connect(...)` — whose context manager ends the **transaction** and leaves the
+  connection OPEN (`snapshot.py` 705/1859, `durability/shards.py` 224/252/279, the last opening
+  two). Because those run inside worker threads with the default `check_same_thread=True`, the
+  fixture's main-thread `close()` was refused with `ProgrammingError`, which is why they were the
+  residue. In a long-lived gateway this is a real handle leak: the hourly incremental export calls
+  `_sqlite_rows` once per table per inventory entry. Fixed at source with `contextlib.closing`,
+  which `snapshot.py` was already using three lines away (this was drift, not a convention).
+  `test_sqlite_compat.py::test_no_production_site_uses_a_bare_with_on_a_connection` holds the line
+  at population ZERO, proven able to fail by reverting one site (`durability/shards.py:259`).
+- [2026-08-13][PHF-9] SH6.1 DECISION — **keep `--dist worksteal`; do NOT switch to `loadgroup`.**
+  Measured on this tree, after the root-cause fixes, `python -m pytest` (18,928 passed, 30 skipped,
+  12 xfailed, 0 failed each time):
+
+  | scheduler | run | wall | notes |
+  |---|---|---|---|
+  | `worksteal` | 1 | **155.98s** | machine otherwise idle |
+  | `worksteal` | 2 | **154.56s** | idle |
+  | `worksteal` | 3 | 192.20s | ⚠️ another pytest selection ran concurrently — excluded |
+  | `worksteal` | 4 | **155.71s** | idle |
+  | `worksteal` | 5 | 183.80s | ⚠️ concurrent load — excluded |
+  | `loadgroup` | 1 | — | **HUNG at 99%** for >20 min with every worker already exited; killed |
+  | `loadgroup` | 2 | **244.98s** | idle, completed clean |
+
+  So `loadgroup` costs **+58% wall time** (245s vs a 155s median on an idle machine — ~90s on every
+  developer run and every CI job) and failed to terminate once in two attempts. That is not an
+  acceptable regression for a capability nothing currently needs, so `worksteal` stays and the plan
+  row's escape hatch is answered rather than bought.
+  **How a test would be serialized if one ever needs it, stated plainly because `worksteal` ignores
+  `xdist_group`:** (1) preferred — make it isolation-safe with a fixture, which is exactly what
+  SH6.2/SH6.3 did and why zero tests need serialization today; (2) have the test take the
+  cross-process `flock` the repo already uses (`concurrency.single_flight`, isolated per test by
+  `_isolate_single_flight_locks`); (3) last resort — run that file in its own invocation
+  (`pytest -p no:xdist <file>` or `--dist loadgroup` for that run only) as a separate CI step.
+  Deliberately NOT done: adding an `xdist_group` mark. Under `worksteal` the mark is a no-op, so a
+  mark added now would be an inert control that reads as protection and provides none — the exact
+  defect class `PHF-6`'s census exists to catch. `grep -rn xdist_group tests/` stays empty by
+  intent, and this log entry is the record of why.
+- [2026-08-13][PHF-9] V6 gate: `make lint` rc=0 (black/isort/flake8/mypy). Full suite **5×
+  consecutively, 18,928 passed / 30 skipped / 12 xfailed / 0 failed** every run, with
+  `ResourceWarning: unclosed database` at **0** in all five (baseline on this branch: 1,596 in one
+  run) and the CRE-8 real-home rail printing "`/Users/golani/.personalclaw` unchanged by this run"
+  every time — no `PERSONALCLAW_HOME`/`HOME` override was used, because CRE-8's own docstring
+  rejects a global one (setting it made 11 unrelated tests fail on env-precedence rails, which is
+  the trap it warns about). The three named flaky tests
+  (`test_a_failed_merge_leaves_both_items`, the two `test_subagent.py` SEL tests) passed in all
+  five, as did the harness trio that used to fail in every worktree. 5 new tests (2 harness
+  interpreter, 1 reaper-audit-raises, 1 bare-`with` ratchet, and the ratchet's own vacuity guard).
+  All four generated baselines byte-identical after regeneration except `dag.json`'s derived block,
+  which this atom's status change requires. No `web/` change. Both flake memories reconciled, plus
+  the harness-worktree memory whose diagnosis was wrong.

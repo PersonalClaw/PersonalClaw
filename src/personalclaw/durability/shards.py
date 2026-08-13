@@ -38,6 +38,7 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -221,7 +222,13 @@ def _sqlite_tables(db: Path) -> list[str]:
     derived data, rebuilt on import).
     """
     try:
-        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        # closing(), not a bare `with` on the connection: sqlite3's connection context
+        # manager ends the TRANSACTION and leaves the connection OPEN, so every call here
+        # leaked one handle until gc got to it. Measured — this is why the suite still
+        # printed unclosed-database warnings after the fixture fix, and in a long-lived
+        # gateway the hourly incremental export leaks one per table per entry. Read-only,
+        # so there is no transaction to commit. (`snapshot.py` already does this.)
+        with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
             names = [
                 r[0]
                 for r in conn.execute(
@@ -249,7 +256,7 @@ def _sqlite_rows(db: Path, table: str) -> list[dict]:
     so the same database always dumps in the same order.
     """
     try:
-        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
             conn.row_factory = sqlite3.Row
             cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')}
             order = "id" if "id" in cols else ("key" if "key" in cols else "rowid")
@@ -276,7 +283,10 @@ def _consistent_db_copy(src: Path, workdir: Path) -> Path | None:
     """A consistent scratch copy of a live database via the backup API."""
     dst = workdir / src.name
     try:
-        with sqlite3.connect(str(src)) as src_conn, sqlite3.connect(str(dst)) as dst_conn:
+        with (
+            closing(sqlite3.connect(str(src))) as src_conn,
+            closing(sqlite3.connect(str(dst))) as dst_conn,
+        ):
             src_conn.backup(dst_conn)
         return dst
     except sqlite3.Error:

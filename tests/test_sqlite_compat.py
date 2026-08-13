@@ -131,3 +131,36 @@ def test_resolved_driver_is_a_real_sqlite_module():
     # If the stdlib resolved, it IS the stdlib module (sanity on the fallback path).
     if sqlite_compat.driver_name() == "sqlite3":
         assert sqlite_compat.sqlite3 is _stdlib_sqlite
+
+
+def test_no_production_site_uses_a_bare_with_on_a_connection():
+    """``with sqlite3.connect(...)`` does NOT close the connection (SH6.2).
+
+    Its context manager ends the TRANSACTION and leaves the handle open, so the shape is a
+    per-call resource leak that only shows up as a `ResourceWarning: unclosed database`
+    charged to whichever test happened to trigger the collecting GC. Five such sites (two
+    in `snapshot.py`, three in `durability/shards.py`) were what kept the suite from
+    reaching zero after the teardown fixture landed, and in a long-lived gateway the hourly
+    incremental export leaked one handle per table per entry. The correct shape, already
+    used elsewhere in `snapshot.py`, is ``with closing(sqlite3.connect(...)) as conn:``.
+
+    Population is ZERO, so this ratchet has nothing to grandfather.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent / "src" / "personalclaw"
+    files = sorted(src.rglob("*.py"))
+    assert len(files) > 100, f"only {len(files)} source files scanned — did the tree move?"
+
+    pattern = re.compile(r"with\s+(?:\w+\.)*sqlite3\.connect\(")
+    offenders = [
+        f"{p.relative_to(src)}:{i}"
+        for p in files
+        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert not offenders, (
+        "a bare `with sqlite3.connect(...)` leaves the connection open — wrap it in "
+        f"contextlib.closing(): {offenders}"
+    )
