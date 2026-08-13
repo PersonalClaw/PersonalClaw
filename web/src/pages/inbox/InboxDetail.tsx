@@ -287,7 +287,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
           {detail.source_excerpt && (
             <details>
               <summary className="cursor-pointer text-on-surface-low text-[0.75rem]">Why this was proposed</summary>
-              <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container/60 px-m py-2 text-on-surface-low text-[0.75rem]">{detail.source_excerpt}</pre>
+              <pre tabIndex={0} role="group" aria-label="Why this was proposed" className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container/60 px-m py-2 text-on-surface-low text-[0.75rem]">{detail.source_excerpt}</pre>
             </details>
           )}
           <div className="flex flex-wrap items-center gap-s">
