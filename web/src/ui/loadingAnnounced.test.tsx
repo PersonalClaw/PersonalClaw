@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { LoadingStatus, ListSkeleton, FormSkeleton, CardGridSkeleton } from './ListScaffold'
+import { LoadingStatus, ListSkeleton, FormSkeleton, CardGridSkeleton, Loading } from './ListScaffold'
 
 // ── A live region with no text announces nothing, however well it is marked up ────────────────────
 //
@@ -32,6 +32,13 @@ import { LoadingStatus, ListSkeleton, FormSkeleton, CardGridSkeleton } from './L
 //
 // 🪤 `#/settings/apps` CARRIED `aria-busy` ON THREE SECTIONS WITH NO ROLE AND NO NAME — not a live
 // region at all, and unfindable. It is one region now.
+//
+// 🪤 CYCLE 144 FOUND THE HOLE IN THIS VERY CENSUS. It keyed on `aria-busy="true"`, and `ui/Loading` —
+// the app's OTHER loading state, 6 call sites — is a bare text `<div>` with no `aria-busy` and no role,
+// so the ratchet never looked at it. Measured mid-load on `#/workflows`: "Loading…" visible for 2.8
+// seconds, `SPOKEN=[]`. **A census that keys on one mechanism cannot see a second one.** Both are
+// checked below, and `Loading` needs no sr-only twin — its text is already visible, so `role="status"`
+// makes the words a sighted user reads the words everyone hears.
 
 const SRC = join(process.cwd(), 'src')
 const walk = (d: string): string[] =>
@@ -90,6 +97,32 @@ describe('every shared skeleton says something', () => {
     // a second hard-coded string that could drift from what people hear, so it went.
     const src = readFileSync(join(SRC, 'ui/ListScaffold.tsx'), 'utf8')
     expect(src, 'two strings for one region is drift').not.toMatch(/aria-busy="true" aria-label="Loading"/)
+  })
+})
+
+describe('Loading — the other loading state — announces too', () => {
+  it('is a live region whose visible text is the announcement', () => {
+    render(<Loading what="workflows" />)
+    const region = screen.getByRole('status')
+    expect(region.getAttribute('aria-busy')).toBe('true')
+    expect(region.textContent?.trim()).toBe('Loading workflows…')
+    expect(region.querySelector('.sr-only'), 'no sr-only twin needed: the text is visible').toBeNull()
+  })
+
+  it('falls back to a bare Loading… when it does not know what', () => {
+    render(<Loading />)
+    expect(screen.getByRole('status').textContent?.trim()).toBe('Loading…')
+  })
+
+  it('every call site names what is loading', () => {
+    // 🪤 COMMENTS STRIPPED FIRST. `InboxSettingsPanel` documents an old bug by quoting the markup
+    // (`rendered <Loading /> FOREVER`), and the first version of this counted that prose as a call
+    // site — the third time this session a scan measured a comment.
+    const code = (abs: string) => readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const sites = walk(SRC).filter((abs) => /<Loading\b/.test(code(abs)) && !abs.endsWith('ListScaffold.tsx'))
+    expect(sites.length, 'Loading call sites').toBeGreaterThanOrEqual(6)
+    const bare = sites.filter((abs) => /<Loading \/>/.test(code(abs))).map((a) => a.slice(SRC.length + 1))
+    expect(bare, `these render a nameless Loading:\n${bare.join('\n')}`).toEqual([])
   })
 })
 

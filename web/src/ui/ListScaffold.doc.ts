@@ -145,7 +145,8 @@ const docs: UiDoc[] = [
     keywords: ['loading', 'placeholder', 'text', 'pending', 'inline'],
     description:
       'A minimal inline "Loading…" text line, dimmed to on-surface-low. A last-resort placeholder for small transient waits; for list/form/dashboard first loads prefer the shaped skeletons instead.',
-    props: [],
+    props: [
+      { name: 'what', description: 'What is loading — renders the visible text "Loading <what>…". Omit for a bare "Loading…". The component is a `role=status aria-busy` live region, so this text is both what a sighted user reads and what everyone hears; measured before that role existed: "Loading…" was on screen for 2.8s on #/workflows with nothing announced.' },],
     bestPractices: [
       { guidance: true, description: 'Use Loading only for tiny inline waits; for a page or panel first load reach for ListSkeleton / FormSkeleton / CardGridSkeleton so content resolves in its final shape.' },
     ],
