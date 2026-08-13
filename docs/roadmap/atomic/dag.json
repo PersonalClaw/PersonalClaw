@@ -428,12 +428,14 @@
         {
           "id": "KL-11",
           "title": "Indexing H1.4: sqlite-vec ANN index with cached probe, fail-soft to exact scan, Doctor line",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment task table — H1.4; Dependency ruling (sqlite-vec, not faiss) + Runtime-availability clause; Risks (silent recall regression)",
           "done_when": "sqlite-vec>=0.1,<1 added to core dependencies with a WHY comment; an ANN index over chunk vectors lives inside the vector arm; a cached enable_load_extension probe fails soft to the existing exact scan with a one-time INFO log; Doctor reports the degraded capability line; a recall-tolerance test asserts ANN-vs-exact match within the stated tolerance and a force-disabled-extension test proves correct results still return via exact scan; faiss and the [embeddings] extra are untouched",
           "deps": [
             "KL-10"
-          ]
+          ],
+          "pr": 1268,
+          "status_note": "Shipped in PR #1268. FOLLOW-UP (not a defect): distance_metric=cosine on the vec0 table is load-bearing but UNRAILED — swapping the real index DDL to L2 leaves all 123 knowledge tests green. The shipped metric is correct and ANN-vs-exact recall is 1.0; what is missing is the regression rail. Two approaches already failed: (1) mutating only the first `distance_metric=cosine` occurrence hits the PROBE's throwaway table (line 164), not the index DDL (line 375); (2) a two-chunk corpus asserted at candidate_chunk_ids(k=1) with far=[3,0,0,0] vs near=[0.8,0.6,0,0] does not discriminate."
         },
         {
           "id": "KL-12",
@@ -7446,11 +7448,6 @@
         "plan": "KL"
       },
       {
-        "id": "KL-11",
-        "title": "Indexing H1.4: sqlite-vec ANN index with cached probe, fail-soft to exact scan, Doctor line",
-        "plan": "KL"
-      },
-      {
         "id": "KL-12",
         "title": "Indexing H1.5: resumable batched chunk backfill + VH validation",
         "plan": "KL"
@@ -9466,9 +9463,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

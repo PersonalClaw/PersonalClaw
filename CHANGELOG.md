@@ -259,8 +259,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   document and point at its top. A document with no indexed passages yet (anything added before this
   release, until it is re-indexed) still matches the way it always did, so nothing becomes unfindable
   in the meantime. Ranking, the relevance-cliff cutoff and the similarity threshold are unchanged;
-  only the evidence feeding them got better. Note that until the upcoming index lands, searching a
-  large library does more work per query than before.
+  only the evidence feeding them got better. Indexing many passages per document also means many more
+  vectors to compare, so this release pairs the change with the index described next.
+
+- **Semantic search on a large library got about twenty times faster.** Comparing your query against
+  every indexed passage was done one vector at a time in Python, which is fine for a few hundred notes
+  and slow for a real library — on a 300-document library with five passages each, measured at roughly
+  40 ms of vector work per query, growing in a straight line from there (a 5,000-document library would
+  have spent over half a second on every search). PersonalClaw now keeps a vector index inside the same
+  knowledge database file and asks it for the nearest passages instead of reading them all: the same
+  measurement drops to about 2 ms, and the results are **identical** — same documents, same order, same
+  citations — because the index only narrows down which passages to score, and the scoring, the
+  similarity threshold, the ranking and the relevance-cliff cutoff are the ones you already had. If
+  your Python's SQLite cannot load extensions, search keeps working exactly as before at the old speed;
+  it says so once in the log, and `personalclaw doctor` shows a line explaining why search is slower
+  rather than leaving you to guess it is broken. Libraries indexed before this release are brought into
+  the index automatically on the first search after upgrading.
 
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it
   claimed to.** If your operating system is set to reduce motion, PersonalClaw relied on a framework
