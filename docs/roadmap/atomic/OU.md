@@ -16,7 +16,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `OU-4` | ⬜ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
 | `OU-5` | ⬜ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
 | `OU-6` | ⬜ | EmptyState primitive + rollout to the 7 listed pages | — | web/src/ui/EmptyState.tsx exists and is applied to Loops, Workflows, Knowledge, Memory, Skills, Tasks, Triggers with one seeded working action each; copy in PRODUCT.md voice; visual check across both themes |
-| `OU-7` | ⬜ | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption | — | web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one) |
+| `OU-7` | ✅ | Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption | — | web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one) |
 | `OU-8` | ⬜ | ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant | `OU-7` | ApprovalCard renders all four zones; useApprovalToasts gets the compact form; remember-scope (session/tool_always/no) persists via the existing approval-preference path; brief never advocates approval; risky+benign approvals driven as a user and README screenshots produced (feeds DISCOVERABILITY-LAUNCH asset list) |
 | `OU-9` | ⬜ | Structured approval brief over the ChannelDelivery.request_approval seam | `OU-7`, `OU-8`, `EXT:CHANNEL-EXPANSION:ChannelDelivery.request_approval + apps-repo slack renderer consume the structured brief` | the same brief fields (tool + blast-radius line) flow through ChannelDelivery.request_approval payloads as additive meta; apps-repo slack renderer minimally updated to show what it can today; dashboard remains the rich surface |
 | `OU-10` | ⬜ | Replayable product tour component + Discover 'Replay the tour' card | `OU-4`, `OU-5` | web/src/app/onboarding/ProductTour.tsx spotlight tour (rail -> chat -> inbox -> approvals -> settings) runs post-onboarding end-to-end, launched from the done-screen; Esc exits anywhere leaving a fully working app; reduced-motion honored; zero requests logged for tour progress (no telemetry); re-launchable from DiscoverPage 'Replay the tour' card; S2 auto-pin behavior unchanged |
@@ -97,11 +97,33 @@ Session 2 T2.2; Contracts C3 (EmptyState props); Design 'Empty states as on-ramp
 
 ### `OU-7` — Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption
 
-**Status:** todo
+**Status:** done
 
 Session 3 T3.1 (Wave 2); Contracts C2 (approval brief data model: blastRadius/rememberScope added to existing ApprovalSegment)
 
 **Done when:** web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one)
+
+**Shipped:** new `web/src/pages/chat/approvalMeta.ts` —
+`deriveBlastRadius({tool, risk?, readOnlyCommand?}) → BlastRadius | undefined`, where
+`BlastRadius` is C2's shape verbatim (`{writes, network, shell, readOnly}`). Pure, total, no
+runtime imports. Every boolean is a POSITIVE claim: `false` means "not established", and when
+NOTHING is established the function returns `undefined` rather than four false negatives that
+would render as a confident all-clear. `readOnly` is claimed only on positive evidence
+(screening verdict → EFFECTIVE-safe risk → a `_READ_VERB_HINTS` name) and never alongside an
+established write. Name evidence mirrors `task_modes.py`'s own hint vocabulary and verb
+precedence, so the two agree on what a name means; `RISK_ESTABLISHES_READ_ONLY` is a total
+`Record<ApprovalRisk, boolean>`, so a new risk level breaks typecheck instead of falling
+through a `default:`. 23 tests in `approvalMeta.test.ts` cover the four named representative
+tools on both wire paths, plus a source-level rail keeping the module a pure leaf nothing can
+gate on.
+
+**Remaining (owned by `OU-8`/`OU-9`, not by this atom):** no call site yet — OU-8 renders the
+facets, OU-9 carries them over `ChannelDelivery.request_approval`. The `readOnlyCommand`
+parameter has no supplier: the classification exists (`is_read_only_bash`, run per approval and
+stored as `perm_meta["is_read_only"]` at `chat_runner.py:2593`) but is on no payload and read by
+nobody, so putting it on the wire is OU-8/OU-9's pass-through. The companion path's missing
+`risk` is likewise OU-9's additive-meta work; until then verbless reads (`grep`, `glob`,
+`repo_map`) correctly derive nothing there rather than being guessed.
 
 ### `OU-8` — ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant
 
