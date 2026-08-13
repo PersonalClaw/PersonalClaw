@@ -1192,7 +1192,7 @@ function DigestRow({ digest }: { digest: DailyDigest }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="rounded-lg bg-surface-container px-3 py-2">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full text-left">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="w-full text-left">
         <div className="flex items-center gap-2">
           <span className="font-mono text-on-surface text-[0.8125rem]">{digest.day}</span>
           <span className="text-on-surface-low text-[0.75rem]">daily digest</span>

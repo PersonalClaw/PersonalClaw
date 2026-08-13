@@ -587,7 +587,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               sub-goals. Run metadata now lives in the status bar above, so this row is
               purely the prompt. */}
           <div className="rounded-lg bg-surface-container/60 px-l py-m">
-            <button type="button" onClick={() => setPromptOpen(!promptOpen)} className="flex items-center gap-s text-left w-full min-w-0">
+            <button type="button" onClick={() => setPromptOpen(!promptOpen)} aria-expanded={promptOpen} className="flex items-center gap-s text-left w-full min-w-0">
               <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${promptOpen ? 'rotate-90' : ''}`} />
               <span className="shrink-0 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Prompt</span>
               {/* first line of the prompt, shown only while collapsed */}
@@ -1107,7 +1107,7 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
   const orderedCycles = [...cycles].reverse()
   return (
     <div className={`rounded-lg ${active ? 'ring-1 ring-primary/40' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-s px-m py-2 text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left">
         <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
         <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{index + 1}</span>
         {/* role + the agent definition backing it this phase (always visible). */}

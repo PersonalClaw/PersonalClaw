@@ -63,7 +63,7 @@ function Row({ label, value }: { label: string; value: unknown }) {
     <div className="text-[0.8125rem]">
       <div className="flex items-start gap-s">
         {nested ? (
-          <button onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-1 text-on-surface-var hover:text-on-surface shrink-0">
+          <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="inline-flex items-center gap-1 text-on-surface-var hover:text-on-surface shrink-0">
             <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
             <span className="font-mono">{label}</span>
             <span className="text-on-surface-low">{Array.isArray(value) ? `[${(value as unknown[]).length}]` : '{…}'}</span>
