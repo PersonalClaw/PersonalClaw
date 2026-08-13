@@ -176,7 +176,12 @@ export function SegToggle<T extends string>({ value, options, onPick, ariaLabel 
       {options.map((o) => (
         <button key={o.key} type="button" onClick={(e) => pick(e, o.key)}
           aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={o.key === value}
-          className="rounded-pill px-2 h-[22px] text-[0.75rem] transition-colors"
+          // 🪤 THE PILLS WERE 22px TALL, and `gap` between them is 0 — they are adjacent siblings inside
+          // the group's `p-0.5`, so SC 2.5.8's spacing exception cannot apply however wide each pill is.
+          // Measured on `#/settings`: 43.70×22, 41.30×22, 42.48×22 (the Mode row) and the same for every
+          // other adopter. `h-6` with `-my-px` gives 24px and hands the 2px back, so the group keeps its
+          // height and no tile row reflows — the shape cycle 113 established for `RowAction`.
+          className="rounded-pill px-2 h-6 -my-px text-[0.75rem] transition-colors"
           style={o.key === value ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
           {o.label}
         </button>
