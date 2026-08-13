@@ -60,6 +60,17 @@ function surfaceHigh(mode: 'dark' | 'light'): string {
   return m[1]
 }
 
+/** `--color-surface-low` in a given mode — the ground a dashboard ROW paints (`bg-surface-low`), which
+ *  is where a row action's 15px label sits. Not white in light: **#f4f6f9**, and that difference is the
+ *  whole finding, so the value is read from source per mode rather than assumed. */
+function surfaceLow(mode: 'dark' | 'light'): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const scope = mode === 'dark' ? css : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+  const m = scope.match(/--color-surface-low:\s*(#[0-9a-fA-F]{3,8})/)
+  if (!m) throw new Error(`could not find --color-surface-low for ${mode}`)
+  return m[1]
+}
+
 const WHITE = '#ffffff'
 
 /** The LIGHT canvas — the shell paints it behind every route (`background: var(--color-canvas)`), and
@@ -93,6 +104,8 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
   const LIGHT_CANVAS = lightCanvas()
   const HIGH_LIGHT = surfaceHigh('light')
   const HIGH_DARK = surfaceHigh('dark')
+  const LOW_LIGHT = surfaceLow('light')
+  const LOW_DARK = surfaceLow('dark')
 
   it('has the full curated scheme set', () => {
     expect(SCHEMES.length).toBeGreaterThanOrEqual(11)
@@ -134,6 +147,20 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
       })
       it('dark: primary-emphasis as accent text on SURFACE-HIGH ≥ AA', () => {
         expect(contrast(emphasis.dark, HIGH_DARK)).toBeGreaterThanOrEqual(AA)
+      })
+
+      // 🔴 THE FOURTH GROUND, and the one that caught a shipped defect. A dashboard ROW paints
+      // `bg-surface-low` — **#f4f6f9** in light, not white — and a row action's label is 15px, so the
+      // 4.5 floor applies. Measured on the rendered row: `text-primary` is **4.46:1**, and across the
+      // curated set on that ground it fails in **6 of 12** schemes (4.46-4.49) while the emphasis shade
+      // clears all twelve (worst 4.92 light, 8.38 dark). Every OTHER `RowAction` tone already passes
+      // there (5.59-10.11) — `--color-primary` is the token tuned for brand presence, which is why the
+      // emphasis shade exists.
+      it('light: primary-emphasis as accent text on SURFACE-LOW ≥ AA', () => {
+        expect(contrast(emphasis.light, LOW_LIGHT)).toBeGreaterThanOrEqual(AA)
+      })
+      it('dark: primary-emphasis as accent text on SURFACE-LOW ≥ AA', () => {
+        expect(contrast(emphasis.dark, LOW_DARK)).toBeGreaterThanOrEqual(AA)
       })
 
       it('light: primary as accent text on white ≥ AA', () => {

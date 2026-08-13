@@ -74,7 +74,14 @@ export function RowAction({
 }) {
   const toneCls = {
     default: 'text-on-surface-var hover:bg-surface-highest hover:text-on-surface',
-    primary: 'text-primary hover:bg-primary-container/40',
+    // 🔴 THE `primary` TONE WAS THE ONE THAT COULD NOT CLEAR AA. A row action is 15px, and these rows
+    // paint `bg-surface-low` (#f4f6f9 in light) — not white. Measured on the rendered row: `text-primary`
+    // is **4.46:1**, and computed across the curated set on that ground it fails in **6 of 12** schemes
+    // (4.46-4.49) while `primary-emphasis` clears every one (worst 4.92, dark worst 8.38). Every sibling
+    // tone here already passes on this ground (5.59-10.11) — `--color-primary` is the token tuned for
+    // brand presence, which is exactly why the emphasis shade exists. Fourth ground for the pairing
+    // cycles 146/147/155 established.
+    primary: 'text-primary-emphasis hover:bg-primary-container/40',
     ok: 'text-ok hover:bg-ok/15',
     danger: 'text-danger hover:bg-danger/15',
   }[tone]

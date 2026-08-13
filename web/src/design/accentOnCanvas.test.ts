@@ -110,6 +110,40 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
   })
 })
 
+// ── Cycle 158: THE FOURTH GROUND — a dashboard ROW, and the ledger's oldest carried contrast item ──
+//
+// `#/dashboard` in LIGHT reported **8 blocking** contrast findings (2 at phone): the Action Centre's
+// `Reply` actions at **4.46:1** against a 4.5 floor, 15px/400. axe agreed [serious]. This is the
+// "dashboard Reply contrast" the ledger has carried since cycle ~139 — bundled under the owner's
+// standing "coral as accent TEXT" question, and **no longer an aesthetic question at all**: cycles 146,
+// 147 and 155 established the token for accent text that must clear AA, and this is its fourth ground.
+//
+// 🪤 THE GROUND IS NOT A TOKEN I WOULD HAVE GUESSED. Read off the rendered row: **rgb(244,246,249)** —
+// which is `--color-surface-low` (#f4f6f9), matching neither `surface` (#ffffff), `surface-high`
+// (#eef1f5), `canvas` (#f0f4f8) nor `surface-highest`. Computed against `surface-container` (white) the
+// same ink measures **4.83 and passes**; against the real ground it is 4.46 and fails. Cycle 147's
+// lesson, third time: **read the backdrop off the node, not out of the token you assume.**
+//
+//     primary → surface-low            worst **4.46** light — fails in **6 of 12** schemes
+//     primary-emphasis → surface-low   worst **4.92** light, 8.38 dark — passes all 12
+//
+// 🔑 AND ONLY THE `primary` TONE WAS BROKEN. Every other `RowAction` tone measures 5.59-10.11 on that
+// ground (ok, danger, warn, info, on-surface-var, on-surface-low). `--color-primary` is the token tuned
+// for brand presence; the emphasis shade is the legible sibling, in both modes — it is DARKER in light
+// (#c8452e → #a33922) and LIGHTER in dark (#ff6b5b → #ff9a86), i.e. further from the ground either way.
+//
+// One line in `dashboard/widgets/kit.tsx` fixes all four `RowAction tone="primary"` call sites (Reply,
+// Answer, Send, Apply update). After: **0 blocking at all four theme × viewport combinations**, and the
+// live row measures 6.13 light / 8.38 dark. Pixel cost: **0.1348% light / 0.1368% dark**, bounding box
+// `684,402 57×375` — the column of `Reply` labels and nothing else; phone captures are 0%.
+//
+// ⚠️ DARK MOVED WITHOUT AN AA REASON, and that is stated rather than hidden: dark was already passing at
+// 6.16. The token is applied unconditionally because it is mode-aware by construction and because
+// forking it per mode would invent an idiom the three earlier grounds do not use.
+//
+// 🔑 `MetaPill`'s primary tone was checked and left alone — it already uses `accentChip`
+// (primary-container / on-primary-container), the cycle-146 pairing.
+
 describe('accent chips on surface-high use the emphasis shade', () => {
   const SITES: [string, RegExp][] = [
     ['pages/knowledge/KnowledgeListPage.tsx', /bg-surface-high px-1\.5 text-primary-emphasis text-\[0\.75rem\]/],
@@ -153,5 +187,43 @@ describe('accent chips on surface-high use the emphasis shade', () => {
     const rail = read('design/schemeContrast.test.ts')
     expect(rail).toMatch(/primary-emphasis as accent text on SURFACE-HIGH/)
     expect(rail, 'both modes').toMatch(/contrast\(emphasis\.dark, HIGH_DARK\)/)
+  })
+})
+
+
+describe('a dashboard row action uses the emphasis shade', () => {
+  it("RowAction's primary tone is the emphasis ink", () => {
+    const code = read('pages/dashboard/widgets/kit.tsx')
+    expect(code).toMatch(/primary: 'text-primary-emphasis hover:bg-primary-container\/40'/)
+    expect(code, 'the failing ink must be gone').not.toMatch(/primary: 'text-primary hover:bg-primary-container/)
+  })
+
+  it('its sibling tones are untouched, because they already pass on that ground', () => {
+    // Measured on `--color-surface-low`: ok 5.89/6.87, danger 5.95/5.95, on-surface-var 5.59/10.11.
+    // Changing them would be a redesign, not a fix.
+    const code = read('pages/dashboard/widgets/kit.tsx')
+    expect(code).toMatch(/ok: 'text-ok hover:bg-ok\/15'/)
+    expect(code).toMatch(/danger: 'text-danger hover:bg-danger\/15'/)
+    expect(code).toMatch(/default: 'text-on-surface-var hover:bg-surface-highest hover:text-on-surface'/)
+  })
+
+  it('the call sites it reaches are the four dashboard row actions', () => {
+    // If a fifth appears it inherits the fix; this pins the population the measurement covered.
+    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((n) => {
+        const p = join(d, n)
+        if (statSync(p).isDirectory()) return walk(p)
+        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+      })
+    const sites = walk(join(SRC, 'pages/dashboard')).flatMap((abs) =>
+      [...readFileSync(abs, 'utf8').matchAll(/<RowAction tone="primary"/g)].map(() => abs.slice(SRC.length + 1)))
+    expect(sites.length, 'RowAction tone="primary" call sites on the dashboard').toBeGreaterThanOrEqual(4)
+  })
+
+  it('the scheme rail carries the fourth ground for every scheme', () => {
+    const rail = read('design/schemeContrast.test.ts')
+    expect(rail).toMatch(/primary-emphasis as accent text on SURFACE-LOW/)
+    expect(rail, 'both modes').toMatch(/contrast\(emphasis\.dark, LOW_DARK\)/)
   })
 })
