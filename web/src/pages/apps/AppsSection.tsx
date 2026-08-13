@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, AlertTriangle, RefreshCw, Plug, ChevronDown,
-  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database, Sparkles,
+  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database, Sparkles, Globe,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -1433,24 +1433,38 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
   )
 }
 
-function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
+// EI-12 D2. The bullets are the permissions the gateway ENFORCES server-side, and
+// `network` is deliberately not among them: an app's provider code is imported
+// in-process by the gateway, so there is no per-app egress chokepoint to enforce at
+// (docs/security/limitations.md §2). Listing it beside storage/cron/agent — which are
+// enforced — would read as a grant the platform polices, and OMITTING it when the app
+// declares `network: false` would read as a block. Both are false, so it gets its own
+// advisory row, rendered either way.
+export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
   if (perms.events?.length) rows.push(`Events: ${perms.events.join(', ')}`)
   if (perms.mcpTools?.length) rows.push(`MCP tools: ${perms.mcpTools.join(', ')}`)
   if (perms.memory) rows.push(`Memory: ${perms.memory}`)
-  if (perms.network) rows.push('Network access')
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
   if (perms.agent) rows.push('Run background agents')
   return (
     <div>
-      <div data-type="label-m" className="mb-1 text-on-surface">Permissions</div>
-      {rows.length === 0 ? <div data-type="body-s" className="text-on-surface-low">No special permissions</div> : (
+      <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
+      {rows.length === 0 ? <div data-type="body-s" className="text-on-surface-low">None — this app is granted no gateway capability.</div> : (
         <ul className="flex flex-col gap-1">
           {rows.map((r, i) => <li key={i} data-type="body-s" className="text-on-surface-low">• {r}</li>)}
         </ul>
       )}
+      <div className="mt-2 flex gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
+        <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+        <div data-type="body-s" className="text-on-surface-low">
+          <span className="text-on-surface">Network access: {perms.network ? 'declared' : 'not declared'}</span>
+          {' — advisory only. PersonalClaw does not confine an app\'s outbound traffic: this app\'s '}
+          code can reach the network either way. The declaration is disclosure, not containment.
+        </div>
+      </div>
     </div>
   )
 }

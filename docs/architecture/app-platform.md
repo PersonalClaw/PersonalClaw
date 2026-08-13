@@ -42,7 +42,8 @@ backend**.
 
 ## Permissions (`apps/permissions.py`)
 
-The manifest's `permissions` block is enforced:
+The manifest's `permissions` block is enforced, with one documented exception
+(`network`, which the consent surface marks advisory):
 
 | Permission | Enforcement |
 |---|---|
@@ -53,7 +54,7 @@ The manifest's `permissions` block is enforced:
 | `cron` | whether manifest crons register |
 | `storage` | a private DATA_DIR handed to the backend |
 | `agent` | two independent gates for agent invocation |
-| `network` | **DECLARATION-ONLY, unenforced by design** — an app backend is its own OS process with its own network stack; there is no chokepoint. The declaration is surfaced honestly at install consent, and gateway-mediated reach is already bounded by `api`. |
+| `network` | **DECLARATION-ONLY, unenforced by design** — there is no per-app chokepoint: provider code is imported in-process by the gateway, and an app backend is its own OS process with its own network stack. So it is disclosure, and the Store consent surface says so: the network claim renders outside the enforced-permission list, labelled advisory, whether or not the app declares it (`PermissionList`) — neither its presence nor its absence reads as containment. Gateway-mediated reach is separately bounded by `api`. See [security/limitations.md](../security/limitations.md#2-the-app-network-permission-is-declaration-only). |
 
 The app identity claim is adopted in **all** auth modes — including
 `AUTH_MODE=none`, where a dedicated middleware still extracts the app token so

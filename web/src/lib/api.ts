@@ -281,6 +281,11 @@ export interface DiscoveredAgent {
 export interface ModelItem { name: string; model_name: string; description: string; provider: string }
 
 // App Platform (A7)
+// An app's declared permission scope. All of these are enforced server-side EXCEPT
+// `network`, which is declaration-only — the gateway has no per-app egress chokepoint
+// (provider code is imported in-process). The consent UI must therefore render it as
+// advisory and outside the enforced list; see `PermissionList` in pages/apps and
+// docs/security/limitations.md §2.
 export interface AppPermissionsWire {
   api?: string[]; events?: string[]; mcpTools?: string[]
   storage?: boolean; network?: boolean; memory?: string; cron?: boolean; agent?: boolean
