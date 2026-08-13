@@ -15,7 +15,9 @@ machine-checked institutional knowledge:
   recorder half lives in core (``personalclaw.trace_recorder``); core can't import here.
 - ``harness.cli`` — ``python -m harness  validate | explain | run | scan | replay``.
 
-The CLI runs on the repo venv (``.venv/bin/python`` at the repo root). See
+The CLI runs on the repo venv (``.venv/bin/python`` at the repo root) when there is one,
+and otherwise on whatever interpreter invoked it — a git worktree has no ``.venv`` of its
+own, so ``harness.profiles.resolve_python`` decides once for every profile command. See
 ``harness/README.md`` for layout and ``AGENT.md`` at the repo root for the machine-facing
 gotcha list every coding agent needs.
 """

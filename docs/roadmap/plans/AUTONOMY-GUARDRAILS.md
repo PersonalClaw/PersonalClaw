@@ -952,10 +952,19 @@ dispatch through `_fire_store_trigger`:
 (`every: 10`) never reached `_fire_store_trigger` at all: `triggers.loop` dispatched the fires to a
 session, `wakeup.dispatch_fires` returned `no_session` (a bare home has no chat session and no model
 to make one), and because the tick had already CLAIMED each run, every later tick recorded
-`skipped_overlap — held by tick:<t> since Ns ago` with the claim never released. So on this path a
-fire that cannot be delivered burns the trigger's claim permanently. That is the no-claim-lease gap
-already owned by WF2WOR-1; recorded here because it is what made the clock half of this validation
-unusable, and the file half is what proved the seam.
+`skipped_overlap — held by tick:<t> since Ns ago` with the claim not released by that path. So on
+this path an undeliverable fire wedges the trigger for the whole run deadline. That is the
+no-claim-lease gap already owned by WF2WOR-1; recorded here because it is what made the clock half
+of this validation unusable, and the file half is what proved the seam.
+
+**CORRECTION (PHF-9, 2026-08-13).** The sentence above originally read that such a fire "burns the
+trigger's claim permanently". That overstates it, and the severity matters because a permanent burn
+would be a data-shaped defect while a bounded delay is a latency one. `triggers/reaper.py:117`
+(`reap_one`) calls `claims.release_claim` for any run overdue past `RUN_DEADLINE_SECS`
+(`reaper.py:63` — 1800s), and the sweep is LIVE: `gateway.py:1877` starts
+`_trigger_reaper_loop` (line 819), which hands the store and home to `reaper.run_forever`. So the
+claim IS released — the wedge is bounded at up to 30 minutes of missed fires, not permanent. The
+finding stands; only its severity was wrong.
 
 Gate: `make lint` rc=0; targeted suites green; full suite **18921 passed, 30 skipped, 12 xfailed, 3 failed** — the three
 pre-existing `tests/test_harness_validate.py` failures that red in any worktree (the harness

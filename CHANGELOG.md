@@ -97,6 +97,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A security-audit write that fails is no longer swallowed.** When the subagent reaper
+  force-kills a subagent that blew its deadline, it writes one security-event row — the only
+  record that the kill happened. That write sat inside a catch-all `except`, so on a home that
+  could not be written (read-only, full, permissions) the kill went ahead and the audit row was
+  lost with nothing raised: an unauditable kill that looked identical to an audited one. The
+  failure now surfaces (logged per-agent by the reaper sweep, which continues with the other
+  agents) rather than being absorbed. Every other audit write on this path already behaved this
+  way; this one was the exception.
+- **Developer-facing: the test suite no longer leaks SQLite handles, and the self-dev harness works
+  in a git worktree.** A full run printed ~1,600 `unclosed database` resource warnings from 95 test
+  files — every sqlite-backed store was built by a fixture and never closed — and closing them
+  exposed a real isolation bug: the process-wide knowledge store was memoized across tests, so
+  tests were searching an earlier test's database. Separately, the harness resolved its interpreter
+  as the cwd-relative `.venv/bin/python`, which does not exist in a worktree, so
+  `python -m harness validate` could not collect the suite there and three of its tests failed in
+  every worktree.
+
 - **A lesson saved for one project no longer becomes a rule for every project.** The
   `memory_remember` tool offers `scope: "workspace"` and the workspace-identity prompt block
   promises such a lesson is "only visible in this working directory" — but `POST /api/lessons`

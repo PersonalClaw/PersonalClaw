@@ -6,19 +6,53 @@ the exact shell commands a change of that shape must pass. Specs declare
 them. Keeping the name→command mapping here (one place) means a spec never hardcodes a
 command line, so retargeting the whole suite (e.g. a new test runner) is a one-file edit.
 
-Commands run from the **repo root** on the repo venv. ``{tests}`` in a template is
+Commands run from the **repo root** on the interpreter :func:`resolve_python` picks.
+``{tests}`` in a template is
 substituted with the caller-supplied pytest node-ids (``run --diff`` fills these from the
 touched-area → required-test mapping); a profile with no ``{tests}`` slot ignores them.
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-# The repo venv interpreter, relative to the repo root (the documented interpreter
-# gotcha — also AGENT.md content). Used as the python for every profile command so the
-# harness never accidentally runs under a system interpreter missing the dev extras.
-VENV_PY = ".venv/bin/python"
+
+def resolve_python(repo_root: Path | None = None) -> str:
+    """The interpreter every profile command runs under, as an ABSOLUTE path.
+
+    This was the cwd-relative literal ``".venv/bin/python"``, which is only correct when
+    the process happens to sit in a checkout that has a ``.venv``. A git worktree does
+    not: ``harness validate``'s whole-suite collection could not even launch there
+    (``[Errno 2] No such file or directory: '.venv/bin/python'``), so reference
+    resolution collapsed into one "could not collect the test suite" error and three
+    tests in ``tests/test_harness_validate.py`` failed in EVERY worktree — for long
+    enough that sessions learned to wave them off as pre-existing (SH6.x).
+
+    Resolution, most specific first:
+
+    1. this tree's own ``.venv/bin/python`` when it exists — the documented dev setup,
+       and the interpreter that definitely carries the dev extras;
+    2. :data:`sys.executable` — whatever is running the harness. In a worktree, in CI, or
+       in a container that is the honest answer: it already imported ``harness``, and the
+       commands it launches run from the repo root, so pytest's ``pythonpath`` ini points
+       them at THIS tree's sources rather than the venv's editable install.
+
+    ``repo_root`` is injectable so both branches are testable; it defaults to the tree
+    this module lives in (never the cwd).
+    """
+    root = repo_root if repo_root is not None else Path(__file__).resolve().parent.parent
+    venv_py = root / ".venv" / "bin" / "python"
+    if venv_py.is_file():
+        return str(venv_py)
+    return sys.executable
+
+
+# Used as the python for every profile command so the harness never accidentally runs
+# under a system interpreter missing the dev extras. Resolved once at import (the value
+# cannot change under a running process).
+HARNESS_PY = resolve_python()
 
 
 @dataclass(frozen=True)
@@ -50,7 +84,7 @@ _register(
     Profile(
         name="fast",
         description="Targeted pytest over the node-ids a change touches (the inner loop).",
-        commands=(f"{VENV_PY} -m pytest {{tests}}",),
+        commands=(f"{HARNESS_PY} -m pytest {{tests}}",),
         needs_tests=True,
     )
 )
@@ -71,7 +105,7 @@ _register(
         # chat coalescer / run fold, and the Python backend-stream metric gate.
         commands=(
             "npm run test:web -- --run src/harness/replayFold.test.ts",
-            f"{VENV_PY} -m harness replay",
+            f"{HARNESS_PY} -m harness replay",
         ),
     )
 )
@@ -89,7 +123,7 @@ _register(
         "smoke script through the real engine with a fake model. Regression anchors.",
         # `python -m harness.exemplars` discovers every exemplars/slice_* bundle and runs its
         # smoke script; a non-zero exit from any one fails the profile.
-        commands=(f"{VENV_PY} -m harness.exemplars",),
+        commands=(f"{HARNESS_PY} -m harness.exemplars",),
     )
 )
 _register(

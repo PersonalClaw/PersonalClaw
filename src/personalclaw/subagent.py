@@ -759,20 +759,25 @@ class SubagentManager:
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
-        try:
-            sel().log_tool_invocation(
-                session_key=session_key,
-                source="subagent",
-                tool_name="reaper_force_kill",
-                outcome="reaped",
-                metadata={
-                    "subagent_id": agent_id,
-                    "session_key": session_key,
-                    "elapsed": int(elapsed),
-                },
-            )
-        except Exception:
-            logger.exception("Reaper: SEL audit failed for %s", agent_id)
+        # NOT best-effort (SH6.3). This write is the only record that the reaper
+        # SIGKILLed a subagent, and it used to sit under `except Exception:
+        # logger.exception(...)` — so a genuine audit-write failure (a read-only or full
+        # home, a broken SEL chain) vanished into a log line while the kill itself
+        # proceeded, and a test patching `sel` could see zero calls with nothing raised.
+        # Every other audit write in this file is unguarded; this one now matches. The
+        # caller (`_reaper_loop`) logs and moves to the next agent, so an unauditable
+        # kill is reported instead of absorbed.
+        sel().log_tool_invocation(
+            session_key=session_key,
+            source="subagent",
+            tool_name="reaper_force_kill",
+            outcome="reaped",
+            metadata={
+                "subagent_id": agent_id,
+                "session_key": session_key,
+                "elapsed": int(elapsed),
+            },
+        )
 
         try:
             self._sessions.release(session_key, cleanup=True)

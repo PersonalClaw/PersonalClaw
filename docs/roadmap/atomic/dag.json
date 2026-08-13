@@ -6887,12 +6887,13 @@
         {
           "id": "PHF-9",
           "title": "Suite flake root-cause fixes + xdist scheduler decision",
-          "status": "todo",
+          "status": "done",
           "scope": "Fix two suite flakes at their root, then decide the parallel scheduler with measurements. Knowledge-merge flake: close the KnowledgeStore connection in fixture teardown (no rerun, no xfail) so the suite runs clean of unclosed-sqlite resource warnings. Subagent SEL flake: the SEL audit call sits inside a swallowing except Exception, so contention makes the patched mock never fire; narrow the except so a genuine audit-write failure surfaces instead of vanishing, and give the two tests an isolated home — a silently-swallowed SEL write is a security-audit gap, not a test problem. Only after the root causes are gone, decide the xdist scheduler last and with measurements: switch --dist worksteal to loadgroup only if the suite wall-time regression is acceptable, recording the before/after either way (the serialization group mark is the real deliverable, not the scheduler choice). Reconcile the two flake memories so a fixed flake is not left documented as pre-existing.",
           "done_when": "The full suite runs 5x consecutively with zero unclosed-database resource warnings and both named tests pass deterministically; a genuine SEL write failure now raises rather than skipping; the scheduler wall-time measurement is recorded and the decision made; both flake memories are updated or deleted.",
           "deps": [
             "EXT:CI-RELEASE-ENGINEERING:xdist-worksteal-escape-hatch"
-          ]
+          ],
+          "pr": 1220
         },
         {
           "id": "PHF-10",
@@ -7589,11 +7590,6 @@
       {
         "id": "PHF-7",
         "title": "Offline fake-model E2E harness + a11y rail",
-        "plan": "PHF"
-      },
-      {
-        "id": "PHF-9",
-        "title": "Suite flake root-cause fixes + xdist scheduler decision",
         "plan": "PHF"
       },
       {
@@ -10008,9 +10004,9 @@
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 13,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
