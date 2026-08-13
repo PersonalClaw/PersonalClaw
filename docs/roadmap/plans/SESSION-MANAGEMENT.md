@@ -209,6 +209,9 @@ bulk/auto-archive, templates, export) — separate clean sub-scopes, not started
     needs_reply/fyi/noise). Building it means inventing the attention contract that
     **INBOX-NOTIFICATIONS-UNIFICATION owns** — a guaranteed rewrite. Deferred to after
     that plan lands. (Note `chat_retag.py` already covers much of T2.1's user value.)
+    **↳ RESOLVED 2026-08-11 by `SM-5`** — Inbox-Unification landed the contract this
+    waited on, and T2.1 shipped. This entry stays as the record of why it waited; it is
+    no longer a statement of current state.
   - **BUG FOUND IN OWN WORK, during as-a-user validation:** rehydration replays a
     transcript through `_ChatSession.append()`, so the un-archive-on-use rule fired on
     LOAD — an archived chat silently un-archived itself just by being opened, or by a
@@ -320,9 +323,19 @@ resident and on disk, and a broken-listing degrade-to-resident-only path.
   (5 new routes) — its drift test caught the staleness, as designed.
 - Tests: `tests/test_session_starters.py` (33) + 14 added to `tests/test_session_lifecycle.py`.
 
-**The plan is now COMPLETE except T2.1 (suggested organization)**, which stays BLOCKED on
+~~**The plan is now COMPLETE except T2.1 (suggested organization)**, which stays BLOCKED on
 INBOX-NOTIFICATIONS-UNIFICATION owning the `emit_attention_item(kind="proposal")` contract
-— unchanged from S2's finding, and `chat_retag.py` already covers much of its user value.
+— unchanged from S2's finding, and `chat_retag.py` already covers much of its user value.~~
+
+**SUPERSEDED — corrected 2026-08-12. The plan is COMPLETE, full stop.** T2.1 shipped on
+2026-08-11 as `SM-5`; the DONE entry is below in this same log ("suggested organization ships,
+and this plan has no unbuilt task left"), with `session_organize.py`, the `OrganizeChip`
+frontend, the closed proposal space and the two suppression tiers. The blocker it cites had
+cleared: `emit_attention_item` exists and Inbox-Unification S1-S5 landed. Two paragraphs in
+this file still described T2.1 as unbuilt — including the S2 DEVIATION above, which was
+accurate when written — so a reader (or a roadmap tick) picking from the header rather than
+the log would nominate work that already exists. Left struck through rather than deleted,
+because the S2 reasoning is the honest record of why it waited.
 - [2026-08-11][SM-5 / T2.1] DONE: suggested organization ships, and this plan has no unbuilt task left. Organization was all-manual, so sessions accumulated with neither folder nor tag and stopped being findable — the gap this plan's own Context names as "organization is all-manual".
   **Deterministic first, model only on genuine ambiguity.** Three signals run in specificity order and the FIRST to produce a non-empty proposal wins: title keywords matched against the user's EXISTING folder/tag vocabulary, then `workspace_dir` basename against folder names, then channel origin (tag-only). `is_ambiguous()` gates the model and requires all three of: a vocabulary to sort into, a title carrying topic words, and no deterministic match — so no vocabulary or no title means no roundtrip at all. The proposal space is CLOSED: `parse_llm_reply` re-resolves every returned name against the live folder/tag lists, so a hallucinated folder cannot reach a proposal and therefore cannot reach an accept click that would create it. `test_deterministic_path_never_calls_the_model` spies the stream helper and asserts zero calls.
   **"Untagged" means NEITHER folder nor tag, not either.** Taken from `dashboard/chat_persistence.py:409-415`, where an existing `has_folder` check already treats a foldered session as organized (it survives the plain-recents cutoff). A chat filed in a folder is findable whether or not it also carries tags, so proposing for it would be advice about a solved problem. Restricted-mode sessions are excluded.

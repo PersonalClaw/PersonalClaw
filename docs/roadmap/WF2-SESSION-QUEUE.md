@@ -2038,7 +2038,7 @@ half-finish; never build a seam against a contract a not-yet-built plan will red
 
 | candidate | why it is NOT a clean atomic session |
 |---|---|
-| `judge_calibration` emission | dead at BOTH ends — nothing emits `judge_verdict`/`judge_divergence`, nothing consumes the `assess_gate` output, and R6a's default-promotion path (its only real consumer) does not exist. The structured judge it needs (`judge_contract.validate_verdict`) is itself uncalled. This is the plan's declared multi-session back half. |
+| `judge_calibration` emission | dead at BOTH ends — nothing emits `judge_verdict`/`judge_divergence`, nothing consumes the `assess_gate` output, and R6a's default-promotion path (its only real consumer) does not exist. ~~The structured judge it needs (`judge_contract.validate_verdict`) is itself uncalled.~~ **CORRECTED 2026-08-12 (WF2LOO-13, #1190): `validate_verdict` is now live** — two production call sites, `engine.py:1655` (sampling) and `engine.py:1868` (the gate), with `meets_ratchet`/`compute_overall`/`detect_forbidden_modes` running underneath it. So the PRODUCER side now has structured verdicts to emit. Both remaining halves are unchanged: nothing emits into `judge_calibration`, and R6a's default-promotion consumer still does not exist — so building the emitter alone would be a new dead seam. Still the plan's declared multi-session back half, for the consumer reason only. |
 | `loop_middleware` run-path wiring | REDUNDANT, not merely inert — the RunController already consults `resilience.check_breaker` every iteration (crit 4's LLM-free 3-identical trip is met there). Wiring `check_middleware` too is a DUAL PATH, a clean-break violation. |
 | `learning/detectors.py`, `learning/accountability.py` | both dead at both ends (no producer emits into them, no consumer reads `revert_proposal`/`lesson_worthy`); crit 9's verdict has no surface. |
 | `workflows/template_pipeline.py`, `eval_specs.py` | no importer AND no producer (no session-reuse counter feeds promotion; no eval runner consumes a derived spec — `eval_specs`' own docstring defers the judge to LEARNING-FLYWHEEL). |
@@ -2063,8 +2063,8 @@ every one found at least one defect by MEASURING rather than reading. Nothing wa
 | item | why |
 |---|---|
 | webhook fire endpoint (`POST /api/triggers/{id}/fire`) | **E4 — owner decision.** `docs/security/threat-model.md` §3 assigns the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS (ASI07), neither landed; the workspace brief orders MCP-Read-Only-Inbound first. Auth model + bind/exposure posture is an owner call. Blocks decision 12's token VERIFICATION half. |
-| `idle` runtime | Gated on LOOPS-EVOLUTION **Phase 4** by §7 item 9 — a real 90-day dependency in that plan, not a wording conflict. |
-| `web_watch` headless tier | §3 asks for "plain fetch → optional headless tier". No browser runtime exists in this repo; a stub would be the inert control this program keeps finding. |
+| `idle` runtime | **PARTLY SHIPPED — corrected 2026-08-12.** The runtime itself is live: `triggers/idle_poll.py` (whose own docstring names WF2AUT-11) is driven from `triggers/loop.py:221` via `idle_poll.poll(...)`, and `dashboard/chat_handlers.py:236` feeds it `notify_activity`. What remains Phase-4-gated is only the **`autonudge.py` deletion / loop-ticker absorption** — `src/personalclaw/autonudge.py` still exists and is imported by `gateway.py`, `mcp_core.py`, `manifest_reference.py` and `snapshot.py`. The EXT dep on WF2AUT-11 names exactly that half ("Phase 4 loop-ticker before autonudge deletion"), so the gate is correct but the row read as though nothing had been built. |
+| `web_watch` headless tier | ~~No browser runtime exists in this repo; a stub would be the inert control this program keeps finding.~~ **CORRECTED 2026-08-12 — this SHIPPED and the row was stale.** `src/personalclaw/web/render.py` provides an egress-guarded headless-Chromium runtime behind the `js-render` extra, and `triggers/web_poll.py` genuinely escalates to it: `_render_headless` (`:328`) is called at `:480`, inside a budget-guarded branch that refuses visibly when `headless_budget_remaining(...) <= 0` and reports `"headless tier unavailable; install personalclaw[js-render]"` when Playwright is absent. Nothing to build. |
 | chat-turn event source | New EMITTER. `agent_scope` (S131) validates and warns today; it gains a reader when the source lands. Building the consumer first inverts the dependency. |
 | meters for the 4 unmetered caps | `cost_cap`/`max_cost_usd_per_run` need per-run spend attribution; `max_runs_per_hour`/`max_actions_per_hour` need a windowed history query. New machinery; S133's doctor finding names them meanwhile. |
 | §3.5 `skip_if_active` / `acting_on` | **Not declared anywhere** — absent from `GATE_KEYS` and every `SPEC_KEYS`. New entity scope, not a gap-fill. |
@@ -2128,3 +2128,42 @@ editing `docs/roadmap/` in a PR." Choosing session 78 would be choosing the prog
 
 **State at block:** clean tree on `feature-wf2-accountability`; `make lint` green (665 files);
 `pytest -n 4 --dist worksteal` → 14939 passed, 29 skipped, 13 xfailed. Nothing half-finished.
+
+## BLOCKED — 2026-08-12: no startable atom in the owner's four priority areas
+
+A roadmap tick swept every candidate in the owner priority order
+(`owner_priority_2026_08_09`: 1 DIST/CRE/PR · 2 CE/EIAT · 3 WV/WF2WOR/WF2UNI/WF2LOO/WF2AUT/
+WF2LEA/WF2KNO · 4 RUA/SM) and found **no atom an implementation session can take**. Verified
+against code, not headers — three of the nominations turned out to be **already shipped**, which
+is why this is recorded rather than reported as "nothing to do".
+
+| candidate | why not startable (verified 2026-08-12) |
+|---|---|
+| `DIST-11`, `DIST-12`, `CRE-7` | Owner-executed by their own `done_when` — clean-VM walkthroughs, a Homebrew tap/Nix flake marked "post-launch, out of scope for this loop", and "owner-executed, no agent code change". |
+| `EIAT-3` | Owner-gated on the draft-by-default confirmation (Owner task 4). Its plan already records BLOCKED and states the decision "is not something a tick may pick". |
+| `CE-9` | `EXT:ECOSYSTEM-TOOLING` — unlanded. |
+| `WF2AUT-11` | **Runtime half already SHIPPED** (`triggers/idle_poll.py`, driven from `triggers/loop.py:221` and `chat_handlers.py:236`). The remainder is the `autonudge.py` deletion, correctly gated on Loops-Evolution Phase 4. |
+| `WF2AUT-12` | **E4 — owner decision.** `docs/security/threat-model.md` §3 assigns the inbound surface to MCP-READONLY-INBOUND + EXTERNAL-ACCESS; auth model and bind/exposure posture are an owner call. |
+| `WF2KNO-9` | Its own `done_when` says blocked: `net.fetch` is a library egress function, not a dispatchable action provider. |
+| `WF2LEA-6` | `EXT:WORKFLOWS-V2:template-versioning` + `EXT:AUTOMATION-SUBSTRATE:run-workflow-trigger`, neither landed. |
+| `WF2LEA-10` | `EXT:OWNER-RULING:skill-md-conformance` — an owner ruling. |
+| `WF2LOO-9` | `EXT:AUTOMATION-SUBSTRATE` — unlanded. |
+| `WF2LOO-13` | **DONE this run** — #1190. Unblocked no downstream atom. |
+| `WF2UNI-12` | Needs loops drained. `plan_memory.py` is gone (that half is done), but `planning/runner.py`, `planning/session.py`, `loop/plan_walkthrough.py`, `loop/classify.py`, `loop/code_classify.py` and four `loop/*_plan_briefs.py` all still have live importers. |
+| `WF2WOR-12` | "Explicitly deferred to last" (Migration Order step 9); needs a container/VM runtime. |
+| `RUA-*`, `SM-*` | Both plans complete. `SM-5`/T2.1 shipped 2026-08-11 — the two paragraphs in `SESSION-MANAGEMENT.md` that still called it BLOCKED are corrected in this change. |
+| `web_watch` headless tier | **Already SHIPPED** — see the corrected row above (`web_poll.py:480`). |
+
+**Three authorities disagreed with the code, each in the direction of manufacturing work that
+does not exist:** `dag.json` still marks `WF2AUT-11` `blocked` with its runtime built;
+this queue said no browser runtime exists when `web/render.py` ships one; and the workspace
+`ROADMAP.md` §2 "newly startable" list nominated `SM` T2.1, the `web_watch` headless tier and
+the `idle` runtime — **all three of which had landed.** Corrected here so the next tick does not
+re-derive the same wrong picture. This is the standing lesson of this program: read the code and
+the execution logs, never a status line.
+
+**Owner decision needed.** This matches what the DECLARED-WORK-EXHAUSTED section above already
+concluded: the remaining WF2 work is the declared multi-session back halves (Loops-Evolution's
+calibration + steering, Work-Containers' call-sites + FE), each needing a coherent multi-session
+program or an owner scope decision — not a single atomic session bolted on. Nothing was
+half-finished to keep a tick busy.

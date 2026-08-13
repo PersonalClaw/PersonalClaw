@@ -665,6 +665,13 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
   deletable once this plan replaces the format. It is NOT dead — `history.py` (2 sites) and
   `dashboard/chat_title.py` import it live, with test coverage. Deleting it now would break three
   live surfaces to front-run a replacement that does not exist until session 41.
+  **↳ SUPERSEDED 2026-08-12: `src/personalclaw/plan_memory.py` no longer exists** and nothing
+  imports it (0 hits across `src/`), so this half of `WF2UNI-12`'s `done_when` is already
+  satisfied and its `scope` note ("plan_memory still imported live") is stale. The REST of that
+  atom is unchanged and still not startable: `planning/runner.py`, `planning/session.py`,
+  `loop/plan_walkthrough.py`, `loop/classify.py`, `loop/code_classify.py` and four
+  `loop/*_plan_briefs.py` all still exist with live importers, which is exactly what the atom's
+  `EXT:LOOPS-EVOLUTION:loop drain / retirement` dependency is about.
 
 - **Validated end to end** in the real runtime: audit intent → `audit-sweep` @0.79 (T3), "why did
   that run fail" → `diagnose-run` @0.59 (T1), synthesis intent → `knowledge-synthesis` @0.80, each
