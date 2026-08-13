@@ -20,6 +20,7 @@ import { TopBar } from '../../ui/TopBar'
 import { useIdentity, firstNameOf } from '../../app/identity'
 import { api, type ChatSessionSummary } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
+import { sessionRecencyMs } from '../../lib/epoch'
 import { spring, expr } from '../../design/motion'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { useComposerData } from '../../lib/useComposerData'
@@ -198,7 +199,7 @@ function Launcher({ navigate }: RouteProps) {
 
   const recent = (sessions ?? [])
     .filter((s) => s.title && !s.running)
-    .sort((a, b) => new Date(b.last_activity_ts ?? b.last_ts ?? 0).getTime() - new Date(a.last_activity_ts ?? a.last_ts ?? 0).getTime())
+    .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
     .slice(0, 4)
 
   return (
