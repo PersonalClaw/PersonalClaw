@@ -130,7 +130,10 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
   const emoji = custom && scheme.emoji && !scheme.emoji.startsWith('icon:') ? scheme.emoji : null
   return (
     <div className="group relative">
-      <button type="button" onClick={onPick}
+      {/* The active scheme was an outline plus a ✓ glyph and nothing else: a screen-reader user tabbing
+          twelve tiles heard "Coral, button … Honey, button" with no way to tell which one is on.
+          `aria-pressed` is what the Mode row in this same panel already does. */}
+      <button type="button" onClick={onPick} aria-pressed={active}
         className="w-full flex flex-col gap-2 rounded-xl p-2.5 transition-all text-left"
         style={{ background: 'var(--color-surface-container)', outline: active ? '2px solid var(--color-primary)' : '1px solid var(--color-outline-variant)', outlineOffset: active ? '0' : '-1px' }}>
         <div className="h-12 w-full rounded-lg grid place-items-center text-[1.5rem]" style={{ background: `linear-gradient(135deg, ${sw} 55%, ${swAlt} 55%)` }}>

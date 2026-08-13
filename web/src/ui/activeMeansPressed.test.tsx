@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { PanelRight } from 'lucide-react'
 import { HeaderControl } from './HeaderActions'
 import { IconButton } from './IconButton'
+import { TileButton } from './TileButton'
 
 // ── Three primitives modelled "this control is on" and told nobody ───────────────────────────
 //
@@ -38,6 +39,31 @@ import { IconButton } from './IconButton'
 // 🔑 AND `active` STAYS OPTIONAL. A header action that is not a toggle (Save, Run build, Close) passes no
 // `active`, so it must emit NO `aria-pressed` at all — announcing `"false"` would tell assistive tech that
 // a plain action has an off state.
+//
+// ── Cycle 153: THE SAME FAMILY, THREE SITES CYCLE 128 DID NOT REACH ─────────────────────────────────
+//
+// `#/settings/design` is where this costs the most, because the whole page IS selection. Read out of
+// Chrome's accessibility tree: **3 of 89 buttons exposed any state** — the Mode row — and everything the
+// user actually picks announced like everything they did not:
+//
+//   the 12 scheme tiles      "Coral, button … Honey, button"  ✓ glyph + coral outline, no state
+//   the 3 personality cards  identical to each other          ✓ glyph + border, no state
+//   the token select pills   **"dm-sans, button"**            coral fill, no state, and no group name
+//
+// The pills were two defects at once: the name was the bare VALUE, so "waves" / "hex" / "claude" gave no
+// hint of Background / Arrangement / Dot shape. `bento`'s `SegToggle` already solves both, one screen
+// over: `aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={o.key === value}`.
+//
+//   after, same probe: **3 → 40 buttons expose state** on that surface, and the names carry their group.
+//   6/6 captures pixel-identical (both themes, desktop + phone) — semantics only.
+//
+// 🪤 AND ONE `active` TURNED OUT TO BE INERT, WHICH THE `aria-pressed` RULE MADE VISIBLE. `TileButton`'s
+// other consumer is `ArtifactCard`, and `ArtifactsSection` passes **`activeSlug={null}`** hard-coded —
+// the grid only renders when nothing is open. So `active` could never be true, and wiring the attribute
+// would have put a permanent `aria-pressed="false"` on five tiles with no on state, which is exactly what
+// the rule above forbids. The plumbing is deleted (`ArtifactCard.active`, `ArtifactGrid.activeSlug`, the
+// call site) rather than announced: `#/artifacts` now reports **zero** `aria-pressed` nodes, and its
+// captures are unchanged because the `border-primary/60` it selected never applied either.
 
 describe('HeaderControl announces the state its colour already showed', () => {
   it('is pressed when active', () => {
@@ -74,6 +100,62 @@ describe('IconButton does the same, and keeps what it already announced', () => 
     const el = screen.getByRole('button', { name: 'Optimize prompt' })
     expect(el.getAttribute('aria-disabled')).toBe('true')
     expect(el.getAttribute('title')).toBe('Optimize prompt — Type something first')
+  })
+})
+
+describe('TileButton — the card-shaped member of the family', () => {
+  it('is pressed when the tile is the selected one', () => {
+    render(<TileButton active onClick={vi.fn()} ariaLabel="Retro Terminal">tile</TileButton>)
+    expect(screen.getByRole('button', { name: 'Retro Terminal' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('is unpressed when it is a selectable tile that is not selected', () => {
+    render(<TileButton active={false} onClick={vi.fn()} ariaLabel="Claw Arcade">tile</TileButton>)
+    expect(screen.getByRole('button', { name: 'Claw Arcade' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('says nothing when the tile is not a selection at all', () => {
+    // Same distinction as HeaderControl: a plain "open this" tile has no off state to report.
+    render(<TileButton onClick={vi.fn()} ariaLabel="open me">tile</TileButton>)
+    expect(screen.getByRole('button', { name: 'open me' }).hasAttribute('aria-pressed')).toBe(false)
+  })
+})
+
+describe("the design panel's own two hand-rolled selectors", () => {
+  const SRC = join(process.cwd(), 'src')
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  it('the scheme tile announces which scheme is on', () => {
+    expect(read('pages/settings/DesignPanel.tsx')).toMatch(/<button type="button" onClick=\{onPick\} aria-pressed=\{active\}/)
+  })
+
+  it('the token select pill announces its state AND names its group', () => {
+    const src = read('ui/TokenControls.tsx')
+    expect(src, 'the bare value is not a name — "dm-sans" told nobody it was Font family')
+      .toMatch(/aria-label=\{`\$\{token\.label\}: \$\{opt\}`\}/)
+    expect(src).toMatch(/aria-pressed=\{on\}/)
+  })
+
+  it('the Mode row it converged onto is unchanged', () => {
+    // The canonical form lives 20 lines above the scheme tiles; if it moves, reconcile rather than fork.
+    expect(read('pages/settings/DesignPanel.tsx')).toMatch(/aria-label=\{`Mode: \$\{m\.label\}`\} aria-pressed=\{on\}/)
+  })
+})
+
+describe('an `active` that can never be true is deleted, not announced', () => {
+  const SRC = join(process.cwd(), 'src')
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  it('the artifacts grid no longer threads a hard-coded selection', () => {
+    for (const rel of ['pages/artifacts/ArtifactCard.tsx', 'pages/artifacts/ArtifactGrid.tsx', 'pages/artifacts/ArtifactsSection.tsx']) {
+      expect(read(rel), `${rel} still carries the inert prop`).not.toMatch(/activeSlug|active=\{a\.slug/)
+    }
+  })
+
+  it('and the card asks TileButton for no state', () => {
+    // If a real selection ever arrives on that grid, this is the line to change — deliberately, with a
+    // writer for the value, rather than by re-adding a prop nothing sets.
+    expect(read('pages/artifacts/ArtifactCard.tsx')).toMatch(/<TileButton onClick=\{\(\) => onOpen\(art\)\} title=\{art\.name\} ariaLabel=\{art\.name\}/)
   })
 })
 

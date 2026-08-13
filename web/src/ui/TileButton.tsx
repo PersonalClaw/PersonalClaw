@@ -28,6 +28,12 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
       onClick={onClick}
       title={title}
       aria-label={ariaLabel}
+      // `active` is the selection, and until now it was PAINT ONLY: a border colour. Measured in the
+      // AX tree on `#/settings/design`, 3 of 89 buttons exposed any state — the Mode row — while the
+      // selected personality card announced exactly like the other two. `aria-pressed` is this app's
+      // idiom for "one of N is chosen" (the Mode row 20 lines away, `WidthPill`, bento's `SegToggle`);
+      // it is omitted entirely for a tile that is not selectable, because `active` is optional.
+      aria-pressed={active}
       className={cx(
         'group flex flex-col overflow-hidden rounded-xl border text-left transition-colors',
         active ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant',
