@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { overlayEnter } from '../../design/motion'
-import { useMenuCursor } from '../../lib/useMenuCursor'
+import { menuCursorKeydown, useMenuCursor } from '../../lib/useMenuCursor'
 import { MenuRow } from '../Popover'
 
 export interface ContextMenuItem {
@@ -54,15 +54,11 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
     if (!pos) return
     const onDoc = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) close() }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); closeAndReturnFocus() }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
-      // Tab dismisses (APG) — and deliberately does NOT preventDefault: focus lands back on the
-      // invoking row and the browser's own Tab then carries on from there. Measured before this:
-      // Tab left the menu OPEN and put focus on an unrelated page control behind it.
-      else if (e.key === 'Tab') closeAndReturnFocus()
-      // No Enter branch: focus sits on the cursor row's <button>, so the browser activates it
-      // natively. Handling it here too would fire `onSelect` TWICE per press.
+      if (e.key === 'Escape') { e.stopPropagation(); closeAndReturnFocus(); return }
+      // Arrows / Home / End / Tab come from the shared reducer, so the kit's five popups spell the
+      // contract once. No Enter branch: focus sits on the cursor row's button, so the browser
+      // activates it natively — handling it here too would fire `onSelect` TWICE per press.
+      menuCursorKeydown(e, { move, dismiss: closeAndReturnFocus })
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
