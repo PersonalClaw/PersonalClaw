@@ -17,7 +17,7 @@ function PlainUserText({ text, onFileClick }: { text: string; onFileClick?: (pat
       {splitFileRefs(text).map((part, i) =>
         part.kind === 'file' ? (
           <button key={i} type="button" onClick={() => onFileClick(part.value)} title={`Open ${part.value}`}
-            className="mx-0.5 inline-flex items-center gap-1 rounded bg-surface-high px-1 align-baseline text-[0.92em] text-primary transition-colors hover:bg-surface-highest">
+            className="mx-0.5 inline-flex items-center gap-1 rounded bg-surface-high px-1 align-baseline text-[0.92em] text-primary-emphasis transition-colors hover:bg-surface-highest">
             <FileText size={11} className="shrink-0" />{part.value.split('/').pop()}
           </button>
         ) : (
@@ -35,7 +35,7 @@ export function PasteChip({ paste }: { paste: TurnPaste }) {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} title={`View paste #${paste.seq} (${paste.lines} lines)`}
-        className="mx-0.5 inline-flex items-center gap-1 rounded-md bg-surface-high px-1.5 py-0.5 align-baseline text-[0.85em] text-primary transition-colors hover:bg-surface-highest">
+        className="mx-0.5 inline-flex items-center gap-1 rounded-md bg-surface-high px-1.5 py-0.5 align-baseline text-[0.85em] text-primary-emphasis transition-colors hover:bg-surface-highest">
         <Clipboard size={11} className="shrink-0" /> Paste #{paste.seq}
         <span className="text-on-surface-low">· {paste.lines}L</span>
       </button>

@@ -631,13 +631,13 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                                   badging every fresh item would make the list noise.
                                   Only the two states a reader deliberately set show. */}
                               {it.read_state === 'reading' && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary" title="You're partway through this">
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary-emphasis" title="You're partway through this">
                                   <BookOpen size={10} /> reading
                                 </span>
                               )}
                               <span className={`truncate text-[0.9375rem] ${it.read_state === 'read' ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(it.read_state === 'read' ? 400 : 500)}>{it.title || it.url_title || '(untitled)'}</span>
                               {(it.processing_status === 'queued' || it.processing_status === 'processing') && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary text-[0.75rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis text-[0.75rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
                               )}
                               {it.processing_status === 'failed' && (
                                 <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-danger text-[0.75rem]" title={it.processing_error || 'Enrichment failed'}><CircleAlert size={10} /> Failed</span>
@@ -711,7 +711,7 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
             <div className="flex items-center gap-1.5">
               <span className="truncate text-on-surface text-[0.9375rem]">{it.goal || it.id}</span>
               {!it.enabled && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">off</span>}
-              {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary/80 text-[0.75rem]">proposes skill</span>}
+              {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis text-[0.75rem]">proposes skill</span>}
             </div>
             <div className="truncate text-on-surface-low text-[0.75rem]">
               {(it.outcome_count ?? 0) > 0 ? `${it.outcome_count} gathered` : 'nothing gathered yet'}
