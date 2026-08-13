@@ -6,6 +6,7 @@ import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { ChipInput } from '../../ui/forms'
+import { PageTitle } from '../../ui/PageTitle'
 import { api, type KnowledgeType } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { TYPES, typeMeta, createKind, ACCEPTED_MIMES, GIST_LANGUAGES, fmtBytes } from './knowledgeMeta'
@@ -25,7 +26,7 @@ export function KnowledgeCreatePage({ onBack, onCreated }: { onBack: () => void;
   if (!type) {
     return (
       <div className="flex h-full flex-col">
-        <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">Add knowledge</span></div>} />
+        <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>Add knowledge</PageTitle></div>} />
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
             <p className="text-on-surface-low text-[0.9375rem] mb-l text-center">What kind of knowledge are you adding?</p>
@@ -133,7 +134,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
 
   return (
     <div className="flex h-full flex-col" onKeyDown={onKeyDown}>
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to types" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface inline-flex items-center gap-s"><tm.icon size={18} style={{ color: tm.tone }} /> New {tm.label.toLowerCase()}</span></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to types" size={40} onClick={onBack} /><PageTitle className="inline-flex items-center gap-s"><tm.icon size={18} style={{ color: tm.tone }} /> New {tm.label.toLowerCase()}</PageTitle></div>} />
       {/* Full-height authoring shell mirroring the detail page's edit layout: inline title
           at top, a per-type middle that fills the height (Monaco for gist, textarea for
           text, drop-zone for files, URL field for bookmarks), and inline tags.
