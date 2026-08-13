@@ -55,6 +55,15 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
 
   return (
     <Popover align={align} width={264} placement="bottom"
+      // 🔴 PORTAL for the same reason as the apps card menu, measured at 430×900 on
+      // `#/notifications`: the menu's box was at **x = -202**, so 202px of its 264px width sat off
+      // the LEFT edge of the shell — every filter LABEL clipped away, leaving a column of bare counts
+      // ("83 ✓ · 2 · 33 · 6 …") with nothing to say what they filtered. `align="right"` anchors it to
+      // a trigger that a phone header puts near the left of the remaining space, and a non-portal
+      // flyout has no viewport clamp at all. Portal mode is `fixed`, anchored to the trigger rect and
+      // clamped into the viewport. Eleven consumers move together, which is why the sweep re-measured
+      // all 17 routes afterwards rather than just this one.
+      portal
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="Filter & sort" title="Filter & sort" aria-expanded={open}
           className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 text-[0.8125rem] transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}

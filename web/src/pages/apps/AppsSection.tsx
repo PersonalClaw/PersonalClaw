@@ -184,6 +184,12 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
   const app = { name: item.name, enabled: item.enabled, hasUI: item.hasUI }
   return (
     <Popover align="right" placement="bottom" width={200}
+      // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
+      // 175px tall inside a card whose own `overflow-hidden` box ends 56px earlier, so the LAST row
+      // — "Force uninstall", the destructive one — was clipped away on every card, and the strip it
+      // occupied belongs to the card underneath (which is itself clickable). At 430px two of the
+      // seven menus were clipped by 166px: invisible entirely.
+      portal
       trigger={(open, toggle) => (
         <button type="button" aria-label={`Actions for ${item.displayName}`} title="Actions"
           aria-expanded={open} onClick={(e) => { e.stopPropagation(); toggle() }}
