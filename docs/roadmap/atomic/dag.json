@@ -417,12 +417,13 @@
         {
           "id": "KL-10",
           "title": "Indexing H1.3: vector arm searches chunks and rolls up to items before RRF",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment task table — H1.3; Amendment Design (a); Risks (do not redesign fusion)",
           "done_when": "the vector arm queries chunk vectors and rolls chunk hits up to their item before RRF; fusion, cliff-cut, _VECTOR_MIN_SIMILARITY and the returned item shape are unchanged on a fixed corpus; a chunk hit returns an item-shaped result whose section/line_range locator is asserted at least as specific as today's item-level one; items lacking chunks fall back to the whole-item vector (partial-chunk libraries degrade, never return zero)",
           "deps": [
             "KL-9"
-          ]
+          ],
+          "pr": 1265
         },
         {
           "id": "KL-11",
@@ -7450,8 +7451,13 @@
         "plan": "KL"
       },
       {
-        "id": "KL-10",
-        "title": "Indexing H1.3: vector arm searches chunks and rolls up to items before RRF",
+        "id": "KL-11",
+        "title": "Indexing H1.4: sqlite-vec ANN index with cached probe, fail-soft to exact scan, Doctor line",
+        "plan": "KL"
+      },
+      {
+        "id": "KL-12",
+        "title": "Indexing H1.5: resumable batched chunk backfill + VH validation",
         "plan": "KL"
       },
       {
@@ -9465,9 +9471,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
