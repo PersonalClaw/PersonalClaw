@@ -536,7 +536,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           ) : apps === undefined && appsErr ? (
             // Before the skeleton branch, or a failed fetch spins it forever.
             <LoadError what="apps" error={appsErr} onRetry={reload} />
-          ) : apps === undefined ? <ListSkeleton rows={4} />
+          ) : apps === undefined ? <ListSkeleton rows={4} what="apps" />
             : libResult && libResult.length === 0 ? (
               // Empty state, tab-aware: Native (should never be empty in practice —
               // native apps always ship), Library (no user-installed apps), each
@@ -659,7 +659,7 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
   if (catalog === undefined && catalogError) {
     return <LoadError what="the Store catalog" error={catalogError} onRetry={reloadCatalog} />
   }
-  if (catalog === undefined) return <ListSkeleton rows={3} />
+  if (catalog === undefined) return <ListSkeleton rows={3} what="the Store catalog" />
 
   return (
     <div className="flex flex-col gap-2xl">

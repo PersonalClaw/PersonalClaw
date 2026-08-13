@@ -164,7 +164,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         {items === undefined && loadErr ? (
           // Before the skeleton branch, or a failed first read spins it forever.
           <LoadError what="notifications" error={loadErr} onRetry={load} />
-        ) : filtered === null ? <ListSkeleton rows={6} /> : items && items.length === 0 ? (
+        ) : filtered === null ? <ListSkeleton rows={6} what="notifications" /> : items && items.length === 0 ? (
           <EmptyState icon={Bell} title="You're all caught up" hint="Schedule runs, trigger fires, agent updates, and task results surface here for you to review." />
         ) : (
           <>

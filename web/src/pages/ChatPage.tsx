@@ -3914,7 +3914,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         </div>
 
         {sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
-          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} /></div>
+          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} what="chats" /></div>
           : sessions.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={MessageSquare} title="No chats yet" hint="Start a conversation — your sessions will appear here to search and revisit." action={{ label: 'New chat', onClick: () => navigate('chat/new'), icon: Edit3 }} /></div>
           : filtered.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={Search} title="No matches" hint="Try a different search or tag filter." /></div>
           : view === 'board' ? (

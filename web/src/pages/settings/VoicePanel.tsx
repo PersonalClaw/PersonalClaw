@@ -50,7 +50,7 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
 
   // Error first: `data` is undefined for loading AND for failure, so a later test never runs.
   if (!data && loadErr) return <LoadError what="speech settings" error={loadErr} onRetry={refresh} />
-  if (!data || !sttSettings || !ttsSettings) return <FormSkeleton sections={3} />
+  if (!data || !sttSettings || !ttsSettings) return <FormSkeleton sections={3} what="speech settings" />
 
   return (
     <div>

@@ -67,7 +67,7 @@ export function InboxSettingsPanel() {
   }
 
   if (!data && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={refresh} />
-  if (!data || !s) return <FormSkeleton sections={2} />
+  if (!data || !s) return <FormSkeleton sections={2} what="inbox settings" />
   return (
     <div>
       <PanelHeader title="Inbox" hint="What gets flagged in the unified inbox, and how long items are kept." />

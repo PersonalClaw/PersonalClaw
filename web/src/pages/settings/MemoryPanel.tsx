@@ -554,7 +554,7 @@ function AuditTab() {
   // Was `.catch(() => [] as MemoryEvent[])`: a failed read of the memory audit log rendered
   // "No matching events." — indistinguishable from a memory that has genuinely recorded nothing.
   if (!events && error) return <LoadError what="memory audit log" error={error} onRetry={reload} />
-  if (!events) return <ListSkeleton rows={8} />
+  if (!events) return <ListSkeleton rows={8} what="memory audit log" />
   const q = filter.trim().toLowerCase()
   const shown = q ? events.filter((e) => `${e.event_type} ${e.memory_type} ${e.memory_key ?? ''}`.toLowerCase().includes(q)) : events
 
