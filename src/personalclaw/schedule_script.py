@@ -13,9 +13,10 @@ nothing this tick), ``Done(msg)`` (deliver and remove the job), ``Report(msg)``
 provider registry), NOT a bespoke MCP client — so a script gets the same
 MCP+native tool surface the agent has.
 
-Layering: the parent process (gateway) calls :func:`run_script_sandboxed`,
-which writes a launcher and runs it through
-``wrap_argv``. The launcher (its source is :data:`_LAUNCHER_SRC`) runs *inside*
+Layering: the parent process (gateway) calls :func:`run_script_sandboxed`, which writes a
+launcher and runs it through ``wrap_argv`` (the OS path sandbox) under the ``tool``
+resource ceiling (``spawn_shim_argv``) with an allowlisted child environment
+(``build_child_env``). The launcher (its source is :data:`_LAUNCHER_SRC`) runs *inside*
 the sandbox: it defines the author API, execs the user script, and emits a JSON
 status line. The gateway internal secret is handed to the launcher via an
 unlinked temp file (never an env var the user script can read).
@@ -33,7 +34,7 @@ from pathlib import Path
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
 from personalclaw.hooks import validate_file_path
 from personalclaw.mcp_core import _internal_secret
-from personalclaw.sandbox import build_child_env, wrap_argv
+from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv, wrap_argv
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,9 @@ def run_script_sandboxed(
     Returns ``{"status": "ok"|"skip"|"done"|"report"|"error", "message"|"error"}``.
     The internal secret + port are passed to the launcher via an unlinked temp
     file, so the user script process never sees them in its environment.
+
+    The child runs under all three isolation controls: the OS path sandbox, the ``tool``
+    resource ceiling, and the allowlisted child environment.
     """
     resolved, func = resolve_script_path(script_spec)
     timeout = timeout if timeout and timeout > 0 else _DEFAULT_SCRIPT_TIMEOUT
@@ -264,6 +268,25 @@ def run_script_sandboxed(
 
         argv = ["python3", launcher_path, cfg_path]
         wrapped, cleanup = wrap_argv(argv, mode="standard")
+        # Resource ceiling (PHF-1, swept here by EI-3). The OS sandbox above bounds what the
+        # child can REACH; it does nothing about how much it can CONSUME, so before this a
+        # scheduled script could exhaust the gateway's descriptors or fork-bomb in ways an
+        # agent bash command already could not. The `tool` profile is the same one that bash
+        # command gets.
+        #
+        # The shim is prepended OUTSIDE the sandbox wrap, matching the one routed spawn seam
+        # (`sandbox_providers/none.py` wraps argv, then delivers ceilings at exec):
+        #   * rlimits inherit through `exec`, so a limit set before `sandbox-exec`/`unshare`
+        #     covers the sandboxed target and every descendant it spawns;
+        #   * inside the wrap, the shim's own `python -m personalclaw._spawn_exec_shim`
+        #     import would have to survive the seatbelt/namespace profile — one denied read of
+        #     the interpreter's path would turn the ceiling into a dead cron job;
+        #   * `wrap_argv` hands back its namespace-backend cleanup path as `wrapped[1]`, so
+        #     the prepend must follow that unpacking, never precede it.
+        # This cannot silently degrade to an unshimmed spawn: the `tool` policy is never empty
+        # (it always carries the OOM bias), and a shim that failed to import would surface as
+        # a loud `error` status from the run below rather than as an uncapped child.
+        wrapped = spawn_shim_argv(wrapped, PROFILE_TOOL)
         # The child env is an ALLOWLIST, not a filtered copy (PHF-4). The internal secret
         # still travels only via the unlinked-on-read cfg file — and now no OTHER gateway
         # variable rides along either. What this replaced was a denylist of exactly one

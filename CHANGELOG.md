@@ -10,6 +10,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A scheduled Python script can no longer exhaust PersonalClaw's file descriptors.** A
+  `run-script` cron ran inside the OS sandbox with a minimal environment, but with no cap on what
+  it could *consume* — so a script that leaked open files could starve the gateway of descriptors,
+  something an agent `bash` command has been unable to do for a while. Scheduled scripts now run
+  under the same resource ceiling as every other agent-driven child: the `sandbox.nofile` limit
+  (default 4096) applies to the script and everything it starts. A script that hits it gets an
+  ordinary `OSError`/`EMFILE`, which surfaces in the job's run history. If you have a legitimately
+  descriptor-hungry script, raise the limit with `personalclaw config set sandbox.nofile 16384`.
+  Platform note: on Linux the same mechanism also carries the optional `sandbox.max_pids` and
+  `sandbox.max_rss_mb` bounds (both off by default) plus the OOM-killer preference that protects
+  the gateway; on macOS only the descriptor limit is enforced.
 - **Your hooks and cron scripts no longer inherit PersonalClaw's environment.** ⚠️ **This changes
   behaviour for any hook, cron script or bash action that read an inherited environment variable.**
   A hook command, a `run-script` cron script and a bash action used to start from a copy of the

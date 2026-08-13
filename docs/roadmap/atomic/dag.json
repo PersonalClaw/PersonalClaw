@@ -6471,12 +6471,13 @@
         {
           "id": "EI-3",
           "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 EI-A3: AST spawn-audit vs ceiling-wrapped/operator-exempt map; wrap apps backend, mcp_client/mcp_discovery, acp/transport, schedule_script, loop gates/worktree",
           "done_when": "tests/test_spawn_ceiling_audit.py is green with every agent-influenced seam ceiling-wrapped or explicitly operator-exempt; adding an unmapped create_subprocess_exec/Popen/StdioServerParameters on a branch fails CI naming the file:line",
           "deps": [
             "EI-1"
-          ]
+          ],
+          "pr": 1227
         },
         {
           "id": "EI-4",
@@ -7311,11 +7312,6 @@
       {
         "id": "EI-2",
         "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
-        "plan": "EI"
-      },
-      {
-        "id": "EI-3",
-        "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
         "plan": "EI"
       },
       {
@@ -9973,9 +9969,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {
