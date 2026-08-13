@@ -41,6 +41,8 @@ import json
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from scripts.generate_inert_surface_baseline import (
     _attribute_names_in_src,
     _enum_members,
@@ -129,9 +131,26 @@ def test_committed_baseline_byte_matches_a_fresh_render():
     )
 
 
+@pytest.mark.timeout(300)
 def test_render_is_deterministic():
     """Generating twice yields byte-identical output — no set-ordering, no timestamps, no
-    absolute paths. Determinism is the whole contract; without it the ratchet is noise."""
+    absolute paths. Determinism is the whole contract; without it the ratchet is noise.
+
+    🔴 The timeout is RAISED, not the work reduced, and the number is measured. Two builds
+    take **13.1s** on an idle machine (6.7s + 6.4s) — nowhere near the suite's 120s default.
+    But `build_baseline()` is a CPU-bound AST walk of the whole tree, run twice, competing
+    with 17 other xdist workers, and CI starved it past 120s twice (#1205, #1222). That is
+    ≥9x, so 300s is headroom rather than a new cliff. Measured again through pytest
+    rather than raw calls: this ONE test took **51.5s** under light local load, so the
+    margin under 120s was thin, not comfortable — the 13.1s figure is the floor.
+
+    Serializing this test instead is NOT available: the suite runs `--dist worksteal`
+    (`pyproject.toml`), which ignores `xdist_group` — measured in PHF-9, where switching to
+    `loadgroup` cost +58% wall time and was rejected.
+
+    Building once and comparing a re-render would be cheaper and WRONG: the contract is that
+    *collection* is order-stable too, so both builds have to be real.
+    """
     assert build_baseline() == build_baseline()
 
 
