@@ -1,6 +1,6 @@
 import { memo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { bounce } from '../design/motion'
+import { physics } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -41,7 +41,7 @@ function DiffBlock({ code }: { code: string }) {
           className="ml-auto inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100 focus-within:opacity-100"
           style={copied ? { color: 'var(--color-success)' } : undefined}>
           <AnimatePresence mode="wait" initial={false}>
-            <motion.span key={copied ? 'ok' : 'copy'} initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={bounce.playful} className="grid place-items-center">
+            <motion.span key={copied ? 'ok' : 'copy'} initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={physics.playful} className="grid place-items-center">
               {copied ? <Check size={12} /> : <Copy size={12} />}
             </motion.span>
           </AnimatePresence>
@@ -160,7 +160,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
             style={copied ? { color: 'var(--color-success)' } : undefined}>
             {/* copy→check pops on a spring (success bloom) rather than a hard swap */}
             <AnimatePresence mode="wait" initial={false}>
-              <motion.span key={copied ? 'ok' : 'copy'} initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={bounce.playful} className="grid place-items-center">
+              <motion.span key={copied ? 'ok' : 'copy'} initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }} transition={physics.playful} className="grid place-items-center">
                 {copied ? <Check size={12} /> : <Copy size={12} />}
               </motion.span>
             </AnimatePresence>

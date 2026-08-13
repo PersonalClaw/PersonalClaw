@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { FolderKanban, ChevronDown, Check, Plus } from 'lucide-react'
 import { api, type ProjectItem } from '../lib/api'
 import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
-import { overlayEnter, bounce } from '../design/motion'
+import { overlayEnter, physics } from '../design/motion'
 
 /** A compact project chooser for the Goal Loop + Code create flows.
  *
@@ -102,7 +102,7 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
         <FolderKanban size={14} className="shrink-0 text-primary" />
         <span className="max-w-[140px] truncate">{label}</span>
         {/* chevron flips on a spring so open/close settles with life */}
-        <motion.span className="shrink-0 opacity-60" animate={{ rotate: open ? 180 : 0 }} transition={bounce.subtle}>
+        <motion.span className="shrink-0 opacity-60" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
           <ChevronDown size={13} />
         </motion.span>
       </button>

@@ -1,7 +1,7 @@
 import { type ReactNode, useId } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Search, X } from 'lucide-react'
-import { bounce } from '../design/motion'
+import { physics } from '../design/motion'
 import { cx } from './cx'
 
 // ── The canonical compound-search field (design-system consistency, S2/S3) ──
@@ -85,7 +85,7 @@ function ClearButton({ show, onClear, label, dense }: { show: boolean; onClear: 
       {show && (
         <motion.button type="button" onClick={onClear} aria-label={label}
           initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-          transition={bounce.subtle} whileTap={{ scale: 0.88 }}
+          transition={physics.snappy} whileTap={{ scale: 0.88 }}
           className={cx('inline-flex shrink-0 items-center justify-center rounded-full text-on-surface-low hover:bg-surface-highest hover:text-on-surface', dense ? 'size-5' : 'size-6')}>
           <X size={dense ? 13 : 14} />
         </motion.button>

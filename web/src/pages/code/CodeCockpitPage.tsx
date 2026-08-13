@@ -39,7 +39,7 @@ import { useResizablePanel } from './useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
-import { overlayEnter, messageEnter, listItemEnter, stagger, springs } from '../../design/motion'
+import { overlayEnter, messageEnter, listItemEnter, stagger, physics } from '../../design/motion'
 import { Expandable } from '../../ui/motion'
 
 const EMPTY_ARTIFACTS = new Set<string>()
@@ -1593,7 +1593,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
         <Expandable open={open} header={
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={a11yLabel}
             className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[0.75rem] uppercase tracking-wide hover:bg-surface-high/40" style={{ color }}>
-            <motion.span animate={{ rotate: open ? 90 : 0 }} transition={springs.snappy} className="shrink-0">
+            <motion.span animate={{ rotate: open ? 90 : 0 }} transition={physics.snappy} className="shrink-0">
               <ChevronRight size={12} />
             </motion.span>
             <span className="truncate">{s.title || s.stage}</span>

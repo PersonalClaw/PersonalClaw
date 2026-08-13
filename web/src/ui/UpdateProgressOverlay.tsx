@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Check, CheckCircle2, DownloadCloud, Loader2, RefreshCw } from 'lucide-react'
-import { spring, bounce } from '../design/motion'
+import { spring, physics } from '../design/motion'
 import { useChatSocket } from '../lib/useChatSocket'
 import { api } from '../lib/api'
 import { useFocusTrap } from './useFocusTrap'
@@ -202,7 +202,7 @@ function UpdateSheet({ progress, cancel }: { progress: UpdateProgress; cancel: (
           <motion.div ref={trapRef} role="alertdialog" aria-modal="true" aria-label="Update progress"
             className="relative w-full max-w-[400px] overflow-hidden rounded-xl bg-surface shadow-sheet"
             initial={{ opacity: 0, scale: 0.97, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.98, y: 6 }} transition={bounce.lift}>
+            exit={{ opacity: 0, scale: 0.98, y: 6 }} transition={physics.playful}>
             <div className="flex items-start gap-3 px-l pt-l">
               <span className="mt-0.5 shrink-0" style={{ color: isError ? 'var(--color-danger)' : isDone ? 'var(--color-success)' : 'var(--color-primary)' }}>
                 {isError ? <AlertTriangle size={18} />

@@ -2,7 +2,7 @@ import { useRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedMotion } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { cx } from './cx'
-import { spring, bounce, expr, exprHeavy } from '../design/motion'
+import { spring, physics, expr, exprHeavy } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 
 type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger'
@@ -131,8 +131,8 @@ export function Button({
       disabled={softOff ? undefined : off}
       onPointerMove={onMove}
       onPointerLeave={onLeave}
-      whileTap={off ? undefined : { scale: pressScale, transition: spring.spatialFast }}
-      whileHover={off ? undefined : { scale: hoverScale, transition: bounce.subtle }}
+      whileTap={off ? undefined : { scale: pressScale, transition: physics.snappy }}
+      whileHover={off ? undefined : { scale: hoverScale, transition: physics.snappy }}
       style={fvs(470)}
       className={cx(
         // whitespace-nowrap + shrink-0: a labelled pill must never wrap its text
@@ -164,7 +164,7 @@ export function Button({
             aria-hidden
             className="absolute inset-0 grid place-items-center"
             initial={{ opacity: 0, scale: 0.6 }}
-            animate={{ opacity: 1, scale: 1, transition: bounce.subtle }}
+            animate={{ opacity: 1, scale: 1, transition: physics.snappy }}
             exit={{ opacity: 0, scale: 0.6, transition: spring.effects }}
           >
             <Loader2 size={16} className="animate-spin" />

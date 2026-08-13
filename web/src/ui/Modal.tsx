@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { X } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { useFocusTrap } from './useFocusTrap'
-import { spring, bounce, expr } from '../design/motion'
+import { spring, physics, expr } from '../design/motion'
 
 /** Reusable centered modal with a scrim. Header carries the title and a single
  *  close (X) button; Escape and a scrim click also dismiss it.
@@ -47,7 +47,7 @@ export function Modal({ title, icon, onClose, children, layoutId }: {
         className="squircle relative flex max-h-full w-full flex-col overflow-hidden bg-surface shadow-sheet"
         style={{ maxWidth: 'calc(var(--content-width) + 160px)' }}
         initial={{ opacity: 0, scale: enterScale, y: enterY }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 6 }}
-        transition={reduce ? spring.effects : bounce.lift}>
+        transition={reduce ? spring.effects : physics.playful}>
         <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface/95 px-l py-m">
           <div className="flex min-w-0 items-center gap-s">{icon}<span data-type="title-l" className="truncate text-on-surface">{title}</span></div>
           <div className="flex shrink-0 items-center gap-1">

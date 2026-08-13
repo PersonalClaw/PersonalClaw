@@ -99,3 +99,135 @@ Both honor reduced-motion (→ instant swap/crossfade) and `expr()`. Registered 
 - **Motion as the "AI-generated feel" tell** — the design skill warns extra animation can read as generated; the mitigation is the budget discipline + orchestration-over-scatter (one considered morph beats ten scattered effects). Restraint is in the plan's soul guardrail.
 - **Performance on the mega-pages** — Morph/layout animations can thrash; T3.3's budget proof is the gate; if a surface can't hit 60fps, it gets a simpler transition, not a dropped frame.
 - **Open:** canvas metaball vs SVG-path for `LiquidShape` — decide in T2.2 by measuring (canvas scales better for many shapes; SVG is simpler for one); no premature choice.
+
+## Execution log
+
+### 2026-08-13 — `FM-1` (S1: T1.1–T1.3, V1; contract §C1) — **DONE**
+
+`physics.{snappy, smooth, fluid, playful}` ships on §C1's constants verbatim, and all four are
+`bouncy()` springs — which makes `bouncy()` the single seam where the bounciness slider enters the
+spring family and the single place reduced motion collapses it. `dragSpring()`, `dragElastic()` and
+`swipeDismiss(velocity, offset)` ship with real call sites. `docs/design/motion.md` is the author
+guide. Two rails: `web/src/design/motion.test.ts` (35 tests — the presets, the dials, the token round
+trip) and `web/src/design/motionSliders.test.tsx` (3 — the generated Design-panel sliders actually
+render, and moving one is what writes `runtime`, closing the loop the done-when names).
+
+**DEVIATION — preset-name reconciliation, and what §C1 collided with.** The recon that opened this
+atom assumed the presets were new; three of the four *names* already existed on other objects, so
+adding `physics` beside them would have put two names on one decision. Resolved by DELETING the
+losers in the same change (no aliases, no re-exports — the pre-1.0 clean break), because one of them
+declared itself an alias set in its own doc comment ("These are aliases/companions to the
+spring/bounce tiers above"):
+
+| Deleted | → | Replacement | Constants before → after (stiffness / damping playful→calm) |
+|---|---|---|---|
+| `springs.gentle` | → | `physics.fluid` | `spring.spatialSlow` 200/26 **unscaled** → 180 / 26→34 **scaled** |
+| `springs.snappy` | → | `physics.snappy` | `spring.spatialFast` 800/34 **unscaled** → 520 / 30→40 **scaled** |
+| `springs.bouncy` | → | *(nothing — zero call sites)* | successor is `physics.playful` |
+| `bounce.subtle` | → | `physics.snappy` | 520 / 26→40 → 520 / 30→40 (near-identical) |
+| `bounce.playful` | → | `physics.playful` | 600 / 16→42 → 420 / 14→34 |
+| `bounce.lift` | → | `physics.playful` | 300 / 22→34 → 420 / 14→34 — **the one LOSSY row** |
+| `bounce.settle` | → | `physics.fluid` | 220 / 24→30 → 180 / 26→34 (near-identical) |
+| `pressable` | → | *(nothing — zero call sites)* | its contents were a dead duplicate of `Button`'s inline `whileTap`/`whileHover`; the real press now takes `physics.snappy` |
+
+`springs` had 2 call sites and one member nobody imported, so retiring it was ~2 lines. `bounce` had
+~35, and retiring it too was the judgement call: keeping it would have left `bounce.playful` and
+`physics.playful` side by side, which is exactly the dual vocabulary this reconciliation exists to
+remove. Every edit was a single identifier; `grep -r 'bounce\.\|springs\.' web/src` is empty of code
+hits. The lossy row is `lift` (a float-up entrance): mapping it to `playful` keeps its overshoot but
+quickens it (300 → 420 stiffness) — the alternative, `smooth`, is critically damped and would have
+deleted the bounce entirely, which is the worse loss for an entrance. Five entrances are affected
+(`StreamingIndicator`, `DialogShell`, `UpdateProgressOverlay`, `Composer`, `Modal`); retuning is now
+four numbers in `motion.ts` rather than a sweep, which is owner task #1's whole point.
+
+Kept, and NOT a third vocabulary: `spring.{spatialDefault, spatialFast, spatialSlow, effects}` — the
+raw unscaled tiers, and `effects` is the critically damped transition a fade must use. The rule the
+guide states is `spatial/character → physics.*`, `opacity/colour → spring.effects`. A closed-set test
+asserts `physics` has exactly four members and that `springs`/`bounce`/`pressable` are not exported
+again.
+
+**DISCOVERY — the reduced-motion claim was NOT true, and a comment said it was.** `motion.ts` and
+`runtime.ts` both asserted that reduced motion "overrides everything to near-static" via the root
+`<MotionConfig reducedMotion="user">`. That root wrapper is real (`App.tsx` mounts it) and it does
+neutralise transform/layout animation — but it does **not** touch the transition objects, so every
+preset still resolved to a live spring, and any preset applied to a non-transform property (opacity,
+a `filter`) still animated. §C1's "ALL … collapse under prefers-reduced-motion (existing gates)" was
+therefore describing a gate that did not exist for the springs themselves. `bouncy()` now returns
+`instant` (`{ type: 'tween', duration: 0 }`) when the query matches, which zeroes all four presets
+plus `dragSpring()` and both `swipeDismiss()` branches. The explicit `type: 'tween'` is load-bearing:
+four call sites spread a preset and override `stiffness`, and without a declared type the leftover
+`stiffness` lets Framer infer a spring again — the collapse would leak straight back through the
+spread. Pinned by its own test.
+
+**DISCOVERY — a variant that carries a preset freezes it at import.** `overlayEnter` held
+`transition: bounce.playful` in a module-level object literal, so the getter ran ONCE at import: every
+menu, popover and context menu in the app used whatever bounciness (and whatever reduced-motion
+answer) was true at module load and ignored the slider for the rest of the session. `overlayEnter`
+and `listItemEnter` are now Framer dynamic variants (`animate: () => ({ … })`), resolved per
+animation. This is the defect class the "scale with the slider" done-when would otherwise have passed
+on a technicality — the preset scaled, but the surface using it did not.
+
+**Adoption (T1.3) — five live interactions, no hardcoded transitions left in them:**
+`Button` press+hover and `IconButton` press → `physics.snappy`; `overlayEnter` → `physics.playful`;
+`listItemEnter` → `physics.smooth` (was a hardcoded `{ duration, ease }` tween); `Reorderable`'s drop
+settle → `dragSpring()`; `Toaster`'s swipe-to-dismiss → `swipeDismiss()` + `dragElastic()`, which
+deletes its `info.offset.x > 80 || info.velocity.x > 500` literals in favour of the two tokens. The
+toast now also leaves on the gesture's own accelerating curve rather than a spring (an element that
+is leaving must not overshoot back into the surface it left); a timer expiry keeps the calm spring.
+`Discover`'s deck transition was `{ ...bounce.settle, ...spring.spatialDefault }` — the second spread
+overwrote every field of the first, so the tier contributed nothing; it is now `physics.fluid`.
+
+**DEVIATION — `swipeDismiss` takes a second argument.** §C1 declares
+`swipeDismiss(velocity: number)`. Velocity alone cannot express a deliberate slow haul all the way
+across the card, which the surface being adopted (`Toaster`) already supported and which reads as
+broken when it stops working. The shipped signature is
+`swipeDismiss(velocity: number, offset = 0)` — a superset, so §C1's call shape stays valid — and the
+two thresholds are OR'd, both from tokens.
+
+**DISCOVERY — token round trip: `--bounciness`, `--expressiveness` and `--dot-size` were registered
+with no `tokens.css` default at all.** The registry says its defaults mirror `tokens.css`; for those
+three there was nothing to mirror. Harmless today (nothing in CSS reads them) but it is exactly the
+half-wired shape this atom's own tokens must avoid, so all three are now declared. The new rail
+asserts EVERY scalar token carrying a `runtimeKey` is declared in `tokens.css` **with a matching
+default** and has its key present in `runtime` — which is what caught them.
+
+**New Motion tokens** (registry `Motion` group → `tokens.css` → `runtime.ts`, read by the gesture
+helpers, never `getComputedStyle`): `--drag-elastic` (0.9), `--swipe-dismiss-velocity` (500 px/s),
+`--swipe-dismiss-distance` (80px). No new slider UI was needed or added — the Motion group is
+generated from the registry, which is also why the bounciness slider the done-when refers to already
+existed.
+
+**Falsified, both directions:** deleting `bouncy()`'s reduced-motion gate reddened 8 tests (the four
+preset zero-outs, the spread-leak guard, both variants' reduced-motion half, `dragSpring`);
+neutralising the bounciness interpolation reddened 8 (the four per-preset scaling tests, the
+read-at-animation-time test, both variants, `dragSpring`). Restored: 35/35.
+
+**Gate:** `make lint` rc 0 · `npm run typecheck:web` clean · full `npx vitest run` **218 files /
+2146 tests passed, 0 failed** (216/2108 + this atom's 38) · `npm run build` rc 0 · full
+`pytest -q --timeout=600` **19001 passed / 30 skipped / 12 xfailed / 0 failed** (baseline; no Python
+touched). No visual snapshot updated — `web/e2e/visual.spec.ts` is not wired into any CI job (the web
+job runs typecheck, vitest, build and `smoke:render` only), and spring constants do not move a
+settled screenshot.
+
+**Live validation (V1) — measured on the BUILT bundle**, isolated home `/private/tmp/fm1-live/home`,
+loopback-only gateway, never `~/.personalclaw`. All five Motion sliders render in
+Settings → Design → Backdrop & motion, each named with its own named reset
+("Reset Drag elasticity"), reading `1.00×` / `0.80×` / `0.90×` / `500.0px/s` / `80px` — the `px/s`
+unit exists because a unitless scalar renders as a multiplier and "500.00×" is nonsense for a
+velocity. Then the SAME overlay (the composer's model popover, which is `overlayEnter` →
+`physics.playful`) sampled frame by frame while opening:
+
+| State | scale path | peak | distinct sampled values |
+|---|---|---|---|
+| bounciness **1** | 0.96 → overshoot → 1 | **1.0128** | 34 |
+| bounciness **0** (moved via the real slider) | 0.96 → 1 | **1.0002** | 19 |
+| `prefers-reduced-motion` | 0.96 → 1 | **1.0000** | **2** — an instant swap |
+
+Gesture, driven with real pointer events: a toast hauled 144px at ~375px/s (deliberately UNDER the
+500px/s flick threshold) followed the finger 124px — `dragElastic()`'s 0.9 — and dismissed on the
+DISTANCE threshold, the case §C1's velocity-only signature would have missed. A 40px slow drag under
+both thresholds sprang back to `x=0` and the toast survived, so the control discriminates rather than
+always firing. Zero console errors across the pass.
+
+**Not in this atom, by scope:** `expressiveness=0`/`bounciness=0`/reduced-motion zero-motion CI
+guard and the 60fps pass are `FM-7`, which now inherits a working assertion instead of a comment.

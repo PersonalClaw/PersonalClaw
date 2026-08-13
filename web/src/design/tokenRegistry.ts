@@ -29,7 +29,7 @@ export interface ScalarToken {
   /** unit appended when writing the CSS var ('' for unitless multipliers) */
   unit?: string
   /** runtime key (if this scalar also feeds the canvas / motion via runtime.ts) */
-  runtimeKey?: 'glow' | 'animSpeed' | 'waveAmount' | 'surfaceAngle' | 'surfaceDistance' | 'dotSize' | 'dotDensity' | 'bounciness' | 'expressiveness'
+  runtimeKey?: 'glow' | 'animSpeed' | 'waveAmount' | 'surfaceAngle' | 'surfaceDistance' | 'dotSize' | 'dotDensity' | 'bounciness' | 'expressiveness' | 'dragElastic' | 'swipeVelocity' | 'swipeDistance'
 }
 
 export interface SelectToken {
@@ -147,6 +147,16 @@ export const TOKENS: Token[] = [
   // and the heavy-effect sheen gate app-wide via expr()/exprHeavy() in
   // design/motion.ts. Default 0.8 (bold-leaning).
   s('--expressiveness', 'Expressiveness', 'Motion', 0.8, 0, 1, 0.05, '', 'expressiveness'),
+  // Gesture physics — read by dragElastic()/swipeDismiss() in design/motion.ts.
+  // Elasticity is how far a dragged element stretches past its constraints (0 =
+  // rigid, 1 = loose). The two dismiss thresholds are OR'd: a fast flick OR a slow
+  // deliberate haul both let go. Lower either one to make swipe-away easier.
+  s('--drag-elastic', 'Drag elasticity', 'Motion', 0.9, 0, 1, 0.05, '', 'dragElastic'),
+  // Unit 'px/s' is for the SLIDER's readout: a unitless scalar renders as a
+  // multiplier ("500.00×"), which is nonsense for a velocity. Only `runtime` reads
+  // the number; no CSS rule consumes this var.
+  s('--swipe-dismiss-velocity', 'Swipe flick speed', 'Motion', 500, 100, 1500, 25, 'px/s', 'swipeVelocity'),
+  s('--swipe-dismiss-distance', 'Swipe distance', 'Motion', 80, 20, 240, 5, 'px', 'swipeDistance'),
 
   // ── Elevation & glass (brand rebrand §3.1 — frosted overlay intensity) ──
   s('--glass-blur', 'Glass blur', 'Elevation & glass', 16, 0, 40, 1, 'px'),

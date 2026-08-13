@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { AlertTriangle } from 'lucide-react'
-import { spring, bounce, expr } from '../../design/motion'
+import { spring, physics, expr } from '../../design/motion'
 import { useFocusTrap } from '../useFocusTrap'
 import { unavailableWhen } from '../unavailable'
 import type { DialogField, DialogResult, DialogRequest } from './dialogStore'
@@ -96,7 +96,7 @@ export function DialogShell({ request, onClose }: {
         aria-label={typeof title === 'string' ? title : undefined}
         className="relative w-full max-w-[420px] overflow-hidden rounded-xl bg-surface shadow-sheet"
         initial={{ opacity: 0, scale: 0.97, y: 8 + expr(10, 0.3) }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 6 }}
-        transition={bounce.lift}>
+        transition={physics.playful}>
         <div className="flex items-start gap-3 px-l pt-l">
           {(danger || Icon) && (
             // On a destructive confirm, the icon gives ONE attention pulse (scale
