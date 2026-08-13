@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type NotificationSettings, type NotificationRulesDoc } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
 import { notify } from '../../app/appSdk'
 
@@ -20,14 +20,20 @@ export function NotificationsPanel() {
 
   // Settings: stale-while-revalidate + persist; seeded into the optimistic local
   // `s` so saves keep their existing behavior.
-  const { data: settingsData } = useCachedData(
-    'settings:notification-settings', () => api.notificationSettings().catch(() => null), { persist: true },
+  // 🔴 NOT `.catch(() => null)`. A substituted null is indistinguishable from "still loading" to the gate
+  // below, so a failed read left this panel shimmering FOREVER with nothing said — measured on
+  // `#/settings/notifications` with the GET at 500: 0 controls, one `aria-busy` skeleton, no alert. Same
+  // shape cycle 117 found on the inbox panel and cycle 124 on three config panels.
+  const { data: settingsData, error: loadErr, refresh } = useCachedData(
+    'settings:notification-settings', () => api.notificationSettings(), { persist: true },
   )
   useEffect(() => { if (settingsData) setS(settingsData) }, [settingsData])
 
   // The per-kind rules matrix. Not persisted to the cache: it's the authoritative view of
   // policy, and serving a stale copy after an edit would show the user a rule they just
   // changed back to its old value.
+  // The rules matrix keeps its own fallback: it DECORATES this panel (a per-kind policy table below the
+  // settings), so losing it degrades one section rather than fabricating the switches above.
   const { data: rules, refresh: refreshRules } = useCachedData<NotificationRulesDoc | null>(
     'settings:notification-rules', () => api.notificationRules().catch(() => null), { persist: false },
   )
@@ -42,6 +48,8 @@ export function NotificationsPanel() {
       .catch((e) => notify(`Couldn't save your notification settings: ${String((e as Error)?.message || e)}`, 'error'))
   }
 
+  // Error BEFORE the skeleton, or it is unreachable: `s` is null for loading AND for failure.
+  if (!s && loadErr) return <LoadError what="notification settings" error={loadErr} onRetry={refresh} />
   if (!s) return <FormSkeleton sections={2} />
   return (
     <div>

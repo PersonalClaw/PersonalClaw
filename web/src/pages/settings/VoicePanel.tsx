@@ -4,7 +4,7 @@ import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SavedToast } from './settingsUI'
-import { FormSkeleton, ListSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
@@ -27,11 +27,18 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. `active` is read-only (the bound model is owned by Models);
   // the stt/tts settings are seeded into local state and mutated optimistically.
-  const { data } = useCachedData('settings:voice', async () => {
+  const { data, error: loadErr, refresh } = useCachedData('settings:voice', async () => {
     const [active, stt, tts] = await Promise.all([
+      // `modelsActive` KEEPS its fallback: it only shows readiness ("model bound" / "no model"), so losing
+      // it degrades a chip rather than inventing your settings.
       api.modelsActive().catch(() => ({} as Record<string, string[]>)),
-      api.useCaseSettings('stt').catch(() => ({} as Record<string, unknown>)),
-      api.useCaseSettings('tts').catch(() => ({} as Record<string, unknown>)),
+      // 🔴 These two ARE the panel. `.catch(() => ({}))` made a failed read resolve as an empty settings
+      // object, so every control rendered at its fallback — indistinguishable from "this is what you
+      // saved" — and each one PUTs on change. Measured on `#/settings/voice` with the use-case GETs at
+      // 500: **2 switches and 1 input rendered, no error anywhere**. Same defect cycle 124 fixed in three
+      // sibling panels; this is the fourth.
+      api.useCaseSettings('stt'),
+      api.useCaseSettings('tts'),
     ])
     return { active, stt, tts }
   }, { persist: true })
@@ -41,6 +48,8 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
     if (data) { setSttSettings(data.stt); setTtsSettings(data.tts) }
   }, [data])
 
+  // Error first: `data` is undefined for loading AND for failure, so a later test never runs.
+  if (!data && loadErr) return <LoadError what="speech settings" error={loadErr} onRetry={refresh} />
   if (!data || !sttSettings || !ttsSettings) return <FormSkeleton sections={3} />
 
   return (
