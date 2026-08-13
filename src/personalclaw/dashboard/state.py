@@ -19,6 +19,7 @@ from personalclaw import trace_recorder as _trace
 from personalclaw import trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
+from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -791,6 +792,10 @@ class DashboardState:
         # the start/stream/cancel handlers share one registry across requests.
         self._model_downloads: Any = None  # lazy ModelDownloadRegistry
         self._embedding_reindex: Any = None  # lazy ReindexRegistry
+        # DESKTOP-CAPABILITIES DC-2: the Electron shell's pushed capability
+        # manifest + its per-session token. Empty (and honestly "not connected")
+        # whenever the gateway is serving a plain browser tab.
+        self.desktop = DesktopRegistry()
         # Magic re-tag batch job (chat_retag) — one at a time; job retained
         # after completion so a re-attaching client sees the terminal state.
         self._retag_job: Any = None  # RetagJob | None
