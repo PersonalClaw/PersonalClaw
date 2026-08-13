@@ -7,11 +7,19 @@ import { cx } from './cx'
  *  TileButton is a bordered container whose CHILDREN are the content (preview,
  *  title rows); it owns only the card chrome — border, radius, hover, the
  *  active ring — and the accessible button semantics. `active` marks selection. */
-export function TileButton({ children, onClick, active, title, className }: {
+export function TileButton({ children, onClick, active, title, ariaLabel, className }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   active?: boolean
   title?: string
+  /** The accessible name, for a tile whose CONTENT is a document rather than a label.
+   *
+   *  Measured in Chrome's computed accessibility tree on `#/artifacts`: five artifact tiles whose
+   *  names were **438-695 characters** of the rendered markdown preview — heading markers, `**`
+   *  emphasis and blockquote `>` included — because a button with content takes its name from that
+   *  content, and `title` loses to it. Nothing in the source looks wrong, which is why only an AX-tree
+   *  read finds it. Pass the thing the tile IS. */
+  ariaLabel?: string
   className?: string
 }) {
   return (
@@ -19,6 +27,7 @@ export function TileButton({ children, onClick, active, title, className }: {
       type="button"
       onClick={onClick}
       title={title}
+      aria-label={ariaLabel}
       className={cx(
         'group flex flex-col overflow-hidden rounded-xl border text-left transition-colors',
         active ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant',

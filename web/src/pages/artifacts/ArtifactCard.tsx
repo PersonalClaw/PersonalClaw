@@ -174,7 +174,8 @@ export const ArtifactCard = memo(function ArtifactCard({ art, active, onOpen }: 
   const Icon = km.icon
   return (
     <div ref={rootRef}>
-    <TileButton onClick={() => onOpen(art)} active={active} title={art.name} className="h-full w-full">
+    <TileButton onClick={() => onOpen(art)} active={active} title={art.name} ariaLabel={art.name}
+      className="h-full w-full">
       <div className="h-36 w-full shrink-0 overflow-hidden border-b border-outline-variant/30 bg-surface">
         {preview}
       </div>

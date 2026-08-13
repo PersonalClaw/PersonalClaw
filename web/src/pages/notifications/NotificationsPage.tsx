@@ -29,6 +29,29 @@ import { notify } from '../../app/appSdk'
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
  *  (all by ts). Filter by read-state + kind; grouped Today / Yesterday / Earlier.
  *  Live via the shared WS `notification_ack` / new-notification events. */
+
+/** What a row action names: the notification's title plus enough of its body to tell two rows apart.
+ *
+ *  🔑 A NAME HAS TO BE DISTINGUISHING **AND** BOUNDED, and this cycle measured both failure modes in
+ *  one pass. Too little: 83 rows sharing three names. Too much: an artifact tile named by 695
+ *  characters of its own rendered body. Measured in the AX tree across the caps:
+ *
+ *    cap    worst duplicate on this route   interactive names >80ch, app-wide
+ *    (none)  ×83  →  ×3                     50 → 219
+ *    60      ×3                             50 → 114
+ *    **55**  ×3                             50 → **45**
+ *
+ *  55 is where both metrics land better than the baseline: the same distinctness as an uncapped
+ *  name, and FEWER over-long names than before this cycle (the five 438-695ch artifact tiles are
+ *  gone and these land at 76). A screen-reader user hears "Delete: Loop progress — cycle 4 fin…"
+ *  instead of a paragraph. The three remaining duplicates are rows with an identical title AND an
+ *  identical first body line — indistinguishable by content, so no name can separate them. */
+function rowName(n: { title: string; body?: string }): string {
+  const line = firstLine(n.body ?? '').trim()
+  const full = line && line !== n.title ? `${n.title} — ${line}` : n.title
+  return full.length > 55 ? `${full.slice(0, 54)}…` : full
+}
+
 export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
   const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })  // 'all' | 'unread' | <kind>
   const [openTsRaw, setOpenTs] = useQueryParam(query, setQuery, 'open', '')
@@ -214,11 +237,20 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {/* Investigate (plan 60): a failure notification carries the link to what
             failed, so the chat opens with the run/job state already resolved. */}
-        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34} />
+        {/* Each of these acts on THIS notification, and there are 83 rows here. Measured in Chrome's
+            AX tree before naming them: 83x "Investigate in chat", 83x "Delete", 81x "Mark unread" —
+            three names for 247 controls.
+
+            🪤 `n.title` ALONE IS NOT THE ROW, and re-measuring proved it: naming from the title left
+            35x "…: Refine a skill" and 26x "…: Loop progress", because the title is a KIND here, not
+            an identity. The row shows title + the body's first line, and so does the name — capped,
+            because the other half of this cycle fixed a tile named by 695 characters of its body. */}
+        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34}
+          label={`Investigate in chat: ${rowName(n)}`} />
         {n.acked
-          ? <IconButton icon={Undo2} label="Mark unread" size={34} onClick={onUnack} />
-          : <IconButton icon={Check} label="Mark read" size={34} onClick={onAck} />}
-        <IconButton icon={X} label="Delete" size={34} onClick={onDelete} />
+          ? <IconButton icon={Undo2} label={`Mark unread: ${rowName(n)}`} title="Mark unread" size={34} onClick={onUnack} />
+          : <IconButton icon={Check} label={`Mark read: ${rowName(n)}`} title="Mark read" size={34} onClick={onAck} />}
+        <IconButton icon={X} label={`Delete: ${rowName(n)}`} title="Delete" size={34} onClick={onDelete} />
       </div>
     </motion.div>
     </ContextMenu>
