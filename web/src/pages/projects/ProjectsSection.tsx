@@ -598,7 +598,10 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   ) : (
     <div className="flex items-center gap-2 min-w-0">
       <FolderKanban size={18} className="shrink-0 text-primary" />
-      <span data-type="title-l" className="truncate text-on-surface">{project.name}</span>
+      {/* 🪤 The shared shell's default title (below) is NOT what renders here: the project view passes
+          this `titleNode`, so converting the shell alone left `#/projects/<id>` still h1-less — measured,
+          after the "fix". Follow the value that actually reaches the slot. */}
+      <PageTitle className="truncate">{project.name}</PageTitle>
       {project.name_locked && <Lock size={12} className="shrink-0 text-on-surface-low" aria-label="Name locked" />}
       {!project.is_builtin && (
         <button type="button" onClick={() => { setNameDraft(project.name); setRenaming(true) }} aria-label="Rename"
@@ -1013,7 +1016,10 @@ function Shell({ title, titleNode, onBack, actions, scroll = true, panel, childr
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
         keepCornerPadding
-        left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">{title}</span></div>}
+        // Measured: `#/projects` renders h1 "Projects", and `#/projects/<id>` rendered NONE. The
+        // project is the destination at that URL, so it carries the h1. `titleNode` (the rename editor)
+        // keeps its own input — an editable title is not a heading.
+        left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>{title}</PageTitle></div>}
         right={<div className="flex items-center gap-1.5">{actions}<HeaderActions><HeaderControl icon={ListChecks} label="All projects" onClick={onBack} priority="primary" /></HeaderActions></div>} />
       <div className="flex min-h-0 flex-1">
         {/* Detail hub fills height (scroll=false); list/loading states scroll. */}

@@ -5,6 +5,7 @@ import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
 import { Field, TextInput } from '../../ui/forms'
+import { PageTitle } from '../../ui/PageTitle'
 import { api, type WorkflowDef, type WorkflowNode } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 
@@ -100,7 +101,9 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
         keepCornerPadding
         left={<div className="flex min-w-0 items-center gap-m">
           <QuietButton onClick={onBack} title="Back to workflows"><ArrowLeft size={13} /> Workflows</QuietButton>
-          <span data-type="title-l" className="truncate text-on-surface">{name}</span>
+          {/* Same route family as the run detail: `#/workflows/defs/<name>` is the definition's own
+              destination. Unmeasured only because this dev home has no saved definition to open. */}
+          <PageTitle className="truncate">{name}</PageTitle>
           {def?.source === 'bundled' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">bundled</span>}
         </div>}
         right={def ? (

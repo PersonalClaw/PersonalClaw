@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { SidePanel } from '../../ui/SidePanel'
+import { PageTitle } from '../../ui/PageTitle'
 import { AppIcon } from './appIcon'
 import { ContributedPage } from './ContributedPage'
 import type { AppContext } from '../../app/appSdk'
@@ -66,10 +67,13 @@ export function AppFrame({ app, title, icon, src, mountFunction }: {
       topBar={
         <TopBar
           keepCornerPadding
+          // `#/app/<name>` is the app's own destination, so its title is the page's h1. Measured
+          // h1-less before; the app under test in this dev home renders almost no body, so this one is
+          // source-verified rather than driven.
           left={
-            <span className="flex items-center gap-s text-on-surface" data-type="title-l">
+            <PageTitle className="flex items-center gap-s">
               <AppIcon name={icon} size={18} /> <span className="truncate">{title}</span>
-            </span>
+            </PageTitle>
           }
           right={actions.length > 0 ? <AppHeaderActions actions={actions} /> : undefined}
         />
