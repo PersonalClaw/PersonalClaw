@@ -487,7 +487,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
 
   return (
     <div>
-      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mb-s flex items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mb-s flex min-h-6 -my-0.5 items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
         <Download size={14} />
         <span className="text-[0.75rem] uppercase tracking-wide">Discovered in other tools ({servers.length})</span>
