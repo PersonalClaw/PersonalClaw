@@ -265,3 +265,66 @@ Owner rulings, mapped onto the existing sessions honestly:
   by unit test with a cold `sessionStorage`, not driven live — killing a live catalog endpoint
   mid-flow was not worth a fixture for it. The rest of V1 (mid-flow reload resume, existing-home
   upgrade shows NO onboarding, <5 min end-to-end timing) belongs to OU-4, which owns resume.
+- [2026-08-13][OU-7] **DONE (S3 T3.1 / C2).** New `web/src/pages/chat/approvalMeta.ts`:
+  `deriveBlastRadius({tool, risk?, readOnlyCommand?}) → BlastRadius | undefined`, with
+  `BlastRadius` exactly C2's `{writes, network, shell, readOnly}`. Pure, total, zero runtime
+  imports. The design question the atom actually turns on is what to do when an input is
+  missing, and the answer is that every boolean is a POSITIVE claim — `false` means "not
+  established", never "verified absent" — and that when NOTHING is established the function
+  returns `undefined` instead of an all-false object. An all-false object is the trap: rendered
+  as chips it reads "no writes, no network, no shell, not read-only", a confident all-clear
+  derived from zero evidence, and it is worst on the surface least able to check (the phone).
+  `blastRadius?` being optional in C2 is already the unknown channel, so absence needs no new
+  field. `readOnly` is claimed only on positive evidence — screening verdict, then EFFECTIVE-safe
+  `risk`, then a `_READ_VERB_HINTS` name — and never survives an established write, so the
+  function can only ever under-claim safety. Name evidence mirrors `task_modes.py`'s own hint
+  tuples and its destructive→read-verb→mutating precedence, so the frontend and the backend agree
+  on what a name means rather than inventing a second vocabulary.
+  `RISK_ESTABLISHES_READ_ONLY` is a total `Record<ApprovalRisk, boolean>`: a new risk level is a
+  type error, and there is no `default:` branch anywhere in the module. 23 tests cover the four
+  representative tools from `done_when` on BOTH wire paths, the foreign-risk-value case
+  (`ChatPage.tsx:911` casts the wire string into the union unvalidated), and a source-level rail
+  that keeps the module a pure leaf nothing can gate on. Central rail falsified: dropping `bash`
+  from `SHELL_HINTS` reds 6 of 23; restoring it returns 23/23.
+- [2026-08-13][OU-7] **DEVIATION (C2's third input has no supplier).** C2 names
+  "command-screening classification" as an input. It exists — `is_read_only_bash()`
+  (`task_modes.py:88`) runs per interactive approval and its verdict is stored as
+  `perm_meta["is_read_only"]` (`chat_runner.py:2593`) — but it is NOT on the `approval` WS
+  payload, so no frontend caller can supply it. Resolved as an optional `readOnlyCommand?:
+  boolean` parameter carrying that verdict's exact shape, documented as having no caller today,
+  with the pass-through left to OU-8/OU-9. Deliberately NOT resolved by re-deriving read-only-ness
+  client-side: deciding whether a command is read-only is security logic with an owner, and
+  C2 says E4 if a gap tempts a change. The module never inspects a command string, and a test
+  asserts it (`never re-implements the command screening it consumes`).
+- [2026-08-13][OU-7] **DISCOVERY (`perm_meta["is_read_only"]` is a live writer of an unread
+  key).** Tracing that input turned up a dead control: `chat_runner.py:2593` computes and
+  persists `is_read_only` "for context-aware buttons", and NOTHING reads it — not the backend,
+  not the frontend (`grep -rn is_read_only web/src/` is empty), not the rehydration path.
+  It is written on every interactive bash approval and has never been consumed. Left as found,
+  since fixing it is neither this atom's file nor its scope, but OU-8 should consume it rather
+  than add a second screening input, and whoever audits the inert-surface baseline should know
+  the key is a candidate.
+- [2026-08-13][OU-7] **DISCOVERY (`memory_remember` infers as SAFE backend-side).**
+  `_MUTATING_NAME_HINTS` (`task_modes.py:153`) has no `remember` token and `remember` is not a
+  read verb, so `infer_risk_from_name("memory_remember")` falls through to `'safe'` — for a tool
+  that durably persists a lesson. Reachable in practice for dict-defined MCP tools that ship no
+  explicit `risk_level`. NOT fixed here: adding a token to live risk inference is exactly the
+  security-logic change C2 forbids (E4). The frontend hint list carries `remember` so the chip is
+  honest, the divergence is documented at the constant, and the conservative "an established
+  write never claims read-only" guard makes the two consistent where it matters. Worth a separate
+  atom on the owning plan.
+- [2026-08-13][OU-7] **DISCOVERY (premise correction: the FE suite baseline).** The task brief
+  cited a 222-file / 2211-test vitest baseline. Measured on this tree at `origin/main`
+  (`811aaee4`) with the two new files moved aside, the real baseline is **220 files / 2179 tests /
+  0 failed**; with them it is 221 / 2202 (+1 file, +23 tests). The cited numbers are from an older
+  revision. Also corrected: `PendingApproval` is at `web/src/lib/api.ts:1661` and `ToolItem` at
+  `:1008`, not the 1595/942 in the brief — the field-level findings themselves all held.
+- [2026-08-13][OU-7] **DISCOVERY (the two risk vocabularies DO agree).**
+  `ApprovalSegment['risk']` (`chatTypes.ts:49`) and `ToolItem.risk_level` (`api.ts:1008`) are
+  byte-identical unions (`'safe' | 'caution' | 'destructive'`) and match the backend `RiskLevel`
+  values, so there was no vocabulary to reconcile. `ApprovalRisk` is aliased from
+  `ApprovalSegment['risk']` rather than re-declared, so the pair cannot drift apart later.
+- [2026-08-13][OU-7] **No CHANGELOG entry, deliberately.** Nothing a user can perceive changed:
+  the atom ships the derivation half with no call site, by design — OU-8 is the renderer. The
+  in-app Updates panel renders `CHANGELOG.md`, so an entry here would advertise blast-radius
+  chips that no surface draws yet. The entry belongs to OU-8.

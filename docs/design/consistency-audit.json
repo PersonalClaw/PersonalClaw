@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-13T20:18:31.591Z",
+  "generatedAt": "2026-08-13T20:55:09.434Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 456,
+    "filesScanned": 455,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -219,7 +219,7 @@
     "outlineNoneFiles": 59,
     "localFocusVisibleFiles": 19,
     "reducedMotionFiles": 9,
-    "animatedFiles": 162,
+    "animatedFiles": 160,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -279,7 +279,7 @@
       "raw-dialog": 0
     },
     "app/Onboarding.tsx": {
-      "raw-button": 0,
+      "raw-button": 2,
       "raw-input": 1,
       "raw-dialog": 0
     },

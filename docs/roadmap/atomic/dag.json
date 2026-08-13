@@ -6311,10 +6311,11 @@
         {
           "id": "OU-7",
           "title": "Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.1 (Wave 2); Contracts C2 (approval brief data model: blastRadius/rememberScope added to existing ApprovalSegment)",
           "done_when": "web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one)",
-          "deps": []
+          "deps": [],
+          "pr": 1261
         },
         {
           "id": "OU-8",
@@ -7547,8 +7548,8 @@
         "plan": "OU"
       },
       {
-        "id": "OU-7",
-        "title": "Blast-radius derivation (approvalMeta.ts pure function) — C2 read-only consumption",
+        "id": "OU-8",
+        "title": "ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant",
         "plan": "OU"
       },
       {
