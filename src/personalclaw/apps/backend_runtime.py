@@ -17,6 +17,13 @@ Process model: ``type`` selects the launcher — ``python`` runs
 from the entry-point suffix (``.py``→python, ``.js``/``.mjs``→node). The chosen
 port is passed via ``PORT`` env (the conventional contract) and recorded so the
 proxy can reach it.
+
+Environment: a backend does **not** inherit the gateway's environment. It receives
+``sandbox.build_child_env(site="app-backend")`` — the ``CHILD_ENV_BASE_NAMES``
+allowlist plus whatever the operator declared in ``sandbox.env_passthrough`` — layered
+with the four variables this module computes (``PORT``, ``PERSONALCLAW_APP_NAME``,
+``PERSONALCLAW_APP_SECRET``, and ``PERSONALCLAW_APP_DATA_DIR`` when the app holds the
+``storage`` capability). See ``docs/architecture/app-platform.md``.
 """
 
 from __future__ import annotations
@@ -137,14 +144,32 @@ class BackendSupervisor:
                 )
                 return None
 
-            env = dict(os.environ)
-            env["PORT"] = str(port)
-            env["PERSONALCLAW_APP_NAME"] = name
-            env[APP_SECRET_ENV] = proxy_secret
+            # The child env is an ALLOWLIST, not a copy of the gateway's (EI-12 D1).
+            # App backends are the LEAST trusted children in the tree — third-party code,
+            # scanned at install, running for as long as the app is enabled — and
+            # `dict(os.environ)` handed them every variable the gateway had grown to carry,
+            # including the `.env` credentials `config/loader.py` seeds into `os.environ` so
+            # "trusted children" inherit them. The four variables below are the ones this
+            # site COMPUTES; everything else arrives only if it is in
+            # `CHILD_ENV_BASE_NAMES` or the operator declared it by name in
+            # `sandbox.env_passthrough`. Withheld names are logged under the `app-backend`
+            # site so an app author can diagnose a variable that stopped arriving.
+            from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv
+
+            extra = {
+                "PORT": str(port),
+                "PERSONALCLAW_APP_NAME": name,
+                APP_SECRET_ENV: proxy_secret,
+            }
             if data_dir is not None:
-                env["PERSONALCLAW_APP_DATA_DIR"] = str(data_dir)
-            else:
-                # Storage not declared → don't hand the backend a data dir.
+                extra["PERSONALCLAW_APP_DATA_DIR"] = str(data_dir)
+            env = build_child_env(site="app-backend", extra=extra)
+            if data_dir is None:
+                # Storage not declared → don't hand the backend a data dir. The allowlist
+                # cannot inherit this name (it is not in the base), but an operator CAN
+                # declare it in `sandbox.env_passthrough`, which would otherwise re-open the
+                # P3 storage gate for every backend at once. The gate is enforced here, at
+                # the point where the name would become a variable.
                 env.pop("PERSONALCLAW_APP_DATA_DIR", None)
             # Resource ceiling (PHF-1): an app backend is agent-influenced (third-party
             # code, scanned at install). Wrap its argv with the post-exec ceiling shim for
@@ -153,8 +178,6 @@ class BackendSupervisor:
             # preexec_fn here would fork the whole gateway from a non-loop thread while the
             # loop holds locks (see backend_runtime hazard audit / §1.1). The shim sets the
             # limit AFTER exec in the single-threaded child, so no fork-time lock hazard.
-            from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
-
             launch_cmd = spawn_shim_argv(list(cmd), PROFILE_TOOL)
             try:
                 proc = subprocess.Popen(  # noqa: S603 — vetted app backend, scanned at install

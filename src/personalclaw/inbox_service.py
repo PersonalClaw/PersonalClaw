@@ -357,8 +357,18 @@ class InboxService:
             return ""
 
     # ── AI affordances ──
+    #
+    # Both affordances declare their action type here (AUTONOMY-GUARDRAILS §5.2), so the
+    # governed inventory is complete in a process that never dispatched a provider action.
+    # `inbox.reply_draft` is declared at the BOTTOM rung with a `one_tap` ceiling and
+    # `leaves_machine=True`: an AI-drafted reply is written and shown, never sent, and no
+    # accumulated track record can propose sending one by itself. `inbox.classify` labels
+    # the user's own row, so it declares `autonomous` — which is what it already does.
     async def classify(self, item_id: str) -> InboxItem | None:
         """Triage a stored item into needs_reply/fyi/noise + confidence, persist, return it."""
+        from personalclaw.guardrails.rungs import ensure_core_action_types
+
+        ensure_core_action_types()
         item = self.inbox.items.get(item_id)
         if item is None:
             return None
@@ -397,6 +407,9 @@ class InboxService:
         Returns None if the item is unknown or the model call fails. A model that
         judges no reply is warranted returns the SKIP sentinel → we store an empty
         draft and leave the item pending (the human decides)."""
+        from personalclaw.guardrails.rungs import ensure_core_action_types
+
+        ensure_core_action_types()
         item = self.inbox.items.get(item_id)
         if item is None:
             return None

@@ -211,18 +211,34 @@ def _reset_model_call_breakers():
     single-user gateway). Under pytest-xdist a breaker tripped OPEN by one test
     would otherwise refuse calls in a later test in the same worker, so clear the
     registry before + after each test — the same discipline as the SEL singleton.
+
+    Also clears the ``guardrails.autonomy`` action-type registry, which is
+    process-global for the same reason: a rung ladder registered by one test would
+    otherwise decide ``resolve_rung`` in the next one.
     """
+    from personalclaw.guardrails.autonomy import reset_action_types
     from personalclaw.guardrails.breaker import reset_breakers
     from personalclaw.guardrails.budgets import reset_meter
+    from personalclaw.guardrails.ceiling import reset_ceiling, reset_clamp_reports
     from personalclaw.guardrails.incident import reset_incident_mirror
 
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
+    reset_action_types()
+    # The governance ceiling is read once per PROCESS and cached (that caching is the
+    # no-mid-run-widening property). Under xdist a ceiling written by one test's tmp_path
+    # would otherwise bound every later test in the same worker, and the clamp-report
+    # dedup would swallow the second test's SEL assertion.
+    reset_ceiling()
+    reset_clamp_reports()
     yield
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
+    reset_action_types()
+    reset_ceiling()
+    reset_clamp_reports()
 
 
 @pytest.fixture(autouse=True)
@@ -286,6 +302,96 @@ def _isolate_single_flight_locks(tmp_path_factory, monkeypatch):
     dir itself still overrides this (last wins)."""
     locks_home = tmp_path_factory.mktemp("pclaw-locks")
     monkeypatch.setattr("personalclaw.concurrency._locks_dir", lambda: locks_home)
+
+
+@pytest.fixture(autouse=True)
+def _reset_knowledge_store_singleton():
+    """Drop the process-wide ``KnowledgeStore`` between tests (SH6.2).
+
+    ``knowledge.get_knowledge_store()`` memoizes one store in a module global, resolved
+    from ``config_dir()`` on FIRST use — so the first test in a worker to touch it pins
+    every later test in that worker to the first test's tmp home. Found by driving, not
+    reading: once :func:`_close_sqlite_connections` began closing what each test opened,
+    ``test_inbound_mcp.py::TestToolBehavior::test_empty_stores_answer_honestly`` failed
+    with ``Cannot operate on a closed database`` — it had been searching an EARLIER
+    test's knowledge DB all along and passing only because that DB happened not to
+    contain its query string. Clearing the global gives each test its own store, the
+    same discipline as ``_reset_sel_singleton``.
+    """
+    import personalclaw.knowledge as knowledge_pkg
+
+    def _clear() -> None:
+        knowledge_pkg._store = None
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _close_sqlite_connections(monkeypatch):
+    """Close every SQLite connection a test opens, at that test's teardown (SH6.2).
+
+    Measured on this tree before the fixture: one full suite run printed **1,596**
+    ``ResourceWarning: unclosed database in <sqlite3.Connection …>`` lines, attributed
+    to **95 test files** — knowledge, memory, durability, codegraph, learning, lexicon,
+    session-search, snapshot, loop. The shape is the same everywhere and it is not one
+    store's bug: a fixture builds a store, returns it, and nothing ever calls
+    ``close()``, so the connection survives the test and is finalized whenever a later
+    ``gc.collect()`` gets to it (the warning is raised from pytest's own
+    ``unraisableexception`` plugin, i.e. attributed to a *bystander* test). Every
+    connection held that way is a live OS handle and a WAL reader on a tmp dir the test
+    is done with, and under ``-n auto`` each worker accumulates its own backlog.
+
+    Closing them one fixture at a time would be ~95 edits guarding one seam, and the
+    96th store would leak again — the same argument :func:`_isolate_real_home_writers`
+    makes about ``config_dir()``. So this wraps the seam every store shares: the
+    ``connect`` of the sqlite driver module. Both bindings are patched — the stdlib
+    module (six stores still ``import sqlite3`` directly) and the one
+    ``sqlite_compat`` resolved (which is ``pysqlite3`` when that wheel is installed, so
+    patching only the stdlib would miss every store that goes through the shared
+    binding — see the driver-mismatch hazard in ``sqlite_compat``'s docstring).
+
+    Deliberately NOT done: closing on a weak reference (a connection already collected
+    has already warned), and swallowing every teardown error. ``ProgrammingError`` is
+    the one documented case that is not this fixture's business — a connection opened
+    with the default ``check_same_thread=True`` inside a worker thread may only be
+    closed by that thread — and it is the ONLY exception passed over.
+
+    This fixture alone did NOT reach zero: 12 warnings survived, from five production
+    sites using ``with sqlite3.connect(...)``, whose context manager ends the
+    TRANSACTION and leaves the connection open — and which, being opened inside worker
+    threads, are exactly the ``ProgrammingError`` case above. Those five were fixed at
+    source with ``contextlib.closing`` and are now held there by
+    ``test_sqlite_compat.py::test_no_production_site_uses_a_bare_with_on_a_connection``.
+    """
+    import sqlite3 as stdlib_sqlite3
+
+    from personalclaw import sqlite_compat
+
+    drivers = {id(stdlib_sqlite3): stdlib_sqlite3, id(sqlite_compat.sqlite3): sqlite_compat.sqlite3}
+    opened: list = []
+
+    for driver in drivers.values():
+        real_connect = driver.connect
+
+        def tracking_connect(*args, _real=real_connect, **kwargs):
+            conn = _real(*args, **kwargs)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr(driver, "connect", tracking_connect)
+
+    programming_errors = tuple(d.ProgrammingError for d in drivers.values())
+
+    yield
+
+    for conn in opened:
+        try:
+            conn.close()
+        except programming_errors:
+            pass
+    opened.clear()
 
 
 @pytest.fixture(autouse=True)

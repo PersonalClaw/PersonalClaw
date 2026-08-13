@@ -695,15 +695,24 @@ async def _gateway(
             "login credential bootstrap failed — continuing without it", exc_info=True
         )
 
-    await run_gateway(
-        cfg,
-        no_dashboard=no_dashboard,
-        no_crons=no_crons,
-        no_open=no_open,
-        port_override=port_override,
-        json_ready=json_ready,
-        approval_mode=approval_mode,
-    )
+    # A governance-boot abort is an OPERATOR-FIXABLE config error, not a crash: render the
+    # WHAT/WHY/FIX lines and exit non-zero rather than dumping a traceback that buries them.
+    # It is still a hard stop — "governance could not be established" is not a degraded mode.
+    from personalclaw.guardrails.ceiling import GovernanceBootError
+
+    try:
+        await run_gateway(
+            cfg,
+            no_dashboard=no_dashboard,
+            no_crons=no_crons,
+            no_open=no_open,
+            port_override=port_override,
+            json_ready=json_ready,
+            approval_mode=approval_mode,
+        )
+    except GovernanceBootError as exc:
+        print(f"\n⛔ PersonalClaw did not start — governance could not be established.\n\n{exc}\n")
+        raise SystemExit(1) from None
 
 
 def _build_consolidator() -> tuple["SessionManager", HistoryConsolidator, ConversationLog]:

@@ -82,6 +82,52 @@ export interface ProviderHealth {
   degraded: boolean
 }
 
+// The earned-autonomy ladder (AUTONOMY-GUARDRAILS §5-§6). One row per DECLARED action
+// type: the rung it resolves at, where that rung came from (`authority`), the recomputed
+// track record, and whether the next rung has been earned. Nothing here is editable in
+// place — a rung changes through `autonomyGrant` (a click) or `autonomyDemote`.
+export interface AutonomyType {
+  key: string
+  floor: string
+  ceiling: string
+  leaves_machine: boolean
+  providers: string[]
+  resolved_rung: string
+  granted_rung: string
+  /** Granted higher than it currently resolves, because the incident kill switch is on. */
+  held_by_incident: boolean
+  /** WHY this type runs at this rung, in one server-composed sentence. */
+  authority: string
+  granted_at: string
+  evidence_window: string
+  demotions: Array<{ at: string; cause: string; cooldown_until: string }>
+  eligible: boolean
+  next_rung: string
+  /** The derived track record, or what is missing from it. Always populated. */
+  record: string
+  clean_approvals: number
+  rejections: number
+  observed_days: number
+  cooldown_until: string
+}
+/** One executed `auto_with_undo` action. `reversed_at` empty = the undo is still offered. */
+export interface AutonomyReversal {
+  id: string
+  action_type: string
+  rung: string
+  label: string
+  created_at: string
+  reversed_at: string
+}
+export interface AutonomyLadder {
+  rungs: string[]
+  /** Server-owned wording per rung, so a chip and a proposal cannot disagree. */
+  rung_meta: Array<{ key: string; label: string; hint: string }>
+  incident_active: boolean
+  types: AutonomyType[]
+  reversals: AutonomyReversal[]
+}
+
 // Doctor — the tiered read-only health report (PLATFORM-RESILIENCE §1).
 export interface DoctorProbe {
   id: string
@@ -235,9 +281,22 @@ export interface DiscoveredAgent {
 export interface ModelItem { name: string; model_name: string; description: string; provider: string }
 
 // App Platform (A7)
+// An app's declared permission scope, exactly as `Permissions.to_dict()` emits it
+// (apps/manifest.py) — every key that dict can carry must be declared here, or the
+// consent UI cannot disclose it (that was the APE-12 defect: `appMessaging` reached
+// the browser and was dropped on the floor). All of these are enforced server-side
+// EXCEPT `network`, which is declaration-only — the gateway has no per-app egress
+// chokepoint (provider code is imported in-process). The consent UI must therefore
+// render `network` as advisory and outside the enforced list; see `PermissionList` in
+// pages/apps and docs/security/limitations.md §2.
 export interface AppPermissionsWire {
   api?: string[]; events?: string[]; mcpTools?: string[]
   storage?: boolean; network?: boolean; memory?: string; cron?: boolean; agent?: boolean
+  // APE-9/APE-12: apps this app may send a brokered message to (exact name, or a
+  // trailing-`*` prefix pattern). Enforced — `POST /api/apps/message` is the only
+  // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
+  // no app at all (deny by default), which the consent UI states rather than implies.
+  appMessaging?: string[]
 }
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
@@ -428,7 +487,14 @@ export interface ChatHistoryMsg {
 }
 
 // ── workspace / build entity types ──
-export interface NotificationItem { kind: string; title: string; body: string; ts: string; job_id?: string; loop_id?: string; loop_kind?: string; acked: boolean }
+export interface NotificationItem {
+  kind: string; title: string; body: string; ts: string
+  job_id?: string; loop_id?: string; loop_kind?: string; acked: boolean
+  /** AUTONOMY-GUARDRAILS §6.1 — set on the passive notice an `auto_with_undo` action leaves.
+   *  `reversal_id` is the RECORD id the undo endpoint takes; `reversal` is the provider's own
+   *  opaque handle, carried for the audit trail only and never sent back by the UI. */
+  reversal_id?: string; reversal?: string; action_type?: string; rung?: string
+}
 // Schedule job — the schedule-kind projection of a Trigger (from /api/triggers).
 // Three orthogonal axes: schedule KIND (every/cron/at), the action (provider +
 // config), and delivery/context (channel, silent, timezone, skip_dates, strict).
@@ -2181,6 +2247,18 @@ export const api = {
   incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
   modelsHealth: () =>
     get<{ providers: ProviderHealth[]; generated_from: number }>('/api/models/health'),
+
+  // ── The earned-autonomy ladder (§5-§6.1). Read, then three writes — and only `grant`
+  //    increases what an automation may do on its own, which is why it is the only one
+  //    that can be refused (400 with the reason).
+  autonomyLadder: () => get<AutonomyLadder>('/api/autonomy'),
+  autonomyGrant: (key: string, rung: string) =>
+    post<{ ok: boolean; key: string; rung: string; evidence: string }>('/api/autonomy/grant', { key, rung }),
+  autonomyDemote: (key: string) =>
+    post<{ ok: boolean; key: string; cooldown_until: string }>('/api/autonomy/demote', { key }),
+  /** Reverse one automatic action by RECORD id (never a raw handle) — and demote its type. */
+  autonomyUndo: (id: string) =>
+    post<{ ok: boolean; code: string; action_type: string; demoted: boolean; detail?: string }>('/api/autonomy/undo', { id }),
 
   // ── Doctor: tiered read-only health probes (PLATFORM-RESILIENCE §1) ──
   doctor: () => get<DoctorReport>('/api/doctor'),

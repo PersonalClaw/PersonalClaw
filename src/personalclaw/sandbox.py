@@ -108,6 +108,189 @@ _AGENT_DENIED_ENV_KEYS: list[str] = [
 ]
 
 
+# ── Child environment allowlist ──
+
+#: What an agent-influenced child process inherits, BY NAME — the allowlist shape
+#: EXECUTION-ISOLATION `D1` specifies, swept to the hook/cron/bash spawn sites by PHF-4.
+#:
+#: 🔴 MEASURED, and the reason this is an allowlist rather than another name-pattern
+#: denylist: a real gateway process carried **121** environment variables, essentially all
+#: of them inherited from whatever the launching shell had grown to include (terminal,
+#: toolbox, agent-CLI and cloud-SDK variables). A denylist can only refuse the credential
+#: shapes it already knows about; the set a child legitimately NEEDS is small and stable.
+#: `config/loader.py:4008` also seeds `.env` credentials into `os.environ` deliberately so
+#: "trusted children" inherit them — which is exactly the inheritance a hook or cron script
+#: must not get for free.
+#:
+#: Widening this set is a security decision. The seam for a script that needs one more
+#: variable is `sandbox.env_passthrough` in `config.json` — an OPERATOR surface. It is
+#: deliberately not reachable from a trigger payload or an action config: a payload-declared
+#: name would be an exfiltration channel (`{"env_passthrough": ["ANTHROPIC_API_KEY"]}`).
+CHILD_ENV_BASE_NAMES: frozenset[str] = frozenset(
+    {
+        # Resolution + shell basics. Without PATH nothing runs at all.
+        "PATH",
+        "SHELL",
+        "PWD",
+        "TERM",
+        # The ceiling shim runs ``python -m personalclaw._spawn_exec_shim`` (see
+        # ``spawn_shim_argv``): dropping PYTHONPATH breaks that import in any layout where
+        # the package is not on the interpreter's default path, which is a total spawn
+        # OUTAGE rather than a tightening. The gateway's own PYTHONPATH is trusted — a
+        # trigger payload can never set it (``bash_provider.PROTECTED_ENV_NAMES``).
+        "PYTHONPATH",
+        # Locale + time. A script that prints non-ASCII or formats a date reads these, and
+        # the failure without them is a mojibake/UnicodeEncodeError far from the cause.
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_COLLATE",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "TZ",
+        # Home-equivalents: where a child reads its config and writes its scratch files.
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "USER",
+        "LOGNAME",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+        "XDG_STATE_HOME",
+        # How the network works HERE. Absent on the host this was measured on, but a
+        # corporate install has them, and a script that curls or pip-installs without them
+        # fails SILENTLY (a hang, then a timeout) — the worst diagnostic shape there is.
+        # None are credential-shaped by the floor below, and all are inherited today, so
+        # keeping them widens nothing.
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+        # The three PersonalClaw vars: which home, which workspace, which instance. A child
+        # that loses these addresses a DIFFERENT install (the default home, port 10000).
+        "PERSONALCLAW_HOME",
+        "PERSONALCLAW_WORKSPACE",
+        "PERSONALCLAW_PORT",
+    }
+)
+
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def env_name_is_sensitive(name: str) -> bool:
+    """Whether *name* is credential-shaped by the floor (``_SENSITIVE_ENV_PREFIXES``).
+
+    The floor applies to EVERYTHING that lands in a child environment — the inherited
+    base, an operator's declared passthrough, and the values a call site injects. A floor a
+    declaration could lower would not be a floor.
+    """
+    return any(name.startswith(prefix) for prefix in _SENSITIVE_ENV_PREFIXES)
+
+
+def _declared_env_passthrough(site: str) -> set[str]:
+    """The operator-declared extra variable names, floor-filtered and name-validated.
+
+    Fail-open to "nothing declared" if the config cannot be read, matching
+    ``ResourceCeilings.from_config``: a broken config must never block a spawn. Failing
+    open here is safe in the security direction — it yields the NARROWER environment.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        declared = list(AppConfig.load().sandbox.env_passthrough)
+    except Exception:
+        logger.debug("sandbox.env_passthrough unreadable; passing only the base", exc_info=True)
+        return set()
+
+    out: set[str] = set()
+    for raw in declared:
+        name = str(raw).strip()
+        if not _ENV_NAME_RE.match(name):
+            logger.warning(
+                "sandbox.env_passthrough entry %r is not a valid environment variable "
+                "name; ignoring it (%s children)",
+                raw,
+                site,
+            )
+            continue
+        if env_name_is_sensitive(name):
+            logger.warning(
+                "sandbox.env_passthrough names %s, which the credential floor refuses; "
+                "it is NOT passed to %s children",
+                name,
+                site,
+            )
+            continue
+        out.add(name)
+    return out
+
+
+def build_child_env(
+    *,
+    site: str,
+    extra: "dict[str, str] | None" = None,
+    source: "dict[str, str] | None" = None,
+) -> dict[str, str]:
+    """The environment an agent-influenced child process runs with.
+
+    Built from :data:`CHILD_ENV_BASE_NAMES` plus the operator's declared
+    ``sandbox.env_passthrough`` names, never from a copy of the parent environment, then
+    layered with *extra* — the values the CALL SITE computes (a hook's event/context, a
+    trigger's ``$variables``) rather than inherits.
+
+    *site* names the spawn site in the logs. Withheld variable names are logged (names
+    only, never values) so a script that breaks for want of one is diagnosable instead of a
+    silent mystery — a dropped variable is otherwise indistinguishable from a bug in the
+    script.
+    """
+    src = dict(os.environ) if source is None else dict(source)
+    names = CHILD_ENV_BASE_NAMES | _declared_env_passthrough(site)
+    # The floor is enforced HERE, at the one point where a name becomes a variable in a
+    # child environment — not only where declarations are parsed. The parse-time check
+    # exists to WARN the operator which entry was ignored and why; this one is what makes
+    # the floor hold no matter how a name reached `names`.
+    env = {
+        name: src[name] for name in sorted(names) if name in src and not env_name_is_sensitive(name)
+    }
+
+    withheld = sorted(name for name in src if name not in env)
+    if withheld:
+        logger.debug(
+            "%s child env: kept %d of %d variables. Withheld: %s. A script that needs one "
+            "of these must be granted it BY NAME in sandbox.env_passthrough (config.json).",
+            site,
+            len(env),
+            len(src),
+            ", ".join(withheld),
+        )
+
+    for name, value in (extra or {}).items():
+        if env_name_is_sensitive(name):
+            logger.warning(
+                "%s: refusing to set credential-shaped variable %s in the child " "environment",
+                site,
+                name,
+            )
+            continue
+        env[name] = str(value)
+    return env
+
+
 # ── Availability probes ──
 
 

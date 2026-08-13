@@ -840,7 +840,7 @@
       "plan": "AUTONOMY-GUARDRAILS",
       "code": "AG",
       "status": "in_progress",
-      "summary": "Plan is IN PROGRESS: the S1-S4 substrate (chokepoint, budgets/scan, floor, profiles/egress/health/FE) is fully shipped and catalogued as 4 done atoms. Seven todo atoms cover the inert SafetyProfile/egress-tier wiring gap (audit 2026-08-04, independently completable), the S5.1/S5.2/S6.1 earned-autonomy rung ladder (needs FEEDBACK-SIGNAL S1), and four logged deferrals (apps-repo native structured_output + channel send() live-writes; run-scope budgets awaiting AUTOMATION-SUBSTRATE; profile/trust enforcement behaviors awaiting WORKFLOWS-V2 engine per-template profiles).",
+      "summary": "Plan is IN PROGRESS: the S1-S4 substrate (chokepoint, budgets/scan, floor, profiles/egress/health/FE) is fully shipped, and the S5.1/S5.2/S6.1 earned-autonomy rung ladder is now COMPLETE end to end (decision layer, routing at all three dispatch seams, promotion proposals, the HTTP ladder + undo executor, and the FE chip/panel/undo affordance). Six todo atoms remain: the inert SafetyProfile/egress-tier wiring gap (audit 2026-08-04, independently completable) and four logged deferrals (apps-repo native structured_output + channel send() live-writes; run-scope budgets awaiting AUTOMATION-SUBSTRATE; profile/trust enforcement behaviors awaiting WORKFLOWS-V2 engine per-template profiles).",
       "atoms": [
         {
           "id": "AG-1",
@@ -896,35 +896,38 @@
         {
           "id": "AG-6",
           "title": "S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 §Contract-level design + S5.1 row: RUNGS ladder, ActionTypeSpec, register_action_type, resolve_rung (floor+grants clamped to ceiling, incident_active() clamp above one_tap), DERIVED promotion_eligibility over SEL tool_approved/tool_rejected + FEEDBACK-SIGNAL records, demote+cooldown; autonomy_rungs.json store (grants/demotions only); guardrails.autonomy config through the four wiring points",
           "done_when": "a type with 10 clean approvals over 7 days + 0 rejections is eligible; one rejection demotes immediately and starts cooldown; incident clamps resolution above one_tap; eligibility is recomputed, never cached to disk",
           "deps": [
             "AG-4",
             "EXT:FEEDBACK-SIGNAL:S1 👍/👎 records feed derived eligibility"
-          ]
+          ],
+          "pr": 1197
         },
         {
           "id": "AG-7",
           "title": "S5.2 action-type declarations + manifest autonomy block + rung routing at seams",
-          "status": "todo",
-          "scope": "Amendment S5.2 row: core action-type keys at action_providers/registry.py + inbox affordances (inbox.reply_draft, sessions.auto_tag); additive manifest autonomy:{floor,ceiling} block (apps/manifest.py, keyed app:<name>.<action>); rung routing composed with enforce_action at the three dispatch seams + profile_for_session (draft_only→proposal item, one_tap→ApprovalGate.request, auto_with_undo→execute+reversal handle+notify, autonomous→SEL)",
+          "status": "done",
+          "scope": "Amendment S5.2 row: core action-type keys registered from action_providers/registry.py + the inbox AI affordances (inbox.reply_draft, inbox.classify, sessions.auto_tag) via guardrails/rungs.CORE_ACTION_TYPES; additive manifest autonomy:{floor,ceiling} block (apps/manifest.py AutonomyConfig, keyed app:<name>.<action> at ActionTypeHandler.register with a core-derived leaves_machine and an audited ceiling clamp); rung routing composed with enforce_action at the TWO enforce_action seams (hooks, event_triggers) plus gateway._fire_store_trigger — the seam the plan's retired _run_action_job became — and with profile_for_session via policy.rung_ceiling_for_profile (draft_only→proposal item, one_tap→agent-request item, auto_with_undo→execute + ActionResult.reversal handle + passive notify, autonomous→SEL)",
           "done_when": "an app-contributed action inherits its declared floor/ceiling with no dispatch-layer special-casing; a leaves_machine type cannot resolve autonomous without an explicit ceiling raise",
           "deps": [
             "AG-6",
             "AG-5",
             "EXT:INBOX-NOTIF-UNIFICATION:emit_attention_item(kind=proposal) for draft_only routing — pre-42 skills/proposals.py fallback keeps this unblocked"
-          ]
+          ],
+          "pr": 1202
         },
         {
           "id": "AG-8",
           "title": "S6.1 promotion proposals + rung FE chips/ladder panel/undo + validation sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment S6.1 row: user-click promotion proposals (SEL-audited like a skill install); FE rung chip on trigger/job rows + ladder panel in Settings→Guardrails (current rung, derived record, demotion history) + undo affordance on auto_with_undo notifications; as-a-user validation sweep",
           "done_when": "promotion never happens without a click; an undo click both reverses the action and demotes the type; the rung chip answers 'why is this allowed to run by itself?' in one glance; full web gate green",
           "deps": [
             "AG-7"
-          ]
+          ],
+          "pr": 1206
         },
         {
           "id": "AG-9",
@@ -959,6 +962,18 @@
             "AG-5",
             "EXT:WORKFLOWS-V2:engine per-template profiles + project-script-execution seam (project loop.md / Code-loop deliverable gate)"
           ]
+        },
+        {
+          "id": "AG-12",
+          "title": "Restore the §1.2 denylist at the third dispatch seam (gateway._fire_store_trigger)",
+          "status": "done",
+          "scope": "§1.2 enforcement placement — the third of the three dispatch seams. §1.2 names it `gateway.py:701` (`_run_action_job`), which retired with `ScheduleService` (S112); the successor `_fire_store_trigger` kept the kill switch and gained AG-7's rung routing but never re-established the denylist. Measured `enforce_action` per seam file: hooks.py 1, event_triggers.py 1, gateway.py 0 — while gateway is the dispatch path for every clock, file, webhook and chained trigger.",
+          "done_when": "`_fire_store_trigger` calls `enforce_action` before `provider.execute` and a blocked decision short-circuits without executing; the refusal is observable (enforce_action's SEL row + needs_human notification, plus a `skipped_gate` Runs-history row naming the matched rule); a test drives a REAL trigger fire and asserts the provider was never reached plus the allowed inverse; `session_key` is threaded so the run's SafetyProfile.denylist_extra/path_allowlist layer as at the other two seams; the chokepoint rail asserts all three execution seams carry the denylist so a fourth seam or another retirement cannot drop it again — DONE 2026-08-13 (18921 passed + 3 pre-existing worktree-only harness_validate failures; 15 new tests). Population measured before enforcing: the only real store available (dev-home) held 1 trigger (`notification-digest`, empty config) → 0 blocked; a 24-config corpus covering every shipped provider blocked 4, of which 3 are credential-exfil/sensitive-path refusals and 1 (`rm -rf /tmp/...`) is a plausible cleanup command already refused at the other two seams AND by the agent's own bash tool (same `BUILTIN_DENIED_COMMAND_PATTERNS`). So this adds no new policy — it removes the one seam that was exempt from the existing one.",
+          "deps": [
+            "AG-3",
+            "AG-7"
+          ],
+          "pr": 1216
         }
       ]
     },
@@ -5422,7 +5437,7 @@
       "plan": "APP-PLATFORM-EVOLUTION",
       "code": "APE",
       "status": "proposed",
-      "summary": "11 atoms, all todo (plan DESIGNED, zero shipped). Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK).",
+      "summary": "12 atoms; APE-7 (update surfacing) + APE-8 + APE-9 + APE-12 done, the rest todo. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK). APE-12 was filed later for a traced defect in APE-9's consent half.",
       "atoms": [
         {
           "id": "APE-1",
@@ -5531,6 +5546,17 @@
           "deps": [
             "EXT:DESIGN-SYSTEM-CONSISTENCY:shell primitives/tokens to export",
             "EXT:AMBIENT-SURFACES:generative-UI layer"
+          ]
+        },
+        {
+          "id": "APE-12",
+          "title": "Disclose appMessaging targets at install consent (the last mile APE-9 left open)",
+          "status": "done",
+          "pr": 1234,
+          "scope": "Traced defect, not a task row. apps/manifest.py:313 claimed of permissions.appMessaging \"This is the install-consent surface for who an app can talk to, shown in the Store via to_dict\" — true on the server (to_dict emits it, catalog._manifest_consent carries it into the pre-install entry, GET /api/apps returns it) and false at the last mile: AppPermissionsWire (web/src/lib/api.ts) never declared the field and PermissionList never rendered it, so the browser received the targets and dropped them. Measured on the unchanged component with {cron: true, appMessaging: [\"receiver\", \"mail-*\"]}: the whole consent output was \"Permissions the gateway enforces • Scheduled jobs\" plus EI-12 D2's network advisory. Owned here rather than reopened as APE-9 because APE-9's done_when covers the broker only and every clause of it holds — enforcement is real (apps/messaging.py:167 → can_use_app_messaging, 403 + SEL on an undeclared pair); the manifest comment overreached. Discovered during EI-12 D2 and recorded in that plan's log as needing its own atom. NOT the same shape as D2: D2 made network an ADVISORY row because app egress cannot be confined, whereas appMessaging IS enforced and belongs in the enforced bullets beside Storage / Scheduled jobs / Run background agents, uncaveated. Only D2's treatment of silence carries over — declaring no target is stated, not left blank. D2's load-bearing Object.keys(permissions).length > 0 Store-panel guard is untouched.",
+          "done_when": "the Store names the apps a declaring app may message, in both surfaces PermissionList serves, among the permissions the gateway ENFORCES; a trailing-* target renders as the name prefix it is (mirroring _matches_any — the grant covers every current and future app under the prefix) and a bare * as any installed app; declaring none is disclosed as messaging no app (deny-by-default) rather than left silent; AppPermissionsWire declares the field and a test pins the server leg end to end (the pre-install catalog payload AND GET /api/apps, not just the component in isolation), backed by a two-sided rail that the wire type declares exactly the keys Permissions.to_dict() can emit; apps/manifest.py's comment is true afterwards. No first-party app declares appMessaging, so the rendering cases are synthetic manifests — stated plainly rather than implied — DONE 2026-08-13 (backend 18956 passed / 0 failed — baseline 18953 + 3 new; web 1832 passed across 192 files + 5 new; tsc + build clean; validated live in an isolated home)",
+          "deps": [
+            "APE-9"
           ]
         }
       ]
@@ -6456,12 +6482,13 @@
         {
           "id": "EI-3",
           "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 EI-A3: AST spawn-audit vs ceiling-wrapped/operator-exempt map; wrap apps backend, mcp_client/mcp_discovery, acp/transport, schedule_script, loop gates/worktree",
           "done_when": "tests/test_spawn_ceiling_audit.py is green with every agent-influenced seam ceiling-wrapped or explicitly operator-exempt; adding an unmapped create_subprocess_exec/Popen/StdioServerParameters on a branch fails CI naming the file:line",
           "deps": [
             "EI-1"
-          ]
+          ],
+          "pr": 1227
         },
         {
           "id": "EI-4",
@@ -6820,12 +6847,13 @@
         {
           "id": "PHF-4",
           "title": "Environment-inheritance allowlist sweep for shell hooks and cron scripts",
-          "status": "todo",
+          "status": "done",
           "scope": "Apply the minimal-allowlist child-env shape (PATH, locale, home-equivalent, the three PersonalClaw vars, plus declared needs, with _SENSITIVE_ENV_PREFIXES as the floor) to the agent-influenced spawn sites not already covered: shell hooks and cron scripts. Confirm the bash action provider's existing _scrub_env is the allowlist shape or align it. Reuses the allowlist shape already specified by EXECUTION-ISOLATION's D1; this only extends it to the sites D1 does not name.",
           "done_when": "A planted secret in the gateway env is absent from a hook child, a cron-script child, and a bash-action child, proven by one regression test per site.",
           "deps": [
             "EXT:EXECUTION-ISOLATION:D1-allowlist-shape"
-          ]
+          ],
+          "pr": 1223
         },
         {
           "id": "PHF-5",
@@ -6860,23 +6888,25 @@
         {
           "id": "PHF-8",
           "title": "Ceiling-intersect-profile guardrail wiring",
-          "status": "todo",
+          "status": "done",
           "scope": "Wire the SafetyProfile family, which shipped with zero non-test callers (a declared decision object nothing consults). Add a Ceiling loaded once at boot from an operator-owned path the agent process cannot weaken; resolve(ceiling, profile) returns the intersection under tightest-wins (the profile may only narrow). Implement four archetypes each with one compose function (ScopedRuleset, OrdinalControl, CapabilityGate, ScopedMap), dispatching on archetype not scope name so adding a scope is data, not engine code; matchers and ordinal scales live in enforcer-owned registries; an unknown matcher aborts governance boot fail-closed. Encode the path-matcher rule as table-driven tests: normalize only the queried item (expand ~ and $VAR, then abspath) and never run the pattern through normpath (normpath treats */** as ordinary segments and collapses an adjacent .. against them, e.g. /a/**/../b -> /a/b, silently dropping the ** and widening an allow or shrinking a deny); cover /a/**/../b, a .. traversal against an allow-prefix, and a relative item against an absolute deny. Wire profile_for_session into the three dispatch seams plus spawn so the guardrail success criterion holds in code, proven by driving a real unattended trigger rather than a constructed object; composes with PHF-1 (profile picks tools/egress, the sandbox ceilings pick blast radius). Owner decision required on the ceiling's trust-root path and how it is protected from the agent on a single-user machine; document what the layer does and does not buy.",
           "done_when": "A profile cannot widen the ceiling (test per archetype); an unknown matcher aborts boot with a WHAT/WHY/FIX error; a normpath-on-pattern implementation reds the matcher tests; a real unattended trigger resolves through the headless profile with a live reader; a narrower profile bites and a widening attempt is refused, confirmed from logs/SEL.",
           "deps": [
             "PHF-1",
             "EXT:AUTONOMY-GUARDRAILS:SafetyProfile-S5.2-wiring"
-          ]
+          ],
+          "pr": 1213
         },
         {
           "id": "PHF-9",
           "title": "Suite flake root-cause fixes + xdist scheduler decision",
-          "status": "todo",
+          "status": "done",
           "scope": "Fix two suite flakes at their root, then decide the parallel scheduler with measurements. Knowledge-merge flake: close the KnowledgeStore connection in fixture teardown (no rerun, no xfail) so the suite runs clean of unclosed-sqlite resource warnings. Subagent SEL flake: the SEL audit call sits inside a swallowing except Exception, so contention makes the patched mock never fire; narrow the except so a genuine audit-write failure surfaces instead of vanishing, and give the two tests an isolated home — a silently-swallowed SEL write is a security-audit gap, not a test problem. Only after the root causes are gone, decide the xdist scheduler last and with measurements: switch --dist worksteal to loadgroup only if the suite wall-time regression is acceptable, recording the before/after either way (the serialization group mark is the real deliverable, not the scheduler choice). Reconcile the two flake memories so a fixed flake is not left documented as pre-existing.",
           "done_when": "The full suite runs 5x consecutively with zero unclosed-database resource warnings and both named tests pass deterministically; a genuine SEL write failure now raises rather than skipping; the scheduler wall-time measurement is recorded and the decision made; both flake memories are updated or deleted.",
           "deps": [
             "EXT:CI-RELEASE-ENGINEERING:xdist-worksteal-escape-hatch"
-          ]
+          ],
+          "pr": 1220
         },
         {
           "id": "PHF-10",
@@ -7054,11 +7084,6 @@
         "id": "AE-10",
         "title": "Split-view iterate panel: ChatEmbed beside the detail view; preview refreshes when artifact_update lands a new version",
         "plan": "AE"
-      },
-      {
-        "id": "AG-6",
-        "title": "S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py)",
-        "plan": "AG"
       },
       {
         "id": "AG-9",
@@ -7298,11 +7323,6 @@
       {
         "id": "EI-2",
         "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
-        "plan": "EI"
-      },
-      {
-        "id": "EI-3",
-        "title": "Spawn-audit CI test + wrap remaining agent-influenced spawn seams",
         "plan": "EI"
       },
       {
@@ -7571,23 +7591,8 @@
         "plan": "PHF"
       },
       {
-        "id": "PHF-4",
-        "title": "Environment-inheritance allowlist sweep for shell hooks and cron scripts",
-        "plan": "PHF"
-      },
-      {
         "id": "PHF-7",
         "title": "Offline fake-model E2E harness + a11y rail",
-        "plan": "PHF"
-      },
-      {
-        "id": "PHF-8",
-        "title": "Ceiling-intersect-profile guardrail wiring",
-        "plan": "PHF"
-      },
-      {
-        "id": "PHF-9",
-        "title": "Suite flake root-cause fixes + xdist scheduler decision",
         "plan": "PHF"
       },
       {
@@ -7778,6 +7783,7 @@
       "AG-9",
       "AG-10",
       "AG-11",
+      "AG-12",
       "AP-1",
       "AP-2",
       "AP-3",
@@ -7796,6 +7802,7 @@
       "APE-10",
       "APE-11",
       "APE-6",
+      "APE-12",
       "AR-1",
       "AR-2",
       "AR-3",
@@ -9469,10 +9476,10 @@
       {
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
-        "total_atoms": 11,
-        "done": 6,
+        "total_atoms": 12,
+        "done": 10,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9883,8 +9890,8 @@
       {
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
-        "total_atoms": 11,
-        "done": 3,
+        "total_atoms": 12,
+        "done": 4,
         "in_progress": 0,
         "todo": 8,
         "blocked": 0
@@ -9974,9 +9981,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {
@@ -10001,9 +10008,9 @@
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 13,
-        "done": 8,
+        "done": 11,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10016,6 +10023,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 851
+    "edge_count": 854
   }
 }

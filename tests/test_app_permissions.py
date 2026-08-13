@@ -10,7 +10,10 @@ passes, the app's own backend-proxy path is always allowed, and an owner request
 from __future__ import annotations
 
 import json
+import re
 from contextlib import asynccontextmanager
+from dataclasses import MISSING, fields
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -60,6 +63,66 @@ class TestCheckerLogic:
     def test_coarse_flags(self):
         c = _checker(cron=True, network=True, storage=False)
         assert c.can_use_cron() and c.can_use_network() and not c.can_use_storage()
+
+    def test_network_declaration_reaches_the_consent_wire(self):
+        """EI-12 D2. ``network`` is unenforced, so the ONLY thing it does is reach the
+        Store's install-consent surface — the advisory row there is rendered from this
+        dict (``handlers/apps.py`` → ``AppPermissionsWire`` → ``PermissionList``). A
+        declared flag must appear; a declining app must omit the key, because the UI
+        distinguishes "declared" from "not declared" and would otherwise mislabel it."""
+        assert Permissions.from_dict({"network": True}).to_dict()["network"] is True
+        assert "network" not in Permissions.from_dict({"network": False}).to_dict()
+        assert "network" not in Permissions.from_dict({}).to_dict()
+
+
+# ── APE-12: the consent wire declares every permission this dict can emit ──
+
+_API_TS = Path(__file__).resolve().parent.parent / "web" / "src" / "lib" / "api.ts"
+
+
+def _permissions_with_every_field_set() -> Permissions:
+    """A ``Permissions`` whose every field is truthy, so ``to_dict`` emits every key it
+    can. Derived from the dataclass rather than a hand-written list — a field added
+    without a wire declaration is exactly the defect this rail exists to catch."""
+    kwargs: dict[str, object] = {}
+    for f in fields(Permissions):
+        if f.default_factory is not MISSING:  # the list scopes
+            kwargs[f.name] = ["x"]
+        elif isinstance(f.default, bool):
+            kwargs[f.name] = True
+        elif isinstance(f.default, str):
+            kwargs[f.name] = "shared"
+        else:  # pragma: no cover — a new field shape must be taught to this rail
+            raise AssertionError(f"unhandled Permissions field shape: {f.name}")
+    return Permissions(**kwargs)  # type: ignore[arg-type]
+
+
+def _wire_declared_keys() -> set[str]:
+    """The optional fields of ``AppPermissionsWire`` in web/src/lib/api.ts."""
+    src = _API_TS.read_text(encoding="utf-8")
+    m = re.search(r"export interface AppPermissionsWire \{(.*?)\n\}", src, re.S)
+    assert m, "AppPermissionsWire not found in web/src/lib/api.ts"
+    body = re.sub(r"//[^\n]*", "", m.group(1))  # drop comments before scanning
+    return set(re.findall(r"(\w+)\?:", body))
+
+
+def test_consent_wire_declares_exactly_the_permissions_the_server_emits():
+    """APE-12. The defect: ``Permissions.to_dict()`` emitted ``appMessaging``,
+    ``GET /api/apps`` returned it, and ``AppPermissionsWire`` never declared it — so the
+    Store dropped it on the floor and install consent never named the apps an app may
+    message, while ``manifest.py`` claimed that surface existed.
+
+    Pinned in BOTH directions on purpose. Server-side keys with no wire field are
+    invisible to the user (the bug); wire fields with no server key are a consent
+    surface promising something nothing ever sends. Adding a permission now reds here
+    until it is disclosed."""
+    emitted = set(_permissions_with_every_field_set().to_dict())
+    declared = _wire_declared_keys()
+    assert emitted == declared, (
+        f"server-only (never disclosed): {sorted(emitted - declared)}; "
+        f"wire-only (nothing sends them): {sorted(declared - emitted)}"
+    )
+    assert "appMessaging" in emitted  # the rail is not vacuously comparing empty sets
 
 
 # ── middleware enforcement (HTTP) ──

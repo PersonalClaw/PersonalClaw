@@ -141,8 +141,15 @@ def test_egress_policy_for_tier():
     assert egress_policy_for_tier("off") is None
     assert egress_policy_for_tier("registry").name == "registry"
     assert egress_policy_for_tier("all").name == "strict"
-    assert egress_policy_for_tier("listed").name == "strict"
     assert egress_policy_for_tier("bogus").name == "strict"  # unknown → safe default
+    # 🔴 CORRECTED (PHF-8), not relaxed: "listed" used to return STRICT, whose
+    # `allow_hosts` is ADDITIVE (it waives the private-range block) — so a "listed" tier
+    # reached every public host exactly like "all" and could not narrow anything. It now
+    # returns the exclusive LISTED profile, so the tier means what its name says.
+    listed = egress_policy_for_tier("listed")
+    assert listed.name == "listed" and listed.allow_only is True
+    assert egress_policy_for_tier("registry").allow_only is True
+    assert egress_policy_for_tier("all").allow_only is False
 
 
 # ── §2.5 provider health ─────────────────────────────────────────────────────

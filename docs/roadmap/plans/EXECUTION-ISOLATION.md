@@ -16,8 +16,10 @@ pre-existing single-file `sandbox.py`, unchanged since v0.1.0), no lima/docker t
 dependency-free, and the amendment's own words are that "an inaccurate security claim is a live
 defect": `docs/architecture/security.md` still lacks the what-the-sandbox-does-and-does-not-do
 section, and `personalclaw.dev`'s security page still says "Bounded capabilities" with no
-credential-hiding-vs-confinement qualification. D1/D2/D3 (app env inheritance, the declaration-only
-`network` permission's advisory marking, the shared-venv pip install) are also untouched.
+credential-hiding-vs-confinement qualification. Of the amendment's other rows, **D1** (app env
+inheritance) and **D2** (the declaration-only `network` permission's advisory marking) landed
+2026-08-13; **D3** (the shared-venv pip install) is BLOCKED as an owner-scope decision and **VD** is
+still open — see the `## Execution log`.
 
 ---
 
@@ -404,3 +406,240 @@ a local process reaching `127.0.0.1:<port>` directly bypasses the gateway proxy,
 
 ### Sequencing note
 D0 is documentation and should land immediately — an inaccurate security claim is a live defect, not a backlog item. D1 is small, high-value, and independent. D2 is a decision before it is code. D3 is the largest and can follow §1's provider work. **None of these are blocked by the `docker`/`lima` tiers**, and none of them substitute for that work: the tiers confine *agent commands*, these tasks confine *app backends*, and the product needs both.
+
+---
+
+## Execution log
+
+- [2026-08-13][EI-3] DONE. **Premise correction: 6 of the 7 seams this atom names, and the audit
+  rail itself, had already shipped** — PHF-1's SH1.3/SH1.3a built
+  `tests/test_spawn_ceiling_audit.py` and wrapped `apps/backend_runtime.py`, `mcp_client.py`,
+  `mcp_discovery.py`, `loop/gates.py`, `loop/worktree.py`, and (via EI-1's provider handle,
+  which subsumes the former `AcpProcess.spawn` site) `acp/transport.py`. The rail classifies
+  **130** spawn sites across `_CEILING_WRAPPED`/`_OPERATOR_EXEMPT` and enforces coverage in both
+  directions, disjointness, and a required-wrapped ratchet. Its done-when was **falsified before
+  being trusted**: appending an unmapped `subprocess.Popen` to `lexicon/store.py` reds the rail
+  naming the exact site — `lexicon/store.py::_phf_probe_unmapped_spawn::subprocess.Popen
+  (lexicon/store.py:344)`. So the atom's CI requirement was already satisfied and was NOT
+  re-implemented.
+- [2026-08-13][EI-3] The one real gap was `schedule_script.run_script_sandboxed`. It had the OS
+  path sandbox (`wrap_argv(argv, mode="standard")`) and, since PHF-4, the allowlisted child env —
+  and its exemption reason conflated those with a ceiling ("operator: scheduled-script runner (own
+  sandbox wrap + clean env)"). Neither bounds consumption, so a cron script could exhaust
+  descriptors or fork-bomb where an agent `bash` call could not. Closed: the `tool` profile now
+  arrives via `spawn_shim_argv` (the sync-usable prepend; no sync site used it before, so cron is
+  the first), and the entry **moved from `_OPERATOR_EXEMPT` to `_CEILING_WRAPPED`** and was
+  ratcheted into `test_agent_influenced_seams_are_all_ceiling_wrapped` so the exemption cannot
+  return. The exemption was NOT made merely honest — the seam is genuinely agent-influenced (an
+  agent authors the file under `crons/` and the job that selects it).
+- [2026-08-13][EI-3] **Composition order: the shim goes OUTSIDE the `wrap_argv` sandbox** —
+  `python -m personalclaw._spawn_exec_shim <policy> -- env -u … sandbox-exec -f <profile> python3
+  <launcher>`. Three reasons: (1) it matches the one routed-spawn seam,
+  `sandbox_providers/none.py`, where `wrap()` builds the sandbox argv and `exec()` prepends the
+  ceiling — so cron and ACP compose identically; (2) rlimits inherit through `exec`, so a limit
+  set before `sandbox-exec`/`unshare` covers the sandboxed target and every descendant; (3) inside
+  the wrap, the shim's own `python -m` import would have to survive the seatbelt/namespace
+  profile, and one denied read of the interpreter's path turns a ceiling into a dead cron job.
+  Ordering hazard recorded: `wrap_argv` returns its namespace-backend cleanup path as
+  `wrapped[1]`, so the prepend must follow that unpacking, never precede it.
+- [2026-08-13][EI-3] PHF-4's `PYTHONPATH` allowlist entry still carries the shim through this
+  path — confirmed, and it is load-bearing here: the cron child's env is `build_child_env`'s
+  allowlist, not a copy, so the shim's `personalclaw._spawn_exec_shim` import resolves only
+  because `PYTHONPATH` (and `PATH`, for the `env`/`sandbox-exec` hop) are in
+  `CHILD_ENV_BASE_NAMES`. The failure mode is loud, not silent: a shim that could not import
+  returns a non-zero child with no sentinel line, which surfaces as an `error` status. And the
+  site cannot degrade to an unshimmed spawn under any config — the `tool` policy is never empty
+  because it always carries the OOM bias.
+- [2026-08-13][EI-3] **Containment DRIVEN, not asserted from a constructed object**
+  (`tests/test_cron_script_ceiling.py`, 6 tests). A real cron script under `sandbox.nofile = 137`
+  reports **137** from its own `resource.getrlimit` (host default: 1048576), and a script asking
+  for **400** descriptors is stopped at **134** with `OSError` (134, not 137, because the child
+  already holds its three standard streams and the launcher's own handles). The falsification leg:
+  with `sandbox.nofile = 0` (cap off, same script, same spawn path, same shim) it opens all
+  **400** — so the containment is attributable to the ceiling and not to the host or the OS
+  sandbox. Falsifying the implementation reds all three drives with the right diagnosis (NOFILE
+  1048576, 400/400 opened, no shim in argv). The same drive was run outside pytest against an
+  isolated `PERSONALCLAW_HOME` under `/var/folders/.../ei3-live-*` (never the real home) and
+  reproduced `134|OSError` / `400|`.
+- [2026-08-13][EI-3] **Platform honesty — what is NOT enforced here.** On macOS only
+  **RLIMIT_NOFILE** applies. `max_pids` (RLIMIT_NPROC) and `max_rss_mb` (RLIMIT_AS) ship **OFF**
+  by default (NPROC is a *per-user* cap that would break a busy host), and `oom_score_adj` is
+  Linux-only and silently skipped — so the fork-bomb and memory bounds this atom's sibling
+  language implies belong to PHF-2's Linux cgroup tier, not to an rlimit. Separately, this host is
+  macOS 26, where `_probe_sandbox_exec` refuses `sandbox-exec` for third-party callers, so
+  `detect_backend` returns `none` and both nesting orders produce the same argv locally. Rather
+  than leave the ordering unexercised, it is driven through a surrogate wrapper of the same shape
+  the real macOS wrap has (`env -u NAME …`) and the ceiling still lands on the far side of it,
+  plus an argv-shape assertion at the real call site.
+- [2026-08-13][EI-3] Gate: `make lint` rc=0 (black/isort/flake8/mypy, 810 source files). Full suite
+  **18,947 passed / 30 skipped / 12 xfailed / 0 failed** in 169s — the branch baseline of 18,941
+  plus exactly the 6 new tests, no unexplained movement — with the CRE-8 real-home rail confirming
+  `~/.personalclaw` unchanged (no global `PERSONALCLAW_HOME` for the pytest run; the live drive used
+  a throwaway home under `/var/folders`). All four generators re-run with `PYTHONPATH` set and
+  **byte-identical**: `config-baseline.json`, `docs-lint-baseline.json`,
+  `inert-surface-baseline.json` and the offline agent reference. Correct — this atom adds no config
+  field, no provider type, and no inert surface (the ceiling is delivered on a live call path, not
+  declared). `tools/regen_dag_derived.py` re-derived the `dag` block for the status flip
+  (`plan_counts` EI done 2→3, todo 10→9; EI-3 out of the ready frontier). No `web/` change — this
+  seam has no frontend surface.
+- [2026-08-13][EI-12 D1] DONE (task D1 only — **`EI-12` stays `todo`**). `apps/backend_runtime.py`
+  now builds the backend's child environment with
+  `sandbox.build_child_env(site="app-backend", extra={…})` instead of `dict(os.environ)`. PHF-4 had
+  converted the hook, cron-script and bash-action sites and deliberately left this one to D1, which
+  made the app backend the **widest remaining inheritance in the tree** and the least deserving of
+  it: third-party code, scanned but not trusted at install, running for as long as the app is
+  enabled, while `config/loader.py` seeds `.env` credentials into `os.environ` so "trusted children"
+  inherit them. The four computed variables move into `extra` unchanged (`PORT`,
+  `PERSONALCLAW_APP_NAME`, `PERSONALCLAW_APP_SECRET`, and `PERSONALCLAW_APP_DATA_DIR` when the
+  `storage` capability is held). `spawn_shim_argv`/`PROFILE_TOOL` composition (PHF-1) was not
+  touched; its duplicate local import folded into the one this change already needed.
+- [2026-08-13][EI-12 D1] **MEASURED, by falsification before trusting the test.** Reverting the one
+  line to `dict(os.environ)` and re-running the new suite reds 3 of its 5 tests and enumerates what
+  the backend used to receive: **~130 undeclared variables**, including `SSH_AUTH_SOCK`,
+  `AWS_REGION`, `AWS_SDK_UA_APP_ID`, `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`, `VIRTUAL_ENV`, both
+  planted secrets and the whole agent-CLI/toolbox variable population. The 2 tests that legitimately
+  stay green under the revert are the sandbox-P3 storage-gate pair — they guard an orthogonal
+  control, which is why they do not move.
+- [2026-08-13][EI-12 D1] **Premise correction on the blast radius — it is narrower than the atom's
+  wording implies, and the correction is load-bearing for the CHANGELOG.** The 9 credential names
+  that are absent from `CHILD_ENV_BASE_NAMES` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, `META_MODEL_API_KEY`, `ALIBABA_API_KEY`, `TAVILY_API_KEY`, `SLACK_BOT_TOKEN`,
+  `SLACK_APP_TOKEN`, `SKILLS_SH_API_KEY`) are read **exclusively in `provider.py` modules**, which
+  the gateway imports **in-process** — verified by grepping every `*.py` in `PersonalClawApps` for
+  those names: every non-test hit is a `provider.py`. Of **44** first-party apps, exactly **2**
+  declare a `backend.entryPoint` (`growth`, `minutes`), and the only environment reads in either
+  backend tree are `PERSONALCLAW_APP_DATA_DIR` and `PORT` — both already computed at this call site.
+  So **no first-party app changes behaviour**, and an operator's exported `ANTHROPIC_API_KEY` still
+  reaches the anthropic-models provider, because that code never travelled through the app-backend
+  env. The real user-visible break is scoped to a **third-party** app backend that read an ambient
+  gateway variable; its two migrations are the credential store (the documented primary path — the
+  env var is a *fallback*, `entry.credential` → `credential_store` raising `CredentialMissing` is
+  primary) or an operator declaration in `sandbox.env_passthrough`.
+- [2026-08-13][EI-12 D1] **`PERSONALCLAW_CC_ISOLATE` is not an app-backend variable and needed no
+  home.** It is read in the sibling apps repo, in `claude-code-agent`'s `provider.py` (line 196 at
+  the time of writing — a cross-repo path, deliberately not cited in `file.py:NNN` form because the
+  docs linter can only resolve in-repo paths); that app's `app.json`
+  declares **no** `backend`, so the read happens in the gateway process against the full
+  `os.environ`. Adding it to the base or to `extra` would have widened the allowlist for a reader
+  that never crossed it. No change.
+- [2026-08-13][EI-12 D1] **Live validation (isolated home, real first-party apps).** Booted with
+  `PERSONALCLAW_HOME=/tmp/ei12-validate-*` (never `~/.personalclaw`) and the worktree's core on
+  `PYTHONPATH`, with `ANTHROPIC_API_KEY`/`TAVILY_API_KEY`/`ACME_DEPLOY_PAT` planted in the gateway
+  env: `growth` and `minutes` both installed and returned `{"ok": true}` from `/health` (pids
+  72797/72855, then 73059/73121). Their child environments were then read **from the OS process
+  table** (`ps -Eww -p <pid>`), not from a dict we built: all four of
+  `ANTHROPIC_API_KEY`/`TAVILY_API_KEY`/`ACME_DEPLOY_PAT`/`SSH_AUTH_SOCK` absent, no planted value
+  present, `PORT=` and `PERSONALCLAW_APP_NAME=<app>` present as the non-vacuity check. The remaining
+  42 first-party apps declare no backend, so this seam cannot affect their boot; the gateway process
+  still saw both planted keys, confirming the in-process provider path is untouched.
+- [2026-08-13][EI-12 D1] **The P3 storage gate is now enforced after the build, on purpose.**
+  `PERSONALCLAW_APP_DATA_DIR` is not in `CHILD_ENV_BASE_NAMES`, so it cannot be inherited — but
+  `sandbox.env_passthrough` accepts any non-credential-shaped name, so declaring it (with the
+  gateway itself carrying the variable) would have handed **every** storage-less backend a data dir
+  at once and silently undone sandbox P3. The conditional `env.pop` is kept for exactly that path
+  and is driven by a test at the real call site, not against the builder.
+- [2026-08-13][EI-12 D1] **DISCOVERY (recorded, not built — out of D1's scope).**
+  `_declared_env_passthrough(site)` takes a `site` argument but uses it **only for logging**; the
+  declared list is the single global `sandbox.env_passthrough`. So an operator who declares one name
+  to unblock one app backend also exposes it to cron scripts and bash actions. That is a real
+  granularity gap now that a third site consumes the seam, but building a per-site scheme is a
+  config-surface change (new field, round-trip contract, frontend control) that belongs to a plan
+  that owns the sandbox config surface — not to a call-site conversion. Not started here.
+- [2026-08-13][EI-12 D1] **DISCOVERY.** `BackendConfig` (`apps/manifest.py:259`) has no `env` field
+  and this change does not add one: an app-declared environment name would be an exfiltration
+  channel (the same reason `sandbox.env_passthrough` is deliberately unreachable from a manifest or
+  a trigger payload). Recorded because "let the app declare what it needs" is the obvious wrong fix
+  for the break above.
+- [2026-08-13][EI-12 D1] **A measured, not hardcoded, exclusion in the closed-set test.** The
+  strictest new assertion — the child's env is *exactly* `CHILD_ENV_BASE_NAMES` + the four computed
+  names — first red on `__CF_USER_TEXT_ENCODING`. Probing a child spawned with a literally empty
+  `env={}` shows Darwin's CoreFoundation and the interpreter's own UTF-8 coercion inject
+  `__CF_USER_TEXT_ENCODING` and `LC_CTYPE` **after** exec, so neither was inherited. The exclusion is
+  therefore computed at run time by that same empty-env probe rather than hardcoding two macOS
+  names, and the test additionally asserts the exclusion set cannot contain the planted secrets — so
+  it stays exact on a platform with a different injected set instead of widening to whatever the OS
+  adds. The floor was raised, not relaxed.
+- [2026-08-13][EI-12 D1] **STOP POINT. `EI-12` remains `todo`; no `pr` field set.** D1 is the only
+  part landed. Outstanding, untouched: **D2** (`permissions.network` — enforce via the egress rail
+  OR mark advisory in the consent UI/manifest, not both/neither), **D3** (per-app
+  `pythonDependencies` isolated to an app-scoped target; confirmed nothing under `apps/` manipulates
+  `PYTHONPATH` today, so the isolation does not exist yet), and **VD** (the validation-as-a-user
+  sweep). The atom's done-when is correspondingly part-met: "a planted secret in the gateway env is
+  absent from an app backend's env (test proves it)" ✅ and "every first-party app still boots" ✅
+  (44 audited, 2 backends booted healthy); the Store-consent network claim and the per-app dependency
+  clauses are still open.
+- [2026-08-13][EI-12 D2] DONE (task D2 only — **`EI-12` stays `todo`**). Decision: **mark advisory,
+  honestly** — not enforce. `PermissionList` (`web/src/pages/apps/AppsSection.tsx`, the ONE component
+  behind both consent surfaces: the Store pre-install panel and the installed-app detail panel) no
+  longer lists `network` among the enforced permission bullets. It renders its own advisory row —
+  "Network access: declared / not declared — advisory only. PersonalClaw does not confine an app's
+  outbound traffic: this app's code can reach the network either way. The declaration is disclosure,
+  not containment." — **whether or not the app declares it**. Heading changed to "Permissions the
+  gateway enforces" so the bullets make a claim the platform can keep, and the empty case now reads
+  "None — this app is granted no gateway capability." instead of "No special permissions" (which
+  claimed an app had no special powers while it could still reach any host on the internet).
+  `apps/permissions.py`'s `can_use_network` docstring, `docs/security/limitations.md` §2 (which quotes
+  it verbatim) and `docs/architecture/app-platform.md`'s permission table now describe that surface
+  instead of asserting a generic "surfaced honestly". `tests/test_app_permissions.py` pins the wire
+  leg the advisory reads; `web/src/pages/apps/permissionConsent.test.tsx` pins the three renderings.
+- [2026-08-13][EI-12 D2] **MEASURED before-state, by falsification before the fix.** Exported
+  `PermissionList`, wrote the ratchet against the honest form, ran it against the UNCHANGED component:
+  3 failed, and their output is the record of what the Store actually rendered. (1) A declaring app
+  (`network: true`) got a bullet matching `/network/i` *inside* the "Permissions" list — "• Network
+  access" — sat beside `Storage` / `Scheduled jobs` / `Run background agents`, all of which ARE
+  enforced server-side, so it read as a grant the gateway polices. (2) A non-declaring app rendered
+  `"Permissions• API: /api/tasks"` — **zero** network mention, so the silence read as "blocked". (3) An
+  app declaring nothing rendered `"PermissionsNo special permissions"`. So the docstring's claim that
+  "the Store can surface it (install consent lists 'network access: yes/no')" was half-true at best:
+  the Store listed `yes` as if enforced and never said `no` at all.
+- [2026-08-13][EI-12 D2] **Why DISCLOSE and not ENFORCE — the option the atom asks us to close
+  deliberately.** Enforcement is out of reach at this seam, not merely expensive: an app's provider
+  code is imported **in-process** by the gateway (`providers/loader.py` `importlib.import_module`), so
+  an app's own `httpx`/`requests` call IS the gateway's egress and there is no per-app chokepoint to
+  gate it at; and an app with a backend owns a separate OS process with its own network stack. Either
+  would need an OS-level isolation layer (cgroups/nftables/seccomp) or routing all app egress through
+  a guarded seam — the `backend.sandbox` work this plan's §1/task-#71 already owns, not a copy change.
+  Half-enforcing was explicitly rejected: only **2 of 44** first-party apps have a backend, so an
+  egress rail on backends alone would confine 2 apps, leave 42 unconfined, and show all 44 identically
+  — a worse claim than the honest advisory.
+- [2026-08-13][EI-12 D2] **The sharpest case, and it inverts the intuition.** Of the four first-party
+  apps whose manifests mention `network`, only `mail-inbox` and `openrouter-models` declare `true`;
+  `growth` and `minutes` declare **`network: false`** — and per D1's audit those two are the *only*
+  first-party apps with a backend. So the two apps that actually run their own OS process with a
+  completely unconfined network stack were exactly the two the consent UI rendered with no network row
+  at all, i.e. as if the platform had honoured their "we don't use the network" declaration. That is
+  the reading the always-rendered advisory kills. Verified through the real parse path
+  (`AppManifest.from_dict(...).permissions.to_dict()`) over all 44 manifests, not by reading JSON.
+- [2026-08-13][EI-12 D2] **DISCOVERY (recorded, not built).** The Store panel still gates the whole
+  section on `Object.keys(item.permissions).length > 0`, and that guard is load-bearing: `CatalogEntry.
+  permissions` defaults to `{}` both for an app that declares nothing AND for a registry-index pointer
+  whose manifest has not been fetched (`catalog.py` `_pointer_to_entry` vs the git/dir scan, which sets
+  `pointer` *and* real permissions — so `pointer` is not the discriminator either). Dropping the guard
+  would make the UI tell a user "None — this app is granted no gateway capability" about an app whose
+  manifest we have never read. Distinguishing the two needs a backend wire field ("manifest known"),
+  which is outside D2's clause. Consequence, stated: a Store card for an app that declares *nothing*
+  shows no permission section and therefore no network advisory — the UI makes no claim rather than a
+  false one, and the installed-app panel (which always renders) does disclose it.
+- [2026-08-13][EI-12 D2] **DISCOVERY (out of scope, unrelated to network).** `AppPermissionsWire`
+  (`web/src/lib/api.ts`) has no `appMessaging` field, so the brokered app-to-app targets an app
+  declares are never shown at install consent — even though `Permissions.appMessaging`'s own docstring
+  calls itself "the install-consent surface for who an app can talk to, shown in the Store via
+  `to_dict`". Same class of defect as this task, different permission; needs its own atom.
+- [2026-08-13][EI-12 D3] **BLOCKED — owner-scope architecture decision, deliberately not attempted.**
+  Per-app `pythonDependencies` are pip-installed into the **shared core venv**; `apps/manifest.py:475`
+  says so outright, and nothing under `apps/` manipulates `PYTHONPATH` (confirmed in D1). Because
+  provider code is imported in-process, isolating them would require either out-of-process providers or
+  per-import path machinery — i.e. a change to how the platform loads app code, not a change to the
+  installer. That is an E-class owner decision (it redefines the provider seam every app depends on),
+  so it is recorded here rather than improvised. The next session should not re-derive it.
+- [2026-08-13][EI-12 D2] **STOP POINT (supersedes the D1 stop point). `EI-12` remains `todo`; no `pr`
+  field set.** Landed: **D1** (backend child env by allowlist) and **D2** (the `network` claim marked
+  advisory in the consent UI + manifest docs). Outstanding: **D3** (per-app dependency isolation —
+  BLOCKED above, owner decision) and **VD** (the validation-as-a-user sweep: install a first-party app,
+  confirm gateway secrets are absent from its process env, confirm a network-declaring and a
+  non-declaring app behave per the D2 decision *in a live browser*, install a dependency-conflicting app,
+  re-read the website copy against `sandbox.py`). D2's own surface was driven by unit-level render tests
+  over the real component, not a browser — the browser leg belongs to VD. Atom done-when after D2: "a
+  planted secret … is absent from an app backend's env" ✅, "every first-party app still boots" ✅, "the
+  Store consent UI's network claim matches enforcement reality" ✅; the per-app dependency clause and the
+  VD sweep remain open.

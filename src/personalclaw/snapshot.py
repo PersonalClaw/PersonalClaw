@@ -112,7 +112,18 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
     # every automation the user actually had. `crons.json` still travels because §6 keeps it
     # read-only for `automation verify-migration` to diff.
     "crons": ("crons.json", "triggers.json", "event_triggers.json"),
-    "config": ("config.json", "session_map.json", "hooks.json", "project_dir", "workspace_dir"),
+    # `autonomy_rungs.json` rides here (AUTONOMY-GUARDRAILS §5): it holds the rungs the
+    # user has explicitly granted per action type plus the demotion history. Losing it
+    # is not catastrophic (every type falls back to its declared floor) but it IS a
+    # decision the user made by hand, so it travels with the other decisions.
+    "config": (
+        "config.json",
+        "session_map.json",
+        "hooks.json",
+        "project_dir",
+        "workspace_dir",
+        "autonomy_rungs.json",
+    ),
     "notifications": ("notifications.jsonl",),
     "security": ("sel_hmac.key", "telemetry_salt"),
 }
@@ -691,7 +702,11 @@ def _validate_identifier(name: str) -> str:
 def _merge_memory(src_db: Path, dst_db: Path) -> None:
     # Integrity check on source DB before ATTACH
     try:
-        with sqlite3.connect(str(src_db)) as check_conn:
+        from contextlib import closing
+
+        # closing(), like the merge paths above: sqlite3's connection context manager ends
+        # the TRANSACTION, not the connection, so a bare `with` leaks the handle until gc.
+        with closing(sqlite3.connect(str(src_db))) as check_conn:
             result = check_conn.execute("PRAGMA integrity_check;").fetchone()[0]
         if result != "ok":
             print(f"  ⚠️  Source DB integrity check failed: {result} — skipping merge")
@@ -1845,7 +1860,9 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
     # Integrity check
     if _want(components, "memory") and (pc / "memory.db").is_file():
         try:
-            with sqlite3.connect(str(pc / "memory.db")) as conn:
+            from contextlib import closing
+
+            with closing(sqlite3.connect(str(pc / "memory.db"))) as conn:
                 result = conn.execute("PRAGMA integrity_check;").fetchone()[0]
         except Exception as e:
             result = str(e)

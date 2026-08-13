@@ -759,20 +759,25 @@ class SubagentManager:
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
-        try:
-            sel().log_tool_invocation(
-                session_key=session_key,
-                source="subagent",
-                tool_name="reaper_force_kill",
-                outcome="reaped",
-                metadata={
-                    "subagent_id": agent_id,
-                    "session_key": session_key,
-                    "elapsed": int(elapsed),
-                },
-            )
-        except Exception:
-            logger.exception("Reaper: SEL audit failed for %s", agent_id)
+        # NOT best-effort (SH6.3). This write is the only record that the reaper
+        # SIGKILLed a subagent, and it used to sit under `except Exception:
+        # logger.exception(...)` — so a genuine audit-write failure (a read-only or full
+        # home, a broken SEL chain) vanished into a log line while the kill itself
+        # proceeded, and a test patching `sel` could see zero calls with nothing raised.
+        # Every other audit write in this file is unguarded; this one now matches. The
+        # caller (`_reaper_loop`) logs and moves to the next agent, so an unauditable
+        # kill is reported instead of absorbed.
+        sel().log_tool_invocation(
+            session_key=session_key,
+            source="subagent",
+            tool_name="reaper_force_kill",
+            outcome="reaped",
+            metadata={
+                "subagent_id": agent_id,
+                "session_key": session_key,
+                "elapsed": int(elapsed),
+            },
+        )
 
         try:
             self._sessions.release(session_key, cleanup=True)
@@ -1846,6 +1851,30 @@ class SubagentManager:
                     outcome="ok",
                     source="subagent",
                     resources=f"subagent_id={info.id}",
+                )
+        # 🔴 THE CEILING BOUNDS THE SPAWN GRANT (PHF-8). Every branch above can only WIDEN
+        # this run to "auto"; none of them consults the operator's governance ceiling. So an
+        # operator who declared `{"scopes": {"approval": {"value": "ask"}}}` still got
+        # auto-approving subagents the moment a toggle, a yolo flag or a config default said
+        # so. `ceiling_permits_approval` resolves the grant through the same tightest-wins
+        # composition every other seam uses, and the refusal is SEL-audited — a silently
+        # downgraded grant would be indistinguishable from the grant never being asked for.
+        if parent_policy == "auto":
+            from personalclaw.guardrails.policy import ceiling_permits_approval
+
+            if not ceiling_permits_approval("auto"):
+                parent_policy = ""
+                logger.warning(
+                    "subagent %s: the governance ceiling refused the auto-approval grant; "
+                    "tool calls stay gated",
+                    info.id,
+                )
+                sel().log_api_access(
+                    caller=info.parent_session_key or f"subagent:{info.id}",
+                    operation="subagent.approval_grant_refused",
+                    outcome="blocked",
+                    source="guardrails",
+                    resources=f"subagent_id={info.id},grant=auto,refused_by=governance_ceiling",
                 )
         # Inherit agent from parent session when not explicitly specified
         agent = info.agent or self._sessions.get_agent(info.parent_session_key)

@@ -691,6 +691,12 @@ async def start_dashboard(
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
     app.router.add_get("/api/models/health", handlers.api_models_health)
+    # The earned-autonomy ladder (§6.1). One read + three writes, and only ONE of the three
+    # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.
+    app.router.add_get("/api/autonomy", handlers.api_autonomy)
+    app.router.add_post("/api/autonomy/grant", handlers.api_autonomy_grant)
+    app.router.add_post("/api/autonomy/demote", handlers.api_autonomy_demote)
+    app.router.add_post("/api/autonomy/undo", handlers.api_autonomy_undo)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
     # Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1). Literal /views first,

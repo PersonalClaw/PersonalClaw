@@ -599,15 +599,24 @@ async def run_script_hook(
     # BEFORE dispatch, so an app-contributed provider inherits the denylist. A
     # blocked action returns a blocked result rather than executing.
     from personalclaw.guardrails.denylist import enforce_action
+    from personalclaw.guardrails.policy import unattended_dispatch_key
 
     # `parent_session_key` rides the event payload when a subagent fired the hook
-    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs. A
-    # top-level fire omits it → "" → the profile-glob union is skipped.
+    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs.
+    #
+    # 🔴 A top-level fire omitted it → "" → classified ATTENDED → INTERACTIVE, so the whole
+    # profile layer was skipped (PHF-8). By the same reasoning the incident kill switch
+    # above already applies — a hook's ACTION is an automated side-effect even when its
+    # triggering event happened in an interactive turn — a hook fire with no parent session
+    # is an unattended dispatch, and now resolves as one.
+    _session_key = str(hook_event.get("parent_session_key", "")) or unattended_dispatch_key(
+        f"hook:{hook.id}"
+    )
     _deny = enforce_action(
         hook.provider,
         hook.provider_config,
         ctx,
-        session_key=str(hook_event.get("parent_session_key", "")),
+        session_key=_session_key,
     )
     if _deny.blocked:
         hook.last_run = time.time()
@@ -618,6 +627,35 @@ async def run_script_hook(
             hook_name=hook.name,
             event=hook.event,
             error=f"blocked by guardrails denylist: {_deny.reason}",
+        )
+    # Rung routing (AUTONOMY-GUARDRAILS §5.2), composed with the denylist gate above and
+    # sitting ON TOP of it: a rung never relaxes a block, an incident, or a budget pause.
+    # The route comes from the provider NAME alone — the name→type mapping lives on the
+    # declaration (`ActionTypeSpec.providers`), so an app-contributed provider is routed by
+    # these same lines with no branch of its own here.
+    from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+    from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+    route = _route_action(hook.provider, session_key=_session_key)
+    if not route.executes:
+        announce_withheld(
+            route,
+            title=f"{hook.name or hook.provider} is waiting for you",
+            body=(
+                f"The {hook.provider!r} action on the {hook.event} event did not run: "
+                f"{route.reason}."
+            ),
+            refs={"hook": hook.id, "provider": hook.provider},
+            dedup_key=f"autonomy_hold:{route.key}:hook:{hook.id}",
+        )
+        hook.last_run = time.time()
+        hook.last_status = "held_for_rung"
+        hook.run_count += 1
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            error=f"held for your approval: {route.reason}",
         )
     try:
         result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
@@ -656,6 +694,16 @@ async def run_script_hook(
     else:
         hook.last_status = "error"
     hook.run_count += 1
+
+    # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only for
+    # an action that actually did something — a failed action has nothing to take back.
+    if route.records_reversal and result.success:
+        record_reversal(
+            route,
+            result,
+            label=hook.name or hook.provider,
+            refs={"hook": hook.id, "provider": hook.provider},
+        )
 
     # A provider that populated the §2 envelope on a failed result surfaces its
     # WHAT/WHY/FIX text as the error (else the plain provider error string).

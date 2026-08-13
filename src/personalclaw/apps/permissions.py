@@ -27,15 +27,22 @@ sandbox). Enforcement status of each method:
   (apps/app_crons.reconcile_app_crons).
 * ``can_use_storage`` — the backend launcher hands the app its DATA_DIR only when
   held (apps/backend_runtime).
-* ``can_use_network`` — **DECLARATION-ONLY (unenforced by design)**. An app
-  backend is an isolated subprocess with its own OS-level network stack; there is
-  no in-process egress hook the gateway can intercept. The flag records INTENT so
-  the Store can surface it (install consent lists "network access: yes/no") and a
-  future OS-level isolation layer (cgroups/nftables/seccomp) can enforce it. Every
-  gateway-MEDIATED reach is already bounded by ``can_use_api`` — a ``network:false``
-  app can still reach the internet through its own subprocess; the plan is to
-  tighten this via egress sandboxing in a future milestone. Until then, treat
-  ``network: true`` as an honest declaration, not a security boundary.
+* ``can_use_app_messaging`` — the gateway broker (apps/messaging.send_message) refuses
+  an undeclared sender→target pair 403 + SEL, and it is the only app-to-app path, so
+  this is the whole gate. Enforced, and (APE-12) disclosed at install consent as such.
+* ``can_use_network`` — **DECLARATION-ONLY (unenforced by design)**, and the consent
+  surface says so rather than implying otherwise (EI-12 D2). There is no per-app
+  egress chokepoint to enforce at: an app's provider code is imported **in-process**
+  by the gateway (``providers/loader.py``), so its own ``httpx``/``requests`` calls
+  are the gateway's egress, and an app with a backend owns a separate OS process with
+  its own network stack. Confining either would take an OS-level isolation layer
+  (cgroups/nftables/seccomp) or routing all app egress through a guarded seam — an
+  architecture change, not a flag. So the flag is DISCLOSURE, and the Store discloses
+  it as such: ``PermissionList`` (``web/src/pages/apps/AppsSection.tsx``) renders the
+  network claim OUTSIDE the enforced-permission bullets, labelled advisory, and
+  renders it whether or not the app declares it — so neither its presence nor its
+  absence reads as containment. Every gateway-MEDIATED reach is separately bounded by
+  ``can_use_api``. Treat ``network: true`` as an honest declaration, not a boundary.
 """
 
 from __future__ import annotations

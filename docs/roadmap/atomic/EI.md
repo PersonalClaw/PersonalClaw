@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `EI-1` | ✅ | SandboxProvider seam + `none` provider + ResourceCeilings foundation | — | sandbox_providers/ package + `none` provider composing sandbox.wrap_argv exists; SubagentManager.spawn(sandbox="none") runs the worker through handle.exec; a child `ulimit -n` reports the ceiling; sandbox.nofile/max_pids/max_rss_mb round-trip via test_config_roundtrip; test_manifest_types_match_handlers passes (type+handler in one commit) |
 | `EI-2` | ⬜ | `docker` provider + engine/workspace-block adoption + cgroup v2 tier | `EI-1`, `EXT:WORK-CONTAINERS:WORK-R3 workspace block call sites + WORK-R20 mode:container re-expression` | SC1: a stage `sandbox: docker` runs its process tree in a UID-aligned bind-mount container over its WORK-R3 worktree; a write outside allowed_write_paths is blocked by the boundary; a no-Docker machine parks needs-input with a typed reason (no silent host downgrade for unattended). SC2: a subagent `sandbox: docker` without a grant to ~/.personalclaw/models cannot delete a real local model. Linux fork-bomb child hits pids.max; macOS logs a one-time not-enforced warning |
-| `EI-3` | ⬜ | Spawn-audit CI test + wrap remaining agent-influenced spawn seams | `EI-1` | tests/test_spawn_ceiling_audit.py is green with every agent-influenced seam ceiling-wrapped or explicitly operator-exempt; adding an unmapped create_subprocess_exec/Popen/StdioServerParameters on a branch fails CI naming the file:line |
+| `EI-3` | ✅ (#PENDING) | Spawn-audit CI test + wrap remaining agent-influenced spawn seams | `EI-1` | tests/test_spawn_ceiling_audit.py is green with every agent-influenced seam ceiling-wrapped or explicitly operator-exempt; adding an unmapped create_subprocess_exec/Popen/StdioServerParameters on a branch fails CI naming the file:line |
 | `EI-4` | ⬜ | Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker | `EI-1`, `EI-2` | SC3: with apps/lima-sandbox installed + instance running, a terminal opened "inside the run's sandbox" executes in the VM with correct path translation; stopping the instance flips the provider to greyed-out-with-reason within one probe TTL; an interactive request gets the path-guard-only dialog; app backends launch through backend.sandbox |
 | `EI-5` | ⬜ | BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings→Agents evidence | — | SC4: Settings→Agents shows Claude Code, Codex, Gemini CLI, Kiro rows with health evidence (last handshake, version, latency) + capability chips; a runner removed from PATH flips unhealthy with the verbatim probe error; an unattended spawn against an unverified adapter is refused when agents.unattended_requires_verified_adapter is on |
 | `EI-6` | ⬜ | Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions | `EI-5`, `EXT:WORK-CONTAINERS:WORK-R8 lease convention (flock under locks/) + WORK-R7 suspended-liveness path` | SC5: killing the gateway mid-run with durable sessions on → the recovery sweep reattaches to the still-alive tmux worker (run resumes suspended→running, journal flags `resumed`), only genuinely dead sessions are tombstoned; a claimed runner idle past TTL is released and its lease holder is visible in Settings |
@@ -43,7 +43,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `EI-3` — Spawn-audit CI test + wrap remaining agent-influenced spawn seams
 
-**Status:** todo
+**Status:** done (#PENDING)
 
 Amendment 2026-07-26 EI-A3: AST spawn-audit vs ceiling-wrapped/operator-exempt map; wrap apps backend, mcp_client/mcp_discovery, acp/transport, schedule_script, loop gates/worktree
 
@@ -115,9 +115,22 @@ Amendment 2026-07-29 (b) + task D0 — docs-only, dependency-free: correct the w
 
 ### `EI-12` — App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)
 
-**Status:** todo
+**Status:** todo — **D1+D2 landed 2026-08-13**; D3/VD outstanding (D3 is BLOCKED as an owner-scope
+architecture decision — see the plan's `## Execution log`)
 
 Amendment 2026-07-29 (a) + tasks D1 (backend env by allowlist not dict(os.environ), sensitive-prefix scrub floor), D2 (permissions.network: enforce via egress rail OR mark advisory in consent UI/manifest — not both/neither), D3 (per-app pythonDependencies isolated to app-scoped target so an app cannot shadow a core dep), VD (validation-as-a-user sweep)
+
+**D1 (done).** `apps/backend_runtime.py` builds the child env via `sandbox.build_child_env(site="app-backend", extra={PORT, PERSONALCLAW_APP_NAME, PERSONALCLAW_APP_SECRET, +PERSONALCLAW_APP_DATA_DIR when storage is held})`. Falsified before trusting: reverting the line shows the backend used to receive ~130 undeclared variables incl. `SSH_AUTH_SOCK`, AWS and git-identity vars. Blast radius measured — the 9 credential-name fallbacks are read only in **in-process** `provider.py` modules, and of 44 first-party apps only `growth` and `minutes` declare a backend (both read just `PORT`/`PERSONALCLAW_APP_DATA_DIR`), so no first-party app changes behaviour; both booted healthy against the change. `tests/test_app_backend_child_env.py` drives the real spawn.
+
+**D2 (done).** Resolved as **mark advisory**, not enforce: provider code is imported in-process by the
+gateway, so there is no per-app egress chokepoint, and only 2 of 44 first-party apps have a backend —
+an egress rail there would confine 2 and leave 42 unconfined while showing all 44 identically. The
+Store's `PermissionList` (both the pre-install panel and the installed-app panel) now renders the
+network claim outside the enforced-permission bullets, labelled advisory, **whether or not the app
+declares it** — measured before-state: a declaring app got a "• Network access" bullet among enforced
+grants, and a `network: false` app (which `growth` and `minutes`, the only two backend-having apps, both
+are) got no row at all, reading as "blocked". `apps/permissions.py`, `docs/security/limitations.md` §2
+and `docs/architecture/app-platform.md` now describe that surface instead of claiming it generically.
 
 **Done when:** a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds
 

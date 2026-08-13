@@ -85,6 +85,7 @@ from personalclaw.subagent import (
     ToolApprovalCallback,
     resolve_max_subagents,
 )
+from personalclaw.triggers.models import Outcome
 
 if TYPE_CHECKING:
     from personalclaw.channel_delivery import ChannelDelivery
@@ -100,6 +101,11 @@ logger = logging.getLogger(__name__)
 
 # Max retries for injecting subagent results into parent sessions.
 _MAX_INJECT_ATTEMPTS = 2
+
+# How often the earned-autonomy promotion scan runs (§6.1). Six hours, not the poll
+# interval it rides: one pass reads the SEL tail once per declared action type, and a rung
+# is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
+_AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
 
 # Upper bound for a single autonudge-driven goal loop turn. Loop cycles run long
 # (subagent fan-out, 15-20 min), so this is generous — it only fires to free a
@@ -128,6 +134,15 @@ _CYCLE_REPROMPT_MSG = (
 
 # Conservative per-message chunk limit for channel delivery (fits Slack's
 # 3000-char Block Kit section.text bound, the tightest known transport).
+
+
+#: The only statuses a pre-dispatch REFUSAL may record (``_record_refused_fire``). Both are
+#: keys `triggers.history.SCHEDULE_STATUS_TO_OUTCOME` resolves, and the guard that reads this
+#: tuple is what stops a caller inventing a third: an unmapped status falls to that table's
+#: silent FAILED fallback, so a defended fire would appear in the user's history as a broken
+#: automation. `test_triggers_status_vocabulary` reads this same tuple to enumerate what this
+#: writer can produce — keeping it a module constant is what keeps that rail able to see it.
+_REFUSAL_STATUSES: tuple[str, ...] = ("blocked_injection", Outcome.SKIPPED_GATE.value)
 
 
 # Tool-name prefixes treated as read-only by the --approval reads flag.
@@ -274,6 +289,7 @@ class GatewayOrchestrator:
         self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
+        self._last_autonomy_scan: float = 0.0  # §6.1 promotion-proposal scan throttle
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -912,8 +928,104 @@ class GatewayOrchestrator:
             self._push_trigger_refresh()
             return
 
+        # The context the provider will receive, built HERE rather than at the `execute` call so
+        # the denylist gate below judges the same `(config, ctx)` pair the provider is handed —
+        # the call shape the other two seams already use.
+        ctx = ActionContext(event=event, context="", payload=payload)
+
+        # 🔴 THE DENYLIST, at the seam that lost it (AUTONOMY-GUARDRAILS §1.2 — AG-12). §1.2 says
+        # the denylist is enforced at the THREE dispatch seams every action-provider execution
+        # passes through, "so an app-contributed provider inherits the denylist without knowing it
+        # exists", and names the third as `gateway.py:701` — `_run_action_job`, which retired with
+        # `ScheduleService` (S112). The successor that method became inherited the kill switch and
+        # the rung ladder but NOT the denylist: measured, `enforce_action` appeared once in
+        # `hooks.py`, once in `event_triggers.py` and ZERO times here — while this is the dispatch
+        # path for every clock, file, webhook and chained trigger, the busiest unattended path in
+        # the product. Retiring a legacy path is never a pure deletion.
+        #
+        # Placed AFTER `_trigger_secrets.resolve` deliberately: the check must see the config the
+        # provider will actually receive, so a `{{secret:...}}` that expands into a denied command
+        # or a sensitive path is judged on its resolved value and not on a placeholder that dodges
+        # every pattern. And BEFORE the rung ladder, matching both other seams — a rung never
+        # relaxes a block, an incident, or a budget pause.
+        from personalclaw.guardrails.denylist import enforce_action
+        from personalclaw.guardrails.policy import unattended_dispatch_key
+        from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+        from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+        # 🔴 THE SESSION IDENTITY (PHF-8), now shared by BOTH gates on this seam (the shape
+        # `event_triggers` uses), so the denylist and the ladder judge one fire under one resolved
+        # posture rather than two. The rung call passed `session_key=""` — which
+        # `is_unattended_session` classifies as ATTENDED, so a clock/file/webhook trigger
+        # fire resolved INTERACTIVE and "headless by construction" held only in tests. A
+        # store-trigger fire has no chat session by definition, so it gets the sessionless
+        # unattended identity: it resolves HEADLESS and is bounded by the operator ceiling,
+        # and the trigger id rides along so a clamp in the SEL names the automation. Threading it
+        # into `enforce_action` is also what lets the run's `SafetyProfile.denylist_extra` and its
+        # `path_allowlist` confinement layer here exactly as they do at the other two seams.
+        dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
+        decision = enforce_action(provider_name, config, ctx, session_key=dispatch_key)
+        if decision.blocked:
+            matched = decision.matched or ""
+            reason = decision.reason or "blocked by a guardrail rule"
+            logger.warning(
+                "trigger %s: action blocked by the guardrails denylist (%s)", trigger.id, matched
+            )
+            # `skipped_gate`, the same status the rung hold below records: a denylist block is a
+            # pre-dispatch POLICY refusal, which is the class `_REFUSAL_STATUSES` admits.
+            # `Outcome.REFUSED` reads closer in prose but is not in that tuple, and an unmapped
+            # status falls to `SCHEDULE_STATUS_TO_OUTCOME`'s silent FAILED default — a defended
+            # fire would then appear in the user's history as a broken automation.
+            # `enforce_action` has already written the SEL row and, for `needs_human`, fired the
+            # notification; this row is what puts the refusal in the Runs history too.
+            from personalclaw.triggers.models import Outcome as _Outcome
+
+            await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=(
+                    f"blocked by the guardrails denylist: {matched} — {reason}"
+                    if matched
+                    else f"blocked by the guardrails denylist: {reason}"
+                ),
+            )
+            self._push_trigger_refresh()
+            return
+
+        # 🔴 RUNG ROUTING, at the seam the retired one became (AUTONOMY-GUARDRAILS §5.2). The plan
+        # names `_run_action_job` as the third dispatch seam; that method retired with
+        # `ScheduleService` (S112) and, per the note at its old site, "the substrate GENERALIZED
+        # both: action dispatch is `_fire_store_trigger`". So this IS the third seam, under a new
+        # name — and it is the one every clock / file / webhook / chained trigger passes through.
+        # Wiring only the hook and event-trigger seams would honour a declared floor at two of
+        # three dispatch points, which is the same shape as not honouring it at all.
+        #
+        # The route comes from the provider NAME; the name→type mapping lives on the declaration
+        # (`ActionTypeSpec.providers`), so an app-contributed action inherits its declared bounds
+        # here with no branch of its own.
+        route = _route_action(provider_name, session_key=dispatch_key)
+        if not route.executes:
+            announce_withheld(
+                route,
+                title=f"{provider_name} is waiting for you",
+                body=(
+                    f"The {provider_name!r} action on trigger {trigger.id} did not run: "
+                    f"{route.reason}."
+                ),
+                refs={"trigger": str(getattr(trigger, "id", "") or ""), "provider": provider_name},
+                dedup_key=f"autonomy_hold:{route.key}:trigger:{getattr(trigger, 'id', '')}",
+            )
+            from personalclaw.triggers.models import Outcome as _Outcome
+
+            await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=f"held for your approval: {route.reason}",
+            )
+            self._push_trigger_refresh()
+            return
+
         try:
-            ctx = ActionContext(event=event, context="", payload=payload)
             # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
             # 30s otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
             # budget. Measured: this call passed nothing, so every store-backed bash fire took the
@@ -975,6 +1087,18 @@ class GatewayOrchestrator:
                     get_meter().end_run(run_key)
                 except Exception:  # noqa: BLE001 - bookkeeping must not mask a fire's outcome
                     logger.debug("end_run failed for %s", run_key, exc_info=True)
+            # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only
+            # for an action that succeeded — a failed action has nothing to take back.
+            if route.records_reversal and bool(getattr(result, "success", False)):
+                record_reversal(
+                    route,
+                    result,
+                    label=provider_name,
+                    refs={
+                        "trigger": str(getattr(trigger, "id", "") or ""),
+                        "provider": provider_name,
+                    },
+                )
             await self._record_fire_outcome(trigger, result=result)
             self._deliver_fire_outcome(trigger, ok=bool(getattr(result, "success", True)))
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
@@ -1412,6 +1536,30 @@ class GatewayOrchestrator:
         matched GROUPS name the pattern class, which is what tells a real attack from a false
         positive.
         """
+        await self._record_refused_fire(
+            trigger,
+            status="blocked_injection",
+            error=f"payload blocked by the injection screen ({groups}); never retried",
+        )
+
+    async def _record_refused_fire(self, trigger: Any, *, status: str, error: str) -> None:
+        """Write ONE ledger row for a fire a gate refused before the provider was called.
+
+        Shared by every pre-dispatch refusal on this path (the injection screen, the rung
+        ladder), because a refusal only a log knows about is a silent drop — and two copies
+        of this row would be two chances to write a `status` no projection maps, which reads
+        in the user's history as a genuine failure.
+
+        ``status`` must be one of :data:`_REFUSAL_STATUSES`. Refused rather than written,
+        because the projection table reads statuses with a `.get(status, FAILED)` — a status
+        nobody mapped is indistinguishable from one somebody decided about, and it lands in
+        the user's history as a genuine failure.
+        """
+        if status not in _REFUSAL_STATUSES:
+            logger.error(
+                "refusing to record fire status %r: not one of %s", status, _REFUSAL_STATUSES
+            )
+            return
         try:
             import time as _time
 
@@ -1421,17 +1569,17 @@ class GatewayOrchestrator:
             now = _time.time()
             await ScheduleRunStore(config_dir()).append(
                 ScheduleRun(
-                    run_id=f"blocked-{int(now * 1000)}",
+                    run_id=f"{status}-{int(now * 1000)}",
                     job_id=str(getattr(trigger, "id", "") or ""),
-                    trigger="blocked_injection",
+                    trigger=status,
                     started_at=now,
                     finished_at=now,
-                    status="blocked_injection",
-                    error=f"payload blocked by the injection screen ({groups}); never retried",
+                    status=status,
+                    error=error,
                 )
             )
         except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
-            logger.debug("could not record the blocked-fire row for %s", trigger, exc_info=True)
+            logger.debug("could not record the refused-fire row for %s", trigger, exc_info=True)
 
     async def _fire_chained_triggers(self, trigger: Any, payload: dict[str, Any]) -> None:
         """Fire every `run_completed` trigger waiting on the run that just finished (S122).
@@ -1499,10 +1647,46 @@ class GatewayOrchestrator:
                 # it raises an inbox PROPOSAL and stops. Incident mode already suspended above,
                 # which is right: proposing work is still unattended background activity.
                 await asyncio.to_thread(self._scan_scratchpad)
+                # The earned-autonomy promotion scan (§6.1). Rides this loop for the same
+                # reason the scratchpad does — it is a periodic "look at local state and
+                # raise a proposal" pass with nothing to dispatch — but on its OWN much
+                # slower clock, because each pass reads the SEL tail once per declared
+                # action type. Self-throttled rather than given a task of its own.
+                await asyncio.to_thread(self._scan_autonomy_promotions)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    def _scan_autonomy_promotions(self) -> None:
+        """Raise a proposal for every action type that has EARNED its next rung (§6.1).
+
+        The ladder only ever climbs on a click, so an earned rung has to travel to the user
+        instead of waiting to be found in a Settings panel — that is the difference between
+        a promotion the user chose and a promotion nobody ever hears about. The proposals
+        are deduped per (type, rung), so re-running this costs nothing and re-raises nothing.
+
+        Never promotes and never raises: this scan cannot change a rung, and a failed scan
+        must not stop the file fires that share the loop.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        if now - self._last_autonomy_scan < _AUTONOMY_PROPOSAL_INTERVAL_SECS:
+            return
+        self._last_autonomy_scan = now
+        try:
+            from personalclaw.guardrails.ladder import propose_promotions
+
+            proposed = propose_promotions()
+            if proposed:
+                logger.info(
+                    "autonomy: proposed a promotion for %d action type(s): %s",
+                    len(proposed),
+                    ", ".join(proposed),
+                )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("autonomy promotion scan failed", exc_info=True)
 
     def _scan_scratchpad(self) -> None:
         """Scan the configured scratchpad and raise proposals for its new actionable lines.
@@ -3500,6 +3684,16 @@ class GatewayOrchestrator:
 
     async def run(self) -> None:
         """Start all services and block until shutdown signal."""
+        # ── GOVERNANCE BOOT, first and fail-closed (PLATFORM-HARDENING-FLOORS §5) ──
+        # The operator's ceiling is established BEFORE any service exists, because every
+        # service below can dispatch an unattended action and each one resolves its posture
+        # through `profile_for_session`. A corrupt/unknown ceiling therefore aborts the
+        # process with WHAT/WHY/FIX rather than starting wide open with a logged warning:
+        # "governance could not be established" is not a degraded mode, it is a stop.
+        from personalclaw.guardrails.ceiling import ensure_governance_boot
+
+        ensure_governance_boot()
+
         # Raise FD limit — each ACP agent session uses ~6 FDs (3 pipes)
         # plus MCP server subprocesses. Default macOS limit (256) is too low.
         import resource

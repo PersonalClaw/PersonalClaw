@@ -228,7 +228,9 @@ def test_sandbox_config_roundtrips(tmp_path, monkeypatch):
 def test_sandbox_config_in_to_dict():
     d = AppConfig_to_dict()
     assert "sandbox" in d
-    assert set(d["sandbox"]) == {"nofile", "max_pids", "max_rss_mb"}
+    # env_passthrough is the child-env allowlist's declared-needs seam (PHF-4) — same
+    # section, same round-trip contract, so it belongs in this exact-set assertion.
+    assert set(d["sandbox"]) == {"nofile", "max_pids", "max_rss_mb", "env_passthrough"}
 
 
 def AppConfig_to_dict():
@@ -244,6 +246,8 @@ def test_sandbox_keys_in_editable_config_allowlist():
     for key in ("sandbox.nofile", "sandbox.max_pids", "sandbox.max_rss_mb"):
         assert key in _EDITABLE_CONFIG, f"{key} missing from _EDITABLE_CONFIG"
         assert _EDITABLE_CONFIG[key]["type"] == "int"
+    # The child-env allowlist's declared-needs seam is a name list, not a ceiling.
+    assert _EDITABLE_CONFIG["sandbox.env_passthrough"]["type"] == "str_list"
 
 
 def test_default_ceilings_do_not_emit_nproc():

@@ -35,7 +35,17 @@ def _ensure_default_providers_registered() -> None:
     moved to a standalone app (apps/webhook-action) and registers via the app loader
     when installed. The four native actions (notify / send-message / create-task /
     invoke-agent) reach in-process services via the action service accessor.
+
+    Registering a provider also registers its AUTONOMY DECLARATION (AUTONOMY-GUARDRAILS
+    §5.2): the two paths must not be able to drift, because a provider present in the
+    dispatch registry with no declaration behind it is exactly the case the dispatch seams
+    cannot tell apart from an ungoverned action. ``guardrails.rungs.CORE_ACTION_TYPES`` is
+    the table; ``test_guardrails_rung_routing`` asserts every built-in name here appears in
+    it, so adding a provider without a declaration reds the build.
     """
+    from personalclaw.guardrails.rungs import ensure_core_action_types
+
+    ensure_core_action_types()
     if "bash" not in _providers:
         from personalclaw.action_providers.bash_provider import BashActionProvider
 

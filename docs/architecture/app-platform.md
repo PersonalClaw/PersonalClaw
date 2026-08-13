@@ -42,7 +42,8 @@ backend**.
 
 ## Permissions (`apps/permissions.py`)
 
-The manifest's `permissions` block is enforced:
+The manifest's `permissions` block is enforced, with one documented exception
+(`network`, which the consent surface marks advisory):
 
 | Permission | Enforcement |
 |---|---|
@@ -53,7 +54,8 @@ The manifest's `permissions` block is enforced:
 | `cron` | whether manifest crons register |
 | `storage` | a private DATA_DIR handed to the backend |
 | `agent` | two independent gates for agent invocation |
-| `network` | **DECLARATION-ONLY, unenforced by design** — an app backend is its own OS process with its own network stack; there is no chokepoint. The declaration is surfaced honestly at install consent, and gateway-mediated reach is already bounded by `api`. |
+| `appMessaging` | which apps this app may send a brokered message to — `POST /api/apps/message` is the only app-to-app path and refuses an undeclared target `403` + SEL. Deny by default: declaring nothing means it can message no app. Install consent names each target, rendering a trailing-`*` entry as the name prefix it is (`PermissionList`), because the grant covers every current and future app under that prefix. |
+| `network` | **DECLARATION-ONLY, unenforced by design** — there is no per-app chokepoint: provider code is imported in-process by the gateway, and an app backend is its own OS process with its own network stack. So it is disclosure, and the Store consent surface says so: the network claim renders outside the enforced-permission list, labelled advisory, whether or not the app declares it (`PermissionList`) — neither its presence nor its absence reads as containment. Gateway-mediated reach is separately bounded by `api`. See [security/limitations.md](../security/limitations.md#2-the-app-network-permission-is-declaration-only). |
 
 The app identity claim is adopted in **all** auth modes — including
 `AUTH_MODE=none`, where a dedicated middleware still extracts the app token so
@@ -72,6 +74,46 @@ An app with a backend gets its own subprocess:
   live sibling's process is never touched;
 - `PERSONALCLAW_SKIP_APP_BACKENDS=1` disables backend spawning (test
   isolation).
+
+### The backend environment — an allowlist, not an inheritance
+
+A backend does **not** inherit the gateway's environment. It receives
+`sandbox.build_child_env(site="app-backend")`: the `CHILD_ENV_BASE_NAMES`
+allowlist (`PATH`, `HOME`, `TMPDIR`, `XDG_*`, locale/`TZ`, proxy + CA vars,
+`PYTHONPATH`, and the three `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` vars) plus
+any name the operator declared in `sandbox.env_passthrough`, layered with the
+four variables the supervisor **computes**:
+
+| variable | when |
+|---|---|
+| `PORT` | always — the resolved backend port |
+| `PERSONALCLAW_APP_NAME` | always |
+| `PERSONALCLAW_APP_SECRET` | always (the proxy-signature secret; fail-closed) |
+| `PERSONALCLAW_APP_DATA_DIR` | only when the app declares the `storage` capability |
+
+**Why.** An app backend is the least-trusted long-lived child in the tree —
+third-party code, scanned but not trusted at install, running for as long as the
+app is enabled. `config/loader.py` deliberately seeds `~/.personalclaw/.env`
+credentials into `os.environ` so "trusted children" inherit them, so a full
+`os.environ` copy handed every one of those credentials to every installed app's
+backend. Measured on a real gateway: the pre-change copy delivered ~130
+variables the backend had no declared need for, including `SSH_AUTH_SOCK`, AWS
+region/SDK vars and the operator's git identity.
+
+**If a backend needs one more variable,** the operator declares it by name in
+`sandbox.env_passthrough` (`config.json`). That is an operator surface on
+purpose — it is not reachable from a manifest or a trigger payload, because an
+app-declared name would be an exfiltration channel. Note that the declaration is
+**global**, not per-site: a name declared there reaches every child site (cron,
+bash action, app backend). Withheld names are logged at DEBUG against the
+`app-backend` site, so an app author whose variable stopped arriving can see
+exactly which one was dropped and why. `BackendConfig` has no `env` field — an
+app cannot declare its own environment.
+
+The `storage` gate is enforced **after** the build: `PERSONALCLAW_APP_DATA_DIR`
+is popped when the app lacks the capability, so declaring that name in
+`sandbox.env_passthrough` cannot hand every storage-less backend a data dir and
+quietly undo sandbox P3.
 
 ### The reverse proxy & token model
 

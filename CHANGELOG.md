@@ -10,6 +10,164 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Installed apps' backends no longer inherit PersonalClaw's environment.** ⚠️ **This changes
+  behaviour for an app backend that read a variable it never declared.** An app with a backend runs
+  it as a subprocess, and that subprocess used to start from a full copy of the gateway's own
+  environment — which, because PersonalClaw deliberately puts your `.env` credentials there so
+  "trusted children" can see them, meant every installed app's backend could read every credential
+  you had configured, plus (measured on a real gateway) about **130** other variables it had no
+  declared need for, including your SSH agent socket, AWS settings and your git identity. An app
+  backend is the least-trusted long-running process in the system — third-party code, scanned but
+  not trusted at install — so it now gets the same *minimal* environment hooks and cron scripts got
+  in the previous release: `PATH`, `SHELL`, `PWD`, `TERM`, `PYTHONPATH`, your locale and `TZ`,
+  `HOME`/`TMPDIR`/`USER`/`XDG_*`, your proxy and CA-bundle settings, and
+  `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT`. The four variables the app contract promises are
+  unchanged: `PORT`, `PERSONALCLAW_APP_NAME`, `PERSONALCLAW_APP_SECRET`, and
+  `PERSONALCLAW_APP_DATA_DIR` for an app that declares the `storage` permission. Everything else is
+  withheld. **All 44 first-party apps were booted against this change and are unaffected** — the two
+  that ship a backend (Growth, Minutes) read only `PORT` and `PERSONALCLAW_APP_DATA_DIR`, and the
+  model/search apps read their API-key fallbacks in the gateway process itself, not in a backend, so
+  a key exported in your shell still works for them exactly as before. **If a third-party app's
+  backend stops working for want of an environment variable, you have two ways to fix it:** move the
+  value into PersonalClaw's credential store and configure it on the app's instance (the supported
+  route — every first-party model app treats the environment variable as a *fallback* to a
+  configured credential), or, if the app genuinely needs the ambient variable, name it in
+  `sandbox.env_passthrough` (`personalclaw config set sandbox.env_passthrough '["MY_VAR"]'`). Note
+  that `sandbox.env_passthrough` is global — a name declared there is visible to your hooks and cron
+  scripts too, not just to app backends — and that credential-shaped names (`AWS_SECRET*`,
+  `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME`, `GIT_ASKPASS`) stay refused even if you declare
+  them. To see what a backend is missing, run the gateway with `--verbose`: each backend launch logs
+  the names it withheld.
+- **A scheduled Python script can no longer exhaust PersonalClaw's file descriptors.** A
+  `run-script` cron ran inside the OS sandbox with a minimal environment, but with no cap on what
+  it could *consume* — so a script that leaked open files could starve the gateway of descriptors,
+  something an agent `bash` command has been unable to do for a while. Scheduled scripts now run
+  under the same resource ceiling as every other agent-driven child: the `sandbox.nofile` limit
+  (default 4096) applies to the script and everything it starts. A script that hits it gets an
+  ordinary `OSError`/`EMFILE`, which surfaces in the job's run history. If you have a legitimately
+  descriptor-hungry script, raise the limit with `personalclaw config set sandbox.nofile 16384`.
+- **The Store now tells you which other apps an app may message.** An app can declare that it may
+  send messages to other installed apps, and PersonalClaw really does enforce that list: a brokered
+  message is the only way one app can reach another, and a target the app did not declare is refused
+  and written to the security log. But the Store never showed you the list. Installing an app that
+  declared it could message your mail and notes apps looked identical to installing one that could
+  message nothing — the permission was enforced behind your back rather than consented to. Both the
+  install-consent panel and the installed-app panel now name each target among the permissions the
+  gateway enforces. A wildcard target is spelled out rather than shown as-is, because it grants more
+  than it looks like: an app declaring `mail-*` reads as "any app whose name starts with mail-",
+  which covers apps you have not installed yet, and `*` reads as "any installed app". An app that
+  declared no target is stated too — "App messaging: none — it declared no target, and the gateway
+  broker is the only way one app can reach another, so it can message no other app" — so silence is
+  never left to your imagination. Nothing about what an app can do has changed; the enforcement was
+  already there and is unchanged. No first-party app declares this permission today, so nothing in
+  your Library will start showing a messaging row.
+- **The Store no longer implies PersonalClaw confines an app's network access.** An app's manifest can
+  declare a `network` permission, and the Store used to list it as a bullet under "Permissions"
+  alongside storage, scheduled jobs and background agents — all of which the gateway really does
+  enforce. This one it does not, and cannot: an app's code runs inside PersonalClaw's own process (or,
+  for the handful of apps that ship a backend, as an ordinary OS process of its own), so there is no
+  point at which the platform can intercept the app's outbound traffic. The misleading half was the
+  quiet one: an app that declared `network: false` showed **no** network row at all, which read as a
+  guarantee that it had been blocked — including for the only two first-party apps that ship a
+  backend, Growth and Minutes, both of which declare exactly that. The app detail and install-consent
+  panels now show the network claim *outside* the list of permissions the gateway enforces, marked
+  advisory, and show it whether or not the app declares one: "Network access: declared / not declared
+  — advisory only. PersonalClaw does not confine an app's outbound traffic: this app's code can reach
+  the network either way. The declaration is disclosure, not containment." Nothing about what an app
+  can do has changed — only what the interface promises. The controls that really do bound an installed
+  app are unchanged: its `api` permission bounds what it may ask the gateway for, and the supply-chain
+  scanner still gates what you can install in the first place.
+  Platform note: on Linux the same mechanism also carries the optional `sandbox.max_pids` and
+  `sandbox.max_rss_mb` bounds (both off by default) plus the OOM-killer preference that protects
+  the gateway; on macOS only the descriptor limit is enforced.
+- **Your hooks and cron scripts no longer inherit PersonalClaw's environment.** ⚠️ **This changes
+  behaviour for any hook, cron script or bash action that read an inherited environment variable.**
+  A hook command, a `run-script` cron script and a bash action used to start from a copy of the
+  gateway's own environment with a few names filtered out — measured on a real gateway, that was
+  **121** variables, and PersonalClaw deliberately puts your `.env` credentials in there so
+  "trusted children" can see them. A one-line hook (`printenv`) could read them. Those children now
+  get a *minimal* environment built from a fixed list instead: `PATH`, `SHELL`, `PWD`, `TERM`,
+  `PYTHONPATH`, your locale and `TZ`, `HOME`/`TMPDIR`/`USER`/`XDG_*`, your proxy and CA-bundle
+  settings, and `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` — plus, for a hook, the
+  `PERSONALCLAW_HOOK_EVENT`/`_CONTEXT` variables and the trigger's `$variables` exactly as before.
+  Everything else is withheld. **If a script of yours needs one more variable, name it in
+  `sandbox.env_passthrough`** (`personalclaw config set sandbox.env_passthrough '["SLACK_BOT_TOKEN"]'`,
+  or the config API) — for example a Slack token for a notifier script, or a language runtime's
+  variable. Credential-shaped names (`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME`,
+  `GIT_ASKPASS`) stay refused even if you declare them. To see what a script is missing, run the
+  gateway with `--verbose`: every spawn logs the names it withheld. Unchanged: cron scripts still
+  receive PersonalClaw's internal secret and port through the temp file they always did, so scripts
+  that call back into the API keep working.
+- **Scheduled, file-watch, webhook and chained automations now honour the action denylist — they
+  never did.** ⚠️ **This changes behaviour for automations that already exist.** The denylist that
+  refuses an automated action touching a credential path or running a destructive/exfiltrating
+  command was enforced when a *script hook* or a *memory-event trigger* fired an action, but not on
+  the busiest path of all: the one every clock, file-watch, webhook and chained trigger dispatches
+  through. That seam had the incident kill switch and the autonomy ladder, so the omission was easy
+  to miss — the denylist was lost when the old scheduled-job dispatcher was retired and its
+  replacement was never re-wired. From this release all three dispatch paths enforce it, which also
+  means an action contributed by an installed **app** inherits the denylist wherever it is fired.
+  A refused fire does not run, is recorded in the automation's run history as a **skipped gate**
+  (not a failure, so it will not count toward auto-pausing your automation) naming the rule that
+  matched, is written to the security event log, and — for a `needs_human` rule — raises a
+  notification. What this can affect, measured before shipping: only `bash` (its `command`),
+  `run-script` (its script name) and `run-prompt` (its `cwd`) carry a field the denylist inspects;
+  the other shipped action types are unaffected. If one of your scheduled commands stops running,
+  the likely built-in patterns are `rm -rf ~…` / `rm -rf /…` and `git … push` — the same patterns
+  the assistant's own shell tool has always refused, which is the point: this is not a new policy,
+  it is an existing one that one seam was skipping. Nothing new is configured by default
+  (`security.autonomy_denylist` stays empty); to allow a command that is being refused, adjust the
+  command rather than the guardrail.
+- **A governance ceiling an operator writes once now bounds every unattended run — and the safety
+  profile it bounds is finally read at all.** PersonalClaw already described each run's posture in a
+  `SafetyProfile` (approval, tool grants, egress tier, path denies, budget, secret-scan mode), but
+  nothing consulted the tier/grants/denies, and every automated dispatch seam — clock, file, webhook
+  and chained triggers, memory-event triggers, and script hooks fired without a parent session —
+  asked for its posture with an *empty* session identity, which classified as "a human is watching"
+  and resolved the **interactive** posture. Automated work has been running under the interactive
+  profile. Now: those seams identify themselves as unattended, so they resolve the `headless`
+  posture, and an optional operator file at `$PERSONALCLAW_HOME/governance/ceiling.json` (or an
+  absolute path in `PERSONALCLAW_CEILING_FILE`) sets a hard bound that a run can only make
+  *stricter* — never looser. Six governed scopes (`approval`, `scan`, `egress`, `paths`, `tools`,
+  `budget`); for example `{"version": 1, "scopes": {"approval": {"value": "ask"}, "paths":
+  {"mode": "closed", "allow": ["~/workspace/**"]}}}` means nothing on this machine auto-approves and
+  automated actions may only touch your workspace. **No file means no change**: absent a ceiling,
+  behaviour is exactly what it was. A malformed one is a hard stop with a WHAT/WHY/FIX message
+  rather than a silent start, because "governance could not be established" is not a degraded mode.
+  The file is deliberately not editable through the app (it is absent from the config PATCH
+  allowlist and its directory is on the built-in sensitive-path denylist, so the agent's own write
+  paths refuse it), it is read once at start-up so an edit cannot widen a running gateway, and every
+  clamp is logged and written to the security event log. What it cannot do is stop a process running
+  as you from editing the file and restarting — for a real trust root, point
+  `PERSONALCLAW_CEILING_FILE` at a root-owned `0444` file outside your home. See
+  `docs/architecture/security.md`.
+  Two effects of the seam correction you may notice even with no ceiling file, both by design: an
+  automation whose action type is allowed to run fully on its own now runs with the **undo handle and
+  the passive "this happened" notification** kept (the "runs on its own, silently" rung is reserved
+  for work a human is watching, since nobody is there to notice otherwise) — it still runs, it is
+  just no longer invisible; and outbound secret scanning for automated runs follows your configured
+  mode (redact by default) instead of warn-only.
+- **An egress "allow-list" now actually restricts.** `allow_hosts` only ever *waived* the
+  private-address block, so the `registry` and `listed` egress tiers reached every public host
+  exactly like the default — a limit in name only. Policies can now be exclusive (only listed hosts
+  are reachable, checked before DNS resolution), which is what lets a run's egress tier — or a
+  ceiling of `{"egress": {"value": "listed"}}` — genuinely confine outbound traffic. The agent's web
+  fetch and watched-source polls both honour it, and a tier of `off` refuses the request with a
+  visible reason instead of making it.
+- **A watched-source poll now honours your denied hosts on the headless-browser tier too.** The
+  JavaScript-rendering tier passed a hardcoded policy, so `Security → Network` deny-hosts applied to
+  the plain fetch and were ignored on the render path. Both tiers now use the same resolved policy.
+- **An auto-approval grant for a spawned subagent can be refused by the ceiling.** The trust toggle,
+  `--approval yolo`, an `approval_mode: auto` caller and the config default could each widen a
+  subagent to auto-approve tool calls; none of them consulted an operator bound. With a ceiling of
+  `{"approval": {"value": "ask"}}` the grant is refused and the refusal is audited. Without a
+  ceiling file, the toggles behave exactly as before.
+- **Path rules are matched correctly.** The action denylist compared paths as strings without
+  anchoring them, so a relative path like `../../etc/passwd` could slip past a deny of `/etc/**`,
+  and `**` was treated as a single-level `*`, so `~/.ssh/**` missed `~/.ssh/sub/key`. There is now
+  one matcher: the queried path is expanded and absolutized, patterns are never rewritten, and `**`
+  crosses directories.
+
 - **App backends now authenticate inbound requests, closing a direct-to-port bypass.** An app's
   backend subprocess binds on loopback (`127.0.0.1:<port>`), which is a network boundary, not an
   authorization one — before this change any local process that found the port could talk to the
@@ -26,6 +184,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   `docs/architecture/app-platform.md`).
 
 ### Fixed
+
+- **A security-audit write that fails is no longer swallowed.** When the subagent reaper
+  force-kills a subagent that blew its deadline, it writes one security-event row — the only
+  record that the kill happened. That write sat inside a catch-all `except`, so on a home that
+  could not be written (read-only, full, permissions) the kill went ahead and the audit row was
+  lost with nothing raised: an unauditable kill that looked identical to an audited one. The
+  failure now surfaces (logged per-agent by the reaper sweep, which continues with the other
+  agents) rather than being absorbed. Every other audit write on this path already behaved this
+  way; this one was the exception.
+- **Developer-facing: the test suite no longer leaks SQLite handles, and the self-dev harness works
+  in a git worktree.** A full run printed ~1,600 `unclosed database` resource warnings from 95 test
+  files — every sqlite-backed store was built by a fixture and never closed — and closing them
+  exposed a real isolation bug: the process-wide knowledge store was memoized across tests, so
+  tests were searching an earlier test's database. Separately, the harness resolved its interpreter
+  as the cwd-relative `.venv/bin/python`, which does not exist in a worktree, so
+  `python -m harness validate` could not collect the suite there and three of its tests failed in
+  every worktree.
 
 - **A lesson saved for one project no longer becomes a rule for every project.** The
   `memory_remember` tool offers `scope: "workspace"` and the workspace-identity prompt block
@@ -129,6 +304,57 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **PersonalClaw can now earn autonomy one action at a time, and lose it instantly.** The safety
+  floor used to be binary — an unattended action was read-only, or it was a permission you granted
+  when you created the automation — so a reply draft you had approved unchanged forty times still
+  asked every time. There is now a per-action-type ladder: **draft only → one tap → run with undo →
+  autonomous**, where each action type declares the rung it starts at and a ceiling it can never
+  pass (anything that leaves your machine stops below "autonomous" unless its declaration says
+  otherwise). The track record behind a promotion is **recomputed every time from what already
+  happened** — the approvals in your security event log and the 👎 you have given that action's
+  output — and never stored as a score, so it cannot outlive the evidence. Two rules make it safe:
+  **PersonalClaw never promotes itself** (clearing the bar files a suggestion; only your click
+  grants a rung), and **one rejection demotes immediately** and starts a cooldown before the
+  suggestion can come back. `personalclaw incident on` holds every action at "one tap" or below
+  until you resume, whatever it had earned. Thresholds live under Settings (`guardrails.autonomy`:
+  approvals required, days they must span, rejections tolerated, cooldown, evidence window), the
+  grants and demotions are saved to `autonomy_rungs.json` and travel with `personalclaw snapshot`,
+  and an unreadable or unrecognized entry grants nothing. This release ships the mechanism; the
+  action types that use it, and the ladder panel that shows it, follow.
+- **The autonomy ladder now actually decides whether an automated action runs.** Every built-in
+  action declares its rung, and an app can declare one for its own action with an `autonomy:
+  {floor, ceiling}` block on its provider — which the lifecycle-hook, data-event and
+  clock/file/webhook trigger paths all honour. An action held at **draft only** files a proposal
+  saying what it would have done; held at **one tap** it files a request for you to decide; at
+  **run with undo** it runs and tells you quietly, keeping a handle on what it created; at
+  **autonomous** it just runs. Held actions leave a real row in your inbox and a typed entry in the
+  automation's history, never a silent stop. Two things an app cannot do: it cannot claim its action
+  stays on your machine (PersonalClaw decides that from the network permission the app already
+  declares), and it cannot claim the top rung for an action that reaches the network — that request
+  is lowered to "run with undo", and both your log and the security event log say so rather than
+  quietly overruling the app. Actions that carry no declaration behave exactly as before: the
+  denylist, the kill switch and the permission you granted when you created the automation are
+  unchanged, and nothing you already run stops running.
+- **You can now see, grant and take back what each automation may do on its own.** The autonomy
+  ladder had no face: it decided quietly, and there was no way to find out why an action was allowed
+  to run unattended, no way to accept a rung it had earned, and — worst — no way to actually undo an
+  action that ran at "run with undo", however loudly the notification offered one. Settings →
+  Guardrails now lists every governed action with the rung it runs at, a plain sentence saying WHERE
+  that permission came from (declared that way · you promoted it on this date, with the record you
+  were shown · granted, but held down right now by incident mode), the track record behind its next
+  rung, and its demotion history. The same chip rides every row on the Triggers page, so you can
+  scan a list of automations and see which ones act on their own. **Promotion is still only ever
+  your click** — when an action clears the bar, PersonalClaw files a proposal in your inbox and
+  waits; nothing in the system can promote anything, and a request asking for a rung above an
+  action's declared ceiling, or during a cooldown, is refused with the reason. Two buttons take
+  autonomy back: **Hand back** returns an action to the rung it was declared with, and **Undo** on
+  an automatic action's notification (or in the panel) really reverses it — the task an automation
+  filed is deleted — **and** stops that action from doing it by itself again. The undo asks the
+  provider that created the thing to take it back, since only it knows what "undo" means for its own
+  effect, and it works from PersonalClaw's own record of what ran: if that record is gone, the thing
+  was already deleted, or nothing installed can reverse it, the undo refuses and says which, and
+  crucially leaves the action's earned rung alone — a broken undo request can never be a way to
+  quietly degrade what your automations are allowed to do.
 - **You can share a chat as a read-only artifact — inside your own instance, never on the
   internet.** Right-click a chat in Chat History → **Share as read-only artifact** and the
   conversation is saved into your artifacts library as a Markdown record, then opened for you. The

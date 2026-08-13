@@ -309,8 +309,15 @@ class Permissions:
     # POST /api/apps/message). Same list-of-names shape as ``events``/``mcpTools``
     # — an exact name or a trailing-``*`` prefix. Empty → may message NO app (deny
     # by default): the gateway broker is the ONLY app-to-app path and refuses an
-    # undeclared pair with 403 + a SEL audit row. This is the install-consent
-    # surface for who an app can talk to, shown in the Store via ``to_dict``.
+    # undeclared pair with 403 + a SEL audit row.
+    # APE-12: it reaches install consent over the WHOLE leg — ``to_dict`` here →
+    # ``GET /api/apps`` / the catalog entry → ``AppPermissionsWire`` (web/src/lib/
+    # api.ts) → ``PermissionList`` (web/src/pages/apps/AppsSection.tsx), which names
+    # each target (a trailing-``*`` entry as the prefix pattern it is) among the
+    # ENFORCED permissions, and states the deny-by-default case when this is empty.
+    # APE-9 shipped the broker without that last mile, so this comment claimed a
+    # consent surface that did not exist; ``test_app_messaging.py`` now pins the
+    # server leg and ``permissionConsent.test.tsx`` the rendering.
     appMessaging: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
@@ -657,6 +664,60 @@ _HOOK_OR_ENTRYPOINT_RE = re.compile(
 
 
 @dataclass
+class AutonomyConfig:
+    """An app-contributed action's declared autonomy bounds (AUTONOMY-GUARDRAILS §5.2).
+
+    ``floor`` is the rung the action starts at; ``ceiling`` is the rung it can never pass
+    however much track record accrues. Both name a rung from
+    ``guardrails.autonomy.RUNGS`` (``draft_only`` → ``one_tap`` → ``auto_with_undo`` →
+    ``autonomous``). Empty means UNDECLARED, and an undeclared action behaves exactly as it
+    did before this block existed — the block is purely additive, and a manifest without
+    one round-trips byte-identically.
+
+    Two things this deliberately does NOT let an app say:
+
+    * **``leaves_machine``.** Core derives it from the app's own ``permissions.network``
+      declaration. An app that could self-certify "my action stays on this machine" would
+      be self-certifying its way to the top of the ladder.
+    * **``autonomous`` for an action that reaches the network.** ``ceiling`` is clamped to
+      ``clamp_untrusted_ceiling``'s bound at registration, LOUDLY (a log line and a SEL
+      row naming both the declared and the granted ceiling). A manifest's claim has had no
+      in-tree review, and a silent downgrade is a recorded finding in this codebase.
+    """
+
+    floor: str = ""
+    ceiling: str = ""
+
+    def validate(self) -> list[str]:
+        from personalclaw.guardrails.autonomy import RUNGS
+
+        errors: list[str] = []
+        for label, value in (("floor", self.floor), ("ceiling", self.ceiling)):
+            if value and value not in RUNGS:
+                errors.append(
+                    f"provider.autonomy.{label} must be one of {list(RUNGS)}, got: {value!r}"
+                )
+        if self.floor and self.ceiling and self.floor in RUNGS and self.ceiling in RUNGS:
+            if RUNGS.index(self.ceiling) < RUNGS.index(self.floor):
+                errors.append(
+                    f"provider.autonomy.ceiling {self.ceiling!r} is below its floor {self.floor!r}"
+                )
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.floor:
+            d["floor"] = self.floor
+        if self.ceiling:
+            d["ceiling"] = self.ceiling
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AutonomyConfig":
+        return cls(floor=str(data.get("floor", "")), ceiling=str(data.get("ceiling", "")))
+
+
+@dataclass
 class ProviderConfig:
     """Declares that this extension provides a pluggable provider implementation.
 
@@ -685,6 +746,11 @@ class ProviderConfig:
     # this value so "Create Task Hook" sits under a "Task Hook Provider" group.
     # Empty → the UI treats the provider as belonging to its type's default group.
     entity: str = ""
+    # AUTONOMY-GUARDRAILS §5.2: the rung bounds for an ``action`` provider, keyed
+    # ``app:<app>.<action>`` when it registers. Additive and optional — a manifest with no
+    # ``autonomy`` block declares no action type, and its action keeps exactly the
+    # pre-ladder behaviour (denylist + capability fence + creation-time grant).
+    autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
 
     def validate(self) -> list[str]:
         errors: list[str] = []
@@ -701,6 +767,7 @@ class ProviderConfig:
                 f"provider.implementation must be 'module.path:factory_fn', "
                 f"got: {self.implementation!r}"
             )
+        errors.extend(self.autonomy.validate())
         return errors
 
     def to_dict(self) -> dict[str, Any]:
@@ -719,10 +786,14 @@ class ProviderConfig:
             d["entity"] = self.entity
         if self.providerType:
             d["providerType"] = self.providerType
+        autonomy_d = self.autonomy.to_dict()
+        if autonomy_d:
+            d["autonomy"] = autonomy_d
         return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProviderConfig":
+        autonomy_raw = data.get("autonomy", {})
         return cls(
             type=str(data.get("type", "")),
             implementation=str(data.get("implementation", "")),
@@ -731,6 +802,11 @@ class ProviderConfig:
             capabilities=[str(c) for c in data.get("capabilities", [])],
             entity=str(data.get("entity", "")),
             providerType=str(data.get("providerType", "")),  # noqa: N815
+            autonomy=(
+                AutonomyConfig.from_dict(autonomy_raw)
+                if isinstance(autonomy_raw, dict)
+                else AutonomyConfig()
+            ),
         )
 
 

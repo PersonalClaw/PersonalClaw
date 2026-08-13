@@ -1723,6 +1723,62 @@ class BreakerConfig:
 
 
 @dataclass
+class AutonomyConfig:
+    """Earned-autonomy rung ladder thresholds (AUTONOMY-GUARDRAILS §5).
+
+    The evidence bar one action type must clear before ``guardrails/autonomy.py``
+    *proposes* its next rung. These are the operator-wide defaults; a type that
+    declares its own ``PromotionRule`` on its spec keeps it.
+
+    None of these is guard-class: no threshold here can grant autonomy on its own,
+    because promotion is always a user click and the derived record only decides
+    whether a proposal is filed. Demotion ignores every threshold except
+    ``cooldown_days`` — it is immediate on the first rejection.
+    """
+
+    clean_approvals: int = field(
+        default=10,
+        metadata=_meta(
+            "Clean Approvals Required",
+            "How many times you must approve an action type unchanged before "
+            "PersonalClaw offers to let it run at the next rung.",
+        ),
+    )
+    min_days: int = field(
+        default=7,
+        metadata=_meta(
+            "Minimum Track-Record Days",
+            "The approvals must be spread over at least this many days — ten "
+            "approvals in one afternoon is not a track record.",
+        ),
+    )
+    max_rejections: int = field(
+        default=0,
+        metadata=_meta(
+            "Rejections Tolerated",
+            "How many rejections, undos or 👎 an action type may have in the "
+            "evidence window and still be offered a promotion. 0 means none.",
+        ),
+    )
+    cooldown_days: int = field(
+        default=14,
+        metadata=_meta(
+            "Demotion Cooldown (days)",
+            "After an action type is demoted it cannot be offered a promotion "
+            "again for this many days.",
+        ),
+    )
+    evidence_window_days: int = field(
+        default=30,
+        metadata=_meta(
+            "Evidence Window (days)",
+            "How far back the derived track record looks. Nothing older counts, "
+            "so a type has to keep earning its rung.",
+        ),
+    )
+
+
+@dataclass
 class GuardrailsConfig:
     """The personal safety-floor substrate (AUTONOMY-GUARDRAILS).
 
@@ -1740,6 +1796,14 @@ class GuardrailsConfig:
     breaker: BreakerConfig = field(
         default_factory=BreakerConfig,
         metadata=_meta("Circuit Breaker", "Per-provider model-call breaker tuning."),
+    )
+    autonomy: AutonomyConfig = field(
+        default_factory=AutonomyConfig,
+        metadata=_meta(
+            "Earned Autonomy",
+            "The evidence bar an action type must clear before PersonalClaw offers "
+            "to let it run at the next rung.",
+        ),
     )
     scan_mode: str = field(
         default="redact",
@@ -2934,6 +2998,21 @@ class SandboxConfig:
             "toolchains, so it is opt-in).",
         ),
     )
+    env_passthrough: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Child Env Passthrough",
+            "Extra environment variable NAMES that hook, cron-script and bash-action "
+            "children inherit from the gateway, on top of the minimal base "
+            "(sandbox.CHILD_ENV_BASE_NAMES: PATH, locale, home-equivalents, proxy/CA "
+            "settings and the three PERSONALCLAW_* vars). Everything else is withheld — a "
+            "child does not inherit the gateway's environment. Declare a name here when a "
+            "script legitimately needs it (e.g. SLACK_BOT_TOKEN for a notifier, a language "
+            "runtime's variable); the withheld names are listed in the debug log at each "
+            "spawn. Names matching the credential floor (AWS_SECRET*, AWS_SESSION*, "
+            "SSH_AUTH_SOCK, GNUPGHOME, GIT_ASKPASS) are refused even when declared.",
+        ),
+    )
 
 
 @dataclass
@@ -3208,6 +3287,9 @@ class AppConfig:
         breaker_data = guardrails_data.get("breaker", {})
         if not isinstance(breaker_data, dict):
             breaker_data = {}
+        autonomy_data = guardrails_data.get("autonomy", {})
+        if not isinstance(autonomy_data, dict):
+            autonomy_data = {}
 
         # Parse agents section into dict[str, AgentProfile]
         raw_agents = data.get("agents", {})
@@ -3653,6 +3735,18 @@ class AppConfig:
                     failure_threshold=max(1, int(breaker_data.get("failure_threshold", 5))),
                     recovery_secs=max(0.0, float(breaker_data.get("recovery_secs", 30.0))),
                 ),
+                # §5 rung-ladder thresholds. `_safe_int` + a floor on each, so a typo
+                # cannot produce a bar of zero approvals (which would offer a promotion
+                # to a type with no track record at all).
+                autonomy=AutonomyConfig(
+                    clean_approvals=max(1, _safe_int(autonomy_data.get("clean_approvals", 10), 10)),
+                    min_days=max(0, _safe_int(autonomy_data.get("min_days", 7), 7)),
+                    max_rejections=max(0, _safe_int(autonomy_data.get("max_rejections", 0), 0)),
+                    cooldown_days=max(0, _safe_int(autonomy_data.get("cooldown_days", 14), 14)),
+                    evidence_window_days=max(
+                        1, _safe_int(autonomy_data.get("evidence_window_days", 30), 30)
+                    ),
+                ),
                 scan_mode=(
                     str(guardrails_data.get("scan_mode", "redact"))
                     if guardrails_data.get("scan_mode", "redact") in ("warn", "redact", "block")
@@ -3688,6 +3782,11 @@ class AppConfig:
                 nofile=max(0, _safe_int(sandbox_data.get("nofile", 4096), 4096)),
                 max_pids=max(0, _safe_int(sandbox_data.get("max_pids", 0), 0)),
                 max_rss_mb=max(0, _safe_int(sandbox_data.get("max_rss_mb", 0), 0)),
+                env_passthrough=[
+                    str(n).strip()
+                    for n in (sandbox_data.get("env_passthrough") or [])
+                    if str(n).strip()
+                ],
             ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
