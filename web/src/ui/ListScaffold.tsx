@@ -195,11 +195,39 @@ export function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`skeleton rounded-md ${className}`} aria-hidden="true" />
 }
 
+/** The half of a skeleton a screen reader can perceive.
+ *
+ *  🔴 Measured on a COLD load with every `/api/**` response held back: `#/tasks`, `#/artifacts` and
+ *  `#/knowledge` all showed the skeleton region on screen — `role="status" aria-busy="true"
+ *  aria-label="Loading"` — and **announced nothing at any point in the load**. A live region is
+ *  announced by its CONTENT changing; the skeleton's content is styled `<div>`s with no text, and an
+ *  `aria-label` is a NAME, not an announcement. So the region was perfectly marked up and completely
+ *  silent, from the first frame to the moment the data arrived.
+ *
+ *  🔑 The result-count status (`ui/ListControls`' ResultAnnouncement) does not cover this: it speaks
+ *  only when a query or filter is narrowing, which is deliberate — cycle 121 fixed the opposite defect,
+ *  an idle surface announcing "39 items" unprompted. So on a first load there was no announcement of
+ *  any kind, before OR after.
+ *
+ *  Renders the sr-only text that gives the region something to say.
+ *
+ *  🪤 AND IT REPLACES THE `aria-label` RATHER THAN JOINING IT. `role="status"` is NOT named from its
+ *  content (name-from-content applies to button/link/heading, not to a live region), so the label was
+ *  a SECOND hard-coded string saying the same word — one that can drift from the text that is actually
+ *  announced. Measured while writing the rail: `getByRole('status', { name: 'Loading providers…' })`
+ *  finds nothing, which is exactly why the announcement had to be content and not a label. */
+export function LoadingStatus({ what }: { what?: string }) {
+  return <span className="sr-only">{what ? `Loading ${what}…` : 'Loading…'}</span>
+}
+
 /** N placeholder rows shaped like ListRow — the default first-load state for list
  *  pages. Matches ListRow's padding/leading-icon so the swap to real data is calm. */
-export function ListSkeleton({ rows = 6 }: { rows?: number }) {
+export function ListSkeleton({ rows = 6, what }: { rows?: number
+  /** What is loading, for the announcement — "tasks", "prompts". Omit for a bare "Loading…". */
+  what?: string }) {
   return (
-    <div className="flex flex-col gap-s" role="status" aria-busy="true" aria-label="Loading">
+    <div className="flex flex-col gap-s" role="status" aria-busy="true">
+      <LoadingStatus what={what} />
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="flex items-center gap-l rounded-lg bg-surface-container px-l py-l">
           <Skeleton className="size-10 shrink-0 rounded-lg" />
@@ -217,9 +245,12 @@ export function ListSkeleton({ rows = 6 }: { rows?: number }) {
  *  each a heading and a few label/control rows. Shaped like the Section/Row chrome
  *  so the swap to the real form is calm. Use as the loading gate on config panels
  *  fetched via useCachedData (Chat, Voice, Inbox, Notifications, Agent defaults…). */
-export function FormSkeleton({ sections = 2, rows = 3, title = true }: { sections?: number; rows?: number; title?: boolean }) {
+export function FormSkeleton({ sections = 2, rows = 3, title = true, what }: { sections?: number; rows?: number; title?: boolean
+  /** What is loading, for the announcement — "notification settings". Omit for a bare "Loading…". */
+  what?: string }) {
   return (
-    <div role="status" aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true">
+      <LoadingStatus what={what} />
       {title && (
         <div className="mb-l space-y-2">
           <Skeleton className="h-5 w-40" />
@@ -245,9 +276,12 @@ export function FormSkeleton({ sections = 2, rows = 3, title = true }: { section
 
 /** First-load placeholder for a stat/hub panel: a title block + a grid of N stat
  *  cards. Use on the read-only dashboard-style panels (Overview, Security). */
-export function CardGridSkeleton({ cards = 4, cols = 2, title = true }: { cards?: number; cols?: number; title?: boolean }) {
+export function CardGridSkeleton({ cards = 4, cols = 2, title = true, what }: { cards?: number; cols?: number; title?: boolean
+  /** What is loading, for the announcement. Omit for a bare "Loading…". */
+  what?: string }) {
   return (
-    <div role="status" aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true">
+      <LoadingStatus what={what} />
       {title && (
         <div className="mb-l space-y-2">
           <Skeleton className="h-5 w-40" />
