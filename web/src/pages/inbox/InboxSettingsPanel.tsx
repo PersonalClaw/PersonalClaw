@@ -78,7 +78,7 @@ export function InboxSettingsPanel() {
           rule, not two inbox-only fields. Pointing there beats leaving controls that write
           to a store nothing reads. */}
       <Row label="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind, so the same rules cover loops, proposals and messages alike.">
-        <a href="#/settings/notifications" className="text-primary text-[0.8125rem] hover:underline">Open notification rules</a>
+        <a href="#/settings/notifications" className="text-primary-emphasis text-[0.8125rem] hover:underline">Open notification rules</a>
       </Row>
 
       <Row label="Auto-cleanup" hint="Automatically prune items past the retention window.">

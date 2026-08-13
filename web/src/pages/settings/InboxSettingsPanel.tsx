@@ -78,7 +78,7 @@ export function InboxSettingsPanel() {
           the same rules cover loops and proposals, not just inbox messages. */}
       <Section title="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind.">
         <Row label="Where to configure" hint="One place for every kind of notification, not just inbox items.">
-          <a href="#/settings/notifications" className="text-primary text-[0.8125rem] hover:underline">Open notification rules</a>
+          <a href="#/settings/notifications" className="text-primary-emphasis text-[0.8125rem] hover:underline">Open notification rules</a>
         </Row>
       </Section>
 

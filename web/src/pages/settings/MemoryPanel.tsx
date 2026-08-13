@@ -87,8 +87,14 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
           return (
             <button key={t.id} type="button" onClick={() => setTab(t.id)}
               className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-[0.8125rem] transition-colors"
+              // 🔴 ACCENT TEXT ON THE CANVAS NEEDS THE EMPHASIS SHADE. Measured at 4.37:1 (need 4.5) by axe and
+              //    ux-audit in light: `--color-primary` on `--color-canvas` (#c8452e on #f0f4f8). The scheme rail
+              //    guaranteed accent text against **white**, and passes there (4.83) — but this sits on the canvas,
+              //    which the guarantee never measured. Across all 12 schemes plain primary fails on the canvas in
+              //    **7 of 12** (4.37-4.41) while `primary-emphasis` passes in **all 12** (worst 4.82, coral 6.0).
+              //    See design/schemeContrast.test.ts, which now measures this dimension.
               style={on
-                ? { borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }
+                ? { borderColor: 'var(--color-primary)', color: 'var(--color-primary-emphasis)' }
                 : { borderColor: 'transparent', color: 'var(--color-on-surface-low)' }}>
               <t.icon size={14} /> {t.label}
             </button>
