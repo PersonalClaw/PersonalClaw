@@ -78,7 +78,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
 
   return (
     <div className="rounded-lg border border-outline-variant/40">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-s px-m py-2.5 text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center gap-s px-m py-2.5 text-left">
         <Play size={14} className="text-primary" />
         <span className="flex-1 text-on-surface text-[0.8125rem]" style={fvs(500)}>Try it</span>
         <ChevronRight size={15} className={`text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />

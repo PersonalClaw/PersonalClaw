@@ -110,7 +110,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
         ) : undefined}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
-        {loading ? <Loading /> : !def ? (
+        {loading ? <Loading what="this workflow" /> : !def ? (
           <p className="text-on-surface-low text-[0.8125rem]">This definition could not be loaded.</p>
         ) : (
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">

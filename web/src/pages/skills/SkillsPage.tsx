@@ -126,7 +126,7 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
         )}
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-          {filtered === null ? <ListSkeleton rows={6} /> : filtered.length === 0 ? (
+          {filtered === null ? <ListSkeleton rows={6} what="skills" /> : filtered.length === 0 ? (
             <EmptyState icon={Sparkles} title={q ? 'No matching skills' : 'No skills installed'} hint={q ? 'Try a different term.' : 'Skills extend what agents can do. Browse the marketplace to install some.'} action={!q ? { label: 'Browse skills', onClick: onBrowse, icon: Store } : undefined} />
           ) : (
             <div className="flex flex-col gap-s">

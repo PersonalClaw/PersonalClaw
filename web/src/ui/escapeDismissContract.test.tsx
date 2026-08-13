@@ -128,7 +128,9 @@ describe('the rail: an overlay with a click-away scrim also binds Escape', () =>
   it('the rail is not vacuously green — it finds the scrim-bearing files', () => {
     // Two cycles ago a rail matched nothing and reported a clean sweep, because
     // `expect(offenders).toEqual([])` cannot tell "nothing is broken" from "my matcher is broken".
-    expect(withScrim.length, 'the scanner must find the scrim-bearing overlays').toBeGreaterThan(4)
+    // Measured 10, floored at 4. Raising it to the measurement means a scrim-bearing overlay that stops
+    // being scanned is caught, instead of being absorbed by six overlays' worth of slack (cycle 134).
+    expect(withScrim.length, 'the scanner must find the scrim-bearing overlays').toBeGreaterThanOrEqual(10)
     const rels = withScrim.map((f) => f.rel)
     expect(rels).toContain('ui/DegradedChip.tsx')
     expect(rels).toContain('ui/Modal.tsx')

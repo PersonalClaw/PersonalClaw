@@ -56,7 +56,9 @@ App bundles come in three tiers:
 one process that boots everything:
 
 - **Background services** — cron scheduling (`schedule.py`), heartbeat
-  (`heartbeat.py`: pending-task dispatch, FTS reindex), autonudge
+  (`heartbeat.py`: pending-task dispatch, and driving the health-scored
+  remediation engine that owns store maintenance — FTS reconciliation, the
+  history/SEL prunes, skill aging — see `resilience/remediation.py`), autonudge
   (`autonudge.py`: reactive same-session self-prompting), inbox polling
   (`inbox_service.py`), background subagents (`subagent.py`), and MCP server
   wiring.

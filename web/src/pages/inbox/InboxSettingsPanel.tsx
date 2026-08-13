@@ -56,7 +56,7 @@ export function InboxSettingsPanel() {
   }
 
   if (!s && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={load} />
-  if (!s) return <Loading />
+  if (!s) return <Loading what="inbox settings" />
   return (
     <div className="flex flex-col gap-l">
       <div className="flex justify-end"><SavedToast show={saved} /></div>
@@ -78,7 +78,7 @@ export function InboxSettingsPanel() {
           rule, not two inbox-only fields. Pointing there beats leaving controls that write
           to a store nothing reads. */}
       <Row label="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind, so the same rules cover loops, proposals and messages alike.">
-        <a href="#/settings/notifications" className="text-primary text-[0.8125rem] hover:underline">Open notification rules</a>
+        <a href="#/settings/notifications" className="text-primary-emphasis text-[0.8125rem] hover:underline">Open notification rules</a>
       </Row>
 
       <Row label="Auto-cleanup" hint="Automatically prune items past the retention window.">

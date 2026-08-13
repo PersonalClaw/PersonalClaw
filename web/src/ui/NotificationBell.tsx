@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Bell, Check, CheckCheck, X } from 'lucide-react'
-import { spring, bounce, stagger, listItemEnter } from '../design/motion'
+import { spring, physics, stagger, listItemEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
@@ -78,7 +78,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
           {unread > 0 && (
             <motion.span key={unread}
               initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
-              transition={bounce.playful}
+              transition={physics.playful}
               className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 text-[0.75rem] leading-none"
               style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
               {unread > 9 ? '9+' : unread}

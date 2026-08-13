@@ -75,7 +75,7 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
 
   return (
     <div className="mb-2 overflow-hidden rounded-lg bg-surface-container">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high">
         <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
         <span className="grid size-7 shrink-0 place-items-center rounded-md"
           style={activeProviders.length > 0

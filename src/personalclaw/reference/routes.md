@@ -82,6 +82,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/auth/password` — set the owner password from an AUTHENTICATED session.
 - `GET /api/auth/session` — the authenticated account view (Settings → Account).
 - `GET /api/auth/status` — what the login UI needs to render itself.
+- `GET /api/autonomy` — every governed action type, its rung, and what it has earned.
+- `POST /api/autonomy/demote` — hand a type's autonomy back. Body ``{key}``.
+- `POST /api/autonomy/grant` — the promotion click. Body ``{key, rung}``.
+- `POST /api/autonomy/undo` — reverse one automatic action. Body ``{id}``.
 - `GET /api/autonudge` — list all active loops.
 - `POST /api/autonudge` — start or replace a loop on a session.
 - `GET /api/autonudge/session/{session_name}` — loop bound to this session (or null).
@@ -430,7 +434,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/notifications/settings` — _(no summary)_
 - `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/unack` — mark a single notification as unread.
-- `GET /api/onboarding` — First-run onboarding signal.
+- `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
+- `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
 - `GET /api/outbox` — list files in the outbox.
 - `POST /api/outbox/notify` — agent sent a file, notify the user.

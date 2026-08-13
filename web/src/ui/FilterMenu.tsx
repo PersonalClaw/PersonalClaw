@@ -6,7 +6,7 @@ import { Popover } from './Popover'
 import { Button } from './Button'
 import { TextLink } from './TextLink'
 import { fvs } from '../design/fontWeight'
-import { spring, bounce } from './../design/motion'
+import { spring, physics } from './../design/motion'
 import { accentChip } from '../design/accent'
 
 /** One selectable choice within a filter section. */
@@ -55,6 +55,15 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
 
   return (
     <Popover align={align} width={264} placement="bottom"
+      // 🔴 PORTAL for the same reason as the apps card menu, measured at 430×900 on
+      // `#/notifications`: the menu's box was at **x = -202**, so 202px of its 264px width sat off
+      // the LEFT edge of the shell — every filter LABEL clipped away, leaving a column of bare counts
+      // ("83 ✓ · 2 · 33 · 6 …") with nothing to say what they filtered. `align="right"` anchors it to
+      // a trigger that a phone header puts near the left of the remaining space, and a non-portal
+      // flyout has no viewport clamp at all. Portal mode is `fixed`, anchored to the trigger rect and
+      // clamped into the viewport. Eleven consumers move together, which is why the sweep re-measured
+      // all 17 routes afterwards rather than just this one.
+      portal
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="Filter & sort" title="Filter & sort" aria-expanded={open}
           className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 text-[0.8125rem] transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}
@@ -67,7 +76,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
             {activeCount > 0 && (
               <motion.span
                 initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-                transition={bounce.playful}
+                transition={physics.playful}
                 className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary text-[0.75rem] tabular-nums" style={fvs(600)}>{activeCount}</motion.span>
             )}
           </AnimatePresence>

@@ -101,7 +101,10 @@ WRITERS: tuple[Writer, ...] = (
         name="status",
         call="ScheduleRun",
         min_sites=2,
-        min_values=3,
+        # Raised from 3 when AG-7 added the rung ladder's `skipped_gate` refusal: both refusal
+        # statuses now arrive through `_record_refused_fire`, pinned by its `_REFUSAL_STATUSES`
+        # guard, so the floor tightens rather than staying where a lost status would fit.
+        min_values=4,
     ),
     Writer(
         label="triggers/service.py records a suppressed fire's ScheduleRun",

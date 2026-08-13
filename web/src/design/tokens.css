@@ -91,6 +91,18 @@
   --anim-speed: 1;
   --wave-amount: 1;
   --glow: 1;
+  /* Spring personality + intensity dials, read in JS by design/motion.ts (bouncy()
+     and expr()) rather than by any CSS rule. Declared here anyway so the Motion
+     token group has ONE default per token instead of a registry default with no
+     stylesheet counterpart — the round trip a reader can check. */
+  --bounciness: 1;
+  --expressiveness: 0.8;
+  /* Gesture physics — dragElastic()/swipeDismiss() in design/motion.ts. Elasticity
+     is the stretch past a drag constraint; the dismiss thresholds are OR'd (flick
+     speed in px/s, or distance dragged). */
+  --drag-elastic: 0.9;
+  --swipe-dismiss-velocity: 500px/s;
+  --swipe-dismiss-distance: 80px;
   /* seconds per outward pulse of the gateway-status dot (customizable in Design
      settings via --status-pulse-speed). A calm default; the Tailwind ping
      default (1s) pulsed too fast. */
@@ -98,6 +110,7 @@
   --surface-angle: 45deg;
   --surface-distance: 1;
   --dot-density: 1;
+  --dot-size: 1;
 
   /* ── main content max-width (Chat composer + conversation column) ── */
   --content-width: 820px;

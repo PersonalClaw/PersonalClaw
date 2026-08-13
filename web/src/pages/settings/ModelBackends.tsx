@@ -8,7 +8,7 @@ import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import { Skeleton } from '../../ui/ListScaffold'
+import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { TextInput } from '../../ui/forms'
 import { OllamaModelManager } from './OllamaModelManager'
@@ -25,7 +25,8 @@ const typeLabel = (type: string) => type
  *  shapes), so the Model section paints instantly on a cold open. */
 function RemoteProvidersSkeleton() {
   return (
-    <div className="mb-3 flex flex-col gap-2" role="status" aria-busy="true" aria-label="Loading model providers">
+    <div className="mb-3 flex flex-col gap-2" role="status" aria-busy="true" >
+        <LoadingStatus what="model providers" />
       {Array.from({ length: 2 }).map((_, i) => (
         <div key={i} className="flex items-center gap-3 rounded-lg bg-surface-container px-l py-m">
           <Skeleton className="size-7 shrink-0 rounded-lg" />

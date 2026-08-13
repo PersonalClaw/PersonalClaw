@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Compass, ArrowUpRight, ArrowRight, X } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState } from './kit'
-import { spring, bounce } from '../../../design/motion'
+import { instant, physics, spring } from '../../../design/motion'
 import { Button } from '../../../ui/Button'
 import { IconButton } from '../../../ui/IconButton'
 import type { DiscoverTip, DiscoverTryIt } from '../../../lib/api'
@@ -110,7 +110,10 @@ function TipCard({ tip, depth, reduce, onGo, onDismiss }: {
   const isFront = depth === 0
   // Reduced motion keeps the depth STAGING (a deck is information, not decoration)
   // but drops the springy promotion — layout animation is what's disorienting.
-  const transition = reduce ? { duration: 0 } : { ...bounce.settle, ...spring.spatialDefault }
+  // (Was a spread of the bounce tier UNDER spring.spatialDefault, which overwrote
+  // every field of it — the tier contributed nothing. `fluid` is the tier this deck
+  // wants: a generous settle for a card promoted to the front.)
+  const transition = reduce ? instant : physics.fluid
 
   return (
     <motion.div
@@ -128,7 +131,7 @@ function TipCard({ tip, depth, reduce, onGo, onDismiss }: {
       }}
       // Dismissal slides the card out to the side and collapses it — a discard,
       // visually distinct from the promotion happening underneath it.
-      exit={{ opacity: 0, scale: 0.96, x: 24, transition: reduce ? { duration: 0 } : spring.spatialFast }}
+      exit={{ opacity: 0, scale: 0.96, x: 24, transition: reduce ? instant : spring.spatialFast }}
       aria-hidden={!isFront}
       // Backing cards are pinned to the FRONT card's baseline and given its full
       // height, so each one contributes exactly a STEP_Y lip above it — nothing

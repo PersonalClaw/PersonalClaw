@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Loader2, Paperclip, Check } from 'lucide-react'
 import { IconButton } from './IconButton'
-import { spring, bounce, expr } from '../design/motion'
+import { spring, physics, expr } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, effortsForAgent, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
@@ -167,7 +167,7 @@ export function Composer({
           y: dragOver ? -expr(11, 0.4) : focused ? -expr(6, 0.4) : 0,
           scale: dragOver ? 1 + expr(0.028, 0.4) : focused ? 1 + expr(0.016, 0.4) : 1,
         }}
-        transition={bounce.lift}
+        transition={physics.playful}
         className="relative"
       >
         {/* Pill↔pill-rounder shape morph: on mobile the resting composer rounds up
@@ -200,7 +200,7 @@ export function Composer({
                 initial={{ opacity: 0, scale: 0.94 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
-                transition={bounce.playful}
+                transition={physics.playful}
                 className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-[var(--radius-xli)] border-2 border-dashed border-primary/70 bg-surface-container/85 text-primary"
                 data-type="label-m"
               >
@@ -225,7 +225,7 @@ export function Composer({
               initial={false}
               animate={{ width: 40 }}
               whileHover={{ width: 40 + expr(14, 0.3) }}
-              transition={bounce.subtle}
+              transition={physics.snappy}
             />
           </div>
 

@@ -63,7 +63,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           // Before the loading branch, or a failed fetch spins the skeleton forever.
           <LoadError what="tips" error={error} onRetry={refresh} />
         ) : data === undefined ? (
-          <ListSkeleton rows={6} />
+          <ListSkeleton rows={6} what="tips" />
         ) : !data || !data.enabled ? (
           <EmptyState
             icon={Compass}

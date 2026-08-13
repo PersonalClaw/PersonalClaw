@@ -17,7 +17,7 @@ export function SkillProposals() {
   )
   const reload = () => { invalidateCache('skill-proposals'); refresh() }
 
-  if (!proposals) return <ListSkeleton rows={4} />
+  if (!proposals) return <ListSkeleton rows={4} what="skill proposals" />
   if (proposals.length === 0) {
     return (
       <EmptyState

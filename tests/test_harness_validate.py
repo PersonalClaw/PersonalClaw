@@ -19,6 +19,37 @@ from harness.validate_refs import (
 )
 
 
+def test_the_interpreter_is_absolute_and_launchable_from_any_cwd() -> None:
+    """The whole-suite collection must launch from a worktree, not just the checkout.
+
+    ``VENV_PY`` was the cwd-relative ``".venv/bin/python"``. A git worktree has no
+    ``.venv``, so ``collect_test_ids`` failed with ``[Errno 2]``, ``validate_refs``
+    reported "could not collect the test suite", and the three tests below failed in
+    every worktree — indistinguishable from a genuinely dangling spec reference.
+    """
+    from harness.profiles import HARNESS_PY
+
+    assert Path(HARNESS_PY).is_absolute()
+    assert Path(HARNESS_PY).is_file()
+
+
+def test_the_interpreter_prefers_this_trees_venv_then_the_running_process(
+    tmp_path: Path,
+) -> None:
+    """Both branches of the resolution, so neither can rot unnoticed."""
+    import sys
+
+    from harness.profiles import resolve_python
+
+    # No .venv in the root (the worktree case) → the interpreter already running.
+    assert resolve_python(tmp_path) == sys.executable
+
+    venv_py = tmp_path / ".venv" / "bin" / "python"
+    venv_py.parent.mkdir(parents=True)
+    venv_py.write_text("#!/bin/sh\n")
+    assert resolve_python(tmp_path) == str(venv_py)
+
+
 def test_shipped_specs_validate_shape() -> None:
     """Every seed spec that ships in harness/specs/ is shape-valid."""
     specs = load_specs()

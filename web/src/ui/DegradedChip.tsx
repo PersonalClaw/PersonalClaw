@@ -82,7 +82,7 @@ export function DegradedChip() {
   return (
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1.5 rounded-pill py-1 text-[0.75rem] transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
+        className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 text-[0.75rem] transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
         // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
         // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put
         // warn ink on a warn-hued tint under AA: axe measured it FAILING at 20% and PASSING at

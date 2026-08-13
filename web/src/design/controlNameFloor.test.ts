@@ -117,7 +117,9 @@ describe('an on-demand edit input carries its own name', () => {
   const autoFocused = tags.filter((t) => /\bautoFocus\b/.test(t.tag))
 
   it('finds the on-demand inputs (not vacuously green)', () => {
-    expect(autoFocused.length, 'expected the inline rename/edit inputs').toBeGreaterThanOrEqual(6)
+    // Measured 18, floored at 6 — the six the header names are the ones that EXISTED when it was written.
+    // Twelve more shipped since, and none of them was protected (cycle 134's audit).
+    expect(autoFocused.length, 'expected the inline rename/edit inputs').toBeGreaterThanOrEqual(18)
   })
 
   it('every autoFocus input is named', () => {

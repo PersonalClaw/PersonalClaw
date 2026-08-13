@@ -170,7 +170,7 @@ function JsonNode({ value, depth, kName }: { value: unknown; depth: number; kNam
   const [lb, rb] = isArr ? ['[', ']'] : ['{', '}']
   return (
     <div>
-      <button onClick={() => setOpen(!open)} type="button" className="inline-flex items-center gap-0.5 text-on-surface-low hover:text-on-surface">
+      <button onClick={() => setOpen(!open)} type="button" aria-expanded={open} className="inline-flex items-center gap-0.5 text-on-surface-low hover:text-on-surface">
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{label}{lb}{!open && <span className="text-on-surface-low"> {entries.length} {isArr ? 'items' : 'keys'} {rb}</span>}
       </button>
       {open && (

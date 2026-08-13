@@ -52,12 +52,25 @@ export function WidgetRow({
 /** A small pill button for inline row actions (approve/dismiss/complete). Tone
  *  drives the accent; ghost by default. */
 export function RowAction({
-  onClick, children, tone = 'default', title,
+  onClick, children, tone = 'default', title, ariaLabel,
 }: {
   onClick: () => void
   children: ReactNode
   tone?: 'default' | 'primary' | 'ok' | 'danger'
   title?: string
+  /** The accessible name, composed with the ROW'S SUBJECT — "Reply: Skill: refine-a-skill".
+   *
+   *  Required for any action rendered inside a per-row `.map`, because `title` alone names the verb
+   *  and every row repeats it. Measured on `#/dashboard`: **8× "Reply", 8× "Dismiss", 6× "Mark
+   *  complete"**, each acting on a different item, so a screen-reader user listing the controls hears
+   *  the same three words over and over with nothing to choose between them (WCAG 4.1.2). Note the
+   *  visible text stays the verb — on screen the subject is the row you are looking at.
+   *
+   *  The kit already composes names this way elsewhere: `ui/Toaster` (`Dismiss: ${message}`),
+   *  `ui/forms` (`Remove ${value}`), `ui/WidthPill` (`Content width: ${label}`), and FileTree /
+   *  AppsSection (`Actions for ${name}`). Omit it only for a SINGLETON action (one per widget, no
+   *  row to disambiguate). */
+  ariaLabel?: string
 }) {
   const toneCls = {
     default: 'text-on-surface-var hover:bg-surface-highest hover:text-on-surface',
@@ -69,6 +82,7 @@ export function RowAction({
     <motion.button
       type="button"
       title={title}
+      aria-label={ariaLabel}
       whileTap={{ scale: 0.92 }}
       transition={spring.spatialFast}
       onClick={onClick}

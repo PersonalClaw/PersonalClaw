@@ -147,7 +147,7 @@ export function DiagnosticsPanel() {
                 )
               })}
             </div>
-            <button onClick={() => setAutoscroll((v) => !v)} title={autoscroll ? 'Autoscroll on' : 'Autoscroll off'}
+            <button onClick={() => setAutoscroll((v) => !v)} aria-pressed={autoscroll} title={autoscroll ? 'Autoscroll on' : 'Autoscroll off'}
               className="inline-flex items-center justify-center size-8 rounded-lg transition-colors"
               style={autoscroll ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
               <ArrowDownToLine size={15} />

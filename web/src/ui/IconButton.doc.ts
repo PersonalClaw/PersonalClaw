@@ -10,7 +10,8 @@ const doc: UiDoc = {
     'The round, icon-only button — a pill hit area (40px default) wrapping a single rounded outline glyph, for toolbar/chrome affordances that a text label would only clutter. Expressiveness-scaled press/hover springs, a soft hover halo at bold intensity, an optional icon-morph on iconKey change, and a one-shot success bloom. Yields to reduced-motion.',
   props: [
     { name: 'icon', description: 'The Lucide icon component to render (rendered at strokeWidth 2, absoluteStrokeWidth).' },
-    { name: 'label', description: 'Accessible name (aria-label) and native tooltip — required, since there is no visible text.' },
+    { name: 'title', description: "Tooltip override — defaults to `label`, matching ui/SquareIconButton. Use it when the accessible NAME must carry a row's subject (e.g. `Delete: <title>` on a list of 83 notifications) while the hover hint stays the bare verb." },
+      { name: 'label', description: 'Accessible name (aria-label) and native tooltip — required, since there is no visible text.' },
     { name: 'onClick', description: 'Click handler; receives the mouse event. Suppressed while disabled.' },
     { name: 'active', description: 'Renders the currently-on (toggled) state — a surface-high fill instead of the bare idle glyph.' },
     { name: 'filled', description: 'Solid primary treatment (bg-primary / on-primary) for an emphasized action; carries its own emphasis so the hover halo is suppressed.' },

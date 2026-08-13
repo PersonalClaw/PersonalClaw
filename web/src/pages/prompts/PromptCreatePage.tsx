@@ -4,6 +4,7 @@ import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
+import { PageTitle } from '../../ui/PageTitle'
 import { api, type PromptKind } from '../../lib/api'
 import { PromptForm, emptyDraft, draftToPayload, type PromptDraft } from './PromptForm'
 import { SnippetForm, emptySnippetDraft, snippetDraftToPayload, type SnippetDraft } from './SnippetForm'
@@ -52,7 +53,7 @@ export function PromptCreatePage({ onBack, onCreated, mode = 'user' }: {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">{isSnippet ? 'New snippet' : 'New prompt'}</span></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>{isSnippet ? 'New snippet' : 'New prompt'}</PageTitle></div>} />
       {/* Split view: authoring form (left) + a sticky preview/reference rail
           (right). The rail collapses below the form on narrow viewports. Body,
           header, and footer all honor the SAME --content-width preference so the

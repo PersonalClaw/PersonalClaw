@@ -449,7 +449,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
 
       {view !== 'graph' && (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {items === null ? (itemsLoading ? <ListSkeleton /> : null) : empty ? (
+        {items === null ? (itemsLoading ? <ListSkeleton what="items" /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
             ) : view === 'conflicts' ? (
               <ConflictPanel />
@@ -942,7 +942,7 @@ function FilterChip({ active, onClick, tone, children }: { active: boolean; onCl
     ? { background: `color-mix(in srgb, ${tone} 20%, transparent)`, color: tone }
     : { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-container)' }
   return (
-    <button type="button" onClick={onClick}
+    <button type="button" onClick={onClick} aria-pressed={active}
       className="inline-flex items-center gap-1 rounded-pill px-m h-8 text-[0.8125rem] transition-colors"
       style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
       {children}

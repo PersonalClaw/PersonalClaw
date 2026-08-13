@@ -113,6 +113,8 @@ describe('the create forms mark their mandatory field', () => {
       const src = readFileSync(f, 'utf8')
       reasons += (src.match(/disabledReason=\{[^}]*[Ee]nter a[^}]*first/g) ?? []).length
     }
-    expect(reasons, 'the "Enter a … first" population must still be visible to this rail').toBeGreaterThan(5)
+    // Measured 20, floored at 5 — 15 could have gone quietly. A floor that stands for a POPULATION has to
+    // sit at the population (cycle 134's audit).
+    expect(reasons, 'the "Enter a … first" population must still be visible to this rail').toBeGreaterThanOrEqual(20)
   })
 })

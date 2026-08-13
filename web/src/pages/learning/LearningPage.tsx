@@ -137,7 +137,7 @@ export function LearningPage() {
             {inbox === undefined && inboxError ? (
               <LoadError what="proposals" error={inboxError} onRetry={refreshProposals} />
             ) : loading && !inbox ? (
-              <ListSkeleton rows={4} />
+              <ListSkeleton rows={4} what="proposals" />
             ) : rows.length === 0 ? (
               <EmptyState
                 icon={Brain}

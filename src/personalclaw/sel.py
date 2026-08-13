@@ -375,21 +375,12 @@ class SecurityEventLog:
                 break
         return result
 
-    def prune(self, keep_days: int = _RETENTION_DAYS, max_entries: int = _MAX_ENTRIES) -> int:
-        """Trim the log. Returns the number of entries removed.
-
-        Two bounds, both applied (whichever drops more wins per entry):
-        - age: drop entries older than ``keep_days``.
-        - size: keep at most the newest ``max_entries``.
-
-        The size cap is the real defense — the log is append-only and high-rate
-        (every gateway/channel/mcp action, including dashboard polls, appends), so an
-        age-only prune still lets the file grow to millions of entries within the
-        retention window and makes reads/verify crawl. Pass ``max_entries<=0`` to
-        disable the size cap.
-        """
+    def _prune_plan(self, keep_days: int, max_entries: int) -> tuple[list[str], int]:
+        """Compute ``(kept_lines, removed_count)`` without writing anything. Shared by
+        ``prune`` and ``count_prunable`` so the measured deficit is exactly the number of
+        entries a prune would drop."""
         if not self._path.exists():
-            return 0
+            return [], 0
         from datetime import timedelta
 
         cutoff_str = (datetime.now(tz=timezone.utc) - timedelta(days=keep_days)).isoformat()
@@ -414,7 +405,29 @@ class SecurityEventLog:
         if max_entries > 0 and len(kept) > max_entries:
             removed += len(kept) - max_entries
             kept = kept[-max_entries:]
+        return kept, removed
 
+    def count_prunable(
+        self, keep_days: int = _RETENTION_DAYS, max_entries: int = _MAX_ENTRIES
+    ) -> int:
+        """Read-only count of entries a ``prune()`` would remove (the remediation engine's
+        measured deficit for the SEL prune)."""
+        return self._prune_plan(keep_days, max_entries)[1]
+
+    def prune(self, keep_days: int = _RETENTION_DAYS, max_entries: int = _MAX_ENTRIES) -> int:
+        """Trim the log. Returns the number of entries removed.
+
+        Two bounds, both applied (whichever drops more wins per entry):
+        - age: drop entries older than ``keep_days``.
+        - size: keep at most the newest ``max_entries``.
+
+        The size cap is the real defense — the log is append-only and high-rate
+        (every gateway/channel/mcp action, including dashboard polls, appends), so an
+        age-only prune still lets the file grow to millions of entries within the
+        retention window and makes reads/verify crawl. Pass ``max_entries<=0`` to
+        disable the size cap.
+        """
+        kept, removed = self._prune_plan(keep_days, max_entries)
         if removed:
             with self._lock:
                 atomic_write(self._path, "\n".join(kept) + "\n" if kept else "")

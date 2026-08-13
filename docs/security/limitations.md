@@ -40,20 +40,23 @@ An app manifest declares a permission scope (`api` / `events` / `mcpTools` /
 `storage` / `network` / `memory` / `cron`). Most of these are enforced
 server-side by the gateway. **`network` is not**, by design:
 
-> `can_use_network` — **DECLARATION-ONLY (unenforced by design)**. An app backend
-> is an isolated subprocess with its own OS-level network stack; there is no
-> in-process egress hook the gateway can intercept. The flag records INTENT so the
-> Store can surface it (install consent lists "network access: yes/no") and a
-> future OS-level isolation layer (cgroups/nftables/seccomp) can enforce it. Every
-> gateway-MEDIATED reach is already bounded by `can_use_api` — a `network:false`
-> app can still reach the internet through its own subprocess … Until then, treat
-> `network: true` as an honest declaration, not a security boundary.
+> `can_use_network` — **DECLARATION-ONLY (unenforced by design)**, and the consent
+> surface says so rather than implying otherwise. There is no per-app egress
+> chokepoint to enforce at: an app's provider code is imported **in-process** by the
+> gateway, so its own `httpx`/`requests` calls are the gateway's egress, and an app
+> with a backend owns a separate OS process with its own network stack … So the flag
+> is DISCLOSURE, and the Store discloses it as such … Treat `network: true` as an
+> honest declaration, not a boundary.
 > — `src/personalclaw/apps/permissions.py`
 
-The consent surface is honest about this: at install time the Store lists the
-app's network declaration, and an app's *gateway-mediated* reach is separately
-bounded by its `api` permission. What is **not** enforced is an app's own
-outbound traffic from its own process.
+The consent surface states the non-enforcement outright. The Store shows the
+network claim **outside** the list of permissions the gateway enforces, labelled
+advisory, with the text *"PersonalClaw does not confine an app's outbound traffic:
+this app's code can reach the network either way. The declaration is disclosure, not
+containment."* It is shown whether or not the app declares `network`, so an app that
+declares `network: false` is not presented as one the platform has blocked. An app's
+*gateway-mediated* reach is separately bounded by its `api` permission; what is
+**not** bounded is the app's own outbound traffic.
 
 **What this means for you:** treat an installed app's `network: true` as a stated
 intent you are consenting to, the same way you would trust any program you choose

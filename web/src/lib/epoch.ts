@@ -20,3 +20,24 @@ export function epochSeconds(ts?: number | string | null): number | undefined {
   const ms = Date.parse(ts)
   return Number.isFinite(ms) ? ms / 1000 : undefined
 }
+
+/** A chat session's recency in MILLISECONDS for sorting — `last_activity_ts`, else `last_ts`, else
+ *  `created`, else 0.
+ *
+ *  🔴 THE FALLBACK CHAIN HAS TO USE `||`, NOT `??`, AND THE DIFFERENCE IS LIVE. `/api/chat/sessions`
+ *  returns `last_ts` as an EMPTY STRING — measured on 31 of 32 sessions in a real dev home — so `??`
+ *  (which only guards null/undefined) passes `''` through, `new Date('')` is an Invalid Date, and
+ *  `.getTime()` is **NaN**. A comparator that returns NaN makes the sort order implementation-defined:
+ *  the "recent chats" list would shuffle rather than fail, which is the kind of bug nobody files.
+ *
+ *  `#/chat` already had this right in two places (`Date.parse(a || b || c || '') || 0`) while
+ *  `#/dashboard` used `new Date(a ?? b ?? 0).getTime()`. This is that shape, once, routed through
+ *  `epochSeconds` so the empty string and the unparseable string are handled by the parser that
+ *  already knows about both — and so a fourth copy has somewhere to converge instead of diverging.
+ *
+ *  Milliseconds, because that is what both existing call sites already produced; only the ORDER matters
+ *  to every consumer, but keeping the unit means adopting this changes no behaviour at all. */
+export function sessionRecencyMs(s: { last_activity_ts?: string; last_ts?: string; created?: string }): number {
+  const secs = epochSeconds(s.last_activity_ts) ?? epochSeconds(s.last_ts) ?? epochSeconds(s.created)
+  return secs == null ? 0 : secs * 1000
+}

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, ChevronDown, MoreHorizontal, type LucideIcon } from 'lucide-react'
@@ -490,6 +491,14 @@ export function HeaderControl({
     <motion.button
       type="button" onClick={onClick} disabled={disabled} title={label}
       aria-label={iconOnly ? label : undefined}
+      // 🔴 `active` DECIDED A COLOUR AND NOTHING ELSE. 14 call sites across 7 files pass it — the chat
+      // Activity/History panels, the code cockpit's terminal, the files explorer, inbox settings, the
+      // knowledge detail rail — and every one rendered an identical accessible node whether the panel it
+      // controls was open or shut. `Button.ariaPressed` already carries this contract in its own doc: "a
+      // button acting as a SELECTED/UNSELECTED choice must announce that state, or a screen-reader user
+      // hears an identical label for the row they are on and the row they are not." `undefined` when
+      // `active` is not passed, so a plain header action gains no misleading state.
+      aria-pressed={active}
       whileTap={disabled ? undefined : { scale: 0.96 }}
       transition={spring.spatialFast}
       className={cx(
@@ -585,13 +594,30 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
   })
   const iconOnly = tier === 'icon' || tier === 'overflow'
   const active = options.find((o) => o.key === value) ?? options[0]
+  // The menu declared `role="menu"` with `menuitemradio` options and implemented none of the
+  // keyboard model: measured on `#/chat`, focus stayed on the trigger, ArrowDown did nothing, and
+  // because the menu is PORTALED it sits last in the document — so Tab skipped straight past it to
+  // the next header control with the menu still open. `autoFocus: false` because this popup also
+  // opens on HOVER, and a pointer crossing a control must not steal focus; the first Arrow key
+  // pulls focus in. The cursor starts on the CHECKED option (APG), not the top.
+  const { move, restoreFocus, tabIndexFor } = useMenuCursor({
+    containerRef: menuRef,
+    count: options.length,
+    openKey: open ? 'open' : null,
+    initialIndex: Math.max(0, options.findIndex((o) => o.key === value)),
+    autoFocus: false,
+  })
 
   const measure = useCallback(() => {
     const el = wrapRef.current
     if (el) setRect(el.getBoundingClientRect())
   }, [])
+  // 🪤 Set while focus is being handed BACK to the trigger on dismiss. The wrapper opens on
+  // `onFocus` (the hover/keyboard-reveal contract), so restoring focus would re-open the menu the
+  // instant Escape or Tab closed it — measured exactly that: `Escape closed: true → false`.
+  const suppressFocusOpen = useRef(false)
   const doOpen = useCallback(() => {
-    if (disabled) return
+    if (disabled || suppressFocusOpen.current) return
     window.clearTimeout(closeTimer.current)
     measure()
     setOpen(true)
@@ -601,13 +627,23 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
     closeTimer.current = window.setTimeout(() => setOpen(false), 120)
   }, [])
   const closeNow = useCallback(() => { window.clearTimeout(closeTimer.current); setOpen(false) }, [])
+  /** Close AND hand focus back to the trigger, with the reopen latch held across the focus event. */
+  const dismiss = useCallback(() => {
+    suppressFocusOpen.current = true
+    closeNow()
+    restoreFocus()
+    window.setTimeout(() => { suppressFocusOpen.current = false }, 0)
+  }, [closeNow, restoreFocus])
 
   // While open: reposition on scroll/resize (fixed portal must track the trigger),
   // close on Escape + outside pointerdown.
   useEffect(() => {
     if (!open) return
     const onScrollResize = () => measure()
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeNow() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { dismiss(); return }
+      menuCursorKeydown(e, { move, dismiss })
+    }
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node
       if (wrapRef.current?.contains(t) || menuRef.current?.contains(t)) return
@@ -623,7 +659,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('pointerdown', onDown, true)
     }
-  }, [open, measure, closeNow])
+  }, [open, measure, closeNow, move, dismiss])
   useEffect(() => () => window.clearTimeout(closeTimer.current), [])
 
   if (!active) return null
@@ -673,12 +709,13 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
                   the corners nest cleanly (fully-round pill rows don't sit right inside
                   a rounded-rect container). */}
               <div className="flex flex-col gap-0.5 rounded-lgi bg-surface-container p-s min-w-[11rem]" style={{ boxShadow: 'var(--shadow-menu)' }}>
-                {options.map((o) => {
+                {options.map((o, i) => {
                   const on = o.key === value
                   const OptIcon = o.icon
                   return (
                     <button key={o.key} type="button" role="menuitemradio" aria-checked={on}
-                      onClick={() => { onChange(o.key); closeNow() }}
+                      tabIndex={tabIndexFor(i)}
+                      onClick={() => { onChange(o.key); dismiss() }}
                       title={o.title ?? o.label}
                       className="flex items-center gap-s w-full rounded-md px-m h-9 text-left text-[0.8125rem] transition-colors"
                       style={on

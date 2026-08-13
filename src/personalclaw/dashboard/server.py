@@ -416,6 +416,9 @@ async def start_dashboard(
     app.router.add_get("/api/system", handlers.api_system)
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
+    # Onboarding progress is ENTITY state (entity_settings/onboarding.json), so it gets its
+    # own write path rather than riding the config PATCH allowlist.
+    app.router.add_post("/api/onboarding/state", handlers.api_onboarding_state)
     # Doctor — tiered read-only health probes
     # Scheduled-backup status, the archive list with its
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
@@ -691,6 +694,12 @@ async def start_dashboard(
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
     app.router.add_get("/api/models/health", handlers.api_models_health)
+    # The earned-autonomy ladder. One read + three writes, and only ONE of the three
+    # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.
+    app.router.add_get("/api/autonomy", handlers.api_autonomy)
+    app.router.add_post("/api/autonomy/grant", handlers.api_autonomy_grant)
+    app.router.add_post("/api/autonomy/demote", handlers.api_autonomy_demote)
+    app.router.add_post("/api/autonomy/undo", handlers.api_autonomy_undo)
     app.router.add_get("/api/dashboard/config", handlers.api_dashboard_config)
     app.router.add_put("/api/dashboard/config", handlers.api_dashboard_config)
     # Dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1). Literal /views first,

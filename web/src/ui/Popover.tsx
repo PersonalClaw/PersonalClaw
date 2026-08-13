@@ -172,7 +172,7 @@ function portalPos(anchor: DOMRect, placement: 'top' | 'bottom', align: 'left' |
  *  presses on tap (spring) — a light physical touch on a high-frequency surface,
  *  kept restrained (menus are dense). The `group` lets the icon shift on hover. */
 export function MenuRow({
-  icon, label, hint, selected, onClick, role,
+  icon, label, hint, selected, onClick, role, tabIndex, disabled,
 }: {
   icon?: ReactNode; label: string; hint?: string; selected?: boolean; onClick?: () => void
   /** The ITEM role required by the popup's container role, when it declares one.
@@ -185,11 +185,23 @@ export function MenuRow({
    *  (`ProjectPicker`, `SlashMenu`, `HeaderActions`, `MentionMenu`) marked its items correctly.
    *  The shared row was the reason those two were the outliers. */
   role?: 'menuitem' | 'menuitemradio' | 'option'
+  /** Roving-tabindex slot, for a container that moves focus row to row (see
+   *  `lib/useMenuCursor`): `0` on the cursor row, `-1` on the rest, so the menu is ONE tab stop
+   *  instead of one per row. Omit inside a click-driven popover — a bare button's default 0 is
+   *  right there. */
+  tabIndex?: number
+  /** A row that cannot act right now. Announced as `aria-disabled` (never the `disabled`
+   *  attribute) because a focus-driven menu must still be able to land on it — APG: a disabled
+   *  item stays reachable so the user learns it exists and is unavailable, rather than finding a
+   *  gap in the list. Dims at the kit's control level (40). */
+  disabled?: boolean
 }) {
   return (
     <motion.button
       onClick={onClick}
       role={role}
+      tabIndex={tabIndex}
+      aria-disabled={disabled || undefined}
       // The selected state goes in the vocabulary the role actually supports: `aria-selected`
       // for an option, `aria-checked` for a radio item. A plain `menuitem` has neither, which is
       // correct for an action row (Peek / Open / Pin) — nothing there is "on".
@@ -197,7 +209,7 @@ export function MenuRow({
       aria-checked={role === 'menuitemradio' ? !!selected : undefined}
       whileTap={{ scale: 0.97 }}
       transition={spring.spatialFast}
-      className="group flex items-center gap-s w-full rounded-md px-m py-2 text-left text-on-surface hover:bg-surface-high transition-colors"
+      className="group flex items-center gap-s w-full rounded-md px-m py-2 text-left text-on-surface hover:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
     >
       {icon && <span className="shrink-0 text-on-surface-var transition-transform duration-150 group-hover:translate-x-0.5">{icon}</span>}
       <span className="flex-1 min-w-0">

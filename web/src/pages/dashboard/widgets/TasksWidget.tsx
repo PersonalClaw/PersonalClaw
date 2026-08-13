@@ -52,7 +52,10 @@ export function TasksWidget({ navigate }: RouteProps) {
             actions={
               busy.has(t.id)
                 ? <span data-type="label-m" className="px-s text-on-surface-low">…</span>
-                : <RowAction tone="ok" onClick={() => complete(t.id)} title="Mark complete"><CheckCircle2 size={15} /></RowAction>
+                : (
+                  <RowAction tone="ok" onClick={() => complete(t.id)} title="Mark complete"
+                    ariaLabel={`Mark complete: ${t.title}`}><CheckCircle2 size={15} /></RowAction>
+                )
             }
           >
             <div className="flex items-center gap-s">

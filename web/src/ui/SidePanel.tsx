@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { X, Maximize2, Minimize2 } from 'lucide-react'
 import { IconButton } from './IconButton'
-import { spring, bounce, expr } from '../design/motion'
+import { spring, physics, expr } from '../design/motion'
 import type { RouteProps } from '../app/useQueryState'
 
 const MIN_W = 320, MAX_W = 720, DEFAULT_W = 420
@@ -140,7 +140,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
         initial={reduce ? { opacity: 0 } : { clipPath: furled }}
         animate={reduce ? { opacity: 1 } : { clipPath: 'inset(0px 0px 0px 0px)' }}
         exit={reduce ? { opacity: 0 } : { clipPath: furled }}
-        transition={reduce ? spring.effects : { ...bounce.settle, stiffness: 240 + expr(120, 0.4) }}>
+        transition={reduce ? spring.effects : { ...physics.fluid, stiffness: 240 + expr(120, 0.4) }}>
         {header}
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto px-l py-l" style={{ maxWidth: 'calc(var(--content-width) + 200px)' }}>{children}</div>
@@ -177,7 +177,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
           initial={false}
           animate={{ width: 1 }}
           whileHover={{ width: 1 + expr(2.5, 0.3) }}
-          transition={bounce.subtle}
+          transition={physics.snappy}
         />
       </div>
       {/* flex column: the header stays PINNED (shrink-0) while only the content

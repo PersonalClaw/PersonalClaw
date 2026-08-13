@@ -65,7 +65,7 @@ async function cachedSearch(query: string, project?: string, leading?: boolean):
  *  it; debounced fuzzy filename search (api.fileSearch). ↑/↓ navigate, Enter/Tab
  *  select, Esc closes. Calls onSelect with the chosen file's path + display name.
  *  NE-styled; portaled to body so it floats above everything. */
-export function MentionMenu({ query, anchorRef, open, project, leading, onSelect, onClose }: {
+export function MentionMenu({ query, anchorRef, open, project, leading, onSelect, onClose, idPrefix, onActiveIndex }: {
   query: string
   anchorRef: React.RefObject<HTMLElement | null>
   open: boolean
@@ -75,6 +75,11 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
   leading?: boolean
   onSelect: (pick: MentionPick) => void
   onClose: () => void
+  /** Id namespace shared with the editor that owns focus, so it can point `aria-activedescendant`
+   *  at the option the cursor is on. */
+  idPrefix: string
+  /** The cursor's index while open, `null` when closed — the editor mirrors it. */
+  onActiveIndex: (index: number | null) => void
 }) {
   const [results, setResults] = useState<Row[]>([])
   const [sel, setSel] = useState(0)
@@ -144,6 +149,14 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
     return () => document.removeEventListener('mousedown', onDown, true)
   }, [open, onClose, anchorRef])
 
+  // Tell the editor which option the cursor is on: focus stays in the composer, so the ONLY channel
+  // that can announce this is `aria-activedescendant` on the focused element. `null` while closed or
+  // empty, so the attribute never points at a node that no longer exists.
+  //
+  // 🪤 ABOVE the `if (!open …) return null` below: an effect placed after an early return runs a
+  // different number of hooks per render, which React rejects outright.
+  useEffect(() => { onActiveIndex(open && results.length ? sel : null) }, [open, results.length, sel, onActiveIndex])
+
   if (!open || !anchorRef.current) return null
   const rect = anchorRef.current.getBoundingClientRect()
   const w = Math.min(Math.max(rect.width, 280), 460)
@@ -159,7 +172,11 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
     : { bottom: window.innerHeight - rect.top + 8, maxHeight: Math.min(maxH, roomAbove) }
 
   return createPortal(
-    <div ref={menuRef} role="listbox"
+    <div ref={menuRef} role="listbox" id={`${idPrefix}-list`}
+      // 🔴 axe (serious) `aria-input-field-name` before this: a `listbox` is an ARIA input field, so
+      // unlike a `menu` it must be named — and this one was anonymous while its sibling SlashMenu was
+      // not. The name follows the menu's own hint copy, which already varies with `leading`.
+      aria-label={leading ? 'Prompts, files and knowledge' : 'Files and knowledge'}
       className="fixed z-[9999] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface/95 p-1 shadow-xl ring-1 ring-black/5 backdrop-blur-md"
       style={{ left: rect.left, width: w, ...pos }}>
       {query.length < 2 ? (
@@ -172,6 +189,7 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
         const Icon = r.kind === 'knowledge' ? BookText : r.kind === 'prompt' ? ScrollText : FileText
         return (
           <button key={`${r.kind}:${r.id}`} type="button" role="option" aria-selected={i === sel} title={r.sub}
+            id={`${idPrefix}-opt-${i}`}
             ref={i === sel ? selItemRef : undefined}
             onMouseEnter={() => setSel(i)}
             onMouseDown={(e) => { e.preventDefault(); choose(i) }}

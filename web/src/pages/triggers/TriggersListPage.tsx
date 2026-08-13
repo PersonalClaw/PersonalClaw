@@ -18,6 +18,8 @@ import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, type Trigger } from './triggerMeta'
+import { RungChip } from '../../ui/RungChip'
+import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { statusMeta, triggerHealthMeta, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -70,6 +72,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
   // carries live enabled/fire-count state → persist:false, like schedules and stores.
   const { data: events } = useCachedData('triggers:events', () => api.eventTriggers().catch(() => [] as WireTrigger[]), { persist: false })
   const { data: providers = [] } = useCachedData('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
+  // How much each row's action may do UNATTENDED. The ladder is
+  // keyed on the action-provider name — the same identity the backend dispatch seams hold —
+  // so this page annotates a row without knowing anything about action types. A failed read
+  // leaves `ladder` null and the rows simply carry no chip: the Settings ladder panel is the
+  // surface that OWNS this data and reports the failure, and substituting a rung here would
+  // be a fabricated claim about what an automation may do on its own.
+  const { ladder } = useAutonomyLadder()
+  const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
 
   const loadSchedules = () => { invalidateCache('triggers:schedules'); refreshSchedules() }
   const loadHooks = () => { invalidateCache('triggers:hooks'); refreshHooks() }
@@ -155,7 +165,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
         <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {triggers === null ? <ListSkeleton rows={6} /> : triggers.length === 0 ? (
+        {triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
               <EmptyState icon={Zap} title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'} hint={q || filter !== 'all' ? 'Try a different filter.' : 'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'} action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined} />
             ) : (
               <div className="flex flex-col gap-s">
@@ -188,6 +198,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
                           <span className="inline-flex items-center gap-1" style={{ color: t.whenTone }}><t.whenIcon size={11} /> {t.whenLabel}</span>
                           <span className="inline-flex items-center gap-1"><t.actionIcon size={11} /> {t.actionLabel}</span>
                           {t.kind === 'schedule' && t.enabled && t.schedule?.next_run_ts && <span className="inline-flex items-center gap-1"><Clock size={11} /> {relFuture(t.schedule.next_run_ts)}</span>}
+                          {/* The rung chip: what this automation may do on its own, and why.
+                              Placed beside the action label because that is the thing being
+                              governed — the action, not the schedule that fires it. Absent for
+                              an action no declaration claims (it keeps its pre-ladder
+                              behaviour) and while the ladder is still loading. */}
+                          {t.actionProvider && rungByProvider.get(t.actionProvider) && (
+                            <RungChip type={rungByProvider.get(t.actionProvider)!} ladder={ladder} />
+                          )}
                           {t.kind === 'lifecycle' && t.runCount != null && <span>ran {t.runCount}×</span>}
                           {/* An event trigger has no clock, so `fired N×` is its one live number. */}
                           {t.kind === 'event' && t.runCount != null && <span>fired {t.runCount}×</span>}

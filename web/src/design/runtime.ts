@@ -27,4 +27,14 @@ export const runtime = {
   // governs the system. Reduced-motion still overrides everything to near-static
   // regardless of this value.
   expressiveness: 0.8,
+  // ── Gesture physics (--drag-elastic / --swipe-dismiss-velocity / -distance) ──
+  // Read by dragElastic()/swipeDismiss() in design/motion.ts. Kept here, not in
+  // CSS-land, because a gesture threshold is compared against a Framer velocity in
+  // JS — getComputedStyle on every drag end would be absurd. `dragElastic` is how
+  // far a dragged element stretches past its constraints (0 = rigid, 1 = loose);
+  // the two dismiss thresholds are OR'd, so a fast flick and a slow deliberate haul
+  // both dismiss.
+  dragElastic: 0.9,
+  swipeVelocity: 500, // px/s flick speed that dismisses
+  swipeDistance: 80,  // px dragged that dismisses regardless of speed
 }

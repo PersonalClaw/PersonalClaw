@@ -531,6 +531,37 @@ class TestSubagentReaper:
         )
 
     @pytest.mark.asyncio
+    async def test_a_failed_reaper_audit_write_raises(self) -> None:
+        """A genuine SEL write failure must surface, not vanish (SH6.3).
+
+        The audit write here is the only record that the reaper SIGKILLed a subagent.
+        It used to sit under ``except Exception: logger.exception(...)``, so a
+        read-only/full home — or any error inside ``sel()`` itself — left the kill
+        unaudited with nothing raised, and the two SEL tests above could see zero calls
+        under load with no failure to debug. This pins the opposite: the write raises to
+        ``_reaper_loop``, which logs it per-agent.
+        """
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            is_yolo=lambda: True,
+        )
+        info = SubagentInfo(
+            id="dead0002",
+            task="stuck task",
+            started=time.time() - _TIMEOUT_SECS - 120,
+        )
+        manager._agents["dead0002"] = info
+        manager._running_count = 1
+
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as mock_sel:
+            mock_sel().log_tool_invocation.side_effect = OSError("read-only file system")
+            with pytest.raises(OSError, match="read-only file system"):
+                await manager._force_reap("dead0002", info, _TIMEOUT_SECS + 120)
+
+    @pytest.mark.asyncio
     async def test_reaper_skips_completed_subagents(self) -> None:
         """Reaper does not touch subagents already marked done."""
         from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo

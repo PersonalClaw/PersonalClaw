@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ChevronDown, Search, Check, X } from 'lucide-react'
-import { spring, bounce } from '../design/motion'
+import { spring, physics } from '../design/motion'
 
 export interface ComboOption { value: string; label: string; group?: string; description?: string }
 
@@ -147,7 +147,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           <motion.button layout="position" type="button" onClick={() => setOpen(true)} data-type="title-m"
             className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50">
             <span className={`flex-1 truncate ${selected ? 'text-on-surface' : 'text-on-surface-low'}`}>{selected ? selected.label : placeholder}</span>
-            <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={bounce.subtle}>
+            <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
               <ChevronDown size={16} />
             </motion.span>
           </motion.button>

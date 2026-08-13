@@ -5,7 +5,7 @@ import { MessageSquare, GripVertical } from 'lucide-react'
 import type { TaskItem } from '../../lib/api'
 import { STATUSES, signalPriority, dueMeta, exitDoneCount } from './taskMeta'
 import { prereqIds } from './dag'
-import { spring, bounce, expr } from '../../design/motion'
+import { spring, physics, expr } from '../../design/motion'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../../ui/BoardCollapse'
 
 /** Kanban board, designed as a fixed SHELL: every status column is always on
@@ -67,7 +67,7 @@ export function TaskBoard({ tasks, onOpen, onMove }: {
           // card hovers over it — a physical "ready to catch" cue; scaled by expr.
           <motion.div key={s.key}
             animate={{ scale: isOver ? 1 + expr(0.012, 0.3) : 1 }}
-            transition={bounce.subtle}
+            transition={physics.snappy}
             {...dropHandlers}
             className="flex min-h-0 flex-col rounded-xl p-2 transition-colors"
             style={{ background: isOver ? `color-mix(in srgb, ${s.tone} 12%, var(--color-surface-container))` : 'color-mix(in srgb, var(--color-surface-container) 40%, transparent)', outline: isOver ? `1.5px dashed ${s.tone}` : '1.5px solid transparent' }}>
@@ -75,7 +75,7 @@ export function TaskBoard({ tasks, onOpen, onMove }: {
               <s.icon size={15} style={{ color: s.tone }} />
               <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{s.label}</span>
               {/* count pops on change (a card arriving/leaving reads as an event) */}
-              <motion.span key={items.length} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={bounce.playful}
+              <motion.span key={items.length} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={physics.playful}
                 className="flex-1 text-on-surface-low text-[0.75rem] tabular-nums">{items.length}</motion.span>
               <CollapseColumnButton onCollapse={() => collapse.toggle(s.key, items.length)} />
             </div>

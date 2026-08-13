@@ -10,9 +10,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Installed apps' backends no longer inherit PersonalClaw's environment.**
+- **A scheduled Python script can no longer exhaust PersonalClaw's file descriptors.**
+- **The Store now tells you which other apps an app may message.**
+- **The Store no longer implies PersonalClaw confines an app's network access.**
+- **Your hooks and cron scripts no longer inherit PersonalClaw's environment.**
+- **Scheduled, file-watch, webhook and chained automations now honour the action denylist — they never did.**
+- **A governance ceiling an operator writes once now bounds every unattended run — and the safety profile it bounds is finally read at all.**
+- **An egress "allow-list" now actually restricts.**
+- **A watched-source poll now honours your denied hosts on the headless-browser tier too.**
+- **An auto-approval grant for a spawned subagent can be refused by the ceiling.**
+- **Path rules are matched correctly.**
+
 - **App backends now authenticate inbound requests, closing a direct-to-port bypass.**
 
 ### Fixed
+
+- **A security-audit write that fails is no longer swallowed.**
 
 - **A lesson saved for one project no longer becomes a rule for every project.**
 
@@ -21,6 +35,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it claimed to.**
+
+- **Housekeeping now runs when your machine actually needs it, instead of on a fixed clock — and one system does it, not two.**
 - **A workflow judge now has to show its work, and a PASS it cannot justify is refused.**
 
 - **A workflow plan now tells you which of its stops survive an unattended run.**
@@ -30,6 +47,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **You can approve what PersonalClaw is waiting on from your phone.**
+- **PersonalClaw can now earn autonomy one action at a time, and lose it instantly.**
+- **The autonomy ladder now actually decides whether an automated action runs.**
+- **You can now see, grant and take back what each automation may do on its own.**
 - **You can share a chat as a read-only artifact — inside your own instance, never on the internet.**
 - **A Routing & Efficiency panel in Settings shows which model is efficient for which kind of work.**
 - **A Usage panel in Settings shows what you're spending.**

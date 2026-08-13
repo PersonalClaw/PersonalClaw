@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, AlertTriangle, RefreshCw, Plug, ChevronDown,
-  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database, Sparkles,
+  MoreVertical, CalendarClock, Bot, Terminal, Copy, Check, Database, Sparkles, Globe,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -184,6 +185,12 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
   const app = { name: item.name, enabled: item.enabled, hasUI: item.hasUI }
   return (
     <Popover align="right" placement="bottom" width={200}
+      // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
+      // 175px tall inside a card whose own `overflow-hidden` box ends 56px earlier, so the LAST row
+      // — "Force uninstall", the destructive one — was clipped away on every card, and the strip it
+      // occupied belongs to the card underneath (which is itself clickable). At 430px two of the
+      // seven menus were clipped by 166px: invisible entirely.
+      portal
       trigger={(open, toggle) => (
         <button type="button" aria-label={`Actions for ${item.displayName}`} title="Actions"
           aria-expanded={open} onClick={(e) => { e.stopPropagation(); toggle() }}
@@ -530,7 +537,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           ) : apps === undefined && appsErr ? (
             // Before the skeleton branch, or a failed fetch spins it forever.
             <LoadError what="apps" error={appsErr} onRetry={reload} />
-          ) : apps === undefined ? <ListSkeleton rows={4} />
+          ) : apps === undefined ? <ListSkeleton rows={4} what="apps" />
             : libResult && libResult.length === 0 ? (
               // Empty state, tab-aware: Native (should never be empty in practice —
               // native apps always ship), Library (no user-installed apps), each
@@ -653,7 +660,7 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
   if (catalog === undefined && catalogError) {
     return <LoadError what="the Store catalog" error={catalogError} onRetry={reloadCatalog} />
   }
-  if (catalog === undefined) return <ListSkeleton rows={3} />
+  if (catalog === undefined) return <ListSkeleton rows={3} what="the Store catalog" />
 
   return (
     <div className="flex flex-col gap-2xl">
@@ -944,9 +951,17 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
                 </span>
               )}
             </div>
+            {/* 🔴 3.97:1 (need 4.5) before this, measured by BOTH `ux-audit` and axe at light/phone on
+                  every card: coral ink on a 14% coral tint. `design/accent.ts` already documents this
+                  exact failure — a tint is not symmetric across modes, and in light it lifts the
+                  backdrop TOWARD the dark accent until ink and background converge (14% → 3.62 by its
+                  own table) — and ships the pair that fixes it: `primary-container` /
+                  `on-primary-container`, 13.1:1 light and 10.43:1 dark, guaranteed for all 12 schemes
+                  by `schemeContrast.test.ts`. This chip was the last accent-carrying TEXT left on the
+                  old spelling. */}
             {providerLabel && (
-              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary" data-type="label-s"
-                style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
+                style={accentChip}>
                 <Plug size={11} />{providerLabel}
               </span>
             )}
@@ -1304,7 +1319,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
           {/* Advanced → the destructive force-uninstall (removes files from disk).
               Hidden behind an expander so it's deliberate, not accidental. */}
           <div className="border-t border-outline-variant/40 pt-3">
-            <button type="button" onClick={() => setAdvancedOpen((o) => !o)}
+            <button type="button" onClick={() => setAdvancedOpen((o) => !o)} aria-expanded={advancedOpen}
               className="flex items-center gap-1.5 text-on-surface-low text-[0.8125rem] transition-colors hover:text-on-surface">
               <ChevronDown size={14} className="transition-transform" style={{ transform: advancedOpen ? 'rotate(180deg)' : 'none' }} /> Advanced
             </button>
@@ -1418,24 +1433,69 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
   )
 }
 
-function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
+// One `appMessaging` entry, in the words a user can act on. The grammar is
+// `apps/permissions.py::_matches_any`, so this MUST mirror it: a trailing `*` is a
+// name PREFIX, not a literal app, and a bare `*` matches every name. Rendering
+// `mail-*` as though an app called "mail-*" existed would understate the grant — it
+// covers every current AND future app under that prefix. (`_matches_any`'s third
+// branch also treats an exact entry as a `/`-path prefix; app names are kebab-case
+// with no `/`, so that branch cannot widen an app target and is not claimed here.)
+function describeMessagingTarget(pattern: string): string {
+  if (pattern === '*') return 'any installed app'
+  if (pattern.endsWith('*')) return `any app whose name starts with “${pattern.slice(0, -1)}”`
+  return pattern
+}
+
+// EI-12 D2. The bullets are the permissions the gateway ENFORCES server-side, and
+// `network` is deliberately not among them: an app's provider code is imported
+// in-process by the gateway, so there is no per-app egress chokepoint to enforce at
+// (docs/security/limitations.md §2). Listing it beside storage/cron/agent — which are
+// enforced — would read as a grant the platform polices, and OMITTING it when the app
+// declares `network: false` would read as a block. Both are false, so it gets its own
+// advisory row, rendered either way.
+//
+// `appMessaging` is the OPPOSITE case and belongs in the enforced bullets: the
+// broker (`POST /api/apps/message`) is the only app-to-app path and refuses an
+// undeclared target 403 + SEL (apps/messaging.py). It used to render nowhere at all —
+// `AppPermissionsWire` never declared the field — so install consent never said which
+// other apps an app may talk to. Declaring nothing is disclosed too (the caption
+// below the bullets): deny-by-default is the real behaviour, and silence would repeat
+// the mistake D2 found for `network`.
+export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
   if (perms.events?.length) rows.push(`Events: ${perms.events.join(', ')}`)
   if (perms.mcpTools?.length) rows.push(`MCP tools: ${perms.mcpTools.join(', ')}`)
   if (perms.memory) rows.push(`Memory: ${perms.memory}`)
-  if (perms.network) rows.push('Network access')
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
   if (perms.agent) rows.push('Run background agents')
+  const messaging = perms.appMessaging ?? []
+  if (messaging.length) {
+    rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)
+  }
   return (
     <div>
-      <div data-type="label-m" className="mb-1 text-on-surface">Permissions</div>
-      {rows.length === 0 ? <div data-type="body-s" className="text-on-surface-low">No special permissions</div> : (
+      <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
+      {rows.length === 0 ? <div data-type="body-s" className="text-on-surface-low">None — this app is granted no gateway capability.</div> : (
         <ul className="flex flex-col gap-1">
           {rows.map((r, i) => <li key={i} data-type="body-s" className="text-on-surface-low">• {r}</li>)}
         </ul>
       )}
+      {messaging.length === 0 && (
+        <div data-type="body-s" className="mt-1 text-on-surface-low">
+          App messaging: none — it declared no target, and the gateway broker is the only
+          way one app can reach another, so it can message no other app.
+        </div>
+      )}
+      <div className="mt-2 flex gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
+        <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+        <div data-type="body-s" className="text-on-surface-low">
+          <span className="text-on-surface">Network access: {perms.network ? 'declared' : 'not declared'}</span>
+          {' — advisory only. PersonalClaw does not confine an app\'s outbound traffic: this app\'s '}
+          code can reach the network either way. The declaration is disclosure, not containment.
+        </div>
+      </div>
     </div>
   )
 }

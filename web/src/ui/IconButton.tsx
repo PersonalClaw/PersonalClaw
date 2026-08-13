@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring, bounce, expr, exprHeavy } from '../design/motion'
+import { physics, expr, exprHeavy } from '../design/motion'
 
 /** Round icon button — pill hit area, rounded outline icon (ROND feel).
  *  Redesign-v2: expressiveness-scaled press/hover + a soft hover halo (bold only)
@@ -9,10 +9,16 @@ import { spring, bounce, expr, exprHeavy } from '../design/motion'
  *  and success `bloom` moments. Yields to reduced-motion; halo drops below the
  *  heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, iconKey, bloom,
+  icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, iconKey, bloom,
 }: {
   icon: LucideIcon
   label: string
+  /** Tooltip override — defaults to `label`, exactly as `ui/SquareIconButton` already does.
+   *
+   *  Needed when the NAME has to carry a row's subject and the tooltip should stay short: on
+   *  `#/notifications` the name is `Delete: <notification title>` (83 rows, otherwise 83 identical
+   *  names in the AX tree) while the hover hint stays "Delete". */
+  title?: string
   onClick?: (e: React.MouseEvent) => void
   active?: boolean
   filled?: boolean
@@ -57,12 +63,16 @@ export function IconButton({
       type="button"
       aria-label={label}
       aria-disabled={disabled || undefined}
-      title={disabled && disabledReason ? `${label} — ${disabledReason}` : label}
+      // Same contract as `HeaderControl` below/above: `active` drove a tint only. The composer's optimize
+      // and mic buttons are its two `active` callers, and "recording" vs "not recording" is exactly the
+      // state a screen-reader user cannot infer from a tint. `undefined` unless a caller opts in.
+      aria-pressed={active}
+      title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={disabled ? undefined : onClick}
       whileTap={disabled ? undefined : { scale: pressScale }}
       whileHover={disabled ? undefined : { scale: hoverScale }}
       animate={bloom ? { scale: [1, 1.18, 1] } : undefined}
-      transition={bloom ? bounce.playful : spring.spatialFast}
+      transition={bloom ? physics.playful : physics.snappy}
       className={cx(
         // `shrink-0`: the size below is set via inline `width`/`height`, and an inline width is NOT a
         // floor for a flex child. Measured at 390px on the settings sub-routes, where this button sits in
@@ -97,7 +107,7 @@ export function IconButton({
             initial={{ scale: 0.4, opacity: 0, rotate: -30 }}
             animate={{ scale: 1, opacity: 1, rotate: 0 }}
             exit={{ scale: 0.4, opacity: 0, rotate: 30 }}
-            transition={bounce.subtle}
+            transition={physics.snappy}
             className="relative inline-flex"
           >
             <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth />

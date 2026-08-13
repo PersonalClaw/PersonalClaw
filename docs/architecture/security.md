@@ -80,6 +80,17 @@ Credential-hiding child-process isolation for tool execution, including an
 environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
 
+Child **environments** are built by allowlist, not inherited: `build_child_env`
+gives a hook, cron-script or bash-action child a minimal base
+(`PATH`, locale, home-equivalents, proxy/CA settings, and the three
+`PERSONALCLAW_*` vars) plus whatever names the operator declared in
+`sandbox.env_passthrough`. Nothing else from the gateway environment reaches
+them, so a credential the gateway holds is not readable by `printenv`. The
+sensitive-prefix list above is the floor: a declaration cannot pass
+`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`.
+Withheld names are listed in the debug log at each spawn, so a script that
+needs one more variable is diagnosable rather than mysteriously broken.
+
 ### What the sandbox does and does not do
 
 This is a **credential-hiding sandbox, not a confinement sandbox** — a precise distinction
@@ -103,6 +114,47 @@ The honest, complete statement of limitations lives in
 [`../security/limitations.md`](../security/limitations.md); this section is the architectural
 summary, not a substitute for them.
 
+## Governance ceiling (`guardrails/ceiling.py`)
+
+Two levels, one rule — **tightest wins**. Level 1 is the operator's `Ceiling`,
+read ONCE at boot; level 2 is the run's `SafetyProfile`
+(`guardrails/policy.py`), which may only **narrow**. Effective posture =
+`resolve(ceiling, profile)`, composed inside `profile_for_session` — the single
+object every dispatch seam already consults (rung routing, the action denylist,
+the tool-approval pick, spawn, egress), so there is no seam that reads a profile
+the ceiling did not bound.
+
+- **Where it lives.** `$PERSONALCLAW_HOME/governance/ceiling.json`, or an
+  absolute path in `PERSONALCLAW_CEILING_FILE`. Schema:
+  `{"version": 1, "scopes": {...}}` over six governed scopes — `approval`,
+  `scan`, `egress` (ordinal), `paths` (ruleset), `tools` (capability gate),
+  `budget` (scoped map).
+- **Four archetypes, one compose function each** (`compose_ordinal`,
+  `compose_ruleset`, `compose_gate`, `compose_map`). The evaluator dispatches on
+  **archetype, never on scope name**, so adding a governed scope is one
+  `ScopeSpec` row of data.
+- **Enforcer-owned registries** (`guardrails/registries.py`): matchers and
+  ordinal scales live in code and are never sourced from the governed file — a
+  rule that could name its own matcher or reorder a scale could widen itself
+  while reading as narrower. An unknown matcher/scale/scope/value, a corrupt or
+  unreadable file, or a scope naming an unknown archetype **aborts governance
+  boot** with WHAT/WHY/FIX. Fail-closed: "governance could not be established"
+  is a stop, not a degraded mode.
+- **Path matching** normalizes only the queried item (`~`/`$VAR`, then
+  `abspath`) and **never** runs a pattern through `normpath`, which would
+  collapse `/a/**/../b` to `/a/b` and silently drop the `**`
+  (`tests/test_guardrails_path_matcher.py` is the table).
+- **What the layer buys**: no HTTP write surface (absent from the
+  `_EDITABLE_CONFIG` PATCH allowlist, no PUT of its own); agent write paths
+  refuse it (`governance/` is in the built-in sensitive-path denylist); no
+  mid-run widening (read once and cached, so a tamper needs a restart an
+  operator can see); tamper evidence (boot SEL-audits source + digest). Every
+  clamp is logged and SEL-audited (`guardrails.ceiling_clamp`).
+- **What it does NOT buy**: OS-level immutability against a process running as
+  the operator. On a single-user machine that requires the file to live outside
+  `$HOME`, owned by another uid and mode `0444` — which is what
+  `PERSONALCLAW_CEILING_FILE` is for.
+
 ## Egress chokepoint (`net/`)
 
 `net/client.py` + `net/guard.py` + `net/policy.py` form the ONE outbound-HTTP
@@ -110,12 +162,20 @@ chokepoint:
 
 - Named policies: `STRICT`, `CONNECTOR` (knowledge scraping), `WEBHOOK`
   (user-configured POSTs), `LOOPBACK_INTERNAL` (loopback only — **never
-  widened** by config).
+  widened** by config), `REGISTRY`/`LISTED` (exclusive allow-lists).
 - `egress_policy_for(base)` is the single config-layering seam: the Security
   panel's allow/deny hosts and `allow_private` are layered onto a base policy
   at the `web_fetch`/`web_extract`/render entry (`web/fetch.py`) and at
   webhook/knowledge-connector call sites (`knowledge/connectors/web_url.py`).
   Raw `net.fetch` stays config-free for fixed-posture internal callers.
+- `allow_only` inverts `allow_hosts` from ADDITIVE (waive the private-range
+  block) to EXCLUSIVE (only a listed host is reachable), checked before DNS
+  resolution. It is what makes an egress TIER able to narrow anything.
+- `egress_policy_for_profile(base, tier)` narrows a surface policy by the RUN's
+  `SafetyProfile.egress_tier` — tightest wins, and caps only tighten. `off`
+  returns `None` and the caller refuses. Live at `web/fetch.py::web_fetch` (the
+  agent's primary fetch surface) and `triggers/web_poll.py` (watched-source
+  polls, plain + headless tier).
 
 ## Untrusted-content fencing
 

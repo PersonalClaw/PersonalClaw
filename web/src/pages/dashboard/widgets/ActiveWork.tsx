@@ -42,6 +42,8 @@ export function ActiveWork({ navigate }: RouteProps) {
 }
 
 function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navigate'] }) {
+  // One label for the row: the heading a user reads AND the subject each action names.
+  const loopLabel = loop.name || loop.task?.slice(0, 60) || 'Loop'
   const meta = loopStatusMeta(loop.status)
   const question = pendingText(loop)
   const [answering, setAnswering] = useState(false)
@@ -72,17 +74,19 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
         <button type="button" onClick={() => navigate(`loops/${loop.id}`)} className="flex min-w-0 flex-1 items-center gap-s text-left">
           {pct != null ? <ProgressRing pct={pct} tone={meta.tone} /> : <StatusDot color={meta.tone} pulse={loop.status === 'running'} />}
           <div className="min-w-0">
-            <p data-type="title-m" className="truncate text-on-surface">{loop.name || loop.task?.slice(0, 60) || 'Loop'}</p>
+            <p data-type="title-m" className="truncate text-on-surface">{loopLabel}</p>
             <p data-type="body-m" className="truncate text-on-surface-low">
               <span style={{ color: meta.tone }}>{meta.label}</span> · {cycleText}
             </p>
           </div>
         </button>
         {loop.status === 'needs_input' && !answering && (
-          <RowAction tone="primary" onClick={() => setAnswering(true)} title="Answer the loop's question"><MessageCircleQuestion size={14} /> Answer</RowAction>
+          <RowAction tone="primary" onClick={() => setAnswering(true)} title="Answer the loop's question"
+            ariaLabel={`Answer: ${loopLabel}`}><MessageCircleQuestion size={14} /> Answer</RowAction>
         )}
         {loop.status !== 'needs_input' && !answering && (
-          <RowAction tone="default" onClick={() => setAnswering(true)} title="Nudge this loop"><Send size={14} /> Nudge</RowAction>
+          <RowAction tone="default" onClick={() => setAnswering(true)} title="Nudge this loop"
+            ariaLabel={`Nudge: ${loopLabel}`}><Send size={14} /> Nudge</RowAction>
         )}
       </div>
 

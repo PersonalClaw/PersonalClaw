@@ -395,7 +395,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {moveError && <InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError>}
           </div>
           <div className="mx-auto h-full min-h-0 w-full" style={{ maxWidth: 'var(--content-width)' }}>
-            {filtered === null ? <ListSkeleton rows={6} /> : (tasks?.length ?? 0) === 0 ? (
+            {filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : scopedTasks.length === 0 ? (
               <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
@@ -422,7 +422,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
                 onReset={resetList} />
             )}
-            {filtered === null ? <ListSkeleton rows={6} /> : (tasks?.length ?? 0) === 0 ? (
+            {filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : view === 'dag' ? (
               scopedTasks.length === 0
@@ -569,7 +569,7 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
           the 24px circle is inside another target by construction (cycle 72's trap, from the
           `sm` Toggle). The button is now a transparent 24px box with the painted 20px control inside
           it, and `-m-0.5` returns the 4px so no row reflows — the fix is the hit box, not the design. */}
-      <button type="button" aria-label={selected ? 'Deselect task' : 'Select task'}
+      <button type="button" aria-label={`${selected ? 'Deselect' : 'Select'}: ${t.title}`}
         onClick={(e) => { e.stopPropagation(); onToggleSelect?.() }}
         className="shrink-0 grid size-6 -m-0.5 place-items-center">
         <span className={`grid size-5 place-items-center rounded-md border transition-all ${selected ? 'border-primary bg-primary text-on-primary' : `border-outline-variant text-transparent ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}`}>

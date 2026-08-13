@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
 import { api } from '../../../lib/api'
+import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -72,6 +73,15 @@ export function ActionCenter({ navigate }: RouteProps) {
         {entries.map((e) => {
           const Icon = icon[e.kind]
           const isBusy = busy.has(e.key)
+          // 🪤 `e.title` ALONE IS NOT THE ROW. For an inbox entry it is the sender/channel, so eight
+          // proposals from the same channel all composed "Reply: skills" — the name changed and the
+          // ambiguity did not. Measured by re-running the census against the fix, which is the only
+          // reason it was caught. The row's identity is title + the summary line beneath it.
+          // Bounded, not just composed: the first version of this shipped uncapped and put SIXTEEN
+          // 107-character names on this widget — measured in the AX tree, and the same defect in the
+          // other direction as the artifact tiles named by their whole body. `lib/rowSubject` owns
+          // the rule and the number for every row control in the app.
+          const subject = rowSubject([e.title, e.sub])
           return (
             <WidgetRow
               key={e.key}
@@ -80,13 +90,17 @@ export function ActionCenter({ navigate }: RouteProps) {
                 isBusy ? <span data-type="label-m" className="px-m text-on-surface-low">…</span> : (
                   e.kind === 'inbox' ? (
                     <>
-                      <RowAction tone="primary" onClick={() => primary(e)} title="Open to reply"><Send size={14} /> Reply</RowAction>
-                      <RowAction tone="danger" onClick={() => secondary(e)} title="Dismiss"><X size={14} /></RowAction>
+                      <RowAction tone="primary" onClick={() => primary(e)} title="Open to reply"
+                        ariaLabel={`Reply: ${subject}`}><Send size={14} /> Reply</RowAction>
+                      <RowAction tone="danger" onClick={() => secondary(e)} title="Dismiss"
+                        ariaLabel={`Dismiss: ${subject}`}><X size={14} /></RowAction>
                     </>
                   ) : (
                     <>
-                      <RowAction tone="ok" onClick={() => primary(e)} title={e.kind === 'approval' ? 'Approve' : 'Accept'}><Check size={14} /> {e.kind === 'approval' ? 'Approve' : 'Accept'}</RowAction>
-                      <RowAction tone="danger" onClick={() => secondary(e)} title="Reject"><X size={14} /></RowAction>
+                      <RowAction tone="ok" onClick={() => primary(e)} title={e.kind === 'approval' ? 'Approve' : 'Accept'}
+                        ariaLabel={`${e.kind === 'approval' ? 'Approve' : 'Accept'}: ${subject}`}><Check size={14} /> {e.kind === 'approval' ? 'Approve' : 'Accept'}</RowAction>
+                      <RowAction tone="danger" onClick={() => secondary(e)} title="Reject"
+                        ariaLabel={`Reject: ${subject}`}><X size={14} /></RowAction>
                     </>
                   )
                 )

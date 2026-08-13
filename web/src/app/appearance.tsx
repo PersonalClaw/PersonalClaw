@@ -25,6 +25,19 @@ export const WIDTH_PRESETS: Record<WidthPreset, string> = {
   full: '100%',
 }
 
+/** The factory default content width — ONE declaration, because there used to be two and they disagreed.
+ *
+ *  🪤 THE PRESET NAMED `'default'` IS NOT THE DEFAULT PRESET, and that is exactly how this happened. The
+ *  shipped default is `'full'` (a pristine profile persists `widthPreset: 'full'` — driven and read back
+ *  from `localStorage`), while two reads spelled their fallback `?? 'default'`, i.e. the 1100px cap. Those
+ *  fallbacks were **unreachable**: `load()` returns `{ ...empty, ...stored }` or a clone of `empty`, so
+ *  `widthPreset` is always set. Dead, and dangerous in the way dead defaults are — "tidying" the constant
+ *  away would have silently re-capped every page from edge-to-edge to 1100px.
+ *
+ *  So the default is named once and read from here everywhere. A disagreement is now a type error rather
+ *  than a comment nobody reads. */
+export const DEFAULT_WIDTH_PRESET: WidthPreset = 'full'
+
 interface Overrides {
   colors: Record<string, { dark?: string; light?: string }>
   scalars: Record<string, number>
@@ -34,7 +47,7 @@ interface Overrides {
 }
 
 const KEY = 'appearance'
-const empty: Overrides = { colors: {}, scalars: {}, selects: {}, scheme: DEFAULT_SCHEME, widthPreset: 'full' }
+const empty: Overrides = { colors: {}, scalars: {}, selects: {}, scheme: DEFAULT_SCHEME, widthPreset: DEFAULT_WIDTH_PRESET }
 
 /** Convert a server ThemeRecord ({dark:{var→hex}, light:{var→hex}}) into the
  *  picker's Scheme shape (colors keyed by var → {dark,light}). A saved theme's
@@ -179,7 +192,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     // width (the narrow/default/wide caps would waste scarce horizontal space and
     // leave dead gutters on a phone). The saved preset is preserved and re-applies
     // as soon as the viewport grows back past the mobile breakpoint.
-    root.style.setProperty('--content-width', isMobile ? '100%' : WIDTH_PRESETS[ov.widthPreset ?? 'default'])
+    root.style.setProperty('--content-width', isMobile ? '100%' : WIDTH_PRESETS[ov.widthPreset ?? DEFAULT_WIDTH_PRESET])
 
     // ── P19 orthogonal theming attributes on <html> ──
     // data-theme = active palette identity (custom `--color-*` stay the mechanism; the
@@ -267,7 +280,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppearanceCtx.Provider value={{ colorValue, scalarValue, selectValue, setColor, setScalar, setSelect, resetAll, resetToken, widthPreset: ov.widthPreset ?? 'default', setWidthPreset, activeScheme, allSchemes, applyScheme, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading }}>
+    <AppearanceCtx.Provider value={{ colorValue, scalarValue, selectValue, setColor, setScalar, setSelect, resetAll, resetToken, widthPreset: ov.widthPreset ?? DEFAULT_WIDTH_PRESET, setWidthPreset, activeScheme, allSchemes, applyScheme, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading }}>
       {children}
     </AppearanceCtx.Provider>
   )

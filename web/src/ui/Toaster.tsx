@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, type Transition } from 'framer-motion'
 import { Info, CheckCircle2, AlertCircle, X } from 'lucide-react'
-import { spring } from '../design/motion'
+import { dragElastic, spring, swipeDismiss } from '../design/motion'
 
 interface Toast { id: number; message: string; level: 'info' | 'success' | 'error' }
 
@@ -17,6 +17,18 @@ const TONES = { info: 'text-on-surface-var', success: 'text-ok', error: 'text-da
 export function Toaster() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id))
+
+  // A toast the user just FLICKED away, with the transition `swipeDismiss()` resolved
+  // for that gesture. Set on drag end and consumed one render later by the effect
+  // below, because AnimatePresence animates an exiting element with the props from its
+  // last render: removing the toast in the same tick as the verdict would throw the
+  // gesture's own curve away and fall back to the timer-expiry spring.
+  const [flicked, setFlicked] = useState<{ id: number; transition: Transition } | null>(null)
+  useEffect(() => {
+    if (!flicked) return
+    dismiss(flicked.id)
+    setFlicked(null)
+  }, [flicked])
 
   useEffect(() => {
     let seq = 0
@@ -69,11 +81,21 @@ export function Toaster() {
               layout
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={{ left: 0, right: 0.9 }}
-              onDragEnd={(_, info) => { if (info.offset.x > 80 || info.velocity.x > 500) dismiss(t.id) }}
+              dragElastic={{ left: 0, right: dragElastic() }}
+              // RIGHTWARD only — the card is pinned at its left constraint and its exit
+              // flies right, so a leftward flick (which Framer still reports a velocity
+              // for, since velocity comes from the pointer and not the element) must not
+              // count. `swipeDismiss` owns the thresholds: they are user-tunable tokens,
+              // not the `> 80 || > 500` literals that used to live here.
+              onDragEnd={(_, info) => {
+                const swipe = swipeDismiss(Math.max(0, info.velocity.x), Math.max(0, info.offset.x))
+                if (swipe.dismiss) setFlicked({ id: t.id, transition: swipe.transition })
+              }}
               initial={{ opacity: 0, y: 16, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 80, scale: 0.9, transition: spring.spatialFast }}
+              // A flicked toast leaves on the gesture's own accelerating curve; one that
+              // simply timed out keeps the calmer spring.
+              exit={{ opacity: 0, x: 80, scale: 0.9, transition: flicked?.id === t.id ? flicked.transition : spring.spatialFast }}
               transition={spring.spatialDefault}
               className="glass pointer-events-auto flex cursor-grab items-start gap-s rounded-lg px-m py-s active:cursor-grabbing"
             >

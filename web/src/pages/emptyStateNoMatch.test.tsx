@@ -25,14 +25,14 @@ import { ArtifactGrid } from './artifacts/ArtifactGrid'
 
 describe('ArtifactGrid empty states', () => {
   it('offers the create path only when the library is genuinely empty', () => {
-    render(<ArtifactGrid artifacts={[]} activeSlug={null} onOpen={() => {}} />)
+    render(<ArtifactGrid artifacts={[]} onOpen={() => {}} />)
     expect(screen.getByText('No artifacts')).toBeInTheDocument()
     // The hint is the one that teaches how artifacts come to exist.
     expect(screen.getByText(/Ask the agent to save one/)).toBeInTheDocument()
   })
 
   it('says "no matching" — and drops the create advice — when a filter is active', () => {
-    render(<ArtifactGrid artifacts={[]} activeSlug={null} onOpen={() => {}} narrowed />)
+    render(<ArtifactGrid artifacts={[]} onOpen={() => {}} narrowed />)
     expect(screen.getByText('No matching artifacts')).toBeInTheDocument()
     expect(screen.queryByText('No artifacts')).not.toBeInTheDocument()
     // Telling someone with a full library to create their first artifact was the whole bug.

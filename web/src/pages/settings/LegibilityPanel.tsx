@@ -33,7 +33,7 @@ export function LegibilityPanel() {
   // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
   // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg) return <FormSkeleton sections={1} />
+  if (!data || !cfg) return <FormSkeleton sections={1} what="settings" />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the
   // error (a swallowed 400 here would look exactly like a successful save).

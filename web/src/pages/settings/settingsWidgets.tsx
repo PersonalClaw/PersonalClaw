@@ -105,8 +105,16 @@ const useVoice = () => useCachedData('settings:voice', async () => {
   ])
   return { active, stt, tts }
 }, { persist: true })
+// 🔴 KEY POISONING, MEASURED ON THE JOURNEY. `#/settings/legibility` already refuses to show fabricated
+// values — but this tile shares its key, so opening `#/settings` first primed `cache:settings:legibility`
+// with `{}` and the panel read it as a success. Driven with `/api/config/personalclaw` at 500:
+//
+//   direct to the panel   cache=null   → "Couldn't load your settings" + Retry   ✅ its fix works
+//   hub → the panel       cache="{}"   → **2 switches, no alert**                🔴 its fix was inert
+//
+// The tile can now fail, so it carries the failure line the other four tiles got in #1194.
 const useLegibility = () => useCachedData('settings:legibility', () =>
-  api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)), { persist: true })
+  api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>), { persist: true })
 const useDoctor = () => useCachedData('settings:doctor', () => api.doctor().catch(() => null as DoctorReport | null), { persist: false })
 const useIncident = () => useCachedData('settings:incident', () => api.incident().catch(() => null as { active: boolean; reason: string; started_at: string } | null), { persist: true })
 // Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
@@ -557,12 +565,15 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'How PersonalClaw describes its capabilities — dashboard tips + project context files.',
     useSearchText() { const { data: c } = useLegibility(); return `legibility discover tips tour features context adapters claude.md agents.md cursorrules ${c ? `tips ${!!c.discover_tips} context ${!!c.context_adapters}` : ''}` },
     render(query, go) {
-      const { data: c, refresh } = useLegibility()
+      const { data: c, error: legErr, refresh } = useLegibility()
       const save = (key: string, value: boolean) => mutate(
         () => api.patchConfig(`legibility.${key}`, value).then(refresh), 'settings:legibility',
       )
       return (
-        <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined} rows={2}>
+        <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined && !legErr} rows={2}>
+          {/* This tile carries live SWITCHES, so a fabricated `{}` did more than mis-state a count — it
+              offered two toggles whose "off" position was invented. #1194's line, fifth adopter. */}
+          {!c && Boolean(legErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your legibility settings.</div>}
           {c && <KVList query={query} rows={[
             { k: 'Discover tips', control: true, v: <Switch on={!!c.discover_tips} label="Discover tips" onToggle={(v) => save('discover_tips', v)} /> },
             { k: 'Context files', control: true, v: <Switch on={!!c.context_adapters} label="Context files" onToggle={(v) => save('context_adapters', v)} /> },

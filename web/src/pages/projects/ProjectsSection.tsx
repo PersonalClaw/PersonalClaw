@@ -143,7 +143,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
             none, with no retry and nothing announced. The error branch must come FIRST,
             because `projects === undefined` also satisfies the skeleton and empty conditions. */}
         {projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateCache('projects:list'); refresh() }} />
-          : loading && !projects ? <ListSkeleton rows={5} />
+          : loading && !projects ? <ListSkeleton rows={5} what="projects" />
           : !shown.length ? (
             needle
               // Through the primitive, like every other list's no-match state — a bare centered
@@ -193,7 +193,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                     </div>
                   </div>
                   {!p.is_builtin && (
-                    <SquareIconButton icon={Trash2} tone="danger" label="Delete project"
+                    <SquareIconButton icon={Trash2} tone="danger" label={`Delete project: ${p.name}`} title="Delete project"
                       onClick={(e) => { e.stopPropagation(); del(p) }}
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
                   )}

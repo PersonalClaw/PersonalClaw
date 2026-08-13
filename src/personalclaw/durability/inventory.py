@@ -614,6 +614,30 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="the main configuration document",
     ),
     StateEntry(
+        id="autonomy_rungs",
+        kind=KIND_JSON_FILE,
+        path="autonomy_rungs.json",
+        domain=DOMAIN_CONFIG,
+        # Last-write-wins per file rather than a union: a rung grant and a demotion for
+        # the same action type are contradictory decisions, and merging them would
+        # resurrect a grant the other machine already withdrew. The conservative merge
+        # for a permission store is the newest whole document.
+        merge=MERGE_LWW,
+        help="earned-autonomy rung grants and demotion history",
+    ),
+    StateEntry(
+        id="autonomy_reversals",
+        kind=KIND_JSON_FILE,
+        path="autonomy_reversals.json",
+        domain=DOMAIN_CONFIG,
+        # Last-write-wins for the same reason as the grants beside it, with one extra: a
+        # union merge could resurrect a record another machine has already marked reversed,
+        # and re-offering an undo for something already undone is the one wrong answer this
+        # store can give.
+        merge=MERGE_LWW,
+        help="undo handles for actions that ran at the auto-with-undo rung",
+    ),
+    StateEntry(
         id="active_models",
         kind=KIND_JSON_FILE,
         path="active_models.json",

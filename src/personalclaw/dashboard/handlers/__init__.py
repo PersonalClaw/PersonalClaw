@@ -17,6 +17,7 @@ from personalclaw.dashboard.handlers_system import (  # noqa: F401
     api_auth_status,
     api_healthz,
     api_onboarding,
+    api_onboarding_state,
     api_status,
     api_system,
 )
@@ -78,6 +79,14 @@ from personalclaw.dashboard.handlers.agents import (  # noqa: E402, F401
     api_theme_detail,
     api_themes,
     api_themes_create,
+)
+
+# ── Earned-autonomy ladder (handlers/autonomy.py) ──
+from personalclaw.dashboard.handlers.autonomy import (  # noqa: E402, F401
+    api_autonomy,
+    api_autonomy_demote,
+    api_autonomy_grant,
+    api_autonomy_undo,
 )
 
 # ── Core (handlers/core.py) ──

@@ -18,7 +18,8 @@ per-route contract.
 | `GET /api/status` | Runtime stats (uptime, sessions, counters). |
 | `GET /api/system` | Host/system information. |
 | `GET /api/auth-status` | Current auth mode + caller identity. |
-| `GET /api/onboarding` | First-run onboarding state. |
+| `GET /api/onboarding` | First-run onboarding state — model readiness + persisted flow progress. |
+| `POST /api/onboarding/state` | Record first-run progress (partial merge; entity state). |
 | `GET /api/token/local` | Mint a local dashboard access token (loopback only). |
 | `POST /api/logout` | Revoke all active dashboard sessions. |
 | `GET /api/ws` | The main WebSocket (chat streaming + event fan-out). |

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FileDiff, FolderGit2, TriangleAlert } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
-import { Skeleton } from '../../ui/ListScaffold'
+import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, ApiError, type WorkflowWorkspaceReview } from '../../lib/api'
 
@@ -55,7 +55,8 @@ export function WorkspacePanel({ runId, onClose }: { runId: string; onClose: () 
     >
       <div data-testid="workspace-panel-body" className="flex flex-col gap-l">
         {loading ? (
-          <div role="status" aria-busy="true" aria-label="Loading the run’s workspace" className="flex flex-col gap-l">
+          <div role="status" aria-busy="true"  className="flex flex-col gap-l">
+        <LoadingStatus what="the run’s workspace" />
             <Skeleton className="h-5 w-32" />
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-16 w-full" />

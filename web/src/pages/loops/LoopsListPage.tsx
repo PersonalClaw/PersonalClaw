@@ -149,7 +149,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           {loops === undefined ? (
-            <ListSkeleton rows={6} />
+            <ListSkeleton rows={6} what="loops" />
           ) : loops.length === 0 ? (
             <EmptyState
               title="No loops yet"

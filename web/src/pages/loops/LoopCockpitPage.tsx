@@ -20,7 +20,7 @@ import { Markdown } from '../../ui/Markdown'
 import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { thinkingGlow } from '../../design/gradients'
-import { spring, springs, messageEnter } from '../../design/motion'
+import { spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { api, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem } from '../../lib/api'
@@ -101,7 +101,7 @@ function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: str
                 <motion.div key={p.cycle} className="flex-1 min-w-[5px] rounded-t-[2px]" title={`cycle ${p.cycle}: ${p.score.toFixed(1)}`}
                   initial={false}
                   animate={{ height: `${Math.max(3, (p.score / max) * 100)}%`, opacity: below ? 0.45 : 1 }}
-                  transition={springs.gentle}
+                  transition={physics.fluid}
                   style={{ background: below ? 'var(--color-on-surface-low)' : 'var(--color-primary)' }} />
               )
             })}
@@ -587,7 +587,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               sub-goals. Run metadata now lives in the status bar above, so this row is
               purely the prompt. */}
           <div className="rounded-lg bg-surface-container/60 px-l py-m">
-            <button type="button" onClick={() => setPromptOpen(!promptOpen)} className="flex items-center gap-s text-left w-full min-w-0">
+            <button type="button" onClick={() => setPromptOpen(!promptOpen)} aria-expanded={promptOpen} className="flex items-center gap-s text-left w-full min-w-0">
               <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${promptOpen ? 'rotate-90' : ''}`} />
               <span className="shrink-0 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Prompt</span>
               {/* first line of the prompt, shown only while collapsed */}
@@ -1054,7 +1054,7 @@ function LiveSubsteps({ activity }: { activity: { kind: string; label: string; d
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-1.5 pl-7">
-      <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1.5 text-[0.75rem] text-on-surface-low hover:text-on-surface">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex items-center gap-1.5 text-[0.75rem] text-on-surface-low hover:text-on-surface">
         <Search size={12} /> {activity.length} steps <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
@@ -1107,7 +1107,7 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
   const orderedCycles = [...cycles].reverse()
   return (
     <div className={`rounded-lg ${active ? 'ring-1 ring-primary/40' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-s px-m py-2 text-left">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left">
         <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
         <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{index + 1}</span>
         {/* role + the agent definition backing it this phase (always visible). */}

@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { spring, bounce } from '../../design/motion'
+import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
 import { FieldLabelProvider, NumberField } from '../../ui/forms'
@@ -142,7 +142,7 @@ export function SavedToast({ show }: { show: boolean }) {
     <AnimatePresence>
       {show && (
         <motion.span initial={{ opacity: 0, scale: 0.8, y: 2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
-          transition={bounce.playful} className="text-[0.75rem]" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
+          transition={physics.playful} className="text-[0.75rem]" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
       )}
     </AnimatePresence>
   )

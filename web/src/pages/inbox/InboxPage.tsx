@@ -269,7 +269,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             />
           </div>
         )}
-        {filtered === null ? <ListSkeleton rows={6} /> : filtered.length === 0 ? (
+        {filtered === null ? <ListSkeleton rows={6} what="items" /> : filtered.length === 0 ? (
           // 🪤 NARROWED FIRST, THEN THE BLANK SLATE. The title always distinguished the two
           // ('Nothing here' vs 'Inbox zero'), but the HINT tested `disabled` first — so a user with
           // items who searched for something that does not match was told "Enable a source to begin",

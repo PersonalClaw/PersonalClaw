@@ -245,7 +245,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     >
       <>
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-          {groups === null ? <ListSkeleton rows={6} /> : groups.length === 0 ? (
+          {groups === null ? <ListSkeleton rows={6} what="tools" /> : groups.length === 0 ? (
             // No group survived: nothing matched the filter, or (unfiltered) there are no
             // tools at all. `importable` must NOT gate this — importable servers are ones
             // you COULD add, never search results, so gating on them made the state
@@ -487,7 +487,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
 
   return (
     <div>
-      <button onClick={() => setOpen((v) => !v)} className="mb-s flex items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mb-s flex min-h-6 -my-0.5 items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
         <Download size={14} />
         <span className="text-[0.75rem] uppercase tracking-wide">Discovered in other tools ({servers.length})</span>

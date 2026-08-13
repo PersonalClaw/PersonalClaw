@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Spark } from '../Spark'
-import { spring, bounce } from '../../design/motion'
+import { spring, physics } from '../../design/motion'
 
 const CURATED_PHRASES = [
   'Connecting the dots…',
@@ -58,7 +58,7 @@ export function StreamingIndicator({ statusText, activity }: Props) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4, transition: spring.effects }}
-      transition={bounce.lift}
+      transition={physics.playful}
       className="flex items-start gap-m py-s"
     >
       {/* Claw mark with breathing coral glow */}

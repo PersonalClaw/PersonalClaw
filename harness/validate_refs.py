@@ -22,7 +22,7 @@ import ast
 import subprocess
 from pathlib import Path
 
-from harness.profiles import VENV_PY, profile_names
+from harness.profiles import HARNESS_PY, profile_names
 from harness.specs import Spec, ValidationIssue
 
 
@@ -91,7 +91,7 @@ def collect_test_ids(*, timeout: int = 180) -> tuple[set[str], int, str]:
     :func:`_node_id_matches` distinguishes those from a real dangling reference).
     """
     cmd = [
-        VENV_PY,
+        HARNESS_PY,
         "-m",
         "pytest",
         "-o",

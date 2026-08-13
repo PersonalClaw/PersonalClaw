@@ -49,8 +49,35 @@ function darkSurfaceContainer(): string {
 
 const WHITE = '#ffffff'
 
+/** The LIGHT canvas — the shell paints it behind every route (`background: var(--color-canvas)`), and
+ *  accent text lands on it wherever a panel does not paint its own surface.
+ *
+ *  🔴 THE DIMENSION THIS RAIL WAS MISSING. It guaranteed `primary` as accent text against WHITE, which
+ *  passes in all 12 schemes (4.83-11.37). But two sites paint accent text straight onto the canvas —
+ *  the Memory Studio tab and the inbox settings link — and there the SAME token measures **4.37:1**
+ *  (axe and ux-audit agree). Computed across the curated set:
+ *
+ *      primary → canvas          FAILS in 7 of 12 schemes (4.37-4.41)
+ *      primary-emphasis → canvas PASSES in all 12          (worst 4.82, coral 6.0)
+ *
+ *  So the fix is the pairing the design system already ships, not a new colour: **accent TEXT on the
+ *  canvas uses `--color-primary-emphasis`.** Asserted below for every scheme, so a new scheme cannot
+ *  land with a canvas-illegible accent, and the two call sites carry the number in a comment. */
+function lightCanvas(): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  // 🪤 Match the RULE BLOCK, not the first occurrence of the string ".light": the file mentions
+  // ".light mode" in a comment 380 characters in, so slicing from `indexOf('.light')` picked up the
+  // DARK `--color-canvas: #0f0f0f` and made this rail red at 2.89:1 against the wrong backdrop.
+  const block = /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1]
+  if (!block) throw new Error('could not find the .light rule block in tokens.css')
+  const m = block.match(/--color-canvas:\s*(#[0-9a-fA-F]{3,8})/)
+  if (!m) throw new Error('could not find --color-canvas inside the .light block')
+  return m[1]
+}
+
 describe('scheme contrast: every scheme meets WCAG AA (not just the default)', () => {
   const DARK_SURFACE = darkSurfaceContainer()
+  const LIGHT_CANVAS = lightCanvas()
 
   it('has the full curated scheme set', () => {
     expect(SCHEMES.length).toBeGreaterThanOrEqual(11)
@@ -70,6 +97,12 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
       it('light: primary as filled control (onPrimary over primary) ≥ AA', () => {
         expect(contrast(primary.light, onPrimary.light)).toBeGreaterThanOrEqual(AA)
       })
+      it('light: primary-emphasis as accent text on the CANVAS ≥ AA', () => {
+        // The shipped rule: on the canvas, accent text uses the emphasis shade. Plain `primary` is
+        // deliberately NOT asserted here — it fails in 7 of 12 schemes, which is the finding.
+        expect(contrast(emphasis.light, LIGHT_CANVAS)).toBeGreaterThanOrEqual(AA)
+      })
+
       it('light: primary as accent text on white ≥ AA', () => {
         expect(contrast(primary.light, WHITE)).toBeGreaterThanOrEqual(AA)
       })

@@ -3,6 +3,7 @@ import { ArrowLeft, Check } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
+import { PageTitle } from '../../ui/PageTitle'
 import { api } from '../../lib/api'
 import { AgentForm, emptyDraft, draftToPayload, type AgentDraft } from './AgentForm'
 
@@ -28,7 +29,7 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">New agent</span></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New agent</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           <AgentForm draft={draft} onChange={setDraft} />

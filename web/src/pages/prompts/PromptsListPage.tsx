@@ -171,7 +171,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {rows === null && loadErr ? (
           <LoadError what={isSnips ? 'snippets' : 'prompts'} error={loadErr} onRetry={load} />
-        ) : loading ? <ListSkeleton rows={6} /> : count === 0 ? (
+        ) : loading ? <ListSkeleton rows={6} what={isSnips ? 'snippets' : 'prompts'} /> : count === 0 ? (
           isSnips ? (
             <EmptyState icon={Puzzle} title={q ? 'No matching snippets' : 'No snippets'} hint={q ? 'Try a different term.' : 'Snippets are reusable fragments other prompts include with {{> name}}. Their variables merge into the including prompt.'} action={!q ? { label: 'New snippet', onClick: () => onCreate('snippets'), icon: Plus } : undefined} />
           ) : (

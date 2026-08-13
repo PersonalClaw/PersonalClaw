@@ -65,6 +65,12 @@ _SENSITIVE_HOME_DIRS: list[str] = [
     ".netrc",
     ".git-credentials",
     ".personalclaw/.env",
+    # The governance ceiling (guardrails/ceiling.py) — the operator's hard bound on every
+    # run. Listed here so every agent-reachable path check (the action denylist, the files
+    # area, the bash read/write hooks) refuses it: a bound the agent can rewrite is not a
+    # bound. This closes the write paths a single-user machine CAN close; the stronger
+    # protection is PERSONALCLAW_CEILING_FILE pointing at a root-owned file outside $HOME.
+    ".personalclaw/governance",
 ]
 
 # Regex for bash commands that read sensitive paths.

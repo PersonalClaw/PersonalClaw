@@ -2,7 +2,7 @@ import { Check, ExternalLink, Loader2 } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader } from './settingsUI'
-import { Skeleton } from '../../ui/ListScaffold'
+import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
@@ -95,8 +95,11 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
 
 function AppsSkeleton() {
   return (
-    <div>
+    <div role="status" aria-busy="true">
       <PanelHeader title="Apps" hint="Settings contributed by installed apps, all in one place." />
+      {/* 🔴 One region, not three: this skeleton carried `aria-busy` on each section with NO role and
+          NO name, so it was neither announced nor findable. */}
+      <LoadingStatus what="app settings" />
       {Array.from({ length: 3 }).map((_, i) => (
         <section key={i} className="mb-l rounded-lg bg-surface-container p-l" aria-busy="true">
           <div className="mb-m flex items-center gap-3">

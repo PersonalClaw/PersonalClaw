@@ -15,13 +15,12 @@ loop-constraints, configurable via ``security.autonomy_denylist``.
 
 from __future__ import annotations
 
-import fnmatch
 import logging
-import os
 import re
 from dataclasses import dataclass
 
 from personalclaw import notification_kinds
+from personalclaw.guardrails.registries import path_glob
 
 logger = logging.getLogger(__name__)
 
@@ -87,18 +86,17 @@ def _config_commands(action_config: dict) -> list[str]:
 
 
 def _glob_match(path: str, pattern: str) -> bool:
-    """Match ``path`` against a user glob, honoring ``~`` and ``**`` loosely.
+    """Match ``path`` against a rule glob through the ENFORCER-OWNED matcher.
 
-    Uses fnmatch on both the raw and the ``~``-expanded path so a rule written as
-    ``~/.ssh/**`` catches an absolute ``/home/u/.ssh/id_rsa``. ``**`` is treated as
-    ``*`` (fnmatch has no recursive glob) — acceptable for a defense-in-depth deny.
+    One matcher, one behaviour: :func:`personalclaw.guardrails.registries.path_glob`
+    normalizes only the queried item (``~``/``$VAR`` expansion then ``abspath``) and never
+    runs the pattern through ``normpath``. The hand-rolled fnmatch this replaced compared
+    an un-absolutized item, so a relative ``../../etc/passwd`` dodged a deny of ``/etc/**``
+    by simply failing to match as a string, and ``**`` collapsed to ``*`` so ``~/.ssh/**``
+    missed ``~/.ssh/sub/key``. Both were the wired-but-wrong class: the check ran every
+    time and was still category-wrong.
     """
-    expanded = os.path.expanduser(os.path.expandvars(path))
-    pat = pattern.replace("**", "*")
-    pat_expanded = os.path.expanduser(pat)
-    return any(
-        fnmatch.fnmatch(candidate, p) for candidate in {path, expanded} for p in {pat, pat_expanded}
-    )
+    return path_glob(path, pattern)
 
 
 def _load_config_rules() -> tuple[list[DenyRule], list[str]]:
@@ -143,13 +141,17 @@ def check_action(
     config_rules, denied_cmd_patterns = _load_config_rules()
     paths = _config_paths(action_config)
 
-    # The session's SafetyProfile can layer extra path globs (§3 ``denylist_extra``)
-    # onto the operator denylist. Read lazily + only when a session identity is known.
+    # The session's SafetyProfile can layer extra path globs (§3 ``denylist_extra``) and
+    # CONFINE the run to an allow-list (the ``paths`` ceiling scope). Read lazily + only
+    # when a session identity is known.
     profile_globs: tuple[str, ...] = ()
+    path_allowlist: tuple[str, ...] = ()
     if session_key:
         from personalclaw.guardrails.policy import profile_for_session
 
-        profile_globs = profile_for_session(session_key).denylist_extra
+        profile = profile_for_session(session_key)
+        profile_globs = profile.denylist_extra
+        path_allowlist = profile.path_allowlist
 
     # 1. Built-in sensitive-path denylist (always on) — a credential dir/file.
     for p in paths:
@@ -160,6 +162,24 @@ def check_action(
                 reason=f"action targets a sensitive path: {p}",
                 matched="builtin:sensitive_path",
             )
+
+    # 1b. Confinement (the ceiling's ``paths`` allow plane): when the resolved profile
+    # carries an allow-list, a path-carrying action config value that matches NONE of it
+    # is refused. This is the closed stance — deny unless allowed — and it is the one
+    # check here that cannot be expressed as a denylist, which is why the ceiling has an
+    # allow plane at all. Empty allow-list = unconfined, so the default is unchanged.
+    if path_allowlist:
+        for p in paths:
+            if not any(_glob_match(p, pattern) for pattern in path_allowlist):
+                return DenyDecision(
+                    blocked=True,
+                    verdict="block",
+                    reason=(
+                        f"action path {p!r} is outside the paths this run is confined to "
+                        f"({', '.join(path_allowlist)})"
+                    ),
+                    matched="ceiling:paths.allow",
+                )
 
     # 2. Operator path-glob rules (verdict block | needs_human), unioned with the
     # session profile's extra globs (which block with no needs_human escalation).

@@ -182,20 +182,42 @@ class MemoryStore:
         atomic_write(path, content)
         self._index_file(path, content)
 
-    def prune_history(self, keep_days: int = 365) -> int:
-        """Delete daily history files older than *keep_days*. Returns count deleted."""
+    def _history_files_over_retention(self, keep_days: int) -> list[Path]:
+        """Daily history files older than *keep_days*. Shared by the prune and its
+        dry-run count so the measured deficit is exactly what the prune would delete."""
         if not self._history_dir.exists():
-            return 0
+            return []
         cutoff = datetime.now().date() - timedelta(days=keep_days)
-        deleted = 0
+        out: list[Path] = []
         for f in self._history_dir.glob("*.md"):
             try:
-                file_date = datetime.strptime(f.stem, "%Y-%m-%d").date()
-                if file_date < cutoff:
-                    f.unlink()
-                    deleted += 1
+                if datetime.strptime(f.stem, "%Y-%m-%d").date() < cutoff:
+                    out.append(f)
             except ValueError:
                 continue
+        return out
+
+    def count_history_over_retention(self, keep_days: int = 365) -> int:
+        """Read-only count of daily history files past *keep_days* (the remediation
+        engine's measured deficit for the history prune — never a guess: it is the same
+        listing ``prune_history`` deletes)."""
+        return len(self._history_files_over_retention(keep_days))
+
+    def prune_history(self, keep_days: int = 365) -> int:
+        """Delete daily history files older than *keep_days*. Returns count deleted.
+
+        Drops each deleted file's FTS row too: otherwise ``search()`` keeps returning
+        snippets for files that no longer exist until the next full rebuild.
+        """
+        deleted = 0
+        for f in self._history_files_over_retention(keep_days):
+            try:
+                f.unlink()
+                deleted += 1
+            except OSError:
+                logger.debug("history prune: could not unlink %s", f, exc_info=True)
+                continue
+            self._unindex_file(f)
         if deleted:
             logger.info("Pruned %d history files older than %d days", deleted, keep_days)
         return deleted
@@ -327,13 +349,25 @@ class MemoryStore:
             if conn is not None:
                 conn.close()
 
-    def rebuild_index(self) -> int:
-        """Rebuild the full FTS index from all memory files. Returns file count.
-
-        Without FTS5 the index doesn't exist; returns 0 rather than attempting a build.
-        """
+    def _unindex_file(self, path: Path) -> None:
+        """Drop a file's FTS row (used when the file itself is deleted). No-op without FTS5."""
         if not self._fts_available:
-            return 0
+            return
+        conn = None
+        try:
+            conn = self._get_db()
+            conn.execute("DELETE FROM memory_fts WHERE path = ?", (str(path),))
+            conn.commit()
+        except Exception:
+            logger.debug("FTS index delete failed", exc_info=True)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _indexable_files(self) -> list[tuple[str, str]]:
+        """``(path, content)`` for every file that BELONGS in the FTS index. One listing
+        shared by the rebuild and the desync measurement, so the measured deficit can
+        never disagree with what a rebuild would produce."""
         files: list[tuple[str, str]] = []
         for path in (self._preferences_file, self._projects_file):
             if path.exists():
@@ -341,6 +375,45 @@ class MemoryStore:
         if self._history_dir.exists():
             for path in self._history_dir.glob("*.md"):
                 files.append((str(path), path.read_text(encoding="utf-8")))
+        return files
+
+    def fts_desync_count(self) -> int:
+        """Number of files whose FTS row disagrees with disk — an EXACT measured count
+        (never a size/mtime proxy), the remediation engine's deficit for the rebuild.
+
+        Writes through this class index incrementally, so a non-zero count means content
+        arrived or vanished out-of-band: a hand-edited memory file, a history file written
+        by another path, or a row left behind by ``prune_history`` (which deletes files
+        without touching the index). Those are exactly what a full rebuild reconciles.
+        Returns 0 without FTS5 — there is no index to be out of sync.
+        """
+        if not self._fts_available:
+            return 0
+        on_disk = dict(self._indexable_files())
+        conn = None
+        try:
+            conn = self._get_db()
+            indexed = {
+                str(row[0]): str(row[1])
+                for row in conn.execute("SELECT path, content FROM memory_fts")
+            }
+        except Exception:
+            logger.debug("FTS desync measure failed", exc_info=True)
+            return 0  # unreadable index contributes no count (never a guess)
+        finally:
+            if conn is not None:
+                conn.close()
+        divergent = sum(1 for p, c in on_disk.items() if indexed.get(p) != c)
+        return divergent + sum(1 for p in indexed if p not in on_disk)
+
+    def rebuild_index(self) -> int:
+        """Rebuild the full FTS index from all memory files. Returns file count.
+
+        Without FTS5 the index doesn't exist; returns 0 rather than attempting a build.
+        """
+        if not self._fts_available:
+            return 0
+        files = self._indexable_files()
 
         conn = None
         try:

@@ -261,7 +261,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       {/* metadata — a collapsed, expandable sticky bottom panel (was a right
           rail): versions + tags + timeline. Header always visible; body toggles. */}
       <div className="shrink-0 border-t border-outline/40 bg-surface-container/40">
-        <button type="button" onClick={() => setMetaOpen((v) => !v)}
+        <button type="button" onClick={() => setMetaOpen((v) => !v)} aria-expanded={metaOpen}
           className="flex w-full items-center gap-2 px-m py-2 text-on-surface-low hover:text-on-surface transition-colors">
           <ChevronUp size={14} className={`transition-transform ${metaOpen ? '' : 'rotate-180'}`} />
           <span className="text-[0.75rem] uppercase tracking-wide">Details</span>
@@ -280,7 +280,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
                   a disabled control on a one-version artifact would just raise the
                   question of why it's disabled. */}
               {versions.length > 1 && (
-                <QuietButton onClick={() => setComparing((v) => !v)}
+                <QuietButton onClick={() => setComparing((v) => !v)} ariaExpanded={comparing}
                   title={comparing ? 'Close the version comparison' : 'Compare two versions of this artifact'}
                   className="mt-1.5">
                   <GitCompare size={13} /> {comparing ? 'Close compare' : 'Compare versions'}

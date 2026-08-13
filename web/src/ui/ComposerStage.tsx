@@ -1,7 +1,7 @@
 import { forwardRef } from 'react'
 import { motion } from 'framer-motion'
 import { Composer } from './Composer'
-import { bounce, expr } from '../design/motion'
+import { physics, expr } from '../design/motion'
 import type { ComposerProps } from './composer/types'
 
 /** The composer as a single persistent, shared-layout element. Forwards a ref to
@@ -13,10 +13,10 @@ import type { ComposerProps } from './composer/types'
  *  (screen-centered) down into the bottom dock when a chat starts — a signature
  *  motion moment. Its settle now scales through the expressiveness knob: bold
  *  lands with a little overshoot/life, refined glides in near-critically-damped.
- *  (bounce.settle already tracks the bounciness knob; expr nudges the stiffness so
+ *  (physics.fluid already tracks the bounciness knob; expr nudges the stiffness so
  *  the whole flight reads calmer when refined.) */
 export const ComposerStage = forwardRef<HTMLDivElement, ComposerProps>(function ComposerStage(props, ref) {
-  const morph = { ...bounce.settle, stiffness: 200 + expr(80, 0.4) }
+  const morph = { ...physics.fluid, stiffness: 200 + expr(80, 0.4) }
   return (
     <motion.div ref={ref} layoutId="composer-stage" transition={morph} className="relative z-10 w-full" style={{ maxWidth: 'var(--content-width)' }}>
       <Composer {...props} />
