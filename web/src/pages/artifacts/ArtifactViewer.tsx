@@ -280,7 +280,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
                   a disabled control on a one-version artifact would just raise the
                   question of why it's disabled. */}
               {versions.length > 1 && (
-                <QuietButton onClick={() => setComparing((v) => !v)}
+                <QuietButton onClick={() => setComparing((v) => !v)} ariaExpanded={comparing}
                   title={comparing ? 'Close the version comparison' : 'Compare two versions of this artifact'}
                   className="mt-1.5">
                   <GitCompare size={13} /> {comparing ? 'Close compare' : 'Compare versions'}
