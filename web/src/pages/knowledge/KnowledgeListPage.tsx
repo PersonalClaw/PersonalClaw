@@ -19,6 +19,7 @@ import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
+import { rowSubject } from '../../lib/rowSubject'
 import { confirm, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -718,7 +719,12 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
             </div>
           </div>
           <span onClick={(e) => e.stopPropagation()}>
-            <Button size="sm" variant="ghost" onClick={() => api.deleteKnowledgeIntent(it.id).then(load)}><Trash2 size={14} /></Button>
+            {/* An icon-only DESTRUCTIVE control had no accessible name at all: axe `button-name`
+                [critical] at both themes, and a screen-reader user heard "button" beside every intent.
+                Named after its row the way `RowAction` does, through the shared cap so an intent whose
+                goal is a sentence cannot turn the name into a paragraph (cycle 142's rule). */}
+            <Button size="sm" variant="ghost" ariaLabel={`Delete intent: ${rowSubject([it.goal || it.id], 40)}`}
+              onClick={() => api.deleteKnowledgeIntent(it.id).then(load)}><Trash2 size={14} /></Button>
           </span>
         </ListRow>
       ))}
