@@ -154,3 +154,85 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 | T2.1r | Rescope S2 to approvals-only: `#/companion` renders full-context approval cards from `GET /api/approvals`; approve/reject round-trip; other sections stubbed behind S3.5 | `web/src/pages/companion/`, router | phone viewport: a real pending approval renders with tool+args+session context and resolves; no other section ships |
 | T3.4 | Push→approval deep link: SW notification click opens `#/companion?approval=<id>` scrolled/highlighted; payload stays content-free `{kind, item_id}` | `web/src/sw.ts`, companion route | locked-phone push → tap → correct card focused → approve → run proceeds; <30s on cell data, timed |
 | T3.5.1 | S3.5: loops/tasks/inbox/notifications sections (former T2.1/T2.2 scope) + SW per-kind sound/badge mapping reading plan 42's rules field | companion components, `sw.ts` | sections work per original S2 Done-whens; distinct sound fires for a kind configured in the rules UI |
+
+## Execution log
+
+### 2026-08-13 — `MC-3` (S2 T2.1r + T2.2 approvals half) — **DONE**
+
+`#/companion` ships approvals-first. A full-screen, no-NavRail hash route
+(`web/src/pages/companion/CompanionPage.tsx`) renders one card per `GET /api/approvals` row with the
+whole decision on screen — tool, arguments UNTRUNCATED (a structured `tool_input` is pretty-printed
+rather than stringified), purpose, session, requesting source, and how long it has been waiting.
+Approve/reject round-trip live; Running/Inbox/Recent are named as not-yet-built, not rendered as empty
+data. Registered in `App.tsx` next to the `#/onboarding` early return and deliberately kept OUT of
+`NAV`/`ROUTABLE`: in `NAV` it would demand an e2e route-manifest entry (`routeManifestParity`) and put a
+phone surface in the desktop rail; in `ROUTABLE` it would render inside the shell WITH the rail.
+Not gated on `useIsMobile` — that is a `max-width` media query, not a touch test, so gating would only
+make the route undebuggable from a desktop browser.
+
+**RESOLVED ROUTE MAP (T2.2, approvals half) — and a correction to §C2.**
+
+| Action | Endpoint actually wired | Handler |
+|---|---|---|
+| list pending approvals | `GET /api/approvals` | `handlers/sessions.py::api_approvals` → `list(state._pending_approvals.values())`; registered `dashboard/server.py:1097` |
+| answer one | `POST /api/approvals/{id}/{action}` (`action` ∈ `approve`/`reject`) | `handlers/sessions.py::api_approval_resolve` → `state.resolve_approval(id, approved)`; registered `dashboard/server.py:1098`; 400 on a bad action, 404 when unknown/expired |
+
+**DEVIATION from §C2's "answer approval" row, which named
+`POST /api/chat/sessions/{session}/approve` (and cited a stale `server.py:667`; it is at `server.py:854`).**
+That is the CHAT page's resolver, not this queue's, and wiring it here would have been wrong twice over:
+
+1. It requires a `{session}` path segment and 404s on an unknown session name. The rows
+   `GET /api/approvals` serves are written only by `DashboardState.request_approval`, called from
+   `gateway.py:495`/`:541` — the gateway tool gate — and those carry `session: ""` for a cron fire or a
+   channel-originated call. A phone answering one of those has no session to address.
+2. It carries chat-only trust scopes (`trust`, `trust_agent`, `trust_reads`) that persist an agent
+   profile's `approval_mode`. A phone approval is a single decision, not a standing grant.
+
+`state.resolve_approval` is the SUPERSET resolver: it answers state-level futures first and then scans
+every session's `_approval_futures`, so `POST /api/approvals/{id}/{action}` resolves both origins. The
+amendment above already cites this pair (its `server.py:941-942` is likewise stale); §C2's table row is
+the outlier and should be read as corrected by this log. Proven by driving it, not by reading it: with
+two approvals seeded into a real `DashboardState` on an isolated home, Allow returned the awaited future
+`True` and Deny returned `False` — the exact values `gateway.py` consumes to let a tool run or refuse it
+— each with a matching `approval_decision` SEL event (`outcome=approved` / `outcome=rejected`).
+
+**DISCOVERY — one renderer, not two.** An approval card already existed
+(`pages/chat/ApprovalCard.tsx`). Rather than fork a second one for the phone, its chrome was extracted to
+`web/src/ui/ApprovalPrompt.tsx` (warn-tinted shell, the `role=group` name + inner `role=alert`
+announcement, tool/argument line, action row) with two densities — `compact` for the chat column,
+`roomy` for the phone (full arguments, a metadata block, 44px targets). The chat card now renders it and
+keeps only what is genuinely chat's: the transcript segment, the settled-outcome collapse, the risk chip,
+the trust vocabulary. Its existing test (`approvalOutcome.test.tsx`, which pins the four scope labels)
+passes unchanged, so the extraction is behaviour-preserving. Net effect: a wording or announcement fix to
+the permission prompt can no longer land on one surface only.
+
+**DISCOVERY — found by DRIVING, not reading: the optimistic hide had no reconciliation.** Answered rows
+were hidden by an id set that was never pruned against the server, so a re-listed id stayed hidden
+forever — the live gateway served two pending approvals while the phone read
+"Nothing waiting on you". On an approvals surface a silently hidden prompt is a denial the user never
+made. The fetched list is now authoritative: every fetch drops the hidden ids whose POST has SETTLED
+(ids still in flight stay hidden, which is the whole point of the optimistic hide), so an approval the
+server still lists comes back. Pinned by a test.
+
+**Failure honesty.** A first fetch that fails renders the `LoadError` primitive (announced `role=alert`,
+retryable) — never the "nothing waiting on you" empty state, which on this surface would be the most
+dangerous possible lie. A failed *resolve* restores the card and toasts the gateway's own message. Both
+paths are tested against a COLD `sessionStorage` (a warm cache masks the error branch entirely) and both
+were falsified: breaking the resolve call reddened 4 tests, removing the error branch reddened 1.
+
+**Deferred, per the atom's own scope:** the plan-43 decision-brief does not exist upstream yet, so the
+raw-argument fallback is what ships (the done-when directs exactly this — do not block on plan 43). PWA
+manifest/service worker is `MC-4`; push and `#/companion?approval=<id>` are `MC-5`; the
+loops/tasks/inbox/notifications sections are `MC-6`.
+
+**Gate:** `make lint` rc 0 · `npm run typecheck:web` clean · full `npx vitest run` 216 files / 2107 tests
+passed · `npm run build` ok · full `pytest -q --timeout=600` 19001 passed / 30 skipped / 12 xfailed
+(baseline, no python touched). `web/src/design/primitiveAdoption.baseline.json` `rawButton` ratcheted
+274 → 272 (the extraction removed the chat card's hand-rolled pill; the other −1 was pre-existing slack
+between the baseline and the live count on the parent commit).
+
+**Live validation** (isolated home `/private/tmp/mc3-live/home`, real `start_dashboard`, loopback-only,
+never `~/.personalclaw`): 390×844, no nav rail, no horizontal overflow, zero console errors. Six controls,
+all named in the accessibility tree and all in the Tab order: `Refresh approvals` (42×42),
+`Allow Bash` / `Deny Bash` / `Allow WebFetch` / `Deny WebFetch` (44×104 each — a thumb target),
+`Open the full dashboard`. A keyboard-only approve (focus + Enter) resolved the backend future.

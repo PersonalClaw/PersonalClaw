@@ -5698,10 +5698,11 @@
         {
           "id": "MC-3",
           "title": "S2 approvals-first companion route + approve/reject wiring",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment §Session placement S2 — Approvals-first companion (T2.1r) + C2 Companion route API map",
           "done_when": "On a phone viewport, `#/companion` renders full-context approval cards from GET /api/approvals (tool name, arguments, session/agent; plan-43 decision-brief when present, raw fallback until then — do not block on plan 43) and approve/reject round-trips against a dev gateway; all other sections stubbed behind S3.5; URL doctrine holds.",
-          "deps": []
+          "deps": [],
+          "pr": 1250
         },
         {
           "id": "MC-4",
@@ -7458,8 +7459,8 @@
         "plan": "MC"
       },
       {
-        "id": "MC-3",
-        "title": "S2 approvals-first companion route + approve/reject wiring",
+        "id": "MC-4",
+        "title": "S3 PWA installability: manifest + service worker (app-shell precache, /api never cached)",
         "plan": "MC"
       },
       {
@@ -9911,9 +9912,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {

@@ -323,6 +323,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **You can approve what PersonalClaw is waiting on from your phone.** A run that stops to ask
+  permission used to stay stopped until you were back at a desk, because the only place the question
+  appeared was the desktop dashboard. There is now a phone route at **`#/companion`** — open it on
+  your phone (over your tailnet or however you reach your gateway) and it shows every pending tool
+  approval with the whole decision on screen: the tool, its **full arguments** (not a truncated
+  preview — you should never approve something you cannot read), why it wants to run, which session
+  or automation asked, and how long it has been blocked. Allow and Deny are thumb-sized, and the
+  answer lands on the same gateway the dashboard talks to, so a run held up by a permission prompt
+  proceeds the moment you tap. Two things it deliberately will *not* do: if it cannot reach your
+  gateway it says so and offers a retry, rather than showing an empty list that would read as
+  "nothing needs you"; and if an answer fails to send, the card comes back instead of quietly
+  disappearing. The rest of the companion — running loops, inbox, notifications — is named on the
+  page as not built yet rather than shown as empty, and push notifications for approvals are still
+  to come. This first release has no app-store app and no offline install; it is a page you open in
+  your phone's browser.
 - **PersonalClaw can now earn autonomy one action at a time, and lose it instantly.** The safety
   floor used to be binary — an unattended action was read-only, or it was a permission you granted
   when you created the automation — so a reply draft you had approved unchanged forty times still
