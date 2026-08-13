@@ -7,12 +7,24 @@ import { useMode } from '../app/theme'
 import { spring, bounce } from '../design/motion'
 
 /** Shared reset control — the RotateCcw icon spins a full turn on click (a literal
- *  "rewind to default" microinteraction), consistent across all token rows. */
-function ResetButton({ onReset }: { onReset: () => void }) {
+ *  "rewind to default" microinteraction), consistent across all token rows.
+ *
+ *  🪤 TWENTY OF THESE RENDER ON `#/settings/design`, which makes both of its defects worse rather than
+ *  rarer:
+ *
+ *   • **15×24 measured** — the button WAS the glyph, so it failed SC 2.5.8 on width. It sits in a
+ *     `gap-m` flex row, so the spacing exception cannot rescue it either. `size-6` with `-mx-1` gives a
+ *     24px hit box and hands the extra width back, keeping the glyph where it was (the invariant from
+ *     cycle 116: grow the hit box, leave the paint alone).
+ *   • **`title="Reset"` ×20** — a non-null name can still be ambiguous. Every row's reset announced the
+ *     same word, so a screen-reader user heard "Reset" twenty times with no way to tell which token they
+ *     were about to revert. The row already knows: `Reset <token label>`.
+ */
+function ResetButton({ onReset, label }: { onReset: () => void; label: string }) {
   const [spins, setSpins] = useState(0)
   return (
-    <button onClick={() => { onReset(); setSpins((n) => n - 1) }} title="Reset"
-      className="text-on-surface-low hover:text-on-surface transition-colors">
+    <button onClick={() => { onReset(); setSpins((n) => n - 1) }} title={`Reset ${label}`}
+      className="grid size-6 -mx-1 place-items-center text-on-surface-low hover:text-on-surface transition-colors">
       <motion.span className="inline-grid place-items-center" animate={{ rotate: spins * 360 }} transition={bounce.playful}>
         <RotateCcw size={15} strokeWidth={2} />
       </motion.span>
@@ -49,7 +61,7 @@ export function ColorControl({ token }: { token: ColorToken }) {
         className="w-[88px] bg-surface-high rounded-md px-s py-1 text-on-surface-var text-[0.8125rem] font-mono outline-none focus:ring-1 focus:ring-primary"
         spellCheck={false}
       />
-      <ResetButton onReset={() => resetToken(token.varName)} />
+      <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
     </div>
   )
 }
@@ -81,7 +93,7 @@ export function SelectControl({ token }: { token: SelectToken }) {
           )
         })}
       </div>
-      <ResetButton onReset={() => resetToken(token.varName)} />
+      <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
     </div>
   )
 }
@@ -111,7 +123,7 @@ export function ScalarControl({ token }: { token: ScalarToken }) {
         className="w-[180px] accent-primary"
         aria-label={token.label}
       />
-      <ResetButton onReset={() => resetToken(token.varName)} />
+      <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
     </div>
   )
 }
