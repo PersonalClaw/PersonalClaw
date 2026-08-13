@@ -416,6 +416,9 @@ async def start_dashboard(
     app.router.add_get("/api/system", handlers.api_system)
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
+    # Onboarding progress is ENTITY state (entity_settings/onboarding.json), so it gets its
+    # own write path rather than riding the config PATCH allowlist (ONBOARDING-UX C1, §2.1).
+    app.router.add_post("/api/onboarding/state", handlers.api_onboarding_state)
     # Doctor — tiered read-only health probes (PLATFORM-RESILIENCE §1)
     # DURABILITY-AND-SYNC §3 — scheduled-backup status, the archive list with its
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the

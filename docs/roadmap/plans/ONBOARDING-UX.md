@@ -133,3 +133,50 @@ Owner rulings, mapped onto the existing sessions honestly:
 | T1.2r | Essential-apps step (re-scope of T1.2): catalog-driven cards for model/search/speech/channel types from the first-party source; model = required rail (install → key → Test → bind, per original T1.2); others opt-in; per-app install consent preserved | `web/src/app/onboarding/` step components (existing Store/provider/binding APIs only) | fresh dev home (`PERSONALCLAW_FIRST_PARTY_APPS_DIR` fixture): model+search installable entirely in-flow; skipping everything but model still reaches first-success; no auto-install anywhere |
 | T5.1 | Replayable tour component (spotlight steps over the real UI, PlanningWalkthrough-pattern), launched from the done-screen; Esc-anywhere; reduced-motion honored | `web/src/app/onboarding/ProductTour.tsx`, done-screen, anchor ids on toured surfaces | tour runs post-onboarding end-to-end; exiting mid-tour leaves a fully working app; zero requests logged for tour progress (no telemetry) |
 | T5.2 | Discover absorbs progressive disclosure formally: "Replay the tour" card + copy pass naming Discover as the disclosure arm beside the S2 auto-pin model | `web/src/pages/discover/DiscoverPage.tsx`, discover catalog (server-side), docs | tour re-launchable from Discover; a dismissed-everything user still finds the tour; S2 auto-pin behavior unchanged |
+
+## Execution log
+
+- [2026-08-13][OU-1] **DONE (S1 T1.1 / C1).** New `src/personalclaw/onboarding.py` holds the
+  first-run progress state in `entity_settings/onboarding.json`:
+  `{step, essentials: {model, search, speech, channel}, first_success: {knowledge, trigger, loop}}`.
+  `load_onboarding_state()` sanitizes field by field and never raises — a missing file, corrupt
+  JSON, non-object JSON, an older client's store with none of these fields, a wrong-typed value,
+  or a retired `step` value each fall back to that field's default while its siblings survive.
+  `merge_onboarding_state()` merges partially at BOTH levels (a patch naming only
+  `first_success.knowledge` leaves `trigger`/`loop` alone) and rejects an unknown or mistyped key
+  with `ValueError`, following bug #22's lesson that a lenient write path leaks garbage back out
+  through every read. `GET /api/onboarding` (`handlers_system.api_onboarding`) now returns the
+  three fields alongside the existing `needs_model`/`has_model_provider`/`has_chat_binding`
+  triple — purely additive, so a client reading only the triple is unaffected — and
+  `POST /api/onboarding/state` is the write path, deliberately NOT the `_EDITABLE_CONFIG` PATCH
+  allowlist (§2.1). 35 tests in `tests/test_onboarding_state.py`. Both central rails were
+  falsified: starting the merge from defaults instead of the stored state reds the four
+  partial-merge tests; returning the raw disk dict instead of the sanitized projection reds the
+  four tolerant-read tests.
+- [2026-08-13][OU-1] **DEVIATION (C1 field/step naming).** C1 spelled the middle step `provider`
+  and the field `provider_chosen`; the 2026-07-26 amendment (ruling a) re-scoped that step to
+  essential-apps and generalized the field to `essentials`. The amendment renamed the field but
+  said nothing about the step enum, so the step id is now `essentials` too — a step id named
+  `provider` for a step whose UI installs essential apps is exactly the drift a later coherence
+  pass would file. `STEPS = ("name", "essentials", "first_success", "done")`. No dual name shipped.
+- [2026-08-13][OU-1] **DISCOVERY (C1 premise correction).** C1 annotates `name` and `completed` as
+  *existing* fields of this state. They are not, and never were: `api_onboarding` only ever
+  returned the readiness triple, the name lives in server identity, and `onboarded` is derived
+  from that name being non-empty (`web/src/app/identity.tsx`, as the amendment's own recon says).
+  Storing either here would create a second source of truth for a derived value, so neither is in
+  the schema. Sessions 1 and 4 should read "resume point + essentials + first-success" as the whole
+  of this store.
+- [2026-08-13][OU-1] **DISCOVERY (no new inventory entry needed).** A new `entity_settings/*.json`
+  store joins snapshot and durability coverage for free: `durability/inventory.py` declares
+  `entity_settings` as one `KIND_JSON_ENTITY_DIR` entry and snapshot capture is inventory-derived,
+  so `CORE_FILES`, `append_dedup` and `audit_home()` needed no change (`test_snapshot.py`,
+  `test_durability_inventory.py`, `test_portability.py`, `test_resilience_doctor.py` all green
+  unchanged) — the same free ride `feedback.json`, `channel_trust.json` and `legibility.json` take.
+  Later atoms adding onboarding-adjacent stores can rely on this too.
+- [2026-08-13][OU-1] **No CHANGELOG entry, deliberately.** The change is class B by the letter
+  (it persists something new under the home) but nothing a user can perceive changed: the flow
+  does not resume yet, because the writers are OU-2/OU-3 and the resume read is OU-4. The in-app
+  Updates panel renders `CHANGELOG.md`, so an entry here would send a user looking for a resume
+  behaviour that does not exist. The entry lands with the atom that makes the state observable.
+  The API addition is discoverable now through the regenerated `reference/routes.md` and
+  `docs/reference/api-overview.md`, which is the surface its actual audience reads.

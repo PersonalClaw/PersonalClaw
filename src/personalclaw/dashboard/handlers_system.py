@@ -610,15 +610,19 @@ async def api_system(request: web.Request) -> web.Response:
 
 
 async def api_onboarding(request: web.Request) -> web.Response:
-    """First-run onboarding signal.
+    """First-run onboarding signal — model readiness plus persisted flow progress.
 
     Reports whether a usable **chat model** is configured, so the dashboard can
     nudge the user to add one. The default agent is the in-process native
     runtime, which inferences through Settings → Models — so with no model
     provider configured, chat cannot work and we surface a setup prompt.
 
-    Returns ``{needs_model: bool, has_model_provider: bool, has_chat_binding: bool}``.
-    No secrets.
+    Returns the readiness triple ``{needs_model, has_model_provider, has_chat_binding}``
+    — computed live, never stored — plus the persisted first-run progress from
+    ``entity_settings/onboarding.json`` (``step``, ``essentials``, ``first_success``;
+    see :mod:`personalclaw.onboarding`), which is what lets a mid-flow reload resume.
+    The progress fields are purely additive: a client that only reads the readiness
+    triple is unaffected. No secrets.
     """
     has_provider = False
     has_binding = False
@@ -660,13 +664,43 @@ async def api_onboarding(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("onboarding: resolve probe failed; falling back", exc_info=True)
         needs_model = not (has_provider or has_binding)
+
+    from personalclaw.onboarding import load_onboarding_state
+
     return web.json_response(
         {
             "needs_model": needs_model,
             "has_model_provider": has_provider,
             "has_chat_binding": has_binding,
+            **load_onboarding_state(),
         }
     )
+
+
+async def api_onboarding_state(request: web.Request) -> web.Response:
+    """Record first-run progress — a partial merge into the onboarding entity state.
+
+    ``POST /api/onboarding/state`` with any subset of
+    ``{step, essentials: {model, search, speech, channel}, first_success: {knowledge,
+    trigger, loop}}``. The merge is partial at both levels, so each onboarding step
+    records only what it learned and never clears another step's progress.
+
+    This is deliberately NOT the config PATCH allowlist: onboarding progress is entity
+    state (§2.1), so it is written here and stored in ``entity_settings/onboarding.json``.
+    Unknown or mistyped fields are rejected with a 400 rather than dropped silently.
+    Returns ``{ok: true, state: {...}}`` — read it back to confirm the merge.
+    """
+    from personalclaw.onboarding import merge_onboarding_state
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    try:
+        state = merge_onboarding_state(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True, "state": state})
 
 
 async def api_auth_status(request: web.Request) -> web.Response:
