@@ -101,6 +101,17 @@ _CEILING_WRAPPED: dict[str, str] = {
         "none sandbox provider → profile ceiling via create_subprocess_limited (post-exec shim); "
         "the single routed-spawn seam (subsumes the former AcpProcess.spawn session_host site)"
     ),
+    # Cron/scheduled-script runner (EI-3). Agent-influenced: an agent authors the file under
+    # `crons/` and the job that selects it, so the child gets the same `tool` ceiling an agent
+    # bash command does. Its earlier exemption reasoned from the OS sandbox wrap + clean env —
+    # both real, neither a ceiling — which left a user script able to exhaust descriptors or
+    # fork-bomb where a bash tool call could not. Sync site, so the ceiling arrives via
+    # spawn_shim_argv (argv-prepend) rather than the async helper; the shim goes OUTSIDE the
+    # wrap_argv sandbox, matching the none-provider seam.
+    "schedule_script.py::run_script_sandboxed::subprocess.run": (
+        "cron/scheduled script → tool ceiling via spawn_shim_argv, prepended outside the "
+        "OS-sandbox wrap (sync site; rlimits inherit through exec)"
+    ),
     # Interactive terminal — explicitly the ``none`` profile (routed for legibility; the
     # helper is a no-op there so no shim cost, but the site stays audited).
     "dashboard/handlers/terminal.py::api_terminal_ws::create_subprocess_limited": (
@@ -255,11 +266,6 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host-fact: sandbox-exec availability probe"
     ),
     "sandbox.py::_ssh_supports_accept_new::subprocess.run": "host-fact: ssh version probe",
-    # Cron/scheduled-script runner — operator-authored scheduled scripts, own sandbox wrap
-    # (wrap_argv) + clean env. Not an agent-tool spawn; scheduling is an operator action.
-    "schedule_script.py::run_script_sandboxed::subprocess.run": (
-        "operator: scheduled-script runner (own sandbox wrap + clean env)"
-    ),
     # Service install/control — operator with sudo (launchd/systemd).
     "service/linux.py::_current_group::subprocess.run": "operator: service install id probe",
     "service/linux.py::_sudo_run::subprocess.run": "operator: service install sudo",
@@ -398,6 +404,10 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         "sandbox_providers/none.py::_NoneHandle.exec::create_subprocess_limited",
         "loop/gates.py::run_verify_command::create_subprocess_limited",
         "loop/worktree.py::_git::subprocess.run",
+        # EI-3 closed the last of the seven named seams: the cron/scheduled-script runner had
+        # the OS sandbox and the PHF-4 clean env but no ceiling. Ratcheted in here so the
+        # exemption cannot come back.
+        "schedule_script.py::run_script_sandboxed::subprocess.run",
     }
     missing = sorted(required - set(_CEILING_WRAPPED))
     assert not missing, f"agent seams not ceiling-wrapped: {missing}"

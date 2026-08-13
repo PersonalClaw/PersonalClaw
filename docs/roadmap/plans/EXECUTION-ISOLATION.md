@@ -404,3 +404,79 @@ a local process reaching `127.0.0.1:<port>` directly bypasses the gateway proxy,
 
 ### Sequencing note
 D0 is documentation and should land immediately — an inaccurate security claim is a live defect, not a backlog item. D1 is small, high-value, and independent. D2 is a decision before it is code. D3 is the largest and can follow §1's provider work. **None of these are blocked by the `docker`/`lima` tiers**, and none of them substitute for that work: the tiers confine *agent commands*, these tasks confine *app backends*, and the product needs both.
+
+---
+
+## Execution log
+
+- [2026-08-13][EI-3] DONE. **Premise correction: 6 of the 7 seams this atom names, and the audit
+  rail itself, had already shipped** — PHF-1's SH1.3/SH1.3a built
+  `tests/test_spawn_ceiling_audit.py` and wrapped `apps/backend_runtime.py`, `mcp_client.py`,
+  `mcp_discovery.py`, `loop/gates.py`, `loop/worktree.py`, and (via EI-1's provider handle,
+  which subsumes the former `AcpProcess.spawn` site) `acp/transport.py`. The rail classifies
+  **130** spawn sites across `_CEILING_WRAPPED`/`_OPERATOR_EXEMPT` and enforces coverage in both
+  directions, disjointness, and a required-wrapped ratchet. Its done-when was **falsified before
+  being trusted**: appending an unmapped `subprocess.Popen` to `lexicon/store.py` reds the rail
+  naming the exact site — `lexicon/store.py::_phf_probe_unmapped_spawn::subprocess.Popen
+  (lexicon/store.py:344)`. So the atom's CI requirement was already satisfied and was NOT
+  re-implemented.
+- [2026-08-13][EI-3] The one real gap was `schedule_script.run_script_sandboxed`. It had the OS
+  path sandbox (`wrap_argv(argv, mode="standard")`) and, since PHF-4, the allowlisted child env —
+  and its exemption reason conflated those with a ceiling ("operator: scheduled-script runner (own
+  sandbox wrap + clean env)"). Neither bounds consumption, so a cron script could exhaust
+  descriptors or fork-bomb where an agent `bash` call could not. Closed: the `tool` profile now
+  arrives via `spawn_shim_argv` (the sync-usable prepend; no sync site used it before, so cron is
+  the first), and the entry **moved from `_OPERATOR_EXEMPT` to `_CEILING_WRAPPED`** and was
+  ratcheted into `test_agent_influenced_seams_are_all_ceiling_wrapped` so the exemption cannot
+  return. The exemption was NOT made merely honest — the seam is genuinely agent-influenced (an
+  agent authors the file under `crons/` and the job that selects it).
+- [2026-08-13][EI-3] **Composition order: the shim goes OUTSIDE the `wrap_argv` sandbox** —
+  `python -m personalclaw._spawn_exec_shim <policy> -- env -u … sandbox-exec -f <profile> python3
+  <launcher>`. Three reasons: (1) it matches the one routed-spawn seam,
+  `sandbox_providers/none.py`, where `wrap()` builds the sandbox argv and `exec()` prepends the
+  ceiling — so cron and ACP compose identically; (2) rlimits inherit through `exec`, so a limit
+  set before `sandbox-exec`/`unshare` covers the sandboxed target and every descendant; (3) inside
+  the wrap, the shim's own `python -m` import would have to survive the seatbelt/namespace
+  profile, and one denied read of the interpreter's path turns a ceiling into a dead cron job.
+  Ordering hazard recorded: `wrap_argv` returns its namespace-backend cleanup path as
+  `wrapped[1]`, so the prepend must follow that unpacking, never precede it.
+- [2026-08-13][EI-3] PHF-4's `PYTHONPATH` allowlist entry still carries the shim through this
+  path — confirmed, and it is load-bearing here: the cron child's env is `build_child_env`'s
+  allowlist, not a copy, so the shim's `personalclaw._spawn_exec_shim` import resolves only
+  because `PYTHONPATH` (and `PATH`, for the `env`/`sandbox-exec` hop) are in
+  `CHILD_ENV_BASE_NAMES`. The failure mode is loud, not silent: a shim that could not import
+  returns a non-zero child with no sentinel line, which surfaces as an `error` status. And the
+  site cannot degrade to an unshimmed spawn under any config — the `tool` policy is never empty
+  because it always carries the OOM bias.
+- [2026-08-13][EI-3] **Containment DRIVEN, not asserted from a constructed object**
+  (`tests/test_cron_script_ceiling.py`, 6 tests). A real cron script under `sandbox.nofile = 137`
+  reports **137** from its own `resource.getrlimit` (host default: 1048576), and a script asking
+  for **400** descriptors is stopped at **134** with `OSError` (134, not 137, because the child
+  already holds its three standard streams and the launcher's own handles). The falsification leg:
+  with `sandbox.nofile = 0` (cap off, same script, same spawn path, same shim) it opens all
+  **400** — so the containment is attributable to the ceiling and not to the host or the OS
+  sandbox. Falsifying the implementation reds all three drives with the right diagnosis (NOFILE
+  1048576, 400/400 opened, no shim in argv). The same drive was run outside pytest against an
+  isolated `PERSONALCLAW_HOME` under `/var/folders/.../ei3-live-*` (never the real home) and
+  reproduced `134|OSError` / `400|`.
+- [2026-08-13][EI-3] **Platform honesty — what is NOT enforced here.** On macOS only
+  **RLIMIT_NOFILE** applies. `max_pids` (RLIMIT_NPROC) and `max_rss_mb` (RLIMIT_AS) ship **OFF**
+  by default (NPROC is a *per-user* cap that would break a busy host), and `oom_score_adj` is
+  Linux-only and silently skipped — so the fork-bomb and memory bounds this atom's sibling
+  language implies belong to PHF-2's Linux cgroup tier, not to an rlimit. Separately, this host is
+  macOS 26, where `_probe_sandbox_exec` refuses `sandbox-exec` for third-party callers, so
+  `detect_backend` returns `none` and both nesting orders produce the same argv locally. Rather
+  than leave the ordering unexercised, it is driven through a surrogate wrapper of the same shape
+  the real macOS wrap has (`env -u NAME …`) and the ceiling still lands on the far side of it,
+  plus an argv-shape assertion at the real call site.
+- [2026-08-13][EI-3] Gate: `make lint` rc=0 (black/isort/flake8/mypy, 810 source files). Full suite
+  **18,947 passed / 30 skipped / 12 xfailed / 0 failed** in 169s — the branch baseline of 18,941
+  plus exactly the 6 new tests, no unexplained movement — with the CRE-8 real-home rail confirming
+  `~/.personalclaw` unchanged (no global `PERSONALCLAW_HOME` for the pytest run; the live drive used
+  a throwaway home under `/var/folders`). All four generators re-run with `PYTHONPATH` set and
+  **byte-identical**: `config-baseline.json`, `docs-lint-baseline.json`,
+  `inert-surface-baseline.json` and the offline agent reference. Correct — this atom adds no config
+  field, no provider type, and no inert surface (the ceiling is delivered on a live call path, not
+  declared). `tools/regen_dag_derived.py` re-derived the `dag` block for the status flip
+  (`plan_counts` EI done 2→3, todo 10→9; EI-3 out of the ready frontier). No `web/` change — this
+  seam has no frontend surface.
