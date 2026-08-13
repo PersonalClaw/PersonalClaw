@@ -896,13 +896,14 @@
         {
           "id": "AG-6",
           "title": "S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 §Contract-level design + S5.1 row: RUNGS ladder, ActionTypeSpec, register_action_type, resolve_rung (floor+grants clamped to ceiling, incident_active() clamp above one_tap), DERIVED promotion_eligibility over SEL tool_approved/tool_rejected + FEEDBACK-SIGNAL records, demote+cooldown; autonomy_rungs.json store (grants/demotions only); guardrails.autonomy config through the four wiring points",
           "done_when": "a type with 10 clean approvals over 7 days + 0 rejections is eligible; one rejection demotes immediately and starts cooldown; incident clamps resolution above one_tap; eligibility is recomputed, never cached to disk",
           "deps": [
             "AG-4",
             "EXT:FEEDBACK-SIGNAL:S1 👍/👎 records feed derived eligibility"
-          ]
+          ],
+          "pr": 1197
         },
         {
           "id": "AG-7",
@@ -7056,8 +7057,8 @@
         "plan": "AE"
       },
       {
-        "id": "AG-6",
-        "title": "S5.1 earned-autonomy rung ladder core (guardrails/autonomy.py)",
+        "id": "AG-7",
+        "title": "S5.2 action-type declarations + manifest autonomy block + rung routing at seams",
         "plan": "AG"
       },
       {
@@ -9470,9 +9471,9 @@
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 11,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

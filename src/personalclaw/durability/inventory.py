@@ -614,6 +614,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="the main configuration document",
     ),
     StateEntry(
+        id="autonomy_rungs",
+        kind=KIND_JSON_FILE,
+        path="autonomy_rungs.json",
+        domain=DOMAIN_CONFIG,
+        # Last-write-wins per file rather than a union: a rung grant and a demotion for
+        # the same action type are contradictory decisions, and merging them would
+        # resurrect a grant the other machine already withdrew. The conservative merge
+        # for a permission store is the newest whole document.
+        merge=MERGE_LWW,
+        help="earned-autonomy rung grants and demotion history",
+    ),
+    StateEntry(
         id="active_models",
         kind=KIND_JSON_FILE,
         path="active_models.json",

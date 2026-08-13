@@ -129,6 +129,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **PersonalClaw can now earn autonomy one action at a time, and lose it instantly.** The safety
+  floor used to be binary — an unattended action was read-only, or it was a permission you granted
+  when you created the automation — so a reply draft you had approved unchanged forty times still
+  asked every time. There is now a per-action-type ladder: **draft only → one tap → run with undo →
+  autonomous**, where each action type declares the rung it starts at and a ceiling it can never
+  pass (anything that leaves your machine stops below "autonomous" unless its declaration says
+  otherwise). The track record behind a promotion is **recomputed every time from what already
+  happened** — the approvals in your security event log and the 👎 you have given that action's
+  output — and never stored as a score, so it cannot outlive the evidence. Two rules make it safe:
+  **PersonalClaw never promotes itself** (clearing the bar files a suggestion; only your click
+  grants a rung), and **one rejection demotes immediately** and starts a cooldown before the
+  suggestion can come back. `personalclaw incident on` holds every action at "one tap" or below
+  until you resume, whatever it had earned. Thresholds live under Settings (`guardrails.autonomy`:
+  approvals required, days they must span, rejections tolerated, cooldown, evidence window), the
+  grants and demotions are saved to `autonomy_rungs.json` and travel with `personalclaw snapshot`,
+  and an unreadable or unrecognized entry grants nothing. This release ships the mechanism; the
+  action types that use it, and the ladder panel that shows it, follow.
 - **You can share a chat as a read-only artifact — inside your own instance, never on the
   internet.** Right-click a chat in Chat History → **Share as read-only artifact** and the
   conversation is saved into your artifacts library as a Markdown record, then opened for you. The

@@ -431,6 +431,36 @@
     "type": "int"
   },
   {
+    "default": 10,
+    "path": "guardrails.autonomy.clean_approvals",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 14,
+    "path": "guardrails.autonomy.cooldown_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 30,
+    "path": "guardrails.autonomy.evidence_window_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0,
+    "path": "guardrails.autonomy.max_rejections",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 7,
+    "path": "guardrails.autonomy.min_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 5,
     "path": "guardrails.breaker.failure_threshold",
     "sensitive": false,

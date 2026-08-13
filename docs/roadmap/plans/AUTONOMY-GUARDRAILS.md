@@ -591,6 +591,63 @@ profiles) exist, and changing it now risks altering today's unattended-run appro
 new capability to show for it. `profile_for_session` is the ready seam; the swap is a
 one-line change when the engine lands.
 
+### 2026-08-12 — Atom AG-6 / Session 5.1 (§5 rung-ladder core) — DONE
+
+`src/personalclaw/guardrails/autonomy.py` ships the earned-autonomy ladder core: `RUNGS`
+(`draft_only → one_tap → auto_with_undo → autonomous`), `ActionTypeSpec` + `PromotionRule`,
+`register_action_type` / `action_type` / `registered_action_types` / `reset_action_types`,
+`resolve_rung` (floor + accepted grant, clamped to ceiling, then clamped to `one_tap` while
+`incident_active()`), `granted_rung` (the same without the incident clamp, so the panel can
+say "granted auto-with-undo, held at one-tap by the incident"), `promotion_eligibility`
+(DERIVED over SEL approval verdicts + FEEDBACK-SIGNAL 👎), `grant_rung` (the user's click —
+the only upward path) and `demote` (immediate, cooldown-starting). The store is
+`~/.personalclaw/autonomy_rungs.json` via `atomic_write`, holding grants and demotions ONLY,
+declared in the durability inventory (`autonomy_rungs`, `DOMAIN_CONFIG`, `lww`) and carried by
+the snapshot `config` component. `guardrails.autonomy` wires through its four points:
+`AutonomyConfig` dataclass + `_meta`, `load()`'s field-by-field mapping (clamped via
+`_safe_int`), `to_dict()` (via the existing `asdict(self.guardrails)`), and five
+`_EDITABLE_CONFIG` PATCH entries. Full gate: `make lint` clean (black/isort/flake8/mypy),
+`pytest tests/` **18701 passed, 30 skipped, 12 xfailed**, plus the 3 pre-existing
+`test_harness_validate.py` failures that red in any worktree (the harness resolves
+`.venv/bin/python` relative to cwd). `config-baseline.json` regenerated in the same commit;
+`inert-surface-baseline.json`, the manifest reference and the dag derived block all
+byte-identical. No `web/` changes (the FE ladder panel is S6.1 / AG-8).
+
+**DISCOVERY — the SEL has no `tool_approved`/`tool_rejected` operation type.** The plan (and
+this section above) names them, but `sel.py` mentions those strings only in its module
+docstring: the verdict actually lives in `SecurityEvent.outcome` (`approved`,
+`auto_approved`, `rejected`, `rejected_*`, `denied`, `not_auto_approved`) while `operation`
+holds the tool name. Eligibility therefore reads `outcome`, and attributes an event to a type
+by the `action_type` **metadata** key (`SEL_ACTION_TYPE_KEY`) that the S5.2 seams stamp, or by
+an `operation` that IS the type key. `metadata` already flows through
+`log_tool_invocation`, so S5.2 adds one dict entry rather than an event stream.
+
+**DECISION (security) — `auto_approved` outcomes are NOT evidence.** Counting them would let
+a type that already runs unattended manufacture its own promotion case and climb the rest of
+the ladder on its own output. Only a human `approved` verdict counts; `auto_approved` /
+`auto_approved_spawn` are excluded, with a named test for the hole.
+
+**DEVIATION — per-type thresholds live on `ActionTypeSpec.promotion`, not in a per-type config
+dict.** §Contract-level design says "thresholds per-type configurable via a new
+`guardrails.autonomy` config subsection", while its own code block puts `promotion:
+PromotionRule` on the spec. Both are honored by making `guardrails.autonomy` the operator-wide
+default (five scalars, all PATCH-editable and bounded) and letting a type that declares its own
+rule keep it. A per-type config dict keyed on an unbounded namespace (`app:<name>.<action>`)
+cannot be validated by the `_EDITABLE_CONFIG` allowlist and would need a bespoke value type;
+the spec is where a type is declared, so it is where a deliberate per-type bar belongs.
+
+**DEVIATION — no `guardrails.autonomy.enabled` toggle.** Considered and dropped: the ladder
+cannot grant anything without a user click, so an on/off switch would not be a safety control,
+and it would have shipped as a guard-class-looking field whose safe default is arguable.
+Suspending earned autonomy is what `personalclaw incident on` already does, now including this
+ladder.
+
+**Deliberately left to AG-7 (S5.2) and AG-8 (S6.1):** no action-type keys are registered (the
+S5.1 row does not declare them), no dispatch seam calls `resolve_rung`, no manifest `autonomy`
+block, and no FE. `leaves_machine` is nonetheless load-bearing here rather than decorative:
+`promotion_eligibility` never *proposes* `autonomous` for a type that leaves the machine,
+however permissive its ceiling — that rung has to be an explicit owner grant.
+
 ---
 
 ## Status: all four sessions COMPLETE (2026-07-25)
