@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { deriveBlastRadius, RISK_ESTABLISHES_READ_ONLY } from './approvalMeta'
+import {
+  BLAST_RADIUS_FACET_ORDER, blastRadiusLine, deriveBlastRadius, establishedFacets,
+  RISK_ESTABLISHES_READ_ONLY,
+} from './approvalMeta'
 import type { ApprovalRisk } from './approvalMeta'
 
 // ── OU-7: blast-radius derivation is a DESCRIPTION, not a decision ──────────────────────────
@@ -212,5 +215,62 @@ describe('approvalMeta.ts must stay a pure leaf that nothing can gate on', () =>
     for (const forbidden of ['_READ_ONLY_BASH', 'rm -rf', 'sudo', 'split(\'|\')']) {
       expect(source).not.toContain(forbidden)
     }
+  })
+})
+
+// ── OU-8: the facet vocabulary the surfaces share ───────────────────────────────────────────
+// Three surfaces render this radius (the chat card's chips, the out-of-context toast's line,
+// and OU-9's channel brief). The words live in this module so they cannot become three
+// vocabularies for one claim — and the positives-only rule lives here too, so a surface
+// cannot re-derive it and get it wrong.
+
+describe('establishedFacets / blastRadiusLine', () => {
+  it('the order list covers every facet of the radius — a fifth cannot go unrendered', () => {
+    // FACET_COPY is a total Record (typecheck catches an unlabelled facet); this catches a
+    // facet that is labelled but left out of the render order, which no type can see.
+    const all = deriveBlastRadius({ tool: 'bash_web_write', risk: 'caution' })
+    expect(all).toBeDefined()
+    expect(BLAST_RADIUS_FACET_ORDER.length).toBe(Object.keys(all as object).length)
+    expect([...BLAST_RADIUS_FACET_ORDER].sort()).toEqual(Object.keys(all as object).sort())
+  })
+
+  it('returns ONLY established facets, in the declared order', () => {
+    const facets = establishedFacets({ writes: true, shell: true, network: false, readOnly: false })
+    expect(facets.map((f) => f.key)).toEqual(['writes', 'shell'])
+    expect(facets.map((f) => f.label)).toEqual(['Writes files', 'Runs a command'])
+  })
+
+  it('yields nothing at all for an undefined radius — the unknown channel stays silent', () => {
+    expect(establishedFacets(undefined)).toEqual([])
+    expect(blastRadiusLine(undefined)).toBe('')
+  })
+
+  it('never renders a false facet as a negative claim', () => {
+    // The failure this exists to prevent: an all-false radius presented as "no writes, no
+    // network, no shell, not read-only" — four confident negatives from zero evidence.
+    const none = establishedFacets({ writes: false, shell: false, network: false, readOnly: false })
+    expect(none).toEqual([])
+    expect(blastRadiusLine({ writes: false, shell: false, network: false, readOnly: false })).toBe('')
+  })
+
+  it('every facet has a label and a spelled-out detail, and none of them is a verdict', () => {
+    const facets = establishedFacets({ writes: true, shell: true, network: true, readOnly: true })
+    expect(facets).toHaveLength(4)
+    for (const f of facets) {
+      expect(f.label.length, f.key).toBeGreaterThan(3)
+      expect(f.detail.length, f.key).toBeGreaterThan(10)
+      // A facet states a capability; it must not editorialise about the decision.
+      for (const advocacy of [/safe to/i, /recommend/i, /harmless/i, /no risk/i, /probably/i]) {
+        expect(`${f.label} ${f.detail}`, f.key).not.toMatch(advocacy)
+      }
+    }
+  })
+
+  it('renders the compact line from the same words as the chips', () => {
+    const radius = { writes: true, shell: true, network: false, readOnly: false }
+    const line = blastRadiusLine(radius)
+    expect(line).toBe('writes files, runs a command')
+    // Same vocabulary, one lowercasing apart — the toast and the card cannot drift.
+    for (const f of establishedFacets(radius)) expect(line).toContain(f.label.toLowerCase())
   })
 })
