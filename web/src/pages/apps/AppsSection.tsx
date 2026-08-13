@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
@@ -950,9 +951,17 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
                 </span>
               )}
             </div>
+            {/* 🔴 3.97:1 (need 4.5) before this, measured by BOTH `ux-audit` and axe at light/phone on
+                  every card: coral ink on a 14% coral tint. `design/accent.ts` already documents this
+                  exact failure — a tint is not symmetric across modes, and in light it lifts the
+                  backdrop TOWARD the dark accent until ink and background converge (14% → 3.62 by its
+                  own table) — and ships the pair that fixes it: `primary-container` /
+                  `on-primary-container`, 13.1:1 light and 10.43:1 dark, guaranteed for all 12 schemes
+                  by `schemeContrast.test.ts`. This chip was the last accent-carrying TEXT left on the
+                  old spelling. */}
             {providerLabel && (
-              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary" data-type="label-s"
-                style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
+                style={accentChip}>
                 <Plug size={11} />{providerLabel}
               </span>
             )}
