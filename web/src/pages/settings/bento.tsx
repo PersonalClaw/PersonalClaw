@@ -72,8 +72,20 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, accent, 
       whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
       className="group relative flex w-full flex-col rounded-xl bg-surface-container p-4 transition-colors focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50 hover:bg-surface-high"
     >
-      {/* Behind-content nav overlay: the whole card opens the subpage. */}
+      {/* Behind-content nav overlay: the whole card opens the subpage.
+          `aria-busy` while the tile's data is still in flight. This button is the ONLY node an
+          assistive-tech user reaches on a card (the skeleton below is `aria-hidden`, correctly — it is
+          decoration), so without it they heard "Open Apps settings" and nothing about the card being
+          empty-because-pending.
+          🪤 A `role="status"` PER TILE WOULD BE UNUSABLE, and it is worth recording why rather than
+          re-deciding it later: measured on a cold open of `#/settings`, **22 tiles shimmer
+          simultaneously** for ~1.2s with a tail to **3.6s** (Speech & Transcription, Chat, Inbox,
+          Notifications last). That is 22 queued polite announcements for one page load. `aria-busy` is a
+          PROPERTY, not a live region — it announces nothing on its own and is read only if the user
+          lands here, which is exactly the trade this surface needs. One `role="status"` per SECTION (as
+          `RemoteProvidersSkeleton` ships) is fine; per tile is not. */}
       <button type="button" onClick={onClick} aria-label={`Open ${title} settings`}
+        aria-busy={loading || undefined}
         className="absolute inset-0 z-0 rounded-xl outline-none" />
       {/* Content sits above the overlay but is click-through except for controls. */}
       <div className="pointer-events-none relative z-10 flex min-h-0 flex-col">
