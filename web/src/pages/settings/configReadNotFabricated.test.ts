@@ -111,7 +111,11 @@ describe('a config panel does not present fabricated values as saved state', () 
     const stillSubstituting = files
       .map((f) => (codeOf(`pages/settings/${f}.tsx`).match(/\.catch\(\(\)\s*=>\s*(\[\]|null|undefined|\{\}|\(\{\}|'')/g) ?? []).length)
       .reduce((a, b) => a + b, 0)
+    // 🪤 THIS NUMBER WAS 3 AND THE REAL COUNT IS 31 — the comment above says "records the number so the
+    // next pass starts from a count", and it recorded a tenth of it. 28 of the 31 could have vanished with
+    // the rail still green. Measured by instrumenting every floor assertion in the suite (cycle 134).
+    // It moves only deliberately: de-swallowing one of these is a real change, so lower it in that PR.
     expect(stillSubstituting, 'the decorating fallbacks in these five files, measured')
-      .toBeGreaterThanOrEqual(3)
+      .toBeGreaterThanOrEqual(31)
   })
 })
