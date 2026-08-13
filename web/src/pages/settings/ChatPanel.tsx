@@ -9,7 +9,7 @@ import { NumberField } from '../../ui/forms'
 import { IconButton } from '../../ui/IconButton'
 import { confirmDelete } from '../../ui/dialog'
 import { Trash2 } from 'lucide-react'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 const RESTORE_WINDOWS = [
   { key: '15', label: '15 min' }, { key: '30', label: '30 min' },
@@ -30,10 +30,17 @@ export function ChatPanel() {
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from a
   // single cached snapshot of both fetches, revalidating in the background. The
   // editable form state below is seeded/rehydrated from this read-only `data`.
-  const { data } = useCachedData('settings:chat', async () => {
+  const { data, error: loadErr, refresh } = useCachedData('settings:chat', async () => {
     const [dash, plaw] = await Promise.all([
+      // The dashboard read KEEPS its fallback: it only feeds the starter list further down, and a
+      // missing starter list degrades one section rather than fabricating your chat settings.
       api.dashboardConfig().catch(() => null),
-      api.personalclawConfig().catch(() => ({} as Record<string, unknown>)),
+      // 🔴 NOT `.catch(() => ({}))`. This read IS the panel: session, routing and resilience all come
+      // from it, so an empty object rendered every control at its fallback — indistinguishable from
+      // "this is what you saved". Measured on `#/settings/chat` with `/api/config/personalclaw` at 500:
+      // **10 switches and 6 inputs rendered, with no error anywhere**, and each one PATCHes on change.
+      // Its sibling `AgentDefaultsPanel` already reads the same endpoint and shows the failure.
+      api.personalclawConfig(),
     ])
     return {
       cfg: dash,
@@ -50,6 +57,9 @@ export function ChatPanel() {
     }
   }, [data])
 
+  // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
+  // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg || !session || !routing || !resilience) return <FormSkeleton sections={3} />
 
   return (

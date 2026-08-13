@@ -7,7 +7,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 /** Scheduled backups (DURABILITY-AND-SYNC §3).
  *
@@ -25,9 +25,12 @@ import { FormSkeleton } from '../../ui/ListScaffold'
 export function DurabilityPanel() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
 
-  const { data } = useCachedData('settings:durability', async () => {
+  const { data, error: loadErr, refresh } = useCachedData('settings:durability', async () => {
     const [plaw, status, snaps] = await Promise.all([
-      api.personalclawConfig().catch(() => ({}) as Record<string, unknown>),
+      // The five `durability.*` controls come from here, so a fabricated `{}` would show a retention
+      // schedule nobody configured. Status and snapshots keep their fallbacks: they DECORATE the panel
+      // (a status strip and a snapshot list) rather than defining what its controls claim.
+      api.personalclawConfig(),
       api.durabilityStatus().catch(() => null),
       api.durabilitySnapshots().catch(() => null),
     ])
@@ -40,6 +43,9 @@ export function DurabilityPanel() {
 
   useEffect(() => { if (data) setCfg(data.durability) }, [data])
 
+  // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
+  // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
+  if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
   if (!data || !cfg) return <FormSkeleton sections={2} />
 
   return (
