@@ -43,6 +43,12 @@ export async function errText(r: Response): Promise<string> {
   // A body that PARSED as JSON but carried no usable message must not be printed: serialized
   // JSON is never a sentence, and `{"error": {"code": 7}}` read aloud is worse than the status.
   // Only genuinely non-JSON text may pass through, and only if it is short and not markup.
-  if (wasJson || !text || text.startsWith('<') || text.length > MAX_INLINE) return `HTTP ${r.status}`
+  // aiohttp default error pages are plain text like '500 Internal Server Error
+
+Server got itself in trouble'
+  // These are not messages for a user — fall back to the status code
+  const isAiohttpDefault = /^\d{3} [A-Z]/.test(text) && text.split('
+').length <= 4
+  if (wasJson || !text || text.startsWith('<') || text.length > MAX_INLINE || isAiohttpDefault) return `HTTP ${r.status}`
   return text
 }
