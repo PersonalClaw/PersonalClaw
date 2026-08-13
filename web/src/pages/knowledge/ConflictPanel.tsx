@@ -29,7 +29,7 @@ export function ConflictPanel() {
     return () => { alive = false }
   }, [])
 
-  if (conflicts === null) return <ListSkeleton rows={3} />
+  if (conflicts === null) return <ListSkeleton rows={3} what="contradictions" />
   if (conflicts.length === 0) {
     return (
       <EmptyState
