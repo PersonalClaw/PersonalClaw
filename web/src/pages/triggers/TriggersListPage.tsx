@@ -155,7 +155,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
         <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, view: 'list' })} />
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {triggers === null ? <ListSkeleton rows={6} /> : triggers.length === 0 ? (
+        {triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
               <EmptyState icon={Zap} title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'} hint={q || filter !== 'all' ? 'Try a different filter.' : 'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'} action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined} />
             ) : (
               <div className="flex flex-col gap-s">

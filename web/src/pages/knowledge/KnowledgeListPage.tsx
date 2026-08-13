@@ -449,7 +449,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
 
       {view !== 'graph' && (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-        {items === null ? (itemsLoading ? <ListSkeleton /> : null) : empty ? (
+        {items === null ? (itemsLoading ? <ListSkeleton what="items" /> : null) : empty ? (
               <EmptyState icon={BookOpen} title="Knowledge base is empty" hint="Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve." action={{ label: 'Add knowledge', onClick: onCreate, icon: Plus }} />
             ) : view === 'conflicts' ? (
               <ConflictPanel />
