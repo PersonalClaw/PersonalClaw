@@ -6298,12 +6298,13 @@
         {
           "id": "OU-2",
           "title": "Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.2, re-scoped to T1.2r by the 2026-07-26 Amendment (ruling a); Design 'Guided first run'; catalog-driven via apps/catalog.py first-party source",
           "done_when": "fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere",
           "deps": [
             "OU-1"
-          ]
+          ],
+          "pr": 1260
         },
         {
           "id": "OU-3",
@@ -7737,8 +7738,8 @@
         "plan": "MRT"
       },
       {
-        "id": "OU-2",
-        "title": "Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in)",
+        "id": "OU-3",
+        "title": "First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop)",
         "plan": "OU"
       },
       {
@@ -10234,9 +10235,9 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {
