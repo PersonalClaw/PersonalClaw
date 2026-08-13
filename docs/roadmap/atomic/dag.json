@@ -5897,12 +5897,13 @@
         {
           "id": "FM-1",
           "title": "Physics preset system: named springs, gesture helpers, Motion tokens + author guide",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 — Physics system (T1.1–T1.3, V1); Contracts C1",
           "done_when": "physics presets (snappy/smooth/fluid/playful) scale with the bounciness slider and zero out under prefers-reduced-motion; dragSpring/swipeDismiss shipped in motion.ts; new Motion tokens wired in tokenRegistry + tokens.css; docs/design/motion.md guide lets an author pick a preset and know the budget/reduced-motion constraints from the doc alone; 2-3 existing interactions (pressable/list-enter/overlay) adopt the presets with no hardcoded transitions left",
           "deps": [
             "EXT:DESIGN-SYSTEM-CONSISTENCY:consistent components+tokens as the motion substrate (shipped v0.1.2)"
-          ]
+          ],
+          "pr": 1252
         },
         {
           "id": "FM-2",
@@ -7394,8 +7395,23 @@
         "plan": "ET"
       },
       {
-        "id": "FM-1",
-        "title": "Physics preset system: named springs, gesture helpers, Motion tokens + author guide",
+        "id": "FM-2",
+        "title": "Morph.tsx shared-element wrapper + wire one real card→detail morph",
+        "plan": "FM"
+      },
+      {
+        "id": "FM-3",
+        "title": "LiquidShape.tsx fluid-blob shape morph (coral-tinted, expr()-scaled)",
+        "plan": "FM"
+      },
+      {
+        "id": "FM-5",
+        "title": "Wire viewTransition() into hash-route changes (cosmetic-only)",
+        "plan": "FM"
+      },
+      {
+        "id": "FM-6",
+        "title": "Orchestrated staggered entrances for 2-3 key surfaces",
         "plan": "FM"
       },
       {
@@ -9930,9 +9946,9 @@
         "code": "FM",
         "plan": "FLUID-MOTION",
         "total_atoms": 7,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
-import { bounce } from '../../../design/motion'
+import { physics } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
 
 const ACTIVE_LOOP_STATES = new Set(['running', 'paused', 'stagnant', 'blocked', 'needs_input'])
@@ -59,7 +59,7 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
             key={`${p.key}-${p.n}`}
             initial={{ scale: 0.6, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            transition={bounce.playful}
+            transition={physics.playful}
             data-type="title-m"
             className="tabular-nums text-on-surface"
           >

@@ -3,7 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
 import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText } from 'lucide-react'
 import { Popover, MenuRow } from '../Popover'
-import { spring, bounce, expr } from '../../design/motion'
+import { spring, physics, expr } from '../../design/motion'
 import { cx } from '../cx'
 import type { ComposerData } from './types'
 import type { ApprovalMode, ReasoningEffort } from '../../lib/api'
@@ -51,7 +51,7 @@ function PillButton({ icon, label, dimension, open, toggle }: { icon: React.Reac
     >
       {icon}
       <span className="truncate">{label}</span>
-      <motion.span className="shrink-0" animate={{ rotate: open ? 180 : 0 }} transition={bounce.subtle}>
+      <motion.span className="shrink-0" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
         <ChevronDown size={15} strokeWidth={2} />
       </motion.span>
     </motion.button>

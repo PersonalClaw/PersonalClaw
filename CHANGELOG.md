@@ -247,6 +247,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it
+  claimed to.** If your operating system is set to reduce motion, PersonalClaw relied on a framework
+  setting that neutralises movement *across the screen* but leaves the underlying spring running, so
+  anything animating opacity or a blur still bounced its way in. Every spring in the app now collapses
+  to an instant swap under that setting, in one place, so a new animation cannot escape it. Separately,
+  menus and popovers were reading your **Bounciness** value once when the app loaded and then ignoring
+  it: moving the slider changed nothing for them until a full reload. They now read it every time they
+  open. The app's spring presets are also down to one named set of four — *snappy*, *smooth*, *fluid*
+  and *playful* — so motion is consistent between surfaces that used to pick from two overlapping
+  lists; a few entrances (dialogs, the update overlay, the composer) are slightly quicker and bouncier
+  as a result, and Settings → Design → Motion tunes all of them. **Three new sliders in that same
+  group** control drag and swipe feel: how far a dragged card stretches past its edge, and the flick
+  speed *or* distance at which a swipe dismisses it (a toast can now be flicked away quickly or hauled
+  away slowly — previously only one worked, at values you could not change).
+
 - **Housekeeping now runs when your machine actually needs it, instead of on a fixed clock — and
   one system does it, not two.** PersonalClaw's minute-by-minute heartbeat used to carry its own
   maintenance schedule: rebuild the memory search index every 15 minutes whether or not anything

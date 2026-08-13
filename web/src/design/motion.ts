@@ -1,12 +1,36 @@
 // PersonalClaw motion presets for Framer Motion.
-// Two families: SPATIAL springs carry visible overshoot (position/scale); EFFECTS
-// are critically damped (opacity/color/content). On top, named BOUNCE tiers add
-// earned personality — applied with discipline (§3.5: ~3-4 moments), scaled by the
-// user-tunable `runtime.bounciness` (0 calm … 1 playful; default playful).
+//
+// TWO families, and only two — pick by whether the move carries personality:
+//   • `spring` — the raw tiers. Unscaled spatial defaults + `effects`, the
+//     critically-damped transition for opacity/color/content (no overshoot ever).
+//   • `physics` — the four named PRESETS (snappy/smooth/fluid/playful). Every one
+//     is built by `bouncy()`, so every one scales with the user's `--bounciness`
+//     slider and collapses to `instant` under `prefers-reduced-motion`.
+// Reach for `physics` for anything spatial with character; reach for `spring.effects`
+// for a fade. There is deliberately no third set of names — see docs/design/motion.md.
 
 import type { Transition, Variants } from 'framer-motion'
 
 import { runtime } from './runtime'
+
+/** True when the user has asked the platform for less motion.
+ *
+ *  Read at CALL time, never cached: the presets below are getters, so a mid-session
+ *  OS change (or a test flipping the query) is honored on the next animation instead
+ *  of whatever the media query happened to say at import. `matchMedia` is guarded for
+ *  non-browser callers (SSR, a bare-node test importing this module). */
+export function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** The terminal reduced-motion transition: an instant swap with ZERO spring.
+ *
+ *  `type: 'tween'` is explicit on purpose. Several call sites spread a preset and
+ *  override one field (`{ ...physics.fluid, stiffness: 240 }`); without an explicit
+ *  type, a leftover `stiffness` would let Framer infer a spring again and the
+ *  reduced-motion collapse would leak right back through the spread. */
+export const instant: Transition = { type: 'tween', duration: 0 }
 
 export const spring = {
   /** default.spatial — gentle settle */
@@ -21,23 +45,37 @@ export const spring = {
 
 /** A bounce spring whose overshoot scales with `runtime.bounciness` (0 → critically
  *  damped, 1 → the given playful damping). Lets one slider dial the whole app's
- *  personality without touching call sites. Lower damping = more overshoot. */
+ *  personality without touching call sites. Lower damping = more overshoot.
+ *
+ *  This is THE gate for both budget dials that matter here: it is the single place
+ *  the bounciness slider enters the spring family, and the single place
+ *  `prefers-reduced-motion` zeroes it. Every named preset routes through it, so no
+ *  preset can be added that silently escapes either. */
 function bouncy(stiffness: number, dampingAtPlayful: number, calmDamping: number): Transition {
+  if (prefersReducedMotion()) return instant
   const b = Math.max(0, Math.min(1, runtime.bounciness))
   // Interpolate damping from calm (high, no overshoot) → playful (low, overshoot).
   const damping = calmDamping + (dampingAtPlayful - calmDamping) * b
   return { type: 'spring', stiffness, damping, mass: 1 }
 }
 
-export const bounce = {
-  /** light overshoot — press-release, hover settles */
-  get subtle(): Transition { return bouncy(520, 26, 40) },
-  /** fun overshoot — menu/popover open, success bloom */
-  get playful(): Transition { return bouncy(600, 16, 42) },
-  /** float-up entrance */
-  get lift(): Transition { return bouncy(300, 22, 34) },
-  /** large layout shifts settle */
-  get settle(): Transition { return bouncy(220, 24, 30) },
+/** The named physics presets — the ONE set an author picks from (plan FLUID-MOTION §C1).
+ *
+ *  All four are `bouncy()` springs, so all four track `--bounciness` and all four go
+ *  `instant` under reduced motion. Named by FEEL, not by use case, so the choice is
+ *  "how should this move?" rather than "which component am I in?".
+ *
+ *  Constants are the plan's, verbatim, and they are the taste surface: retuning the
+ *  app's whole personality is four numbers here, not a sweep of call sites. */
+export const physics = {
+  /** quick, minimal overshoot — controls, chevrons, press/hover feedback */
+  get snappy(): Transition { return bouncy(520, 30, 40) },
+  /** default UI — reach for this when nothing argues for another tier */
+  get smooth(): Transition { return bouncy(320, 34, 38) },
+  /** liquid, generous settle — large surfaces, layout shifts, morphs */
+  get fluid(): Transition { return bouncy(180, 26, 34) },
+  /** the most overshoot at bounciness=1 — the ~3-4 earned personality moments */
+  get playful(): Transition { return bouncy(420, 14, 34) },
 }
 
 export const ease = {
@@ -55,11 +93,18 @@ export const messageEnter: Variants = {
   animate: { opacity: 1, y: 0, transition: { duration: duration.medium, ease: ease.emphasizedDecel } },
 }
 
-/** Menu / sheet entrance — spring scale+fade with an earned playful bounce (one
- *  of the ~3-4 sanctioned bounce moments; scales with the bounciness slider). */
+/** Menu / sheet entrance — spring scale+fade on the `playful` preset (one of the
+ *  ~3-4 sanctioned bounce moments).
+ *
+ *  `animate` is a FUNCTION, not an object literal, and that is load-bearing. A
+ *  module-level `{ transition: physics.playful }` reads the getter ONCE at import
+ *  and freezes whatever bounciness (and whatever reduced-motion answer) happened to
+ *  be true then — every overlay in the app would ignore the slider for the rest of
+ *  the session. Framer resolves a variant function per animation, so the preset is
+ *  read fresh each time it opens. */
 export const overlayEnter: Variants = {
   initial: { opacity: 0, scale: 0.96, y: 4 },
-  animate: { opacity: 1, scale: 1, y: 0, transition: bounce.playful },
+  animate: () => ({ opacity: 1, scale: 1, y: 0, transition: physics.playful }),
   exit: { opacity: 0, scale: 0.98, transition: spring.effects },
 }
 
@@ -72,38 +117,70 @@ export const thinkingPulse: Variants = {
   },
 }
 
-/** Press feedback for buttons/chips — press in, spring back with a subtle bounce. */
-export const pressable = {
-  whileTap: { scale: 0.96, transition: spring.spatialFast },
-  whileHover: { scale: 1.02, transition: bounce.subtle },
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Component-redesign Slice 0 — researched, tokenized presets shared across the
-// per-component sweep. These are aliases/companions to the spring/bounce tiers
-// above, named by the technique-selection map (§4) so call sites read intent.
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Named spring tiers for the redesign sweep. `gentle` = soft settle (large
- *  surfaces), `snappy` = fast low-overshoot (controls), `bouncy` = earned
- *  personality (scales with the bounciness knob, one of the sanctioned moments). */
-export const springs = {
-  get gentle(): Transition { return spring.spatialSlow },
-  get snappy(): Transition { return spring.spatialFast },
-  get bouncy(): Transition { return bounce.playful },
-}
-
 /** Stagger a container's children by a fixed step. Use on list/grid entrances so
  *  rows cascade instead of popping in together (§4 choreography). */
 export function stagger(step = 0.04, delayChildren = 0): Transition {
   return { staggerChildren: step, delayChildren }
 }
 
-/** A list-item entrance variant pair — rise+fade, emphasized-decelerate. Pair
- *  with a parent `variants={{ animate: { transition: stagger() } }}`. */
+/** A list-item entrance variant pair — rise+fade on the `smooth` preset. Pair with
+ *  a parent `variants={{ animate: { transition: stagger() } }}`.
+ *
+ *  A function for the same reason `overlayEnter.animate` is one: an object literal
+ *  would freeze the preset at import. `smooth` is critically damped at every slider
+ *  position, so a list still arrives without wobble — the discipline lives in the
+ *  preset choice, not in a hardcoded tween. */
 export const listItemEnter: Variants = {
   initial: { opacity: 0, y: 8 },
-  animate: { opacity: 1, y: 0, transition: { duration: duration.medium, ease: ease.emphasizedDecel } },
+  animate: () => ({ opacity: 1, y: 0, transition: physics.smooth }),
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Gesture physics (plan FLUID-MOTION §C1). Direct manipulation is not decoration:
+// reduced motion zeroes the transitions a gesture RESOLVES with, and never the
+// drag itself — taking the drag away would remove a function, not an effect.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The spring a dragged element settles with when the finger lets go — snapping
+ *  back inside its constraints, or landing after a reorder.
+ *
+ *  Stiffer than `physics.snappy` on purpose: a return that loses a race with the
+ *  hand that threw it reads as lag, not as softness. Same `bouncy()` family, so it
+ *  still tracks the slider and still zeroes under reduced motion. */
+export function dragSpring(): Transition {
+  return bouncy(620, 24, 44)
+}
+
+/** How far a dragged element may stretch PAST its constraints (Framer's
+ *  `dragElastic`), from `--drag-elastic`.
+ *
+ *  Deliberately NOT reduced-motion gated and NOT `expr()`-scaled: with elastic 0 and
+ *  a zero-width constraint box the element cannot move at all, so a swipe-to-dismiss
+ *  would stop being performable. The rubber band is how the gesture answers the
+ *  finger; only its release transition is decoration. */
+export function dragElastic(): number {
+  return Math.max(0, Math.min(1, runtime.dragElastic))
+}
+
+/** Verdict + transition for a swipe-to-dismiss gesture, from Framer's
+ *  `onDragEnd(_, info)`: pass `info.velocity.x` and `info.offset.x` (or the y pair).
+ *
+ *  Dismiss on either a fast FLICK (`--swipe-dismiss-velocity`, px/s) or a deliberate
+ *  slow HAUL past `--swipe-dismiss-distance` (px) — velocity alone would make a
+ *  careful drag all the way across do nothing, which reads as broken. Both thresholds
+ *  are user-tunable tokens rather than magic numbers at the call site.
+ *
+ *  A dismissed element LEAVES on an accelerating curve (it must not overshoot back
+ *  into the surface it is leaving); a kept one springs home on `dragSpring()`. */
+export function swipeDismiss(velocity: number, offset = 0): { dismiss: boolean; transition: Transition } {
+  const dismiss = Math.abs(velocity) >= runtime.swipeVelocity || Math.abs(offset) >= runtime.swipeDistance
+  if (prefersReducedMotion()) return { dismiss, transition: instant }
+  return {
+    dismiss,
+    transition: dismiss
+      ? { duration: duration.medium, ease: ease.emphasizedAccel }
+      : dragSpring(),
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

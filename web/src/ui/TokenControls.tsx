@@ -4,7 +4,7 @@ import { RotateCcw } from 'lucide-react'
 import type { ColorToken, ScalarToken, SelectToken } from '../design/tokenRegistry'
 import { useAppearance } from '../app/appearance'
 import { useMode } from '../app/theme'
-import { spring, bounce } from '../design/motion'
+import { spring, physics } from '../design/motion'
 
 /** Shared reset control — the RotateCcw icon spins a full turn on click (a literal
  *  "rewind to default" microinteraction), consistent across all token rows.
@@ -25,7 +25,7 @@ function ResetButton({ onReset, label }: { onReset: () => void; label: string })
   return (
     <button onClick={() => { onReset(); setSpins((n) => n - 1) }} title={`Reset ${label}`}
       className="grid size-6 -mx-1 place-items-center text-on-surface-low hover:text-on-surface transition-colors">
-      <motion.span className="inline-grid place-items-center" animate={{ rotate: spins * 360 }} transition={bounce.playful}>
+      <motion.span className="inline-grid place-items-center" animate={{ rotate: spins * 360 }} transition={physics.playful}>
         <RotateCcw size={15} strokeWidth={2} />
       </motion.span>
     </button>

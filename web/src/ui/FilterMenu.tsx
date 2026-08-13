@@ -6,7 +6,7 @@ import { Popover } from './Popover'
 import { Button } from './Button'
 import { TextLink } from './TextLink'
 import { fvs } from '../design/fontWeight'
-import { spring, bounce } from './../design/motion'
+import { spring, physics } from './../design/motion'
 import { accentChip } from '../design/accent'
 
 /** One selectable choice within a filter section. */
@@ -76,7 +76,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
             {activeCount > 0 && (
               <motion.span
                 initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-                transition={bounce.playful}
+                transition={physics.playful}
                 className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary text-[0.75rem] tabular-nums" style={fvs(600)}>{activeCount}</motion.span>
             )}
           </AnimatePresence>

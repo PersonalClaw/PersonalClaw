@@ -20,7 +20,7 @@ import { Markdown } from '../../ui/Markdown'
 import { SidePanel } from '../../ui/SidePanel'
 import { Modal } from '../../ui/Modal'
 import { thinkingGlow } from '../../design/gradients'
-import { spring, springs, messageEnter } from '../../design/motion'
+import { spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { api, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type Artifact, type TaskItem } from '../../lib/api'
@@ -101,7 +101,7 @@ function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: str
                 <motion.div key={p.cycle} className="flex-1 min-w-[5px] rounded-t-[2px]" title={`cycle ${p.cycle}: ${p.score.toFixed(1)}`}
                   initial={false}
                   animate={{ height: `${Math.max(3, (p.score / max) * 100)}%`, opacity: below ? 0.45 : 1 }}
-                  transition={springs.gentle}
+                  transition={physics.fluid}
                   style={{ background: below ? 'var(--color-on-surface-low)' : 'var(--color-primary)' }} />
               )
             })}

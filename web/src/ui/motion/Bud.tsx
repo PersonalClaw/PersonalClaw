@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { bounce, expr } from '../../design/motion'
+import { physics, expr } from '../../design/motion'
 
 /** "Bud off" spawn — a spawned panel/form emerges FROM its trigger like a liquid
  *  droplet splitting off, instead of appearing from nowhere (§Goal 3 liquid,
@@ -29,7 +29,7 @@ export function Bud({ from = 'bottom', className, children }: {
       animate={{ opacity: 1, scaleY: 1, borderRadius: 'var(--radius-md)' }}
       exit={{ opacity: 0, scaleY: 0.12, borderRadius: 'var(--radius-pill)' }}
       // A touch more overshoot when expressiveness is bold; settles calmly when refined.
-      transition={{ ...bounce.settle, stiffness: 260 - expr(70, 0.4) }}
+      transition={{ ...physics.fluid, stiffness: 260 - expr(70, 0.4) }}
       style={{ originY: from === 'bottom' ? 1 : 0, overflow: 'hidden' }}
       className={className}
     >

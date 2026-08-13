@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import { Reorder } from 'framer-motion'
-import { spring } from '../../design/motion'
+import { dragSpring } from '../../design/motion'
 
 /** Delightful drag-to-reorder for a simple vertical list, built on Motion's
  *  `Reorder` (physics-y lift + spring settle). For KEYBOARD-accessible or
@@ -36,7 +36,10 @@ export function Reorderable<T>({
             key={getKey(item)}
             value={item}
             as="div"
-            transition={spring.spatialDefault}
+            // The gesture-return spring: this transition governs both the rows shoving
+            // aside mid-drag and the dropped row landing, so it is the drag's own physics
+            // rather than the generic spatial default.
+            transition={dragSpring()}
             whileDrag={{ scale: 1.03, zIndex: 10 }}
           >
             {renderItem(item)}

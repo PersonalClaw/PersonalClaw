@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring, bounce, expr, exprHeavy } from '../design/motion'
+import { physics, expr, exprHeavy } from '../design/motion'
 
 /** Round icon button — pill hit area, rounded outline icon (ROND feel).
  *  Redesign-v2: expressiveness-scaled press/hover + a soft hover halo (bold only)
@@ -72,7 +72,7 @@ export function IconButton({
       whileTap={disabled ? undefined : { scale: pressScale }}
       whileHover={disabled ? undefined : { scale: hoverScale }}
       animate={bloom ? { scale: [1, 1.18, 1] } : undefined}
-      transition={bloom ? bounce.playful : spring.spatialFast}
+      transition={bloom ? physics.playful : physics.snappy}
       className={cx(
         // `shrink-0`: the size below is set via inline `width`/`height`, and an inline width is NOT a
         // floor for a flex child. Measured at 390px on the settings sub-routes, where this button sits in
@@ -107,7 +107,7 @@ export function IconButton({
             initial={{ scale: 0.4, opacity: 0, rotate: -30 }}
             animate={{ scale: 1, opacity: 1, rotate: 0 }}
             exit={{ scale: 0.4, opacity: 0, rotate: 30 }}
-            transition={bounce.subtle}
+            transition={physics.snappy}
             className="relative inline-flex"
           >
             <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth />

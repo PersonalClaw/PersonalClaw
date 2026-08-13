@@ -3,7 +3,7 @@ import { withWeight } from '../design/fontWeight'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { spring, bounce, expr } from '../design/motion'
+import { spring, physics, expr } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
@@ -91,9 +91,9 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
     return () => ro.disconnect()
   }, [collapse, options, iconOnly, sm])
   // The sliding indicator carries personality: at bold expressiveness it settles
-  // with a little overshoot/squish (bounce.subtle); refined/reduced → a clean
+  // with a little overshoot/squish (physics.snappy); refined/reduced → a clean
   // snappy spring with no wobble. Tab press-scale also scales with the knob.
-  const indicatorSpring = reduce || expr(1, 0) < 0.4 ? spring.spatialFast : bounce.subtle
+  const indicatorSpring = reduce || expr(1, 0) < 0.4 ? spring.spatialFast : physics.snappy
   const pressScale = reduce ? 1 : 1 - expr(0.06, 0.4)
   // A per-instance layoutId so the sliding active-indicator is scoped to THIS
   // segmented group (two on a page must not share/steal one indicator).
