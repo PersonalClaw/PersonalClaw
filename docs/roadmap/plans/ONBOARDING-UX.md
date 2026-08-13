@@ -180,3 +180,88 @@ Owner rulings, mapped onto the existing sessions honestly:
   behaviour that does not exist. The entry lands with the atom that makes the state observable.
   The API addition is discoverable now through the regenerated `reference/routes.md` and
   `docs/reference/api-overview.md`, which is the surface its actual audience reads.
+- [2026-08-13][OU-2] **DONE (S1 T1.2r / Amendment ruling a).** `web/src/app/onboarding/EssentialsStep.tsx`
+  is the flow's new step 2 (`name → essentials → ready`), and it is the first place a fresh install
+  can become a working agent without a detour through Settings. Four lanes render from
+  `GET /api/apps/catalog`: **model** (required), **search**, **speech**, **channel**. The model lane
+  carries the full rail over three EXISTING endpoints — `POST /api/apps` (install) →
+  `POST /api/model-providers` + `POST /api/model-providers/{name}/test` (the key, then a real Test) →
+  `PUT /api/models/active/chat` (the binding) — with the provider's own `settingsSchema` rendered by
+  the Settings panel's `SchemaField`, so onboarding grew no second key-entry idiom. This atom is what
+  finally WRITES the state OU-1 shipped: the shell persists `step`
+  (`essentials` → `first_success` → `done`) and each lane patches only its own `essentials` field, so
+  OU-1's both-level partial merge is exercised for real rather than asserted in isolation. The old
+  fix-or-skip `ModelStep` is deleted, not bypassed — its two states (chat already resolves; a provider
+  exists but nothing is bound) are the model lane's opening phases, so there is no dual path.
+- [2026-08-13][OU-2] **Central rails, both falsified.** (1) *No auto-install anywhere*: installing the
+  first model candidate from an effect reds 12 tests in `essentialsStep.test.tsx`; restored, green.
+  (2) *Per-app consent preserved*: making the card's Review button install directly — the quieter
+  consent path the done_when forbids — reds 12 tests including the three that assert the Store's
+  disclosure copy verbatim; restored, green. Consent is not a paraphrase: `PermissionList`,
+  `CronConsentList` and `ConsentModal` are the Store's own components, so a scanner WARNING raised
+  during onboarding shows the same findings and demands the same explicit "Install anyway".
+- [2026-08-13][OU-2] **DEVIATION (the "chat binding API" is not the prompt-bindings API).** The plan's
+  Integration points say "model-bindings API", and the atom brief pointed at
+  `PUT /api/prompts/bindings` (`api_prompt_bindings_save`). That endpoint binds a PROMPT to a use
+  case. The chat-model binding is `PUT /api/models/active/{use_case}` (`api.setActiveModel`), which is
+  what `active_model_refs("chat")` — and therefore `needs_model` / `can_resolve_use_case("chat")` —
+  actually reads, and what the pre-existing model step already used. Binding through the prompt
+  endpoint would have left `needs_model` true forever: a step that reports success while the readiness
+  probe still says "no model" is the shape this repo calls a live reader of an unwritten key. Verified
+  live: `active_models.json` ends at `{"chat": ["ollama:gemma4:12b"]}` and the GET flips to
+  `needs_model: false, has_chat_binding: true`.
+- [2026-08-13][OU-2] **DEVIATION (model is a required RAIL, not a wall).** The amendment says
+  "model-provider required, the rest skippable"; the Design says "Skippable at every step". Both hold:
+  `Continue` is unavailable until the model lane resolves (with a `disabledReason`), and a quiet
+  "Set up later" link still leaves the step. OU-4's full-skip path depends on that escape existing.
+- [2026-08-13][OU-2] **DISCOVERY (a provider key is stored in `config.json`, not the credential
+  store).** An earlier draft of the key-entry copy read "they go to the credential store, never a
+  config file". Driving the step against a real gateway falsified it: `POST /api/model-providers`
+  writes the whole `options` object — `sensitive` fields included — into `config.json`, and no
+  `credentials.json` is created. Confirmed on an isolated home with a throwaway key:
+  `providers[0].options.api_key` sat there in plaintext. This is a pre-existing property of the
+  endpoint the Store and Settings already use, so re-routing it is a security change well outside an
+  onboarding atom (and would belong with SECURITY-HARDENING's keychain slice); what OU-2 fixed is the
+  copy, which now describes only what happens ("fill in its settings, then test the connection").
+  A first run must not make a storage promise the backend does not keep.
+- [2026-08-13][OU-2] **DISCOVERY (`providerType` cannot separate a chat model from a speech model).**
+  `CatalogEntry` exposed `providerType` and author-controlled `tags`, but not the provider's declared
+  capabilities — and faster-whisper (`stt`), piper-tts (`tts`), sentence-transformers (`embedding`)
+  and fal-image (`image_gen`) are ALL `providerType: "model"`. A `providerType`-only model lane would
+  have offered a transcription app as the required chat provider, installed it, and then found nothing
+  to bind. Fixed additively: `CatalogEntry.providerCapabilities`, populated from
+  `provider.capabilities` at every construction site. Live against the first-party fixture the model
+  lane lists 15 chat-capable apps and Whisper/Piper sit under Speech.
+- [2026-08-13][OU-2] **DISCOVERY (an app's own Test may not validate its key).** Reusing the existing
+  Test endpoint means its strength is the provider app's, not this step's: `anthropic-models` accepted
+  an obviously bogus key and advanced to binding, because its test does not call the API. The failure
+  path was therefore driven against a provider whose test does make a real call — Ollama pointed at a
+  dead port — and it behaves as T1.2 requires: the provider's real error
+  (`Cannot connect to host 127.0.0.1:9 …`) renders inline in a `role="alert"`, the form keeps its
+  values, and correcting the endpoint in place succeeds. Worth knowing before OU-3: a passing Test is
+  not a guarantee a real call will work, which is exactly why OU-3's cards carry a failure path.
+- [2026-08-13][OU-2] **DISCOVERY (the install-consent surface needed its own module).** Importing the
+  consent components from `AppsSection` made the bundler report
+  `INEFFECTIVE_DYNAMIC_IMPORT: AppsSection.tsx is dynamically imported by App.tsx but also statically
+  imported by EssentialsStep.tsx` — the whole Store page would have joined the first-load bundle, on
+  the first-run path of all places. `ScanReport`/`ConsentModal`/`ClientInstallCommand`/
+  `PermissionList`/`CronConsentList` moved to `web/src/pages/apps/installConsent.tsx`, imported by
+  both the Store and onboarding; `permissionConsent.test.tsx` follows them. One definition, no
+  re-export shim, and the warning is gone.
+- [2026-08-13][OU-2] **V1 (partial — the essentials leg).** Fresh isolated home
+  (`PERSONALCLAW_HOME=/private/tmp/ou2-live/home`, `PERSONALCLAW_FIRST_PARTY_APPS_DIR` → the
+  `PersonalClawApps` clone, `AUTH_MODE=none` so the bind is loopback-only): name → all four lanes
+  listed correctly → Review discloses OpenRouter's permissions with the Store's exact wording
+  (enforced-permissions list, the app-messaging deny-by-default caption, the network advisory row) →
+  Install Ollama → schema form seeded from the manifest → Save and test hits the LIVE local Ollama →
+  bind `gemma4:12b` → lane reads "Ready" → Continue → "Start using PersonalClaw" → working dashboard
+  greeting the entered name. Zero console errors. `POST /api/apps` fired exactly once, only after the
+  Install click — the network log for the whole pre-install phase contains no install request at all.
+  `entity_settings/onboarding.json` finished at
+  `{"step": "done", "essentials": {"model": "ollama-models", "search": false, "speech": false, "channel": null}}`,
+  which is also the done_when's "skipping all but model" path: three lanes untouched, first success
+  reached. The real `~/.personalclaw` was never written (no `entity_settings/onboarding.json` there).
+  The load-FAILURE branch (dead catalog → `LoadError` alert + retry, not four empty lanes) is covered
+  by unit test with a cold `sessionStorage`, not driven live — killing a live catalog endpoint
+  mid-flow was not worth a fixture for it. The rest of V1 (mid-flow reload resume, existing-home
+  upgrade shows NO onboarding, <5 min end-to-end timing) belongs to OU-4, which owns resume.

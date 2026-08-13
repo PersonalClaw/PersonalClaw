@@ -132,6 +132,14 @@ class CatalogEntry:
     sourceKind: str = "bundled"  # noqa: N815 — "bundled" | "git"
     isProvider: bool = False  # noqa: N815
     providerType: str = ""  # noqa: N815
+    # The provider's DECLARED capabilities (``provider.capabilities``: chat, stt, tts,
+    # search, messaging, …). ``providerType`` alone cannot tell a chat model from a
+    # speech model — faster-whisper (stt) and piper-tts (tts) are both
+    # ``providerType: "model"``, so a surface that groups apps by what they DO (the
+    # onboarding essential-apps step) needs the capability list, not free-text ``tags``,
+    # which are author-controlled and unvalidated. Empty for a non-provider app or for a
+    # registry-index pointer whose manifest has not been fetched yet.
+    providerCapabilities: list[str] = field(default_factory=list)  # noqa: N815
     tags: list[str] = field(default_factory=list)
     # P20 federation: when this entry came from a source's registry index (not a
     # direct dir-scan), the install POINTER — the exact source string to hand
@@ -440,6 +448,7 @@ def _scan_git_source(url: str, *, now: float) -> list[CatalogEntry]:
                     sourceKind="git",
                     isProvider=bool(m.provider),
                     providerType=(m.provider.type if m.provider else ""),
+                    providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
                     tags=list(m.tags),
                     pointer=f"{url}#{entry.name}",
                     permissions=_perms,
@@ -691,6 +700,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     sourceKind=kind,
                     isProvider=bool(m.provider),
                     providerType=(m.provider.type if m.provider else ""),
+                    providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
                     tags=list(m.tags),
                     permissions=_perms,
                     crons=_crons,
@@ -787,6 +797,7 @@ def available_bundled() -> list[CatalogEntry]:
                 sourceKind="native",
                 isProvider=bool(m.provider),
                 providerType=(m.provider.type if m.provider else ""),
+                providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
                 tags=list(m.tags),
                 permissions=_perms,
                 crons=_crons,

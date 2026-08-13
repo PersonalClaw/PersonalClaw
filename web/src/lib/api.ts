@@ -364,6 +364,12 @@ export interface AppCatalogEntry {
   icon: string; heroUrl?: string; author: string
   source: string; sourceKind: 'bundled' | 'native' | 'first-party' | 'local' | 'git'
   isProvider: boolean; providerType: string; tags: string[]
+  /** The provider's DECLARED capabilities (`chat`, `stt`, `tts`, `search`, `messaging`, …).
+   *  `providerType` alone cannot tell a chat model from a speech model — faster-whisper
+   *  (stt) and piper-tts (tts) are both `providerType: 'model'` — so a surface grouping
+   *  apps by what they DO must read this, not the author-controlled `tags`. Absent for a
+   *  non-provider app or a registry pointer whose manifest isn't fetched yet. */
+  providerCapabilities?: string[]
   // P20: when this entry came from a source's registry index, the install pointer
   // (repo[#subdirectory]) to hand install — routes through the scanner unchanged. "" for
   // a dir-scanned/bundled entry (its `source` is the pointer).
@@ -1826,7 +1832,35 @@ export interface DashboardConfig {
   // drops the field. Do NOT re-introduce a client layout editor against it.
   dashboard_layout?: { widgets: Array<{ id: string; x: number; y: number; w: number; h: number; hidden?: boolean }>; v: number } | Record<string, never>
 }
-export interface OnboardingState { needs_model: boolean; has_model_provider: boolean; has_chat_binding: boolean }
+/** The four essential-app lanes of the first-run flow. `model`/`channel` hold the
+ *  chosen app's NAME (or null); `search`/`speech` are "did the user set one up" flags.
+ *  Mirrors `_ESSENTIALS_SCHEMA` in `personalclaw/onboarding.py`. */
+export interface OnboardingEssentials {
+  model: string | null
+  search: boolean
+  speech: boolean
+  channel: string | null
+}
+/** The resume points of the guided first run, in order — `STEPS` in `onboarding.py`. */
+export type OnboardingStep = 'name' | 'essentials' | 'first_success' | 'done'
+/** `GET /api/onboarding` — the live readiness triple PLUS the persisted first-run
+ *  progress from `entity_settings/onboarding.json`. The readiness fields are computed
+ *  per request and never stored; the progress fields are what let a reload resume. */
+export interface OnboardingState {
+  needs_model: boolean; has_model_provider: boolean; has_chat_binding: boolean
+  step?: OnboardingStep
+  essentials?: OnboardingEssentials
+  first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
+}
+/** A partial patch for `POST /api/onboarding/state`. The backend merges at BOTH
+ *  levels, so a step sends ONLY what it learned — never a read-modify-write of the
+ *  whole document, which would clobber a sibling step's progress. An unknown or
+ *  mistyped key is a 400, not a silent drop. */
+export interface OnboardingStatePatch {
+  step?: OnboardingStep
+  essentials?: Partial<OnboardingEssentials>
+  first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
+}
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
@@ -2529,6 +2563,10 @@ export const api = {
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
+  /** Record first-run progress — a PARTIAL merge at both levels, so each step sends
+   *  only what it learned. Never read-modify-write the whole document. */
+  saveOnboardingState: (patch: OnboardingStatePatch) =>
+    post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/state', patch),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
   // Re-index all knowledge + memory embeddings after the embedding model changed.

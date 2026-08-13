@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import { PermissionList } from './AppsSection'
+import { PermissionList } from './installConsent'
 import type { AppPermissionsWire } from '../../lib/api'
 
 // EI-12 D2. The consent surface must not present `permissions.network` as something

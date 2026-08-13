@@ -11,7 +11,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
 | `OU-1` | ✅ | Extend onboarding state backend (step/provider/first_success fields + POST write path) | — | additive fields (step, provider_chosen/essentials, first_success) persist to entity_settings/onboarding.json, survive mid-flow reload, old clients tolerant-read; POST /api/onboarding/state does a partial merge (NOT the config PATCH allowlist, per §2.1 entity-state rule) |
-| `OU-2` | ⬜ | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) | `OU-1` | fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere |
+| `OU-2` | ✅ | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) | `OU-1` | fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere |
 | `OU-3` | ⬜ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
 | `OU-4` | ⬜ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
 | `OU-5` | ⬜ | NavRail progressive disclosure (starter/expert sections, auto-pin-on-visit, expert toggle) + URL-doctrine regression test | — | fresh home shows the starter rail; visiting an Everything surface via deep link/CommandPalette renders AND auto-pins it (test red if a deep link 404s/blanks under starter mode); expert-mode toggle in Appearance shows all permanently; upgrade fixture (onboarding-completed-before-this-version marker) defaults expert ON; keyboard-only, reduced-motion, and mobile-viewport passes hold |
@@ -57,11 +57,41 @@ frontend that no component reads.
 
 ### `OU-2` — Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in)
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.2, re-scoped to T1.2r by the 2026-07-26 Amendment (ruling a); Design 'Guided first run'; catalog-driven via apps/catalog.py first-party source
 
 **Done when:** fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere
+
+**Shipped:** `web/src/app/onboarding/EssentialsStep.tsx` replaces the old `model` readiness step as
+step 2 of the stack (`name → essentials → ready`); the fix-or-skip `ModelStep` is DELETED, its two
+states folded into the model lane. Four lanes — model (required), search, speech, channel — are
+rendered from `GET /api/apps/catalog`, each card disclosing the Store's own
+`PermissionList`/`CronConsentList` before offering Install. The model lane completes in-flow over
+three EXISTING endpoints: `POST /api/apps` → `POST /api/model-providers` (+ `/test`) →
+`PUT /api/models/active/chat`. `step` and `essentials` are finally written (OU-1's remainder), each
+lane patching only its own field. The install-consent components moved to a new
+`web/src/pages/apps/installConsent.tsx` so onboarding and the Store share ONE consent surface
+without the onboarding flow statically importing the lazily-loaded Store page. 32 frontend tests
+(`essentialsStep.test.tsx`, `onboardingProgress.test.tsx`) + 2 backend
+(`test_app_catalog.py`).
+
+**Backend, minimal and additive:** `CatalogEntry.providerCapabilities` (from
+`provider.capabilities`). `providerType` alone cannot separate a chat model from a speech model —
+faster-whisper (`stt`) and piper-tts (`tts`) are both `providerType: "model"` — so without it the
+model lane would offer a transcription app as a chat provider and dead-end at binding. Verified
+live: the model lane lists 15 chat apps, and Whisper/Piper appear under Speech.
+
+**Deviations:** (1) the plan's "chat binding API" is `PUT /api/models/active/{use_case}`, NOT
+`PUT /api/prompts/bindings` (which binds a PROMPT to a use case); the active-model path is what
+`needs_model`/`can_resolve_use_case('chat')` actually reads. (2) The model lane is required for
+`Continue` but a quiet "Set up later" escape remains, per the Design's "skippable at every step" —
+required to CONSIDER, not a wall. (3) `ScanReport`'s `text-negative`/`text-positive` were corrected
+to `text-danger`/`text-ok` because relocating that code would otherwise have GROWN the
+inert-utility allowlist, which the rail forbids.
+
+**Remainder — none for this atom.** `first_success` is still unwritten (OU-3 owns it) and nothing
+reads `step` to resume yet (OU-4), exactly as the DAG orders it.
 
 ### `OU-3` — First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop)
 
