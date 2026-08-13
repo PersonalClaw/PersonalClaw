@@ -164,6 +164,13 @@ datas += collect_data_files("trafilatura")
 datas += collect_data_files("slack_sdk")
 # cron_descriptor includes locale data.
 datas += collect_data_files("cron_descriptor")
+# sqlite-vec ships its loadable SQLite extension as a shared library INSIDE the package
+# (sqlite_vec/vec0.dylib|.so), found at runtime via sqlite_vec.loadable_path(). It is data, not
+# an importable extension module, so PyInstaller's import analysis never sees it — collect it
+# with the package path preserved so loadable_path() still resolves inside the bundle. If this
+# ever fails to land, the knowledge ANN index degrades to the exact scan (correct, slower) and
+# says so in the Doctor rather than breaking search.
+datas += collect_data_files("sqlite_vec", include_py_files=False)
 
 a = Analysis(
     ["src/personalclaw/__main__.py"],
