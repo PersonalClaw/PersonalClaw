@@ -39,6 +39,16 @@ dependencies = [
     "numpy>=1.21,<3",
     "snowballstemmer>=1.0",
     "pysqlite3-binary>=0.5.4; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # sqlite-vec is a CORE dep, and NOT faiss (owner ruling 2026-07-29). The knowledge store
+    # is SQLite-first (items + FTS5 + graph tables in one file), so a vector index shipped as a
+    # SQLite extension lives in that same file and travels with the rows it indexes — no
+    # sidecar artifact with its own consistency story. faiss stays an [embeddings] extra: it is
+    # excluded from the desktop bundle (personalclaw-backend.spec), so promoting it would hand
+    # desktop users a knowledge search that silently degrades to a full-table scan. sqlite-vec
+    # is small and pure-wheel, so it clears the desktop-bundle bar the reader block clears.
+    # Extension LOADING still is not universal, so knowledge/vector_index.py probes once and
+    # fails soft to the exact scan (correct, just linear) with a Doctor capability line.
+    "sqlite-vec>=0.1,<1",
     # Knowledge document readers (readers.py): .docx / .pdf / .pptx / .html.
     # Pure-Python, no native/torch weight — safe as core deps (incl. desktop bundle).
     "python-docx>=0.8.6,<2",

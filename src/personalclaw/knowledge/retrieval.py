@@ -1,5 +1,6 @@
 """HybridRetriever -- FTS5 keyword + graph + optional vector, fused with RRF."""
 
+import logging
 import math
 import re
 import struct
@@ -7,7 +8,10 @@ from collections import defaultdict
 
 from personalclaw.sqlite_compat import sqlite3
 
+from .embedder import floats_to_bytes
 from .store import KnowledgeStore
+
+logger = logging.getLogger(__name__)
 
 # Relevance-cliff cutoff: walking the score-sorted results, stop at the first
 # point where the score drops by more than this fraction of the running top
@@ -28,6 +32,22 @@ _VECTOR_MIN_SIMILARITY = 0.25
 # per list, so a boost of one rank-step lets a full title match overtake a long document
 # that merely mentions the query terms. Scaled by query-term-in-title overlap fraction.
 _TITLE_BOOST = 1.0 / 61
+
+# ── ANN candidate budget (KL-11) ───────────────────────────────────────────────
+# The chunk ANN index returns the k nearest CHUNKS, but the arm ranks ITEMS, and several of
+# an item's chunks can occupy the top of that list — so k chunks can collapse to far fewer
+# than k items. Over-fetch, then escalate while the surviving item set is still short of the
+# requested limit — the loop's own stop rule (below) usually ends it on the first attempt by
+# proving the candidate set complete. This is the one place ANN can lose recall against the
+# exact scan (candidate truncation — the scoring itself is shared), so the budget is generous.
+_ANN_OVERFETCH = 4  # k = limit × this on the first attempt
+_ANN_ESCALATION_FACTOR = 4
+_ANN_MAX_ATTEMPTS = 4  # so k reaches limit × 256 before giving up on a pathological corpus
+
+# SQLite's bound-parameter ceiling is 999 on older builds, so candidate ids are re-fetched in
+# batches rather than one giant IN-list that would raise on exactly the escalated queries
+# where the extra recall matters most.
+_ID_BATCH = 400
 
 
 def relevance_cliff_cut(
@@ -283,6 +303,15 @@ class HybridRetriever:
         signal, which no chunk carries and which the keyword arm can only reach by literal
         term match.
 
+        **KL-11: the scan is a fallback, not the plan.** When ``sqlite-vec`` loads, the chunk
+        arm asks a ``vec0`` index for the k nearest chunk vectors and the item arm orders by
+        ``vec_distance_cosine``, so neither arm reads every BLOB into Python. Both are pure
+        candidate generation — ``_consider`` still scores — so the exact scan and the ANN path
+        share one scoring implementation and cannot disagree on a similarity value. When the
+        extension cannot load (a SQLite built without loadable extensions), both arms revert to
+        the streamed exact scan above: slower on a large library, identical in what it returns,
+        announced once at INFO and reported by the Doctor.
+
         ``chunk_locators`` is an optional sink: when supplied, it is filled with
         ``item_id -> {"section", "line_start", "line_end"}`` for every item whose winning
         signal was a chunk, so ``search`` can cite the passage that actually matched. It is
@@ -302,7 +331,11 @@ class HybridRetriever:
         best: dict[str, float] = {}
         best_loc: dict[str, dict] = {}
 
-        def _consider(item_id: str, blob, locator: dict | None) -> None:
+        def _consider(item_id: str, blob, locator: dict | None) -> float | None:
+            """Score one vector into the roll-up. Returns the similarity, or ``None`` when the
+            vector is unscoreable (dimension guard). The value is returned — not just applied —
+            so the ANN candidate loop can see where the ``_VECTOR_MIN_SIMILARITY`` floor falls
+            in an ordered candidate list without a second cosine implementation."""
             vec = _bytes_to_floats(blob)
             # Skip vectors from a different embedding model: a stored vec whose dimension
             # differs from the current query vec can't be compared (cosine over zip() would
@@ -311,33 +344,44 @@ class HybridRetriever:
             # This guard applies to chunk vectors exactly as it does to item vectors — a
             # half-re-embedded library has both old-model chunks and old-model item rows.
             if not vec or len(vec) != q_dim:
-                return
+                return None
             sim = self._cosine_similarity(query_vec, vec)
             # Floor: drop near-orthogonal noise so precise keyword/tag queries aren't
             # polluted by weak semantic neighbors. Applied per vector, before the roll-up,
             # so a weak chunk can never become an item's cited passage.
             if sim < _VECTOR_MIN_SIMILARITY:
-                return
+                return sim
             if sim > best.get(item_id, -1.0):
                 best[item_id] = sim
                 if locator is None:
                     best_loc.pop(item_id, None)
                 else:
                     best_loc[item_id] = locator
+            return sim
+
+        # KL-11: sqlite-vec narrows both arms to a candidate set instead of reading every
+        # BLOB. It is a CANDIDATE GENERATOR only — `_consider` above still does the scoring,
+        # so the dimension guard, the cosine, the floor, and the max roll-up are byte-for-byte
+        # the ones the exact scan uses, and the only way ANN can differ from exact is by
+        # truncating candidates. `index.enabled` loads the extension into this connection on
+        # first ask and reports False (once, at INFO) on any build that cannot load it.
+        index = getattr(self.store, "vec_index", None)
+        if index is not None and not index.enabled:
+            index = None  # collapse "no index" and "index refused" to one branch
+        q_blob = floats_to_bytes(query_vec) if index is not None else b""
 
         # Chunk arm. Row count is (embedded chunks) rather than (items) — strictly more
         # BLOBs than the item-only scan, bounded by chunking.MAX_CHARS (~1 chunk per 1500
-        # content chars). Both cursors are STREAMED rather than .fetchall()-ed so peak
-        # memory stays O(1) rows instead of O(corpus); eliminating the scan itself is the
-        # ANN-index task (H1.4), which slots in behind this same roll-up.
+        # content chars). With the ANN index it is (k candidates) instead; without it, both
+        # cursors are STREAMED rather than .fetchall()-ed so peak memory stays O(1) rows
+        # instead of O(corpus).
         chunk_archived = "" if include_archived else "AND COALESCE(i.is_archived, 0) = 0"
-        for row in self.store.db.execute(
-            "SELECT c.item_id, c.embedding, c.section, c.line_start, c.line_end "
-            "FROM chunks c JOIN items i ON i.id = c.item_id "
-            "WHERE c.embedding IS NOT NULL AND i.status = 'active' "
-            f"{chunk_archived}"  # noqa: S608 (clause is a fixed literal)
-        ):
-            _consider(
+        chunk_cols = (
+            "SELECT c.id AS chunk_id, c.item_id, c.embedding, c.section, c.line_start, c.line_end "
+        )
+
+        def _consider_chunk_row(row) -> float | None:
+            return _consider(
                 row["item_id"],
                 row["embedding"],
                 {
@@ -347,13 +391,106 @@ class HybridRetriever:
                 },
             )
 
-        # Whole-item arm, unchanged: the document-level (title + summary) vector.
+        ann_served = False
+        if index is not None:
+            k = max(1, limit) * _ANN_OVERFETCH
+            seen: set[str] = set()  # never re-score a candidate a smaller k already returned
+            for _ in range(_ANN_MAX_ATTEMPTS):
+                cand = index.candidate_chunk_ids(q_blob, q_dim, k)
+                if cand is None:  # no usable index for this dimension — fall through to exact
+                    break
+                ann_served = True
+                fresh = [cid for cid in cand if cid not in seen]
+                seen.update(fresh)
+                # STOP RULE. vec0 returns candidates in exact cosine order, so the FIRST
+                # candidate that scores below `_VECTOR_MIN_SIMILARITY` proves every chunk after
+                # it — including every chunk the index has not returned — is also below the
+                # floor and can never contribute. At that point the candidate set is COMPLETE,
+                # not truncated: scoring stops and escalation stops. Two earlier versions of
+                # this loop were measurably SLOWER than the exact scan it replaces — one
+                # escalated k until `limit` items were found (unreachable on a corpus with fewer
+                # than `limit` above-floor items: 3,180 rows scored where the scan reads 1,500),
+                # the other applied the rule per attempt instead of per candidate and so always
+                # decoded the whole first over-fetch.
+                reached_floor = False
+                for start in range(0, len(fresh), _ID_BATCH):
+                    batch = fresh[start : start + _ID_BATCH]
+                    placeholders = ",".join("?" * len(batch))
+                    # Keyed by chunk id, because `IN (...)` returns rows in STORAGE order and
+                    # the stop rule is only sound while candidates are walked in the index's
+                    # cosine order.
+                    rows_by_id = {
+                        row["chunk_id"]: row
+                        for row in self.store.db.execute(
+                            chunk_cols + "FROM chunks c JOIN items i ON i.id = c.item_id "
+                            f"WHERE c.id IN ({placeholders}) "  # noqa: S608 (placeholders only)
+                            "AND c.embedding IS NOT NULL AND i.status = 'active' "
+                            f"{chunk_archived}",
+                            batch,
+                        )
+                    }
+                    for chunk_id in batch:
+                        row = rows_by_id.get(chunk_id)
+                        if row is None:
+                            # A candidate the index still lists but the live table no longer
+                            # offers (deleted item, archived, un-embedded). Unscored, so it
+                            # says nothing about the floor — skip it and keep walking.
+                            continue
+                        sim = _consider_chunk_row(row)
+                        if sim is not None and sim < _VECTOR_MIN_SIMILARITY:
+                            reached_floor = True
+                            break
+                    if reached_floor:
+                        break
+                if reached_floor or len(best) >= limit or len(cand) < k:
+                    break
+                k *= _ANN_ESCALATION_FACTOR
+
+        if not ann_served:
+            for row in self.store.db.execute(
+                chunk_cols + "FROM chunks c JOIN items i ON i.id = c.item_id "
+                "WHERE c.embedding IS NOT NULL AND i.status = 'active' "
+                f"{chunk_archived}"  # noqa: S608 (clause is a fixed literal)
+            ):
+                _consider_chunk_row(row)
+
+        # Whole-item arm: the document-level (title + summary) vector. One vector per item, so
+        # there is no roll-up to collapse candidates and no index to keep in step — ordering by
+        # sqlite-vec's `vec_distance_cosine` over the LIVE column is exact and can never go
+        # stale, which is why this arm gets the scalar function rather than a second vec0
+        # table. `length(embedding) = ?` is the SQL spelling of `_consider`'s dimension guard,
+        # and it is load-bearing: vec_distance_cosine RAISES on a dimension mismatch, so a
+        # half-re-embedded library would otherwise fail the whole query instead of skipping
+        # the unscoreable rows.
         archived_clause = "" if include_archived else "AND COALESCE(is_archived, 0) = 0"
-        for row in self.store.db.execute(
-            "SELECT id, embedding FROM items WHERE embedding IS NOT NULL AND status = 'active' "
-            f"{archived_clause}"  # noqa: S608 (clause is a fixed literal)
-        ):
-            _consider(row["id"], row["embedding"], None)
+        item_rows = None
+        if index is not None:
+            try:
+                item_rows = self.store.db.execute(
+                    "SELECT id, embedding FROM items "
+                    "WHERE embedding IS NOT NULL AND status = 'active' "
+                    f"{archived_clause} AND length(embedding) = ? "  # noqa: S608
+                    "ORDER BY vec_distance_cosine(embedding, ?) LIMIT ?",
+                    (q_dim * 4, q_blob, max(1, limit) * _ANN_OVERFETCH),
+                ).fetchall()
+            except sqlite3.Error as exc:  # fail soft to the exact scan, never into the search
+                logger.debug("knowledge vector search: item-arm ANN query failed: %s", exc)
+                item_rows = None
+        if item_rows is not None:
+            # Ordered by cosine, so the same completeness argument as the chunk arm applies:
+            # the first row below the floor proves every later row is too. Stop there instead
+            # of decoding the rest of the over-fetch.
+            for row in item_rows:
+                sim = _consider(row["id"], row["embedding"], None)
+                if sim is not None and sim < _VECTOR_MIN_SIMILARITY:
+                    break
+        else:
+            for row in self.store.db.execute(
+                "SELECT id, embedding FROM items WHERE embedding IS NOT NULL "
+                f"AND status = 'active' {archived_clause}"  # noqa: S608 (fixed literal)
+            ):
+                # Unordered: every row must be scored, so no early exit is available here.
+                _consider(row["id"], row["embedding"], None)
 
         scored = sorted(best.items(), key=lambda x: x[1], reverse=True)[:limit]
         if chunk_locators is not None:

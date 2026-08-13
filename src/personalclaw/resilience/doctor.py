@@ -857,6 +857,90 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
+    """knowledge — is the chunk ANN index (sqlite-vec) live, and does it cover the chunks? (KL-11)
+
+    🔴 WHY THIS EXISTS. KL-10 made knowledge search score every embedded CHUNK, measured at
+    ~21 µs/row in Python — roughly 650 ms/query on a 5,000-item library. KL-11 puts a
+    ``sqlite-vec`` ``vec0`` index in front of that, but SQLite extension loading depends on how
+    the interpreter's SQLite was built, so on some installs the index cannot load and search
+    silently reverts to that linear scan. A user whose search feels slow deserves to be told
+    WHY here rather than concluding the product is broken.
+
+    Reports **degraded, not failed** in both directions: an install with no extension has a
+    correct-but-slower search, and an index whose row count has drifted from the live chunks is
+    repaired by the next search's reconciliation. Neither is an outage, and failing hard on
+    either would make a stripped SQLite build look like one. Read-only throughout: the
+    capability probe runs on a throwaway in-memory connection and the coverage read opens
+    ``knowledge.db`` with ``mode=ro``, so the probe can never create or rebuild an index.
+    """
+    from personalclaw.knowledge.store import knowledge_db_path
+    from personalclaw.knowledge.vector_index import VEC_REMEDY, ChunkVectorIndex
+    from personalclaw.knowledge.vector_index import probe as vec_probe
+    from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
+
+    # Through the one helper that owns this path (a second copy of it once split the store's
+    # brain), and with `create=False` so a health check never leaves a directory behind.
+    db_path = knowledge_db_path(ctx.home, create=False)
+
+    def _read() -> dict[str, Any]:
+        cap = vec_probe()
+        ev: dict[str, Any] = {
+            "extension_available": cap.available,
+            "db_present": db_path.exists(),
+        }
+        if cap.version:
+            ev["sqlite_vec_version"] = cap.version
+        if cap.reason:
+            ev["reason"] = cap.reason
+        if not (cap.available and db_path.exists()):
+            return ev
+        conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            ev.update(ChunkVectorIndex(conn).coverage())
+        finally:
+            conn.close()
+        return ev
+
+    try:
+        ev = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(ok=False, detail=f"vector index probe failed: {exc}", evidence={})
+
+    if not ev.get("extension_available"):
+        ev["degraded"] = True
+        ev["remedy"] = VEC_REMEDY
+        return ProbeResult(
+            ok=True,
+            detail=(
+                "sqlite-vec could not load "
+                f"({ev.get('reason', 'unknown reason')}) — knowledge vector search uses the "
+                "exact scan: correct, but linear in library size"
+            ),
+            evidence=ev,
+        )
+
+    dims = ev.get("dimensions") or {}
+    stale = sorted(d for d, c in dims.items() if c.get("indexed") != c.get("live"))
+    indexed_total = sum(int(c.get("indexed") or 0) for c in dims.values())
+    if stale:
+        ev["degraded"] = True
+        ev["stale_dimensions"] = stale
+        return ProbeResult(
+            ok=True,
+            detail=(
+                f"chunk ANN index active but out of step at {len(stale)} dimension(s) "
+                f"({', '.join(stale)}) — the next search rebuilds it"
+            ),
+            evidence=ev,
+        )
+    return ProbeResult(
+        ok=True,
+        detail=f"chunk ANN index active ({indexed_total} chunk vector(s) indexed)",
+        evidence=ev,
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -965,6 +1049,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_remote_reachability,
             "Remote reachability (tailnet / exposure)",
+        )
+    )
+    register_probe(
+        Probe(
+            "knowledge.vector-index",
+            "knowledge",
+            Tier.CAPABILITY,
+            _probe_knowledge_vector_index,
+            "Knowledge chunk ANN index (sqlite-vec)",
         )
     )
 
