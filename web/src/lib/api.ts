@@ -281,14 +281,22 @@ export interface DiscoveredAgent {
 export interface ModelItem { name: string; model_name: string; description: string; provider: string }
 
 // App Platform (A7)
-// An app's declared permission scope. All of these are enforced server-side EXCEPT
-// `network`, which is declaration-only — the gateway has no per-app egress chokepoint
-// (provider code is imported in-process). The consent UI must therefore render it as
-// advisory and outside the enforced list; see `PermissionList` in pages/apps and
-// docs/security/limitations.md §2.
+// An app's declared permission scope, exactly as `Permissions.to_dict()` emits it
+// (apps/manifest.py) — every key that dict can carry must be declared here, or the
+// consent UI cannot disclose it (that was the APE-12 defect: `appMessaging` reached
+// the browser and was dropped on the floor). All of these are enforced server-side
+// EXCEPT `network`, which is declaration-only — the gateway has no per-app egress
+// chokepoint (provider code is imported in-process). The consent UI must therefore
+// render `network` as advisory and outside the enforced list; see `PermissionList` in
+// pages/apps and docs/security/limitations.md §2.
 export interface AppPermissionsWire {
   api?: string[]; events?: string[]; mcpTools?: string[]
   storage?: boolean; network?: boolean; memory?: string; cron?: boolean; agent?: boolean
+  // APE-9/APE-12: apps this app may send a brokered message to (exact name, or a
+  // trailing-`*` prefix pattern). Enforced — `POST /api/apps/message` is the only
+  // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
+  // no app at all (deny by default), which the consent UI states rather than implies.
+  appMessaging?: string[]
 }
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
