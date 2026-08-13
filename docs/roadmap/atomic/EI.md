@@ -115,11 +115,22 @@ Amendment 2026-07-29 (b) + task D0 — docs-only, dependency-free: correct the w
 
 ### `EI-12` — App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD)
 
-**Status:** todo — **D1 landed 2026-08-13**; D2/D3/VD outstanding (see the plan's `## Execution log`)
+**Status:** todo — **D1+D2 landed 2026-08-13**; D3/VD outstanding (D3 is BLOCKED as an owner-scope
+architecture decision — see the plan's `## Execution log`)
 
 Amendment 2026-07-29 (a) + tasks D1 (backend env by allowlist not dict(os.environ), sensitive-prefix scrub floor), D2 (permissions.network: enforce via egress rail OR mark advisory in consent UI/manifest — not both/neither), D3 (per-app pythonDependencies isolated to app-scoped target so an app cannot shadow a core dep), VD (validation-as-a-user sweep)
 
 **D1 (done).** `apps/backend_runtime.py` builds the child env via `sandbox.build_child_env(site="app-backend", extra={PORT, PERSONALCLAW_APP_NAME, PERSONALCLAW_APP_SECRET, +PERSONALCLAW_APP_DATA_DIR when storage is held})`. Falsified before trusting: reverting the line shows the backend used to receive ~130 undeclared variables incl. `SSH_AUTH_SOCK`, AWS and git-identity vars. Blast radius measured — the 9 credential-name fallbacks are read only in **in-process** `provider.py` modules, and of 44 first-party apps only `growth` and `minutes` declare a backend (both read just `PORT`/`PERSONALCLAW_APP_DATA_DIR`), so no first-party app changes behaviour; both booted healthy against the change. `tests/test_app_backend_child_env.py` drives the real spawn.
+
+**D2 (done).** Resolved as **mark advisory**, not enforce: provider code is imported in-process by the
+gateway, so there is no per-app egress chokepoint, and only 2 of 44 first-party apps have a backend —
+an egress rail there would confine 2 and leave 42 unconfined while showing all 44 identically. The
+Store's `PermissionList` (both the pre-install panel and the installed-app panel) now renders the
+network claim outside the enforced-permission bullets, labelled advisory, **whether or not the app
+declares it** — measured before-state: a declaring app got a "• Network access" bullet among enforced
+grants, and a `network: false` app (which `growth` and `minutes`, the only two backend-having apps, both
+are) got no row at all, reading as "blocked". `apps/permissions.py`, `docs/security/limitations.md` §2
+and `docs/architecture/app-platform.md` now describe that surface instead of claiming it generically.
 
 **Done when:** a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds
 

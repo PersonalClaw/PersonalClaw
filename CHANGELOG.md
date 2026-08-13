@@ -46,6 +46,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (default 4096) applies to the script and everything it starts. A script that hits it gets an
   ordinary `OSError`/`EMFILE`, which surfaces in the job's run history. If you have a legitimately
   descriptor-hungry script, raise the limit with `personalclaw config set sandbox.nofile 16384`.
+- **The Store no longer implies PersonalClaw confines an app's network access.** An app's manifest can
+  declare a `network` permission, and the Store used to list it as a bullet under "Permissions"
+  alongside storage, scheduled jobs and background agents — all of which the gateway really does
+  enforce. This one it does not, and cannot: an app's code runs inside PersonalClaw's own process (or,
+  for the handful of apps that ship a backend, as an ordinary OS process of its own), so there is no
+  point at which the platform can intercept the app's outbound traffic. The misleading half was the
+  quiet one: an app that declared `network: false` showed **no** network row at all, which read as a
+  guarantee that it had been blocked — including for the only two first-party apps that ship a
+  backend, Growth and Minutes, both of which declare exactly that. The app detail and install-consent
+  panels now show the network claim *outside* the list of permissions the gateway enforces, marked
+  advisory, and show it whether or not the app declares one: "Network access: declared / not declared
+  — advisory only. PersonalClaw does not confine an app's outbound traffic: this app's code can reach
+  the network either way. The declaration is disclosure, not containment." Nothing about what an app
+  can do has changed — only what the interface promises. The controls that really do bound an installed
+  app are unchanged: its `api` permission bounds what it may ask the gateway for, and the supply-chain
+  scanner still gates what you can install in the first place.
   Platform note: on Linux the same mechanism also carries the optional `sandbox.max_pids` and
   `sandbox.max_rss_mb` bounds (both off by default) plus the OOM-killer preference that protects
   the gateway; on macOS only the descriptor limit is enforced.

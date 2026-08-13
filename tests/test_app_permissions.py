@@ -61,6 +61,16 @@ class TestCheckerLogic:
         c = _checker(cron=True, network=True, storage=False)
         assert c.can_use_cron() and c.can_use_network() and not c.can_use_storage()
 
+    def test_network_declaration_reaches_the_consent_wire(self):
+        """EI-12 D2. ``network`` is unenforced, so the ONLY thing it does is reach the
+        Store's install-consent surface — the advisory row there is rendered from this
+        dict (``handlers/apps.py`` → ``AppPermissionsWire`` → ``PermissionList``). A
+        declared flag must appear; a declining app must omit the key, because the UI
+        distinguishes "declared" from "not declared" and would otherwise mislabel it."""
+        assert Permissions.from_dict({"network": True}).to_dict()["network"] is True
+        assert "network" not in Permissions.from_dict({"network": False}).to_dict()
+        assert "network" not in Permissions.from_dict({}).to_dict()
+
 
 # ── middleware enforcement (HTTP) ──
 

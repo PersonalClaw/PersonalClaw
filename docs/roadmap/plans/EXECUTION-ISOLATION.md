@@ -16,8 +16,10 @@ pre-existing single-file `sandbox.py`, unchanged since v0.1.0), no lima/docker t
 dependency-free, and the amendment's own words are that "an inaccurate security claim is a live
 defect": `docs/architecture/security.md` still lacks the what-the-sandbox-does-and-does-not-do
 section, and `personalclaw.dev`'s security page still says "Bounded capabilities" with no
-credential-hiding-vs-confinement qualification. D1/D2/D3 (app env inheritance, the declaration-only
-`network` permission's advisory marking, the shared-venv pip install) are also untouched.
+credential-hiding-vs-confinement qualification. Of the amendment's other rows, **D1** (app env
+inheritance) and **D2** (the declaration-only `network` permission's advisory marking) landed
+2026-08-13; **D3** (the shared-venv pip install) is BLOCKED as an owner-scope decision and **VD** is
+still open — see the `## Execution log`.
 
 ---
 
@@ -566,3 +568,78 @@ D0 is documentation and should land immediately — an inaccurate security claim
   absent from an app backend's env (test proves it)" ✅ and "every first-party app still boots" ✅
   (44 audited, 2 backends booted healthy); the Store-consent network claim and the per-app dependency
   clauses are still open.
+- [2026-08-13][EI-12 D2] DONE (task D2 only — **`EI-12` stays `todo`**). Decision: **mark advisory,
+  honestly** — not enforce. `PermissionList` (`web/src/pages/apps/AppsSection.tsx`, the ONE component
+  behind both consent surfaces: the Store pre-install panel and the installed-app detail panel) no
+  longer lists `network` among the enforced permission bullets. It renders its own advisory row —
+  "Network access: declared / not declared — advisory only. PersonalClaw does not confine an app's
+  outbound traffic: this app's code can reach the network either way. The declaration is disclosure,
+  not containment." — **whether or not the app declares it**. Heading changed to "Permissions the
+  gateway enforces" so the bullets make a claim the platform can keep, and the empty case now reads
+  "None — this app is granted no gateway capability." instead of "No special permissions" (which
+  claimed an app had no special powers while it could still reach any host on the internet).
+  `apps/permissions.py`'s `can_use_network` docstring, `docs/security/limitations.md` §2 (which quotes
+  it verbatim) and `docs/architecture/app-platform.md`'s permission table now describe that surface
+  instead of asserting a generic "surfaced honestly". `tests/test_app_permissions.py` pins the wire
+  leg the advisory reads; `web/src/pages/apps/permissionConsent.test.tsx` pins the three renderings.
+- [2026-08-13][EI-12 D2] **MEASURED before-state, by falsification before the fix.** Exported
+  `PermissionList`, wrote the ratchet against the honest form, ran it against the UNCHANGED component:
+  3 failed, and their output is the record of what the Store actually rendered. (1) A declaring app
+  (`network: true`) got a bullet matching `/network/i` *inside* the "Permissions" list — "• Network
+  access" — sat beside `Storage` / `Scheduled jobs` / `Run background agents`, all of which ARE
+  enforced server-side, so it read as a grant the gateway polices. (2) A non-declaring app rendered
+  `"Permissions• API: /api/tasks"` — **zero** network mention, so the silence read as "blocked". (3) An
+  app declaring nothing rendered `"PermissionsNo special permissions"`. So the docstring's claim that
+  "the Store can surface it (install consent lists 'network access: yes/no')" was half-true at best:
+  the Store listed `yes` as if enforced and never said `no` at all.
+- [2026-08-13][EI-12 D2] **Why DISCLOSE and not ENFORCE — the option the atom asks us to close
+  deliberately.** Enforcement is out of reach at this seam, not merely expensive: an app's provider
+  code is imported **in-process** by the gateway (`providers/loader.py` `importlib.import_module`), so
+  an app's own `httpx`/`requests` call IS the gateway's egress and there is no per-app chokepoint to
+  gate it at; and an app with a backend owns a separate OS process with its own network stack. Either
+  would need an OS-level isolation layer (cgroups/nftables/seccomp) or routing all app egress through
+  a guarded seam — the `backend.sandbox` work this plan's §1/task-#71 already owns, not a copy change.
+  Half-enforcing was explicitly rejected: only **2 of 44** first-party apps have a backend, so an
+  egress rail on backends alone would confine 2 apps, leave 42 unconfined, and show all 44 identically
+  — a worse claim than the honest advisory.
+- [2026-08-13][EI-12 D2] **The sharpest case, and it inverts the intuition.** Of the four first-party
+  apps whose manifests mention `network`, only `mail-inbox` and `openrouter-models` declare `true`;
+  `growth` and `minutes` declare **`network: false`** — and per D1's audit those two are the *only*
+  first-party apps with a backend. So the two apps that actually run their own OS process with a
+  completely unconfined network stack were exactly the two the consent UI rendered with no network row
+  at all, i.e. as if the platform had honoured their "we don't use the network" declaration. That is
+  the reading the always-rendered advisory kills. Verified through the real parse path
+  (`AppManifest.from_dict(...).permissions.to_dict()`) over all 44 manifests, not by reading JSON.
+- [2026-08-13][EI-12 D2] **DISCOVERY (recorded, not built).** The Store panel still gates the whole
+  section on `Object.keys(item.permissions).length > 0`, and that guard is load-bearing: `CatalogEntry.
+  permissions` defaults to `{}` both for an app that declares nothing AND for a registry-index pointer
+  whose manifest has not been fetched (`catalog.py` `_pointer_to_entry` vs the git/dir scan, which sets
+  `pointer` *and* real permissions — so `pointer` is not the discriminator either). Dropping the guard
+  would make the UI tell a user "None — this app is granted no gateway capability" about an app whose
+  manifest we have never read. Distinguishing the two needs a backend wire field ("manifest known"),
+  which is outside D2's clause. Consequence, stated: a Store card for an app that declares *nothing*
+  shows no permission section and therefore no network advisory — the UI makes no claim rather than a
+  false one, and the installed-app panel (which always renders) does disclose it.
+- [2026-08-13][EI-12 D2] **DISCOVERY (out of scope, unrelated to network).** `AppPermissionsWire`
+  (`web/src/lib/api.ts`) has no `appMessaging` field, so the brokered app-to-app targets an app
+  declares are never shown at install consent — even though `Permissions.appMessaging`'s own docstring
+  calls itself "the install-consent surface for who an app can talk to, shown in the Store via
+  `to_dict`". Same class of defect as this task, different permission; needs its own atom.
+- [2026-08-13][EI-12 D3] **BLOCKED — owner-scope architecture decision, deliberately not attempted.**
+  Per-app `pythonDependencies` are pip-installed into the **shared core venv**; `apps/manifest.py:475`
+  says so outright, and nothing under `apps/` manipulates `PYTHONPATH` (confirmed in D1). Because
+  provider code is imported in-process, isolating them would require either out-of-process providers or
+  per-import path machinery — i.e. a change to how the platform loads app code, not a change to the
+  installer. That is an E-class owner decision (it redefines the provider seam every app depends on),
+  so it is recorded here rather than improvised. The next session should not re-derive it.
+- [2026-08-13][EI-12 D2] **STOP POINT (supersedes the D1 stop point). `EI-12` remains `todo`; no `pr`
+  field set.** Landed: **D1** (backend child env by allowlist) and **D2** (the `network` claim marked
+  advisory in the consent UI + manifest docs). Outstanding: **D3** (per-app dependency isolation —
+  BLOCKED above, owner decision) and **VD** (the validation-as-a-user sweep: install a first-party app,
+  confirm gateway secrets are absent from its process env, confirm a network-declaring and a
+  non-declaring app behave per the D2 decision *in a live browser*, install a dependency-conflicting app,
+  re-read the website copy against `sandbox.py`). D2's own surface was driven by unit-level render tests
+  over the real component, not a browser — the browser leg belongs to VD. Atom done-when after D2: "a
+  planted secret … is absent from an app backend's env" ✅, "every first-party app still boots" ✅, "the
+  Store consent UI's network claim matches enforcement reality" ✅; the per-app dependency clause and the
+  VD sweep remain open.
