@@ -6863,13 +6863,14 @@
         {
           "id": "PHF-8",
           "title": "Ceiling-intersect-profile guardrail wiring",
-          "status": "todo",
+          "status": "done",
           "scope": "Wire the SafetyProfile family, which shipped with zero non-test callers (a declared decision object nothing consults). Add a Ceiling loaded once at boot from an operator-owned path the agent process cannot weaken; resolve(ceiling, profile) returns the intersection under tightest-wins (the profile may only narrow). Implement four archetypes each with one compose function (ScopedRuleset, OrdinalControl, CapabilityGate, ScopedMap), dispatching on archetype not scope name so adding a scope is data, not engine code; matchers and ordinal scales live in enforcer-owned registries; an unknown matcher aborts governance boot fail-closed. Encode the path-matcher rule as table-driven tests: normalize only the queried item (expand ~ and $VAR, then abspath) and never run the pattern through normpath (normpath treats */** as ordinary segments and collapses an adjacent .. against them, e.g. /a/**/../b -> /a/b, silently dropping the ** and widening an allow or shrinking a deny); cover /a/**/../b, a .. traversal against an allow-prefix, and a relative item against an absolute deny. Wire profile_for_session into the three dispatch seams plus spawn so the guardrail success criterion holds in code, proven by driving a real unattended trigger rather than a constructed object; composes with PHF-1 (profile picks tools/egress, the sandbox ceilings pick blast radius). Owner decision required on the ceiling's trust-root path and how it is protected from the agent on a single-user machine; document what the layer does and does not buy.",
           "done_when": "A profile cannot widen the ceiling (test per archetype); an unknown matcher aborts boot with a WHAT/WHY/FIX error; a normpath-on-pattern implementation reds the matcher tests; a real unattended trigger resolves through the headless profile with a live reader; a narrower profile bites and a widening attempt is refused, confirmed from logs/SEL.",
           "deps": [
             "PHF-1",
             "EXT:AUTONOMY-GUARDRAILS:SafetyProfile-S5.2-wiring"
-          ]
+          ],
+          "pr": 1213
         },
         {
           "id": "PHF-9",
@@ -7576,11 +7577,6 @@
       {
         "id": "PHF-7",
         "title": "Offline fake-model E2E harness + a11y rail",
-        "plan": "PHF"
-      },
-      {
-        "id": "PHF-8",
-        "title": "Ceiling-intersect-profile guardrail wiring",
         "plan": "PHF"
       },
       {
@@ -9999,9 +9995,9 @@
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 13,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

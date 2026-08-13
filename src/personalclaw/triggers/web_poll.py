@@ -325,13 +325,34 @@ def _await_maybe(result: Any) -> Any:
         return pool.submit(asyncio.run, result).result(timeout=120)
 
 
-def _render_headless(url: str, renderer: Any) -> Any:
+def _poll_egress_policy(trigger_id: str) -> Any:
+    """The egress policy ONE poll may use, or `None` when the run may not egress at all.
+
+    Three layers, tightest wins: the SOURCE surface profile (a poll is a knowledge scrape on
+    a timer) → the operator's `security.egress` allow/deny/private config → the run's
+    `SafetyProfile.egress_tier`, resolved for a poll's sessionless unattended identity and
+    therefore bounded by the governance ceiling. A poll ran on a bare `STRICT` before, which
+    is why an operator's `deny_hosts` did not reach the headless tier and the egress tier
+    reached nothing at all.
+    """
+    from personalclaw.guardrails.policy import profile_for_session, unattended_dispatch_key
+    from personalclaw.net.policy import SOURCE, egress_policy_for, egress_policy_for_profile
+
+    tier = profile_for_session(unattended_dispatch_key(f"trigger:{trigger_id}")).egress_tier
+    return egress_policy_for_profile(egress_policy_for(SOURCE), tier)
+
+
+def _render_headless(url: str, renderer: Any, policy: Any) -> Any:
     """Drive the headless tier and return its `RenderResult`. NEVER raises.
 
     `renderer` defaults to `web.render.render_url` (async); an injected sync fake (the tests)
     returns a `RenderResult` directly. Coroutine bridge: `_await_maybe` (shared with `_fetch`).
+
+    `policy` is the poll's RESOLVED egress policy (`_poll_egress_policy`), not a hardcoded
+    `STRICT`: the hardcoded one skipped both the operator's `security.egress` layering (so a
+    configured `deny_hosts` was honoured on the plain tier and ignored here) and the run's
+    egress tier.
     """
-    from personalclaw.net.policy import STRICT
     from personalclaw.web.render import RenderResult
 
     try:
@@ -339,7 +360,7 @@ def _render_headless(url: str, renderer: Any) -> Any:
             from personalclaw.web.render import render_url
 
             renderer = render_url
-        return _await_maybe(renderer(url, policy=STRICT))
+        return _await_maybe(renderer(url, policy=policy))
     except Exception as exc:  # noqa: BLE001 - a render crash is a reason, not a dead poll loop
         return RenderResult(
             ok=False, url=url, error=f"headless render raised ({type(exc).__name__}: {exc})"
@@ -447,7 +468,16 @@ def poll_one(
             "resumes tomorrow"
         )
 
-    body, status, error = _fetch(url, fetcher)
+    # The run's egress posture, resolved BEFORE the request is spent (PHF-8). A tier of
+    # "off" refuses visibly — the reason travels to the ledger row, like the budget refusals
+    # above — rather than making a request the run's posture forbids.
+    egress = _poll_egress_policy(str(getattr(trigger, "id", "") or ""))
+    if egress is None:
+        return PollOutcome(
+            reason="this run's safety profile denies all network egress (egress tier 'off')"
+        )
+
+    body, status, error = _fetch(url, fetcher, egress)
 
     # Accounted whether or not the fetch SUCCEEDED. A failing url that did not count toward the
     # budget would retry forever at full rate, which is the shape that gets a user's IP blocked.
@@ -477,7 +507,7 @@ def poll_one(
             # says so rather than launching a browser it has no budget for.
             escalation = f"headless escalation budget spent ({limit} renders); resumes tomorrow"
         else:
-            result = _render_headless(url, renderer)
+            result = _render_headless(url, renderer, egress)
             if getattr(result, "unavailable", False):
                 # No render happened, so nothing is charged — and it can never succeed until the
                 # dependency is installed, so charging it would only burn the budget for nothing.
@@ -566,13 +596,18 @@ def poll_one(
     )
 
 
-def _fetch(url: str, fetcher: Any) -> tuple[str, int, str]:
+def _fetch(url: str, fetcher: Any, policy: Any) -> tuple[str, int, str]:
     """`(body, status, error)`. Never raises — a bad url is a reason, not an exception.
 
     Routed through `net.fetch` by default: that is where host classification, private-IP denial,
     redirect-hop re-checks, the byte cap and the timeout live. A watch pointed at
     `http://169.254.169.254/` is an SSRF against the machine's own metadata service, and this is the
     layer that already refuses it — a direct `urllib` call here would bypass all of it.
+
+    `policy` is the poll's resolved egress policy (`_poll_egress_policy`): the SOURCE surface
+    profile, layered with the operator's `security.egress` config and narrowed by the run's
+    egress tier. Passing it explicitly is what makes an operator `deny_hosts` and a narrowed
+    ceiling apply to a poll — `net.fetch`'s own default is a bare `STRICT` that layers neither.
     """
     try:
         if fetcher is None:
@@ -583,7 +618,7 @@ def _fetch(url: str, fetcher: Any) -> tuple[str, int, str]:
             # returned an un-awaited coroutine → `status`/`body` read as 0/empty and EVERY
             # default-fetcher web_watch silently no-oped (pre-existing bug; the suite was blind
             # because tests inject a sync `fetcher`). A sync fake passes through `_await_maybe`.
-            response = _await_maybe(net_fetch(url))
+            response = _await_maybe(net_fetch(url, policy=policy))
         else:
             response = _await_maybe(fetcher(url))
     except Exception as exc:  # noqa: BLE001 - an unreachable page must not kill the poll loop

@@ -219,17 +219,26 @@ def _reset_model_call_breakers():
     from personalclaw.guardrails.autonomy import reset_action_types
     from personalclaw.guardrails.breaker import reset_breakers
     from personalclaw.guardrails.budgets import reset_meter
+    from personalclaw.guardrails.ceiling import reset_ceiling, reset_clamp_reports
     from personalclaw.guardrails.incident import reset_incident_mirror
 
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
     reset_action_types()
+    # The governance ceiling is read once per PROCESS and cached (that caching is the
+    # no-mid-run-widening property). Under xdist a ceiling written by one test's tmp_path
+    # would otherwise bound every later test in the same worker, and the clamp-report
+    # dedup would swallow the second test's SEL assertion.
+    reset_ceiling()
+    reset_clamp_reports()
     yield
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
     reset_action_types()
+    reset_ceiling()
+    reset_clamp_reports()
 
 
 @pytest.fixture(autouse=True)

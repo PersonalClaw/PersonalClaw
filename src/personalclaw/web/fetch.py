@@ -123,6 +123,32 @@ async def web_fetch(
     # must hold on the agent's primary fetch surface, not just webhooks/connectors.
     # Idempotent, so a caller that already layered is unaffected.
     policy = egress_policy_for(policy)
+    # 🔴 THE RUN'S EGRESS TIER, applied to the agent's primary fetch surface (PHF-8).
+    # `SafetyProfile.egress_tier` shipped with no reader at all, so "an unattended run may
+    # only reach an allow-list" was true in tests and nowhere else. Narrowing happens AFTER
+    # the operator layering above, so a "listed" tier is exclusively the operator's
+    # `security.egress.allow_hosts` (they are already unioned into `policy` by then). A
+    # session-less caller resolves INTERACTIVE, whose tier is "all" and narrows nothing —
+    # but an operator CEILING of "listed"/"off" still bites, because a machine-wide bound
+    # must not be dodged by calling without a session identity.
+    from personalclaw.guardrails.policy import profile_for_session
+    from personalclaw.net.policy import egress_policy_for_profile
+
+    _tier = profile_for_session(session_key).egress_tier
+    _narrowed = egress_policy_for_profile(policy, _tier)
+    if _narrowed is None:
+        return FetchOutcome(
+            ok=False,
+            url=url,
+            risk_level="destructive",
+            error=f"egress is off for this run (safety profile egress tier {_tier!r})",
+            recovery_hints=[
+                "This run's safety posture denies all network egress.",
+                "Widen the egress tier in the governance ceiling, or run the fetch from an "
+                "interactive session.",
+            ],
+        )
+    policy = _narrowed
     scheme = (urlparse(url).scheme or "").lower()
     if scheme not in ("http", "https"):
         return FetchOutcome(

@@ -567,12 +567,16 @@ async def execute_event_action(
     # Denylist gate (AUTONOMY-GUARDRAILS §1.2): a blocked action never runs, so an app-contributed
     # provider fired by a memory event inherits it.
     from personalclaw.guardrails.denylist import enforce_action
+    from personalclaw.guardrails.policy import unattended_dispatch_key
 
-    # No session identity is in scope here: an event trigger fires from a memory
-    # write, not a run — `key` is the memory key, not a session key. So the
-    # SafetyProfile deny-glob layer is skipped (session_key=""); the operator
-    # `autonomy_denylist` and built-in checks inside `check_action` still apply.
-    decision = enforce_action(t.action_provider, t.action_config, ctx, session_key="")
+    # 🔴 THE SESSION IDENTITY (PHF-8). An event trigger fires from a memory/inbox write,
+    # not a run, so `key` is a memory key and there is no chat session — but "no session"
+    # is not "attended". This passed `session_key=""`, which classified as ATTENDED and
+    # resolved INTERACTIVE, so the SafetyProfile layer (deny globs, path confinement) was
+    # skipped on a genuinely unattended dispatch. The sessionless unattended identity
+    # names the trigger, so it resolves HEADLESS ∩ ceiling and a clamp is attributable.
+    dispatch_key = unattended_dispatch_key(f"trigger:{t.id}")
+    decision = enforce_action(t.action_provider, t.action_config, ctx, session_key=dispatch_key)
     if decision.blocked:
         matched = getattr(decision, "matched", "") or ""
         reason = getattr(decision, "reason", "") or "blocked by a guardrail rule"
@@ -583,13 +587,12 @@ async def execute_event_action(
     # seam holds, and the name→type mapping lives on the declaration, so an app-contributed
     # action inherits its declared floor/ceiling without a line of its own here.
     #
-    # `session_key=""` for the same reason the denylist call above uses it: an event trigger
-    # fires from a memory/inbox write, not a run, so there is no session identity to resolve
-    # a SafetyProfile from — the type's own ceiling is the only bound that applies.
+    # Same `dispatch_key` as the denylist call above, so both gates on this seam judge the
+    # run under one resolved posture rather than two.
     from personalclaw.guardrails.rungs import announce_withheld, record_reversal
     from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
-    route = _route_action(t.action_provider, session_key="")
+    route = _route_action(t.action_provider, session_key=dispatch_key)
     if not route.executes:
         announce_withheld(
             route,
