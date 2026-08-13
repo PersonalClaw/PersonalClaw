@@ -26,10 +26,38 @@ import { PageTitle } from './PageTitle'
 //
 //   · `ChatPage`'s "Chat history" — a DOCKED PANEL header. A side panel is not the page, and
 //     giving it an h1 would claim the document's title for a drawer.
-//   · `AppFrame` and the detail/create pages — their title is an ENTITY name
-//     (`{project.name}`, `{active.name}`, the installed app's title). Those are page titles
-//     too, but they are a different subset with their own judgment (does a detail view's h1
-//     name the entity or the section?), and taking half a family is worse than taking none.
+//   · `AppFrame` and the DETAIL pages — their title is an ENTITY name (`{project.name}`,
+//     `{active.name}`, `{run.workflow}`, the installed app's title). Those are page titles too,
+//     but they are a different subset with their own judgment (does a detail view's h1 name the
+//     entity or the section?), and taking half a family is worse than taking none. **Still
+//     deferred, and cycle 150 checked whether the app already answers it: it does not.**
+//     `#/artifacts` with an artifact open swaps its `PageTitle` for a Back button and renders the
+//     artifact name as a bare span; the h1 measured on that route comes from the artifact's own
+//     CONTENT, not from the page title. So the question is genuinely open, not settled by
+//     precedent. Measured h1-less today: `#/workflows/runs/<id>` (loses "Workflows" the moment a
+//     run opens — axe `page-has-heading-one`), `WorkflowDefDetail`, `KnowledgeDetailPage`,
+//     `PromptViewPage`, `CodeSection`/`CodeCockpitPage`/`CodePlanReview`, `AppFrame`,
+//     `ProjectsSection`'s project view, and `SkillsPage`'s browse branch.
+//
+// ── Cycle 150: the CREATE pages, which are not that subset ───────────────────────────────────
+//
+// "New task" is no more an entity name than "Tasks" is — a create destination has a static name,
+// exactly like the 20 converged above. All five measured h1-less, driven at 1440x900:
+//
+//   #/tasks/new      no h1; headings began at **H3** ("Basics")
+//   #/prompts/new    no h1, and **ZERO headings of any level**
+//   #/agents/new     no h1, ZERO headings — under 9,441 characters of form
+//   #/triggers/new   no h1, ZERO headings
+//   #/knowledge/new  no h1 (both steps: the type picker and the chosen-type form)
+//
+// Verified pixel-identical after conversion: 8/8 captures at 0.00% across both themes, which is
+// what `PageTitle`'s own doc claims and this pass re-measured rather than trusted.
+//
+// ⚠️ `#/tasks/new` still skips **h1 → h3**: `TaskForm`'s `Section` renders an `h3`, and it has TWO
+// hosts — `TaskCreatePage` (a full page) and `TaskDetail` (a docked panel). Levelling it is a
+// shared-component change with a second consumer to reason about, so it is deliberately NOT in
+// this pass; the skip existed before (from nothing straight to h3) and now at least has an anchor
+// above it.
 //   · `topBarTitleTruncates.test.tsx` — a fixture that must keep exercising the RAW idiom, or
 //     it stops testing what it claims to.
 
@@ -90,6 +118,12 @@ const DESTINATIONS = [
   'pages/discover/DiscoverPage.tsx',
   'pages/workflows/WorkflowsListPage.tsx',
   'ui/ListScaffold.tsx',
+  // Cycle 150 — the create destinations.
+  'pages/tasks/TaskCreatePage.tsx',
+  'pages/triggers/TriggerCreatePage.tsx',
+  'pages/agents/AgentCreatePage.tsx',
+  'pages/prompts/PromptCreatePage.tsx',
+  'pages/knowledge/KnowledgeCreatePage.tsx',
 ]
 
 describe('every converged destination names itself', () => {
@@ -113,14 +147,16 @@ describe('every converged destination names itself', () => {
   })
 
   it('renders exactly ONE PageTitle per destination (a page has one name)', () => {
-    // SkillsPage is the exception that proves the rule: it renders two, in mutually exclusive
-    // branches (the proposals view vs the installed view), never both at once. Asserted by
-    // branch count rather than waved through.
+    // Two files render more than one, both in mutually exclusive branches, never both at once:
+    // SkillsPage (proposals view vs installed view) and KnowledgeCreatePage (the type picker step
+    // vs the chosen-type form). Named rather than waved through, so a THIRD one has to justify
+    // itself here.
+    const TWO_STEP = ['pages/skills/SkillsPage.tsx', 'pages/knowledge/KnowledgeCreatePage.tsx']
     const offenders: string[] = []
     for (const rel of DESTINATIONS) {
       const src = readFileSync(join(SRC, rel), 'utf8')
       const n = [...src.matchAll(/<PageTitle[\s>]/g)].length
-      if (n > 1 && rel !== 'pages/skills/SkillsPage.tsx') offenders.push(`${rel} (${n})`)
+      if (n > 1 && !TWO_STEP.includes(rel)) offenders.push(`${rel} (${n})`)
     }
     expect(offenders, `more than one page title:\n  ${offenders.join('\n  ')}`).toEqual([])
   })

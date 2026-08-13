@@ -3,6 +3,7 @@ import { ArrowLeft, Check } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
+import { PageTitle } from '../../ui/PageTitle'
 import { api, type TaskItem } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { TaskForm, emptyDraft, draftToPayload, type TaskDraft } from './TaskForm'
@@ -36,7 +37,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">New task</span></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New task</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           <TaskForm draft={draft} onChange={setDraft} allTasks={allTasks} />

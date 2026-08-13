@@ -9,6 +9,7 @@ import { useCachedData } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Field, TextInput, Segmented } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
+import { PageTitle } from '../../ui/PageTitle'
 import { ScheduleForm, emptyDraft as emptySchedule, type ScheduleDraft } from '../schedule/ScheduleForm'
 import { intervalToSecs } from '../schedule/scheduleMeta'
 import { ActionConfig, seedActionConfig } from './ActionConfig'
@@ -151,7 +152,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><span data-type="title-l" className="text-on-surface">New trigger</span></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New trigger</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl flex flex-col gap-xl" style={{ maxWidth: 'var(--content-width)' }}>
           <Field label="Name" hint="A short label for this trigger."><TextInput required value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
