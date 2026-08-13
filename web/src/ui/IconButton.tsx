@@ -57,6 +57,10 @@ export function IconButton({
       type="button"
       aria-label={label}
       aria-disabled={disabled || undefined}
+      // Same contract as `HeaderControl` below/above: `active` drove a tint only. The composer's optimize
+      // and mic buttons are its two `active` callers, and "recording" vs "not recording" is exactly the
+      // state a screen-reader user cannot infer from a tint. `undefined` unless a caller opts in.
+      aria-pressed={active}
       title={disabled && disabledReason ? `${label} — ${disabledReason}` : label}
       onClick={disabled ? undefined : onClick}
       whileTap={disabled ? undefined : { scale: pressScale }}
