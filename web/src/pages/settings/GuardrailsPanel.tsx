@@ -32,7 +32,7 @@ export function GuardrailsPanel() {
   // loaded. Measured on `#/settings/agent` with `/api/config` at 500: the form rendered in full with no
   // error anywhere. Now the rejection reaches the hook and the form is replaced by the failure.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg) return <FormSkeleton sections={3} />
+  if (!data || !cfg) return <FormSkeleton sections={3} what="settings" />
 
   const patchNum = (path: string, value: number) =>
     api.patchConfig(`guardrails.${path}`, value).catch((e) => {

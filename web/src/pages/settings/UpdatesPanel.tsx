@@ -64,7 +64,7 @@ export function UpdatesPanel() {
 
   // Error before the skeleton, or the skeleton wins forever.
   if (!info && loadErr) return <LoadError what="update status" error={loadErr} onRetry={refresh} />
-  if (!info) return <FormSkeleton sections={3} />
+  if (!info) return <FormSkeleton sections={3} what="update status" />
   const kind = info.kind ?? 'git'
   const isContainer = kind === 'container'
   const isDesktop = kind === 'desktop'

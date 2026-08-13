@@ -44,7 +44,7 @@ export function AuditPanel() {
   // possible lie. The fetcher's `.catch(() => [] as SelEvent[])` made a 500 render "No matching
   // events." — the same words as a genuinely quiet log, with no alert and no retry.
   if (!events && error) return <LoadError what="audit log" error={error} onRetry={reload} />
-  if (!events) return <ListSkeleton rows={8} />
+  if (!events) return <ListSkeleton rows={8} what="audit log" />
   const needle = q.trim().toLowerCase()
   const shown = events.filter((e) => {
     if (filter === 'denied' && !/denied|blocked|failure|refused/.test(e.outcome ?? '')) return false

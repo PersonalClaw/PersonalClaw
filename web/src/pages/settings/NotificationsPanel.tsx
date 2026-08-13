@@ -50,7 +50,7 @@ export function NotificationsPanel() {
 
   // Error BEFORE the skeleton, or it is unreachable: `s` is null for loading AND for failure.
   if (!s && loadErr) return <LoadError what="notification settings" error={loadErr} onRetry={refresh} />
-  if (!s) return <FormSkeleton sections={2} />
+  if (!s) return <FormSkeleton sections={2} what="notification settings" />
   return (
     <div>
       <PanelHeader title="Notifications" hint="Control how and when PersonalClaw notifies you." />

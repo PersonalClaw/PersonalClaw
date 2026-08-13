@@ -305,7 +305,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
             // consumers can adopt one form instead of re-deriving it.
             <LoadError what="projects" error={loadErr} onRetry={load} />
           ) : projects === undefined ? (
-            <ListSkeleton rows={6} />
+            <ListSkeleton rows={6} what="projects" />
           ) : projects.length === 0 ? (
             <EmptyState
               icon={Code2}
