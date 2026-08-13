@@ -89,7 +89,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       {agent.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{agent.description}</p>}
 
       {agent.system_prompt && (
-        <Section label="System prompt"><div className="rounded-md bg-surface-container px-m py-2 max-h-72 overflow-y-auto text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{agent.system_prompt}</Markdown></div></Section>
+        <Section label="System prompt"><div tabIndex={0} role="group" aria-label="System prompt" className="rounded-md bg-surface-container px-m py-2 max-h-72 overflow-y-auto text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{agent.system_prompt}</Markdown></div></Section>
       )}
 
       <Caps label="Skills" items={agent.skills} />
