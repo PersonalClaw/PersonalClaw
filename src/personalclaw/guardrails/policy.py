@@ -48,6 +48,12 @@ class SafetyProfile:
     tool_allowlist: tuple[str, ...] = ()  # meaningful only when tool_grants == custom
     egress_tier: str = "all"  # off | listed | registry | all  (§4.2)
     denylist_extra: tuple[str, ...] = ()  # extra path globs layered on the base denylist
+    # Path globs the run is CONFINED to (the ``paths`` ceiling scope's allow plane).
+    # Empty = unconfined (deny-only, today's posture). Non-empty = a closed ruleset: a
+    # path-carrying action config that matches none of these is refused by
+    # ``denylist.check_action``. Only an operator ceiling writes it — no named profile
+    # ships one, so the default stays byte-identical to the deny-only behaviour.
+    path_allowlist: tuple[str, ...] = ()
     budget: Budget = field(default_factory=Budget)
     scan_mode: str = "redact"  # warn | redact | block
 
@@ -106,11 +112,24 @@ INCIDENT = SafetyProfile(
 # The unattended default: read-only + creation-time grants. Auto-fired runs resolve
 # HERE by construction (never blocks waiting for a human; writes require a grant on
 # the job/trigger reviewed when the automation was created).
+#
+# 🔴 ``egress_tier="all"``, corrected from ``"registry"`` when PHF-8 gave the tier a real
+# enforcement point. REGISTRY was authored (net/policy.py) for "sandboxed code runs that
+# need the common dev registries WITHOUT opening the whole internet" — a PACKAGE-manager
+# posture. The plane that actually exists to enforce a tier on is the agent's page fetch
+# (`web.fetch.web_fetch`) and the watched-source poll; core has no code-run egress plane
+# (the sandbox providers do not own a network namespace). Enforcing "registry" there would
+# deny every unattended fetch that is not pypi/npm/crates — i.e. every watched-source
+# poll, every subagent research fetch, every inbox-triggered link read — with no UI to
+# undo it. "all" is not "unguarded": it is STRICT (public hosts only, no loopback/RFC-1918/
+# link-local, pinned IPs, byte + timeout caps, operator deny_hosts honoured). An operator
+# who does want registry-only or allow-list-only unattended egress writes it in the
+# governance ceiling (`{"scopes": {"egress": {"value": "listed"}}}`), which is enforced.
 HEADLESS = SafetyProfile(
     name="headless",
     approval="hook_based",
     tool_grants=TOOL_READ,
-    egress_tier="registry",
+    egress_tier="all",
     scan_mode="redact",
 )
 
@@ -150,15 +169,37 @@ def safety_profile_for(base: SafetyProfile) -> SafetyProfile:
 
 # ── Headless-by-construction resolution ─────────────────────────────────────────
 
+#: The prefix for a dispatch that has NO session at all — a store-backed trigger fire, a
+#: memory-event trigger, a top-level script hook. Those seams hold a trigger/hook id and
+#: nothing else, and they are unattended by definition: no human is watching, and the
+#: action is an automated side-effect (the same reasoning the incident kill switch already
+#: applies to a hook's action). Before PHF-8 every one of them passed ``session_key=""``,
+#: which classified as ATTENDED and resolved INTERACTIVE — so "headless by construction"
+#: held in tests and nowhere else. :func:`unattended_dispatch_key` mints the identity.
+UNATTENDED_DISPATCH_PREFIX = "unattended:"
+
 # loop-worker session keys (Goal/Code loop cycle workers) — unattended, like the
 # stateless prefixes. Kept here (not in session.py) since it's a guardrail concern.
 _LOOP_PREFIXES = ("loop-", "loop:")
 
+#: Every prefix this module classifies as unattended on top of session.py's own.
+_EXTRA_UNATTENDED_PREFIXES = (*_LOOP_PREFIXES, UNATTENDED_DISPATCH_PREFIX)
+
+
+def unattended_dispatch_key(origin: str) -> str:
+    """The guardrail identity for a sessionless unattended dispatch.
+
+    ``origin`` names WHAT fired (``trigger:<id>``, ``hook:<id>``) so a clamp in the SEL is
+    attributable to the automation that caused it. The key is a guardrail identity only —
+    it is never used to open or look up a chat session.
+    """
+    return f"{UNATTENDED_DISPATCH_PREFIX}{(origin or 'unknown').strip()}"
+
 
 def is_unattended_session(session_key: str) -> bool:
     """True when ``session_key`` names an unattended run (cron/subagent/channel/inbox/
-    side/loop worker, or the ``_bg`` background key) — the keys that resolve through
-    HEADLESS by construction."""
+    side/loop worker, a sessionless ``unattended:`` dispatch, or the ``_bg`` background
+    key) — the keys that resolve through HEADLESS by construction."""
     from personalclaw.session import _STATELESS_PREFIXES, BACKGROUND_KEY
 
     key = session_key or ""
@@ -167,19 +208,54 @@ def is_unattended_session(session_key: str) -> bool:
     # it matches no prefix. It's an exact key, not a prefix, hence the equality check.
     if key == BACKGROUND_KEY:
         return True
-    return any(key.startswith(p) for p in (*_STATELESS_PREFIXES, *_LOOP_PREFIXES))
+    return any(key.startswith(p) for p in (*_STATELESS_PREFIXES, *_EXTRA_UNATTENDED_PREFIXES))
 
 
 def profile_for_session(session_key: str) -> SafetyProfile:
     """Resolve the safety profile for a session key BY CONSTRUCTION.
 
-    An unattended session (cron/subagent/channel/inbox/side/loop) resolves to
-    ``HEADLESS`` (read-only default, config-layered budget + scan); everything else
-    is the human-watched ``INTERACTIVE`` posture. This is the single object the
-    gateway's approval pick consults, replacing the ad-hoc AUTO_APPROVE/HOOK_BASED
-    branch. Operator config is layered in via ``safety_profile_for``."""
+    An unattended session (cron/subagent/channel/inbox/side/loop, or a sessionless
+    ``unattended:`` dispatch) resolves to ``HEADLESS`` (read-only default, config-layered
+    budget + scan); everything else is the human-watched ``INTERACTIVE`` posture. This is
+    the single object the gateway's approval pick consults, replacing the ad-hoc
+    AUTO_APPROVE/HOOK_BASED branch. Operator config is layered in via
+    ``safety_profile_for``.
+
+    **Then the CEILING intersects it** (PLATFORM-HARDENING-FLOORS §5): the operator's
+    ``governance/ceiling.json`` is level one and this profile is level two, and tightest
+    wins. Composing HERE — rather than at each seam — is deliberate: this function is
+    already the single object every dispatch seam consults (rung routing, the action
+    denylist, the tool-approval pick, egress), so one call site makes the ceiling live
+    everywhere at once and leaves no seam that reads a profile the ceiling never bounded.
+    A corrupt ceiling raises out of here, which fails the dispatch CLOSED."""
     base = HEADLESS if is_unattended_session(session_key) else INTERACTIVE
-    return safety_profile_for(base)
+    layered = safety_profile_for(base)
+    from personalclaw.guardrails.ceiling import active_ceiling, resolve
+
+    return resolve(active_ceiling(), layered)
+
+
+def ceiling_permits_approval(value: str) -> bool:
+    """Whether the operator CEILING permits an explicit approval grant of ``value``.
+
+    The spawn path (``subagent._run_inner``) resolves its approval posture through five
+    widening branches — the dashboard trust toggle, an explicit ``approval_mode="auto"``
+    from a cron/agent caller, ``--approval yolo``, the config default, and
+    ``auto_approve_subagent_tools`` — each of which can only set ``auto``. Those are
+    deliberate USER grants, so the profile default must not veto them (that would delete
+    the trust toggle). The CEILING must: it is the operator's hard bound, and an operator
+    who wrote ``{"approval": {"value": "ask"}}`` has said no run on this machine
+    auto-approves, including one a toggle widened.
+
+    Implemented by resolving the grant as a posture: a profile carrying the grant is
+    intersected with the ceiling, and the grant stands only if it survives. That keeps
+    ONE composition rule (tightest wins, via :func:`~personalclaw.guardrails.ceiling.
+    resolve`) instead of a second hand-rolled comparison that could drift from it.
+    """
+    from personalclaw.guardrails.ceiling import active_ceiling, resolve
+
+    probe = SafetyProfile(name="approval_grant", approval=value)
+    return resolve(active_ceiling(), probe).approval == value
 
 
 def rung_ceiling_for_profile(profile: SafetyProfile) -> str:

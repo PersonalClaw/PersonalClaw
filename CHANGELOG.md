@@ -10,6 +10,56 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A governance ceiling an operator writes once now bounds every unattended run — and the safety
+  profile it bounds is finally read at all.** PersonalClaw already described each run's posture in a
+  `SafetyProfile` (approval, tool grants, egress tier, path denies, budget, secret-scan mode), but
+  nothing consulted the tier/grants/denies, and every automated dispatch seam — clock, file, webhook
+  and chained triggers, memory-event triggers, and script hooks fired without a parent session —
+  asked for its posture with an *empty* session identity, which classified as "a human is watching"
+  and resolved the **interactive** posture. Automated work has been running under the interactive
+  profile. Now: those seams identify themselves as unattended, so they resolve the `headless`
+  posture, and an optional operator file at `$PERSONALCLAW_HOME/governance/ceiling.json` (or an
+  absolute path in `PERSONALCLAW_CEILING_FILE`) sets a hard bound that a run can only make
+  *stricter* — never looser. Six governed scopes (`approval`, `scan`, `egress`, `paths`, `tools`,
+  `budget`); for example `{"version": 1, "scopes": {"approval": {"value": "ask"}, "paths":
+  {"mode": "closed", "allow": ["~/workspace/**"]}}}` means nothing on this machine auto-approves and
+  automated actions may only touch your workspace. **No file means no change**: absent a ceiling,
+  behaviour is exactly what it was. A malformed one is a hard stop with a WHAT/WHY/FIX message
+  rather than a silent start, because "governance could not be established" is not a degraded mode.
+  The file is deliberately not editable through the app (it is absent from the config PATCH
+  allowlist and its directory is on the built-in sensitive-path denylist, so the agent's own write
+  paths refuse it), it is read once at start-up so an edit cannot widen a running gateway, and every
+  clamp is logged and written to the security event log. What it cannot do is stop a process running
+  as you from editing the file and restarting — for a real trust root, point
+  `PERSONALCLAW_CEILING_FILE` at a root-owned `0444` file outside your home. See
+  `docs/architecture/security.md`.
+  Two effects of the seam correction you may notice even with no ceiling file, both by design: an
+  automation whose action type is allowed to run fully on its own now runs with the **undo handle and
+  the passive "this happened" notification** kept (the "runs on its own, silently" rung is reserved
+  for work a human is watching, since nobody is there to notice otherwise) — it still runs, it is
+  just no longer invisible; and outbound secret scanning for automated runs follows your configured
+  mode (redact by default) instead of warn-only.
+- **An egress "allow-list" now actually restricts.** `allow_hosts` only ever *waived* the
+  private-address block, so the `registry` and `listed` egress tiers reached every public host
+  exactly like the default — a limit in name only. Policies can now be exclusive (only listed hosts
+  are reachable, checked before DNS resolution), which is what lets a run's egress tier — or a
+  ceiling of `{"egress": {"value": "listed"}}` — genuinely confine outbound traffic. The agent's web
+  fetch and watched-source polls both honour it, and a tier of `off` refuses the request with a
+  visible reason instead of making it.
+- **A watched-source poll now honours your denied hosts on the headless-browser tier too.** The
+  JavaScript-rendering tier passed a hardcoded policy, so `Security → Network` deny-hosts applied to
+  the plain fetch and were ignored on the render path. Both tiers now use the same resolved policy.
+- **An auto-approval grant for a spawned subagent can be refused by the ceiling.** The trust toggle,
+  `--approval yolo`, an `approval_mode: auto` caller and the config default could each widen a
+  subagent to auto-approve tool calls; none of them consulted an operator bound. With a ceiling of
+  `{"approval": {"value": "ask"}}` the grant is refused and the refusal is audited. Without a
+  ceiling file, the toggles behave exactly as before.
+- **Path rules are matched correctly.** The action denylist compared paths as strings without
+  anchoring them, so a relative path like `../../etc/passwd` could slip past a deny of `/etc/**`,
+  and `**` was treated as a single-level `*`, so `~/.ssh/**` missed `~/.ssh/sub/key`. There is now
+  one matcher: the queried path is expanded and absolutized, patterns are never rewritten, and `**`
+  crosses directories.
+
 - **App backends now authenticate inbound requests, closing a direct-to-port bypass.** An app's
   backend subprocess binds on loopback (`127.0.0.1:<port>`), which is a network boundary, not an
   authorization one — before this change any local process that found the port could talk to the

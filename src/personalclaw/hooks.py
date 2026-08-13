@@ -599,15 +599,24 @@ async def run_script_hook(
     # BEFORE dispatch, so an app-contributed provider inherits the denylist. A
     # blocked action returns a blocked result rather than executing.
     from personalclaw.guardrails.denylist import enforce_action
+    from personalclaw.guardrails.policy import unattended_dispatch_key
 
     # `parent_session_key` rides the event payload when a subagent fired the hook
-    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs. A
-    # top-level fire omits it → "" → the profile-glob union is skipped.
+    # (E11-P3); it lets the run's SafetyProfile layer its extra deny globs.
+    #
+    # 🔴 A top-level fire omitted it → "" → classified ATTENDED → INTERACTIVE, so the whole
+    # profile layer was skipped (PHF-8). By the same reasoning the incident kill switch
+    # above already applies — a hook's ACTION is an automated side-effect even when its
+    # triggering event happened in an interactive turn — a hook fire with no parent session
+    # is an unattended dispatch, and now resolves as one.
+    _session_key = str(hook_event.get("parent_session_key", "")) or unattended_dispatch_key(
+        f"hook:{hook.id}"
+    )
     _deny = enforce_action(
         hook.provider,
         hook.provider_config,
         ctx,
-        session_key=str(hook_event.get("parent_session_key", "")),
+        session_key=_session_key,
     )
     if _deny.blocked:
         hook.last_run = time.time()
@@ -627,7 +636,7 @@ async def run_script_hook(
     from personalclaw.guardrails.rungs import announce_withheld, record_reversal
     from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
-    route = _route_action(hook.provider, session_key=str(hook_event.get("parent_session_key", "")))
+    route = _route_action(hook.provider, session_key=_session_key)
     if not route.executes:
         announce_withheld(
             route,

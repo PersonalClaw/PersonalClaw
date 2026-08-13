@@ -168,6 +168,26 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
     # LAN-webhook opt-in) — but still resolves + pins so the connection is honest.
     operator_allowed = _host_matches(host, policy.allow_hosts)
 
+    # EXCLUSIVE allow-list (a run's egress tier narrowed to "listed"/"registry"): only a
+    # listed host is reachable at all. Checked BEFORE resolution so an off-list host is
+    # never even looked up — a DNS query is itself an egress signal.
+    if policy.allow_only and not operator_allowed:
+        return GuardDecision(
+            allow=False,
+            url=url,
+            host=host,
+            reason=(
+                f"host {host!r} is not on the {policy.name!r} egress allow-list "
+                f"({len(policy.allow_hosts)} host(s) allowed)"
+            ),
+            risk_level="destructive",
+            recovery_hints=[
+                "This run's safety profile limits egress to an allow-list.",
+                "An operator can add the host via security.egress allow_hosts, or widen the "
+                "egress tier in the governance ceiling.",
+            ],
+        )
+
     try:
         ips = resolver(host)
     except socket.gaierror:

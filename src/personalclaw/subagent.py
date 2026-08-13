@@ -1847,6 +1847,30 @@ class SubagentManager:
                     source="subagent",
                     resources=f"subagent_id={info.id}",
                 )
+        # 🔴 THE CEILING BOUNDS THE SPAWN GRANT (PHF-8). Every branch above can only WIDEN
+        # this run to "auto"; none of them consults the operator's governance ceiling. So an
+        # operator who declared `{"scopes": {"approval": {"value": "ask"}}}` still got
+        # auto-approving subagents the moment a toggle, a yolo flag or a config default said
+        # so. `ceiling_permits_approval` resolves the grant through the same tightest-wins
+        # composition every other seam uses, and the refusal is SEL-audited — a silently
+        # downgraded grant would be indistinguishable from the grant never being asked for.
+        if parent_policy == "auto":
+            from personalclaw.guardrails.policy import ceiling_permits_approval
+
+            if not ceiling_permits_approval("auto"):
+                parent_policy = ""
+                logger.warning(
+                    "subagent %s: the governance ceiling refused the auto-approval grant; "
+                    "tool calls stay gated",
+                    info.id,
+                )
+                sel().log_api_access(
+                    caller=info.parent_session_key or f"subagent:{info.id}",
+                    operation="subagent.approval_grant_refused",
+                    outcome="blocked",
+                    source="guardrails",
+                    resources=f"subagent_id={info.id},grant=auto,refused_by=governance_ceiling",
+                )
         # Inherit agent from parent session when not explicitly specified
         agent = info.agent or self._sessions.get_agent(info.parent_session_key)
         if not info.agent and agent:

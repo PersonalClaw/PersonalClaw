@@ -939,10 +939,18 @@ class GatewayOrchestrator:
         # The route comes from the provider NAME; the name→type mapping lives on the declaration
         # (`ActionTypeSpec.providers`), so an app-contributed action inherits its declared bounds
         # here with no branch of its own.
+        from personalclaw.guardrails.policy import unattended_dispatch_key
         from personalclaw.guardrails.rungs import announce_withheld, record_reversal
         from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
-        route = _route_action(provider_name, session_key="")
+        # 🔴 THE SESSION IDENTITY (PHF-8). This passed `session_key=""` — which
+        # `is_unattended_session` classifies as ATTENDED, so a clock/file/webhook trigger
+        # fire resolved INTERACTIVE and "headless by construction" held only in tests. A
+        # store-trigger fire has no chat session by definition, so it gets the sessionless
+        # unattended identity: it resolves HEADLESS and is bounded by the operator ceiling,
+        # and the trigger id rides along so a clamp in the SEL names the automation.
+        dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
+        route = _route_action(provider_name, session_key=dispatch_key)
         if not route.executes:
             announce_withheld(
                 route,
@@ -3624,6 +3632,16 @@ class GatewayOrchestrator:
 
     async def run(self) -> None:
         """Start all services and block until shutdown signal."""
+        # ── GOVERNANCE BOOT, first and fail-closed (PLATFORM-HARDENING-FLOORS §5) ──
+        # The operator's ceiling is established BEFORE any service exists, because every
+        # service below can dispatch an unattended action and each one resolves its posture
+        # through `profile_for_session`. A corrupt/unknown ceiling therefore aborts the
+        # process with WHAT/WHY/FIX rather than starting wide open with a logged warning:
+        # "governance could not be established" is not a degraded mode, it is a stop.
+        from personalclaw.guardrails.ceiling import ensure_governance_boot
+
+        ensure_governance_boot()
+
         # Raise FD limit — each ACP agent session uses ~6 FDs (3 pipes)
         # plus MCP server subprocesses. Default macOS limit (256) is too low.
         import resource

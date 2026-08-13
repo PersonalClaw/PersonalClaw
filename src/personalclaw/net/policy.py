@@ -31,6 +31,13 @@ class EgressPolicy:
     loopback_only: bool = False
     allow_hosts: tuple[str, ...] = ()
     deny_hosts: tuple[str, ...] = ()
+    # Invert ``allow_hosts`` from ADDITIVE to EXCLUSIVE: only a listed host is reachable,
+    # public or not. Without this, ``allow_hosts`` merely waives the private-range block,
+    # so REGISTRY (a 22-host preset) reached every public host exactly like STRICT and an
+    # egress "tier" could not narrow anything — the whole tier plane was decorative. A
+    # tier that means "only these hosts" needs the exclusive stance; the guard enforces it
+    # before DNS resolution, so a denied host is never even looked up.
+    allow_only: bool = False
     max_redirects: int = 5
     max_bytes: int = 5_000_000
     timeout_s: float = 30.0
@@ -107,12 +114,19 @@ REGISTRY_HOSTS: tuple[str, ...] = (
 REGISTRY = EgressPolicy(
     name="registry",
     allow_hosts=REGISTRY_HOSTS,
+    allow_only=True,  # dev registries ONLY — the point of the tier
     max_bytes=100_000_000,  # a wheel/image layer is large
     timeout_s=60.0,
 )
 
+# The "listed" tier: reachable = exactly the operator's ``security.egress.allow_hosts``
+# (unioned in by ``egress_policy_for``) and nothing else. Its own allow list is empty, so
+# a "listed" tier with no configured hosts denies every host — the fail-closed reading of
+# "only what is listed", and visible as a refusal rather than a silent widening.
+LISTED = EgressPolicy(name="listed", allow_only=True)
+
 _PROFILES: dict[str, EgressPolicy] = {
-    p.name: p for p in (STRICT, CONNECTOR, SOURCE, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY)
+    p.name: p for p in (STRICT, CONNECTOR, SOURCE, WEBHOOK, LOOPBACK_INTERNAL, REGISTRY, LISTED)
 }
 
 
@@ -120,17 +134,50 @@ def egress_policy_for_tier(tier: str) -> "EgressPolicy | None":
     """Resolve a safety-profile egress TIER to a base :class:`EgressPolicy` (§4.2).
 
     * ``off``      → ``None`` (the caller denies all egress — no policy applies).
-    * ``listed``   → STRICT + the operator's ``security.egress.allow_hosts`` (via
-                     ``egress_policy_for`` at the call site) — a user allow-list.
-    * ``registry`` → the curated REGISTRY preset (dev registries only).
+    * ``listed``   → LISTED: exclusively the operator's ``security.egress.allow_hosts``
+                     (unioned in by ``egress_policy_for`` at the call site).
+    * ``registry`` → the curated REGISTRY preset, exclusively (dev registries only).
     * ``all``      → STRICT (public hosts, the normal agent posture).
 
-    An unknown tier falls back to STRICT (the safe public-only default)."""
+    An unknown tier falls back to STRICT (the safe public-only default); the ceiling
+    rejects an off-scale tier at boot, so an unknown value cannot arrive from there."""
     if tier == "off":
         return None
     if tier == "registry":
         return REGISTRY
-    return STRICT  # "listed" and "all" both start from STRICT; operator layering adds hosts
+    if tier == "listed":
+        return LISTED
+    return STRICT
+
+
+def egress_policy_for_profile(base: EgressPolicy, tier: str) -> "EgressPolicy | None":
+    """Narrow a surface's ``base`` policy by a run's egress TIER — tightest wins.
+
+    The surface keeps its own caps and stance (a knowledge scrape stays CONNECTOR-shaped);
+    the tier can only take reach away. ``None`` means the run may not egress at all and the
+    caller must refuse — never fall through to the base.
+
+    Composition, per field:
+
+    * ``off`` → ``None``.
+    * a tier with an exclusive host set (``listed``/``registry``) → the base becomes
+      exclusive too, with the tier's hosts unioned onto the base's own (a surface that
+      already allow-listed a host keeps it; the tier adds its preset).
+    * ``all`` → the base is already at least this narrow, so it is returned unchanged.
+    * caps (``max_bytes``/``timeout_s``) take the tighter of the two, so a tier can never
+      raise a surface's ceiling — REGISTRY's 100 MB does not widen a 5 MB fetch.
+    """
+    tier_policy = egress_policy_for_tier(tier)
+    if tier_policy is None:
+        return None
+    if not tier_policy.allow_only:
+        return base
+    return base.with_overrides(
+        allow_only=True,
+        allow_hosts=tuple(dict.fromkeys([*base.allow_hosts, *tier_policy.allow_hosts])),
+        max_bytes=min(base.max_bytes, tier_policy.max_bytes),
+        timeout_s=min(base.timeout_s, tier_policy.timeout_s),
+    )
 
 
 def get_policy(name: str) -> EgressPolicy:
