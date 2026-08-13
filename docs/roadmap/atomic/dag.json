@@ -6835,12 +6835,13 @@
         {
           "id": "PHF-4",
           "title": "Environment-inheritance allowlist sweep for shell hooks and cron scripts",
-          "status": "todo",
+          "status": "done",
           "scope": "Apply the minimal-allowlist child-env shape (PATH, locale, home-equivalent, the three PersonalClaw vars, plus declared needs, with _SENSITIVE_ENV_PREFIXES as the floor) to the agent-influenced spawn sites not already covered: shell hooks and cron scripts. Confirm the bash action provider's existing _scrub_env is the allowlist shape or align it. Reuses the allowlist shape already specified by EXECUTION-ISOLATION's D1; this only extends it to the sites D1 does not name.",
           "done_when": "A planted secret in the gateway env is absent from a hook child, a cron-script child, and a bash-action child, proven by one regression test per site.",
           "deps": [
             "EXT:EXECUTION-ISOLATION:D1-allowlist-shape"
-          ]
+          ],
+          "pr": 1223
         },
         {
           "id": "PHF-5",
@@ -7580,11 +7581,6 @@
       {
         "id": "PHF-2",
         "title": "cgroup v2 second enforcement tier",
-        "plan": "PHF"
-      },
-      {
-        "id": "PHF-4",
-        "title": "Environment-inheritance allowlist sweep for shell hooks and cron scripts",
         "plan": "PHF"
       },
       {
@@ -10004,9 +10000,9 @@
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 13,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

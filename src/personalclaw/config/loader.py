@@ -2998,6 +2998,21 @@ class SandboxConfig:
             "toolchains, so it is opt-in).",
         ),
     )
+    env_passthrough: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Child Env Passthrough",
+            "Extra environment variable NAMES that hook, cron-script and bash-action "
+            "children inherit from the gateway, on top of the minimal base "
+            "(sandbox.CHILD_ENV_BASE_NAMES: PATH, locale, home-equivalents, proxy/CA "
+            "settings and the three PERSONALCLAW_* vars). Everything else is withheld — a "
+            "child does not inherit the gateway's environment. Declare a name here when a "
+            "script legitimately needs it (e.g. SLACK_BOT_TOKEN for a notifier, a language "
+            "runtime's variable); the withheld names are listed in the debug log at each "
+            "spawn. Names matching the credential floor (AWS_SECRET*, AWS_SESSION*, "
+            "SSH_AUTH_SOCK, GNUPGHOME, GIT_ASKPASS) are refused even when declared.",
+        ),
+    )
 
 
 @dataclass
@@ -3767,6 +3782,11 @@ class AppConfig:
                 nofile=max(0, _safe_int(sandbox_data.get("nofile", 4096), 4096)),
                 max_pids=max(0, _safe_int(sandbox_data.get("max_pids", 0), 0)),
                 max_rss_mb=max(0, _safe_int(sandbox_data.get("max_rss_mb", 0), 0)),
+                env_passthrough=[
+                    str(n).strip()
+                    for n in (sandbox_data.get("env_passthrough") or [])
+                    if str(n).strip()
+                ],
             ),
             observe_max_messages=max(1, int(data.get("observe_max_messages", 200))),
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),

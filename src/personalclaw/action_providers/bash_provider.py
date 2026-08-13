@@ -21,67 +21,22 @@ from personalclaw.action_providers.base import (
 
 logger = logging.getLogger(__name__)
 
-# Scrub secret-shaped env vars before exec'ing bash hooks so a hook command
-# like ``env`` or ``printenv`` cannot trivially exfiltrate API keys held in
-# the gateway's process environment. The hook user already has
-# dashboard-token-level trust, but reducing the easy-to-extract surface is
-# defense-in-depth — full RCE would still require crafting a real exploit
-# rather than running ``printenv ANTHROPIC_API_KEY``.
-#
-# Heuristic: drop env vars whose name contains any of these tokens
-# case-insensitively. False-negatives (e.g. ``MY_GITHUB_PAT`` is kept) are
-# accepted as a tradeoff against false-positives (e.g. dropping
-# ``PERSONALCLAW_HOOK_EVENT`` would break the feature contract).
-_SECRET_NAME_PATTERNS = re.compile(
-    r"(?:_KEY|_SECRET|_TOKEN|_PASSWORD|_PASSPHRASE|_CREDENTIAL|_PRIVATE|"
-    r"^API_KEY$|^API_TOKEN$|^OPENAI_|^ANTHROPIC_|^AWS_|^AZURE_|^GCP_|"
-    r"^GOOGLE_|^SLACK_|^GITHUB_|^GITLAB_|^GH_TOKEN|^NPM_TOKEN|"
-    r"^GIT_SSH_COMMAND|^SSH_AUTH_SOCK|^GPG_)",
-    re.IGNORECASE,
-)
-# Always keep these even if they match the secret pattern — needed by the
-# hook contract or by common Unix tooling.
-_KEEP_NAMES = frozenset(
-    {
-        "PATH",
-        "HOME",
-        "USER",
-        "SHELL",
-        "LANG",
-        "LC_ALL",
-        "LC_CTYPE",
-        "TERM",
-        "PWD",
-        "TZ",
-        "TMPDIR",
-        "PERSONALCLAW_HOOK_EVENT",
-        "PERSONALCLAW_HOOK_CONTEXT",
-        "PERSONALCLAW_HOME",
-        "PERSONALCLAW_WORKSPACE",
-    }
-)
-
-
-def _scrub_env(env: dict[str, str]) -> dict[str, str]:
-    """Return *env* with secret-shaped variables stripped."""
-    out: dict[str, str] = {}
-    for name, val in env.items():
-        if name in _KEEP_NAMES:
-            out[name] = val
-            continue
-        if _SECRET_NAME_PATTERNS.search(name):
-            continue
-        out[name] = val
-    return out
-
+# The child environment is built by ALLOWLIST — `sandbox.build_child_env` — so a hook
+# command like `env` or `printenv` cannot read the gateway's credentials at all. This
+# replaced a name-pattern denylist (PHF-4): the denylist kept everything it did not
+# recognise, which on a real gateway meant ~121 inherited variables minus the shapes the
+# pattern happened to know, and it could never see a credential named in a shape nobody
+# had thought of. The allowlist inverts the default.
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 #: Env vars a PAYLOAD KEY may never set (§7/R4 rule e — S129).
 #:
-#: 🔴 MEASURED. `_payload_env` merges AFTER `os.environ`, so a payload key shadows the
-#: real variable. Driven end to end: a payload of ``{"PATH": "<dir with a fake `date`>"}``
+#: 🔴 MEASURED. `_payload_env` merges AFTER the inherited environment (before PHF-4:
+#: `os.environ`; now the allowlisted base `sandbox.build_child_env` produces — the merge
+#: ORDER, and so this hazard, is unchanged), so a payload key shadows the real variable.
+#: Driven end to end: a payload of ``{"PATH": "<dir with a fake `date`>"}``
 #: made the command ``date`` print ``HIJACKED``. The whole point of passing the payload as
 #: ENV rather than string-templating the command is that a payload value cannot become
 #: code — but a payload *key* could change which binary the code resolves to, which is the
@@ -197,16 +152,26 @@ class BashActionProvider(ActionProvider):
             configured = 0
         timeout = configured or timeout
 
-        from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited, wrap_argv
+        from personalclaw.sandbox import (
+            PROFILE_TOOL,
+            build_child_env,
+            create_subprocess_limited,
+            wrap_argv,
+        )
 
         start = time.monotonic()
-        env = _scrub_env(
-            {
-                **os.environ,
+        # The allowlisted base, plus the values this site COMPUTES (never inherits): the
+        # trigger's `$variables` and the hook event/context the contract promises. The
+        # payload keys have already passed `PROTECTED_ENV_NAMES`, so a payload cannot
+        # shadow PATH or a loader variable; `build_child_env` applies the credential floor
+        # to these too, so it cannot set an AWS session either.
+        env = build_child_env(
+            site="bash-action",
+            extra={
                 **_payload_env(ctx),
                 "PERSONALCLAW_HOOK_EVENT": ctx.event,
                 "PERSONALCLAW_HOOK_CONTEXT": ctx.context,
-            }
+            },
         )
         argv = ["/bin/sh", "-c", command]
         wrapped_argv, cleanup_path = wrap_argv(argv)

@@ -464,6 +464,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "sandbox.nofile": {"type": "int", "min": 0, "max": 1_048_576},
     "sandbox.max_pids": {"type": "int", "min": 0, "max": 100_000},
     "sandbox.max_rss_mb": {"type": "int", "min": 0, "max": 1_048_576},
+    # PHF-4 — the declared-needs seam for the child-env allowlist. Names only; the
+    # credential floor still refuses a sensitive name at spawn, so a write here cannot
+    # hand a hook the gateway's AWS session.
+    "sandbox.env_passthrough": {"type": "str_list", "max_items": 40},
     "security.denied_commands": {"type": "str_list", "max_items": 100, "each_regex": True},
     "security.egress": {"type": "egress"},
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is

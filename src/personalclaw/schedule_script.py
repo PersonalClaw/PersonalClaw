@@ -33,7 +33,7 @@ from pathlib import Path
 from personalclaw.config.loader import DASHBOARD_PORT, config_dir
 from personalclaw.hooks import validate_file_path
 from personalclaw.mcp_core import _internal_secret
-from personalclaw.sandbox import wrap_argv
+from personalclaw.sandbox import build_child_env, wrap_argv
 
 logger = logging.getLogger(__name__)
 
@@ -264,8 +264,13 @@ def run_script_sandboxed(
 
         argv = ["python3", launcher_path, cfg_path]
         wrapped, cleanup = wrap_argv(argv, mode="standard")
-        # Clean env — the secret travels via the (unlinked-on-read) cfg file only.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PERSONALCLAW_SECRET")}
+        # The child env is an ALLOWLIST, not a filtered copy (PHF-4). The internal secret
+        # still travels only via the unlinked-on-read cfg file — and now no OTHER gateway
+        # variable rides along either. What this replaced was a denylist of exactly one
+        # prefix (`PERSONALCLAW_SECRET`), which left every other inherited variable —
+        # including the `.env` credentials `config/loader.py` seeds into `os.environ` for
+        # "trusted children" — readable by a user script via `os.environ`.
+        env = build_child_env(site="cron-script")
         try:
             proc = subprocess.run(
                 wrapped,
