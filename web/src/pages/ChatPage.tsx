@@ -2956,7 +2956,7 @@ function RewindDivider({ snapshots, canFork, onFork }: {
       <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
         <Rewind size={12} className="shrink-0" />
         <span>Rewound from here · {kept} message{kept === 1 ? '' : 's'} kept in history</span>
-        <QuietButton onClick={() => setOpen((o) => !o)} className="h-6">
+        <QuietButton onClick={() => setOpen((o) => !o)} ariaExpanded={open} className="h-6">
           {open ? 'Hide' : 'View'} <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         </QuietButton>
       </div>

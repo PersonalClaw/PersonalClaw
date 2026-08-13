@@ -57,6 +57,11 @@ export function SquareIconButton({
       type="button"
       aria-label={label}
       aria-disabled={disabled || undefined}
+      // `on` means "selected/toggled" and drove only the coral tint — the fifth primitive in this family
+      // (after Button, HeaderControl, IconButton, FilterChip). Two callers pass it: the Edit buttons on
+      // `#/settings/providers` and each multi-instance card, where "editing" vs "not editing" was a tint
+      // and nothing else. `undefined` unless a caller opts in, so a plain icon action claims no state.
+      aria-pressed={on}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={disabled ? undefined : onClick}
       whileTap={disabled ? undefined : { scale: pressScale }}
