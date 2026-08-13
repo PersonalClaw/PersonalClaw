@@ -66,6 +66,7 @@ const docs: UiDoc[] = [
     description:
       "The default first-load state for list pages — N shimmering placeholder rows shaped like ListRow (matching padding + leading-icon), so the swap to real data is calm rather than a jarring pop. Gate a list body on it while a cache-miss fetch is in flight.",
     props: [
+      { name: 'what', description: 'What is loading, for the sr-only announcement — "tasks", "notification settings". Omit for a bare "Loading…". Measured before it existed: the region was marked `role=status aria-busy` with an `aria-label`, and announced NOTHING at any point in a cold load, because a live region is announced by its content and the content was styled divs.' },
       { name: 'rows', description: 'How many placeholder rows to render (default 6).' },
     ],
     bestPractices: [
@@ -94,6 +95,7 @@ const docs: UiDoc[] = [
     description:
       'A first-load placeholder for a stat/hub panel — a title block plus a grid of N stat cards. Use it as the loading gate on read-only dashboard-style panels (Overview, Security).',
     props: [
+      { name: 'what', description: 'What is loading, for the sr-only announcement — "tasks", "notification settings". Omit for a bare "Loading…". Measured before it existed: the region was marked `role=status aria-busy` with an `aria-label`, and announced NOTHING at any point in a cold load, because a live region is announced by its content and the content was styled divs.' },
       { name: 'cards', description: 'How many stat-card placeholders to render (default 4).' },
       { name: 'cols', description: 'Grid column count (default 2).' },
       { name: 'title', description: 'Whether to render the leading title block (default true); pass false when the panel has no header.' },
@@ -110,6 +112,7 @@ const docs: UiDoc[] = [
     description:
       'A first-load placeholder for a settings FORM panel — a title block plus N sections, each a heading and a few label/control rows, shaped like the Section/Row chrome so the swap to the real form is calm. Use it as the loading gate on config panels fetched via useCachedData (Chat, Voice, Inbox, Notifications, Agent defaults…).',
     props: [
+      { name: 'what', description: 'What is loading, for the sr-only announcement — "tasks", "notification settings". Omit for a bare "Loading…". Measured before it existed: the region was marked `role=status aria-busy` with an `aria-label`, and announced NOTHING at any point in a cold load, because a live region is announced by its content and the content was styled divs.' },
       { name: 'rows', description: 'Label/control rows per section (default 3).' },
       { name: 'sections', description: 'How many section blocks to render (default 2).' },
       { name: 'title', description: 'Whether to render the leading title block (default true); pass false when the panel has no header.' },
@@ -147,6 +150,20 @@ const docs: UiDoc[] = [
       { guidance: true, description: 'Use Loading only for tiny inline waits; for a page or panel first load reach for ListSkeleton / FormSkeleton / CardGridSkeleton so content resolves in its final shape.' },
     ],
     anatomy: ['dimmed "Loading…" text span'],
+  },
+  {
+    name: 'LoadingStatus',
+    keywords: ['loading', 'skeleton', 'announce', 'live region', 'status', 'screen reader'],
+    description:
+      'The sr-only text that makes a skeleton audible. A `role="status" aria-busy="true"` region is announced by its CONTENT changing, so a skeleton built from styled divs announces nothing however well it is marked up — measured on a cold, throttled load of #/tasks and #/knowledge: the region was on screen, correctly named by aria-label, and silent from the first frame to the moment data arrived. Render this inside any busy region; it replaces the aria-label rather than joining it, because `status` takes no name from its content and a second hard-coded string would drift from the one people hear.',
+    props: [
+      { name: 'what', description: 'What is loading — renders "Loading <what>…". Omit for a bare "Loading…".' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Put it inside every region that sets aria-busy. The rail in ui/loadingAnnounced.test.tsx fails a busy region that renders no announcement.' },
+      { guidance: false, description: 'Do not add an aria-label alongside it — one region, one string, so the announced text cannot drift from the name.' },
+    ],
+    anatomy: ['sr-only span with the "Loading …" text'],
   },
 ]
 

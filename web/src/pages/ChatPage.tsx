@@ -25,7 +25,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { DotGlow } from '../ui/DotGlow'
-import { EmptyState, ListSkeleton, LoadError, Skeleton } from '../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { FieldError } from '../ui/forms'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
@@ -2895,7 +2895,8 @@ function MessagesSkeleton() {
   ]
   return (
     <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}
-      role="status" aria-busy="true" aria-label="Loading conversation">
+      role="status" aria-busy="true" >
+        <LoadingStatus what="conversation" />
       {rows.map((r, i) => (
         <div key={i} className={`flex flex-col gap-2 ${r.me ? 'items-end' : 'items-start'}`}>
           <Skeleton className={`h-4 ${r.w} ${r.me ? 'max-w-[70%]' : ''}`} />
