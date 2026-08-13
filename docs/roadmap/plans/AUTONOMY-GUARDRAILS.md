@@ -749,6 +749,104 @@ the manifest reference and the dag derived block all regenerate byte-identical (
 baseline tracks enum / sdk-export / config surfaces, not call sites, so wiring a resolver is
 invisible to it). No `web/` changes — the rung chip, ladder panel and undo click are AG-8.
 
+### 2026-08-12 — Atom AG-8 / Session 6.1 (§6.1 promotion proposals + the ladder's user surface) — DONE
+
+AG-6 built the decision layer, AG-7 wired it into all three dispatch seams, and both left the
+ladder **invisible**: no HTTP surface, `promotion_eligibility` with zero production callers, and
+`ActionResult.reversal` written by `create-task` with **nothing anywhere able to reverse a
+handle**. This atom closes all three and is the LAST atom of the rung-ladder track (§5-§6).
+
+`src/personalclaw/guardrails/ladder.py` is the user-facing half — the third module beside
+`autonomy.py` (decides) and `rungs.py` (routes). It holds three things:
+
+* **The reversal record store** (`autonomy_reversals.json`, `atomic_write`, a 50-record ring,
+  declared in the durability inventory as `autonomy_reversals`/`DOMAIN_CONFIG`/`lww`). Written by
+  `rungs.record_reversal`, which every `auto_with_undo` execution already goes through, so the
+  record has a production writer at all three seams rather than only in a test.
+* **The undo executor** (`reverse_action`). Takes a RECORD ID, never a handle: the handle comes
+  out of our own persisted state, so a request can only ask to undo something this machine
+  actually did and told the user about. Dispatch is `ActionProvider.reverse` on a provider the
+  RECORDED action type's own declaration claims (`ActionTypeSpec.providers`) and that claims the
+  handle's kind (the new `ActionProvider.reversal_kinds`) — the handle stays opaque to core, and
+  it never reaches a path, a shell or a query. On success: mark reversed, then `demote`. On ANY
+  refusal: named code, SEL row, effect untouched, **no demotion**.
+* **The promotion proposal** (`propose_promotions`) plus `ladder_view()`, the panel's inventory —
+  `promotion_eligibility`'s two production callers.
+
+`GET /api/autonomy` (inventory + derived proposals, `asyncio.to_thread` because it reads the SEL
+tail once per type) and `POST /api/autonomy/{grant,demote,undo}` in a new
+`dashboard/handlers/autonomy.py`. The asymmetry is the design: only `grant` increases autonomy,
+and the decision is `grant_rung`'s — the handler calls it, never re-implements its ceiling /
+cooldown / no-op checks, and explains an already-final refusal afterwards via
+`ladder.explain_refused_grant`. A client-supplied rung is an ASK. The grant's stored
+`evidence_window` is the SERVER's recomputed record, never text from the body.
+
+FE (`web/`): `ui/RungChip.tsx` (+ its `.doc.ts`) and `lib/rungs.ts`, the Settings → Guardrails
+**Earned autonomy** panel (per-type rung, the `authority` sentence, the derived record, demotion
+history, Promote / Hand back) and its **undo list**, chips on every trigger row keyed on the
+action-provider name, and an **Undo & stop doing this automatically** button on an
+`auto_with_undo` notification — rendered from the persisted record's pending state, not from the
+`reversal_id` sitting on the notification, so an already-undone action never offers a second undo.
+Rung WORDING is server-owned (`rungs.RUNG_LABELS` / `RUNG_HINTS`, served as `rung_meta`) so a
+chip, the panel and the proposal that offered a promotion cannot disagree.
+
+**done_when 3, concretely.** The chip's answer is the rung in behaviour words plus its
+provenance, and there are exactly three provenances: *"Runs at runs-on-its-own because that is
+the rung it was declared with; it has never been promoted."* · *"You promoted this to runs-with-
+undo on 2026-08-10 — 12 clean approvals over 9.0 days with 0 rejection(s)."* · *"Granted runs-on-
+its-own, held at asks-first while the incident kill switch is active."* Composed once, in
+`_authority_sentence`, because a chip tooltip and a panel row describing one authority differently
+is the drift this project keeps finding.
+
+**Proved as a user drives it** (`tests/test_guardrails_ladder.py`, 40 tests): a REAL
+`execute_event_action` fire of an app-declared `draft_only` action is withheld and files a
+proposal row; a grant through the REAL endpoint lets the SAME fire execute and file a REAL native
+task; the undo endpoint deletes that task file and demotes the type; a third fire is withheld
+again. Plus: the API refuses a grant above the declared ceiling and during a demotion cooldown;
+five bogus record-id shapes never reach the store; eleven unparseable handles are refused at BOTH
+ends; a provider that refuses (the task was already tidied away) leaves the rung ALONE; a second
+undo says `already_reversed`; every refusal AND the success are SEL-audited.
+
+Full gate: `make lint` clean (black/isort/flake8/mypy), `pytest tests/` **18834 passed, 30
+skipped, 12 xfailed** plus the 3 pre-existing `test_harness_validate.py` failures that red in any
+worktree; web gate green — `tsc --noEmit` clean, **1824 vitest tests in 191 files**, `npm run
+build` clean. `inert-surface-baseline.json` and `config-baseline.json` regenerate byte-identical
+(no new config field, no new enum surface); the manifest reference gained the four routes and the
+dag derived block was regenerated for the atom flip. `docs/design/consistency-audit.json` moved
+only its `filesScanned` count (446→449, the three new FE files) with `driftHits` unchanged at 7.
+
+**DEVIATION — the one-tap card's execute-on-APPROVE replay is not built.** AG-7's log promised
+AG-8 would "render that row as the one-tap card and supply the approval verdict". Half of that
+shipped: the withheld row is a standard `agent_request` the inbox already renders, and the ladder
+panel is where its type's rung is decided. The other half — re-EXECUTING a withheld action when
+the user approves — needs the action config, context and dispatch identity persisted with the row
+and replayed later, which is a durable action-replay mechanism owned by the withhold surface
+(INBOX-NOTIF-UNIFICATION's agent-request contract), not by the ladder. Building it here would
+have meant a second, ladder-private dispatch path for actions the seams already know how to run.
+Recorded rather than half-built; `inbox.reply_draft` therefore still cannot climb from its
+`draft_only` floor, which is the state AG-7 described and the reason no `one_tap` execute branch
+exists at that affordance.
+
+**DEVIATION — no `guardrails.autonomy` config field was added for the proposal cadence.** The
+scan interval is a module constant (`_AUTONOMY_PROPOSAL_INTERVAL_SECS`, 6h) rather than a config
+knob: a rung is earned over days, so the cadence is not a decision a user needs, and shipping a
+PATCH-able field nobody would turn is the config surface this plan already declined once (the
+dropped `autonomy.enabled` toggle).
+
+**DECISION — the proposal scan rides the file-watch poll loop, self-throttled.** It follows the
+scratchpad intake's precedent in the same loop ("a periodic look-at-local-state-and-raise-a-
+proposal pass with nothing to dispatch") rather than adding a fifth background task, and it sits
+inside that loop's `incident_active()` guard — which is correct, since eligibility is ineligible
+during an incident anyway. `--no-crons` disables it with the rest of the unattended work.
+
+**DECISION (security) — the undo site is EXEMPT from the action-provider execution invariant, and
+the exemption is asserted.** `test_action_provider_chokepoints` requires every module reaching
+`get_action_provider` to carry a policy check. `ladder.py` reaches one to UNDO, which is the
+opposite direction: an `incident_active` check there would refuse to take back exactly the
+automatic action a user turned the kill switch on because of. So a second named exemption joins
+the catalog one, with `test_the_reversal_site_undoes_and_never_executes` pinning the properties
+that earn it (never `.execute(`, always `.reverse(`, resolution bounded by `reversal_kinds`).
+
 ---
 
 ## Status: all four sessions COMPLETE (2026-07-25)

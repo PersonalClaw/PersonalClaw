@@ -80,6 +80,14 @@ from personalclaw.dashboard.handlers.agents import (  # noqa: E402, F401
     api_themes_create,
 )
 
+# ── Earned-autonomy ladder (handlers/autonomy.py) ──
+from personalclaw.dashboard.handlers.autonomy import (  # noqa: E402, F401
+    api_autonomy,
+    api_autonomy_demote,
+    api_autonomy_grant,
+    api_autonomy_undo,
+)
+
 # ── Core (handlers/core.py) ──
 from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     _DIST_DIR,

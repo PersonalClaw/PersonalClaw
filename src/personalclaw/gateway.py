@@ -102,6 +102,11 @@ logger = logging.getLogger(__name__)
 # Max retries for injecting subagent results into parent sessions.
 _MAX_INJECT_ATTEMPTS = 2
 
+# How often the earned-autonomy promotion scan runs (§6.1). Six hours, not the poll
+# interval it rides: one pass reads the SEL tail once per declared action type, and a rung
+# is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
+_AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
+
 # Upper bound for a single autonudge-driven goal loop turn. Loop cycles run long
 # (subagent fan-out, 15-20 min), so this is generous — it only fires to free a
 # genuinely-wedged turn (e.g. an ACP turn that hung and never emitted turn-end).
@@ -284,6 +289,7 @@ class GatewayOrchestrator:
         self._web_watch_task: "asyncio.Task[None] | None" = None  # S121 web_watch poll loop
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
+        self._last_autonomy_scan: float = 0.0  # §6.1 promotion-proposal scan throttle
         self._running_script_ids: set[str] = set()  # zero-token jobs in flight
         self.heartbeat_svc: HeartbeatService | None = None
         self.loop_watchdog: "LoopWatchdog | None" = None
@@ -1581,10 +1587,46 @@ class GatewayOrchestrator:
                 # it raises an inbox PROPOSAL and stops. Incident mode already suspended above,
                 # which is right: proposing work is still unattended background activity.
                 await asyncio.to_thread(self._scan_scratchpad)
+                # The earned-autonomy promotion scan (§6.1). Rides this loop for the same
+                # reason the scratchpad does — it is a periodic "look at local state and
+                # raise a proposal" pass with nothing to dispatch — but on its OWN much
+                # slower clock, because each pass reads the SEL tail once per declared
+                # action type. Self-throttled rather than given a task of its own.
+                await asyncio.to_thread(self._scan_autonomy_promotions)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - the loop must outlive any single poll's failure
                 logger.warning("file-watch poll loop iteration failed", exc_info=True)
+
+    def _scan_autonomy_promotions(self) -> None:
+        """Raise a proposal for every action type that has EARNED its next rung (§6.1).
+
+        The ladder only ever climbs on a click, so an earned rung has to travel to the user
+        instead of waiting to be found in a Settings panel — that is the difference between
+        a promotion the user chose and a promotion nobody ever hears about. The proposals
+        are deduped per (type, rung), so re-running this costs nothing and re-raises nothing.
+
+        Never promotes and never raises: this scan cannot change a rung, and a failed scan
+        must not stop the file fires that share the loop.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        if now - self._last_autonomy_scan < _AUTONOMY_PROPOSAL_INTERVAL_SECS:
+            return
+        self._last_autonomy_scan = now
+        try:
+            from personalclaw.guardrails.ladder import propose_promotions
+
+            proposed = propose_promotions()
+            if proposed:
+                logger.info(
+                    "autonomy: proposed a promotion for %d action type(s): %s",
+                    len(proposed),
+                    ", ".join(proposed),
+                )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("autonomy promotion scan failed", exc_info=True)
 
     def _scan_scratchpad(self) -> None:
         """Scan the configured scratchpad and raise proposals for its new actionable lines.

@@ -160,6 +160,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   quietly overruling the app. Actions that carry no declaration behave exactly as before: the
   denylist, the kill switch and the permission you granted when you created the automation are
   unchanged, and nothing you already run stops running.
+- **You can now see, grant and take back what each automation may do on its own.** The autonomy
+  ladder had no face: it decided quietly, and there was no way to find out why an action was allowed
+  to run unattended, no way to accept a rung it had earned, and — worst — no way to actually undo an
+  action that ran at "run with undo", however loudly the notification offered one. Settings →
+  Guardrails now lists every governed action with the rung it runs at, a plain sentence saying WHERE
+  that permission came from (declared that way · you promoted it on this date, with the record you
+  were shown · granted, but held down right now by incident mode), the track record behind its next
+  rung, and its demotion history. The same chip rides every row on the Triggers page, so you can
+  scan a list of automations and see which ones act on their own. **Promotion is still only ever
+  your click** — when an action clears the bar, PersonalClaw files a proposal in your inbox and
+  waits; nothing in the system can promote anything, and a request asking for a rung above an
+  action's declared ceiling, or during a cooldown, is refused with the reason. Two buttons take
+  autonomy back: **Hand back** returns an action to the rung it was declared with, and **Undo** on
+  an automatic action's notification (or in the panel) really reverses it — the task an automation
+  filed is deleted — **and** stops that action from doing it by itself again. The undo asks the
+  provider that created the thing to take it back, since only it knows what "undo" means for its own
+  effect, and it works from PersonalClaw's own record of what ran: if that record is gone, the thing
+  was already deleted, or nothing installed can reverse it, the undo refuses and says which, and
+  crucially leaves the action's earned rung alone — a broken undo request can never be a way to
+  quietly degrade what your automations are allowed to do.
 - **You can share a chat as a read-only artifact — inside your own instance, never on the
   internet.** Right-click a chat in Chat History → **Share as read-only artifact** and the
   conversation is saved into your artifacts library as a Markdown record, then opened for you. The

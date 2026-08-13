@@ -82,6 +82,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/auth/password` — set the owner password from an AUTHENTICATED session.
 - `GET /api/auth/session` — the authenticated account view (Settings → Account).
 - `GET /api/auth/status` — what the login UI needs to render itself.
+- `GET /api/autonomy` — every governed action type, its rung, and what it has earned.
+- `POST /api/autonomy/demote` — hand a type's autonomy back. Body ``{key}``.
+- `POST /api/autonomy/grant` — the promotion click. Body ``{key, rung}``.
+- `POST /api/autonomy/undo` — reverse one automatic action. Body ``{id}``.
 - `GET /api/autonudge` — list all active loops.
 - `POST /api/autonudge` — start or replace a loop on a session.
 - `GET /api/autonudge/session/{session_name}` — loop bound to this session (or null).

@@ -19,6 +19,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { rowSubject } from '../../lib/rowSubject'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type NotificationItem } from '../../lib/api'
+import { useAutonomyLadder } from '../../lib/rungs'
 import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, unreadRail, toneChipBg } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -52,6 +53,27 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     return () => clearInterval(t)
   }, [refresh])
   useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) refresh() })
+
+  // The undo affordance on an `auto_with_undo` notice (AUTONOMY-GUARDRAILS §6.1). The button
+  // is rendered from the persisted reversal RECORD, not from the `reversal_id` sitting on the
+  // notification: a record that has already been undone (here, in Settings, or on another
+  // machine) must not still offer an undo, and the notification itself never changes once
+  // written. So the id is the key and the ladder read is the state.
+  const { ladder, refresh: refreshLadder } = useAutonomyLadder()
+  const undoable = useMemo(
+    () => new Set((ladder?.reversals ?? []).filter((r) => !r.reversed_at).map((r) => r.id)),
+    [ladder],
+  )
+  async function undoAction(n: NotificationItem) {
+    if (!n.reversal_id) return
+    try {
+      await api.autonomyUndo(n.reversal_id)
+      notify(`Undone. ${n.action_type || 'That action'} will not do this on its own any more.`, 'success')
+    } catch (e) {
+      notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    invalidateCache('autonomy:ladder'); refreshLadder()
+  }
 
   // newest first (the log is appended chronologically)
   const ordered = useMemo(() => (items ? [...items].reverse() : null), [items])
@@ -149,6 +171,15 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
               {open.loop_id && (
                 <Button size="sm" onClick={() => { ack(open); navigate(`${open.loop_kind === 'code' ? 'code' : 'loops'}/${open.loop_id}`) }}>
                   <Target size={14} /> {open.loop_kind === 'code' ? 'Open project' : 'Open loop'}
+                </Button>
+              )}
+              {/* Undo the action this notice is ABOUT — offered only while the reversal record
+                  is still pending. The label says both halves of what the click does, because
+                  "your automation will stop doing this by itself" is not a consequence to
+                  discover afterwards. */}
+              {open.reversal_id && undoable.has(open.reversal_id) && (
+                <Button size="sm" variant="secondary" onClick={() => { undoAction(open); ack(open) }}>
+                  <Undo2 size={14} /> Undo & stop doing this automatically
                 </Button>
               )}
               {open.acked
