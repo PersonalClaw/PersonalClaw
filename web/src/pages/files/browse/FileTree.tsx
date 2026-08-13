@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, ChevronDown, Pencil, Trash2, Upload, FilePlus2, FolderPlus, MoreHorizontal } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { FsEntry } from '../../../lib/api'
-import { useMenuCursor } from '../../../lib/useMenuCursor'
+import { menuCursorKeydown, useMenuCursor } from '../../../lib/useMenuCursor'
 import { fileIcon, gitBadge, gitStatusTitle } from '../fileMeta'
 import type { useDirCache } from '../filesData'
 
@@ -375,13 +375,11 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: Me
       // without it: the Explorer is a `ui/SidePanel`, which binds Escape on WINDOW, so one press
       // closed the menu AND collapsed the whole explorer — 13 tree rows to 0, and focus on <body>
       // because the "⋯" button this menu returns focus to had just unmounted with the tree.
-      if (e.key === 'Escape') { e.stopPropagation(); closeAndReturnFocus() }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
-      // Tab dismisses and hands focus back to the "⋯" button, so the browser's own Tab continues
-      // from there instead of walking into the tree behind an open menu.
-      else if (e.key === 'Tab') closeAndReturnFocus()
-      // Enter/Space activate the focused row natively — no branch here, or every press fires twice.
+      if (e.key === 'Escape') { e.stopPropagation(); closeAndReturnFocus(); return }
+      // Arrows / Home / End / Tab: the shared reducer. Tab hands focus back to the "⋯" button so
+      // the browser's own Tab continues from there instead of walking into the tree behind an open
+      // menu. Enter/Space activate the focused row natively — no branch, or every press fires twice.
+      menuCursorKeydown(e, { move, dismiss: closeAndReturnFocus })
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)

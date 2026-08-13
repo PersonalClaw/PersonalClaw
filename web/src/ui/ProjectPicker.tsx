@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { FolderKanban, ChevronDown, Check, Plus } from 'lucide-react'
 import { api, type ProjectItem } from '../lib/api'
+import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
 import { overlayEnter, bounce } from '../design/motion'
 
 /** A compact project chooser for the Goal Loop + Code create flows.
@@ -30,6 +31,22 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
   const [open, setOpen] = useState(false)
   const [projects, setProjects] = useState<ProjectItem[] | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  // Archived projects are "put away" — don't offer them as a target for NEW work.
+  // (The Projects page still manages them; this picker is for active scoping.) An
+  // already-selected project that's since been archived stays shown via `current`
+  // below — we just don't list it as a fresh option below. Computed HERE, above the
+  // listeners, because the cursor hook needs the option count.
+  const selectable = projects?.filter((p) => p.status !== 'archived' || p.id === value) ?? null
+  // This popup declared `role="listbox"` and implemented none of what that promises: measured on
+  // `#/chat`, focus stayed on the trigger, ArrowDown did nothing, and all 6 options were separate
+  // tab stops. Options are the empty row + `selectable`, and the cursor opens on the SELECTED one.
+  const optionCount = 1 + (selectable?.length ?? 0)
+  const selectedIdx = value ? Math.max(0, 1 + (selectable?.findIndex((pr) => pr.id === value) ?? -1)) : 0
+  const { move, restoreFocus, tabIndexFor } = useMenuCursor({
+    containerRef: listRef, count: optionCount, openKey: open ? 'open' : null, initialIndex: selectedIdx,
+  })
+  const closeAndReturnFocus = useCallback(() => { setOpen(false); restoreFocus() }, [restoreFocus])
   const lastSignal = useRef(openSignal ?? 0)
   useEffect(() => {
     if (openSignal === undefined || openSignal === lastSignal.current) return
@@ -55,19 +72,17 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
   useEffect(() => {
     if (!open) return
     const onDown = (e: PointerEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpen(false); restoreFocus(); return }
+      menuCursorKeydown(e, { move, dismiss: closeAndReturnFocus })
+    }
     window.addEventListener('pointerdown', onDown)
     window.addEventListener('keydown', onKey)
     return () => { window.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onKey) }
-  }, [open])
+  }, [open, move, restoreFocus, closeAndReturnFocus])
 
   const current = value ? projects?.find((p) => p.id === value) : null
   const label = value ? (current?.name ?? 'Project') : (emptyLabel ?? 'New project')
-  // Archived projects are "put away" — don't offer them as a target for NEW work.
-  // (The Projects page still manages them; this picker is for active scoping.) An
-  // already-selected project that's since been archived stays shown via `current`
-  // above — we just don't list it as a fresh option below.
-  const selectable = projects?.filter((p) => p.status !== 'archived' || p.id === value) ?? null
 
   return (
     <div ref={ref} className="relative">
@@ -93,14 +108,17 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
       </button>
       <AnimatePresence>
       {open && (
-        <motion.div role="listbox"
+        <motion.div ref={listRef} role="listbox" aria-orientation="vertical"
+          // 🔴 axe (serious) `aria-input-field-name` before this: a listbox is an ARIA INPUT FIELD,
+          // so unlike a `role="menu"` it MUST carry a name — and this one had none.
+          aria-label="Project"
           variants={overlayEnter} initial="initial" animate="animate" exit="exit"
           style={{ transformOrigin: 'top left' }}
           className="absolute z-30 mt-1 max-h-[300px] w-[240px] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface-container p-1 shadow-menu">
           {/* The empty option. Loop flow: "New project (auto-named)" — backend names it
               from the goal/task. Chat passes emptyLabel="No project" (unbound). */}
-          <button type="button" role="option" aria-selected={!value}
-            onClick={() => { onChange(''); setOpen(false) }}
+          <button type="button" role="option" aria-selected={!value} tabIndex={tabIndexFor(0)}
+            onClick={() => { onChange(''); closeAndReturnFocus() }}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
             <Plus size={14} className="shrink-0 text-on-surface-low" />
             <span className="min-w-0 flex-1 truncate">{emptyLabel ?? 'New project'} {(emptyHint ?? '(auto-named)') && <span className="text-on-surface-low/70">{emptyHint ?? '(auto-named)'}</span>}</span>
@@ -112,10 +130,15 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
             <div className="px-2 py-2 text-on-surface-low text-[0.75rem]">No existing projects.</div>
           ) : (
             <>
-              <div className="mt-1 border-t border-outline-variant/40 px-2 pt-1.5 pb-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low/70">Existing</div>
-              {selectable.map((p) => (
+              {/* 🔴 axe (serious) `color-contrast` measured this at 3.62:1 — a 9pt uppercase label
+                  needs 4.5. The `/70` alpha on an already-low ink was the whole cause; dropping it
+                  takes the same token to 5.93:1 and changes nothing else. Found while driving the
+                  listbox for this cycle's keyboard work, and it was there before it. */}
+              <div className="mt-1 border-t border-outline-variant/40 px-2 pt-1.5 pb-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">Existing</div>
+              {selectable.map((p, i) => (
                 <button key={p.id} type="button" role="option" aria-selected={value === p.id}
-                  onClick={() => { onChange(p.id); setOpen(false) }}
+                  tabIndex={tabIndexFor(i + 1)}
+                  onClick={() => { onChange(p.id); closeAndReturnFocus() }}
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
                   <FolderKanban size={14} className="shrink-0 text-on-surface-low" />
                   <span className="min-w-0 flex-1 truncate">{p.name}</span>

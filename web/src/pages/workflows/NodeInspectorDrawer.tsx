@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ScanSearch, Link2, Package } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
-import { Skeleton } from '../../ui/ListScaffold'
+import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, ApiError, type NodeInspect } from '../../lib/api'
 import { accentChip } from '../../design/accent'
@@ -67,7 +67,8 @@ export function NodeInspectorDrawer({ runId, nodeId, onClose }: {
     >
       <div data-testid="node-inspector-body" className="flex flex-col gap-l">
         {loading ? (
-          <div role="status" aria-busy="true" aria-label="Loading node detail" className="flex flex-col gap-l">
+          <div role="status" aria-busy="true"  className="flex flex-col gap-l">
+        <LoadingStatus what="node detail" />
             <Skeleton className="h-5 w-24" />
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-16 w-full" />

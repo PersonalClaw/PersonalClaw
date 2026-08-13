@@ -46,7 +46,7 @@ export function DurabilityPanel() {
   // Error BEFORE the skeleton, or it is unreachable: `data` is undefined for the loading, failed AND
   // empty cases. Same one-line shape `AgentDefaultsPanel` ships for the same endpoint.
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg) return <FormSkeleton sections={2} />
+  if (!data || !cfg) return <FormSkeleton sections={2} what="settings" />
 
   return (
     <div>

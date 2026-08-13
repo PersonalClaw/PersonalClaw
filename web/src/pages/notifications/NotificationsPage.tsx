@@ -16,6 +16,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { confirm } from '../../ui/dialog'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { rowSubject } from '../../lib/rowSubject'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type NotificationItem } from '../../lib/api'
 import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, unreadRail, toneChipBg } from './notificationMeta'
@@ -29,6 +30,8 @@ import { notify } from '../../app/appSdk'
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
  *  (all by ts). Filter by read-state + kind; grouped Today / Yesterday / Earlier.
  *  Live via the shared WS `notification_ack` / new-notification events. */
+
+
 export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 'setQuery' | 'navigate'>) {
   const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })  // 'all' | 'unread' | <kind>
   const [openTsRaw, setOpenTs] = useQueryParam(query, setQuery, 'open', '')
@@ -161,7 +164,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         {items === undefined && loadErr ? (
           // Before the skeleton branch, or a failed first read spins it forever.
           <LoadError what="notifications" error={loadErr} onRetry={load} />
-        ) : filtered === null ? <ListSkeleton rows={6} /> : items && items.length === 0 ? (
+        ) : filtered === null ? <ListSkeleton rows={6} what="notifications" /> : items && items.length === 0 ? (
           <EmptyState icon={Bell} title="You're all caught up" hint="Schedule runs, trigger fires, agent updates, and task results surface here for you to review." />
         ) : (
           <>
@@ -214,11 +217,20 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {/* Investigate (plan 60): a failure notification carries the link to what
             failed, so the chat opens with the run/job state already resolved. */}
-        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34} />
+        {/* Each of these acts on THIS notification, and there are 83 rows here. Measured in Chrome's
+            AX tree before naming them: 83x "Investigate in chat", 83x "Delete", 81x "Mark unread" —
+            three names for 247 controls.
+
+            🪤 `n.title` ALONE IS NOT THE ROW, and re-measuring proved it: naming from the title left
+            35x "…: Refine a skill" and 26x "…: Loop progress", because the title is a KIND here, not
+            an identity. The row shows title + the body's first line, and so does the name — capped,
+            because the other half of this cycle fixed a tile named by 695 characters of its body. */}
+        <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34}
+          label={`Investigate in chat: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} />
         {n.acked
-          ? <IconButton icon={Undo2} label="Mark unread" size={34} onClick={onUnack} />
-          : <IconButton icon={Check} label="Mark read" size={34} onClick={onAck} />}
-        <IconButton icon={X} label="Delete" size={34} onClick={onDelete} />
+          ? <IconButton icon={Undo2} label={`Mark unread: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} title="Mark unread" size={34} onClick={onUnack} />
+          : <IconButton icon={Check} label={`Mark read: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} title="Mark read" size={34} onClick={onAck} />}
+        <IconButton icon={X} label={`Delete: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} title="Delete" size={34} onClick={onDelete} />
       </div>
     </motion.div>
     </ContextMenu>

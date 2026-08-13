@@ -8,6 +8,7 @@ const doc: UiDoc = {
   description:
     "An icon button (MessageCircleQuestion, tooltip 'Investigate in chat') that opens a chat pre-loaded with one entity's full context. The context envelope is composed SERVER-side by the entity kind's registered resolver (a client can't forge a snapshot), fenced as untrusted data at injection, and the session opens in read-only `ask` task mode — investigating never mutates the entity; the user escalates the mode themselves. The one shared primitive: a surface passes only {kind, id}.",
   props: [
+      { name: 'label', description: 'Name override for a per-row instance. The bare verb (Investigate in chat) repeats once per row — 83 times on #/notifications — so a list passes `Investigate in chat: <row>` while the tooltip stays the verb. Omit for single-instance use.' },
     { name: 'kind', type: 'string', required: true, description: "The entity kind — a key in the backend investigate resolver registry (inbox_item | loop_finding | … — a new kind registers a resolver first)." },
     { name: 'id', type: 'string', required: true, description: 'The entity id within the owning store (e.g. an inbox item id, "loopid:cycle").' },
     { name: 'backLink', type: 'string', required: false, description: "Hash route back to the source surface; overrides the resolver's default (the chat header chip deep-links here)." },

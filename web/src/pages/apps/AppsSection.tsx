@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
+import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
@@ -184,6 +185,12 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
   const app = { name: item.name, enabled: item.enabled, hasUI: item.hasUI }
   return (
     <Popover align="right" placement="bottom" width={200}
+      // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
+      // 175px tall inside a card whose own `overflow-hidden` box ends 56px earlier, so the LAST row
+      // — "Force uninstall", the destructive one — was clipped away on every card, and the strip it
+      // occupied belongs to the card underneath (which is itself clickable). At 430px two of the
+      // seven menus were clipped by 166px: invisible entirely.
+      portal
       trigger={(open, toggle) => (
         <button type="button" aria-label={`Actions for ${item.displayName}`} title="Actions"
           aria-expanded={open} onClick={(e) => { e.stopPropagation(); toggle() }}
@@ -530,7 +537,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           ) : apps === undefined && appsErr ? (
             // Before the skeleton branch, or a failed fetch spins it forever.
             <LoadError what="apps" error={appsErr} onRetry={reload} />
-          ) : apps === undefined ? <ListSkeleton rows={4} />
+          ) : apps === undefined ? <ListSkeleton rows={4} what="apps" />
             : libResult && libResult.length === 0 ? (
               // Empty state, tab-aware: Native (should never be empty in practice —
               // native apps always ship), Library (no user-installed apps), each
@@ -653,7 +660,7 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
   if (catalog === undefined && catalogError) {
     return <LoadError what="the Store catalog" error={catalogError} onRetry={reloadCatalog} />
   }
-  if (catalog === undefined) return <ListSkeleton rows={3} />
+  if (catalog === undefined) return <ListSkeleton rows={3} what="the Store catalog" />
 
   return (
     <div className="flex flex-col gap-2xl">
@@ -944,9 +951,17 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
                 </span>
               )}
             </div>
+            {/* 🔴 3.97:1 (need 4.5) before this, measured by BOTH `ux-audit` and axe at light/phone on
+                  every card: coral ink on a 14% coral tint. `design/accent.ts` already documents this
+                  exact failure — a tint is not symmetric across modes, and in light it lifts the
+                  backdrop TOWARD the dark accent until ink and background converge (14% → 3.62 by its
+                  own table) — and ships the pair that fixes it: `primary-container` /
+                  `on-primary-container`, 13.1:1 light and 10.43:1 dark, guaranteed for all 12 schemes
+                  by `schemeContrast.test.ts`. This chip was the last accent-carrying TEXT left on the
+                  old spelling. */}
             {providerLabel && (
-              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-primary" data-type="label-s"
-                style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
+                style={accentChip}>
                 <Plug size={11} />{providerLabel}
               </span>
             )}

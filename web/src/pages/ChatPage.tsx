@@ -25,7 +25,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { DotGlow } from '../ui/DotGlow'
-import { EmptyState, ListSkeleton, LoadError, Skeleton } from '../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { FieldError } from '../ui/forms'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
@@ -2895,7 +2895,8 @@ function MessagesSkeleton() {
   ]
   return (
     <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}
-      role="status" aria-busy="true" aria-label="Loading conversation">
+      role="status" aria-busy="true" >
+        <LoadingStatus what="conversation" />
       {rows.map((r, i) => (
         <div key={i} className={`flex flex-col gap-2 ${r.me ? 'items-end' : 'items-start'}`}>
           <Skeleton className={`h-4 ${r.w} ${r.me ? 'max-w-[70%]' : ''}`} />
@@ -3913,7 +3914,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         </div>
 
         {sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
-          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} /></div>
+          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} what="chats" /></div>
           : sessions.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={MessageSquare} title="No chats yet" hint="Start a conversation — your sessions will appear here to search and revisit." action={{ label: 'New chat', onClick: () => navigate('chat/new'), icon: Edit3 }} /></div>
           : filtered.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={Search} title="No matches" hint="Try a different search or tag filter." /></div>
           : view === 'board' ? (

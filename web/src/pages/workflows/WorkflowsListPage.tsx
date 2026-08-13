@@ -228,7 +228,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
       <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }}
         results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
-        {loading ? <Loading /> : tab === 'defs' ? (
+        {loading ? <Loading what="workflows" /> : tab === 'defs' ? (
           defsErr ? (
             <LoadError what="workflow definitions" error={defsErr} onRetry={load} />
           ) : filteredDefs.length === 0 ? (

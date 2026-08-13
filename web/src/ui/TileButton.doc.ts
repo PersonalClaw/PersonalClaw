@@ -7,6 +7,7 @@ const doc: UiDoc = {
   description:
     'A block-level clickable CARD/TILE — the kit\'s home for "the whole card is one click target" (library grids, gallery tiles). Distinct from Button (an inline CTA pill) and QuietButton (a compact toolbar action): a TileButton is a bordered container whose CHILDREN are the content (a preview area, title rows); it owns only the card chrome — border, radius, hover fill, the active selection ring — and the accessible button semantics.',
   props: [
+      { name: 'ariaLabel', description: "The accessible name, for a tile whose CONTENT is a document rather than a label. Measured in Chrome's computed accessibility tree on #/artifacts: five tiles named by 438-695 characters of their own rendered markdown preview, heading and emphasis markers included — a button with content takes its name from that content, and `title` loses to it. Pass the thing the tile IS." },
     { name: 'children', description: 'The card content — preview area, title/metadata rows. The tile owns only the chrome around them.' },
     { name: 'onClick', description: 'Activation handler; the whole tile is the click target.' },
     { name: 'active', description: 'Marks the tile as the current selection (primary-tinted border).' },
