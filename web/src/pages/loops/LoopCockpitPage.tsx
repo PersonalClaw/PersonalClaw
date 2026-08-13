@@ -1054,7 +1054,7 @@ function LiveSubsteps({ activity }: { activity: { kind: string; label: string; d
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-1.5 pl-7">
-      <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1.5 text-[0.75rem] text-on-surface-low hover:text-on-surface">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex items-center gap-1.5 text-[0.75rem] text-on-surface-low hover:text-on-surface">
         <Search size={12} /> {activity.length} steps <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (

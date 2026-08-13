@@ -1304,7 +1304,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
           {/* Advanced → the destructive force-uninstall (removes files from disk).
               Hidden behind an expander so it's deliberate, not accidental. */}
           <div className="border-t border-outline-variant/40 pt-3">
-            <button type="button" onClick={() => setAdvancedOpen((o) => !o)}
+            <button type="button" onClick={() => setAdvancedOpen((o) => !o)} aria-expanded={advancedOpen}
               className="flex items-center gap-1.5 text-on-surface-low text-[0.8125rem] transition-colors hover:text-on-surface">
               <ChevronDown size={14} className="transition-transform" style={{ transform: advancedOpen ? 'rotate(180deg)' : 'none' }} /> Advanced
             </button>

@@ -109,7 +109,7 @@ function AgentAdvanced({ agentName }: { agentName: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="border-t border-outline-variant/40 pt-l">
-      <button type="button" onClick={() => setOpen((v) => !v)}
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] hover:text-on-surface">
         <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} /> Advanced
       </button>

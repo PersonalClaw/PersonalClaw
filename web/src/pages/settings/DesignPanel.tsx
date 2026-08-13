@@ -91,7 +91,7 @@ export function DesignPanel() {
               navigation, so it must NOT become a coral `TextLink` — coral means "primary action / alive"
               in this system, and a quiet expander is neither. Measured 257.05×**19.50**; `py-1 -my-1`
               adds 8px of target and hands all 8 back, so nothing reflows. */}
-          <button onClick={() => setEditingColors((v) => !v)} className="flex items-center gap-s py-1 -my-1 text-on-surface-var text-[0.8125rem]">
+          <button onClick={() => setEditingColors((v) => !v)} aria-expanded={editingColors} className="flex items-center gap-s py-1 -my-1 text-on-surface-var text-[0.8125rem]">
             <ChevronDown size={16} className={`transition-transform ${editingColors ? 'rotate-180' : ''}`} />
             <Sliders size={15} /> Edit colors &amp; save a custom theme
           </button>

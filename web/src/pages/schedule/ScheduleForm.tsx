@@ -176,7 +176,7 @@ function Advanced({ draft, set }: { draft: ScheduleDraft; set: <K extends keyof 
 
   return (
     <div className="rounded-lg bg-surface-container/60">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-s px-m h-11 text-on-surface-var text-[0.8125rem]">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center gap-s px-m h-11 text-on-surface-var text-[0.8125rem]">
         <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         Advanced — delivery, timezone, skip dates
       </button>
