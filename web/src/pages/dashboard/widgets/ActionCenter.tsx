@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
 import { api } from '../../../lib/api'
+import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -76,7 +77,11 @@ export function ActionCenter({ navigate }: RouteProps) {
           // proposals from the same channel all composed "Reply: skills" — the name changed and the
           // ambiguity did not. Measured by re-running the census against the fix, which is the only
           // reason it was caught. The row's identity is title + the summary line beneath it.
-          const subject = e.sub ? `${e.title} — ${e.sub}` : e.title
+          // Bounded, not just composed: the first version of this shipped uncapped and put SIXTEEN
+          // 107-character names on this widget — measured in the AX tree, and the same defect in the
+          // other direction as the artifact tiles named by their whole body. `lib/rowSubject` owns
+          // the rule and the number for every row control in the app.
+          const subject = rowSubject([e.title, e.sub])
           return (
             <WidgetRow
               key={e.key}
