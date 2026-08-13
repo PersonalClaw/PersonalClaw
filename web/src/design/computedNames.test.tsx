@@ -155,6 +155,35 @@ describe("the notification row actions name their row, and stay bounded", () => 
 })
 
 
+// ── Cycle 156: THE NAME WAS WRITTEN AND THE PRIMITIVE THREW IT AWAY ─────────────────────────────
+//
+// Sweeping the views behind every surface's view switcher (the lens cycle 154 opened) found
+// `#/triggers` → **Week** reporting `button-name` [critical] **twice**, at both themes — the week's
+// prev/next arrows. The source looked correct:
+//
+//     <Button size="sm" variant="ghost" aria-label="Previous week" …><ChevronLeft /></Button>
+//
+// 🪤 **`Button` never forwarded `aria-label`, and TypeScript cannot say so: a JSX attribute containing a
+// HYPHEN is not checked against a component's props type.** So the name was dropped in silence, the
+// build stayed green, and the only witness was the accessibility tree. The prop is `ariaLabel` — the one
+// cycle 154 added, for exactly this shape.
+//
+// This is the second time this session that a control's name existed and never reached the user
+// (cycle 148: a `LoadError` noun the loading state did not borrow). **A name in the source is not a name
+// in the tree.**
+//
+// The same sweep found one more, in the same class of never-audited view: `#/skills` → **Browse** has a
+// raw `<select>` with no label at all — `select-name` [critical], both themes. It is the marketplace
+// picker; it now carries `aria-label="Marketplace"`.
+//
+// 🔑 SIZING THE SELECT QUESTION HONESTLY. A source scan says **11 of 24** raw `<select>`s carry no
+// `aria-label` / `aria-labelledby` / `id` — and that count is misleading. axe, which implements the
+// naming rules (wrapping label included), fires on **exactly one** across every route and view swept:
+// the rest are named by other means or not rendered. The DOM decides; the grep only nominates.
+//
+// After: `#/triggers` → Week and `#/skills` → Browse both report axe 0 and zero unnamed controls at
+// both themes.
+
 // ── The census that keeps it closed ─────────────────────────────────────────────────────────────
 
 /** Every `<Button>` in the tree whose children are ONLY a self-closing icon element. Walks the tag
@@ -229,5 +258,49 @@ describe('a Button whose whole body is an icon carries a name', () => {
     // The prop is the fix; without the forward, every call site above is inert.
     expect(readFileSync(join(process.cwd(), 'src/ui/Button.tsx'), 'utf8')).toMatch(/aria-label=\{ariaLabel\}/)
     expect(readFileSync(join(process.cwd(), 'src/ui/Button.doc.ts'), 'utf8')).toMatch(/name: 'ariaLabel'/)
+  })
+})
+
+describe('a hyphenated aria prop on a kit component is a dropped name', () => {
+  // TypeScript checks `ariaLabel` and ignores `aria-label`, so this class of mistake compiles, ships,
+  // and is invisible until something reads the accessibility tree. These are the kit components that
+  // declare camelCase aria props, i.e. the ones where the hyphenated form is silently inert.
+  const KIT = ['Button', 'TileButton', 'Segmented', 'HeaderSegmented', 'QuietButton', 'TextInput',
+    'TextArea', 'SearchField', 'Slider', 'HeaderControl', 'IconButton']
+
+  const walk = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walk(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+
+  it('no call site passes one', () => {
+    const SRC = join(process.cwd(), 'src')
+    const offenders: string[] = []
+    for (const abs of walk(SRC)) {
+      readFileSync(abs, 'utf8').split('\n').forEach((line, i) => {
+        for (const c of KIT) {
+          const m = new RegExp(`<${c}\\b([^>]*)`).exec(line)
+          if (m && /\saria-[a-z]+=/.test(m[1])) offenders.push(`${abs.slice(SRC.length + 1)}:${i + 1} — <${c} ${/\s(aria-[a-z]+)=/.exec(m[1])?.[1]}>`)
+        }
+      })
+    }
+    expect(offenders, `a hyphenated aria prop here is dropped in silence:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('the two week arrows carry the forwarded prop instead', () => {
+    const src = readFileSync(join(process.cwd(), 'src/pages/triggers/WeekGridView.tsx'), 'utf8')
+    expect(src).toMatch(/ariaLabel="Previous week"/)
+    expect(src).toMatch(/ariaLabel="Next week"/)
+    expect(src, 'and not the form the primitive ignores').not.toMatch(/<Button[^>]*aria-label=/)
+  })
+
+  it("the marketplace picker names itself", () => {
+    // 🪤 The first version of this assertion was `<select value={marketplace}[^>]*aria-label=…` and it
+    // FAILED on correct source — `[^>]*` stops at the `>` inside `onChange={(e) => …}`. The same trap
+    // this whole cycle is about, in the test written to catch it. Anchor on the attribute instead.
+    const src = readFileSync(join(process.cwd(), 'src/pages/skills/SkillsPage.tsx'), 'utf8')
+    expect(src).toMatch(/setMarketplace\(e\.target\.value\)\} aria-label="Marketplace"/)
   })
 })
