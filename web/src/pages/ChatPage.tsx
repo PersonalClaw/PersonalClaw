@@ -3281,7 +3281,7 @@ function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string
     : [fed && 'recalled context', learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
   return (
     <div className="mt-2 mb-1">
-      <button type="button" onClick={() => setOpen((v) => !v)}
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 text-[0.75rem] transition-colors hover:text-on-surface-low"
         title={open ? 'Hide what fed this turn and what was learned' : 'What fed this turn · what was learned'}>
         <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
