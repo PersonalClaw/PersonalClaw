@@ -962,6 +962,18 @@
             "AG-5",
             "EXT:WORKFLOWS-V2:engine per-template profiles + project-script-execution seam (project loop.md / Code-loop deliverable gate)"
           ]
+        },
+        {
+          "id": "AG-12",
+          "title": "Restore the §1.2 denylist at the third dispatch seam (gateway._fire_store_trigger)",
+          "status": "done",
+          "scope": "§1.2 enforcement placement — the third of the three dispatch seams. §1.2 names it `gateway.py:701` (`_run_action_job`), which retired with `ScheduleService` (S112); the successor `_fire_store_trigger` kept the kill switch and gained AG-7's rung routing but never re-established the denylist. Measured `enforce_action` per seam file: hooks.py 1, event_triggers.py 1, gateway.py 0 — while gateway is the dispatch path for every clock, file, webhook and chained trigger.",
+          "done_when": "`_fire_store_trigger` calls `enforce_action` before `provider.execute` and a blocked decision short-circuits without executing; the refusal is observable (enforce_action's SEL row + needs_human notification, plus a `skipped_gate` Runs-history row naming the matched rule); a test drives a REAL trigger fire and asserts the provider was never reached plus the allowed inverse; `session_key` is threaded so the run's SafetyProfile.denylist_extra/path_allowlist layer as at the other two seams; the chokepoint rail asserts all three execution seams carry the denylist so a fourth seam or another retirement cannot drop it again — DONE 2026-08-13 (18921 passed + 3 pre-existing worktree-only harness_validate failures; 15 new tests). Population measured before enforcing: the only real store available (dev-home) held 1 trigger (`notification-digest`, empty config) → 0 blocked; a 24-config corpus covering every shipped provider blocked 4, of which 3 are credential-exfil/sensitive-path refusals and 1 (`rm -rf /tmp/...`) is a plausible cleanup command already refused at the other two seams AND by the agent's own bash tool (same `BUILTIN_DENIED_COMMAND_PATTERNS`). So this adds no new policy — it removes the one seam that was exempt from the existing one.",
+          "deps": [
+            "AG-3",
+            "AG-7"
+          ],
+          "pr": 1216
         }
       ]
     },
@@ -7772,6 +7784,7 @@
       "AG-9",
       "AG-10",
       "AG-11",
+      "AG-12",
       "AP-1",
       "AP-2",
       "AP-3",
@@ -9463,8 +9476,8 @@
       {
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
-        "total_atoms": 11,
-        "done": 9,
+        "total_atoms": 12,
+        "done": 10,
         "in_progress": 0,
         "todo": 2,
         "blocked": 0
@@ -10010,6 +10023,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 851
+    "edge_count": 853
   }
 }

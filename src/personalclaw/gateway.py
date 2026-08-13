@@ -928,6 +928,70 @@ class GatewayOrchestrator:
             self._push_trigger_refresh()
             return
 
+        # The context the provider will receive, built HERE rather than at the `execute` call so
+        # the denylist gate below judges the same `(config, ctx)` pair the provider is handed —
+        # the call shape the other two seams already use.
+        ctx = ActionContext(event=event, context="", payload=payload)
+
+        # 🔴 THE DENYLIST, at the seam that lost it (AUTONOMY-GUARDRAILS §1.2 — AG-12). §1.2 says
+        # the denylist is enforced at the THREE dispatch seams every action-provider execution
+        # passes through, "so an app-contributed provider inherits the denylist without knowing it
+        # exists", and names the third as `gateway.py:701` — `_run_action_job`, which retired with
+        # `ScheduleService` (S112). The successor that method became inherited the kill switch and
+        # the rung ladder but NOT the denylist: measured, `enforce_action` appeared once in
+        # `hooks.py`, once in `event_triggers.py` and ZERO times here — while this is the dispatch
+        # path for every clock, file, webhook and chained trigger, the busiest unattended path in
+        # the product. Retiring a legacy path is never a pure deletion.
+        #
+        # Placed AFTER `_trigger_secrets.resolve` deliberately: the check must see the config the
+        # provider will actually receive, so a `{{secret:...}}` that expands into a denied command
+        # or a sensitive path is judged on its resolved value and not on a placeholder that dodges
+        # every pattern. And BEFORE the rung ladder, matching both other seams — a rung never
+        # relaxes a block, an incident, or a budget pause.
+        from personalclaw.guardrails.denylist import enforce_action
+        from personalclaw.guardrails.policy import unattended_dispatch_key
+        from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+        from personalclaw.guardrails.rungs import route_provider_action as _route_action
+
+        # 🔴 THE SESSION IDENTITY (PHF-8), now shared by BOTH gates on this seam (the shape
+        # `event_triggers` uses), so the denylist and the ladder judge one fire under one resolved
+        # posture rather than two. The rung call passed `session_key=""` — which
+        # `is_unattended_session` classifies as ATTENDED, so a clock/file/webhook trigger
+        # fire resolved INTERACTIVE and "headless by construction" held only in tests. A
+        # store-trigger fire has no chat session by definition, so it gets the sessionless
+        # unattended identity: it resolves HEADLESS and is bounded by the operator ceiling,
+        # and the trigger id rides along so a clamp in the SEL names the automation. Threading it
+        # into `enforce_action` is also what lets the run's `SafetyProfile.denylist_extra` and its
+        # `path_allowlist` confinement layer here exactly as they do at the other two seams.
+        dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
+        decision = enforce_action(provider_name, config, ctx, session_key=dispatch_key)
+        if decision.blocked:
+            matched = decision.matched or ""
+            reason = decision.reason or "blocked by a guardrail rule"
+            logger.warning(
+                "trigger %s: action blocked by the guardrails denylist (%s)", trigger.id, matched
+            )
+            # `skipped_gate`, the same status the rung hold below records: a denylist block is a
+            # pre-dispatch POLICY refusal, which is the class `_REFUSAL_STATUSES` admits.
+            # `Outcome.REFUSED` reads closer in prose but is not in that tuple, and an unmapped
+            # status falls to `SCHEDULE_STATUS_TO_OUTCOME`'s silent FAILED default — a defended
+            # fire would then appear in the user's history as a broken automation.
+            # `enforce_action` has already written the SEL row and, for `needs_human`, fired the
+            # notification; this row is what puts the refusal in the Runs history too.
+            from personalclaw.triggers.models import Outcome as _Outcome
+
+            await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=(
+                    f"blocked by the guardrails denylist: {matched} — {reason}"
+                    if matched
+                    else f"blocked by the guardrails denylist: {reason}"
+                ),
+            )
+            self._push_trigger_refresh()
+            return
+
         # 🔴 RUNG ROUTING, at the seam the retired one became (AUTONOMY-GUARDRAILS §5.2). The plan
         # names `_run_action_job` as the third dispatch seam; that method retired with
         # `ScheduleService` (S112) and, per the note at its old site, "the substrate GENERALIZED
@@ -939,17 +1003,6 @@ class GatewayOrchestrator:
         # The route comes from the provider NAME; the name→type mapping lives on the declaration
         # (`ActionTypeSpec.providers`), so an app-contributed action inherits its declared bounds
         # here with no branch of its own.
-        from personalclaw.guardrails.policy import unattended_dispatch_key
-        from personalclaw.guardrails.rungs import announce_withheld, record_reversal
-        from personalclaw.guardrails.rungs import route_provider_action as _route_action
-
-        # 🔴 THE SESSION IDENTITY (PHF-8). This passed `session_key=""` — which
-        # `is_unattended_session` classifies as ATTENDED, so a clock/file/webhook trigger
-        # fire resolved INTERACTIVE and "headless by construction" held only in tests. A
-        # store-trigger fire has no chat session by definition, so it gets the sessionless
-        # unattended identity: it resolves HEADLESS and is bounded by the operator ceiling,
-        # and the trigger id rides along so a clamp in the SEL names the automation.
-        dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
         route = _route_action(provider_name, session_key=dispatch_key)
         if not route.executes:
             announce_withheld(
@@ -973,7 +1026,6 @@ class GatewayOrchestrator:
             return
 
         try:
-            ctx = ActionContext(event=event, context="", payload=payload)
             # 🔴 The MODE DEFAULT the legacy dispatcher applied (gateway.py:820 — 300s for a command,
             # 30s otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
             # budget. Measured: this call passed nothing, so every store-backed bash fire took the
