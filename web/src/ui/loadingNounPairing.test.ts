@@ -212,15 +212,17 @@ const carries = (tag: string, noun: string) => {
 
 /** The sites cycle 152 named from their own gate's empty branch. Explicit, because deciding that a
  *  nearby "No …" belongs to the SAME gate is a judgement the scanner cannot make. */
-const FROM_EMPTY_STATE = [
-  'pages/tasks/TasksListPage.tsx:398',
-  'pages/tasks/TasksListPage.tsx:425',
-  'pages/tools/ToolsPage.tsx:248',
-  'pages/settings/ProjectionRulesPanel.tsx:73',
-  'pages/settings/MemoryPanel.tsx:1186',
-  'pages/knowledge/TagManager.tsx:82',
-  'pages/knowledge/ConflictPanel.tsx:32',
-  'pages/skills/SkillProposals.tsx:20',
+/** 🪤 THIS LIST USED TO PIN LINE NUMBERS, and cycle 159 broke it by inserting 24 lines ABOVE two of the
+ *  entries — a red that said nothing about the rule it guards. Keyed on file + noun instead: the pair
+ *  that matters is "this file's skeleton says this word", and neither part moves when the file does. */
+const FROM_EMPTY_STATE: [string, string][] = [
+  ['pages/tasks/TasksListPage.tsx', 'tasks'],
+  ['pages/tools/ToolsPage.tsx', 'tools'],
+  ['pages/settings/ProjectionRulesPanel.tsx', 'custom rules'],
+  ['pages/settings/MemoryPanel.tsx', 'daily digests'],
+  ['pages/knowledge/TagManager.tsx', 'tags'],
+  ['pages/knowledge/ConflictPanel.tsx', 'contradictions'],
+  ['pages/skills/SkillProposals.tsx', 'skill proposals'],
 ]
 
 /** Sites with a "No …" in reach that is NOT their gate's. Asserted to stay bare, with the reason. */
@@ -275,11 +277,13 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   it('every noun taken from an empty state still matches the copy users read', () => {
     // If an empty state is reworded, the loading noun must follow — that is the whole point of
     // sourcing it from the copy instead of writing a second string that can drift.
-    const named = all.filter((s) => FROM_EMPTY_STATE.includes(`${s.rel}:${s.line}`))
-    expect(named.length, `all ${FROM_EMPTY_STATE.length} named sites found`).toBe(FROM_EMPTY_STATE.length)
-    const drifted = named.filter((s) => !s.emptyTitle || !carriesFromEmpty(s.tag, s.emptyTitle))
-      .map((s) => `${s.rel}:${s.line} says ${s.tag} but its empty state says ${JSON.stringify(s.emptyTitle)}`)
-    expect(drifted, `the loading noun drifted from the empty-state copy:\n${drifted.join('\n')}`).toEqual([])
+    for (const [rel, noun] of FROM_EMPTY_STATE) {
+      const named = all.filter((s) => s.rel === rel && s.tag.includes(`what="${noun}"`))
+      expect(named.length, `${rel} should still name a skeleton "${noun}"`).toBeGreaterThanOrEqual(1)
+      const drifted = named.filter((s) => !s.emptyTitle || !carriesFromEmpty(s.tag, s.emptyTitle))
+        .map((s) => `${s.rel}:${s.line} says ${s.tag} but its empty state says ${JSON.stringify(s.emptyTitle)}`)
+      expect(drifted, `the loading noun drifted from the empty-state copy:\n${drifted.join('\n')}`).toEqual([])
+    }
   })
 
   it('a "No …" in reach is a CANDIDATE, not a licence — the excluded ones stay bare', () => {
@@ -289,7 +293,7 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
     // gate, and a SEARCH empty state at that. Same for the memory list's "No matches". Both are
     // excluded by name, with the reason, so the next pass does not "finish the job".
     for (const [rel, why] of EXCLUDED) {
-      const site = all.find((s) => s.rel === rel && !FROM_EMPTY_STATE.some((k) => k.startsWith(`${rel}:`)))
+      const site = all.find((s) => s.rel === rel && !FROM_EMPTY_STATE.some(([r]) => r === rel))
         ?? all.find((s) => s.rel === rel)
       expect(site, `${rel} left the census`).toBeTruthy()
       expect(/what=/.test(site!.tag), `${rel} must stay bare — ${why}`).toBe(false)
