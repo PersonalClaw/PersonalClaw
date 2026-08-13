@@ -20,12 +20,17 @@ function loadCommands(): Promise<Cmd[]> {
  *  the backend's is_slash check). ↑/↓ navigate, Enter/Tab select, Esc closes.
  *  onSelect replaces the input with the chosen command (+ trailing space).
  *  Portaled to body so it floats above everything. */
-export function SlashMenu({ query, anchorRef, open, onSelect, onClose }: {
+export function SlashMenu({ query, anchorRef, open, onSelect, onClose, idPrefix, onActiveIndex }: {
   query: string
   anchorRef: React.RefObject<HTMLElement | null>
   open: boolean
   onSelect: (command: string) => void
   onClose: () => void
+  /** Id namespace shared with the editor that owns focus, so it can point `aria-activedescendant`
+   *  at the option the cursor is on. */
+  idPrefix: string
+  /** The cursor's index while open, `null` when closed — the editor mirrors it. */
+  onActiveIndex: (index: number | null) => void
 }) {
   const [all, setAll] = useState<Cmd[]>(_cache ?? [])
   const [sel, setSel] = useState(0)
@@ -38,7 +43,6 @@ export function SlashMenu({ query, anchorRef, open, onSelect, onClose }: {
   const results = q ? all.filter((c) => c.name.slice(1).toLowerCase().startsWith(q) || c.description.toLowerCase().includes(q)) : all
   const resultsRef = useRef<Cmd[]>(results); resultsRef.current = results
   const selRef = useRef(sel); selRef.current = sel
-  useEffect(() => { setSel(0) }, [query])
 
   const choose = useCallback((i: number) => {
     const c = resultsRef.current[i]
@@ -74,6 +78,14 @@ export function SlashMenu({ query, anchorRef, open, onSelect, onClose }: {
     return () => document.removeEventListener('mousedown', onDown, true)
   }, [open, onClose, anchorRef])
 
+  // Tell the editor which option the cursor is on: focus stays in the composer, so the ONLY channel
+  // that can announce this is `aria-activedescendant` on the focused element. `null` while closed or
+  // empty, so the attribute never points at a node that no longer exists.
+  //
+  // 🪤 ABOVE the `if (!open …) return null` below: an effect placed after an early return runs a
+  // different number of hooks per render, which React rejects outright.
+  useEffect(() => { onActiveIndex(open && results.length ? sel : null) }, [open, results.length, sel, onActiveIndex])
+
   if (!open || !anchorRef.current || results.length === 0) return null
   const rect = anchorRef.current.getBoundingClientRect()
   const w = Math.min(Math.max(rect.width, 280), 460)
@@ -85,11 +97,12 @@ export function SlashMenu({ query, anchorRef, open, onSelect, onClose }: {
     : { bottom: window.innerHeight - rect.top + 8, maxHeight: Math.min(maxH, roomAbove) }
 
   return createPortal(
-    <div ref={menuRef} role="listbox" aria-label="Slash commands"
+    <div ref={menuRef} role="listbox" aria-label="Slash commands" id={`${idPrefix}-list`}
       className="fixed z-[9999] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface/95 p-1 shadow-xl ring-1 ring-black/5 backdrop-blur-md"
       style={{ left: rect.left, width: w, ...pos }}>
       {results.map((c, i) => (
         <button key={c.name} type="button" role="option" aria-selected={i === sel} title={c.description}
+          id={`${idPrefix}-opt-${i}`}
           ref={i === sel ? selItemRef : undefined}
           onMouseEnter={() => setSel(i)}
           onMouseDown={(e) => { e.preventDefault(); choose(i) }}

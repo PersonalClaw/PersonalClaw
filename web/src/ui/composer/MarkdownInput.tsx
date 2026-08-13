@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
 import { EditorState, Compartment } from '@codemirror/state'
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
@@ -67,6 +67,31 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
   // changes (e.g. the Loop composer's kind slider) — CodeMirror bakes extensions at editor
   // construction, so without this the placeholder froze at its first-mount value.
   const placeholderComp = useRef(new Compartment())
+  // The typeahead menus are a COMBOBOX popup driven from this editor: focus stays here (correct for a
+  // typeahead — moving it would break typing) while a cursor moves inside a portaled listbox. Measured
+  // on `#/chat` before this: ArrowDown moved `aria-selected` from option 0 to option 1 and the focused
+  // element said nothing at all — no `aria-activedescendant`, so a screen-reader user was never told
+  // which option the cursor was on, or that a list had opened. Same defect as the row menus of cycles
+  // 136-137, in its third variant: a cursor with no channel. axe reported ZERO violations on the open
+  // menu, because every attribute it can check was already right.
+  //
+  // `aria-activedescendant` + `aria-controls` + `aria-haspopup` only — deliberately NOT `role=combobox`
+  // + `aria-expanded`: `aria-expanded` is not an allowed attribute on `textbox` (axe: aria-allowed-attr),
+  // and re-roling a multi-line message editor as a combobox is a bigger claim than this fixes.
+  const comboComp = useRef(new Compartment())
+  const comboId = useId().replace(/:/g, '')
+  const [activeOption, setActiveOption] = useState<{ list: 'mention' | 'slash'; index: number } | null>(null)
+  // 🪤 DEDUPE IN THE SETTER, or this is an infinite loop: each menu reports its cursor from an effect
+  // whose dependency list includes the callback, and the callback identity changes on every render of
+  // this component. Returning `prev` unchanged makes React bail out of the re-render, so the report
+  // settles after one call instead of ping-ponging.
+  const reportCursor = useCallback((list: 'mention' | 'slash', index: number | null) => {
+    setActiveOption((prev) => {
+      if (index == null) return prev?.list === list ? null : prev
+      if (prev?.list === list && prev.index === index) return prev
+      return { list, index }
+    })
+  }, [])
   // Latest props for the (static) CM extensions to read without rebuilding.
   const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile })
   cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile }
@@ -156,6 +181,7 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
           // placeholder is compartment-swapped at runtime but extensions here
           // build once.
           EditorView.contentAttributes.of({ 'aria-label': 'Message input' }),
+          comboComp.current.of([]),
           placeholderComp.current.of(cmPlaceholder(placeholder ?? '')),
           sendKeys,
           updateListener,
@@ -226,6 +252,21 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
     view.dispatch({ effects: placeholderComp.current.reconfigure(cmPlaceholder(placeholder ?? '')) })
   }, [placeholder])
 
+  // Point the editor at the option the typeahead cursor is on. Compartment-swapped for the same
+  // reason as the placeholder: the extensions above build once.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const attrs: Record<string, string> = activeOption
+      ? {
+        'aria-controls': `${comboId}-${activeOption.list}-list`,
+        'aria-activedescendant': `${comboId}-${activeOption.list}-opt-${activeOption.index}`,
+        'aria-haspopup': 'listbox',
+      }
+      : {}
+    view.dispatch({ effects: comboComp.current.reconfigure(EditorView.contentAttributes.of(attrs)) })
+  }, [activeOption, comboId])
+
   // auto-grow: the editor min-height = restH, grows with content up to maxHeight.
   useEffect(() => {
     const host = hostRef.current
@@ -281,11 +322,15 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
       {(onMentionFile || onMentionKnowledge) && (
         <MentionMenu query={mention?.query ?? ''} anchorRef={hostRef} open={!!mention} project={mentionProject}
           leading={mention?.at === 0}
+          idPrefix={`${comboId}-mention`}
+          onActiveIndex={(i) => reportCursor('mention', i)}
           onSelect={pickMention}
           onClose={() => { if (mention) dismissedRef.current = `${mention.at}:${mention.query}`; setMention(null) }} />
       )}
       {slashCommands && (
         <SlashMenu query={slash?.query ?? ''} anchorRef={hostRef} open={!!slash}
+          idPrefix={`${comboId}-slash`}
+          onActiveIndex={(i) => reportCursor('slash', i)}
           onSelect={pickSlash}
           onClose={() => { if (slash) slashDismissedRef.current = slash.query; setSlash(null) }} />
       )}
