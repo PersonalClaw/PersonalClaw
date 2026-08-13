@@ -490,6 +490,14 @@ export function HeaderControl({
     <motion.button
       type="button" onClick={onClick} disabled={disabled} title={label}
       aria-label={iconOnly ? label : undefined}
+      // 🔴 `active` DECIDED A COLOUR AND NOTHING ELSE. 14 call sites across 7 files pass it — the chat
+      // Activity/History panels, the code cockpit's terminal, the files explorer, inbox settings, the
+      // knowledge detail rail — and every one rendered an identical accessible node whether the panel it
+      // controls was open or shut. `Button.ariaPressed` already carries this contract in its own doc: "a
+      // button acting as a SELECTED/UNSELECTED choice must announce that state, or a screen-reader user
+      // hears an identical label for the row they are on and the row they are not." `undefined` when
+      // `active` is not passed, so a plain header action gains no misleading state.
+      aria-pressed={active}
       whileTap={disabled ? undefined : { scale: 0.96 }}
       transition={spring.spatialFast}
       className={cx(
