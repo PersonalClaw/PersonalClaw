@@ -94,15 +94,18 @@ describe("the notification row actions name their row, and stay bounded", () => 
   const code = codeOf('pages/notifications/NotificationsPage.tsx')
 
   it('all four actions name the row through the shared helper', () => {
+    // Cycle 142 moved the composition into `lib/rowSubject` (one rule, one number, two surfaces), so
+    // this asserts the call rather than a local copy of the join.
     for (const verb of ['Investigate in chat', 'Mark unread', 'Mark read', 'Delete']) {
-      expect(code, `${verb} must name its row`).toMatch(new RegExp(`\`${verb}: \\$\\{rowName\\(n\\)\\}\``))
+      expect(code, `${verb} must name its row`)
+        .toMatch(new RegExp(`\`${verb}: \\$\\{rowSubject\\(\\[n\\.title, firstLine`))
     }
   })
 
-  it('the helper composes title + body line and caps at 55', () => {
-    expect(code).toMatch(/const line = firstLine\(n\.body \?\? ''\)\.trim\(\)/)
-    expect(code).toMatch(/line && line !== n\.title \? `\$\{n\.title\} — \$\{line\}` : n\.title/)
-    expect(code, 'the cap is the bounded half of the rule').toMatch(/full\.length > 55 \? `\$\{full\.slice\(0, 54\)\}…` : full/)
+  it('the composition and its cap live in the shared helper, not here', () => {
+    expect(code).toMatch(/rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
+    expect(code, 'a local re-implementation is the drift this closed').not.toMatch(/function rowName/)
+    expect(code, 'and its number with it').not.toMatch(/full\.length > 55/)
   })
 
   it('the tooltips stay the bare verbs', () => {
