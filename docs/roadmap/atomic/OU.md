@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `OU-1` | ⬜ | Extend onboarding state backend (step/provider/first_success fields + POST write path) | — | additive fields (step, provider_chosen/essentials, first_success) persist to entity_settings/onboarding.json, survive mid-flow reload, old clients tolerant-read; POST /api/onboarding/state does a partial merge (NOT the config PATCH allowlist, per §2.1 entity-state rule) |
+| `OU-1` | ✅ | Extend onboarding state backend (step/provider/first_success fields + POST write path) | — | additive fields (step, provider_chosen/essentials, first_success) persist to entity_settings/onboarding.json, survive mid-flow reload, old clients tolerant-read; POST /api/onboarding/state does a partial merge (NOT the config PATCH allowlist, per §2.1 entity-state rule) |
 | `OU-2` | ⬜ | Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in) | `OU-1` | fresh dev home (PERSONALCLAW_FIRST_PARTY_APPS_DIR fixture): model+search installable and the model bindable entirely in-flow (install -> key -> Test -> chat binding, reusing the 3 existing APIs); skipping all but model still reaches first-success; per-app install consent preserved; no auto-install anywhere |
 | `OU-3` | ⬜ | First-success 'try one' cards (knowledge ingest+ask, reminder trigger, seeded loop) | `OU-1`, `OU-2` | each of the three cards executes a real flow and reaches its visible outcome on a fresh home in <2 min; failure path shows the error and offers a Settings deep-link when a real call fails despite a passing Test |
 | `OU-4` | ⬜ | Onboarding done screen + resume + per-step skip + CLI setup pointer | `OU-1`, `OU-2`, `OU-3` | skip at any step lands in a working dashboard; re-entering onboarding resumes at the persisted step; personalclaw setup prints the dashboard-flow pointer when a browser is available (wizard unchanged); V1 recorded in Execution log (full flow <5 min, mid-flow reload, full-skip path, existing-home upgrade shows NO onboarding) |
@@ -26,11 +26,34 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `OU-1` — Extend onboarding state backend (step/provider/first_success fields + POST write path)
 
-**Status:** todo
+**Status:** done
 
 Session 1 T1.1; Contracts C1 (onboarding state: extends GET /api/onboarding, handler api_onboarding; new POST /api/onboarding/state)
 
 **Done when:** additive fields (step, provider_chosen/essentials, first_success) persist to entity_settings/onboarding.json, survive mid-flow reload, old clients tolerant-read; POST /api/onboarding/state does a partial merge (NOT the config PATCH allowlist, per §2.1 entity-state rule)
+
+**Shipped:** new `personalclaw/onboarding.py` store over `entity_settings/onboarding.json` —
+`{step, essentials: {model, search, speech, channel}, first_success: {knowledge, trigger, loop}}`.
+`load_onboarding_state()` sanitizes per field and never raises (missing file, corrupt JSON,
+non-object JSON, absent fields, wrong types, retired step value → that field's default, siblings
+kept); `merge_onboarding_state()` merges partially at BOTH levels and rejects unknown/mistyped
+keys with `ValueError`. `GET /api/onboarding` returns the three new fields alongside the existing
+readiness triple (additive — an old client reading only `needs_model`/`has_*` is unaffected);
+`POST /api/onboarding/state` is the write path, deliberately not the `_EDITABLE_CONFIG` PATCH
+allowlist. 35 tests in `tests/test_onboarding_state.py`, including a rail that every declared step
+is writable and one asserting nothing onboarding-shaped reached `AppConfig`/`_EDITABLE_CONFIG`.
+
+**Deviations from C1** (both recorded in the module docstring and the plan's Execution log): the
+middle step id is `essentials`, not `provider` — the 2026-07-26 amendment (ruling a) re-scoped that
+step and renamed the field, so the step id now agrees with the field it fills; and `name`/`completed`
+are NOT stored, because C1's "existing" annotation was inaccurate against code (the GET never
+returned them; the name lives in server identity and `onboarded` is derived from it being non-empty).
+
+**Remainder — the fields' real-path writers are downstream atoms, by the DAG:** `OU-2` writes
+`step` + `essentials` from the essential-apps step, `OU-3` writes `first_success` as each "try one"
+card completes, `OU-4` reads `step` to resume. No `web/` change shipped here (`OnboardingState` in
+`web/src/lib/api.ts` gains the fields when OU-2 consumes them), so nothing was added to the
+frontend that no component reads.
 
 ### `OU-2` — Essential-apps in-flow onboarding step (model required; search/speech/channel opt-in)
 
