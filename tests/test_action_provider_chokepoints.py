@@ -4,11 +4,18 @@ The plan asks for "a test asserting no execution without a policy check". Measur
 it — and the honest result is that the invariant HOLDS today, so this file exists to keep it holding
 rather than to fix a defect:
 
-    hooks._run_provider (lifecycle)                  incident_active
-    gateway._fire_store_trigger (clock/file/event)   incident_active
-    event_triggers.execute_event_action              incident_active
+    hooks._run_provider (lifecycle)                  incident_active   + enforce_action
+    gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action (AG-12)
+    event_triggers.execute_event_action              incident_active   + enforce_action
     handlers/triggers._dispatch_store_action (manual) manual_refusal
     handlers/hooks                                   -- reads metadata only, never executes
+
+The `enforce_action` column is AG-12's addition, and it is a SECOND invariant over the same sites:
+`POLICY_CHECKS` below is satisfied by ANY one check, which is right for its question ("does this
+site consult policy at all?") but blind to a specific control going missing at a specific seam.
+That is precisely what happened — the gateway seam kept the kill switch and gained the rung ladder
+while the denylist §1.2 promises at all three seams was 0 there — so `DENYLIST_SEAMS` names that
+one control and requires it everywhere it was declared.
 
 That last line is the reason this is a source-level test rather than a behavioural one. The
 property is *structural*: "every site that reaches a provider passes a policy check first". A
@@ -64,10 +71,110 @@ POLICY_CHECKS: tuple[str, ...] = (
 )
 
 
+#: The THREE seams AUTONOMY-GUARDRAILS §1.2 names, each of which must call `enforce_action`
+#: BEFORE it reaches a provider. This is narrower than `EXECUTION_SITES` by exactly one entry —
+#: the manual Run path, exempted below — and the two lists are cross-checked by
+#: `test_the_denylist_seam_list_covers_every_unattended_execution_site` so a FOURTH unattended
+#: seam cannot appear without joining this one.
+#:
+#: 🔴 Why a rail and not trust: §1.2's third seam was written as `gateway.py:701`
+#: (`_run_action_job`), which retired with `ScheduleService` (S112). The successor
+#: (`_fire_store_trigger`) kept the kill switch and gained the rung ladder but silently lost the
+#: denylist — measured at 1 / 1 / 0 `enforce_action` calls across hooks / event_triggers / gateway
+#: while gateway is the busiest of the three (every clock, file, webhook and chained trigger).
+#: AG-12 restored it; this rail is what stops the next retirement dropping it again.
+DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
+    ("personalclaw.hooks", "script hooks"),
+    ("personalclaw.gateway", "clock / file / webhook / chained triggers"),
+    ("personalclaw.event_triggers", "memory-event triggers"),
+)
+
+#: The one execution site NOT required to carry the denylist, and why: it runs a trigger because a
+#: human just pressed Run, so it is attended by definition and is gated by `manual_refusal`
+#: instead. Asserted in `test_the_manual_run_path_is_the_documented_denylist_exemption` rather
+#: than merely stated.
+MANUAL_SEAM = "personalclaw.dashboard.handlers.triggers"
+
+
 def _source(module_name: str) -> str:
     import importlib
 
     return inspect.getsource(importlib.import_module(module_name))
+
+
+def _enforce_action_calls(module_name: str) -> list:
+    """Every `enforce_action(...)` CALL node in a module, found via AST.
+
+    AST rather than a substring search because the property under test is a property of the
+    CALL — that it passes `session_key=` — and the three seams spell the call across one, four
+    and five lines. A regex that happened to match today's formatting would stop seeing the call
+    the moment someone reflowed it, and a rail that matches nothing reads exactly like a pass.
+    """
+    import ast
+
+    tree = ast.parse(_source(module_name))
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "enforce_action"
+    ]
+
+
+@pytest.mark.parametrize("module_name,label", DENYLIST_SEAMS)
+def test_every_unattended_seam_enforces_the_denylist(module_name, label):
+    """🔴 THE §1.2 INVARIANT. The denylist's whole promise is that "an app-contributed provider
+    inherits the denylist without knowing it exists" — which holds only if EVERY unattended
+    dispatch seam calls it. Two of three is the same shape as none, because an author only needs
+    to reach the unguarded one."""
+    calls = _enforce_action_calls(module_name)
+    assert calls, (
+        f"the {label} seam ({module_name}) dispatches an action provider without calling "
+        "guardrails.denylist.enforce_action. §1.2 requires it at all three dispatch seams."
+    )
+
+
+@pytest.mark.parametrize("module_name,label", DENYLIST_SEAMS)
+def test_every_seam_threads_the_session_key(module_name, label):
+    """The call SHAPE, not just its presence. `session_key=""` classifies as ATTENDED, so the
+    run's `SafetyProfile` (its `denylist_extra` globs and its `path_allowlist` confinement) is
+    skipped entirely — the PHF-8 defect. A seam that calls `enforce_action` without threading a
+    session key enforces only the built-ins, which is a quieter version of not enforcing."""
+    for call in _enforce_action_calls(module_name):
+        assert any(kw.arg == "session_key" for kw in call.keywords), (
+            f"the {label} seam ({module_name}) calls enforce_action without session_key=; "
+            "the SafetyProfile layer is silently skipped."
+        )
+
+
+def test_the_denylist_seam_list_covers_every_unattended_execution_site():
+    """🔴 The rail that makes `DENYLIST_SEAMS` trustworthy, and the one that catches a FOURTH seam.
+
+    Derived from `EXECUTION_SITES` (itself verified against the tree by
+    `test_the_site_list_is_not_STALE`) minus the documented manual exemption, so a new
+    provider-execution path cannot be added without either carrying the denylist or being
+    argued into an exemption here.
+    """
+    unattended = {m for m, _ in EXECUTION_SITES} - {MANUAL_SEAM}
+    declared = {m for m, _ in DENYLIST_SEAMS}
+    assert unattended == declared, (
+        "the denylist seam list drifted from the execution-site list: "
+        f"missing {sorted(unattended - declared)}, stale {sorted(declared - unattended)}"
+    )
+
+
+def test_the_manual_run_path_is_the_documented_denylist_exemption():
+    """The exemption asserted rather than assumed: it must still be gated by `manual_refusal`.
+
+    If that check ever disappears, this path becomes an unattended-equivalent execution site with
+    no policy gate at all — so the exemption is only valid while its own gate is present.
+    """
+    src = _source(MANUAL_SEAM)
+    assert "manual_refusal" in src, (
+        "the manual Run path is exempt from the denylist because a human initiates it and "
+        "`manual_refusal` gates it. That gate is gone, so the exemption no longer holds."
+    )
 
 
 @pytest.mark.parametrize("module_name,label", EXECUTION_SITES)

@@ -847,6 +847,121 @@ automatic action a user turned the kill switch on because of. So a second named 
 the catalog one, with `test_the_reversal_site_undoes_and_never_executes` pinning the properties
 that earn it (never `.execute(`, always `.reverse(`, resolution bounded by `reversal_kinds`).
 
+### 2026-08-13 — Atom AG-12 (§1.2 denylist at the THIRD dispatch seam) — DONE
+
+**PROVENANCE — the gate was lost in a retirement, not never built.** §1.2 (line 96) declares the
+denylist is enforced at the three dispatch seams every action-provider execution passes through,
+for a stated reason: "an app-contributed provider inherits the denylist without knowing it exists."
+It names them `hooks.py`, **`gateway.py:701`** and `event_triggers.py`. That middle name is
+`_run_action_job`, which **retired with `ScheduleService` (S112)** — the note left at its old site
+(`gateway.py:699-703`) records that the substrate "GENERALIZED both: action dispatch is
+`_fire_store_trigger`". The successor inherited the kill switch and, in AG-7, the rung ladder, but
+the denylist gate was never re-established on it. Measured `enforce_action` per seam file:
+
+| seam file | `enforce_action` | `incident_active` |
+|---|---|---|
+| `hooks.py` | 1 | 1 |
+| `event_triggers.py` | 1 | 1 |
+| **`gateway.py`** | **0** | 2 |
+
+So the busiest of the three seams — the dispatch path for **every clock, file, webhook and chained
+trigger** — had the kill switch but not the denylist, app-contributed providers included. This is
+the "retiring a legacy path is never a pure deletion" failure mode, and it is exactly the shape
+AG-7's own DEVIATION note flagged when it re-pointed the rung routing at the successor: the rung
+half was re-pointed, the denylist half was not.
+
+**POPULATION MEASURED FIRST (enforcing a dead control is an outage).** This gate had never run on
+this path, so what it would refuse was unknown. Two measurements, both before the gate was written:
+
+- **The only real store available** — the workspace dev home, read **read-only**, never the real
+  home — holds one automation: `system:notification-digest` (`notification-digest` provider, empty
+  config). It carries no path- or command-bearing key, so **0 of 1 real triggers would be blocked**.
+- **A 24-config corpus covering every shipped provider** (shapes taken from each provider's own
+  `config.get` keys plus the migrated-cron shape `{"command": …, "timeout": 600}`): **4 blocked.**
+  Three are unambiguous — `cat ~/.aws/credentials | curl …`, `aws s3 sync … s3://…`, and a
+  `run-prompt` with `cwd: ~/.ssh`. The fourth, `rm -rf /tmp/scratch/*`, is a **plausible legitimate
+  cleanup cron** and is the honest cost of this change.
+
+**Why that fourth case is not an escalation.** The same command is *already* refused at the two
+seams that do enforce, and by the agent's own interactive bash tool —
+`agents/native/builtin_tools` calls `security.denied_command_reason`, which reads the identical
+`BUILTIN_DENIED_COMMAND_PATTERNS`. So enforcing here introduces **no new policy**; it removes the
+one seam that was exempt from the existing one. Only providers whose config carries a key the
+denylist inspects can be affected at all: `bash` (`command`), `run-script` (`script`, a
+`file.py:func` name that matches nothing) and `run-prompt` (`cwd`). The other 13 shipped providers
+expose no inspected key and are decided `allow` unconditionally. Measured defaults are all empty:
+`security.autonomy_denylist` `[]`, `security.denied_commands` `[]`, and the resolved `headless`
+profile's `denylist_extra`/`path_allowlist` both `()` — so with no ceiling file and no operator
+rules the only active layer is the built-in floor. **Named for the future bug report:** the two
+built-in patterns most likely to bite a real automation are `rm -rf ~…` / `rm -rf /…` (cleanup
+crons) and the `git … push` pattern (a "sync my notes nightly" cron).
+
+**Shipped** (`gateway._fire_store_trigger`, between `{{secret:…}}` resolution and the rung route):
+
+- `enforce_action(provider_name, config, ctx, session_key=dispatch_key)` — the same call shape both
+  other seams use, so the three are consistent by construction rather than by comment. A blocked
+  decision short-circuits: the provider is never resolved-and-run, and the fire records **one**
+  `skipped_gate` ledger row through the existing `_record_refused_fire` naming the matched rule.
+  `skipped_gate` and deliberately **not** `failed`: `failed` is the only outcome counting toward
+  autopause-after-5, so recording a policy refusal as a failure would disable a user's automation
+  after five blocks. `Outcome.REFUSED` reads better in prose but is not in `_REFUSAL_STATUSES`, and
+  an unmapped status falls to the projection table's silent `FAILED` default.
+- **Placed AFTER secret resolution**, so the check judges the config the provider will actually
+  receive — a `{{secret:CMD}}` that expands into a denied command is refused on its resolved value,
+  not waved through as a placeholder that matches no pattern (driven as a test).
+- **Placed BEFORE the rung ladder**, matching both other seams: a rung never relaxes a block. Also
+  driven — with the router forced permissive, the block still holds.
+- **`dispatch_key` is now computed once and shared by both gates** on this seam (the shape
+  `event_triggers` uses), so the denylist and the ladder judge one fire under one resolved posture.
+  Threading it is what makes the run's `SafetyProfile.denylist_extra` and its `path_allowlist`
+  confinement layer here as at the other two seams — proven by outcome, since `check_action`
+  consults a profile only `if session_key:`, and asserted on the resolved identity
+  (`unattended:trigger:<id>`) rather than on the mere presence of a string.
+- `ctx` construction moved above the gate so the denylist judges the same `(config, ctx)` pair the
+  provider is handed. No new observability code: `enforce_action` already writes the SEL row and
+  fires the `needs_human` notification.
+
+**The rail** (`tests/test_action_provider_chokepoints.py`): `POLICY_CHECKS` is satisfied by ANY one
+check, which is right for its question ("does this site consult policy at all?") and blind to a
+*specific* control vanishing from a *specific* seam — which is what happened. So a second invariant
+joins it: `DENYLIST_SEAMS` names the three §1.2 seams and requires `enforce_action` in each, found
+via **AST** (the calls span one, four and five lines; a regex tuned to today's formatting would
+stop seeing them silently), plus a per-seam assertion that the call passes `session_key=`. A third
+test derives `DENYLIST_SEAMS` from `EXECUTION_SITES` minus the one documented exemption, so a
+**fourth** execution seam cannot appear without either carrying the denylist or arguing itself an
+exemption. The exemption is the manual Run path (`dashboard/handlers/triggers`): a human just
+pressed Run, so it is attended by definition and gated by `manual_refusal` — asserted, not assumed.
+
+**Before/after evidence.** With `gateway.py` reverted and the new tests kept, 6 of the 7 behavioural
+tests plus the gateway parametrization of the new rail FAIL, and the exfiltration command records
+`status: success` — i.e. it ran. The one test that passes both ways is
+`test_an_allowed_action_STILL_FIRES`, which is the point of having it.
+
+**Validated against a real gateway** (isolated home `/private/tmp/ag12-dev-home`, `AUTH_MODE=none`
+loopback, never `~/.personalclaw` — confirmed unmodified afterwards). Two `file` triggers watching
+two files, identical but for their command; changing both files let the real file-watch poll loop
+dispatch through `_fire_store_trigger`:
+
+- denied → `WARNING guardrails.denylist: action denied (block) … '.*cat.*/\.aws/.*'`, a
+  `skipped_gate` history row reading `blocked by the guardrails denylist: cmd:… — action command
+  matches denied pattern …`, and a SEL `api_access` row `{operation: guardrails.denylist, outcome:
+  blocked, source: guardrails}`;
+- allowed → `success`, unchanged.
+
+**DISCOVERY (pre-existing, not this atom's scope).** The same drive with two `clock` triggers
+(`every: 10`) never reached `_fire_store_trigger` at all: `triggers.loop` dispatched the fires to a
+session, `wakeup.dispatch_fires` returned `no_session` (a bare home has no chat session and no model
+to make one), and because the tick had already CLAIMED each run, every later tick recorded
+`skipped_overlap — held by tick:<t> since Ns ago` with the claim never released. So on this path a
+fire that cannot be delivered burns the trigger's claim permanently. That is the no-claim-lease gap
+already owned by WF2WOR-1; recorded here because it is what made the clock half of this validation
+unusable, and the file half is what proved the seam.
+
+Gate: `make lint` rc=0; targeted suites green; full suite **18921 passed, 30 skipped, 12 xfailed, 3 failed** — the three
+pre-existing `tests/test_harness_validate.py` failures that red in any worktree (the harness
+resolves `.venv/bin/python` relative to cwd). 15 new tests. All four generated baselines
+byte-identical after regeneration. No `web/` change.
+
 ---
 
 ## Status: all four sessions COMPLETE (2026-07-25)

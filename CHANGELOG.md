@@ -10,6 +10,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Scheduled, file-watch, webhook and chained automations now honour the action denylist — they
+  never did.** ⚠️ **This changes behaviour for automations that already exist.** The denylist that
+  refuses an automated action touching a credential path or running a destructive/exfiltrating
+  command was enforced when a *script hook* or a *memory-event trigger* fired an action, but not on
+  the busiest path of all: the one every clock, file-watch, webhook and chained trigger dispatches
+  through. That seam had the incident kill switch and the autonomy ladder, so the omission was easy
+  to miss — the denylist was lost when the old scheduled-job dispatcher was retired and its
+  replacement was never re-wired. From this release all three dispatch paths enforce it, which also
+  means an action contributed by an installed **app** inherits the denylist wherever it is fired.
+  A refused fire does not run, is recorded in the automation's run history as a **skipped gate**
+  (not a failure, so it will not count toward auto-pausing your automation) naming the rule that
+  matched, is written to the security event log, and — for a `needs_human` rule — raises a
+  notification. What this can affect, measured before shipping: only `bash` (its `command`),
+  `run-script` (its script name) and `run-prompt` (its `cwd`) carry a field the denylist inspects;
+  the other shipped action types are unaffected. If one of your scheduled commands stops running,
+  the likely built-in patterns are `rm -rf ~…` / `rm -rf /…` and `git … push` — the same patterns
+  the assistant's own shell tool has always refused, which is the point: this is not a new policy,
+  it is an existing one that one seam was skipping. Nothing new is configured by default
+  (`security.autonomy_denylist` stays empty); to allow a command that is being refused, adjust the
+  command rather than the guardrail.
 - **A governance ceiling an operator writes once now bounds every unattended run — and the safety
   profile it bounds is finally read at all.** PersonalClaw already described each run's posture in a
   `SafetyProfile` (approval, tool grants, egress tier, path denies, budget, secret-scan mode), but
