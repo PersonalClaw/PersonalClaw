@@ -245,7 +245,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     >
       <>
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
-          {groups === null ? <ListSkeleton rows={6} /> : groups.length === 0 ? (
+          {groups === null ? <ListSkeleton rows={6} what="tools" /> : groups.length === 0 ? (
             // No group survived: nothing matched the filter, or (unfiltered) there are no
             // tools at all. `importable` must NOT gate this — importable servers are ones
             // you COULD add, never search results, so gating on them made the state

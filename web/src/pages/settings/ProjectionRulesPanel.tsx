@@ -70,7 +70,7 @@ export function ProjectionRulesPanel() {
               <Button variant="secondary" size="sm" onClick={refresh}><RotateCcw size={14} /> Retry</Button>
             </InlineError>
           ) : rules === undefined ? (
-            <ListSkeleton rows={2} />
+            <ListSkeleton rows={2} what="custom rules" />
           ) : list.length === 0 ? (
             <div className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low text-[0.8125rem]">
               No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.

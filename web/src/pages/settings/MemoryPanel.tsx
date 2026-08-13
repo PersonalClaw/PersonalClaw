@@ -1183,7 +1183,7 @@ function DailyDigestSection() {
         </Button>
         {digests && <span className="text-on-surface-low text-[0.8125rem]">{digests.length} digest{digests.length === 1 ? '' : 's'}</span>}
       </div>
-      {!digests ? <ListSkeleton rows={3} /> : digests.length === 0 ? (
+      {!digests ? <ListSkeleton rows={3} what="daily digests" /> : digests.length === 0 ? (
         <p className="py-4 text-center text-on-surface-low text-[0.8125rem]">No daily digests yet — they build from past days with memory activity.</p>
       ) : (
         <div className="flex flex-col gap-1.5">

@@ -53,10 +53,57 @@ import { join } from 'node:path'
 // `undefined` while `LoopsListPage` is mounted. The noun is applied because the rule holds, and
 // recorded as unverified rather than claimed.
 //
-// 🔑 THE REMAINING UNNAMED SKELETONS STAY BARE. No `LoadError` neighbour and no results noun means the
-// word would have to be invented, and a wrong noun ("Loading data…") is worse than an honest
-// "Loading…". The settings panels are the next coherent subset — they declare `PanelHeader title=`,
-// a third source — and belong to their own pass, not to this one.
+// ── Cycle 152: THE THIRD DECLARATION IS THE EMPTY STATE, AND IT IS THE SAME GATE ────────────────
+//
+// Cycle 148 left the rest for "the settings panels, which declare `PanelHeader title=`". That turned
+// out to be the wrong source: a panel title often names a CONCERN rather than a thing, so
+// "Loading security…", "Loading doctor…", "Loading memory…" would all be wrong. The right source was
+// one branch further along the very same conditional:
+//
+//     {filtered === null ? <ListSkeleton rows={6} />                       ← no noun
+//       : (tasks?.length ?? 0) === 0 ? <EmptyState title="No tasks" … />   ← names the rows
+//
+// A gate that knows what to call the rows when there are NONE knows what to call them while they
+// LOAD. Eight sites take their noun from their own empty state, all in the same conditional chain
+// (two ternary branches, or two sequential early returns):
+//
+//   #/tasks (×2 layout branches) "No tasks"              → tasks
+//   #/tools                      "No tools"              → tools
+//   settings/projection          "No custom rules"       → custom rules
+//   settings/memory (digests)    "No daily digests yet"  → daily digests
+//   knowledge/TagManager         "No tags yet"           → tags
+//   knowledge/ConflictPanel      "No contradictions recorded" → contradictions
+//   skills/SkillProposals        "No skill proposals"    → skill proposals
+//
+// Driven cold on the two route-level ones (fresh context, `/api/**` held, 150ms poll):
+// `#/tasks` and `#/tools` go from "Loading…" to "Loading tasks…" / "Loading tools…".
+//
+// 🪤 DISTANCE IS NOT THE TEST, AND NEITHER IS ANY REGEX I TRIED. Cycle 144's "within 3 lines" is right
+// for a `LoadError`/skeleton `return` pair and useless here — a JSX ternary puts its empty branch 8-11
+// lines down. But widening the window makes the scan pick up copy from a DIFFERENT gate in the same
+// component, and my first attempt at this rail claimed the component scope would exclude those. It
+// does not: an inner `<GroupSection>` is nested JSX, not another function, so the scanner saw
+// `AgentsListPage`'s "No matching agents" and the rail failed on its own claim. **The scanner finds
+// candidates; deciding that a nearby "No …" belongs to the same gate is a judgement, and it is written
+// down as one** (`FROM_EMPTY_STATE` / `EXCLUDED` below) rather than dressed up as derivation:
+//
+//   agents/AgentsListPage   "No matching agents" is an inner `GroupSection`'s SEARCH empty state,
+//                           filtered by the search box — a different gate. Excluded.
+//   settings/memory (list)  "No matches" is +1 line, but it is a SEARCH empty state; the rows are
+//                           not called matches — excluded.
+//   knowledge/EntityDetail  "No items reference this entity" is a sentence, and `EntityDetail`'s own
+//                           gate rather than the library list's — excluded.
+//   settings/search, models "No search providers configured" / "no models discovered" sit +8/+11
+//                           lines away in a different branch — excluded.
+//
+// 🔑 THE TRIM IS MECHANICAL, NOT EDITORIAL. The noun is the empty-state title minus its leading
+// "No " and any trailing participle ("recorded", "yet", "configured"). This rail asserts the
+// relationship rather than the exact string: every `what` must appear inside its own gate's empty
+// state, so a hand-written noun that drifts from the copy fails.
+//
+// 🔑 THE REST STAY BARE, DELIBERATELY. The panels whose title names a concern (Security, Doctor,
+// Memory's four sub-views), and every site whose neighbour is a different gate. A wrong noun is worse
+// than an honest "Loading…".
 
 const SRC = join(process.cwd(), 'src')
 const walk = (d: string): string[] =>
@@ -70,6 +117,8 @@ const SKELETON = /<(?:List|Form|CardGrid)Skeleton\b[^>]*?\/>/
 /** `what="literal"` or `what={expression}` — a dynamic noun is still a declared noun. */
 const ERR_NOUN = /<(?:LoadError|InlineError)[^>]*?what=(?:"([^"]+)"|\{([^}]+?)\})/
 const RESULTS = /results=\{\{([^}]*)\}\}/
+/** An empty-state title in the same gate: `title="No tasks"` or a bare "No daily digests yet" line. */
+const EMPTY_TITLE = /title=(?:"(No [^"]{2,40})"|\{[^}]*'(No [^']{2,40})')|(?:>|^)\s*(No [a-z][a-z' &-]{2,38})/
 /** An identifier used as a gate: `x === null`, `!x`, `x ?`, `x &&`. */
 const GATE = /!?([A-Za-z_$][\w$]*)\s*(?:===|!==|&&|\?)/g
 
@@ -101,6 +150,8 @@ type Site = {
   rel: string; line: number; tag: string; owner: string
   errNoun: string | null; errDist: number | null
   resultsNoun: string | null
+  /** The "No …" copy in the same gate's empty branch, if there is one. */
+  emptyTitle: string | null
 }
 
 /** Every skeleton in the tree, with whichever noun its own surface has already declared. */
@@ -132,7 +183,17 @@ function skeletons(): Site[] {
       }
       const idents = gateIdents(lines, i, text.slice(0, text.indexOf(tag)))
       const hit = declared.find((d) => d.owner === owner && idents.some((id) => new RegExp(`\\b${id}\\b`).test(d.count)))
-      out.push({ rel: abs.slice(SRC.length + 1), line: i + 1, tag, owner, errNoun, errDist, resultsNoun: hit?.noun ?? null })
+      // The same gate's EMPTY branch, within a JSX ternary chain or the next early return. Bounded
+      // to 12 lines and required to be in the same component: a "No …" further away is a different
+      // gate, which is exactly what excluded AgentsListPage's inner GroupSection.
+      let emptyTitle: string | null = null
+      for (let d = 1; d <= 12 && emptyTitle === null; d++) {
+        const l = lines[i + d]
+        if (l === undefined || ownerOf(bs, i + d) !== owner) break
+        const m = EMPTY_TITLE.exec(l)
+        if (m) emptyTitle = (m[1] ?? m[2] ?? m[3]).trim()
+      }
+      out.push({ rel: abs.slice(SRC.length + 1), line: i + 1, tag, owner, errNoun, errDist, resultsNoun: hit?.noun ?? null, emptyTitle })
     })
   }
   return out
@@ -147,6 +208,36 @@ const carries = (tag: string, noun: string) => {
   const lit = /^(['"])(.*)\1$/.exec(noun)
   const forms = lit ? [`what="${lit[2]}"`] : [`what="${noun}"`, `what={${noun}}`]
   return forms.some((f) => tag.includes(f))
+}
+
+/** The sites cycle 152 named from their own gate's empty branch. Explicit, because deciding that a
+ *  nearby "No …" belongs to the SAME gate is a judgement the scanner cannot make. */
+const FROM_EMPTY_STATE = [
+  'pages/tasks/TasksListPage.tsx:398',
+  'pages/tasks/TasksListPage.tsx:425',
+  'pages/tools/ToolsPage.tsx:248',
+  'pages/settings/ProjectionRulesPanel.tsx:73',
+  'pages/settings/MemoryPanel.tsx:1186',
+  'pages/knowledge/TagManager.tsx:82',
+  'pages/knowledge/ConflictPanel.tsx:32',
+  'pages/skills/SkillProposals.tsx:20',
+]
+
+/** Sites with a "No …" in reach that is NOT their gate's. Asserted to stay bare, with the reason. */
+const EXCLUDED: [string, string][] = [
+  ['pages/agents/AgentsListPage.tsx', '"No matching agents" is an inner GroupSection\'s SEARCH empty state'],
+  ['pages/knowledge/KnowledgeListPage.tsx', '"No items reference this entity" is a sentence, and EntityDetail\'s own gate'],
+]
+
+/**
+ * Does the tag's noun come out of its own gate's empty-state copy? The trim is mechanical — drop the
+ * leading "No " and any trailing participle — so the test is containment, not equality: a hand-written
+ * noun that drifts from the copy users read stops matching.
+ */
+const carriesFromEmpty = (tag: string, emptyTitle: string) => {
+  const what = /what="([^"]+)"/.exec(tag)?.[1]
+  if (!what) return false
+  return emptyTitle.toLowerCase().includes(what.toLowerCase())
 }
 
 describe('a skeleton borrows a noun its own surface already declares', () => {
@@ -181,6 +272,30 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
     expect(dyn && carries(dyn.tag, dyn.errNoun!), 'and the skeleton passes the same expression').toBe(true)
   })
 
+  it('every noun taken from an empty state still matches the copy users read', () => {
+    // If an empty state is reworded, the loading noun must follow — that is the whole point of
+    // sourcing it from the copy instead of writing a second string that can drift.
+    const named = all.filter((s) => FROM_EMPTY_STATE.includes(`${s.rel}:${s.line}`))
+    expect(named.length, `all ${FROM_EMPTY_STATE.length} named sites found`).toBe(FROM_EMPTY_STATE.length)
+    const drifted = named.filter((s) => !s.emptyTitle || !carriesFromEmpty(s.tag, s.emptyTitle))
+      .map((s) => `${s.rel}:${s.line} says ${s.tag} but its empty state says ${JSON.stringify(s.emptyTitle)}`)
+    expect(drifted, `the loading noun drifted from the empty-state copy:\n${drifted.join('\n')}`).toEqual([])
+  })
+
+  it('a "No …" in reach is a CANDIDATE, not a licence — the excluded ones stay bare', () => {
+    // 🪤 THE SCANNER CANNOT TELL A GATE FROM A LOOK-ALIKE, and pretending otherwise is how a page gets
+    // named after one of its groups. `AgentsListPage`'s skeleton has "No matching agents" within
+    // reach, but that copy belongs to an inner `GroupSection` filtered by the search box — a different
+    // gate, and a SEARCH empty state at that. Same for the memory list's "No matches". Both are
+    // excluded by name, with the reason, so the next pass does not "finish the job".
+    for (const [rel, why] of EXCLUDED) {
+      const site = all.find((s) => s.rel === rel && !FROM_EMPTY_STATE.some((k) => k.startsWith(`${rel}:`)))
+        ?? all.find((s) => s.rel === rel)
+      expect(site, `${rel} left the census`).toBeTruthy()
+      expect(/what=/.test(site!.tag), `${rel} must stay bare — ${why}`).toBe(false)
+    }
+  })
+
   it('the pairs really are the two branches of one gate', () => {
     // Every LoadError match measured at −1 or −2 lines. If a future match is 30 lines away it is
     // probably a DIFFERENT fetch, and copying its noun would be a lie — so the rule stays tight.
@@ -201,9 +316,10 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
   })
 
   it('the unnamed ones stay bare rather than guessing', () => {
-    // Asserted from the other side: a `what` that matches neither declaration is an invented word, and
-    // the ledger is where proposals belong until someone names them deliberately.
-    const invented = all.filter((s) => !s.errNoun && !s.resultsNoun && /what=/.test(s.tag))
+    // Asserted from the other side: a `what` that matches NONE of the three declarations is an
+    // invented word, and the ledger is where proposals belong until someone names them deliberately.
+    const invented = all.filter((s) => /what=/.test(s.tag) && !s.errNoun && !s.resultsNoun
+      && !(s.emptyTitle && carriesFromEmpty(s.tag, s.emptyTitle)))
       .map((s) => `${s.rel}:${s.line} — ${s.tag}`)
     expect(invented, `these invent a noun with no declaration to source it from:\n${invented.join('\n')}`).toEqual([])
   })

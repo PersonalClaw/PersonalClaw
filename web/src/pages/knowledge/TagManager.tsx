@@ -79,7 +79,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
     return out
   }, [tags])
 
-  if (tags === null) return <ListSkeleton />
+  if (tags === null) return <ListSkeleton what="tags" />
   if (!tags.length) {
     return (
       <EmptyState icon={TagIcon} title="No tags yet"
