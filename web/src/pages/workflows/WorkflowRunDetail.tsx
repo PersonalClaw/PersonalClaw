@@ -8,6 +8,7 @@ import { SidePanel } from '../../ui/SidePanel'
 import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
+import { PageTitle } from '../../ui/PageTitle'
 import { fmtElapsed, isNodeTerminal, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
@@ -253,7 +254,15 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
         keepCornerPadding
         left={<div className="flex min-w-0 items-center gap-m">
           <QuietButton onClick={onBack} title="Back to workflows"><ArrowLeft size={13} /> Workflows</QuietButton>
-          {run && <span data-type="title-l" className="truncate text-on-surface">{run.workflow}</span>}
+          {/* 🔴 THIS ROUTE HAD NO h1 AT ALL. Measured: `#/workflows` renders `h1 "Workflows"`, and opening
+              a run navigates to `#/workflows/runs/<id>` where the h1 count drops to ZERO — axe
+              `page-has-heading-one`, and a screen-reader user skimming by heading lands on nothing.
+              The rule this settles (cycle 150 left it open): when the URL's PATH identifies the entity,
+              that entity IS the destination and takes the h1; when the entity is a query param on a list
+              route (`?item=`, `?open=` — the peek), the list keeps its h1 and the panel gets none. All
+              five surfaces measured agree, and it is the row lesson from cycle 161 one level up: a
+              destination is named by its identity, not by its category. */}
+          {run && <PageTitle className="truncate">{run.workflow}</PageTitle>}
           {look && StatusIcon && (
             <span className={`inline-flex shrink-0 items-center gap-1 text-[0.75rem] ${look.tone}`}>
               <StatusIcon size={13} className={look.spin ? 'animate-spin' : ''} /> {look.label}
