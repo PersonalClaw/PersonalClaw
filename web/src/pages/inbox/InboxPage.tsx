@@ -14,6 +14,7 @@ import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQuery
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type InboxItem, type InboxStatus } from '../../lib/api'
+import { rowSubject } from '../../lib/rowSubject'
 import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
@@ -311,7 +312,22 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
               const accentTone = channelBacked ? cm.tone : km.tone
               return (
                 <ContextMenu key={it.id} items={menuItems}>
-                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)} label={channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}>
+                {/* 🔴 THE ROW WAS NAMED BY ITS KIND, NOT ITS IDENTITY. `km.label` is the kind word, so
+                    measured on this surface: **39 rows → 3 distinct names**, 35 of them "Proposals"
+                    (36 buttons whose whole computed name is a kind word). A screen-reader user tabbing
+                    the inbox heard "Proposals, button" thirty-five times while every row's own text
+                    identified it. Same defect cycle 141 measured for rows named by kind, and the helper
+                    cycle 142 built for it — join the identifying parts, drop repeats, cap at 55 — is
+                    what `#/notifications` already uses for exactly this. The sender stays first for a
+                    channel-backed row (that IS its identity); the message line distinguishes the rest.
+
+                    🪤 `firstLine()` — which `#/notifications` uses — was WRONG here, and only measuring
+                    showed it: an inbox message wraps its subject onto several lines, so the first line
+                    is often just "Refine a skill" and 34 rows still collapsed to one name. The visible
+                    `<p>` renders those newlines as spaces, so a sighted user reads the whole subject.
+                    Collapsing whitespace is what matches what is on screen. */}
+                <ListRow index={i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
+                  label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, (it.message ?? '').replace(/\s+/g, ' ')])}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
                   </span>
