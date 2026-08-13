@@ -247,6 +247,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **Knowledge search now finds the passage, not just the document — and tells you which passage.**
+  Semantic search used to compare your query against one vector per item, built from the item's title
+  and summary, so an answer buried on page 12 of a long document was effectively invisible to it: the
+  document either matched as a whole or not at all. Search now compares your query against the
+  individual passages the library indexes for each document, and scores each document by its single
+  best-matching passage. Two things change for you. Long documents become findable by what is *inside*
+  them, which is where most of a real library's value sits. And a result that matched semantically now
+  carries a citation — the section heading and line range of the passage that actually matched — where
+  before, if none of your literal query words appeared in the text, the result could only name the
+  document and point at its top. A document with no indexed passages yet (anything added before this
+  release, until it is re-indexed) still matches the way it always did, so nothing becomes unfindable
+  in the meantime. Ranking, the relevance-cliff cutoff and the similarity threshold are unchanged;
+  only the evidence feeding them got better. Note that until the upcoming index lands, searching a
+  large library does more work per query than before.
+
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it
   claimed to.** If your operating system is set to reduce motion, PersonalClaw relied on a framework
   setting that neutralises movement *across the screen* but leaves the underlying spring running, so
