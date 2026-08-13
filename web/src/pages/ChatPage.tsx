@@ -58,6 +58,7 @@ import { FindBar } from './chat/FindBar'
 import { FollowupChips } from './chat/FollowupChips'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
+import { sessionRecencyMs } from '../lib/epoch'
 import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
@@ -222,7 +223,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
     const all = data ?? []
     return all
       .filter((s) => (s.origin ?? 'manual') === 'manual')
-      .sort((a, b) => (Date.parse(b.last_activity_ts || b.last_ts || b.created || '') || 0) - (Date.parse(a.last_activity_ts || a.last_ts || a.created || '') || 0))
+      .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
       .slice(0, 20)
   }, [data])
   return (
@@ -3506,7 +3507,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
 
   const tagById = useMemo(() => { const m: Record<string, ChatTag> = {}; for (const t of tags) m[t.id] = t; return m }, [tags])
   const n = q.trim().toLowerCase()
-  const recency = (s: ChatSessionSummary) => Date.parse(s.last_activity_ts || s.last_ts || s.created || '') || 0
+  const recency = sessionRecencyMs
   // Full-text conversation search: the local filter (title/key/preview) only sees
   // what the list row carries. For "I remember SAYING X" we also query
   // /api/sessions/search, which scans the persisted JSONL bodies, and union those
