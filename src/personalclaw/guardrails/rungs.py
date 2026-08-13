@@ -85,6 +85,27 @@ _ROUTE_BY_RUNG: dict[str, str] = {
     RUNG_AUTONOMOUS: ROUTE_EXECUTE,
 }
 
+#: The human name of each rung, said in terms of BEHAVIOUR rather than of the ladder —
+#: "runs on its own" is what a user needs to know; "autonomous" is what the code calls it.
+#: Defined here, next to the routes it describes, and served to the frontend by
+#: ``GET /api/autonomy`` so a rung cannot be called one thing in a chip and another in the
+#: proposal that offered it (the catalog-over-mirror rule the trigger UI already follows).
+RUNG_LABELS: dict[str, str] = {
+    RUNG_DRAFT_ONLY: "drafts only",
+    RUNG_ONE_TAP: "asks first",
+    RUNG_AUTO_WITH_UNDO: "runs with undo",
+    RUNG_AUTONOMOUS: "runs on its own",
+}
+
+#: What each rung DOES at a dispatch seam, in one sentence — the table at the top of this
+#: module, in the words the ladder panel shows.
+RUNG_HINTS: dict[str, str] = {
+    RUNG_DRAFT_ONLY: "Never executes on its own. Files a proposal describing what it would do.",
+    RUNG_ONE_TAP: "Never executes on its own. Raises a request for you to decide.",
+    RUNG_AUTO_WITH_UNDO: "Executes, then tells you and keeps a handle so you can undo it.",
+    RUNG_AUTONOMOUS: "Executes silently. The audit log is the record.",
+}
+
 
 @dataclass(frozen=True)
 class RungRoute:
@@ -373,8 +394,12 @@ def record_reversal(route: RungRoute, result: Any, *, label: str, refs: dict | N
 
     The handle itself is the PROVIDER's: only it knows what "undo" means for its own
     effect (``ActionResult.reversal``, e.g. the task row a ``create-task`` filed). This
-    persists it where a user and AG-8's undo affordance can both find it — the SEL row and
-    the notification's ``meta`` — and returns the handle it recorded.
+    persists it in the three places the undo click needs — the SEL row (audit), the
+    reversal record store (``guardrails.ladder``, which is what
+    :func:`~personalclaw.guardrails.ladder.reverse_action` resolves an id against) and the
+    notification's ``meta`` (which carries the record id, so the affordance is rendered
+    from persisted state rather than from a handle sitting in a page) — and returns the
+    handle it recorded.
 
     **No handle, no notification.** A provider that cannot reverse itself leaves
     ``reversal`` empty, and then the passive notify is skipped entirely: an "undo
@@ -398,6 +423,19 @@ def record_reversal(route: RungRoute, result: Any, *, label: str, refs: dict | N
         logger.debug("reversal SEL audit failed", exc_info=True)
     if not handle:
         return ""
+    # The durable record the undo click acts on. A refused handle yields no record id, and
+    # then the notification says the action ran WITHOUT offering an undo — the same "never
+    # promise a reversal that cannot happen" rule as the no-handle case above, applied one
+    # level down to a handle the store could not accept.
+    record_id = ""
+    try:
+        from personalclaw.guardrails.ladder import record_reversal_handle
+
+        record_id = record_reversal_handle(
+            action_type=route.key, rung=route.rung, handle=handle, label=label
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("could not record a reversal handle for %s", route.key, exc_info=True)
     try:
         from personalclaw import notification_kinds
         from personalclaw.action_providers.services import get_action_services
@@ -408,8 +446,12 @@ def record_reversal(route: RungRoute, result: Any, *, label: str, refs: dict | N
             state.notify(
                 notification_kinds.INFO,
                 "An automatic action ran",
-                f"{label} ran on its own. You can still undo it.",
-                meta={**meta, "reversal": handle},
+                (
+                    f"{label} ran on its own. You can still undo it."
+                    if record_id
+                    else f"{label} ran on its own."
+                ),
+                meta={**meta, "reversal": handle, "reversal_id": record_id},
             )
     except Exception:  # noqa: BLE001
         logger.debug("reversal notify failed", exc_info=True)

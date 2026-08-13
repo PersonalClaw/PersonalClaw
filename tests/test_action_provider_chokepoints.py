@@ -41,6 +41,15 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.dashboard.handlers.triggers", "the manual Run path"),
 )
 
+#: The ONE site that resolves an action provider to UNDO an action rather than to run one
+#: (AUTONOMY-GUARDRAILS §6.1). Exempt from the execution invariant, and asserted separately by
+#: `test_the_reversal_site_undoes_and_never_executes` rather than merely trusted. Why it is
+#: exempt: it calls `reverse`, never `execute`; the provider it may reach is bounded by the
+#: recorded action type's own declaration plus the handle kind that provider claims; and the
+#: request is user-initiated and autonomy-REDUCING. An `incident_active` check here would refuse
+#: to take back exactly the automatic action a user turned the kill switch on because of.
+REVERSAL_SITE = "personalclaw.guardrails.ladder"
+
 #: Any one of these, present in the module, satisfies the invariant. A LIST rather than one name
 #: because the sites legitimately differ: an unattended fire is gated by the kill switch, a manual
 #: fire by `manual_refusal`, and a store-backed fire additionally walks the whole `firepath`.
@@ -86,6 +95,22 @@ def test_the_catalog_site_does_not_execute():
     assert ".execute(" not in src, "the catalog site must never execute a provider"
 
 
+def test_the_reversal_site_undoes_and_never_executes():
+    """The second exemption from the execution invariant, and the properties that earn it.
+
+    `guardrails.ladder` resolves a provider so a user can take an `auto_with_undo` action BACK.
+    That is the opposite direction from every site in `EXECUTION_SITES`, so the kill-switch check
+    they share would be wrong here — but "it's different" is not an exemption, so the difference
+    is asserted: it must never execute, and it must resolve its provider through the declaration
+    (`reversal_kinds`) rather than accept whatever name a caller supplies.
+    """
+    src = _source(REVERSAL_SITE)
+    assert "get_action_provider(" in src, "the exemption is stale if this site no longer resolves"
+    assert ".execute(" not in src, "the reversal site must never execute a provider"
+    assert ".reverse(" in src, "the reversal site must reach the provider's own undo"
+    assert "reversal_kinds" in src, "resolution must be bounded by what the provider claims"
+
+
 def test_the_site_list_is_not_STALE():
     """🔴 The test that makes the list above trustworthy.
 
@@ -106,6 +131,7 @@ def test_the_site_list_is_not_STALE():
             callers.add("personalclaw." + str(rel).replace("/", "."))
 
     known = {m for m, _ in EXECUTION_SITES} | {
+        REVERSAL_SITE,
         "personalclaw.dashboard.handlers.hooks",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it

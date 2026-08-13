@@ -183,6 +183,11 @@ export interface Trigger {
   whenTone: string
   actionLabel: string        // "Agent" / "Bash" / "Notify" …
   actionIcon: LucideIcon
+  /** The raw action-provider name, when the row has one. Carried alongside the derived
+   *  label/icon because the autonomy ladder is keyed on the provider IDENTITY, not on its
+   *  presentation: `providerRungIndex` maps this exact string to the action type that
+   *  governs it, which is the same thing the backend dispatch seams hold. */
+  actionProvider?: string
   lastRunTs: number | null
   lastStatus: string | null
   /** Lifecycle state, store triggers only — `active | paused | autopaused | parked | …` (S164). */
@@ -214,6 +219,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     whenLabel: j.schedule, whenIcon: km.icon, whenTone: km.tone,
     actionLabel: provider ? actionLabel(provider) : mm.label,
     actionIcon: provider ? actionIcon(provider) : mm.icon,
+    actionProvider: provider,
     lastRunTs: j.last_run_ts ?? null,
     // Honest last-run status (T7): prefer the newest run record's status (persists
     // across restarts; carries launched/failure/timeout) over last_status (only
@@ -248,7 +254,7 @@ export function hookToTrigger(h: HookItem): Trigger {
   return {
     kind: 'lifecycle', id: `lifecycle:${h.id}`, rawId: h.id, name: h.name, enabled: h.enabled,
     whenLabel: humanizeEvent(h.event), whenIcon: Anchor, whenTone: 'var(--color-primary)',
-    actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider),
+    actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider), actionProvider: h.provider,
     lastRunTs: h.last_run || null, lastStatus: h.last_status || null, runCount: h.run_count, usedBy: h.used_by,
     schedule: undefined, hook: h,
   }
@@ -266,6 +272,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     whenLabel: km.label, whenIcon: km.icon, whenTone: 'var(--color-primary)',
     actionLabel: provider ? actionLabel(provider) : 'Action',
     actionIcon: provider ? actionIcon(provider) : Zap,
+    actionProvider: provider,
     lastRunTs: null, lastStatus: t.health || null, state: t.state || null,
     runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], store: t,
@@ -289,6 +296,7 @@ export function eventToTrigger(t: WireTrigger): Trigger {
     whenLabel: pm.label, whenIcon: eventSourceIcon(pm.source), whenTone: 'var(--color-secondary)',
     actionLabel: provider ? actionLabel(provider) : 'Action',
     actionIcon: provider ? actionIcon(provider) : Zap,
+    actionProvider: provider,
     // A data event has no clock, so there is no next run and no duration to show. `runCount` is
     // the fire count — the one live number an event row can honestly report.
     lastRunTs: null, lastStatus: null, state: null,

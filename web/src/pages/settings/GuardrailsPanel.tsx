@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
-import { api, type ProviderHealth } from '../../lib/api'
+import { useEffect, useMemo, useState } from 'react'
+import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { useCachedData } from '../../lib/useCachedData'
+import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
+import { Button } from '../../ui/Button'
+import { RungChip } from '../../ui/RungChip'
+import { rungMeta } from '../../lib/rungs'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 /** Guardrails — the personal safety floor (AUTONOMY-GUARDRAILS). Four groups:
@@ -80,7 +83,157 @@ export function GuardrailsPanel() {
         </div>
       </Section>
 
+      <AutonomyLadderSection />
+
       <ProviderHealthSection />
+    </div>
+  )
+}
+
+// ── Earned autonomy: the rung ladder (AUTONOMY-GUARDRAILS §5-§6.1) ──────────
+/** The ladder panel: what each automated action may do on its own, what it has earned, and
+ *  the two things a user can do about it — promote (a click, never automatic) or hand the
+ *  autonomy back. Plus the undo list for actions that already ran at the with-undo rung.
+ *
+ *  This is the surface that OWNS the ladder read, so it is the one that must state a failed
+ *  read out loud: a chip elsewhere can go quiet, but a panel that silently rendered an empty
+ *  ladder would say "no automation has any autonomy" — a reassuring claim about a safety
+ *  control, produced by a failed request. */
+function AutonomyLadderSection() {
+  const { data: ladder, error: loadErr, refresh } = useCachedData('autonomy:ladder', () => api.autonomyLadder(), { persist: true })
+  const [busy, setBusy] = useState('')
+  const reload = () => { invalidateCache('autonomy:ladder'); refresh() }
+
+  // Eligible first (the only rows with a decision to make), then least autonomy first — a
+  // type that drafts or asks is one the user may want to promote, while a row that already
+  // runs on its own needs no attention. Alphabetical inside each tier so the list is stable.
+  const types = useMemo(() => {
+    const order = ladder?.rungs ?? []
+    return [...(ladder?.types ?? [])].sort((a, b) =>
+      Number(b.eligible) - Number(a.eligible) ||
+      order.indexOf(a.resolved_rung) - order.indexOf(b.resolved_rung) ||
+      a.key.localeCompare(b.key),
+    )
+  }, [ladder])
+
+  const promote = async (t: AutonomyType) => {
+    setBusy(t.key)
+    try {
+      const r = await api.autonomyGrant(t.key, t.next_rung)
+      notify(`${t.key} now ${rungMeta(r.rung, ladder ?? null).label}.`, 'success')
+      reload()
+    } catch (e) {
+      notify(`Couldn't promote ${t.key}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy('') }
+  }
+  const handBack = async (t: AutonomyType) => {
+    setBusy(t.key)
+    try {
+      await api.autonomyDemote(t.key)
+      notify(`${t.key} is back at ${rungMeta(t.floor, ladder ?? null).label}.`, 'success')
+      reload()
+    } catch (e) {
+      notify(`Couldn't change ${t.key}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy('') }
+  }
+
+  return (
+    <Section title="Earned autonomy" hint="Every automated action starts at the rung it was declared with and can only climb when you say so. A single rejection, thumbs-down or undo drops it back immediately and starts a cooldown.">
+      {!ladder && loadErr ? (
+        <LoadError what="the autonomy ladder" error={loadErr} onRetry={reload} />
+      ) : !ladder ? (
+        <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">Loading…</div>
+      ) : (
+        <div className="flex flex-col gap-l">
+          {ladder.incident_active && (
+            <div role="alert" className="rounded-lg px-4 py-3 text-[0.8125rem] bg-error/10 ring-1 ring-error/40 text-on-surface-var">
+              Incident mode is active, so nothing runs above “asks first” — a granted rung shows as held until you resume.
+            </div>
+          )}
+          <div className="rounded-lg bg-surface-container px-4 py-1">
+            {types.map((t) => (
+              <div key={t.key} className="flex items-start justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-on-surface text-[0.8125rem]">{t.key}</span>
+                    <RungChip type={t} ladder={ladder} />
+                    {t.leaves_machine && (
+                      <span className="text-on-surface-low text-[0.6875rem]" title="Its effect is visible outside this machine, so a track record can never propose full autonomy for it.">leaves this machine</span>
+                    )}
+                  </div>
+                  {/* WHY it runs at this rung, then WHAT it has earned. Both, always: the first
+                      is the answer to "why is this allowed to run by itself", the second is the
+                      only thing that decides whether a promote button appears — and when it does
+                      not appear, the record says what is missing rather than leaving a user to
+                      guess why a row is inert. */}
+                  <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{t.authority}</div>
+                  <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{t.record}</div>
+                  {t.demotions.length > 0 && (
+                    <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+                      Last demoted {t.demotions[t.demotions.length - 1].at.slice(0, 10)} — {t.demotions[t.demotions.length - 1].cause}
+                      {t.demotions.length > 1 && ` (${t.demotions.length} demotions on record)`}
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0 flex items-center gap-2">
+                  {t.eligible && t.next_rung && (
+                    <Button size="xs" variant="secondary" disabled={busy === t.key} onClick={() => promote(t)}>
+                      Promote to {rungMeta(t.next_rung, ladder).label}
+                    </Button>
+                  )}
+                  {t.granted_at && (
+                    <Button size="xs" variant="ghost" disabled={busy === t.key} onClick={() => handBack(t)}
+                      title={`Drop ${t.key} back to ${rungMeta(t.floor, ladder).label} and start its cooldown.`}>
+                      Hand back
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <UndoList ladder={ladder} onChange={reload} />
+        </div>
+      )}
+    </Section>
+  )
+}
+
+/** Actions that ran at the with-undo rung and can still be taken back.
+ *
+ *  The undo is offered from a PERSISTED record, so this list is the same source the
+ *  notification's undo button uses — one place decides whether an undo is still available,
+ *  rather than a page holding a handle it hopes is still good. */
+function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () => void }) {
+  const [busy, setBusy] = useState('')
+  const pending = ladder.reversals.filter((r) => !r.reversed_at)
+
+  const undo = async (r: AutonomyReversal) => {
+    setBusy(r.id)
+    try {
+      // A refused undo comes back as a non-2xx and lands in `catch` carrying the server's
+      // named reason, so there is no in-band failure branch to write here — and the list
+      // reloads either way, because the record's state is what decides whether the button
+      // should still be offered.
+      await api.autonomyUndo(r.id)
+      notify(`Undone. ${r.action_type} will ask again from now on.`, 'success')
+    } catch (e) {
+      notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy(''); onChange() }
+  }
+
+  return (
+    <div>
+      <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">Automatic actions you can still undo</div>
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        {pending.length === 0 ? (
+          <div className="py-3 text-on-surface-low text-[0.8125rem]">Nothing is waiting to be undone — no action has run at the “runs with undo” rung yet.</div>
+        ) : pending.map((r) => (
+          <Row key={r.id} label={r.label || r.action_type}
+            hint={`Ran ${r.created_at.slice(0, 16).replace('T', ' ')}. Undoing it also stops ${r.action_type} from doing this on its own.`}>
+            <Button size="xs" variant="secondary" disabled={busy === r.id} onClick={() => undo(r)}>Undo</Button>
+          </Row>
+        ))}
+      </div>
     </div>
   )
 }

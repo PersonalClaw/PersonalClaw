@@ -125,6 +125,19 @@ class ActionProvider(ABC):
         of what WOULD run instead (T9 honesty)."""
         return False
 
+    @property
+    def reversal_kinds(self) -> tuple[str, ...]:
+        """The ``ActionResult.reversal`` handle kinds this provider can take back.
+
+        A handle is ``<kind>:<provider-defined rest>`` and the KIND is the only part any
+        shared code reads: it is how the undo executor
+        (:func:`personalclaw.guardrails.ladder.reverse_action`) finds a provider willing to
+        reverse one. Empty by default — a provider that cannot undo its own effect says so
+        by staying silent, and its executions are then recorded without an undo offer
+        rather than with one that would refuse.
+        """
+        return ()
+
     @abstractmethod
     async def execute(
         self,
@@ -140,3 +153,26 @@ class ActionProvider(ABC):
         result rather than raising.
         """
         ...
+
+    async def reverse(self, handle: str) -> ActionResult:
+        """Undo what an earlier execution created, identified by its own handle.
+
+        The other half of ``ActionResult.reversal`` (AUTONOMY-GUARDRAILS §6.1). Called ONLY
+        with a handle this provider itself produced, whose kind it claimed in
+        :attr:`reversal_kinds`, and only from a persisted reversal record — never with a
+        client-supplied string.
+
+        A provider MUST resolve the handle against what actually exists and return
+        ``success=False`` with a reason when it does not (already deleted, changed hands,
+        unparseable): the caller treats a failed reversal as a refusal that leaves the
+        action's autonomy untouched, so an optimistic "sure, done" here would take away a
+        user's undo AND their evidence in one call. Like ``execute``, it should return an
+        error result rather than raise.
+
+        The default is a refusal, which is the correct answer for every provider that
+        never sets ``reversal``.
+        """
+        return ActionResult(
+            success=False,
+            error=f"{self.name} cannot undo its own actions",
+        )

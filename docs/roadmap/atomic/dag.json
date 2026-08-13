@@ -840,7 +840,7 @@
       "plan": "AUTONOMY-GUARDRAILS",
       "code": "AG",
       "status": "in_progress",
-      "summary": "Plan is IN PROGRESS: the S1-S4 substrate (chokepoint, budgets/scan, floor, profiles/egress/health/FE) is fully shipped and catalogued as 4 done atoms. Seven todo atoms cover the inert SafetyProfile/egress-tier wiring gap (audit 2026-08-04, independently completable), the S5.1/S5.2/S6.1 earned-autonomy rung ladder (needs FEEDBACK-SIGNAL S1), and four logged deferrals (apps-repo native structured_output + channel send() live-writes; run-scope budgets awaiting AUTOMATION-SUBSTRATE; profile/trust enforcement behaviors awaiting WORKFLOWS-V2 engine per-template profiles).",
+      "summary": "Plan is IN PROGRESS: the S1-S4 substrate (chokepoint, budgets/scan, floor, profiles/egress/health/FE) is fully shipped, and the S5.1/S5.2/S6.1 earned-autonomy rung ladder is now COMPLETE end to end (decision layer, routing at all three dispatch seams, promotion proposals, the HTTP ladder + undo executor, and the FE chip/panel/undo affordance). Six todo atoms remain: the inert SafetyProfile/egress-tier wiring gap (audit 2026-08-04, independently completable) and four logged deferrals (apps-repo native structured_output + channel send() live-writes; run-scope budgets awaiting AUTOMATION-SUBSTRATE; profile/trust enforcement behaviors awaiting WORKFLOWS-V2 engine per-template profiles).",
       "atoms": [
         {
           "id": "AG-1",
@@ -921,12 +921,13 @@
         {
           "id": "AG-8",
           "title": "S6.1 promotion proposals + rung FE chips/ladder panel/undo + validation sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment S6.1 row: user-click promotion proposals (SEL-audited like a skill install); FE rung chip on trigger/job rows + ladder panel in Settings→Guardrails (current rung, derived record, demotion history) + undo affordance on auto_with_undo notifications; as-a-user validation sweep",
           "done_when": "promotion never happens without a click; an undo click both reverses the action and demotes the type; the rung chip answers 'why is this allowed to run by itself?' in one glance; full web gate green",
           "deps": [
             "AG-7"
-          ]
+          ],
+          "pr": 1206
         },
         {
           "id": "AG-9",
@@ -7058,11 +7059,6 @@
         "plan": "AE"
       },
       {
-        "id": "AG-8",
-        "title": "S6.1 promotion proposals + rung FE chips/ladder panel/undo + validation sweep",
-        "plan": "AG"
-      },
-      {
         "id": "AG-9",
         "title": "Apps-repo guardrails follow-ons: native structured_output + channel send() live-writes (cross-repo)",
         "plan": "AG"
@@ -9472,9 +9468,9 @@
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 11,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
