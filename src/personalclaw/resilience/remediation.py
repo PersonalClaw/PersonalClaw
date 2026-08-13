@@ -9,8 +9,21 @@ re-checking the score after each step, and stop at whichever comes first —
 Design tenets (from the plan's risk table): this is a **plan-executor over declared
 jobs, not a policy brain**. Deficit inputs are measured counts, ordering is declared
 ``after:`` edges, stopping is three plain caps, and per-job cooldowns are the "dumb
-cooldown". If it misbehaves, disabling it (``resilience.remediation.enabled``)
-restores today's heartbeat maintenance, which is kept callable.
+cooldown".
+
+**Exclusive ownership of periodic maintenance (§4.4, PR2-11).** When this engine is
+enabled it OWNS the maintenance it absorbed — memory FTS reconciliation, the daily
+history and SEL prunes, skill-library aging — and the heartbeat does not run them.
+Disabling it (``resilience.remediation.enabled=false``) hands those same passes back to
+the heartbeat's own cadence (``HeartbeatService._legacy_maintenance``), so a user who
+distrusts the engine is never left with NO maintenance. Exactly one owner at a time,
+never both: that is what criterion #6 ("the old heartbeat maintenance no longer runs
+independently") means here.
+
+Cadence note: absorbed maintenance is now **deficit-driven, not clock-driven**. A job runs
+when its measured backlog drops the health score below ``target_score``, so the deficits
+below are weighted such that a *material* backlog crosses the default gate
+(100 − 90 = 10 penalty points) rather than waiting for a fixed tick.
 
 Cost: deterministic jobs (FTS rebuild, faiss re-index, prune) cost $0 and never block
 on budget. Judgment jobs (re-extraction, semantic lint) would run through
@@ -34,6 +47,17 @@ logger = logging.getLogger(__name__)
 _LEDGER_FILE = "remediation.jsonl"
 _JOBS_FILE = "jobs.json"
 _LEDGER_CAP = 500  # trim at 2× (notifications.jsonl pattern)
+
+# ⚠️ SCHEDULABILITY FLOOR. ``run_remediation`` returns before planning anything while
+# ``score_before >= target_score``, so a deficit whose ENTIRE penalty fits inside
+# ``100 − target_score`` can never schedule its own job, at any backlog magnitude — it is a
+# registered job that provably never runs. Measured at the default target of 90 this floor
+# is 10, and two shipped deficits sat exactly ON it (``orphan_locks`` and ``skill_aging_due``,
+# both ``max_penalty=10.0``): 1000 stale skills scored 90.0 and returned "target_score
+# already met". Every job-bearing deficit must therefore declare
+# ``max_penalty > _MIN_SCHEDULABLE_PENALTY``; ``test_resilience_remediation`` pins it.
+_DEFAULT_TARGET_SCORE = 90.0
+_MIN_SCHEDULABLE_PENALTY = 100.0 - _DEFAULT_TARGET_SCORE
 
 
 def _doctor_dir() -> Path:
@@ -96,6 +120,7 @@ def measure_deficits() -> list[Deficit]:
         logger.debug("deficit: knowledge embeddings measure failed", exc_info=True)
 
     # Serving/fs: orphaned stale locks — always reachable (deterministic prune).
+    # ``max_penalty`` 12, not 10: see the ⚠️ note under `_MIN_SCHEDULABLE_PENALTY`.
     try:
         from personalclaw.resilience.fixes import _dead_locks
 
@@ -104,7 +129,7 @@ def measure_deficits() -> list[Deficit]:
                 key="orphan_locks",
                 count=len(_dead_locks()),
                 weight=2.0,
-                max_penalty=10.0,
+                max_penalty=12.0,
                 job_id="serving-fs.prune-orphans",
             )
         )
@@ -121,14 +146,130 @@ def measure_deficits() -> list[Deficit]:
                 key="skill_aging_due",
                 count=due,
                 weight=1.0,
-                max_penalty=10.0,
+                max_penalty=12.0,
                 job_id="skills.age",
             )
         )
     except Exception:
         logger.debug("deficit: skill-aging measure failed", exc_info=True)
 
+    # ── Maintenance absorbed from the heartbeat (§4.4, PR2-11) ────────────────
+    #
+    # 🔴 WEIGHTS ARE LOAD-BEARING for these three. ``run_remediation`` returns before
+    # planning anything when ``score_before >= target_score``, so a deficit whose whole
+    # penalty stays inside 100 − target (10 points at the default target of 90) can never
+    # get its job scheduled — it would be a registered job that provably never runs, which
+    # is strictly worse than the heartbeat copy it replaced. Each weight below is therefore
+    # chosen against the question "at what backlog must this cross the gate?", and every
+    # ``max_penalty`` sits ABOVE 10 so the deficit can trigger its job ALONE.
+
+    # Memory FTS index vs disk. Writes index incrementally, so any divergence means
+    # out-of-band content — and a search index that misses a file is wrong, not slightly
+    # wrong. Weighted so ONE divergent file crosses the gate (the old cadence reconciled
+    # every 15 min; a single stale file must not wait for a tenth one to show up).
+    try:
+        from personalclaw.memory import MemoryStore
+
+        out.append(
+            Deficit(
+                key="memory_fts_desync",
+                count=int(MemoryStore().fts_desync_count()),
+                weight=11.0,
+                max_penalty=22.0,
+                job_id="memory.rebuild-fts",
+            )
+        )
+    except Exception:
+        logger.debug("deficit: memory FTS desync measure failed", exc_info=True)
+
+    # Daily history past its retention window. Retention is a PROMISE, so one file over
+    # the line is already a policy violation → weighted to cross the gate at count 1,
+    # which reproduces the old daily prune (the count self-clears every pass).
+    try:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.memory import MemoryStore
+
+        keep_days = int(AppConfig.load().memory.history_max_days)
+        out.append(
+            Deficit(
+                key="history_over_retention",
+                count=int(MemoryStore().count_history_over_retention(keep_days)),
+                weight=11.0,
+                max_penalty=15.0,
+                job_id="memory.prune-history",
+            )
+        )
+    except Exception:
+        logger.debug("deficit: history retention measure failed", exc_info=True)
+
+    # Security event log: entries a prune would drop (aged out OR over the size cap).
+    # Deliberately NOT weighted to trigger at 1: the size cap is a high-rate moving
+    # target (every dashboard poll appends), so a count-1 trigger would leave the score
+    # permanently below target with the job stuck in cooldown. ~200 removable entries —
+    # minutes of traffic on an active install, 0.4% of the 50k cap — crosses the gate.
+    try:
+        from personalclaw.sel import sel
+
+        out.append(
+            Deficit(
+                key="sel_prunable_entries",
+                count=int(sel().count_prunable()),
+                weight=0.05,
+                max_penalty=15.0,
+                job_id="sel.prune",
+            )
+        )
+    except Exception:
+        logger.debug("deficit: SEL prune measure failed", exc_info=True)
+
+    # Skill-library tamper (§4.4's `verify_skill_integrity` — finally SCHEDULED, here,
+    # on every engine pass and every Doctor read, instead of only when a human opens the
+    # Skills page). Deliberately job-less and ``reachable=False``: verification is a
+    # DETECTOR, not a fix — no job can un-tamper a skill, and re-baselining a mutated one
+    # would launder the tamper. So it never burns budget and never depresses a score the
+    # engine cannot improve; it surfaces on the Doctor's deficit list, and
+    # ``verify_skill_integrity`` emits its own SEL audit on every detection.
+    try:
+        out.append(
+            Deficit(
+                key="skills_tampered",
+                count=_count_tampered_skills(),
+                weight=5.0,
+                max_penalty=20.0,
+                reachable=False,
+            )
+        )
+    except Exception:
+        logger.debug("deficit: skill-integrity measure failed", exc_info=True)
+
     return out
+
+
+def _count_tampered_skills() -> int:
+    """Installed skills whose on-disk hashes diverge from their install-time lock.
+
+    Only *locked* skills are hashed — ``verify_skill_integrity`` returns ``unlocked``
+    before reading any file — so bundled/hand-placed skills cost a single stat.
+    """
+    from personalclaw.agent import _all_skill_paths
+    from personalclaw.skills.marketplace import _SKILL_FILENAME, verify_skill_integrity
+
+    tampered = 0
+    seen: set[str] = set()
+    for base_str in _all_skill_paths():
+        base = Path(base_str)
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.iterdir()):
+            if not entry.is_dir() or entry.name in seen:
+                continue
+            if not (entry / _SKILL_FILENAME).is_file():
+                continue
+            seen.add(entry.name)
+            rep = verify_skill_integrity(entry)
+            if not rep.unlocked and not rep.ok:
+                tampered += 1
+    return tampered
 
 
 def health_score(deficits: list[Deficit]) -> float:
@@ -399,6 +540,26 @@ def _job_reindex_embeddings() -> str:
     return f"re-embedded {n} item(s)"
 
 
+def _job_rebuild_memory_fts() -> str:
+    from personalclaw.memory import MemoryStore
+
+    return f"FTS index rebuilt: {MemoryStore().rebuild_index()} file(s)"
+
+
+def _job_prune_history() -> str:
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.memory import MemoryStore
+
+    keep_days = int(AppConfig.load().memory.history_max_days)
+    return f"pruned {MemoryStore().prune_history(keep_days=keep_days)} history file(s)"
+
+
+def _job_prune_sel() -> str:
+    from personalclaw.sel import sel
+
+    return f"pruned {sel().prune()} security-event entr(ies)"
+
+
 def _register_builtin_jobs() -> None:
     register_job(
         RemediationJob(
@@ -429,6 +590,40 @@ def _register_builtin_jobs() -> None:
             after=("serving-fs.prune-orphans",),
             cooldown_hours=6.0,
             fixes_deficit="knowledge_missing_embeddings",
+        )
+    )
+    # Absorbed from the heartbeat (§4.4, PR2-11).
+    register_job(
+        RemediationJob(
+            id="memory.prune-history",
+            title="Prune daily history past its retention window",
+            run=_job_prune_history,
+            lane="deterministic",
+            cooldown_hours=12.0,
+            fixes_deficit="history_over_retention",
+        )
+    )
+    register_job(
+        RemediationJob(
+            id="memory.rebuild-fts",
+            title="Reconcile the memory full-text index with disk",
+            run=_job_rebuild_memory_fts,
+            lane="deterministic",
+            # After the prune: a pass that deletes history files and then reconciles the
+            # index does both in one run instead of leaving the index a pass behind.
+            after=("memory.prune-history",),
+            cooldown_hours=0.25,  # the old heartbeat floor (15 min)
+            fixes_deficit="memory_fts_desync",
+        )
+    )
+    register_job(
+        RemediationJob(
+            id="sel.prune",
+            title="Prune the security event log (retention + size cap)",
+            run=_job_prune_sel,
+            lane="deterministic",
+            cooldown_hours=12.0,
+            fixes_deficit="sel_prunable_entries",
         )
     )
 

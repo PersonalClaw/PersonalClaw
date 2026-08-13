@@ -247,6 +247,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **Housekeeping now runs when your machine actually needs it, instead of on a fixed clock — and
+  one system does it, not two.** PersonalClaw's minute-by-minute heartbeat used to carry its own
+  maintenance schedule: rebuild the memory search index every 15 minutes whether or not anything
+  had changed, and once a day trim old daily-history files, trim the security event log, and age
+  the skill library. The self-healing Maintenance engine on the Doctor page (Settings → Doctor) was
+  doing the same kind of work from measured evidence, so the two overlapped. Those four passes are
+  now jobs the engine owns and schedules from what it can measure — how many memory files disagree
+  with the search index, how many history files are past your retention setting, how many
+  security-log entries are past theirs, how many skills are due for aging — so each one runs when
+  there is genuinely something to do and is recorded in the Doctor's run history with what it did.
+  Two consequences worth knowing. **If you turn the engine off** (`resilience.remediation.enabled`),
+  the heartbeat picks all four back up on its original schedule, so you are never left with no
+  housekeeping at all. **And the memory search index is now reconciled properly:** deleting old
+  history used to leave its text in the search index until the next rebuild, so a search could quote
+  a file that no longer existed; the prune now removes both together. Skill *tamper detection* is
+  also finally scheduled — a skill whose files changed after installation used to be noticed only if
+  you happened to open the Skills page, and is now checked on every maintenance pass and shown on
+  the Doctor page (it is reported, not silently "fixed": re-recording a changed skill's fingerprint
+  would hide the very change you need to see).
 - **A workflow judge now has to show its work, and a PASS it cannot justify is refused.** A `judge`
   gate used to be asked for exactly one word — `PASS`, `RETRY`, `ESCALATE` or `REJECT` — which
   cannot carry a score, a citation or a reason. Every rule the judge contract states ("a PASS

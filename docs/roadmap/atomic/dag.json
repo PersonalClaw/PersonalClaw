@@ -832,7 +832,8 @@
           "done_when": "heartbeat FTS rebuild, daily history/SEL prunes, skill-curator aging, and inbox 6h maintenance are removed from the heartbeat and run only as remediation-engine registered jobs (verify_skill_integrity finally scheduled), so success criterion #6 'old heartbeat maintenance no longer runs independently' holds after the engine has soaked.",
           "deps": [
             "PR2-5"
-          ]
+          ],
+          "status_note": "Every HEARTBEAT-driven pass landed 2026-08-13 (PR #1240): FTS rebuild, history prune and SEL prune registered as memory.rebuild-fts / memory.prune-history / sel.prune, skill aging retired onto the pre-existing skills.age, and _legacy_maintenance kept as the declared enabled=false fallback so exactly one owner runs maintenance per tick. verify_skill_integrity is scheduled as a job-less reachable=False detector (nothing un-tampers a skill). Still todo: the inbox 6h pass, which was never on the heartbeat (InboxService._loop) and mutates the live store, so it needs gateway-side registration bound to the running service — see the plan's Execution log."
         }
       ]
     },

@@ -2,7 +2,13 @@
 
 Runs on a configurable interval (default 60s):
 - Reads HEARTBEAT.md for pending tasks → sends to agent
-- Rebuilds FTS index every 15 min
+- Drives the health-scored remediation engine on an adaptive cadence
+
+Store maintenance (memory FTS reconciliation, the history/SEL prunes, skill aging) is
+OWNED by that engine (PLATFORM-RESILIENCE §4.4). ``_legacy_maintenance`` keeps the
+per-tick cadence those passes used to have, and runs ONLY when the engine is disabled —
+so exactly one owner does maintenance, and turning the engine off never leaves a system
+with none.
 """
 
 import asyncio
@@ -125,44 +131,21 @@ class HeartbeatService:
         if not self._processing:
             await self._process_heartbeat_file()
 
-        if self._tick % _FTS_REBUILD_TICKS == 0:
-            count = self._memory.rebuild_index()
-            logger.info("FTS index rebuilt: %d files", count)
-
-        if self._tick % _PRUNE_TICKS == 0:
-            from personalclaw.config.loader import AppConfig
-
-            max_days = AppConfig.load().memory.history_max_days
-            self._memory.prune_history(keep_days=max_days)
-
-            # Prune security event log per retention policy
-            try:
-                from personalclaw.sel import sel
-
-                sel().prune()
-            except Exception:
-                logger.debug("SEL prune failed", exc_info=True)
-
-            # Groom the auto/ skill library: age active→stale→archived by last-use
-            # (#27, pure/reversible). Off the event loop — it does blocking file I/O.
-            try:
-                from personalclaw.skills.curator import run_aging
-
-                report = await asyncio.get_running_loop().run_in_executor(None, run_aging)
-                if report.changed:
-                    logger.info(report.summary())
-            except Exception:
-                logger.debug("Skill curator aging failed", exc_info=True)
-
-        # Health-scored remediation engine (PLATFORM-RESILIENCE §4.3) — one background
-        # job with an adaptive cadence, replacing scattered maintenance. Runs off the
-        # event loop (deterministic re-index/prune do blocking I/O). Best-effort: a
-        # failure here never breaks the heartbeat. Disabling it (config) leaves the
-        # legacy per-tick maintenance above as the fallback.
+        # Health-scored remediation engine (PLATFORM-RESILIENCE §4.3/§4.4) — ONE background
+        # engine with an adaptive cadence that OWNS the store maintenance this loop used to
+        # duplicate per tick. Runs off the event loop (deterministic re-index/prune do
+        # blocking I/O). It reports whether it owns maintenance this tick; when it does not
+        # (disabled, or its own config unreadable, or it raised) the legacy per-tick pass
+        # runs instead, so maintenance never silently stops.
+        engine_owns_maintenance = False
         try:
-            await self._maybe_remediate()
+            engine_owns_maintenance = await self._maybe_remediate()
         except Exception:
-            logger.debug("remediation beat failed", exc_info=True)
+            logger.warning(
+                "Remediation beat failed — heartbeat maintenance owns this tick", exc_info=True
+            )
+        if not engine_owns_maintenance:
+            await self._legacy_maintenance()
 
         # Check for idle sessions needing history consolidation (every tick)
         if self._consolidator:
@@ -244,11 +227,53 @@ class HeartbeatService:
                 "Background compression: %d session(s), ~%d chars reclaimed", len(stats), saved
             )
 
-    async def _maybe_remediate(self) -> None:
+    async def _legacy_maintenance(self) -> None:
+        """The pre-engine per-tick store maintenance, on its original cadence.
+
+        Runs ONLY when the remediation engine is disabled (PLATFORM-RESILIENCE §4.4,
+        PR2-11) — it is the declared fallback that keeps ``remediation.enabled=false`` from
+        meaning "no maintenance at all", not a second scheduler. Every pass here has a
+        registered engine counterpart: FTS rebuild → ``memory.rebuild-fts``, history prune →
+        ``memory.prune-history``, SEL prune → ``sel.prune``, skill aging → ``skills.age``.
+        """
+        if self._tick % _FTS_REBUILD_TICKS == 0:
+            count = self._memory.rebuild_index()
+            logger.info("FTS index rebuilt: %d files", count)
+
+        if self._tick % _PRUNE_TICKS == 0:
+            from personalclaw.config.loader import AppConfig
+
+            max_days = AppConfig.load().memory.history_max_days
+            self._memory.prune_history(keep_days=max_days)
+
+            # Prune security event log per retention policy
+            try:
+                from personalclaw.sel import sel
+
+                sel().prune()
+            except Exception:
+                logger.warning("SEL prune failed", exc_info=True)
+
+            # Groom the auto/ skill library: age active→stale→archived by last-use
+            # (#27, pure/reversible). Off the event loop — it does blocking file I/O.
+            try:
+                from personalclaw.skills.curator import run_aging
+
+                report = await asyncio.get_running_loop().run_in_executor(None, run_aging)
+                if report.changed:
+                    logger.info(report.summary())
+            except Exception:
+                logger.warning("Skill curator aging failed", exc_info=True)
+
+    async def _maybe_remediate(self) -> bool:
         """Run the health-scored remediation engine when due (adaptive cadence).
 
         Healthy (score ≥95) → schedule the next run ``idle_minutes_healthy`` out;
         degraded → ``tick_minutes_degraded``. Off the event loop (blocking I/O).
+
+        Returns True when the engine OWNS store maintenance for this tick — i.e. it is
+        enabled, whether or not this particular tick was due to run one. False means the
+        caller must fall back to ``_legacy_maintenance``.
         """
         import time
 
@@ -256,10 +281,10 @@ class HeartbeatService:
 
         cfg = AppConfig.load().resilience.remediation
         if not cfg.enabled:
-            return
+            return False
         now = time.time()
         if self._remediation_next_ts and now < self._remediation_next_ts:
-            return
+            return True  # enabled and owning maintenance; simply not due this tick
 
         from personalclaw.resilience import remediation as _rem
 
@@ -281,6 +306,14 @@ class HeartbeatService:
                 result.stopped_reason,
                 minutes,
             )
+        # A maintenance job that failed must not read as a quiet success — the engine now
+        # owns passes whose absence is invisible (prunes, index reconciliation).
+        failed = [j["id"] for j in result.jobs if j.get("status") == "error"]
+        if failed:
+            logger.warning(
+                "Remediation job(s) failed: %s (see the doctor ledger)", ", ".join(failed)
+            )
+        return True
 
     async def _run_one_task(self, task_text: str, deliver: str) -> str | None:
         """Execute a single heartbeat task (used by gather).

@@ -204,3 +204,153 @@ def test_builtin_deterministic_jobs_registered():
     for j in rem.all_jobs():
         if j.id in ("serving-fs.prune-orphans", "skills.age", "knowledge.reindex-embeddings"):
             assert j.lane == "deterministic"
+
+
+# ── absorbed heartbeat maintenance (§4.4, PR2-11) ─────────────────────────────
+
+
+_ABSORBED = {
+    "memory.rebuild-fts": "memory_fts_desync",
+    "memory.prune-history": "history_over_retention",
+    "sel.prune": "sel_prunable_entries",
+    "skills.age": "skill_aging_due",
+}
+
+
+def test_absorbed_maintenance_jobs_registered():
+    """Every maintenance pass retired from the heartbeat has a registered engine job in
+    the deterministic ($0) lane. If one of these disappears, the heartbeat's
+    `_legacy_maintenance` counterpart has nothing to hand off to."""
+    jobs = {j.id: j for j in rem.all_jobs()}
+    for job_id, deficit_key in _ABSORBED.items():
+        assert job_id in jobs, f"{job_id} is not registered"
+        assert jobs[job_id].lane == "deterministic"
+        assert jobs[job_id].fixes_deficit == deficit_key
+
+
+def test_every_job_bearing_deficit_can_be_scheduled_alone(tmp_path, monkeypatch):
+    """🔴 The rail that catches a registered-but-unschedulable job.
+
+    ``run_remediation`` bails out while ``score_before >= target_score``, so a deficit whose
+    whole penalty fits inside ``100 − target`` can NEVER schedule its job — at any backlog.
+    Two shipped deficits sat exactly on that line (`orphan_locks`, `skill_aging_due`, both
+    ``max_penalty=10.0`` against the default target 90: 1000 stale skills still scored 90.0
+    and stopped with "target_score already met"). Raise the ceiling for a new deficit; never
+    lower this floor."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    by_key = {d.key: d for d in rem.measure_deficits()}
+    job_deficits = {j.fixes_deficit for j in rem.all_jobs() if j.fixes_deficit}
+    # NON-VACUITY: measure the whole set, don't skip what this env can't see. Every
+    # job-bearing deficit is observable in a bare home (each ``measure_deficits`` branch
+    # swallows its own exception, so an unmeasurable one vanishes silently — and a rail
+    # that silently checks nothing reads exactly like a passing one).
+    assert job_deficits <= set(by_key), (
+        f"deficit(s) {sorted(job_deficits - set(by_key))} are declared by a job but were not "
+        f"measured at all — their measure branch is swallowing an exception"
+    )
+    for key in sorted(job_deficits):
+        d = by_key[key]
+        assert d.max_penalty > rem._MIN_SCHEDULABLE_PENALTY, (
+            f"deficit {key!r} caps at {d.max_penalty} penalty points, which never drops the "
+            f"score below the default target — its job can never be scheduled by it alone"
+        )
+
+
+def test_skills_tampered_deficit_is_a_detector_not_a_job(tmp_path, monkeypatch):
+    """`verify_skill_integrity` is finally SCHEDULED — as a measured deficit on every engine
+    pass and Doctor read — but deliberately job-less and unreachable: no job can un-tamper a
+    skill, and re-baselining a mutated one would launder the tamper. So it must never burn
+    budget nor depress a score the engine cannot improve."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    tampered = [d for d in rem.measure_deficits() if d.key == "skills_tampered"]
+    assert tampered, "skill-integrity is not measured — verify_skill_integrity is unscheduled"
+    d = tampered[0]
+    assert d.reachable is False and d.job_id == ""
+    assert rem.health_score([d]) == 100.0  # unreachable → excluded from the score
+    assert not [j for j in rem.all_jobs() if j.fixes_deficit == "skills_tampered"]
+
+
+def test_history_prune_job_deletes_expired_files_and_their_index_rows(tmp_path, monkeypatch):
+    """The job does the WORK: expired daily-history files are gone, and so are the FTS rows
+    that would otherwise keep returning snippets for deleted files."""
+    from datetime import datetime, timedelta
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.memory import MemoryStore, workspace_dir
+
+    # No explicit workspace: the JOB builds MemoryStore() from config_dir(), and passing one
+    # here would point the test at a different memory_index.db than the job writes.
+    mem = MemoryStore()
+    mem.init()
+    hist = workspace_dir() / "memory" / "history"
+    old = hist / f"{datetime.now().date() - timedelta(days=400)}.md"
+    fresh = hist / f"{datetime.now().date()}.md"
+    for p in (old, fresh):
+        p.write_text("# day\n\n#### 09:00\nstuff\n", encoding="utf-8")
+        mem._index_file(p, p.read_text(encoding="utf-8"))
+
+    assert mem.count_history_over_retention(365) == 1
+    detail = rem._job_prune_history()
+
+    assert "1 history file" in detail
+    assert not old.exists() and fresh.exists()
+    assert mem.count_history_over_retention(365) == 0
+    # the deleted file left no orphan search row behind
+    assert str(old) not in dict(_indexed_rows(mem))
+    assert str(fresh) in dict(_indexed_rows(mem))
+
+
+def _indexed_rows(mem):
+    conn = mem._get_db()
+    try:
+        return list(conn.execute("SELECT path, content FROM memory_fts"))
+    finally:
+        conn.close()
+
+
+def test_fts_rebuild_job_reconciles_out_of_band_edits(tmp_path, monkeypatch):
+    """The job does the WORK: a memory file edited outside the store API is measured as
+    desync and the index matches disk afterwards."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.memory import MemoryStore, workspace_dir
+
+    mem = MemoryStore()  # same resolution the job uses (see the sibling test)
+    mem.init()
+    mem.write_preferences("# User Preferences\n\nlikes tea\n")
+    mem.rebuild_index()
+    assert mem.fts_desync_count() == 0  # converged
+
+    prefs = workspace_dir() / "memory" / "preferences.md"
+    prefs.write_text("# User Preferences\n\nedited by hand\n", encoding="utf-8")
+    assert mem.fts_desync_count() == 1
+
+    detail = rem._job_rebuild_memory_fts()
+
+    assert "FTS index rebuilt" in detail
+    assert mem.fts_desync_count() == 0
+    assert dict(_indexed_rows(mem))[str(prefs)] == prefs.read_text(encoding="utf-8")
+
+
+def test_sel_prune_job_removes_exactly_what_it_measured(tmp_path, monkeypatch):
+    """The job does the WORK: aged entries are gone, fresh ones survive, and the measured
+    deficit equals what the prune removed (shared plan, so they can never disagree)."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.sel import sel
+
+    log = sel()
+    log.log_api_access(caller="t", operation="fresh", outcome="ok")
+    aged = (datetime.now(tz=timezone.utc) - timedelta(days=400)).isoformat()
+    with log._path.open("a", encoding="utf-8") as fh:
+        for i in range(5):
+            fh.write(json.dumps({"timestamp": aged, "event": "old", "n": i}) + "\n")
+
+    assert log.count_prunable() == 5
+    detail = rem._job_prune_sel()
+
+    assert "pruned 5" in detail
+    assert log.count_prunable() == 0
+    body = log._path.read_text(encoding="utf-8")
+    assert "fresh" in body and '"event": "old"' not in body
