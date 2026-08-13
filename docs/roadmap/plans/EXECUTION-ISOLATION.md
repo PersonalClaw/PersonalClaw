@@ -480,3 +480,89 @@ D0 is documentation and should land immediately — an inaccurate security claim
   declared). `tools/regen_dag_derived.py` re-derived the `dag` block for the status flip
   (`plan_counts` EI done 2→3, todo 10→9; EI-3 out of the ready frontier). No `web/` change — this
   seam has no frontend surface.
+- [2026-08-13][EI-12 D1] DONE (task D1 only — **`EI-12` stays `todo`**). `apps/backend_runtime.py`
+  now builds the backend's child environment with
+  `sandbox.build_child_env(site="app-backend", extra={…})` instead of `dict(os.environ)`. PHF-4 had
+  converted the hook, cron-script and bash-action sites and deliberately left this one to D1, which
+  made the app backend the **widest remaining inheritance in the tree** and the least deserving of
+  it: third-party code, scanned but not trusted at install, running for as long as the app is
+  enabled, while `config/loader.py` seeds `.env` credentials into `os.environ` so "trusted children"
+  inherit them. The four computed variables move into `extra` unchanged (`PORT`,
+  `PERSONALCLAW_APP_NAME`, `PERSONALCLAW_APP_SECRET`, and `PERSONALCLAW_APP_DATA_DIR` when the
+  `storage` capability is held). `spawn_shim_argv`/`PROFILE_TOOL` composition (PHF-1) was not
+  touched; its duplicate local import folded into the one this change already needed.
+- [2026-08-13][EI-12 D1] **MEASURED, by falsification before trusting the test.** Reverting the one
+  line to `dict(os.environ)` and re-running the new suite reds 3 of its 5 tests and enumerates what
+  the backend used to receive: **~130 undeclared variables**, including `SSH_AUTH_SOCK`,
+  `AWS_REGION`, `AWS_SDK_UA_APP_ID`, `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`, `VIRTUAL_ENV`, both
+  planted secrets and the whole agent-CLI/toolbox variable population. The 2 tests that legitimately
+  stay green under the revert are the sandbox-P3 storage-gate pair — they guard an orthogonal
+  control, which is why they do not move.
+- [2026-08-13][EI-12 D1] **Premise correction on the blast radius — it is narrower than the atom's
+  wording implies, and the correction is load-bearing for the CHANGELOG.** The 9 credential names
+  that are absent from `CHILD_ENV_BASE_NAMES` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, `META_MODEL_API_KEY`, `ALIBABA_API_KEY`, `TAVILY_API_KEY`, `SLACK_BOT_TOKEN`,
+  `SLACK_APP_TOKEN`, `SKILLS_SH_API_KEY`) are read **exclusively in `provider.py` modules**, which
+  the gateway imports **in-process** — verified by grepping every `*.py` in `PersonalClawApps` for
+  those names: every non-test hit is a `provider.py`. Of **44** first-party apps, exactly **2**
+  declare a `backend.entryPoint` (`growth`, `minutes`), and the only environment reads in either
+  backend tree are `PERSONALCLAW_APP_DATA_DIR` and `PORT` — both already computed at this call site.
+  So **no first-party app changes behaviour**, and an operator's exported `ANTHROPIC_API_KEY` still
+  reaches the anthropic-models provider, because that code never travelled through the app-backend
+  env. The real user-visible break is scoped to a **third-party** app backend that read an ambient
+  gateway variable; its two migrations are the credential store (the documented primary path — the
+  env var is a *fallback*, `entry.credential` → `credential_store` raising `CredentialMissing` is
+  primary) or an operator declaration in `sandbox.env_passthrough`.
+- [2026-08-13][EI-12 D1] **`PERSONALCLAW_CC_ISOLATE` is not an app-backend variable and needed no
+  home.** It is read in the sibling apps repo, in `claude-code-agent`'s `provider.py` (line 196 at
+  the time of writing — a cross-repo path, deliberately not cited in `file.py:NNN` form because the
+  docs linter can only resolve in-repo paths); that app's `app.json`
+  declares **no** `backend`, so the read happens in the gateway process against the full
+  `os.environ`. Adding it to the base or to `extra` would have widened the allowlist for a reader
+  that never crossed it. No change.
+- [2026-08-13][EI-12 D1] **Live validation (isolated home, real first-party apps).** Booted with
+  `PERSONALCLAW_HOME=/tmp/ei12-validate-*` (never `~/.personalclaw`) and the worktree's core on
+  `PYTHONPATH`, with `ANTHROPIC_API_KEY`/`TAVILY_API_KEY`/`ACME_DEPLOY_PAT` planted in the gateway
+  env: `growth` and `minutes` both installed and returned `{"ok": true}` from `/health` (pids
+  72797/72855, then 73059/73121). Their child environments were then read **from the OS process
+  table** (`ps -Eww -p <pid>`), not from a dict we built: all four of
+  `ANTHROPIC_API_KEY`/`TAVILY_API_KEY`/`ACME_DEPLOY_PAT`/`SSH_AUTH_SOCK` absent, no planted value
+  present, `PORT=` and `PERSONALCLAW_APP_NAME=<app>` present as the non-vacuity check. The remaining
+  42 first-party apps declare no backend, so this seam cannot affect their boot; the gateway process
+  still saw both planted keys, confirming the in-process provider path is untouched.
+- [2026-08-13][EI-12 D1] **The P3 storage gate is now enforced after the build, on purpose.**
+  `PERSONALCLAW_APP_DATA_DIR` is not in `CHILD_ENV_BASE_NAMES`, so it cannot be inherited — but
+  `sandbox.env_passthrough` accepts any non-credential-shaped name, so declaring it (with the
+  gateway itself carrying the variable) would have handed **every** storage-less backend a data dir
+  at once and silently undone sandbox P3. The conditional `env.pop` is kept for exactly that path
+  and is driven by a test at the real call site, not against the builder.
+- [2026-08-13][EI-12 D1] **DISCOVERY (recorded, not built — out of D1's scope).**
+  `_declared_env_passthrough(site)` takes a `site` argument but uses it **only for logging**; the
+  declared list is the single global `sandbox.env_passthrough`. So an operator who declares one name
+  to unblock one app backend also exposes it to cron scripts and bash actions. That is a real
+  granularity gap now that a third site consumes the seam, but building a per-site scheme is a
+  config-surface change (new field, round-trip contract, frontend control) that belongs to a plan
+  that owns the sandbox config surface — not to a call-site conversion. Not started here.
+- [2026-08-13][EI-12 D1] **DISCOVERY.** `BackendConfig` (`apps/manifest.py:259`) has no `env` field
+  and this change does not add one: an app-declared environment name would be an exfiltration
+  channel (the same reason `sandbox.env_passthrough` is deliberately unreachable from a manifest or
+  a trigger payload). Recorded because "let the app declare what it needs" is the obvious wrong fix
+  for the break above.
+- [2026-08-13][EI-12 D1] **A measured, not hardcoded, exclusion in the closed-set test.** The
+  strictest new assertion — the child's env is *exactly* `CHILD_ENV_BASE_NAMES` + the four computed
+  names — first red on `__CF_USER_TEXT_ENCODING`. Probing a child spawned with a literally empty
+  `env={}` shows Darwin's CoreFoundation and the interpreter's own UTF-8 coercion inject
+  `__CF_USER_TEXT_ENCODING` and `LC_CTYPE` **after** exec, so neither was inherited. The exclusion is
+  therefore computed at run time by that same empty-env probe rather than hardcoding two macOS
+  names, and the test additionally asserts the exclusion set cannot contain the planted secrets — so
+  it stays exact on a platform with a different injected set instead of widening to whatever the OS
+  adds. The floor was raised, not relaxed.
+- [2026-08-13][EI-12 D1] **STOP POINT. `EI-12` remains `todo`; no `pr` field set.** D1 is the only
+  part landed. Outstanding, untouched: **D2** (`permissions.network` — enforce via the egress rail
+  OR mark advisory in the consent UI/manifest, not both/neither), **D3** (per-app
+  `pythonDependencies` isolated to an app-scoped target; confirmed nothing under `apps/` manipulates
+  `PYTHONPATH` today, so the isolation does not exist yet), and **VD** (the validation-as-a-user
+  sweep). The atom's done-when is correspondingly part-met: "a planted secret in the gateway env is
+  absent from an app backend's env (test proves it)" ✅ and "every first-party app still boots" ✅
+  (44 audited, 2 backends booted healthy); the Store-consent network claim and the per-app dependency
+  clauses are still open.

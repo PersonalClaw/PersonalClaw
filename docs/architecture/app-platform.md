@@ -73,6 +73,46 @@ An app with a backend gets its own subprocess:
 - `PERSONALCLAW_SKIP_APP_BACKENDS=1` disables backend spawning (test
   isolation).
 
+### The backend environment — an allowlist, not an inheritance
+
+A backend does **not** inherit the gateway's environment. It receives
+`sandbox.build_child_env(site="app-backend")`: the `CHILD_ENV_BASE_NAMES`
+allowlist (`PATH`, `HOME`, `TMPDIR`, `XDG_*`, locale/`TZ`, proxy + CA vars,
+`PYTHONPATH`, and the three `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` vars) plus
+any name the operator declared in `sandbox.env_passthrough`, layered with the
+four variables the supervisor **computes**:
+
+| variable | when |
+|---|---|
+| `PORT` | always — the resolved backend port |
+| `PERSONALCLAW_APP_NAME` | always |
+| `PERSONALCLAW_APP_SECRET` | always (the proxy-signature secret; fail-closed) |
+| `PERSONALCLAW_APP_DATA_DIR` | only when the app declares the `storage` capability |
+
+**Why.** An app backend is the least-trusted long-lived child in the tree —
+third-party code, scanned but not trusted at install, running for as long as the
+app is enabled. `config/loader.py` deliberately seeds `~/.personalclaw/.env`
+credentials into `os.environ` so "trusted children" inherit them, so a full
+`os.environ` copy handed every one of those credentials to every installed app's
+backend. Measured on a real gateway: the pre-change copy delivered ~130
+variables the backend had no declared need for, including `SSH_AUTH_SOCK`, AWS
+region/SDK vars and the operator's git identity.
+
+**If a backend needs one more variable,** the operator declares it by name in
+`sandbox.env_passthrough` (`config.json`). That is an operator surface on
+purpose — it is not reachable from a manifest or a trigger payload, because an
+app-declared name would be an exfiltration channel. Note that the declaration is
+**global**, not per-site: a name declared there reaches every child site (cron,
+bash action, app backend). Withheld names are logged at DEBUG against the
+`app-backend` site, so an app author whose variable stopped arriving can see
+exactly which one was dropped and why. `BackendConfig` has no `env` field — an
+app cannot declare its own environment.
+
+The `storage` gate is enforced **after** the build: `PERSONALCLAW_APP_DATA_DIR`
+is popped when the app lacks the capability, so declaring that name in
+`sandbox.env_passthrough` cannot hand every storage-less backend a data dir and
+quietly undo sandbox P3.
+
 ### The reverse proxy & token model
 
 `dashboard/handlers/apps.py::api_app_proxy` forwards

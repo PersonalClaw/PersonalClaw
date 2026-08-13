@@ -10,6 +10,34 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Installed apps' backends no longer inherit PersonalClaw's environment.** ⚠️ **This changes
+  behaviour for an app backend that read a variable it never declared.** An app with a backend runs
+  it as a subprocess, and that subprocess used to start from a full copy of the gateway's own
+  environment — which, because PersonalClaw deliberately puts your `.env` credentials there so
+  "trusted children" can see them, meant every installed app's backend could read every credential
+  you had configured, plus (measured on a real gateway) about **130** other variables it had no
+  declared need for, including your SSH agent socket, AWS settings and your git identity. An app
+  backend is the least-trusted long-running process in the system — third-party code, scanned but
+  not trusted at install — so it now gets the same *minimal* environment hooks and cron scripts got
+  in the previous release: `PATH`, `SHELL`, `PWD`, `TERM`, `PYTHONPATH`, your locale and `TZ`,
+  `HOME`/`TMPDIR`/`USER`/`XDG_*`, your proxy and CA-bundle settings, and
+  `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT`. The four variables the app contract promises are
+  unchanged: `PORT`, `PERSONALCLAW_APP_NAME`, `PERSONALCLAW_APP_SECRET`, and
+  `PERSONALCLAW_APP_DATA_DIR` for an app that declares the `storage` permission. Everything else is
+  withheld. **All 44 first-party apps were booted against this change and are unaffected** — the two
+  that ship a backend (Growth, Minutes) read only `PORT` and `PERSONALCLAW_APP_DATA_DIR`, and the
+  model/search apps read their API-key fallbacks in the gateway process itself, not in a backend, so
+  a key exported in your shell still works for them exactly as before. **If a third-party app's
+  backend stops working for want of an environment variable, you have two ways to fix it:** move the
+  value into PersonalClaw's credential store and configure it on the app's instance (the supported
+  route — every first-party model app treats the environment variable as a *fallback* to a
+  configured credential), or, if the app genuinely needs the ambient variable, name it in
+  `sandbox.env_passthrough` (`personalclaw config set sandbox.env_passthrough '["MY_VAR"]'`). Note
+  that `sandbox.env_passthrough` is global — a name declared there is visible to your hooks and cron
+  scripts too, not just to app backends — and that credential-shaped names (`AWS_SECRET*`,
+  `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME`, `GIT_ASKPASS`) stay refused even if you declare
+  them. To see what a backend is missing, run the gateway with `--verbose`: each backend launch logs
+  the names it withheld.
 - **A scheduled Python script can no longer exhaust PersonalClaw's file descriptors.** A
   `run-script` cron ran inside the OS sandbox with a minimal environment, but with no cap on what
   it could *consume* — so a script that leaked open files could starve the gateway of descriptors,
