@@ -338,6 +338,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The desktop app can now tell the dashboard what it is actually allowed to do.** The macOS shell
+  gained a typed capability bridge — `window.pclawDesktop.capabilities` — covering the microphone,
+  screen recording, native notifications, the menu-bar item, a global hotkey and open-at-login. Each
+  one can be probed for its real OS permission state and, where macOS allows an app to ask, requested;
+  the request raises exactly one system dialog, and a capability already denied routes you to System
+  Settings instead of silently doing nothing. Two capabilities are honest about their limits rather
+  than guessing: macOS gives an app no way to prompt for Screen Recording and no way to read whether
+  notifications are authorized, so those are labelled as such and offer no button that would do
+  nothing. On boot the shell registers this manifest with your gateway over loopback, so
+  **Settings → Security → Desktop capabilities** shows the truth — and in an ordinary browser tab it
+  says "Desktop app not connected" instead of listing native permissions a tab could never grant.
+  Apps can reach a capability only by declaring it (`"permissions": {"desktop": ["audio_capture"]}`);
+  the gateway mediates every such call, refuses an undeclared one, records the refusal in the security
+  event log, and the Store names the capabilities an app asked for before you install it.
+
 - **You can approve what PersonalClaw is waiting on from your phone.** A run that stops to ask
   permission used to stay stopped until you were back at a desk, because the only place the question
   appeared was the desktop dashboard. There is now a phone route at **`#/companion`** — open it on

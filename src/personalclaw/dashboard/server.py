@@ -427,6 +427,16 @@ async def start_dashboard(
     app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
     app.router.add_post("/api/durability/run", handlers.api_durability_run)
     app.router.add_post("/api/durability/restore", handlers.api_durability_restore)
+    # DESKTOP-CAPABILITIES DC-2 — the Electron shell seam. The three POSTs are
+    # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
+    # the truth surface for Settings → Security and for apps holding a manifest
+    # ``desktop`` grant. Register the specific /capabilities/{cap} path after
+    # /state so neither shadows the other.
+    app.router.add_post("/api/desktop/register", handlers.api_desktop_register)
+    app.router.add_post("/api/desktop/unregister", handlers.api_desktop_unregister)
+    app.router.add_get("/api/desktop/state", handlers.api_desktop_state)
+    app.router.add_post("/api/desktop/state", handlers.api_desktop_state_push)
+    app.router.add_get("/api/desktop/capabilities/{cap}", handlers.api_desktop_capability)
     app.router.add_get("/api/doctor", handlers.api_doctor)
     # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
     # registration order — otherwise "fixes"/"crash"/"remediation" bind as a capability).

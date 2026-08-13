@@ -113,6 +113,15 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     index,
 )
 
+# ── Desktop shell capability seam (handlers/desktop.py) ──
+from personalclaw.dashboard.handlers.desktop import (  # noqa: E402, F401
+    api_desktop_capability,
+    api_desktop_register,
+    api_desktop_state,
+    api_desktop_state_push,
+    api_desktop_unregister,
+)
+
 # ── Doctor + degraded mode (handlers/doctor.py) ──
 from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
     api_degraded,
