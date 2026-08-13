@@ -106,9 +106,42 @@ Execution log Session 6 S6.2 (ACP capability gate) + §6 not-done ACP delivery
 
 ### `PR2-11` — Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)
 
-**Status:** todo
+**Status:** todo — **every HEARTBEAT-driven pass landed 2026-08-13**; the inbox 6h pass is
+outstanding (it was never on the heartbeat — see the plan's `## Execution log`)
 
 §4.4 What it absorbs (disposition)
+
+**What landed.** The four passes the heartbeat actually drove now have registered engine
+jobs, and the heartbeat no longer runs them while `resilience.remediation.enabled` is true:
+FTS rebuild → `memory.rebuild-fts`, history prune → `memory.prune-history`, SEL prune →
+`sel.prune`, skill aging → `skills.age` (already registered). Each new job was driven under
+an isolated home and proven to do the WORK, not merely to run (index reconciled to disk,
+files deleted plus their orphan FTS rows, 300 aged SEL entries removed; score 59 → 100, one
+ledger row, second pass a no-op). `HeartbeatService._legacy_maintenance` keeps the old
+cadence as the **declared** fallback for `enabled=false`, so disabling the engine never
+leaves a system with no maintenance — tested both ways (criterion #6: exactly one owner per
+tick, never both).
+
+**`verify_skill_integrity` is scheduled as a DETECTOR, not a job.** It cannot reduce a
+deficit — nothing un-tampers a skill, and re-baselining a mutated one would launder the
+tamper — so it runs as a measured, `reachable=False`, job-less deficit (`skills_tampered`)
+on every engine pass and Doctor read, surfaced on the Doctor's deficit list with its
+existing SEL audit. Previously it only ran when a human opened the Skills page.
+
+**Discovery (fixed here).** Two shipped deficits (`orphan_locks`, `skill_aging_due`) capped
+at `max_penalty=10.0` — exactly `100 − target_score`. `run_remediation` returns before
+planning while `score_before >= target_score`, so at ANY backlog those jobs scored 90.0 and
+stopped with "target_score already met": `skills.age` could never be scheduled by its own
+deficit, which would have made retiring the heartbeat's aging pass a silent gap. Both
+ceilings raised to 12.0 and the floor is now pinned by a rail
+(`_MIN_SCHEDULABLE_PENALTY`).
+
+**Remainder.** Inbox 6h maintenance is NOT heartbeat-driven (`InboxService._loop`,
+`inbox_service.py:198`, its own `_MAINTENANCE_EVERY_SECS` timer), and its pass mutates the
+LIVE `InboxStore`/`InboxState` plus `check_retire_candidates(state=_dashboard_state())`.
+The module-global job registry has no handle on the running service, so registering it
+means gateway-side registration bound to `self.inbox_svc`; constructing a fresh store in
+the engine thread instead would fork the live store. Left running where it is.
 
 **Done when:** heartbeat FTS rebuild, daily history/SEL prunes, skill-curator aging, and inbox 6h maintenance are removed from the heartbeat and run only as remediation-engine registered jobs (verify_skill_integrity finally scheduled), so success criterion #6 'old heartbeat maintenance no longer runs independently' holds after the engine has soaked.
 

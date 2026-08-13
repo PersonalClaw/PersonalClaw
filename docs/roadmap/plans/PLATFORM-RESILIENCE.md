@@ -713,3 +713,93 @@ Sessions 1-4 each ship independently; Session 1 alone is a Wave-0 win (the symli
   `tests/test_fts5_capability_guard.py` (11: RAISE raises-with-remedy + no DB file created + happy path;
   memory degrade + happy-path finds; session connect→None-logs-once + degrade + happy path) +
   memory/knowledge/session/sqlite_compat regression (my run 178, subagent's broader run 186+35) pass.
+
+## Execution log — PR2-11 (retire duplicate heartbeat maintenance into the engine, §4.4)
+
+- **[2026-08-13][PR2-11] DONE for every heartbeat-driven pass; the inbox pass is a recorded
+  remainder.** S5 deferred the §4.4 deletion ("fully retiring the duplicate heartbeat
+  maintenance is a follow-on cleanup once the engine has soaked"). This is that cleanup —
+  but the pre-work measurement contradicted the atom's premise, so it ran **register first,
+  retire second**. Measured disposition before touching anything:
+
+  | heartbeat/service pass | engine counterpart BEFORE | after PR2-11 |
+  |---|---|---|
+  | skill-curator aging (`heartbeat.py:149`) | `skills.age` — a true duplicate | retired from the tick |
+  | memory FTS rebuild (`_FTS_REBUILD_TICKS=15`) | **none** (`knowledge.reindex-embeddings` is knowledge EMBEDDINGS, a different subsystem) | new `memory.rebuild-fts`, retired from the tick |
+  | history prune (`_PRUNE_TICKS=1440`) | **none** (`serving-fs.prune-orphans` is serving-fs locks) | new `memory.prune-history`, retired from the tick |
+  | SEL prune (`sel().prune()`, same tick) | **none** | new `sel.prune`, retired from the tick |
+  | inbox 6h maintenance | **none** | **NOT retired** — see the remainder below |
+  | `verify_skill_integrity` | unscheduled (on-demand only) | scheduled as a measured DETECTOR, not a job |
+
+  Retiring all four at once would have silently stopped FTS reconciliation and both prunes:
+  three of the four had no counterpart at all. So each was registered, driven, and proven to
+  do the work BEFORE its tick invocation was removed.
+
+- **Proof each registered job does the WORK (not merely that it ran).** Driven under an
+  isolated `PERSONALCLAW_HOME` (never the real home) against a deliberately degraded store —
+  criterion #6's own scenario: 1 hand-edited memory file, 3 history files 400 days old, 300
+  aged SEL entries. `measure_deficits()` reported 1/3/300; `health_score` 59.0; one
+  `run_remediation(target_score=90)` executed `memory.prune-history` → `memory.rebuild-fts`
+  → `sel.prune` in declared order, score 59 → 100, `stopped_reason` "target_score reached",
+  one ledger row. Observable after-state asserted, not inferred: the 3 files gone AND zero
+  orphan FTS rows left behind, `fts_desync_count()` 0 with the index row byte-equal to disk,
+  SEL 301 → 1 lines with the fresh entry surviving. A second pass was a no-op
+  ("target_score already met"). Pinned as tests in `test_resilience_remediation.py`.
+
+- **The docstring/`kept callable` contradiction — resolved as a REAL fallback, not a
+  correction.** `remediation.py` promised that disabling the engine "restores today's
+  heartbeat maintenance, which is kept callable", which a plain deletion would have made
+  false. Chosen resolution: **exclusive ownership.** `_maybe_remediate` now returns whether
+  the engine owns maintenance this tick, and the old per-tick pass moved wholesale into
+  `HeartbeatService._legacy_maintenance`, which runs ONLY when the engine is disabled. One
+  declared mechanism, one owner per tick, never both — so criterion #6 ("no longer runs
+  independently") holds while `remediation.enabled=false` still yields full maintenance
+  rather than none. Both directions are tested (`TestMaintenanceOwnership`), including the
+  fail-safe: if the engine itself raises, the legacy pass takes that tick and the failure is
+  logged at WARNING (three swallowed `logger.debug` maintenance failures were also raised to
+  WARNING — an absent prune is invisible by nature).
+
+- **DISCOVERY — two shipped jobs could never be scheduled (fixed here).** `orphan_locks` and
+  `skill_aging_due` both declared `max_penalty=10.0`, exactly `100 − target_score` at the
+  default target. `run_remediation` returns before planning anything while
+  `score_before >= target_score`, so at *any* backlog magnitude those deficits scored 90.0
+  and stopped with "target_score already met" (verified: count=1000 → penalty 10.0 → score
+  90.0 → early return). `skills.age` — the one true duplicate this atom set out to retire —
+  was therefore unschedulable by its own deficit, and retiring the heartbeat's aging pass on
+  top of it would have been a silent gap. Both ceilings raised to 12.0, the rule named as
+  `_MIN_SCHEDULABLE_PENALTY`, and a rail added asserting every job-bearing deficit can cross
+  the default gate alone. Absorbed-maintenance weights were chosen against the same
+  question: FTS desync and history-over-retention at weight 11 (one divergent file / one file
+  past a retention promise must cross the gate), SEL at weight 0.05 deliberately NOT
+  triggering at count 1 — the size cap is a high-rate moving target, so a count-1 trigger
+  would park the score permanently below target with the job stuck in cooldown.
+
+- **`verify_skill_integrity` is scheduled as a DETECTOR, not a job — deliberately.** The
+  engine's job contract is `run()` that REDUCES a measured deficit. Verification reduces
+  nothing: no job can un-tamper a skill, and re-baselining a mutated one would launder the
+  tamper (the only real remediations — quarantine, forced reinstall — are new security policy,
+  not this atom, and are left for the owner). So it is registered as a measured, job-less,
+  `reachable=False` deficit (`skills_tampered`) evaluated on every engine pass and every
+  Doctor read, surfaced on the Doctor's existing deficit list (`handlers/doctor.py:298` →
+  `RemediationSection`), with the SEL audit `verify_skill_integrity` already emits. That is
+  strictly more scheduling than before (it previously ran only when a human opened the Skills
+  page) without pretending a detector is a fix. Only *locked* skills are hashed, so bundled
+  ones cost a stat.
+
+- **REMAINDER (why the inbox pass was left alone).** Premise correction: inbox 6h
+  maintenance is **not** on the heartbeat. It runs in `InboxService._loop`
+  (`inbox_service.py:198`) on its own `_MAINTENANCE_EVERY_SECS` timer, interleaved with
+  polling, and `run_maintenance()` mutates the **live** `InboxStore`/`InboxState` and calls
+  `check_retire_candidates(state=_dashboard_state())` (FEEDBACK-SIGNAL explicitly rides this
+  cadence). The job registry is module-global with no handle on the running service, so
+  honest absorption means gateway-side registration bound to `self.inbox_svc` plus a deficit
+  measured off that live store; constructing a fresh store inside the engine's executor
+  thread instead would fork the live store — the known live-store hazard. Deliberately not
+  improvised. `PR2-11` therefore stays **todo** with this as its single outstanding scope.
+
+- **Gates.** `make lint` clean; `tests/test_resilience_remediation.py` 19, 
+  `tests/test_heartbeat_retention.py` 27, memory/SEL/doctor/session-search 183, and the
+  skills/inbox/heartbeat/gateway/curator selection 881 — then the full suite. Four
+  generators re-run byte-identical. No `web/` change (the new deficit rides the existing
+  deficit list the panel already renders). CHANGELOG entry added — this changes WHEN
+  maintenance runs, which is user-visible.
