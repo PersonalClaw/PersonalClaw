@@ -112,7 +112,18 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
     # every automation the user actually had. `crons.json` still travels because §6 keeps it
     # read-only for `automation verify-migration` to diff.
     "crons": ("crons.json", "triggers.json", "event_triggers.json"),
-    "config": ("config.json", "session_map.json", "hooks.json", "project_dir", "workspace_dir"),
+    # `autonomy_rungs.json` rides here (AUTONOMY-GUARDRAILS §5): it holds the rungs the
+    # user has explicitly granted per action type plus the demotion history. Losing it
+    # is not catastrophic (every type falls back to its declared floor) but it IS a
+    # decision the user made by hand, so it travels with the other decisions.
+    "config": (
+        "config.json",
+        "session_map.json",
+        "hooks.json",
+        "project_dir",
+        "workspace_dir",
+        "autonomy_rungs.json",
+    ),
     "notifications": ("notifications.jsonl",),
     "security": ("sel_hmac.key", "telemetry_salt"),
 }

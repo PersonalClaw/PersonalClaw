@@ -211,7 +211,12 @@ def _reset_model_call_breakers():
     single-user gateway). Under pytest-xdist a breaker tripped OPEN by one test
     would otherwise refuse calls in a later test in the same worker, so clear the
     registry before + after each test — the same discipline as the SEL singleton.
+
+    Also clears the ``guardrails.autonomy`` action-type registry, which is
+    process-global for the same reason: a rung ladder registered by one test would
+    otherwise decide ``resolve_rung`` in the next one.
     """
+    from personalclaw.guardrails.autonomy import reset_action_types
     from personalclaw.guardrails.breaker import reset_breakers
     from personalclaw.guardrails.budgets import reset_meter
     from personalclaw.guardrails.incident import reset_incident_mirror
@@ -219,10 +224,12 @@ def _reset_model_call_breakers():
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
+    reset_action_types()
     yield
     reset_breakers()
     reset_meter()
     reset_incident_mirror()
+    reset_action_types()
 
 
 @pytest.fixture(autouse=True)

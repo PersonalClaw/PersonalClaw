@@ -475,6 +475,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
     "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
+    # §5 earned-autonomy thresholds. Runtime-editable because these are the knobs a
+    # user reaches for after seeing what the ladder actually proposed. Bounded on both
+    # sides: `clean_approvals` floors at 1 (a bar of zero would offer a promotion to a
+    # type with no record), and every ceiling keeps a typo from budgeting a decade.
+    "guardrails.autonomy.clean_approvals": {"type": "int", "min": 1, "max": 1000},
+    "guardrails.autonomy.min_days": {"type": "int", "min": 0, "max": 365},
+    "guardrails.autonomy.max_rejections": {"type": "int", "min": 0, "max": 100},
+    "guardrails.autonomy.cooldown_days": {"type": "int", "min": 0, "max": 365},
+    "guardrails.autonomy.evidence_window_days": {"type": "int", "min": 1, "max": 365},
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
     "resilience.mid_turn_policy": {
