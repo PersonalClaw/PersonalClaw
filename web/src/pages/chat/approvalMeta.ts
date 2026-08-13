@@ -8,10 +8,11 @@
  *  are unchanged by this file. Read-only consumption of classifications the backend
  *  already computed — per C2, "no security-logic change".
  *
- *  CONSUMER: `OU-8` (the ApprovalCard redesign) renders these facets as chips, and
- *  `OU-9` carries the same fields over `ChannelDelivery.request_approval`. Until
- *  OU-8 lands this module has NO call site — that split is the atom boundary, not an
- *  oversight, so nothing here is live yet.
+ *  CONSUMERS: `pages/chat/ApprovalCard` renders these facets as chips and
+ *  `app/approvalToast` renders the same vocabulary as one line (both landed with
+ *  OU-8); `OU-9` carries the same fields over `ChannelDelivery.request_approval`.
+ *  The facet WORDS live here too, beside the derivation, so the surfaces cannot
+ *  drift into three vocabularies for one claim.
  *
  *  ── Honesty contract ─────────────────────────────────────────────────────────
  *  Every returned boolean is a POSITIVE claim; `false` means "not established",
@@ -186,4 +187,59 @@ export function deriveBlastRadius(input: BlastRadiusInput): BlastRadius | undefi
   // Nothing established → say nothing. See the honesty contract in the header.
   if (!writes && !network && !shell && !readOnly) return undefined
   return { writes, network, shell, readOnly }
+}
+
+// ── OU-8: the ONE facet vocabulary every surface renders ─────────────────────
+// Three surfaces show a blast radius — the chat card's chips, the out-of-context
+// approval toast's one-liner, and (OU-9) the channel brief. They must not each
+// invent their own words for `writes`, so the words live here, beside the
+// derivation, and each surface only chooses a PRESENTATION.
+
+/** One established facet, ready to render. */
+export interface BlastRadiusFacet {
+  key: keyof BlastRadius
+  /** Chip text. A noun phrase for a capability, never a verdict. */
+  label: string
+  /** The same claim spelled out, for a `title`. */
+  detail: string
+}
+
+/** Total over `BlastRadius` — adding a facet to the interface makes this object a
+ *  type error, so a new facet cannot arrive unlabelled (the same discipline
+ *  `RISK_ESTABLISHES_READ_ONLY` applies to the risk union). */
+const FACET_COPY: Record<keyof BlastRadius, { label: string; detail: string }> = {
+  writes: { label: 'Writes files', detail: 'Can create or change files on this machine.' },
+  shell: { label: 'Runs a command', detail: 'Can execute a command on this machine.' },
+  network: { label: 'Uses the network', detail: 'Can reach the network from this machine.' },
+  readOnly: { label: 'Reads only', detail: 'Established as a read: no change was established.' },
+}
+
+/** Render order — broadest consequence first, the read claim last. Kept as data (not
+ *  `Object.keys`) so the order is deliberate and reviewable; a test asserts it covers
+ *  every key of `FACET_COPY`, so a fifth facet cannot be silently dropped from every
+ *  surface at once. */
+export const BLAST_RADIUS_FACET_ORDER: readonly (keyof BlastRadius)[] = [
+  'writes', 'shell', 'network', 'readOnly',
+]
+
+/** The facets a caller may legitimately SHOW, in render order.
+ *
+ *  Only established (`true`) facets are returned, and `undefined` yields `[]`. That is
+ *  the honesty contract made renderable: a `false` facet means "not established", so
+ *  painting it as a negative chip ("no network") would turn absence of evidence into a
+ *  confident all-clear. A surface therefore shows the positives or shows nothing — it
+ *  must never enumerate all four with on/off states. */
+export function establishedFacets(radius: BlastRadius | undefined): BlastRadiusFacet[] {
+  if (!radius) return []
+  return BLAST_RADIUS_FACET_ORDER.filter((k) => radius[k]).map((k) => ({ key: k, ...FACET_COPY[k] }))
+}
+
+/** The compact one-line form, for a surface with no room for chips (the
+ *  out-of-context approval toast). Empty string when nothing is established — the
+ *  caller then says nothing about the blast radius rather than "nothing established",
+ *  which a reader would hear as "nothing happens". */
+export function blastRadiusLine(radius: BlastRadius | undefined): string {
+  const facets = establishedFacets(radius)
+  if (facets.length === 0) return ''
+  return facets.map((f) => f.label.toLowerCase()).join(', ')
 }

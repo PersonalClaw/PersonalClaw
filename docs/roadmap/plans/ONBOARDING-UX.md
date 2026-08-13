@@ -328,3 +328,93 @@ Owner rulings, mapped onto the existing sessions honestly:
   the atom ships the derivation half with no call site, by design — OU-8 is the renderer. The
   in-app Updates panel renders `CHANGELOG.md`, so an entry here would advertise blast-radius
   chips that no surface draws yet. The entry belongs to OU-8.
+- [2026-08-13][OU-8] **DONE (S3 T3.2 + V3 / C2).** `ApprovalCard` is now a four-zone decision
+  brief and `useApprovalToasts` carries the compact form of the same brief.
+  **WHAT** — tool + arguments (unchanged, `ui/ApprovalPrompt`'s truncated mono line).
+  **WHY** — the runner's `purpose`, and nothing at all when it supplied none (no filler line).
+  **WHAT IT CAN TOUCH** — a named `<ul>` of ESTABLISHED blast-radius facets from OU-7's
+  `deriveBlastRadius`, rendered through a new shared vocabulary in `approvalMeta.ts`
+  (`establishedFacets` / `blastRadiusLine` / `BLAST_RADIUS_FACET_ORDER`, labels in a total
+  `Record<keyof BlastRadius, …>`). Positives only: `undefined` and an all-false radius both
+  render NO zone, because four "no" chips would be a confident all-clear from zero evidence.
+  **HOW FAR THE ANSWER REACHES** — a `Segmented` (`size="sm"`) remember-scope strip plus the
+  promise it makes, in visible text, above the verbs.
+  Actions collapse from four scope-encoding buttons to **Allow / Deny**, with the scope carried
+  in Allow's accessible name. `ui/ApprovalPrompt` gained ONE optional `scope` slot (+ doc/anatomy
+  update); the companion passes nothing and its 13 tests pass untouched. Toast: new pure
+  `app/approvalToast.ts` (`approvalToastMessage`) — one line, no verbs, no scope, drawing its
+  words from the same vocabulary so the card and the nudge cannot drift.
+  **Tests:** `ApprovalCard.test.tsx` (16), `approvalToast.test.ts` (5), +6 in
+  `approvalMeta.test.ts`; `approvalOutcome.test.tsx`'s four-label assertion re-pointed at the new
+  action row. FE suite 223 files / 2229 tests / 0 failed (was 221 / 2202).
+- [2026-08-13][OU-8] **DEVIATION (C2's `tool_always` remember-scope has no honest home — SHIPPED
+  WITHOUT IT).** C2 names three scopes (`session` / `tool_always` / `no`) persisting "via the
+  existing approval-preference path". Two of the three map cleanly onto actions
+  `api_chat_session_approve` already implements — `no` → `approved`, `session` → `trust` — and the
+  card also keeps the pre-existing agent-wide grant (`trust_agent`). **Nothing in this codebase
+  remembers an approval decision per TOOL.** `trust`, `trust_agent` and `yolo` are all "every
+  tool" at a widening blast radius (`chat_handlers.py:2105-2160`), and `set_approval_policy`
+  (`session.py:1579`) is keyed by session, not by tool. The one per-tool matcher that exists,
+  `config.hooks.auto_approve_tools` (consumed live at `hooks.py:394` via
+  `chat_runner.py:2284`), has **no write path** and is pinned into a `HookManager` at gateway
+  construction (`gateway.py:662`), so a config write would keep asking until a restart — and its
+  patterns are `fnmatch` over the tool TITLE, which for an ACP agent is a command string
+  ("Running: ls -la"), so a literal tool name would match nothing or too much depending on the
+  provider. Building that write path + live mutation is a change to the approval gate, which C2
+  forbids (E4). Labelling `trust` "always allow this tool" was the alternative and is a
+  security-relevant lie about what a click did, so the option is **absent**, the reasoning is
+  recorded at `REMEMBER_SCOPES`, and a test asserts no label implies per-tool memory.
+  **Remainder for a future atom:** a genuinely per-tool grant needs a persisted per-tool policy
+  the runtime reads live — a security-surface change with its own scope, not a label.
+- [2026-08-13][OU-8] **DEVIATION (`readOnlyCommand` pass-through NOT wired — it would add
+  nothing on this path).** OU-7 left `perm_meta["is_read_only"]` unbroadcast and named the
+  pass-through OU-8/OU-9's. Measured: on the chat path it is redundant. `resolve_effective_risk`
+  reaches `'safe'` THROUGH read-only-ness (`task_modes.py:245`), the `approval` frame already
+  carries that effective risk, and `RISK_ESTABLISHES_READ_ONLY.safe` is `true` — so a read-only
+  bash call already derives `readOnly` today, as the live drive shows (`Safe` → chips "Runs a
+  command" + "Reads only"). Putting the flag on the wire would change no rendered chip here; its
+  value is the companion path, which has no `risk` at all, and that payload is OU-9's. Left for
+  OU-9 with the reason, rather than touching `src/` for a no-op.
+- [2026-08-13][OU-8] **DEVIATION (no `primary` tone on Allow).** `ui/ApprovalPrompt` documents
+  `primary` as "the least-privilege default", which the old four-button row satisfied. With one
+  Allow whose breadth depends on the scope, a solid primary fill would read as "this is the
+  action to take" — advocacy, on the one surface whose job is to make someone weigh a decision.
+  Allow is neutral, Deny keeps its tinted danger edge, and a test asserts Allow's inline
+  background is not `--color-primary`. The companion's Allow still passes `primary`; that is
+  named in the prompt's doc as worth revisiting with it, not changed here.
+- [2026-08-13][OU-8] **V3 (validated as a user, real gateway, isolated home).**
+  `PERSONALCLAW_HOME=/private/tmp/ou8-live/home`, gateway on `:10088` from THIS worktree
+  (`PYTHONPATH` + a fresh `static/dist` symlink so the served SPA is this build). No hosted-model
+  credentials were available in the validation environment, so the
+  provider is the real `openai-compatible` app installed from the first-party source and pointed
+  at a local OpenAI-compatible stub (`/private/tmp/ou8-live/stub_openai.py`, streaming path,
+  returns one deterministic tool call per turn). Everything downstream of the model is the real
+  system: real `approval` WS frame, real card, real
+  `POST /api/chat/sessions/{s}/approve`, real resolution.
+  Drove three cards and both answers: **risky** `bash` (`rm -rf …`) → `Destructive` + one chip
+  "Runs a command"; **benign** read-only `bash` (`ls -la`) → `Safe` + "Runs a command" +
+  "Reads only", Allowed once → persisted `resolved: "approved"`, the tool ran, the turn finished;
+  a **denial** → persisted `resolved: "rejected"`; and a **`write_file`** call → `Caution` +
+  "Writes files", with the scope switched to "This chat" → Allow's name became "Allow write_file —
+  this chat: Every tool in this chat runs without asking, until you change it back." and the
+  session's mode came back `trust`. Screenshots (README/asset-list feed, plan 36 T3.2):
+  `ou8-risky-card-zoom.png`, `ou8-benign-card-zoom.png`, `ou8-writes-card-zoom.png`,
+  `ou8-benign-allow-settled.png` — in `/private/tmp/ou8-live/shots/` and copied to the workspace
+  root beside the other UX-loop shots. They are NOT placed in `README.md`: the README has no
+  screenshot section today and that section is DISCOVERABILITY-LAUNCH's to design.
+- [2026-08-13][OU-8] **Falsified the central rail.** Made `BlastRadiusChips` enumerate all four
+  facets with negative labels when nothing is established (the exact defect OU-7's `undefined`
+  exists to prevent): 4 tests RED, including "renders NO facet zone at all when the inputs
+  establish nothing". Restored → 16/16 green. Also flipped Allow to `tone: 'primary'`: the
+  no-advocacy rail "does not make Allow the visual primary" went RED alone; restored → green.
+- [2026-08-13][OU-8] **DISCOVERY (the approval record is memory-only, so a restart erases it).**
+  `_save_session_to_history` deliberately DROPS role `permission` when writing a session's JSONL
+  (`chat_persistence.py:603`), so an approval row — pending or settled — lives only in the
+  in-memory `session.messages`. Verified live in the other direction: the resolution IS stamped
+  in memory (`GET /api/chat/sessions/<key>` came back with `resolved: "approved"` on the allowed
+  card and `"rejected"` on the denied one, and only the two cards I deliberately left unanswered
+  read `null`), and the settled outcome line renders from that. But nothing survives a gateway
+  restart: the transcript that is the permanent record of a security decision loses the decision.
+  Not touched — backend lifecycle, not this atom's file — and the same family as #541. Worth its
+  own atom on the owning plan. (`approvalOutcome.test.tsx`'s history-hydration parity tests keep
+  the FE side honest for whenever the rows do start persisting.)
