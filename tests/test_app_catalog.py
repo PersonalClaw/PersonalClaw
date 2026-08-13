@@ -621,3 +621,69 @@ def test_installed_logger_roots_ignores_apps_without_roots(tmp_path):
     _install_app(tmp_path, "plain-app", logger_roots=[])
     _install_app(tmp_path, "logging-app", logger_roots=["custom_rt"])
     assert catalog.installed_logger_roots() == ("custom_rt",)
+
+
+def _provider_app(root: Path, name: str, ptype: str, caps: list[str]) -> None:
+    """A local-source app declaring a provider type AND its capabilities."""
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "app.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": "1.0",
+                "displayName": name.title(),
+                "description": f"{name} fixture",
+                "provider": {
+                    "type": ptype,
+                    "implementation": "provider:create_provider",
+                    "capabilities": caps,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_catalog_entry_carries_declared_provider_capabilities(tmp_path):
+    """ONBOARDING-UX OU-2: a Store card exposes the provider's DECLARED capabilities.
+
+    ``providerType`` alone cannot tell a chat model from a speech model — a speech app
+    is ``providerType: "model"`` with ``capabilities: ["stt"]`` — so a surface that
+    groups apps by what they DO (the onboarding essential-apps step) would otherwise
+    have to guess from author-controlled ``tags``, and would offer a transcription app
+    as a chat provider that has nothing bindable behind it.
+    """
+    src = tmp_path / "firstparty"
+    src.mkdir()
+    _provider_app(src, "openai-models", "model", ["chat", "streaming", "embedding"])
+    _provider_app(src, "faster-whisper", "model", ["stt"])
+    _provider_app(src, "brave-search", "search", ["search"])
+    catalog.add_local_source(str(src))
+
+    by_name = {a["name"]: a for a in catalog.available_catalog()["localApps"]}
+    assert by_name["openai-models"]["providerCapabilities"] == ["chat", "streaming", "embedding"]
+    # The discriminator this field exists for: same providerType, different lane.
+    assert by_name["faster-whisper"]["providerType"] == "model"
+    assert by_name["faster-whisper"]["providerCapabilities"] == ["stt"]
+    assert "chat" not in by_name["faster-whisper"]["providerCapabilities"]
+    assert by_name["brave-search"]["providerCapabilities"] == ["search"]
+
+
+def test_catalog_entry_capabilities_empty_for_a_non_provider_app(tmp_path):
+    """An app that declares no provider gets an empty list, never a missing key —
+    the frontend reads it unconditionally."""
+    src = tmp_path / "plain"
+    src.mkdir()
+    d = src / "note-app"
+    d.mkdir(parents=True)
+    (d / "app.json").write_text(
+        json.dumps(
+            {"name": "note-app", "version": "1.0", "displayName": "Notes", "description": "x"}
+        ),
+        encoding="utf-8",
+    )
+    catalog.add_local_source(str(src))
+    entry = next(a for a in catalog.available_catalog()["localApps"] if a["name"] == "note-app")
+    assert entry["isProvider"] is False
+    assert entry["providerCapabilities"] == []

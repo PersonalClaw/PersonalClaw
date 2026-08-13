@@ -1,25 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Cpu, Sparkles, Loader2, ExternalLink, Check } from 'lucide-react'
+import { ArrowRight, User, Boxes, Sparkles, Loader2, Check } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
-import { TextLink } from '../ui/TextLink'
+import { LoadingStatus } from '../ui/ListScaffold'
 import { spring, stagger, listItemEnter } from '../design/motion'
 import { useIdentity, firstNameOf } from './identity'
 import { APP_NAME } from './config'
-import { api, type OnboardingState, type ChatModelOption } from '../lib/api'
+import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
 import { StepRow, type StepState } from './onboarding/StepStack'
+import { EssentialsStep } from './onboarding/EssentialsStep'
 
-type StepId = 'name' | 'model' | 'ready'
-const ORDER: StepId[] = ['name', 'model', 'ready']
+type StepId = 'name' | 'essentials' | 'ready'
+const ORDER: StepId[] = ['name', 'essentials', 'ready']
 
 /** First-run welcome — a full-screen branded moment over the chat 3D dot-wave.
  *  A vertically-stacked stepper: each step expands when active and collapses to
  *  a green "done" row. The DotGlow focus follows the active row down the page.
- *  Shown only until a name is set; the model step is a fix-or-skip readiness
- *  check (name is the only hard gate). */
+ *  Shown only until a name is set (name is the only hard gate).
+ *
+ *  The middle step is the essential-apps step (OU-2): the flow's first real act,
+ *  where a fresh install installs a model provider — required — plus optional
+ *  search / speech / channel apps, and binds a chat model, all in-flow.
+ *
+ *  Each transition persists its resume point through `POST /api/onboarding/state`
+ *  (`step`), and the essentials step persists which lanes it filled (`essentials`).
+ *  Those writes are what OU-4's resume reads; the progress POST is fire-and-forget on
+ *  purpose — a failed write must never block a user's first run. */
 export function Onboarding() {
   const { setName } = useIdentity()
   const [step, setStep] = useState<StepId>('name')
@@ -29,7 +38,7 @@ export function Onboarding() {
   const [modelDone, setModelDone] = useState<string>('')  // '' = not resolved, else summary
 
   // the active step's row drives the 3D glow focus (like the composer in chat)
-  const rowRefs = { name: useRef<HTMLDivElement>(null), model: useRef<HTMLDivElement>(null), ready: useRef<HTMLDivElement>(null) }
+  const rowRefs = { name: useRef<HTMLDivElement>(null), essentials: useRef<HTMLDivElement>(null), ready: useRef<HTMLDivElement>(null) }
   const activeRef = rowRefs[step]
 
   const stateOf = (id: StepId): StepState => {
@@ -38,17 +47,27 @@ export function Onboarding() {
     return ii < si ? 'done' : 'upcoming'
   }
 
-  // fetch readiness when entering the model step
+  /** Record first-run progress. Deliberately fire-and-forget: the flow's job is to get
+   *  the user working, and a progress write that fails must cost them nothing. */
+  const progress = useCallback((patch: OnboardingStatePatch) => {
+    api.saveOnboardingState(patch).catch(() => { /* resume is a convenience, not a gate */ })
+  }, [])
+
+  // fetch readiness when entering the essentials step
   useEffect(() => {
-    if (step === 'model' && !readiness) api.onboarding().then(setReadiness).catch(() => setReadiness({ needs_model: true, has_model_provider: false, has_chat_binding: false }))
+    if (step === 'essentials' && !readiness) api.onboarding().then(setReadiness).catch(() => setReadiness({ needs_model: true, has_model_provider: false, has_chat_binding: false }))
   }, [step, readiness])
 
   function commitName() {
     const n = name.trim()
     if (!n) return
-    setSavedName(n); setStep('model')
+    setSavedName(n); setStep('essentials'); progress({ step: 'essentials' })
+  }
+  function leaveEssentials(summary: string) {
+    setModelDone(summary); setStep('ready'); progress({ step: 'first_success' })
   }
   function finish() {
+    progress({ step: 'done' })
     // commit identity LAST so the gate (`onboarded`) flips only on completion
     setName(savedName || 'Operator')
   }
@@ -77,14 +96,18 @@ export function Onboarding() {
               <NameStep value={name} onChange={setNameDraft} onSubmit={commitName} />
             </StepRow>
 
-            <StepRow ref={rowRefs.model} index={1} icon={Cpu} title="Chat model"
-              subtitle="Confirm the agent has a model to think with."
-              state={stateOf('model')} doneSummary={modelDone || undefined}
-              onActivate={() => setStep('model')}>
-              <ModelStep readiness={readiness}
-                onResolved={(summary) => { setModelDone(summary); setStep('ready') }}
-                onSkip={() => { setModelDone('Set up later'); setStep('ready') }}
-                onOpenSettings={finish} />
+            <StepRow ref={rowRefs.essentials} index={1} icon={Boxes} title="Essential apps"
+              subtitle="Install what the agent needs to work. A model provider is required; the rest are optional."
+              state={stateOf('essentials')} doneSummary={modelDone || undefined}
+              onActivate={() => setStep('essentials')}>
+              {readiness
+                ? <EssentialsStep readiness={readiness} onProgress={progress}
+                    onDone={leaveEssentials}
+                    onSkip={() => leaveEssentials('Set up later')} />
+                : <div role="status" aria-busy="true" className="flex items-center py-2">
+                    <LoadingStatus what="what's already set up" />
+                    <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
+                  </div>}
             </StepRow>
 
             <StepRow ref={rowRefs.ready} index={2} icon={Sparkles} title="All set"
@@ -117,83 +140,6 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
   )
 }
 
-/** Step 2 — readiness. Real fix: bind a chat model in-flow when none is bound. */
-function ModelStep({ readiness, onResolved, onSkip, onOpenSettings }: { readiness: OnboardingState | null; onResolved: (summary: string) => void; onSkip: () => void; onOpenSettings: () => void }) {
-  const [models, setModels] = useState<ChatModelOption[] | null>(null)
-  const [binding, setBinding] = useState<string>('')
-
-  // already good? `needs_model` is the backend's single source of truth (a
-  // dry-run of real chat resolution) — the coarser has_* flags only pick which
-  // fix-path UI to show below.
-  useEffect(() => {
-    if (readiness && !readiness.needs_model) onResolved('Ready to chat')
-  }, [readiness]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // provider present but chat can't resolve → offer the bindable models
-  useEffect(() => {
-    if (readiness && readiness.needs_model && readiness.has_model_provider) {
-      api.chatModels().then(setModels).catch(() => setModels([]))
-    }
-  }, [readiness])
-
-  if (!readiness) return <Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>
-
-  if (!readiness.needs_model) {
-    return <p className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: 'var(--color-success)' }}><Check size={15} /> A chat model is configured — you're ready.</p>
-  }
-
-  // No provider at all → can't bind here; point to Settings, allow skip.
-  if (!readiness.has_model_provider) {
-    return (
-      <div className="flex flex-col gap-m">
-        <p className="text-on-surface-var text-[0.8125rem] leading-relaxed">No model provider is connected yet, so chat can't run. Connect one in <span className="text-on-surface">Settings → Providers</span> after setup — it only takes a moment.</p>
-        <div className="flex items-center gap-s">
-          {/* Commit the name BEFORE navigating: the App.tsx guard redirects back
-              to onboarding while `onboarded` is false, so without the commit
-              this link is a no-op loop. The name step is already complete here. */}
-          <a href="#/settings" onClick={onOpenSettings} className="inline-flex items-center gap-1.5 rounded-md px-3 h-9 text-[0.8125rem]" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}><ExternalLink size={14} /> Open Settings</a>
-          <button type="button" onClick={onSkip} className="text-on-surface-low text-[0.8125rem] hover:text-on-surface">Set up later</button>
-        </div>
-      </div>
-    )
-  }
-
-  // Provider present, no binding → bind one in-flow.
-  async function bind(m: ChatModelOption) {
-    setBinding(m.name)
-    // active_models.json holds canonical `provider:model` refs (what ModelsPanel
-    // writes) — NOT the display `name`, which the discovery fallback builds as
-    // `provider/model`. Build the ref from the entry's own parts.
-    const ref = m.provider ? `${m.provider}:${m.model_id}` : m.model_id
-    try { await api.setActiveModel('chat', [ref]); onResolved(`${m.model_id}`) }
-    catch { setBinding('') }
-  }
-  return (
-    <div className="flex flex-col gap-m">
-      <p className="text-on-surface-var text-[0.8125rem]">Pick the model the agent should chat with:</p>
-      {models === null ? <Centered><Loader2 size={16} className="animate-spin text-on-surface-low" /></Centered>
-        : models.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No chat-capable models found. <TextLink onClick={onSkip}>Set up later</TextLink></p>
-        : (
-          <motion.div className="flex flex-col gap-1.5"
-            initial="initial" animate="animate" variants={{ animate: { transition: stagger() } }}>
-            {models.map((m) => (
-              <motion.button key={m.name} variants={listItemEnter} type="button" onClick={() => bind(m)} disabled={!!binding}
-                className="flex items-center gap-2 rounded-lg bg-surface-high px-3 py-2.5 text-left transition-colors hover:bg-surface-highest disabled:opacity-50">
-                <Cpu size={15} className="shrink-0 text-primary" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-on-surface text-[0.8125rem]">{m.model_id}</div>
-                  <div className="text-on-surface-low text-[0.75rem]">{m.provider}</div>
-                </div>
-                {binding === m.name && <Loader2 size={15} className="shrink-0 animate-spin text-on-surface-low" />}
-              </motion.button>
-            ))}
-            <button type="button" onClick={onSkip} className="mt-1 self-start text-on-surface-low text-[0.8125rem] hover:text-on-surface">Set up later</button>
-          </motion.div>
-        )}
-    </div>
-  )
-}
-
 /** Step 3 — recap + launch. */
 function ReadyStep({ name, modelSummary, onFinish }: { name: string; modelSummary: string; onFinish: () => void }) {
   const chatReady = modelSummary && modelSummary !== 'Set up later'
@@ -220,8 +166,4 @@ function Recap({ ok, label }: { ok: boolean; label: string }) {
       <span className="text-on-surface-var">{label}</span>
     </div>
   )
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-center py-2">{children}</div>
 }

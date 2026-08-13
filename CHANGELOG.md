@@ -338,7 +338,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
-- **You can approve what PersonalClaw is waiting on from your phone.** A run that stops to ask
+- **First run now sets you up with a working model instead of pointing at Settings.** The second step
+  of the welcome flow used to be a readiness check: if no model provider was configured it told you
+  chat could not run, offered a link to Settings, and left you to find your own way. It is now an
+  **Essential apps** step that does the work in place. Four groups are listed from the app catalog —
+  a **model provider** (required; nothing else works without one), plus optional **web search**,
+  **speech** (transcription/voice) and a **messaging channel** — and for the model you can go from
+  nothing to a bound, tested model without leaving the flow: install the provider app, fill in its
+  own settings fields, run its real connection **Test**, then pick which model chat should use. If
+  the Test fails you see the provider's actual error and can correct it right there; skipping every
+  optional group still gets you to a working dashboard. **Nothing installs by itself.** Each app has
+  a **Review** step that shows exactly what installing grants it — the same permission disclosure,
+  scheduled-job list and scanner warning the Store shows — and installs only when you click that
+  card's own Install button. Where you are in the flow, and which of the four you set up, is now
+  remembered on the server.
   permission used to stay stopped until you were back at a desk, because the only place the question
   appeared was the desktop dashboard. There is now a phone route at **`#/companion`** — open it on
   your phone (over your tailnet or however you reach your gateway) and it shows every pending tool

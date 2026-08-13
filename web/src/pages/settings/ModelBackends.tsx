@@ -192,8 +192,12 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
 
 const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
 
-/** A single schema-driven field: enum → select, sensitive → password, else text. */
-function SchemaField({ field, name, value, onChange }: {
+/** A single schema-driven field: enum → select, sensitive → password, else text.
+ *  Exported so the onboarding essential-apps step renders a provider's key/config
+ *  fields with the IDENTICAL semantics (label from x-meta, password masking + reveal
+ *  for a `sensitive` field) instead of growing a second, subtly different key-entry
+ *  idiom for the same settingsSchema. */
+export function SchemaField({ field, name, value, onChange }: {
   field: ModelProviderTypeField; name: string; value: string; onChange: (v: string) => void
 }) {
   const [show, setShow] = useState(false)
