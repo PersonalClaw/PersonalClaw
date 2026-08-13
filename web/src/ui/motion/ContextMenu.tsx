@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { overlayEnter } from '../../design/motion'
+import { useMenuCursor } from '../../lib/useMenuCursor'
 import { MenuRow } from '../Popover'
 
 export interface ContextMenuItem {
@@ -23,7 +24,12 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const longPress = useRef<number | undefined>(undefined)
-  const [active, setActive] = useState(0)
+  // The highlighted row is FOCUS, not a font weight — see lib/useMenuCursor for the measurement.
+  const { active, move, restoreFocus, tabIndexFor } = useMenuCursor({
+    containerRef: menuRef,
+    count: items.length,
+    openKey: pos ? `${pos.x},${pos.y}` : null,
+  })
 
   const open = useCallback((x: number, y: number) => {
     if (disabled || items.length === 0) return
@@ -37,19 +43,26 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
       x: Math.min(x, Math.max(8, window.innerWidth - w - 8)),
       y: Math.min(y, Math.max(8, window.innerHeight - h - 8)),
     })
-    setActive(0)
   }, [disabled, items.length])
 
   const close = useCallback(() => setPos(null), [])
+  /** Escape and selection hand focus back to the row that opened the menu; an outside-CLICK does
+   *  not, because the pointer is already somewhere else. Same split as ui/Popover. */
+  const closeAndReturnFocus = useCallback(() => { setPos(null); restoreFocus() }, [restoreFocus])
 
   useEffect(() => {
     if (!pos) return
     const onDoc = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) close() }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); close() }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(items.length - 1, i + 1)) }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)) }
-      else if (e.key === 'Enter') { e.preventDefault(); const it = items[active]; if (it && !it.disabled) { it.onSelect(); close() } }
+      if (e.key === 'Escape') { e.stopPropagation(); closeAndReturnFocus() }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
+      // Tab dismisses (APG) — and deliberately does NOT preventDefault: focus lands back on the
+      // invoking row and the browser's own Tab then carries on from there. Measured before this:
+      // Tab left the menu OPEN and put focus on an unrelated page control behind it.
+      else if (e.key === 'Tab') closeAndReturnFocus()
+      // No Enter branch: focus sits on the cursor row's <button>, so the browser activates it
+      // natively. Handling it here too would fire `onSelect` TWICE per press.
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -59,7 +72,7 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
       document.removeEventListener('keydown', onKey)
       window.removeEventListener('scroll', close, true)
     }
-  }, [pos, items, active, close])
+  }, [pos, close, closeAndReturnFocus, move])
 
   const bind = {
     onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); open(e.clientX, e.clientY) },
@@ -80,6 +93,7 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
             <motion.div
               ref={menuRef}
               role="menu"
+              aria-orientation="vertical"
               variants={overlayEnter} initial="initial" animate="animate" exit="exit"
               className="glass fixed z-50 min-w-[200px] rounded-lgi p-s"
               style={{ left: pos.x, top: pos.y, transformOrigin: 'top left' }}
@@ -88,14 +102,17 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
                 <div key={it.label} className={it.danger ? '[&_span]:!text-danger' : undefined} data-active={i === active || undefined}>
                   <MenuRow
                     // `menuitem`, not `menuitemradio`: these rows are ACTIONS (Peek / Open / Pin),
-                    // so `selected` here means "keyboard-highlighted" and must stay visual — an
-                    // `aria-checked` on an action would claim a state it does not have.
+                    // so `selected` is a cursor rather than a state — an `aria-checked` on an
+                    // action would claim something it does not have. The cursor's ARIA channel is
+                    // FOCUS (roving tabindex below); `selected` now only paints what focus says.
                     role="menuitem"
+                    tabIndex={tabIndexFor(i)}
+                    disabled={it.disabled}
                     icon={it.icon}
                     label={it.label}
                     hint={it.hint}
                     selected={i === active}
-                    onClick={() => { if (!it.disabled) { it.onSelect(); close() } }}
+                    onClick={() => { if (!it.disabled) { it.onSelect(); closeAndReturnFocus() } }}
                   />
                 </div>
               ))}
