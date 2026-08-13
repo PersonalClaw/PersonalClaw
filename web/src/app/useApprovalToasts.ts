@@ -1,5 +1,7 @@
 import { useRef } from 'react'
 import { useChatSocket } from '../lib/useChatSocket'
+import { approvalToastMessage } from './approvalToast'
+import type { ApprovalRisk } from '../pages/chat/approvalMeta'
 
 /** Shell-level watcher: surfaces a toast when a tool-approval is requested for a
  *  chat session the user is NOT currently viewing — most importantly a SUBAGENT's
@@ -35,8 +37,18 @@ export function useApprovalToasts(activeSession: string) {
     const source = String(d.source ?? '')
     const who = source === 'subagent' ? 'A subagent'
       : source ? 'A background task' : 'Another chat session'
+    // The compact form of the same brief the card renders (OU-8) — one shared facet
+    // vocabulary, two presentations, no second approval renderer. `risk` rides the same
+    // `approval` frame the card reads it from (chat_runner broadcasts the EFFECTIVE risk);
+    // it is cast, not validated, exactly as ChatPage does, and an unknown value simply
+    // establishes nothing.
     window.dispatchEvent(new CustomEvent('ne:toast', {
-      detail: { level: 'info', message: `${who} needs approval to run ${tool} — open ${session} to respond.` },
+      detail: {
+        level: 'info',
+        message: approvalToastMessage({
+          who, tool, session, risk: (d.risk ? String(d.risk) : undefined) as ApprovalRisk | undefined,
+        }),
+      },
     }))
   })
 }

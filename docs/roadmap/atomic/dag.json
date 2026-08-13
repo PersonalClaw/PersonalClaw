@@ -6318,12 +6318,14 @@
         {
           "id": "OU-8",
           "title": "ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.2 + V3 (Wave 2); Design 'Approval brief'; copy-sensitive surface reviewed against security voice",
           "done_when": "ApprovalCard renders all four zones; useApprovalToasts gets the compact form; remember-scope (session/tool_always/no) persists via the existing approval-preference path; brief never advocates approval; risky+benign approvals driven as a user and README screenshots produced (feeds DISCOVERABILITY-LAUNCH asset list)",
           "deps": [
             "OU-7"
-          ]
+          ],
+          "status_note": "Four zones + toast compact form shipped and driven live. One deviation: C2's `tool_always` remember-scope is NOT shipped — nothing in the codebase remembers an approval per TOOL (trust/trust_agent/yolo are all every-tool; the one per-tool matcher, config.hooks.auto_approve_tools, has no write path and is pinned into a HookManager at gateway construction), and labelling a wider grant \"always for this tool\" would misdescribe what the click does. The two honest scopes (`no` -> approved, `session` -> trust) plus the pre-existing agent-wide grant ship instead. See the plan's Execution log.",
+          "pr": 1263
         },
         {
           "id": "OU-9",
@@ -7546,8 +7548,8 @@
         "plan": "OU"
       },
       {
-        "id": "OU-8",
-        "title": "ApprovalCard redesign (what/why/blast-radius/scoped-remember) + toast compact variant",
+        "id": "OU-9",
+        "title": "Structured approval brief over the ChannelDelivery.request_approval seam",
         "plan": "OU"
       },
       {
@@ -9983,9 +9985,9 @@
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {

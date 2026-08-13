@@ -8,6 +8,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **The approval prompt now tells you what a tool call can touch, and how far your answer
+  reaches.** When the agent asks permission to run a tool, the card is a four-part brief instead
+  of a tool name and four buttons: **what** (the tool and its arguments), **why** (the one-line
+  purpose, when the agent gave one), **what it can touch** — chips like "Runs a command", "Writes
+  files", "Uses the network", "Reads only" — and **how far the answer reaches**, a
+  "Remember this choice" picker (*Just this once* · *This chat* · *This agent*) that spells out, in
+  plain text, exactly what gets remembered before you answer. Then one **Allow** and one **Deny**.
+  The out-of-context approval toast (an approval raised in a chat you are not looking at) carries
+  the same one-line summary, so "another chat session needs approval to run bash (runs a command)"
+  is legible without opening it.
+  Two deliberate restraints: the chips are **claims, not an audit** — only facets the system can
+  actually establish are shown, and when it can establish nothing it says nothing rather than
+  painting four reassuring negatives; and the brief **never advocates**. Nothing recommends
+  approving, no answer is preselected or focused, and neither verb is styled as "the" action —
+  the only thing chosen for you is the narrowest scope, which remembers nothing.
+
 ### Security
 
 - **Installed apps' backends no longer inherit PersonalClaw's environment.** ⚠️ **This changes
