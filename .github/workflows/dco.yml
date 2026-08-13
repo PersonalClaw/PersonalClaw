@@ -16,12 +16,12 @@
 # after approval.
 #
 # SAFETY — `pull_request_target` runs with the base repo's secrets, so it must never
-# execute fork-supplied code (the "pwn request" hole). This workflow is safe because
-# every step reads git METADATA only: it checks out the merge ref to resolve the
-# commit range, then reads author identities and trailers. It runs no build, no
-# dependency install, and no script from the contributor's tree.
-# Do NOT add a step here that executes anything out of the checked-out tree. Such a
-# step belongs in ci.yml under `pull_request`, where the approval gate guards it.
+# execute fork-supplied code (the "pwn request" hole). This workflow never checks the
+# fork out at all: it reads commit metadata over the commits API. No fork file is ever
+# on disk, so there is nothing to execute.
+# Do NOT add a checkout of the PR head here. `actions/checkout` refuses a fork ref
+# under this trigger anyway, and a step that runs contributor code belongs in ci.yml
+# under `pull_request`, where the first-time-contributor approval gate guards it.
 name: DCO
 
 on:
@@ -51,34 +51,50 @@ jobs:
       contents: read
       pull-requests: write   # post the remediation comment on failure
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          # The PR's merge ref, so BASE_SHA..HEAD_SHA resolves without adding the
-          # fork as a remote. Metadata only — see the SAFETY note in the header.
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      # No checkout. `actions/checkout` REFUSES a fork ref under pull_request_target
+      # ("Refusing to check out fork pull request code"), which skipped this step and
+      # the comment below on every fork PR — the exact PRs this workflow exists for.
+      # The commits API carries author identity and the full message, which is all a
+      # DCO check needs, and it keeps the no-fork-code guarantee absolute.
       - name: Verify DCO sign-off on every commit
         id: verify
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/pulls/$PR/commits" \
+            --jq '.[] | {sha, name: .commit.author.name, email: .commit.author.email, msg: .commit.message} | @base64' \
+            > /tmp/commits.txt
+
           missing=0
           unsigned=""
-          for sha in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
-            email="$(git show -s --format='%ae' "$sha")"
+          while read -r row; do
+            [ -n "$row" ] || continue
+            d=$(printf '%s' "$row" | base64 -d)
+            sha=$(printf '%s' "$d"   | jq -r .sha)
+            name=$(printf '%s' "$d"  | jq -r .name)
+            email=$(printf '%s' "$d" | jq -r .email)
+            msg=$(printf '%s' "$d"   | jq -r .msg)
+
             # Skip dependabot's own commits — a bot can't sign off, and bumps are
             # provenance-clear. Maintainer commits on the same branch still checked.
             case "$email" in
               *dependabot*@users.noreply.github.com) continue ;;
             esac
-            author="$(git show -s --format='%an <%ae>' "$sha")"
-            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qF "$author"; then
-              echo "::error::commit $sha is missing a matching 'Signed-off-by: $author' trailer — run: git commit -s (or git rebase --signoff)"
-              unsigned="${unsigned}- \`${sha}\` — ${author}"$'\n'
+
+            # -F, not a regex: a name like `dependabot[bot]` contains `[bot]`, which
+            # BRE reads as a character class and never matches the literal.
+            if printf '%s' "$msg" | grep -qF "Signed-off-by: $name <$email>"; then
+              echo "DCO ok: ${sha} $name <$email>"
+            else
+              echo "::error::commit $sha is missing a matching 'Signed-off-by: $name <$email>' trailer — run: git commit -s (or git rebase --signoff)"
+              unsigned="${unsigned}- \`${sha}\` — ${name} <${email}>"$'\n'
               missing=1
             fi
-          done
+          done < /tmp/commits.txt
+
           {
             echo "unsigned<<EOF"
             printf '%s' "$unsigned"
