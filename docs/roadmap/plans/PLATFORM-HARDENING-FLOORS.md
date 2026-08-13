@@ -844,3 +844,123 @@ Rows 1-4 are roughly one focused session between them.
   All four generated baselines byte-identical after regeneration except `dag.json`'s derived block,
   which this atom's status change requires. No `web/` change. Both flake memories reconciled, plus
   the harness-worktree memory whose diagnosis was wrong.
+- [2026-08-13][PHF-4] DONE: SH2.5 — the child environment at the hook, cron-script and
+  bash-action spawn sites is now built by ALLOWLIST (`sandbox.build_child_env`), not inherited.
+  One shared helper, used at both real call sites, plus one declared-needs seam
+  (`sandbox.env_passthrough`) and `_SENSITIVE_ENV_PREFIXES` as an absolute floor.
+- [2026-08-13][PHF-4] 🔴 THE MEASUREMENT the atom asked for, taken before tightening anything.
+  A **real running gateway** (`ps eww`, dev instance on :10092) carried **121 environment
+  variables**. Classified: 4 that decide what runs (`PATH`, `SHELL`, `PWD`, `TERM`), ~6 locale/TZ,
+  ~6 home-equivalents (`HOME`, `TMPDIR`, `USER`, `LOGNAME`, …), 2 PersonalClaw vars
+  (`PERSONALCLAW_HOME`, `PERSONALCLAW_BYPASS_LOCAL_NETWORKS`), **1 credential-adjacent socket**
+  (`SSH_AUTH_SOCK`), and the remaining ~100 pure launching-shell residue: 19 `CLAUDE_*`/`CLAUDECODE`
+  agent-CLI variables, 22 `TOOLBOX_*`, 11 `WARP_*`, 13 `DISABLE_*`, 8 `__MISE_*`, `AWS_REGION`,
+  `JAVA_HOME`, terminal/pager/less settings. **Not one of those ~100 is something a hook or cron
+  script could plausibly need**, which is what makes the allowlist safe here. The credential
+  population is worse than the variable list shows: `config/loader.py:4008` deliberately
+  `setdefault`s `.env` credentials (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `PERSONALCLAW_OWNER_ID`)
+  into `os.environ` *so that* "spawned children (sandboxed agents, MCP servers, cron-fired
+  subprocesses) inherit them" — so on any install with Slack configured, `printenv SLACK_BOT_TOKEN`
+  in a one-line hook returned the bot token. `sandbox.py` already refuses exactly those keys for
+  cc/strict *agent* children (`_AGENT_DENIED_ENV_KEYS`), so the doctrine was in place and only these
+  seams were exempt.
+- [2026-08-13][PHF-4] WHAT THE MEASUREMENT IMPLIES FOR REAL SCRIPTS, and where the base was
+  widened past the atom's literal list because narrowing there would have been an outage, not a
+  tightening:
+  * **`PYTHONPATH`.** The PHF-1 ceiling shim prepends `python -m personalclaw._spawn_exec_shim` to
+    every bash-provider spawn. Dropping `PYTHONPATH` breaks that import in any layout where the
+    package is not on the interpreter's default path — a *total spawn outage*, not a leak. In the
+    base, with the reason recorded at the constant.
+  * **Proxy + CA variables** (`HTTP(S)_PROXY`, `NO_PROXY`, lowercase forms, `SSL_CERT_FILE`,
+    `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`). Absent on the measured host, but
+    present on any corporate install, and a script that curls or pip-installs without them fails
+    *silently* (hang → timeout) — the worst diagnostic shape. In the base; none are credential-
+    shaped by the floor, and all are inherited today, so keeping them widens nothing.
+  * **`XDG_*`** as home-equivalents, and `PERSONALCLAW_PORT`/`PERSONALCLAW_WORKSPACE` alongside
+    `PERSONALCLAW_HOME` (the atom's "three PersonalClaw vars"): a child that loses these addresses a
+    *different install* — the default home on port 10000 — which is a silent wrong-target bug.
+  * **`SSH_AUTH_SOCK` is the one thing an operator cannot get back**, by design: it is in the floor,
+    so a declaration is refused. A cron script that `git push`es over SSH agent-forwarding will
+    break. Deliberate — the floor is what makes the control a floor — and cheap to work around with
+    a deploy key. Bash hooks already lost it before this change (the old pattern matched it), so
+    only cron scripts are affected.
+  * **Everything else a script might want is reachable by declaration**, including the Slack tokens
+    (`sandbox.env_passthrough: ["SLACK_BOT_TOKEN"]`). The declared-needs mechanism therefore covers
+    every need the measurement found except the deliberate `SSH_AUTH_SOCK` refusal, so no plausible
+    breakage is being shipped without a remedy.
+- [2026-08-13][PHF-4] DEVIATION (premise correction, `hooks.py`): this plan's row and the atom both
+  name `hooks.py` as a spawn site with no `env=`. **`hooks.py` has no child spawn at all** — verified
+  by grep (`subprocess`, `Popen`, `create_subprocess*` all absent) and by reading `run_script_hook`,
+  which dispatches through `provider.execute(...)` and nothing else. A *hook child* is spawned by
+  `bash_provider` (bash hooks) or by `schedule_script.run_script_sandboxed` (`run-script` hooks), so
+  the three sites in the `done_when` are reached through **two** call sites, both fixed. `hooks.py`
+  is unchanged, and that is the correct diff — editing it would have meant inventing a spawn.
+- [2026-08-13][PHF-4] `D1` had NOT shipped, so there was no builder to reuse:
+  `apps/backend_runtime.py:140` is still `env = dict(os.environ)` (the plan's re-home note assumed
+  `D1` might already be in). The shared helper therefore lives in `sandbox.py` — where
+  `_SENSITIVE_ENV_PREFIXES` and the spawn wrappers already are, and which both call sites already
+  import — as `CHILD_ENV_BASE_NAMES` + `build_child_env(site=…, extra=…, source=…)`.
+  **`D1` should now consume this helper rather than write a second allowlist**; that is the whole
+  point of putting it in `sandbox.py`, and `backend_runtime.py` is deliberately left untouched
+  because an app backend's *declared needs* (`PORT`, `PERSONALCLAW_APP_NAME`,
+  `PERSONALCLAW_APP_DATA_DIR` gated on the `storage` permission) are `D1`'s scope, not this atom's.
+- [2026-08-13][PHF-4] CLEAN BREAK: `bash_provider._scrub_env` is **deleted**, with both of its
+  constants (`_SECRET_NAME_PATTERNS`, `_KEEP_NAMES`). It was a name-pattern denylist — the shape the
+  atom asked to confirm-or-align — and its own comment conceded the false negatives
+  ("`MY_GITHUB_PAT` is kept"). `schedule_script`'s one-prefix denylist
+  (`not k.startswith("PERSONALCLAW_SECRET")`) is deleted the same way. Preserved intact: the cron
+  cfg-file secret channel (a test drives it), `PROTECTED_ENV_NAMES` and the payload-key guard (a
+  payload still cannot shadow `PATH`), and the merge ORDER that hazard depends on.
+- [2026-08-13][PHF-4] Two rulings worth recording because they are security-control decisions, not
+  mechanics: (1) **the floor is enforced where the env is BUILT**, not only where declarations are
+  parsed — the parse-time check exists to *warn* the operator which entry was ignored, the build-time
+  check is what makes the floor hold no matter how a name reached the set; a test patches the parser
+  out of the way to prove it. (2) **The floor also applies to what a call site INJECTS** (`extra`),
+  so a trigger payload cannot plant an `AWS_SECRET_ACCESS_KEY` that would redirect a hook's `aws`
+  call to someone else's account. The known relaxation, stated rather than hidden: the old
+  `_SECRET_NAME_PATTERNS` also filtered *payload* keys ending in `_TOKEN`/`_KEY`, and the floor is
+  narrower than that. A payload-supplied token is attacker-owned material, not gateway-held, and
+  `PROTECTED_ENV_NAMES` still stops every key that changes *what runs*.
+- [2026-08-13][PHF-4] Observability, per the fail-closed-and-observably rule: every spawn logs the
+  names it withheld (names only, never values) at DEBUG on `personalclaw.sandbox`, naming
+  `sandbox.env_passthrough` as the remedy in the same line, and a declaration refused by the floor or
+  malformed logs a WARNING. A test asserts the withheld-name line, because a dropped variable a
+  script needed is otherwise indistinguishable from a bug in the script.
+- [2026-08-13][PHF-4] Config round-trip for the new field: `SandboxConfig.env_passthrough` (dataclass
+  + `_meta`) → `load()` (normalising, blank-dropping) → `to_dict()` (via the existing `asdict`) →
+  `_EDITABLE_CONFIG["sandbox.env_passthrough"] = {"type": "str_list", "max_items": 40}` PATCH write
+  path → documented in `docs/reference/CONFIG-REFERENCE.md`. **No frontend control, deliberately**:
+  every `sandbox.*` sibling is backend-only for the same reason (an operator/deployment knob edited
+  by `personalclaw config set`), and `CONFIG-REFERENCE.md` is exactly the surface that documents
+  those. Making it a dashboard field would put "which of my credentials reach a hook" one click from
+  a chat-driven UI.
+- [2026-08-13][PHF-4] Gate: `make lint` rc=0 (black/isort/flake8/mypy, 810 source files). Full suite
+  **18,941 passed / 30 skipped / 12 xfailed / 0 failed** in 136s, with the CRE-8 real-home rail
+  printing "`/Users/golani/.personalclaw` unchanged by this run" (no global `PERSONALCLAW_HOME`;
+  live validation used a throwaway `PERSONALCLAW_HOME` under `/tmp`). Baseline on this branch was
+  18,928 + the 13 new tests. Three failures on the FIRST full run, all attributable and all fixed
+  rather than excused: `test_config_baseline` (the new field needs the generator re-run),
+  `test_spawn_shim::test_sandbox_config_in_to_dict` (an exact-key-set assertion over
+  `SandboxConfig` — **extended** to include `env_passthrough`, and its sibling
+  `_EDITABLE_CONFIG` test extended with the `str_list` type check), and `test_gate_report`
+  (downstream of the stale baseline). All four generators re-run with `PYTHONPATH` set:
+  `config-baseline.json` gains exactly the one new field, and `docs-lint-baseline.json`,
+  `inert-surface-baseline.json` and the offline agent reference (`python -m
+  personalclaw.manifest_reference`) are **byte-identical** — the new config key is not inert
+  (`build_child_env` reads it, `_EDITABLE_CONFIG` writes it) and the new doc lines add no dead
+  link. No `web/` change: this field is backend-only by design.
+- [2026-08-13][PHF-4] VALIDATED AS A USER, driven through the real provider against an isolated
+  `PERSONALCLAW_HOME=/tmp/phf4-live` (never the real home — the suite's own CRE-8 rail confirms it
+  too). Three secrets planted in the gateway process (`ACME_CLOUD_API_KEY`, `SLACK_BOT_TOKEN`,
+  `AWS_SECRET_ACCESS_KEY`), then a bash action running `env | sort`:
+  * **127 variables in the parent → 19 in the child** (12 from the allowlist; `/bin/sh` itself adds
+    `SHLVL`/`_`/`__CF_USER_TEXT_ENCODING`, and `EVENT`/`CONTEXT`/`PERSONALCLAW_HOOK_*` are the site's
+    own injected values). All three planted secrets **absent**.
+  * The withheld-name DEBUG line named all 108 dropped variables and pointed at
+    `sandbox.env_passthrough` — the diagnosability requirement, confirmed from real output.
+  * Then declared `["ACME_REGION", "SLACK_BOT_TOKEN", "AWS_SECRET_ACCESS_KEY"]` by writing
+    `config.json` in that home (the real loader, no monkeypatch): the child went to 21 variables with
+    `ACME_REGION` and `SLACK_BOT_TOKEN` now present — so the escape hatch works end to end — while
+    `AWS_SECRET_ACCESS_KEY` was still **refused**, logging
+    "`sandbox.env_passthrough names AWS_SECRET_ACCESS_KEY, which the credential floor refuses`".
+    The floor holds against an operator declaration, observably.

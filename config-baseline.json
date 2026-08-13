@@ -971,6 +971,12 @@
     "type": "int"
   },
   {
+    "default": [],
+    "path": "sandbox.env_passthrough",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
     "default": 0,
     "path": "sandbox.max_pids",
     "sensitive": false,

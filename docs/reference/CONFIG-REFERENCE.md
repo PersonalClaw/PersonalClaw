@@ -99,6 +99,18 @@ panel (entity store). Config-side:
 | `inbox.test_mode` | `false` | Ingest your OWN messages too (demo/testing; also a CLI flag). |
 | `inbox.engagement_half_life_days` | `0` | Engagement-ranking decay half-life; `0` = no decay. The ranking toggle is in the UI. |
 
+## Child processes (`sandbox.*`)
+
+Resource ceilings and the environment allowlist applied to agent-influenced
+children (bash tools, hook and cron-script children, app backends, MCP servers).
+
+| Key | Default | What it does |
+|---|---|---|
+| `sandbox.nofile` | `4096` | Soft `RLIMIT_NOFILE` for an agent-influenced child; `0` disables the cap. ACP session hosts are exempt by profile (they multiplex many MCP pipes). |
+| `sandbox.max_pids` | `0` (off) | `RLIMIT_NPROC` ceiling. Off by default because `RLIMIT_NPROC` is a **per-user** limit counting every process you already run — an absolute cap can break a busy host with "cannot fork". |
+| `sandbox.max_rss_mb` | `0` (off) | `RLIMIT_AS` ceiling in MB. Off by default: `RLIMIT_AS` is coarse and breaks memory-mapped toolchains. |
+| `sandbox.env_passthrough` | `[]` | Extra environment variable **names** that hook, cron-script and bash-action children inherit from the gateway. Those children do **not** inherit the gateway environment: they get a minimal base (`PATH`, `SHELL`, `PWD`, `TERM`, `PYTHONPATH`, locale/`TZ`, `HOME`/`TMPDIR`/`USER`/`XDG_*`, proxy and CA-bundle settings, and `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT`) plus the names you list here. Use it when a script legitimately needs one more variable (e.g. `SLACK_BOT_TOKEN` for a notifier, or a language runtime's variable). Names matching the credential floor (`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME`, `GIT_ASKPASS`) are refused even when declared. Withheld names are listed in the debug log at each spawn — run the gateway with `--verbose` to see what a script is missing. |
+
 ## Top-level
 
 | Key | Default | What it does |

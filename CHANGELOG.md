@@ -10,6 +10,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Your hooks and cron scripts no longer inherit PersonalClaw's environment.** ⚠️ **This changes
+  behaviour for any hook, cron script or bash action that read an inherited environment variable.**
+  A hook command, a `run-script` cron script and a bash action used to start from a copy of the
+  gateway's own environment with a few names filtered out — measured on a real gateway, that was
+  **121** variables, and PersonalClaw deliberately puts your `.env` credentials in there so
+  "trusted children" can see them. A one-line hook (`printenv`) could read them. Those children now
+  get a *minimal* environment built from a fixed list instead: `PATH`, `SHELL`, `PWD`, `TERM`,
+  `PYTHONPATH`, your locale and `TZ`, `HOME`/`TMPDIR`/`USER`/`XDG_*`, your proxy and CA-bundle
+  settings, and `PERSONALCLAW_HOME`/`_WORKSPACE`/`_PORT` — plus, for a hook, the
+  `PERSONALCLAW_HOOK_EVENT`/`_CONTEXT` variables and the trigger's `$variables` exactly as before.
+  Everything else is withheld. **If a script of yours needs one more variable, name it in
+  `sandbox.env_passthrough`** (`personalclaw config set sandbox.env_passthrough '["SLACK_BOT_TOKEN"]'`,
+  or the config API) — for example a Slack token for a notifier script, or a language runtime's
+  variable. Credential-shaped names (`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME`,
+  `GIT_ASKPASS`) stay refused even if you declare them. To see what a script is missing, run the
+  gateway with `--verbose`: every spawn logs the names it withheld. Unchanged: cron scripts still
+  receive PersonalClaw's internal secret and port through the temp file they always did, so scripts
+  that call back into the API keep working.
 - **Scheduled, file-watch, webhook and chained automations now honour the action denylist — they
   never did.** ⚠️ **This changes behaviour for automations that already exist.** The denylist that
   refuses an automated action touching a credential path or running a destructive/exfiltrating

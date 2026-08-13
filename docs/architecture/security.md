@@ -80,6 +80,17 @@ Credential-hiding child-process isolation for tool execution, including an
 environment-variable denylist (credential env vars like `SLACK_BOT_TOKEN`
 never reach a sandboxed child).
 
+Child **environments** are built by allowlist, not inherited: `build_child_env`
+gives a hook, cron-script or bash-action child a minimal base
+(`PATH`, locale, home-equivalents, proxy/CA settings, and the three
+`PERSONALCLAW_*` vars) plus whatever names the operator declared in
+`sandbox.env_passthrough`. Nothing else from the gateway environment reaches
+them, so a credential the gateway holds is not readable by `printenv`. The
+sensitive-prefix list above is the floor: a declaration cannot pass
+`AWS_SECRET*`, `AWS_SESSION*`, `SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`.
+Withheld names are listed in the debug log at each spawn, so a script that
+needs one more variable is diagnosable rather than mysteriously broken.
+
 ### What the sandbox does and does not do
 
 This is a **credential-hiding sandbox, not a confinement sandbox** — a precise distinction
