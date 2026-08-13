@@ -237,7 +237,8 @@ describe('the migrated surfaces read the error', () => {
       // and `FormSkeleton` (a shaped form placeholder, used by the settings panels). The rail knew the
       // first two because the first adopters used them — the same accident this file has now corrected
       // four times. The vocabulary is what widens; the property being checked does not.
-      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\s*\/>/, /<FormSkeleton\b/].map((re) => {
+      // `<Loading />` gained a `what` prop in cycle 144 (it is a live region now), so match the TAG.
+      const loadAt = Math.min(...[/<ListSkeleton\b/, /<Loading\b/, /<FormSkeleton\b/].map((re) => {
         const i = src.search(re)
         return i === -1 ? Number.POSITIVE_INFINITY : i
       }))

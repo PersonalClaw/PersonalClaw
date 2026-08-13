@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { withWeight } from '../design/fontWeight'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ChevronDown } from 'lucide-react'
@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 import { spring, bounce, expr } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
+import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
 import { useFieldLabelId } from './forms'
 
 export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
@@ -209,6 +210,12 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
   return (
     <Popover
       placement="bottom"
+      // 🔴 PORTAL, or this menu is INVISIBLE. Measured on `#/knowledge` at 430px with the list open:
+      // `document.elementFromPoint` at the listbox's own centre returned the page's search INPUT, not
+      // the menu — an `absolute z-30` flyout inside the header loses to the page body, which paints
+      // over the header row. `ui/HeaderActions`' mode pill portals for exactly this reason and says
+      // so; this sibling did not, so its options were operable by keyboard and unseeable by everyone.
+      portal
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} disabled={disabled}
           aria-label={ariaLabel ?? active?.label ?? active?.key} aria-expanded={open}
@@ -224,15 +231,41 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
         </button>
       )}
     >
-      {(close) => (
-        <div role="listbox" aria-label={ariaLabel}>
-          {options.map((o) => (
-            <MenuRow key={o.key} role="option" icon={o.icon ? <o.icon size={15} /> : undefined}
-              label={o.label ?? o.key} selected={o.key === value}
-              onClick={() => { onChange(o.key); close() }} />
-          ))}
-        </div>
-      )}
+      {(close) => <CollapsedOptions options={options} value={value} onChange={onChange} close={close} ariaLabel={ariaLabel} />}
     </Popover>
+  )
+}
+
+/** The collapsed pill's option list. A separate component because `ui/Popover` mounts its children
+ *  only while open, which is what lets the cursor hook treat MOUNT as "opened" — no open flag has to
+ *  be threaded back out of the Popover.
+ *
+ *  Before this it was a bare `role="listbox"`: measured on `#/knowledge` at 430px (where the strip
+ *  collapses), focus stayed on the trigger, ArrowDown did nothing, and all five options carried
+ *  `tabindex="0"`. Escape/close already restored focus to the trigger — that half was Popover's. */
+function CollapsedOptions({ options, value, onChange, close, ariaLabel }: {
+  options: SegOption[]; value: string; onChange: (k: string) => void; close: () => void; ariaLabel?: string
+}) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const { move, tabIndexFor } = useMenuCursor({
+    containerRef: listRef,
+    count: options.length,
+    openKey: 'open',
+    initialIndex: Math.max(0, options.findIndex((o) => o.key === value)),
+  })
+  useEffect(() => {
+    // Escape is Popover's (it closes one layer and restores the trigger); this adds the arrows.
+    const onKey = (e: KeyboardEvent) => { menuCursorKeydown(e, { move, dismiss: close }) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [move, close])
+  return (
+    <div ref={listRef} role="listbox" aria-orientation="vertical" aria-label={ariaLabel}>
+      {options.map((o, i) => (
+        <MenuRow key={o.key} role="option" icon={o.icon ? <o.icon size={15} /> : undefined}
+          label={o.label ?? o.key} selected={o.key === value} tabIndex={tabIndexFor(i)}
+          onClick={() => { onChange(o.key); close() }} />
+      ))}
+    </div>
   )
 }

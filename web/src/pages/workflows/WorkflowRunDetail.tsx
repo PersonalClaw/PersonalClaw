@@ -265,25 +265,25 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             {/* Workspace on BOTH sides of the terminal split, unlike Steer/Pause/Fork: reviewing
                 what a run changed is the one thing a user wants equally mid-run (is it touching
                 what I expected) and after (do I take this work). */}
-            <QuietButton onClick={() => setWorkspaceOpen((v) => !v)} title="Workspace — changed files and how to take this work">
+            <QuietButton onClick={() => setWorkspaceOpen((v) => !v)} ariaExpanded={workspaceOpen} title="Workspace — changed files and how to take this work">
               <FolderGit2 size={13} /> Workspace
             </QuietButton>
             {/* Artifacts, likewise on both sides of the terminal split: mid-run it answers "what has
                 it produced so far", and after, it is where the deliverable and its version diff
                 live. It is also the only surface that can hand a live run a file. */}
-            <QuietButton onClick={() => setOutboxOpen((v) => !v)} title="Artifacts — what this run published, version diffs, and handing it files">
+            <QuietButton onClick={() => setOutboxOpen((v) => !v)} ariaExpanded={outboxOpen} title="Artifacts — what this run published, version diffs, and handing it files">
               <Package size={13} /> Artifacts
             </QuietButton>
             {/* Introspect, on both sides of the terminal split for the strongest reason of the
                 three: mid-run it answers "what will you do next if I say nothing", and after, it
                 is the Proof section that lets a user review unattended work without reading the
                 transcript (criteria 6 & 8). */}
-            <QuietButton onClick={() => setIntrospectOpen((v) => !v)} title="Introspect — cost, latency, gates, timeline and proof">
+            <QuietButton onClick={() => setIntrospectOpen((v) => !v)} ariaExpanded={introspectOpen} title="Introspect — cost, latency, gates, timeline and proof">
               <ScanSearch size={13} /> Introspect
             </QuietButton>
             {!isTerminal(run.status) ? (
               <>
-                <QuietButton onClick={() => setSteerOpen((v) => !v)} title="Steer this run — queue an instruction or accept a judge comment">
+                <QuietButton onClick={() => setSteerOpen((v) => !v)} ariaExpanded={steerOpen} title="Steer this run — queue an instruction or accept a judge comment">
                   <MessageSquarePlus size={13} /> Steer
                 </QuietButton>
                 <QuietButton onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))} title="Pause — in-flight steps finish">
@@ -302,7 +302,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
 
       <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
-        {loading && !run ? <Loading /> : !run ? (
+        {loading && !run ? <Loading what="this run" /> : !run ? (
           <p className="text-on-surface-low text-[0.8125rem]">This run could not be loaded.</p>
         ) : (
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">

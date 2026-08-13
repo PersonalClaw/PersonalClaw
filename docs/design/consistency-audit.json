@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-13T03:15:29.385Z",
+  "generatedAt": "2026-08-13T13:44:31.876Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 446,
+    "filesScanned": 448,
     "filesWithDrift": 6
   },
   "byCategory": {
@@ -69,11 +69,6 @@
       "detail": "6 raw-button, 2 raw-input"
     },
     {
-      "file": "pages/settings/VoicePanel.tsx",
-      "score": 13,
-      "detail": "5 raw-button, 3 raw-input"
-    },
-    {
       "file": "pages/tools/ToolsPage.tsx",
       "score": 13,
       "detail": "6 raw-button, 1 raw-input"
@@ -85,6 +80,11 @@
     },
     {
       "file": "pages/settings/SecurityPanel.tsx",
+      "score": 11,
+      "detail": "4 raw-button, 3 raw-input"
+    },
+    {
+      "file": "pages/settings/VoicePanel.tsx",
       "score": 11,
       "detail": "4 raw-button, 3 raw-input"
     },
@@ -664,7 +664,7 @@
       "raw-dialog": 0
     },
     "pages/settings/VoicePanel.tsx": {
-      "raw-button": 5,
+      "raw-button": 4,
       "raw-input": 3,
       "raw-dialog": 0
     },

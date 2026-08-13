@@ -22,7 +22,7 @@ export function ArchivePanel() {
   // fiction to sessionStorage, where it survived a reload. The rejection has to REACH the hook
   // before `error` can be read at all.
   if (!archives && error) return <LoadError what="archived sessions" error={error} onRetry={refresh} />
-  if (!archives) return <ListSkeleton rows={6} />
+  if (!archives) return <ListSkeleton rows={6} what="archived sessions" />
 
   const needle = q.trim().toLowerCase()
   const shown = needle ? archives.filter((a) => `${a.key} ${a.name}`.toLowerCase().includes(needle)) : archives

@@ -390,7 +390,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                     ? <FileTree key={`${activeRoot}:${nonce}`} dirs={dirs} rootPath={activeRoot} activePath={fileTabs.activePath || null}
                         gitStatuses={statuses} onOpenFile={fileTabs.open} artifactPaths={artifactPaths}
                         onRename={onRename} onDelete={onDelete} onUpload={(entry, files) => onUpload(entry.path, files)} />
-                    : <Loading />}
+                    : <Loading what="the file" />}
               </div>
             </div>
             </SidePanel>

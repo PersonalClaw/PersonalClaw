@@ -4,7 +4,7 @@ import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Field, Toggle, SavedToast } from './settingsUI'
-import { FormSkeleton, ListSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
@@ -27,11 +27,18 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
   // Stale-while-revalidate + persist: paint instantly on revisit/reload from one
   // cached snapshot. `active` is read-only (the bound model is owned by Models);
   // the stt/tts settings are seeded into local state and mutated optimistically.
-  const { data } = useCachedData('settings:voice', async () => {
+  const { data, error: loadErr, refresh } = useCachedData('settings:voice', async () => {
     const [active, stt, tts] = await Promise.all([
+      // `modelsActive` KEEPS its fallback: it only shows readiness ("model bound" / "no model"), so losing
+      // it degrades a chip rather than inventing your settings.
       api.modelsActive().catch(() => ({} as Record<string, string[]>)),
-      api.useCaseSettings('stt').catch(() => ({} as Record<string, unknown>)),
-      api.useCaseSettings('tts').catch(() => ({} as Record<string, unknown>)),
+      // 🔴 These two ARE the panel. `.catch(() => ({}))` made a failed read resolve as an empty settings
+      // object, so every control rendered at its fallback — indistinguishable from "this is what you
+      // saved" — and each one PUTs on change. Measured on `#/settings/voice` with the use-case GETs at
+      // 500: **2 switches and 1 input rendered, no error anywhere**. Same defect cycle 124 fixed in three
+      // sibling panels; this is the fourth.
+      api.useCaseSettings('stt'),
+      api.useCaseSettings('tts'),
     ])
     return { active, stt, tts }
   }, { persist: true })
@@ -41,7 +48,9 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
     if (data) { setSttSettings(data.stt); setTtsSettings(data.tts) }
   }, [data])
 
-  if (!data || !sttSettings || !ttsSettings) return <FormSkeleton sections={3} />
+  // Error first: `data` is undefined for loading AND for failure, so a later test never runs.
+  if (!data && loadErr) return <LoadError what="speech settings" error={loadErr} onRetry={refresh} />
+  if (!data || !sttSettings || !ttsSettings) return <FormSkeleton sections={3} what="speech settings" />
 
   return (
     <div>
@@ -175,10 +184,14 @@ function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
       <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs">
         Bind the {kind} model in Models
       </TextLink>
-      <button type="button" onClick={() => go('providers')}
-        className="inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface hover:underline">
-        Add or download models in Providers <ArrowRight size={13} />
-      </button>
+      {/* 🔑 ITS OWN SIBLING WAS THE ANSWER. This row already ships a `TextLink` two lines up — same job
+          (navigate to another settings sub-view), same `xs` size, same trailing arrow — and it measured
+          181.13×26.00 while this hand-rolled twin measured 224.73×**18.00**. So the fix is not a colour
+          judgement, it is convergence onto what the row already renders: the primitive carries cycle
+          115's `py-1 -my-1` hit box, so adopting it fixes SC 2.5.8 and deletes the drift in one move. */}
+      <TextLink onClick={() => go('providers')} icon={ArrowRight} iconPosition="trailing" size="xs">
+        Add or download models in Providers
+      </TextLink>
     </div>
   )
 }

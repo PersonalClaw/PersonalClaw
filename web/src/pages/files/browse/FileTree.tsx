@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, ChevronDown, Pencil, Trash2, Upload, FilePlus2, FolderPlus, MoreHorizontal } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { FsEntry } from '../../../lib/api'
+import { menuCursorKeydown, useMenuCursor } from '../../../lib/useMenuCursor'
 import { fileIcon, gitBadge, gitStatusTitle } from '../fileMeta'
 import type { useDirCache } from '../filesData'
 
@@ -336,9 +337,21 @@ interface MenuItem { icon: typeof Pencil; label: string; onClick: () => void; to
  *  container; closes on outside-click, scroll, or Escape. The requested (x,y) is
  *  clamped to the viewport so a menu opened near the panel's right/bottom edge
  *  (e.g. from the row's "⋯" button, anchored at its right edge) flips inward
- *  instead of overflowing off-screen — mirroring the ui/motion/ContextMenu clamp. */
+ *  instead of overflowing off-screen — mirroring the ui/motion/ContextMenu clamp.
+ *
+ *  Its OPEN contract differs from the shared menu deliberately (explicit x/y from a "⋯" button
+ *  vs wrapping a child — see design/primitiveShadowing), but its KEYBOARD contract must not:
+ *  both share `lib/useMenuCursor`. Measured here before that: the "⋯" button opens the menu with
+ *  the keyboard, then focus stayed on the button, arrows did nothing, **Tab moved into the tree
+ *  BEHIND the open menu** (portaled rows sit last in the document), and Escape dropped focus on
+ *  `<body>` — so Rename / Upload here / **Delete** were unreachable for a keyboard user. */
 function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
+  // No `active` here: these rows have no paint of their own, so the focus ring IS the cursor.
+  const { move, restoreFocus, tabIndexFor } = useMenuCursor({
+    containerRef: ref, count: items.length, openKey: `${x},${y}`,
+  })
+  const closeAndReturnFocus = useCallback(() => { onClose(); restoreFocus() }, [onClose, restoreFocus])
   // Measure the real menu size post-mount and clamp within the viewport; falls
   // back to a width/row estimate for the first paint so it never opens overflowing.
   const estW = 200, estH = Math.min(items.length * 40 + 16, 360)
@@ -357,19 +370,30 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: Me
   }, [x, y, items.length])
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      // `stopPropagation` makes Escape SINGLE-LAYER, the contract ui/Popover documents. Measured
+      // without it: the Explorer is a `ui/SidePanel`, which binds Escape on WINDOW, so one press
+      // closed the menu AND collapsed the whole explorer — 13 tree rows to 0, and focus on <body>
+      // because the "⋯" button this menu returns focus to had just unmounted with the tree.
+      if (e.key === 'Escape') { e.stopPropagation(); closeAndReturnFocus(); return }
+      // Arrows / Home / End / Tab: the shared reducer. Tab hands focus back to the "⋯" button so
+      // the browser's own Tab continues from there instead of walking into the tree behind an open
+      // menu. Enter/Space activate the focused row natively — no branch, or every press fires twice.
+      menuCursorKeydown(e, { move, dismiss: closeAndReturnFocus })
+    }
     document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onEsc)
+    document.addEventListener('keydown', onKey)
     window.addEventListener('scroll', onClose, true)
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onEsc); window.removeEventListener('scroll', onClose, true) }
-  }, [onClose])
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); window.removeEventListener('scroll', onClose, true) }
+  }, [onClose, closeAndReturnFocus, move])
 
   return createPortal(
-    <div ref={ref} className="fixed z-50 min-w-[160px] rounded-lgi bg-surface-container p-s"
+    <div ref={ref} role="menu" aria-orientation="vertical"
+      className="fixed z-50 min-w-[160px] rounded-lgi bg-surface-container p-s"
       style={{ left: pos.left, top: pos.top, boxShadow: 'var(--shadow-menu)' }}>
-      {items.map((it) => (
-        <button key={it.label} type="button"
-          onClick={() => { it.onClick(); onClose() }}
+      {items.map((it, i) => (
+        <button key={it.label} type="button" role="menuitem" tabIndex={tabIndexFor(i)}
+          onClick={() => { it.onClick(); closeAndReturnFocus() }}
           className="flex w-full items-center gap-s rounded-md px-m py-2 text-left text-[0.8125rem] transition-colors hover:bg-surface-high"
           style={{ color: it.tone === 'danger' ? 'var(--color-danger)' : 'var(--color-on-surface)' }}>
           <it.icon size={15} className="shrink-0" />

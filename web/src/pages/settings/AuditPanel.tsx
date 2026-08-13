@@ -44,7 +44,7 @@ export function AuditPanel() {
   // possible lie. The fetcher's `.catch(() => [] as SelEvent[])` made a 500 render "No matching
   // events." — the same words as a genuinely quiet log, with no alert and no retry.
   if (!events && error) return <LoadError what="audit log" error={error} onRetry={reload} />
-  if (!events) return <ListSkeleton rows={8} />
+  if (!events) return <ListSkeleton rows={8} what="audit log" />
   const needle = q.trim().toLowerCase()
   const shown = events.filter((e) => {
     if (filter === 'denied' && !/denied|blocked|failure|refused/.test(e.outcome ?? '')) return false
@@ -100,7 +100,7 @@ function EventRow({ ev }: { ev: SelEvent }) {
   const tone = OUTCOME_TONE[ev.outcome ?? ''] ?? 'var(--color-on-surface-low)'
   return (
     <div className="rounded-md bg-surface-container px-3 py-1.5">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 text-left text-[0.75rem]">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 text-left text-[0.75rem]">
         <span className="w-14 shrink-0 font-mono text-[0.75rem]" style={{ color: tone }}>{ev.outcome || '—'}</span>
         <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{ev.event_type}</span>
         <span className="min-w-0 flex-1 truncate text-on-surface">{ev.operation || ev.resources || '—'}</span>

@@ -25,7 +25,7 @@ import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
 import { DotGlow } from '../ui/DotGlow'
-import { EmptyState, ListSkeleton, LoadError, Skeleton } from '../ui/ListScaffold'
+import { EmptyState, ListSkeleton, LoadError, Skeleton, LoadingStatus } from '../ui/ListScaffold'
 import { FieldError } from '../ui/forms'
 import { MessageUser } from '../ui/chat/MessageUser'
 import { MessageAssistant } from '../ui/chat/MessageAssistant'
@@ -58,6 +58,7 @@ import { FindBar } from './chat/FindBar'
 import { FollowupChips } from './chat/FollowupChips'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
+import { sessionRecencyMs } from '../lib/epoch'
 import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
@@ -222,7 +223,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
     const all = data ?? []
     return all
       .filter((s) => (s.origin ?? 'manual') === 'manual')
-      .sort((a, b) => (Date.parse(b.last_activity_ts || b.last_ts || b.created || '') || 0) - (Date.parse(a.last_activity_ts || a.last_ts || a.created || '') || 0))
+      .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
       .slice(0, 20)
   }, [data])
   return (
@@ -2894,7 +2895,8 @@ function MessagesSkeleton() {
   ]
   return (
     <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}
-      role="status" aria-busy="true" aria-label="Loading conversation">
+      role="status" aria-busy="true" >
+        <LoadingStatus what="conversation" />
       {rows.map((r, i) => (
         <div key={i} className={`flex flex-col gap-2 ${r.me ? 'items-end' : 'items-start'}`}>
           <Skeleton className={`h-4 ${r.w} ${r.me ? 'max-w-[70%]' : ''}`} />
@@ -2956,7 +2958,7 @@ function RewindDivider({ snapshots, canFork, onFork }: {
       <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]">
         <Rewind size={12} className="shrink-0" />
         <span>Rewound from here · {kept} message{kept === 1 ? '' : 's'} kept in history</span>
-        <QuietButton onClick={() => setOpen((o) => !o)} className="h-6">
+        <QuietButton onClick={() => setOpen((o) => !o)} ariaExpanded={open} className="h-6">
           {open ? 'Hide' : 'View'} <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         </QuietButton>
       </div>
@@ -3281,7 +3283,7 @@ function ContextLedger({ fed, learned, stats }: { fed?: string; learned?: string
     : [fed && 'recalled context', learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
   return (
     <div className="mt-2 mb-1">
-      <button type="button" onClick={() => setOpen((v) => !v)}
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 text-[0.75rem] transition-colors hover:text-on-surface-low"
         title={open ? 'Hide what fed this turn and what was learned' : 'What fed this turn · what was learned'}>
         <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
@@ -3506,7 +3508,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
 
   const tagById = useMemo(() => { const m: Record<string, ChatTag> = {}; for (const t of tags) m[t.id] = t; return m }, [tags])
   const n = q.trim().toLowerCase()
-  const recency = (s: ChatSessionSummary) => Date.parse(s.last_activity_ts || s.last_ts || s.created || '') || 0
+  const recency = sessionRecencyMs
   // Full-text conversation search: the local filter (title/key/preview) only sees
   // what the list row carries. For "I remember SAYING X" we also query
   // /api/sessions/search, which scans the persisted JSONL bodies, and union those
@@ -3912,7 +3914,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         </div>
 
         {sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
-          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} /></div>
+          : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} what="chats" /></div>
           : sessions.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={MessageSquare} title="No chats yet" hint="Start a conversation — your sessions will appear here to search and revisit." action={{ label: 'New chat', onClick: () => navigate('chat/new'), icon: Edit3 }} /></div>
           : filtered.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={Search} title="No matches" hint="Try a different search or tag filter." /></div>
           : view === 'board' ? (

@@ -4,7 +4,7 @@ import { api, type UpdateCheck } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
 import { Button } from '../../ui/Button'
-import { FormSkeleton } from '../../ui/ListScaffold'
+import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
@@ -18,9 +18,12 @@ export function UpdatesPanel() {
   const [saved, setSaved] = useState(false)
 
   // Version + changelog change slowly — one persisted snapshot, instant on revisit.
-  const { data, loading: checking, refresh } = useCachedData('settings:updates', async () => {
+  const { data, loading: checking, error: loadErr, refresh } = useCachedData('settings:updates', async () => {
     const [info, changelog] = await Promise.all([
-      api.updateCheck().catch(() => null as UpdateCheck | null),
+      // 🔴 The version check IS the panel — a substituted null read as "still loading" and left it
+      // shimmering forever (measured: 0 controls, one `aria-busy` skeleton, no alert). The changelog
+      // keeps its fallback: it decorates a section further down.
+      api.updateCheck(),
       api.changelog().catch(() => ''),
     ])
     return { info, changelog }
@@ -59,7 +62,9 @@ export function UpdatesPanel() {
     api.setUpdateDevMode(v).then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }).catch(() => {})
   }
 
-  if (!info) return <FormSkeleton sections={3} />
+  // Error before the skeleton, or the skeleton wins forever.
+  if (!info && loadErr) return <LoadError what="update status" error={loadErr} onRetry={refresh} />
+  if (!info) return <FormSkeleton sections={3} what="update status" />
   const kind = info.kind ?? 'git'
   const isContainer = kind === 'container'
   const isDesktop = kind === 'desktop'
