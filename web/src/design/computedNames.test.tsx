@@ -67,8 +67,14 @@ describe('a tile whose content is a document needs an explicit name', () => {
   })
 
   it('the artifact card passes the artifact name', () => {
+    // Cycle 153 removed the `active={active}` that used to sit between `onClick` and `title`: it was
+    // threaded from a hard-coded `activeSlug={null}`, so it could never be true. The assertion this
+    // test exists for — the tile carries an explicit `ariaLabel` instead of 438-695 characters of
+    // markdown preview — is unchanged.
     expect(codeOf('pages/artifacts/ArtifactCard.tsx'))
-      .toMatch(/<TileButton onClick=\{\(\) => onOpen\(art\)\} active=\{active\} title=\{art\.name\} ariaLabel=\{art\.name\}/)
+      .toMatch(/<TileButton onClick=\{\(\) => onOpen\(art\)\} title=\{art\.name\} ariaLabel=\{art\.name\}/)
+    expect(codeOf('pages/artifacts/ArtifactCard.tsx'), 'and it claims no selection state')
+      .not.toMatch(/active=\{active\}/)
   })
 })
 

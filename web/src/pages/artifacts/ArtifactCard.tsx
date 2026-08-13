@@ -103,9 +103,8 @@ function LivePreview({ art, content, mode }: { art: Artifact; content: string; m
   )
 }
 
-export const ArtifactCard = memo(function ArtifactCard({ art, active, onOpen }: {
+export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
   art: Artifact
-  active: boolean
   onOpen: (a: Artifact) => void
 }) {
   const { mode } = useMode()
@@ -174,7 +173,7 @@ export const ArtifactCard = memo(function ArtifactCard({ art, active, onOpen }: 
   const Icon = km.icon
   return (
     <div ref={rootRef}>
-    <TileButton onClick={() => onOpen(art)} active={active} title={art.name} ariaLabel={art.name}
+    <TileButton onClick={() => onOpen(art)} title={art.name} ariaLabel={art.name}
       className="h-full w-full">
       <div className="h-36 w-full shrink-0 overflow-hidden border-b border-outline-variant/30 bg-surface">
         {preview}

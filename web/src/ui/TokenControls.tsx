@@ -83,6 +83,12 @@ export function SelectControl({ token }: { token: SelectToken }) {
             <button
               key={opt}
               onClick={() => setSelect(token.varName, opt)}
+              // Two halves of the same defect, both read out of the AX tree: the pill announced as
+              // "dm-sans, button" — the bare VALUE, with no hint that it belongs to Font family — and
+              // the chosen one announced identically to the rest, its selection being a coral fill.
+              // `bento`'s SegToggle already solves both this way, one screen over.
+              aria-label={`${token.label}: ${opt}`}
+              aria-pressed={on}
               className={`relative rounded-pill px-m h-7 text-[0.8125rem] capitalize transition-colors ${on ? 'text-on-primary' : 'text-on-surface-var hover:text-on-surface'}`}
             >
               {/* liquid active pill — slides between options via layoutId instead of
