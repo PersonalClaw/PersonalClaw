@@ -309,8 +309,15 @@ class Permissions:
     # POST /api/apps/message). Same list-of-names shape as ``events``/``mcpTools``
     # — an exact name or a trailing-``*`` prefix. Empty → may message NO app (deny
     # by default): the gateway broker is the ONLY app-to-app path and refuses an
-    # undeclared pair with 403 + a SEL audit row. This is the install-consent
-    # surface for who an app can talk to, shown in the Store via ``to_dict``.
+    # undeclared pair with 403 + a SEL audit row.
+    # APE-12: it reaches install consent over the WHOLE leg — ``to_dict`` here →
+    # ``GET /api/apps`` / the catalog entry → ``AppPermissionsWire`` (web/src/lib/
+    # api.ts) → ``PermissionList`` (web/src/pages/apps/AppsSection.tsx), which names
+    # each target (a trailing-``*`` entry as the prefix pattern it is) among the
+    # ENFORCED permissions, and states the deny-by-default case when this is empty.
+    # APE-9 shipped the broker without that last mile, so this comment claimed a
+    # consent surface that did not exist; ``test_app_messaging.py`` now pins the
+    # server leg and ``permissionConsent.test.tsx`` the rendering.
     appMessaging: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:

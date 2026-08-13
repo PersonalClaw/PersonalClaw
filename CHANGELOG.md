@@ -46,6 +46,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (default 4096) applies to the script and everything it starts. A script that hits it gets an
   ordinary `OSError`/`EMFILE`, which surfaces in the job's run history. If you have a legitimately
   descriptor-hungry script, raise the limit with `personalclaw config set sandbox.nofile 16384`.
+- **The Store now tells you which other apps an app may message.** An app can declare that it may
+  send messages to other installed apps, and PersonalClaw really does enforce that list: a brokered
+  message is the only way one app can reach another, and a target the app did not declare is refused
+  and written to the security log. But the Store never showed you the list. Installing an app that
+  declared it could message your mail and notes apps looked identical to installing one that could
+  message nothing — the permission was enforced behind your back rather than consented to. Both the
+  install-consent panel and the installed-app panel now name each target among the permissions the
+  gateway enforces. A wildcard target is spelled out rather than shown as-is, because it grants more
+  than it looks like: an app declaring `mail-*` reads as "any app whose name starts with mail-",
+  which covers apps you have not installed yet, and `*` reads as "any installed app". An app that
+  declared no target is stated too — "App messaging: none — it declared no target, and the gateway
+  broker is the only way one app can reach another, so it can message no other app" — so silence is
+  never left to your imagination. Nothing about what an app can do has changed; the enforcement was
+  already there and is unchanged. No first-party app declares this permission today, so nothing in
+  your Library will start showing a messaging row.
 - **The Store no longer implies PersonalClaw confines an app's network access.** An app's manifest can
   declare a `network` permission, and the Store used to list it as a bullet under "Permissions"
   alongside storage, scheduled jobs and background agents — all of which the gateway really does

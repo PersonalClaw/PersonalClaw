@@ -54,6 +54,7 @@ The manifest's `permissions` block is enforced, with one documented exception
 | `cron` | whether manifest crons register |
 | `storage` | a private DATA_DIR handed to the backend |
 | `agent` | two independent gates for agent invocation |
+| `appMessaging` | which apps this app may send a brokered message to — `POST /api/apps/message` is the only app-to-app path and refuses an undeclared target `403` + SEL. Deny by default: declaring nothing means it can message no app. Install consent names each target, rendering a trailing-`*` entry as the name prefix it is (`PermissionList`), because the grant covers every current and future app under that prefix. |
 | `network` | **DECLARATION-ONLY, unenforced by design** — there is no per-app chokepoint: provider code is imported in-process by the gateway, and an app backend is its own OS process with its own network stack. So it is disclosure, and the Store consent surface says so: the network claim renders outside the enforced-permission list, labelled advisory, whether or not the app declares it (`PermissionList`) — neither its presence nor its absence reads as containment. Gateway-mediated reach is separately bounded by `api`. See [security/limitations.md](../security/limitations.md#2-the-app-network-permission-is-declaration-only). |
 
 The app identity claim is adopted in **all** auth modes — including

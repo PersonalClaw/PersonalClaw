@@ -4,7 +4,7 @@
 **Code:** `APE`  
 **Source status:** proposed
 
-11 atoms; APE-7 (update surfacing, PR #929) + APE-8 + APE-9 shipped, the rest todo. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK).
+12 atoms; APE-7 (update surfacing, PR #929) + APE-8 + APE-9 + APE-12 shipped, the rest todo. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK). APE-12 was filed later, for a traced defect in APE-9's consent half.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -17,10 +17,11 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `APE-5` | ⬜ | Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles | — | a native bundle gains a real provider method via the documented native SDK subset without core edits; apps import-boundary test still green |
 | `APE-6` | ⬜ | Migrate Minutes + Growth backend+UI apps to the current design system | `APE-11`, `EXT:DESIGN-SYSTEM-CONSISTENCY:tokens/primitives to consume` | both apps pass token-lint and look native (screenshot check) using tokens + shell primitives via the UI SDK |
 | `APE-7` | ✅ | Update surfacing: catalog.updates_available() + card/nav badges + kind-registered notification | `EXT:INBOX-NOTIF-UNIFICATION:kind registry + emit_attention_item (dual-honesty: plain notify before its gate is ON)` | bump a local source's version -> installed-card badge + Store nav count + ONE notification; re-view -> no re-nag (dedup by name+latest_version); zero polling processes added |
-| `APE-8` | ⬜ | Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat | — | a deliberately broken app's failed install offers the button; the opened chat (via ne:launch-chat) contains the log wrapped in fence_untrusted(source=app_install_log:<name>); fence verified |
-| `APE-9` | ⬜ | appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL) | — | two fixture apps exchange a typed message through the broker (V3-4: one app drives another); an undeclared pair -> 403 + SEL; payload capped and fenced; no direct app-to-app sockets |
+| `APE-8` | ✅ (#918) | Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat | — | a deliberately broken app's failed install offers the button; the opened chat (via ne:launch-chat) contains the log wrapped in fence_untrusted(source=app_install_log:<name>); fence verified |
+| `APE-9` | ✅ (#914) | appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL) | — | two fixture apps exchange a typed message through the broker (V3-4: one app drives another); an undeclared pair -> 403 + SEL; payload capped and fenced; no direct app-to-app sockets |
 | `APE-10` | ⬜ | storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir | `APE-9` | fixture consumer reads the sharer's file via PERSONALCLAW_APP_SHARED_DIR_<NAME> (read-only); undeclared pair gets no mount; a write attempt fails; consent lists the grant (capability_grant SEL); import-boundary test green |
 | `APE-11` | ⬜ | UI SDK exports design-system shell primitives + tokens + uiCapabilities block + generative-widget path | `EXT:DESIGN-SYSTEM-CONSISTENCY:shell primitives/tokens to export`, `EXT:AMBIENT-SURFACES:generative-UI layer` | a fixture app page renders using host Button/Surface/tokens via @personalclaw/app-sdk and is indistinguishable from a native page; generative-widget contribution path works |
+| `APE-12` | ✅ (#PENDING) | Disclose appMessaging targets at install consent (the last mile APE-9 left open) | `APE-9` | the Store names the apps a declaring app may message, in both surfaces `PermissionList` serves, among the permissions the gateway ENFORCES (not beside the advisory network row EI-12 D2 created); a trailing-`*` target reads as the name prefix it is and a bare `*` as any installed app; declaring none is stated as messaging no app (deny by default), not left silent; `AppPermissionsWire` declares the field and a test pins the server leg end to end (both the pre-install catalog payload and `GET /api/apps`), plus a two-sided rail that every key `Permissions.to_dict()` emits is declared on the wire; `apps/manifest.py`'s "this is the install-consent surface" comment is true after the change — DONE 2026-08-13 (backend 18956 passed / 0 failed — baseline 18953 + 3 new; web 1832 passed across 192 files + 5 new; tsc + build clean; validated live in an isolated home) |
 
 ## Atom scopes
 
@@ -84,7 +85,7 @@ Amendment 2026-07-26 T2.4 (update-available surfacing; folds into Session 2)
 
 ### `APE-8` — Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat
 
-**Status:** todo
+**Status:** done (PR #918)
 
 Amendment 2026-07-26 T2.5 (Fix with AI; folds into Session 2)
 
@@ -92,7 +93,7 @@ Amendment 2026-07-26 T2.5 (Fix with AI; folds into Session 2)
 
 ### `APE-9` — appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL)
 
-**Status:** todo
+**Status:** done (PR #914)
 
 Sessions 3-4 T3.1 + V3-4 (app-to-app demo half); Contract C3 (app-to-app broker)
 
@@ -113,4 +114,16 @@ Amendment 2026-07-26 T3.2 (consented cross-app read; folds into Session 3)
 Sessions 3-4 T4.1 + V3-4 (contributed-page half); Contract C1 (uiCapabilities)
 
 **Done when:** a fixture app page renders using host Button/Surface/tokens via @personalclaw/app-sdk and is indistinguishable from a native page; generative-widget contribution path works
+
+### `APE-12` — Disclose appMessaging targets at install consent (the last mile APE-9 left open)
+
+**Status:** done (2026-08-13)
+
+Traced defect, not a task row. `apps/manifest.py:313` said of `permissions.appMessaging`: *"This is the install-consent surface for who an app can talk to, shown in the Store via `to_dict`."* The server half was true — `to_dict` emits it, `catalog._manifest_consent` carries it into the Store's pre-install entry, and `GET /api/apps` returns it — but `AppPermissionsWire` (`web/src/lib/api.ts`) never declared the field and `PermissionList` never rendered it, so the browser received the targets and dropped them. Measured on the unchanged component with `{cron: true, appMessaging: ["receiver", "mail-*"]}`: the entire consent output was *"Permissions the gateway enforces • Scheduled jobs"* plus EI-12 D2's network advisory. A user installing that app was never told it may message `receiver` or anything named `mail-*`.
+
+Owned here rather than reopened as APE-9 because APE-9's `done_when` covers the broker only (typed message exchanged, undeclared pair 403 + SEL, capped, fenced, no direct sockets) and every clause of it holds: the enforcement is real (`apps/messaging.py:167` → `can_use_app_messaging`). It was the manifest comment that overreached. Discovered while executing EI-12 D2 and recorded in that plan's log as needing its own atom.
+
+Not the same shape as D2. D2 made `network` an **advisory** row because the platform cannot confine app egress; `appMessaging` IS enforced, so it belongs in the enforced bullets beside Storage / Scheduled jobs / Run background agents, and its copy does not hedge. The one thing borrowed from D2 is the treatment of silence: declaring no target is stated, because deny-by-default is the real behaviour and saying nothing would leave the user to guess. D2's load-bearing `Object.keys(permissions).length > 0` guard on the Store panel is untouched — `{}` still means "manifest not fetched OR declares nothing", and claiming "messages no app" about a manifest we never read would be a new false statement.
+
+**Done when:** the Store names the apps a declaring app may message, in both surfaces `PermissionList` serves, among the permissions the gateway ENFORCES; a trailing-`*` target renders as the name prefix it is (mirroring `_matches_any`, since the grant covers every current and future app under the prefix) and a bare `*` as any installed app; declaring none is disclosed as messaging no app rather than left silent; `AppPermissionsWire` declares the field and a test pins the server leg end to end (the pre-install catalog payload AND `GET /api/apps`, not just the component in isolation), backed by a two-sided rail that the wire type declares exactly the keys `Permissions.to_dict()` can emit; `apps/manifest.py`'s comment is true afterwards. No first-party app declares `appMessaging`, so the rendering cases are synthetic manifests — stated plainly rather than implied — DONE 2026-08-13 (backend 18956 passed / 0 failed — baseline 18953 + 3 new; web 1832 passed across 192 files + 5 new; tsc + build clean; validated live in an isolated home)
 

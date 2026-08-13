@@ -122,3 +122,73 @@ Request `{to: "<app>", type: "<str>", payload: {...}}`; broker verifies the call
 | T2.4 | `updates_available()` + badges + kind-registered notification (dedup by version; no new scheduler) | `apps/catalog.py`, `dashboard/handlers/apps.py`, Store/installed cards, kind registration | bump a local source's version → badge + one notification; re-view → no re-nag; zero polling processes added |
 | T2.5 | Fix-with-AI: `InstallResult.log_excerpt` + Store button → prefilled fenced chat turn | `apps/app_manager.py`, Store error UI | a deliberately broken app's failed install offers the button; the opened chat contains the fenced log; fence verified |
 | T3.2 | `storageRead`/`storageShared` manifest pair + consent surface + read-only env mount + `sdk/util.py::shared_app_data_dir` | `apps/manifest.py`, `apps/permissions.py`, `backend_runtime.py`, `sdk/util.py`, consent UI | fixture consumer reads the sharer's file; undeclared pair gets no mount; write attempt fails; consent lists the grant; boundary test green |
+
+## Execution log
+
+- [2026-08-13][APE-12] DONE. **A comment claimed a consent surface that did not exist.**
+  `apps/manifest.py:313` said of `permissions.appMessaging`: *"This is the install-consent surface
+  for who an app can talk to, shown in the Store via `to_dict`."* The server half was true —
+  `Permissions.to_dict()` emits the key, `catalog._manifest_consent` carries it into the Store's
+  pre-install entry, and `GET /api/apps` returns it (measured: a fixture app declaring
+  `{"appMessaging": ["receiver", "mail-*"], "cron": true}` came back with
+  `"permissions": {"cron": true, "appMessaging": ["receiver", "mail-*"]}`). The last mile was
+  missing: `AppPermissionsWire` (`web/src/lib/api.ts`) never declared the field, so `PermissionList`
+  could not render it. **What the Store actually showed for that app, measured by rendering the
+  unchanged component:** `"Permissions the gateway enforces • Scheduled jobs"` plus EI-12 D2's
+  network advisory — and nothing else. Bullets: exactly `["• Scheduled jobs"]`. A user installing it
+  was never told it may message `receiver`, nor that `mail-*` covers every app under that prefix.
+- [2026-08-13][APE-12] **Why this is a new atom and not a reopened `APE-9`.** APE-9 (`done`, PR #914)
+  shipped the broker, and every clause of its `done_when` holds: two apps exchange a typed message,
+  an undeclared pair is refused 403 with a SEL denial row (`apps/messaging.py:167` →
+  `can_use_app_messaging`), the payload is capped and fenced, and `POST /api/apps/message` is the
+  only app-to-app path. Its `done_when` never mentioned consent — the manifest comment overreached
+  on its behalf. So the enforcement was never broken; only the disclosure was. Found while executing
+  EI-12 D2 and recorded in `EXECUTION-ISOLATION.md`'s log as needing its own atom.
+- [2026-08-13][APE-12] **Enforced, therefore NOT shaped like D2.** The atom immediately before this
+  one (EI-12 D2) moved `permissions.network` OUT of the enforced list into an advisory row, because
+  PersonalClaw cannot confine an app's egress. `appMessaging` is the opposite: the broker is a real
+  chokepoint, so it renders as a bullet under "Permissions the gateway enforces", beside Storage /
+  Scheduled jobs / Run background agents, with no hedging copy (a component test asserts the
+  messaging bullet matches neither /advisory/ nor /does not confine/, so it cannot drift into D2's
+  wording). The one thing borrowed from D2 is its treatment of silence: an app that declares no
+  target is now told about, not left blank — *"App messaging: none — it declared no target, and the
+  gateway broker is the only way one app can reach another, so it can message no other app"* —
+  because deny-by-default is the real behaviour. A trailing-`*` entry renders as the pattern it is
+  (*"any app whose name starts with “mail-”"*) and a bare `*` as *"any installed app"*, mirroring
+  `apps/permissions.py::_matches_any`; rendering `mail-*` as a literal app name would understate a
+  grant that reaches apps the user has not installed yet. `_matches_any`'s third branch (an exact
+  entry also matching `<entry>/...` as a path prefix) is inert for app names — kebab-case, no `/` —
+  and is deliberately not claimed in the copy.
+- [2026-08-13][APE-12] **D2's load-bearing guard is untouched.** The Store panel still gates the
+  whole section on `Object.keys(item.permissions).length > 0`, which is what distinguishes "declares
+  nothing" from a registry pointer whose manifest has never been fetched (both `{}`). Claiming
+  "messages no other app" about a manifest we have not read would be a new false statement, so the
+  deny-by-default line renders only where a manifest was actually parsed. Consequence, stated: a
+  Store card for an app that declares *nothing at all* still shows no permission section, hence no
+  messaging line; the installed-app panel (which always renders) does show it.
+- [2026-08-13][APE-12] **The wire leg is pinned on both ends, plus a rail so the next permission
+  cannot repeat this.** `tests/test_app_messaging.py` asserts the pre-install catalog payload
+  (`catalog._manifest_consent`) and `GET /api/apps` both carry the targets verbatim, and that a
+  declining app sends no key at all. `tests/test_app_permissions.py` adds a two-sided rail: the keys
+  `Permissions.to_dict()` can emit (derived from the dataclass fields, not a hand-written list) must
+  equal the optional fields declared on `AppPermissionsWire`, so a server-only key (invisible to the
+  user — this defect) and a wire-only key (a consent surface promising something nothing sends) both
+  red. Falsified by deleting the new field: *"server-only (never disclosed): ['appMessaging']"*.
+  `web/src/pages/apps/permissionConsent.test.tsx` covers the rendering; falsified against the
+  unchanged component, 4 of its 5 new cases red (the 5th is a regression guard for the new
+  double-claim case, which cannot fail on code that renders nothing).
+- [2026-08-13][APE-12] **No first-party app declares `appMessaging`** — verified independently: 44
+  `app.json` manifests in the first-party apps repo, zero occurrences of the string anywhere in that
+  tree — so every rendering case above uses a synthetic manifest fixture. Nothing in a real Library will
+  start showing a messaging row from this change — which also means no first-party app exercises
+  this path, and the fixtures are the whole coverage.
+- [2026-08-13][APE-12] **Validated as a user**, in a throwaway home (`/private/tmp/ape12-home`, an
+  `AUTH_MODE=none` loopback gateway on port 10312, deleted afterwards) with two synthetic apps added
+  as a local Store source. Both surfaces, measured in a real browser with zero console errors:
+  the **pre-install** panel for the declaring app reads *"Permissions the gateway enforces / • API:
+  /api/knowledge / • Scheduled jobs / • App messaging: consent-demo-quiet, any app whose name starts
+  with “mail-”"*, the **installed-app** panel reads the same three bullets, and the pre-install panel
+  for the app that declares only `storage` reads *"• Storage"* followed by *"App messaging: none — it
+  declared no target…"*. `GET /api/apps` and `GET /api/apps/catalog` were both inspected on the wire
+  first and carried `"appMessaging": ["consent-demo-quiet", "mail-*"]` verbatim, confirming the data
+  had always been arriving and only the browser was discarding it.

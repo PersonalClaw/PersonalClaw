@@ -27,6 +27,9 @@ sandbox). Enforcement status of each method:
   (apps/app_crons.reconcile_app_crons).
 * ``can_use_storage`` — the backend launcher hands the app its DATA_DIR only when
   held (apps/backend_runtime).
+* ``can_use_app_messaging`` — the gateway broker (apps/messaging.send_message) refuses
+  an undeclared sender→target pair 403 + SEL, and it is the only app-to-app path, so
+  this is the whole gate. Enforced, and (APE-12) disclosed at install consent as such.
 * ``can_use_network`` — **DECLARATION-ONLY (unenforced by design)**, and the consent
   surface says so rather than implying otherwise (EI-12 D2). There is no per-app
   egress chokepoint to enforce at: an app's provider code is imported **in-process**

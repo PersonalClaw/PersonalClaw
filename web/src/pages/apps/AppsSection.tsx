@@ -1433,6 +1433,19 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
   )
 }
 
+// APE-12. One `appMessaging` entry, in the words a user can act on. The grammar is
+// `apps/permissions.py::_matches_any`, so this MUST mirror it: a trailing `*` is a
+// name PREFIX, not a literal app, and a bare `*` matches every name. Rendering
+// `mail-*` as though an app called "mail-*" existed would understate the grant — it
+// covers every current AND future app under that prefix. (`_matches_any`'s third
+// branch also treats an exact entry as a `/`-path prefix; app names are kebab-case
+// with no `/`, so that branch cannot widen an app target and is not claimed here.)
+function describeMessagingTarget(pattern: string): string {
+  if (pattern === '*') return 'any installed app'
+  if (pattern.endsWith('*')) return `any app whose name starts with “${pattern.slice(0, -1)}”`
+  return pattern
+}
+
 // EI-12 D2. The bullets are the permissions the gateway ENFORCES server-side, and
 // `network` is deliberately not among them: an app's provider code is imported
 // in-process by the gateway, so there is no per-app egress chokepoint to enforce at
@@ -1440,6 +1453,14 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 // enforced — would read as a grant the platform polices, and OMITTING it when the app
 // declares `network: false` would read as a block. Both are false, so it gets its own
 // advisory row, rendered either way.
+//
+// APE-12. `appMessaging` is the OPPOSITE case and belongs in the enforced bullets: the
+// broker (`POST /api/apps/message`) is the only app-to-app path and refuses an
+// undeclared target 403 + SEL (apps/messaging.py). It used to render nowhere at all —
+// `AppPermissionsWire` never declared the field — so install consent never said which
+// other apps an app may talk to. Declaring nothing is disclosed too (the caption
+// below the bullets): deny-by-default is the real behaviour, and silence would repeat
+// the mistake D2 found for `network`.
 export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
@@ -1449,6 +1470,10 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
   if (perms.storage) rows.push('Storage')
   if (perms.cron) rows.push('Scheduled jobs')
   if (perms.agent) rows.push('Run background agents')
+  const messaging = perms.appMessaging ?? []
+  if (messaging.length) {
+    rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)
+  }
   return (
     <div>
       <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
@@ -1456,6 +1481,12 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
         <ul className="flex flex-col gap-1">
           {rows.map((r, i) => <li key={i} data-type="body-s" className="text-on-surface-low">• {r}</li>)}
         </ul>
+      )}
+      {messaging.length === 0 && (
+        <div data-type="body-s" className="mt-1 text-on-surface-low">
+          App messaging: none — it declared no target, and the gateway broker is the only
+          way one app can reach another, so it can message no other app.
+        </div>
       )}
       <div className="mt-2 flex gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
         <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
