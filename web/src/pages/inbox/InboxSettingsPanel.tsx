@@ -56,7 +56,7 @@ export function InboxSettingsPanel() {
   }
 
   if (!s && loadErr) return <LoadError what="inbox settings" error={loadErr} onRetry={load} />
-  if (!s) return <Loading />
+  if (!s) return <Loading what="inbox settings" />
   return (
     <div className="flex flex-col gap-l">
       <div className="flex justify-end"><SavedToast show={saved} /></div>

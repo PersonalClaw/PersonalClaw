@@ -302,7 +302,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
 
       <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
-        {loading && !run ? <Loading /> : !run ? (
+        {loading && !run ? <Loading what="this run" /> : !run ? (
           <p className="text-on-surface-low text-[0.8125rem]">This run could not be loaded.</p>
         ) : (
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">

@@ -184,8 +184,30 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
   )
 }
 
-export function Loading() {
-  return <div className="text-on-surface-low text-[0.8125rem]">Loading…</div>
+/** The bare-text loading state, for a slot too small or too irregular for a shaped skeleton.
+ *
+ *  🔴 It was a plain `<div>`: no role, so **nothing announced it** — the same defect cycle 143 fixed
+ *  across every `aria-busy` skeleton, hiding in the one loading component that has no `aria-busy` and
+ *  was therefore outside that census. Measured mid-load on `#/workflows` with `/api/**` held back:
+ *  "Loading…" on screen for 2.8 seconds, `SPOKEN=[]`.
+ *
+ *  🔑 A live region here needs no sr-only twin: the text is already visible, so `role="status"` makes
+ *  the words a sighted user reads the words everyone hears. `what` names the thing, matching
+ *  `LoadingStatus`.
+ *
+ *  🪤 THIS IS THE LESSER IDIOM AND STAYS SO. `Skeleton`'s own doc says it exists "so the page appears
+ *  instantly instead of a bare 'Loading…'", and ten list surfaces use `ListSkeleton`. Seven sites still
+ *  use this; graduating each to a shaped placeholder is a per-site visual judgment, recorded rather
+ *  than guessed at here. */
+export function Loading({ what }: {
+  /** What is loading — renders "Loading <what>…". Omit for a bare "Loading…". */
+  what?: string
+}) {
+  return (
+    <div role="status" aria-busy="true" className="text-on-surface-low text-[0.8125rem]">
+      {what ? `Loading ${what}…` : 'Loading…'}
+    </div>
+  )
 }
 
 /** A single shimmering placeholder block. Use to render the SHAPE of content while
