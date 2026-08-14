@@ -308,9 +308,16 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                     className="min-w-0 flex-1 bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low/70" />
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
+                  {/* 🔴 "Attach reference" WAS POINTER-ONLY. A `<label>` around a `hidden` input looks
+                      accessible and is not: the label is not focusable and the input was removed from
+                      the tab order, so nothing here could be reached by keyboard. Same defect and same
+                      fix as `#/knowledge/new`'s drop area (measured there: 0 of 55 Tab presses). The
+                      input stays `sr-only` so Tab reaches it and Space opens the picker natively, and
+                      because it sits INSIDE the label it takes "Attach reference" as its name with no
+                      `aria-label` needed. The ring is drawn on the label, keyed off the input. */}
+                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary/50 ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
                     <Paperclip size={13} /> Attach reference
-                    <input type="file" multiple accept={DESIGN_ACCEPT} disabled={busy} className="hidden"
+                    <input type="file" multiple accept={DESIGN_ACCEPT} disabled={busy} className="sr-only"
                       onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) setDesignFiles((cur) => [...cur, ...fs]); e.currentTarget.value = '' }} />
                   </label>
                   {designFiles.map((f, i) => (

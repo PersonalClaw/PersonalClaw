@@ -58,7 +58,7 @@ import { FindBar } from './chat/FindBar'
 import { FollowupChips } from './chat/FollowupChips'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
-import { sessionRecencyMs } from '../lib/epoch'
+import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
@@ -197,12 +197,22 @@ function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
   )
 }
 
-/** Relative-time label for the history list (compact: "2m", "3h", "5d", "1w"). */
-function relTimeShort(iso?: string): string {
-  if (!iso) return ''
-  const t = Date.parse(iso)
-  if (!t) return ''
-  const s = Math.max(0, (Date.now() - t) / 1000)
+/** Relative-time label for the history list (compact: "2m", "3h", "5d", "1w").
+ *
+ *  Parses through `lib/epoch`'s `epochSeconds` rather than its own `Date.parse`, which makes it
+ *  the last time formatter in the tree to converge on that parser (`lib/epoch.test.ts` carried
+ *  it as a NAMED EXEMPTION until now — see the correction there: the reason recorded for the
+ *  exemption did not hold). Two consequences beyond the de-duplication:
+ *
+ *    · it accepts a NUMBER as well as an ISO string, so a numeric wire field renders instead of
+ *      silently blanking — the failure the exemption was worried about, now impossible
+ *    · `epochSeconds` guards on READABILITY, so the epoch itself (0) formats instead of being
+ *      discarded by the old `if (!t)` truthiness test
+ */
+function relTimeShort(at?: string | number): string {
+  const at_s = epochSeconds(at)
+  if (at_s == null) return ''
+  const s = Math.max(0, Date.now() / 1000 - at_s)
   if (s < 60) return 'now'
   if (s < 3600) return `${Math.floor(s / 60)}m`
   if (s < 86400) return `${Math.floor(s / 3600)}h`
@@ -242,7 +252,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
               <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{s.title || 'Untitled chat'}</span>
-              <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(s.last_activity_ts || s.last_ts || s.created)}</span>
+              <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(sessionActivitySeconds(s))}</span>
             </motion.button>
           ))}
         </motion.div>

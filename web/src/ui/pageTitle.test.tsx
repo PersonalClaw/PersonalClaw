@@ -26,11 +26,13 @@ import { PageTitle } from './PageTitle'
 //
 //   · `ChatPage`'s "Chat history" — a DOCKED PANEL header. A side panel is not the page, and
 //     giving it an h1 would claim the document's title for a drawer.
-//   · `AppFrame` and the DETAIL pages — their title is an ENTITY name (`{project.name}`,
-//     `{active.name}`, `{run.workflow}`, the installed app's title). Those are page titles too,
-//     but they are a different subset with their own judgment (does a detail view's h1 name the
-//     entity or the section?), and taking half a family is worse than taking none. **Still
-//     deferred, and cycle 150 checked whether the app already answers it: it does not.**
+//   · ~~`AppFrame` and the DETAIL pages~~ — **SETTLED IN CYCLE 162, and the URL is what settles it.**
+//     Driven across five surfaces: when the URL's PATH identifies the entity (`#/workflows/runs/<id>`,
+//     `#/projects/<id>`, `#/app/<name>`) the route rendered **NO h1 at all** — axe
+//     `page-has-heading-one`. When the entity is a QUERY PARAM on the list route (`?item=`, `?open=` —
+//     the peek) the list kept its own h1, which is right: a docked panel is not the page. So the entity
+//     takes the h1 exactly where the entity is the destination, and that is the row lesson from cycle
+//     161 one level up — **a destination is named by its identity, not by its category.**
 //     `#/artifacts` with an artifact open swaps its `PageTitle` for a Back button and renders the
 //     artifact name as a bare span; the h1 measured on that route comes from the artifact's own
 //     CONTENT, not from the page title. So the question is genuinely open, not settled by
@@ -118,6 +120,10 @@ const DESTINATIONS = [
   'pages/discover/DiscoverPage.tsx',
   'pages/workflows/WorkflowsListPage.tsx',
   'ui/ListScaffold.tsx',
+  // Cycle 162 — the entity-detail destinations (a path segment IS the entity).
+  'pages/workflows/WorkflowRunDetail.tsx',
+  'pages/workflows/WorkflowDefDetail.tsx',
+  'pages/apps/AppFrame.tsx',
   // Cycle 150 — the create destinations.
   'pages/tasks/TaskCreatePage.tsx',
   'pages/triggers/TriggerCreatePage.tsx',
@@ -151,7 +157,12 @@ describe('every converged destination names itself', () => {
     // SkillsPage (proposals view vs installed view) and KnowledgeCreatePage (the type picker step
     // vs the chosen-type form). Named rather than waved through, so a THIRD one has to justify
     // itself here.
-    const TWO_STEP = ['pages/skills/SkillsPage.tsx', 'pages/knowledge/KnowledgeCreatePage.tsx']
+    // `ProjectsSection` renders three, one per mutually exclusive branch: the LIST page's title, the
+    // shared detail shell's default, and the project view's own `titleNode`. 🪤 Converting the shell's
+    // default alone left `#/projects/<id>` still h1-less — the project view passes `titleNode`, so the
+    // `??` default never renders. Follow the value that reaches the slot, not the first one you find.
+    const TWO_STEP = ['pages/skills/SkillsPage.tsx', 'pages/knowledge/KnowledgeCreatePage.tsx',
+      'pages/projects/ProjectsSection.tsx']
     const offenders: string[] = []
     for (const rel of DESTINATIONS) {
       const src = readFileSync(join(SRC, rel), 'utf8')
@@ -182,6 +193,83 @@ describe('every converged destination names itself', () => {
 // greeting as h1 and then EVERY one of its seven sections as h3 — measured `h1 -> h3 "Needs you"`
 // — so a screen-reader user skipping by level fell straight past a missing tier. Both section
 // headers (the shared `Section` and the separately-authored `PinnedTiles`) are now h2.
+
+describe('an entity is the destination when the URL says so', () => {
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  it('the path-segment detail routes carry the entity as their h1', () => {
+    expect(read('pages/workflows/WorkflowRunDetail.tsx'), 'the run')
+      .toMatch(/<PageTitle className="truncate">\{run\.workflow\}<\/PageTitle>/)
+    expect(read('pages/workflows/WorkflowDefDetail.tsx'), 'the definition')
+      .toMatch(/<PageTitle className="truncate">\{name\}<\/PageTitle>/)
+    expect(read('pages/projects/ProjectsSection.tsx'), "the project view's own titleNode")
+      .toMatch(/<PageTitle className="truncate">\{project\.name\}<\/PageTitle>/)
+    expect(read('pages/apps/AppFrame.tsx'), 'the installed app')
+      .toMatch(/<PageTitle className="flex items-center gap-s">/)
+  })
+
+  it('a peek does NOT take one — the list is still the destination', () => {
+    // `?item=` on knowledge, `?open=` on prompts and apps all keep the LIST's h1 and give the
+    // panel none. `PageTitle`'s doc already forbids an h1 on a docked panel; this pins the surfaces that
+    // could most easily drift, because their peek and their full page look the same in a diff.
+    const knowledge = read('pages/knowledge/KnowledgeListPage.tsx')
+    expect(knowledge).toMatch(/<PageTitle[\s>]/)
+    expect((knowledge.match(/<PageTitle[\s>]/g) ?? []).length, 'one per destination, not one per panel').toBe(1)
+    const chat = read('pages/ChatPage.tsx')
+    expect(/left=\{<PageTitle[^>]*>Chat history/.test(chat), 'the chat history drawer stays a span').toBe(false)
+  })
+
+  it('none of the four kept the bare span it replaced', () => {
+    for (const rel of ['pages/workflows/WorkflowRunDetail.tsx', 'pages/workflows/WorkflowDefDetail.tsx',
+      'pages/apps/AppFrame.tsx']) {
+      expect(read(rel), `${rel} still hand-rolls a title`).not.toMatch(/<span data-type="title-l"/)
+    }
+    // ProjectsSection keeps ONE such span deliberately: the rename editor's input is not a heading.
+    const projects = read('pages/projects/ProjectsSection.tsx')
+    expect((projects.match(/<span data-type="title-l"/g) ?? []).length, 'only the peek-panel header').toBeLessThanOrEqual(1)
+  })
+})
+
+describe('no destination skips a heading level', () => {
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  // ── Cycle 163: the LAST skip in the app, and the sweep that proves it was the last ──────────────
+  //
+  // Every destination has an h1 now (cycles 150 and 162), so the next question is whether what follows
+  // it is an h2. Swept 20 surfaces, reading the visible heading sequence on each:
+  //
+  //   #/tasks/new   h1 → **h3** ×5 ("Basics", "Classification", …)   🔴 the only skip
+  //   everything else   a lone h1, or a clean 1→2 sequence (dashboard 12222222, settings 12222, …)
+  //
+  // `TaskForm`'s local `Section` rendered the h3, and cycle 150 deferred it because that component has
+  // TWO hosts. Measured, both want h2: on `#/tasks/new` the page h1 is "New task"; in the task detail
+  // panel on `#/tasks` the page h1 is "Tasks" and the panel carries no heading of its own (a docked
+  // panel is not the page — `PageTitle`'s own rule), so the sections sit one level under the page either
+  // way. After: **0 skips across all 20 surfaces**, and 6/6 captures pixel-identical (Tailwind's
+  // preflight resets heading margins, so the tag swap moves nothing).
+
+  it("the task form's section headers are h2, directly under the page h1", () => {
+    const src = read('pages/tasks/TaskForm.tsx')
+    expect(src).toMatch(/<h2 className="text-on-surface text-\[0\.8125rem\]" style=\{fvs\(550\)\}>\{title\}<\/h2>/)
+    expect(src, 'no h3 section header left to skip a level').not.toMatch(/<h3/)
+  })
+
+  it('nothing in pages/tasks renders an h3 at all', () => {
+    // The surface this cycle measured, held closed. Other areas still have h3s (workflows' drawers,
+    // settings' panels, DiscoverPage) — they sit under an h2 or in a panel, and the sweep found no skip
+    // in any of them, so they are deliberately untouched rather than swept on principle.
+    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((n) => {
+        const p = join(d, n)
+        if (statSync(p).isDirectory()) return walk(p)
+        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+      })
+    const offenders = walk(join(SRC, 'pages/tasks')).filter((abs) => /<h3[\s>]/.test(readFileSync(abs, 'utf8')))
+      .map((abs) => abs.slice(SRC.length + 1))
+    expect(offenders, `these would skip h1 → h3:\n${offenders.join('\n')}`).toEqual([])
+  })
+})
 
 describe('the dashboard does not skip a heading level', () => {
   const files = ['pages/dashboard/DashboardPage.tsx', 'pages/dashboard/PinnedTiles.tsx']

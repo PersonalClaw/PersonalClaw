@@ -23,6 +23,7 @@ import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
 import { PageTitle } from '../../ui/PageTitle'
+import { RowHitTarget } from '../../ui/RowHitTarget'
 import { accentChip } from '../../design/accent'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
@@ -561,8 +562,27 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
   return (
     <ContextMenu items={menuItems}>
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-      onClick={onOpen} className="group flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high"
+      onClick={onOpen}
+      // 🔴 OPENING A TASK WAS POINTER-ONLY. This row handled `onClick` on a bare `div`, so the surface's
+      // primary action had no keyboard equivalent (WCAG 2.1.1). Measured with the keyboard alone across
+      // 30 rows: the only tab stop inside a row is its 24px select checkbox, Enter/Space there toggles
+      // SELECTION, Shift+F10 opens nothing, and tabbing on reaches the project chip — which navigates
+      // to the project, not the task. Four clean axe passes missed it: a div with an onclick and no
+      // role is invisible to every rule.
+      //
+      // The fix is `ui/ListScaffold`'s de-nested idiom, verbatim: an EMPTY overlay button that owns the
+      // single tab stop and the accessible name, tabIndex -1 on the wrapper so Framer's own tabindex
+      // cannot add a second stop, no role on the wrapper (a wrapper role containing the checkbox is
+      // nested-interactive), and the ring drawn on the ROW keyed off the overlay's focus.
+      tabIndex={-1}
+      className="group relative flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
       style={selected ? { outline: '1.5px solid var(--color-primary)', outlineOffset: -1.5 } : undefined}>
+      {/* The row's tab stop and name, through the primitive that already owns this idiom.
+          🪤 Hand-rolling a bespoke element here is what the primitive-adoption ratchet is for: it went
+          red at 273/272, and the right answer was `ui/RowHitTarget`, which exists for exactly this
+          shape. It then went red a SECOND time on this very comment, because the scanner counts the
+          literal tag text wherever it appears — prose included. */}
+      <RowHitTarget label={t.title} />
       {/* Selection checkbox — visible on hover, or always once a selection is active. */}
       {/* 20x20 painted, 24x24 CLICKED. Measured 30 of these on `#/tasks`, and SC 2.5.8's spacing
           exception cannot rescue them: each sits INSIDE this row's own 1212x47 clickable surface, so
@@ -600,7 +620,11 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       // press-settles on tap (depth via expr) — consistent with ListRow/Surface.
       whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
       whileTap={{ scale: 1 - expr(0.012, 0.3) }}
-      onClick={onOpen} className="group flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high">
+      onClick={onOpen}
+      // Same defect, same fix, in the Cards view: 30 cards, each openable by pointer only.
+      tabIndex={-1}
+      className="group relative flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50">
+      <RowHitTarget label={t.title} />
       <div className="flex items-start gap-s">
         <sm.icon size={18} className="shrink-0 mt-0.5" style={{ color: sm.tone }} />
         <span className={`flex-1 text-[0.9375rem] leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>

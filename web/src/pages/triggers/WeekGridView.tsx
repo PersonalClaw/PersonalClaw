@@ -84,8 +84,11 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
           </div>
         </div>
         <div className="flex items-center gap-xs">
-          <Button size="sm" variant="ghost" aria-label="Previous week" onClick={() => setOffset((o) => o - 1)}><ChevronLeft size={15} /></Button>
-          <Button size="sm" variant="ghost" aria-label="Next week" onClick={() => setOffset((o) => o + 1)}><ChevronRight size={15} /></Button>
+          {/* 🪤 These were `aria-label="…"`, and `Button` never forwarded it: TypeScript does not check a
+              HYPHENATED JSX attribute against a component's props type, so the name was dropped in
+              silence and axe reported `button-name` [critical] on both. The prop is `ariaLabel`. */}
+          <Button size="sm" variant="ghost" ariaLabel="Previous week" onClick={() => setOffset((o) => o - 1)}><ChevronLeft size={15} /></Button>
+          <Button size="sm" variant="ghost" ariaLabel="Next week" onClick={() => setOffset((o) => o + 1)}><ChevronRight size={15} /></Button>
         </div>
       </div>
 

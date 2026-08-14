@@ -68,6 +68,7 @@ export function PinnedArtifacts({ navigate }: RouteProps) {
             <WidgetRow
               key={p.slug}
               onClick={() => navigate(`artifacts?slug=${encodeURIComponent(p.slug)}`)}
+              label={art?.name ?? p.slug}
               actions={
                 <RowAction tone="default" onClick={() => unpin(p.slug)} title="Unpin"
                   ariaLabel={`Unpin: ${art?.name ?? p.slug}`}>

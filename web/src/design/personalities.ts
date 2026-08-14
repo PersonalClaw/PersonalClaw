@@ -31,6 +31,8 @@
  * without touching any of the machinery.
  */
 
+import type { ErrorTreatmentId } from './errorTreatments'
+
 /** Assistant-name + prompt-persona + chrome behaviors a personality may carry.
  *  Every field is optional: a personality that only recolors is valid. */
 export interface PersonalityBehavior {
@@ -47,6 +49,11 @@ export interface PersonalityBehavior {
   uiDensity?: 'comfortable' | 'dense' | 'cli'
   /** Browser tab title. */
   documentTitle?: string
+  /** Skin for the two error surfaces (ErrorBoundary fallback, IncidentBanner) —
+   *  an id from the closed `ERROR_TREATMENTS` map. Presentation only: the shape
+   *  of a treatment has no room for copy, actions or roles, so a personality
+   *  cannot reword or disarm a failure. Omitted = today's treatment, unchanged. */
+  errorTreatment?: ErrorTreatmentId
 }
 
 export interface Personality {
@@ -88,6 +95,7 @@ export const PERSONALITIES: Personality[] = [
       faviconHref: '/favicon.svg',
       personaSnippet: 'persona-retro-terminal',
       uiDensity: 'cli',
+      errorTreatment: 'terminal-frame',
     },
   },
   {
@@ -103,6 +111,7 @@ export const PERSONALITIES: Personality[] = [
       documentTitle: 'CLAW ARCADE',
       faviconHref: '/favicon.svg',
       uiDensity: 'comfortable',
+      errorTreatment: 'arcade-panel',
     },
   },
 ]

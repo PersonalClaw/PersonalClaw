@@ -40,7 +40,7 @@
     <div class="status" id="status">Checking gateway…</div>
   </div>
   <script>
-    window.electronAPI?.onStatus?.((msg) => {
+    window.pclawDesktop?.onStatus?.((msg) => {
       document.getElementById('status').textContent = msg;
     });
   </script>

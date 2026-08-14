@@ -725,16 +725,21 @@ def _embed(store, item_id: str, embedder) -> str:
             "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), item_id)
         )
         store.db.commit()
-        _embed_chunks(store, item_id, item.get("content") or "", embedder)
+        embed_item_chunks(store, item_id, item.get("content") or "", embedder)
         return "done"
     except Exception:
         logger.debug("knowledge embed failed for %s", item_id, exc_info=True)
         return "failed"
 
 
-def _embed_chunks(store, item_id: str, content: str, embedder) -> None:
+def embed_item_chunks(store, item_id: str, content: str, embedder) -> None:
     """Structurally chunk *content* and write each chunk (with its embedding) to the
     ``chunks`` table, additive to the item's whole-item vector.
+
+    Public because it is the ONE chunk-write unit: the ingest path calls it for a new item
+    and ``knowledge.chunk_backfill`` calls it for every pre-chunking item. Both therefore
+    go through ``store.replace_chunks``, which is what keeps the ANN index (KL-11) in step
+    — a bulk writer taking any other route would leave that index stale.
 
     Never raises into the ingest: a chunking/embedding hiccup must not fail an item whose
     whole-item vector already landed. A chunk whose embedding degrades to None is stored

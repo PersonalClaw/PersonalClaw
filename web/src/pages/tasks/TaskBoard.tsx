@@ -129,8 +129,25 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
   // pills) is its own native drag source (drag-selected-text), which steals the
   // gesture so only empty card area dragged. Cards are click-to-open anyway.
   return (
+    // 🔴 A BOARD CARD COULD NOT BE OPENED FROM THE KEYBOARD. Measured on `#/tasks?view=board`:
+    // **30** draggable cards, `role` null, `tabindex` null and `aria-label` null on every one, and
+    // **0 of 70** Tab presses landed on a card. axe reports 0 blocking, as it does for every
+    // click-only div. WCAG 2.1.1 + 4.1.2.
+    //
+    // 🔑 THIS ONE DOES NOT WANT `ui/RowHitTarget`, and that is why cycle 164 deferred it rather than
+    // copying the row fix. That primitive exists for a row that carries its OWN controls — an overlay
+    // sibling is how you avoid `nested-interactive`. This card carries **zero** interactive
+    // descendants (measured, not assumed), so the wrapper can simply BE the button; and stretching an
+    // overlay button across a `draggable` element would put a control between the pointer and the drag
+    // source, which is the one thing this card cannot afford (its own comment above records that
+    // selectable text already stole the gesture once). Same shape `pages/code/CodeSection.tsx` ships.
+    //
+    // The name is the task title, matching what the list row's hit target announces, rather than the
+    // card's whole subtree (title + pills + dates).
     <div draggable={!readOnly} onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen}
-      className={`shrink-0 select-none ${readOnly ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`}>
+      role="button" tabIndex={0} aria-label={t.title}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
+      className={`shrink-0 select-none rounded-lg ${readOnly ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`}>
     <motion.div
       layout
       layoutId={`board-card-${t.id}`}

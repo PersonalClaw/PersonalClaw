@@ -192,3 +192,46 @@ class ReindexRegistry:
             vector_store.clear_embeddings()
             res = vector_store.reembed_all(on_progress=lambda d, _t: _progress(d, k_done))
             job.memory = res.get("reembedded", 0)
+
+
+async def start_chunk_backfill(app: Any) -> "asyncio.Task | None":
+    """Schedule the knowledge CHUNK backfill (KL-12) in the background, or no-op.
+
+    Sibling of the item-vector re-index above, and deliberately separate from it: the
+    re-index rewrites the items' OWN vectors on a model switch, while this only adds the
+    chunk layer beneath them for items that predate chunking. Both are needed and neither
+    substitutes for the other.
+
+    Safe to call on every boot: the backlog is derived from the rows (see
+    ``store.count_items_missing_chunks``), so a fully-chunked library costs one COUNT and
+    returns. Returns the scheduled task (for tests / callers that want to await it) or None
+    when there is nothing to do. Never raises — a backfill must not be able to fail startup.
+    """
+    try:
+        state = app["state"]
+        store = getattr(state, "knowledge_store", None)
+        if store is None or store.count_items_missing_chunks() <= 0:
+            return None
+        from personalclaw.dashboard.handlers.embedding_reindex import _resolve_embed
+        from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
+
+        embedder, _embed_fn, _model = _resolve_embed(app)
+        if embedder is None:
+            logger.info(
+                "Knowledge chunk backfill pending: item(s) need chunking but no embedding "
+                "model is ready — deep-document recall resumes once one is bound."
+            )
+            return None
+
+        async def _run() -> None:
+            try:
+                # OFF the event loop: chunking + embedding a real library is CPU-bound and
+                # the store's sqlite connection is synchronous.
+                await asyncio.to_thread(backfill_item_chunks, store, embedder)
+            except Exception:
+                logger.debug("knowledge chunk backfill failed", exc_info=True)
+
+        return asyncio.ensure_future(_run())
+    except Exception:
+        logger.debug("knowledge chunk backfill startup failed", exc_info=True)
+        return None

@@ -589,14 +589,19 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       <input autoFocus aria-label="Rename this project" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) } else if (e.key === 'Escape') setRenaming(false) }}
         className="min-w-0 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[1.0625rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-      <Button size="sm" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}
+      {/* Its sibling Cancel below carries an `aria-label`; this one did not — the confirm half of a
+          two-button pair announced as bare "button". That asymmetry is the tell. */}
+      <Button size="sm" ariaLabel="Save the project name" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}
         disabledReason={!nameDraft.trim() ? 'Enter a project name first' : undefined}><Check size={14} /></Button>
       <button type="button" onClick={() => setRenaming(false)} aria-label="Cancel" className="text-on-surface-low hover:text-on-surface"><X size={15} /></button>
     </div>
   ) : (
     <div className="flex items-center gap-2 min-w-0">
       <FolderKanban size={18} className="shrink-0 text-primary" />
-      <span data-type="title-l" className="truncate text-on-surface">{project.name}</span>
+      {/* 🪤 The shared shell's default title (below) is NOT what renders here: the project view passes
+          this `titleNode`, so converting the shell alone left `#/projects/<id>` still h1-less — measured,
+          after the "fix". Follow the value that actually reaches the slot. */}
+      <PageTitle className="truncate">{project.name}</PageTitle>
       {project.name_locked && <Lock size={12} className="shrink-0 text-on-surface-low" aria-label="Name locked" />}
       {!project.is_builtin && (
         <button type="button" onClick={() => { setNameDraft(project.name); setRenaming(true) }} aria-label="Rename"
@@ -1011,7 +1016,10 @@ function Shell({ title, titleNode, onBack, actions, scroll = true, panel, childr
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
         keepCornerPadding
-        left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">{title}</span></div>}
+        // `#/projects` renders h1 "Projects", and `#/projects/<id>` rendered NONE. The
+        // project is the destination at that URL, so it carries the h1. `titleNode` (the rename editor)
+        // keeps its own input — an editable title is not a heading.
+        left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>{title}</PageTitle></div>}
         right={<div className="flex items-center gap-1.5">{actions}<HeaderActions><HeaderControl icon={ListChecks} label="All projects" onClick={onBack} priority="primary" /></HeaderActions></div>} />
       <div className="flex min-h-0 flex-1">
         {/* Detail hub fills height (scroll=false); list/loading states scroll. */}

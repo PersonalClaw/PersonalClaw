@@ -7,7 +7,7 @@ scheduled jobs, memory-event triggers), so an app-contributed provider inherits 
 denylist without knowing it exists.
 
 This is defense-in-depth, not a sandbox: it composes with the always-on built-ins
-(``security.is_sensitive_path``, ``BUILTIN_DENIED_COMMAND_PATTERNS``) and the OS
+(``security.is_sensitive_path``, ``baseline_denied_command_patterns``) and the OS
 child sandbox, which remains the containment story. What it adds is a *path-level*
 denylist for autonomous action-provider runs — the machine-readable analog of the
 loop-constraints, configurable via ``security.autonomy_denylist``.
@@ -136,7 +136,7 @@ def check_action(
     globs onto the operator denylist. Every named profile ships
     ``denylist_extra=()``, so this is a no-op until a profile/operator sets globs.
     """
-    from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS, is_sensitive_path
+    from personalclaw.security import baseline_denied_command_patterns, is_sensitive_path
 
     config_rules, denied_cmd_patterns = _load_config_rules()
     paths = _config_paths(action_config)
@@ -208,7 +208,10 @@ def check_action(
     # 3. Command patterns (built-in self-tamper/destructive + operator regexes).
     commands = _config_commands(action_config)
     if commands:
-        all_patterns = list(BUILTIN_DENIED_COMMAND_PATTERNS) + denied_cmd_patterns
+        # Same packaged baseline the native bash screen enforces, re-asserted on read —
+        # action-provider dispatch and `execute_bash` can never drift apart.
+        baseline = baseline_denied_command_patterns()
+        all_patterns = list(baseline) + [p for p in denied_cmd_patterns if p not in set(baseline)]
         for cmd in commands:
             low = cmd.lower()
             for pat in all_patterns:

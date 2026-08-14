@@ -209,9 +209,31 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                 />
               ) : (
                 <>
-                  <input ref={fileRef} type="file" hidden accept={ACCEPTED_MIMES[type] || undefined} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); e.target.value = '' }} />
-                  <div onClick={() => !file && fileRef.current?.click()} onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pickFile(f) }}
-                    className={`min-h-0 flex-1 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed cursor-pointer transition-colors ${dragOver ? 'border-primary bg-primary/5' : file ? 'border-primary/40' : 'border-outline-variant/60 hover:border-primary/50'}`}>
+                  {/* 🔴 CHOOSING A FILE WAS POINTER-ONLY, and this is a CREATE form — the step could
+                      not be completed at all without a mouse. `hidden` takes the input out of the tab
+                      order and the drop area was a bare `div` (no role, no tabIndex), so measured on
+                      `#/knowledge/new` with a file type selected: **0 of 55** Tab presses reached
+                      either one. WCAG 2.1.1.
+                      🔑 The fix is the REAL input kept focusable rather than a new control: `sr-only`
+                      instead of `hidden` means Tab reaches it and Space/Enter opens the picker through
+                      the browser's own behaviour, which no hand-rolled button can match. It carries its
+                      own name because a visually hidden input has no visible label to borrow.
+                      🪤 It lives INSIDE the drop area, not beside it: the focus ring is drawn with this
+                      app's `has-[…]` idiom, and a sibling input can never satisfy `:has()` — measured,
+                      the ring computed to `none` in both themes while the input was genuinely
+                      `:focus-visible`. Tailwind's `peer` would reach a sibling, but nothing else in this
+                      codebase uses it, and a container styled from its own descendant is the shape every
+                      other row and tab strip here already uses. */}
+                  <div onClick={(e) => {
+                      // Activating the input dispatches a click that bubbles to here; calling `click()`
+                      // again would ask for a second file dialog on every keyboard open.
+                      if (e.target === fileRef.current) return
+                      if (!file) fileRef.current?.click()
+                    }} onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pickFile(f) }}
+                    className={`min-h-0 flex-1 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed cursor-pointer transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary/50 ${dragOver ? 'border-primary bg-primary/5' : file ? 'border-primary/40' : 'border-outline-variant/60 hover:border-primary/50'}`}>
+                    <input ref={fileRef} type="file" className="sr-only"
+                      aria-label={`Choose a ${tm.label.toLowerCase()} file`}
+                      accept={ACCEPTED_MIMES[type] || undefined} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); e.target.value = '' }} />
                     {file ? (
                       <div className="flex items-center gap-m px-m">
                         {preview ? <img src={preview} alt="" className="size-16 rounded-md object-cover" /> : <tm.icon size={28} style={{ color: tm.tone }} />}
@@ -219,7 +241,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                         <SquareIconButton icon={X} iconSize={16} tone="danger" label="Remove file" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }} />
                       </div>
                     ) : (
-                      <><Upload size={22} className="text-on-surface-low" /><span className="text-on-surface-low text-[0.8125rem]">Drop a {tm.label.toLowerCase()} file or click to choose</span></>
+                      <><Upload size={22} className="text-on-surface-low" /><span className="text-on-surface-low text-[0.8125rem]">Drop a {tm.label.toLowerCase()} file, or choose one</span></>
                     )}
                   </div>
                 </>

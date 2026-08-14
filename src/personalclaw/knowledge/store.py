@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
+from .vector_index import ChunkVectorIndex
+
 logger = logging.getLogger(__name__)
 
 # Query params that only track marketing/analytics — never identify the resource.
@@ -193,7 +195,7 @@ class SimpleDiGraph:
         return iter(self._rev.get(nid, {}))
 
 
-def knowledge_db_path() -> pathlib.Path:
+def knowledge_db_path(home: "pathlib.Path | None" = None, *, create: bool = True) -> pathlib.Path:
     """THE knowledge database path. One store, one path.
 
     `<home>/workspace/knowledge/knowledge.db` — the path the dashboard's `AppState` has always
@@ -204,11 +206,20 @@ def knowledge_db_path() -> pathlib.Path:
 
     Every knowledge reader and writer must come through here rather than composing the path
     again, because a second copy of the path is how the split-brain happened in the first place.
+    ``tests/test_knowledge_contradiction.py`` enforces that as a lint over the whole package.
+
+    ``home`` overrides the home directory for a caller that is handed one (the Doctor gets a
+    ``DoctorContext.home``, which is the real home in the gateway and a tmp dir under test), and
+    ``create=False`` suppresses the parent ``mkdir`` — a read-only prober must not leave a
+    directory behind, since the state-inventory probe would then have an unclaimed path to
+    report. Both exist so those callers can still come through here rather than recomposing.
     """
     from personalclaw.config.loader import config_dir
 
-    path = config_dir() / "workspace" / "knowledge" / "knowledge.db"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    root = home if home is not None else config_dir()
+    path = root / "workspace" / "knowledge" / "knowledge.db"
+    if create:
+        path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
@@ -238,6 +249,12 @@ class KnowledgeStore:
         self._init_schema()
         self._migrate()
         self._load_graph()
+        # The chunk ANN index lives in THIS database file, so a chunk write and its
+        # vector write travel together instead of needing a sidecar's consistency story.
+        # Construction loads nothing — the sqlite-vec extension is loaded lazily on first
+        # index use, so opening a store on a SQLite build that cannot load extensions costs
+        # nothing and degrades to the exact scan.
+        self.vec_index = ChunkVectorIndex(self.db)
 
     def _init_schema(self):
         self.db.executescript("""
@@ -1342,6 +1359,10 @@ class KnowledgeStore:
         is written pre-serialized on the Chunk (``.embedding`` bytes) or NULL. Caller owns
         no commit — this commits its own single statement batch. Returns rows written.
         """
+        # Drop the OLD chunk ids from the ANN index while they are still readable: a re-chunk
+        # mints fresh uuids, so deleting only the new ids would leave every previous
+        # generation's vectors behind as orphan candidates.
+        self.vec_index.drop_item(item_id)
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         rows = [
             (
@@ -1363,6 +1384,10 @@ class KnowledgeStore:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+        # Write through to the ANN index on the same connection, immediately after the rows it
+        # indexes. A failure here is swallowed by the index (an index write must never fail a
+        # chunk write) and repaired by the next process's reconciliation.
+        self.vec_index.sync_item(item_id, [(r[0], r[4]) for r in rows])
         self.db.commit()
         return len(rows)
 
@@ -1390,6 +1415,7 @@ class KnowledgeStore:
 
     def clear_chunks(self, item_id: str) -> None:
         """Drop an item's chunk rows (e.g. before a re-ingest)."""
+        self.vec_index.drop_item(item_id)  # before the ids go away
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         self.db.commit()
 
@@ -1720,6 +1746,7 @@ class KnowledgeStore:
         self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
         self.db.execute("DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,))
         self.db.execute("DELETE FROM extracted_contents WHERE item_id = ?", (item_id,))
+        self.vec_index.drop_item(item_id)  # before the chunk ids go away
         self.db.execute("DELETE FROM chunks WHERE item_id = ?", (item_id,))
         # Intent outcomes are kept BY VALUE — only the soft back-ref is severed, so the
         # gathered insight survives the item's deletion.
@@ -1798,6 +1825,58 @@ class KnowledgeStore:
             (active_dim * 4,),
         ).fetchone()
         return int(row["n"]) if row else 0
+
+    #: The whitespace set ``chunking.chunk_text`` strips before deciding a document is
+    #: empty. SQLite's ``TRIM`` strips ONLY spaces unless the set is spelled out, so a
+    #: bare ``TRIM(content)`` would keep selecting a tab/newline-only item that the
+    #: chunker then declines — a backlog entry that can never drain, which makes a
+    #: "completed" backfill re-run forever instead of being a no-op.
+    _CHUNKABLE_WHITESPACE = " \t\n\r\v\f"
+
+    #: The backlog predicate, in ONE place: an item needs chunking when it is active,
+    #: not archived, carries non-whitespace content, and owns no chunk rows. Both the
+    #: COUNT and the batch selector share it so the count can never disagree with the
+    #: work — the backfill's resume state IS this query, never a persisted cursor, so no
+    #: crash window can leave a cursor claiming work that the rows say is done.
+    _CHUNK_BACKLOG_WHERE = (
+        "FROM items WHERE status = 'active' "
+        "AND COALESCE(is_archived, 0) = 0 "
+        "AND LENGTH(TRIM(COALESCE(content, ''), ?)) > 0 "
+        "AND NOT EXISTS (SELECT 1 FROM chunks WHERE chunks.item_id = items.id) "
+    )
+
+    def count_items_missing_chunks(self) -> int:
+        """How many items still need chunking (KL-12/H1.5).
+
+        Zero means the library is fully chunked, so a boot hook costs one COUNT. An item
+        leaves this backlog the instant its chunk rows commit, which is what makes an
+        interrupted backfill resumable without remembering anything.
+        """
+        row = self.db.execute(
+            f"SELECT COUNT(*) AS n {self._CHUNK_BACKLOG_WHERE}",  # noqa: S608 — fixed literal
+            (self._CHUNKABLE_WHITESPACE,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def items_missing_chunks(self, limit: int, after_id: str | None = None) -> list[dict]:
+        """One bounded batch of the chunk backlog, as ``{id, content}`` in id order.
+
+        ``after_id`` is an exclusive keyset cursor rather than an OFFSET: it bounds peak
+        memory (item content is unbounded) AND guarantees forward progress past an item
+        the chunker declines, which re-fetching the backlog head would loop on forever.
+        """
+        params: list[object] = [self._CHUNKABLE_WHITESPACE]
+        cursor = ""
+        if after_id:
+            cursor = "AND items.id > ? "
+            params.append(after_id)
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"SELECT id, content {self._CHUNK_BACKLOG_WHERE}{cursor}"  # noqa: S608
+            "ORDER BY items.id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [{"id": r["id"], "content": r["content"] or ""} for r in rows]
 
     def reembed_all(self, embedder, on_progress=None) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes

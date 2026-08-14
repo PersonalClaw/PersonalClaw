@@ -71,6 +71,10 @@ def _backend_data():
         ("src/personalclaw/slack-manifest.yaml", "personalclaw"),
         ("src/personalclaw/model_tokens.json", "personalclaw"),
         ("src/personalclaw/model_pricing.json", "personalclaw"),
+        # The baseline bash denylist — PyInstaller's import analysis cannot see a
+        # data file, and security.py raises at import without it, so the frozen binary
+        # would refuse to start rather than run with a shorter denylist.
+        ("src/personalclaw/baseline_denylist.json", "personalclaw"),
         ("src/personalclaw/config", "personalclaw/config"),
         ("src/personalclaw/eval/scenarios", "personalclaw/eval/scenarios"),
         ("src/personalclaw/scripts", "personalclaw/scripts"),
@@ -164,6 +168,13 @@ datas += collect_data_files("trafilatura")
 datas += collect_data_files("slack_sdk")
 # cron_descriptor includes locale data.
 datas += collect_data_files("cron_descriptor")
+# sqlite-vec ships its loadable SQLite extension as a shared library INSIDE the package
+# (sqlite_vec/vec0.dylib|.so), found at runtime via sqlite_vec.loadable_path(). It is data, not
+# an importable extension module, so PyInstaller's import analysis never sees it — collect it
+# with the package path preserved so loadable_path() still resolves inside the bundle. If this
+# ever fails to land, the knowledge ANN index degrades to the exact scan (correct, slower) and
+# says so in the Doctor rather than breaking search.
+datas += collect_data_files("sqlite_vec", include_py_files=False)
 
 a = Analysis(
     ["src/personalclaw/__main__.py"],

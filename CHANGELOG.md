@@ -8,8 +8,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
+
 ### Security
 
+- **The built-in command denylist now repairs itself.**
+- **Settings → Security now shows which denylist is actually protecting you.**
 - **Installed apps' backends no longer inherit PersonalClaw's environment.**
 - **A scheduled Python script can no longer exhaust PersonalClaw's file descriptors.**
 - **The Store now tells you which other apps an app may message.**
@@ -35,6 +41,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **Knowledge search now finds the passage, not just the document — and tells you which passage.**
+
+- **Semantic search on a large library got about twenty times faster.**
+
+- **The library you already have becomes searchable by content, without you doing anything.**
+- **Anthropic models now reuse the stable head of a conversation instead of re-reading it every turn.**
+- **The Retro Terminal and Claw Arcade personalities now skin the error surfaces too.**
+
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it claimed to.**
 
 - **Housekeeping now runs when your machine actually needs it, instead of on a fixed clock — and one system does it, not two.**
@@ -46,6 +60,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Security docs now describe what the sandbox actually does — credential-hiding, not confinement.**
 
 ### Added
+
+- **The desktop app can now tell the dashboard what it is actually allowed to do.**
+
+- **First run now sets you up with a working model instead of pointing at Settings.**
+- **Prompt caching is now a switch you can find, in Settings → Models.**
 
 - **You can approve what PersonalClaw is waiting on from your phone.**
 - **PersonalClaw can now earn autonomy one action at a time, and lose it instantly.**

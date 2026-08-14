@@ -37,7 +37,28 @@ export function epochSeconds(ts?: number | string | null): number | undefined {
  *
  *  Milliseconds, because that is what both existing call sites already produced; only the ORDER matters
  *  to every consumer, but keeping the unit means adopting this changes no behaviour at all. */
-export function sessionRecencyMs(s: { last_activity_ts?: string; last_ts?: string; created?: string }): number {
-  const secs = epochSeconds(s.last_activity_ts) ?? epochSeconds(s.last_ts) ?? epochSeconds(s.created)
+export function sessionRecencyMs(s: SessionStamps): number {
+  const secs = sessionActivitySeconds(s)
   return secs == null ? 0 : secs * 1000
+}
+
+type SessionStamps = { last_activity_ts?: string; last_ts?: string; created?: string }
+
+/** WHICH field is a session's activity time, in epoch SECONDS, or `undefined` when none reads.
+ *
+ *  The chain above answered that for SORTING; `#/chat`'s history list answered it again for
+ *  DISPLAY (`relTimeShort(s.last_activity_ts || s.last_ts || s.created)`) with its own
+ *  `Date.parse`. One question, two answers, and they can drift apart in either direction — a
+ *  sort that ranks by `last_activity_ts` beside a label that fell back to `created` would show
+ *  a list ordered by a number the user cannot see.
+ *
+ *  So the field choice lives here once and both callers read it. `undefined` rather than `0`
+ *  is the failure value, because a formatter needs to tell "no timestamp" (render nothing)
+ *  apart from "the epoch" — `sessionRecencyMs` still collapses it to 0, which is what a
+ *  comparator wants.
+ */
+export function sessionActivitySeconds(s: SessionStamps): number | undefined {
+  // `||`, not `??`: `/api/chat/sessions` sends `last_ts` as an EMPTY STRING on 31 of 32
+  // sessions, and `??` would pass that through to be parsed. Documented on the sorter above.
+  return epochSeconds(s.last_activity_ts) ?? epochSeconds(s.last_ts) ?? epochSeconds(s.created)
 }

@@ -9,6 +9,7 @@ import { api } from '../../lib/api'
 import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
 import { PageTitle } from '../../ui/PageTitle'
+import { tabListKeys } from '../../lib/tabListKeys'
 
 export interface TermTab { id: string; label: string; cwd?: string; shell?: string; custom?: boolean }
 
@@ -153,7 +154,15 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       {error && <InlineError icon className="mx-2 mt-2" onDismiss={() => setError('')}>{error}</InlineError>}
 
       {tabs.length > 0 && (
-        <div className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">
+        // 🔴 THE STRIP ANNOUNCED TABS IT COULD NOT REACH. Each chip carried `role="tab"` on a bare
+        // `div` with no `tabIndex`, no `aria-selected` and no owning `role="tablist"` — measured with
+        // two live sessions on `#/terminal`: 2 tabs, `tabindex` null on both, `aria-selected` null on
+        // both, tablists 0, and 0 of 45 Tab presses ever landed on one. axe agreed once the strip
+        // existed at all: `aria-required-parent` (critical) and `nested-interactive` (serious), ×2
+        // each — findings four earlier audits of this surface missed because sessions were off, so
+        // the strip was never rendered to scan.
+        <div role="tablist" aria-label="Terminal sessions" onKeyDown={tabListKeys((i) => setActive(tabs[i].id))}
+          className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">
           {tabs.map((t) => (
             <TermTabChip key={t.id} tab={t} active={t.id === active} inSplit={t.id === split}
               onSelect={() => setActive(t.id)} onClose={() => closeSession(t.id)} onRename={(l) => rename(t.id, l)} />
@@ -195,21 +204,56 @@ function TermTabChip({ tab, active, inSplit, onSelect, onClose, onRename }: {
   const [editing, setEditing] = useState(false)
   const [v, setV] = useState(tab.label)
   const on = active || inSplit
+  const chrome = on
+    ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' }
+    : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }
   return (
-    <div role="tab" onClick={onSelect} title={tab.cwd || tab.id}
-      className="group inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border border-b-0 pl-3 pr-2 text-[0.8125rem] transition-colors"
-      style={on ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' } : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }}>
+    // 🪤 THE CLOSE BUTTON STAYS INSIDE THE TAB, DELIBERATELY, AND axe STILL REPORTS ONE
+    // `nested-interactive`. Both alternatives were built and measured on this surface:
+    //
+    //   tab as a real button element, close control as a SIBLING in a presentational wrapper
+    //     → `aria-required-parent` and `nested-interactive` both clear, and
+    //       **`aria-required-children` (critical) appears**: a tablist's owned children must be
+    //       tabs, and axe does not look through the wrapper. `aria-owns` on the tablist listing
+    //       the tab ids does not help either — measured, it changed nothing, because the tabs are
+    //       already DOM descendants. Net: two findings traded for one CRITICAL one.
+    //   close glyph as a non-interactive <span>, closing via Delete only
+    //     → axe fully green, but the close control leaves the accessibility tree entirely. That
+    //       is optimising the scanner at the user's expense, so it was rejected.
+    //
+    // So the residual is named rather than chased: a closable tab is `nested-interactive` by
+    // construction unless its close control stops being a control. What this cycle DID fix is
+    // everything that kept the strip from being operable at all — see the tablist above.
+    <div role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
+      onClick={onSelect} title={tab.cwd || tab.id}
+      aria-keyshortcuts="F2 Delete"
+      onKeyDown={(e) => {
+        // A `div` carrying a role owns the keys a button element would have given for free.
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); return }
+        // F2 renames — the platform convention, and the ONLY keyboard route to a rename that
+        // was double-click-only. Delete closes, as the APG suggests for a closable tab.
+        if (e.key === 'F2') { e.preventDefault(); setV(tab.label); setEditing(true) }
+        if (e.key === 'Delete') { e.preventDefault(); onClose() }
+      }}
+      style={chrome}
+      className="group inline-flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-t-lg border border-b-0 pl-3 pr-1.5 text-[0.8125rem] transition-colors"
+    >
       <TermIcon size={13} className={inSplit && !active ? 'text-primary' : 'opacity-70'} />
       {editing ? (
-        <input autoFocus aria-label="Rename this terminal tab" value={v} onChange={(e) => setV(e.target.value)}
+        <input autoFocus aria-label={`Rename ${tab.label}`} value={v} onChange={(e) => setV(e.target.value)}
           onClick={(e) => e.stopPropagation()}
           onBlur={() => { setEditing(false); if (v.trim()) onRename(v.trim()) }}
-          onKeyDown={(e) => { if (e.key === 'Enter') { setEditing(false); if (v.trim()) onRename(v.trim()) } if (e.key === 'Escape') { setEditing(false); setV(tab.label) } }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') { setEditing(false); if (v.trim()) onRename(v.trim()) } if (e.key === 'Escape') { setEditing(false); setV(tab.label) } }}
           className="w-24 bg-transparent text-on-surface outline-none" />
       ) : (
-        <span onDoubleClick={(e) => { e.stopPropagation(); setV(tab.label); setEditing(true) }}>{tab.label}</span>
+        <span className="mr-1" onDoubleClick={(e) => { e.stopPropagation(); setV(tab.label); setEditing(true) }}>{tab.label}</span>
       )}
-      <button onClick={(e) => { e.stopPropagation(); onClose() }} aria-label="Close session" className="rounded p-0.5 opacity-50 hover:bg-surface-high hover:opacity-100"><X size={12} /></button>
+      {/* 24px hit box around the 12px glyph (SC 2.5.8 — it was 16×16), and a name that says WHICH
+          session: "Close session" was one name for every tab on the strip. `-mr-0.5` returns the
+          added width so the strip does not reflow. */}
+      <button type="button" onClick={(e) => { e.stopPropagation(); onClose() }}
+        aria-label={`Close ${tab.label}`} title="Close session"
+        className="grid size-6 -mr-0.5 shrink-0 place-items-center rounded opacity-50 hover:bg-surface-high hover:opacity-100"><X size={12} /></button>
     </div>
   )
 }

@@ -12,6 +12,8 @@ import { ListControls } from '../../ui/ListControls'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Markdown } from '../../ui/Markdown'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { RowHitTarget } from '../../ui/RowHitTarget'
+import { UnreadRail } from './UnreadRail'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { confirm } from '../../ui/dialog'
@@ -20,7 +22,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { api, type NotificationItem } from '../../lib/api'
 import { useAutonomyLadder } from '../../lib/rungs'
-import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, unreadRail, toneChipBg } from './notificationMeta'
+import { kindMeta, kindsPresent, bucketOf, BUCKET_ORDER, relTime, clockTime, firstLine, toneChipBg } from './notificationMeta'
 import { fvs } from '../../design/fontWeight'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
@@ -222,6 +224,9 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
 
 function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem; index: number; now: number; onOpen: () => void; onAck: () => void; onUnack: () => void; onDelete: () => void }) {
   const km = kindMeta(n.kind)
+  // What this row IS, bound once: the row's own hit target and all three actions must
+  // announce the same subject, and it was being recomputed per control.
+  const subject = rowSubject([n.title, firstLine(n.body ?? '')])
   // Right-click / long-press → the same actions the row's click + hover buttons
   // already wire (open, ack/unack by read-state, delete) — the shared ContextMenu
   // primitive, no duplicated logic.
@@ -235,8 +240,19 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
   return (
     <ContextMenu items={menuItems}>
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
-      className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors"
-      style={unreadRail(km.tone, n.acked)} onClick={onOpen}>
+      // 🔴 OPENING A NOTIFICATION WAS POINTER-ONLY. Driven with the keyboard across all 83 rows on
+      // this surface: no row is ever a tab stop (measured `tabindex` = null on every one), so the
+      // only keyboard route to `Open` was Shift+F10 on one of the hover actions — and those are
+      // `opacity-0` until hover/focus-within, so nothing advertises it. Same shape the tasks list
+      // carried before cycle 159; same fix, through the same primitive.
+      tabIndex={-1}
+      className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      onClick={onOpen}>
+      {/* 🪤 THE UNREAD RAIL HAD TO STOP BEING A BOX-SHADOW FOR THIS ROW TO SHOW FOCUS — the whole reason
+          `ui/RowHitTarget`'s ring painted nothing here. Written out in `UnreadRail`, which is where the
+          rail now lives for both this row and the bell's. */}
+      <UnreadRail tone={km.tone} acked={n.acked} />
+      <RowHitTarget label={subject} />
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: toneChipBg(km.tone) }}><km.icon size={19} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
@@ -257,11 +273,11 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
             an identity. The row shows title + the body's first line, and so does the name — capped,
             because the other half of this cycle fixed a tile named by 695 characters of its body. */}
         <InvestigateButton kind="notification" id={n.ts} backLink="#/notifications" size={34}
-          label={`Investigate in chat: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} />
+          label={`Investigate in chat: ${subject}`} />
         {n.acked
-          ? <IconButton icon={Undo2} label={`Mark unread: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} title="Mark unread" size={34} onClick={onUnack} />
-          : <IconButton icon={Check} label={`Mark read: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} title="Mark read" size={34} onClick={onAck} />}
-        <IconButton icon={X} label={`Delete: ${rowSubject([n.title, firstLine(n.body ?? '')])}`} title="Delete" size={34} onClick={onDelete} />
+          ? <IconButton icon={Undo2} label={`Mark unread: ${subject}`} title="Mark unread" size={34} onClick={onUnack} />
+          : <IconButton icon={Check} label={`Mark read: ${subject}`} title="Mark read" size={34} onClick={onAck} />}
+        <IconButton icon={X} label={`Delete: ${subject}`} title="Delete" size={34} onClick={onDelete} />
       </div>
     </motion.div>
     </ContextMenu>

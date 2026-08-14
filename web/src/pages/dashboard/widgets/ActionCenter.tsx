@@ -86,6 +86,7 @@ export function ActionCenter({ navigate }: RouteProps) {
             <WidgetRow
               key={e.key}
               onClick={() => navigate(routeFor(e))}
+              label={subject}
               actions={
                 isBusy ? <span data-type="label-m" className="px-m text-on-surface-low">…</span> : (
                   e.kind === 'inbox' ? (

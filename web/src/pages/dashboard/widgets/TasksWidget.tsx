@@ -49,6 +49,7 @@ export function TasksWidget({ navigate }: RouteProps) {
           <WidgetRow
             key={t.id}
             onClick={() => navigate('tasks')}
+            label={t.title}
             actions={
               busy.has(t.id)
                 ? <span data-type="label-m" className="px-s text-on-surface-low">…</span>

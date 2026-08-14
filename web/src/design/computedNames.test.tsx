@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { TileButton } from '../ui/TileButton'
 import { IconButton } from '../ui/IconButton'
@@ -48,6 +48,33 @@ import { Trash2 } from 'lucide-react'
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+// ── Cycle 154: THREE BUTTONS WHOSE ENTIRE BODY IS AN ICON, AND SO HAD NO NAME AT ALL ────────────
+//
+// `#/knowledge` → **Intents** had never been audited: the ledger's coverage for this surface is the
+// Library view, and four of its five tabs had never been driven. Driven at both themes, the Intents
+// view reported axe **`button-name` [critical]** on a 46×32 control at the right edge of every intent
+// row — `<Button size="sm" variant="ghost"><Trash2 /></Button>`, a **destructive** action announcing
+// as bare "button".
+//
+// A depth-aware source census found **three** of that exact shape:
+//
+//   knowledge/KnowledgeListPage  <Trash2/>     delete an intent   ← driven, axe-confirmed
+//   settings/MemoryPanel         <RefreshCw/>  reload the audit log
+//   projects/ProjectsSection     <Check/>      confirm a rename — **its sibling Cancel WAS named**
+//
+// 🪤 A NAIVE `<Button([^>]*)>` MATCHER FINDS ONE OF THE THREE. `onClick={() => …}` contains a `>`, so
+// the attribute group stops early and the children never parse — the recorded JSX-matcher trap, and it
+// hid the two sites that use an arrow function. The census below walks the tag with BRACE DEPTH.
+//
+// 🔑 THE FIX IS A PRIMITIVE PROP, NOT A TOOLTIP. `Button` had `title`, `ariaExpanded` and `ariaPressed`
+// but no way to carry a name, so it gained `ariaLabel` — `title` alone is not an accessible name in
+// every engine (the rule this repo already wrote down on `DegradedChip`). The delete name goes through
+// `rowSubject` so an intent whose goal is a sentence cannot turn a control's name into a paragraph,
+// which is this file's own 55-character rule applied at a 40-char budget.
+//
+// After: Intents reports axe **2 → 1** (the survivor is a contrast defect on the same view, its own
+// concern) and **0** unnamed controls at either theme.
 
 describe('a tile whose content is a document needs an explicit name', () => {
   it('TileButton takes ariaLabel, and it wins over the content', () => {
@@ -102,10 +129,40 @@ describe("the notification row actions name their row, and stay bounded", () => 
   it('all four actions name the row through the shared helper', () => {
     // Cycle 142 moved the composition into `lib/rowSubject` (one rule, one number, two surfaces), so
     // this asserts the call rather than a local copy of the join.
+    //
+    // Cycle 164 bound it ONCE — the row's own hit target needs the same name, and five call sites
+    // recomputing an identical expression is how two of them drift. So the shape asserted here moved
+    // from the inline call to the binding plus its uses, which also pins that they cannot diverge.
+    expect(code, 'the row subject is computed once')
+      .toMatch(/const subject = rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
     for (const verb of ['Investigate in chat', 'Mark unread', 'Mark read', 'Delete']) {
-      expect(code, `${verb} must name its row`)
-        .toMatch(new RegExp(`\`${verb}: \\$\\{rowSubject\\(\\[n\\.title, firstLine`))
+      expect(code, `${verb} must name its row`).toMatch(new RegExp(`\`${verb}: \\$\\{subject\\}\``))
     }
+    // And the row itself announces the same subject, not its whole 2001-character subtree.
+    expect(code, 'the row hit target shares the actions\' subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
+  })
+
+  it("the bell's shade actions name their row too, and bind the subject once", () => {
+    // 🔴 Cycle 171: the SAME notification row, in the dropdown, still had bare verbs. Measured in the
+    // open shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the
+    // whole panel — while the Action Center rows a few pixels away already announced
+    // "Reply: <subject>". Cycle 164 had given this row a named hit target, which left its two actions
+    // as the last unnamed controls on the surface.
+    //
+    // 🔑 The rail lives beside the page's because they are ONE row shown on two surfaces: a
+    // notification must not announce itself differently depending on which surface renders it. After:
+    // 12 named controls in the shade, **0 bare verbs, 0 duplicate names**, both themes.
+    const bell = codeOf('ui/NotificationBell.tsx')
+    expect(bell, 'the subject is computed once for the row and both actions')
+      .toMatch(/const subject = rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
+    for (const verb of ['Mark read', 'Dismiss']) {
+      expect(bell, `${verb} must name its row`).toMatch(new RegExp(`aria-label=\\{\`${verb}: \\$\\{subject\\}\`\\}`))
+    }
+    expect(bell, 'the row itself shares that subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
+    // 🪤 And the VISIBLE hint stays the bare verb — cycle 119's contract. A tooltip repeating the whole
+    // subject on hover is noise for a sighted user who can already read the row.
+    expect(bell).toMatch(/title="Mark read"/)
+    expect(bell).toMatch(/title="Dismiss"/)
   })
 
   it('the composition and its cap live in the shared helper, not here', () => {
@@ -124,5 +181,156 @@ describe("the notification row actions name their row, and stay bounded", () => 
     const inv = codeOf('ui/InvestigateButton.tsx')
     expect(inv).toMatch(/label=\{label \?\? 'Investigate in chat'\}/)
     expect(inv).toMatch(/title="Investigate in chat"/)
+  })
+})
+
+
+// ── Cycle 156: THE NAME WAS WRITTEN AND THE PRIMITIVE THREW IT AWAY ─────────────────────────────
+//
+// Sweeping the views behind every surface's view switcher (the lens cycle 154 opened) found
+// `#/triggers` → **Week** reporting `button-name` [critical] **twice**, at both themes — the week's
+// prev/next arrows. The source looked correct:
+//
+//     <Button size="sm" variant="ghost" aria-label="Previous week" …><ChevronLeft /></Button>
+//
+// 🪤 **`Button` never forwarded `aria-label`, and TypeScript cannot say so: a JSX attribute containing a
+// HYPHEN is not checked against a component's props type.** So the name was dropped in silence, the
+// build stayed green, and the only witness was the accessibility tree. The prop is `ariaLabel` — the one
+// cycle 154 added, for exactly this shape.
+//
+// This is the second time this session that a control's name existed and never reached the user
+// (cycle 148: a `LoadError` noun the loading state did not borrow). **A name in the source is not a name
+// in the tree.**
+//
+// The same sweep found one more, in the same class of never-audited view: `#/skills` → **Browse** has a
+// raw `<select>` with no label at all — `select-name` [critical], both themes. It is the marketplace
+// picker; it now carries `aria-label="Marketplace"`.
+//
+// 🔑 SIZING THE SELECT QUESTION HONESTLY. A source scan says **11 of 24** raw `<select>`s carry no
+// `aria-label` / `aria-labelledby` / `id` — and that count is misleading. axe, which implements the
+// naming rules (wrapping label included), fires on **exactly one** across every route and view swept:
+// the rest are named by other means or not rendered. The DOM decides; the grep only nominates.
+//
+// After: `#/triggers` → Week and `#/skills` → Browse both report axe 0 and zero unnamed controls at
+// both themes.
+
+// ── The census that keeps it closed ─────────────────────────────────────────────────────────────
+
+/** Every `<Button>` in the tree whose children are ONLY a self-closing icon element. Walks the tag
+ *  with brace depth, because `onClick={() => …}` contains a `>` and a `[^>]*` group stops there —
+ *  the mistake that reported 1 of the 3 real sites. */
+function iconOnlyButtons(): string[] {
+  const SRC = join(process.cwd(), 'src')
+  const walk = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walk(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+  const out: string[] = []
+  for (const abs of walk(SRC)) {
+    const lines = readFileSync(abs, 'utf8').split('\n')
+    lines.forEach((line, i) => {
+      if (!line.includes('<Button')) return
+      const blob = lines.slice(i, i + 6).join('\n')
+      const start = blob.indexOf('<Button')
+      let depth = 0
+      let end = -1
+      for (let k = start; k < blob.length; k++) {
+        const c = blob[k]
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        else if (c === '>' && depth === 0) { end = k; break }
+      }
+      if (end === -1 || blob[end - 1] === '/') return
+      const attrs = blob.slice(start + 7, end)
+      const close = blob.indexOf('</Button>', end)
+      if (close === -1) return
+      const inner = blob.slice(end + 1, close).replace(/\s+/g, ' ').trim()
+      if (/ariaLabel|aria-label|title=/.test(attrs)) return
+      if (/^<[A-Z]\w+[^>]*\/>$/.test(inner)) out.push(`${abs.slice(SRC.length + 1)}:${i + 1} — ${inner}`)
+    })
+  }
+  return out
+}
+
+describe('a Button whose whole body is an icon carries a name', () => {
+  it('none is left unnamed anywhere in the tree', () => {
+    const offenders = iconOnlyButtons()
+    expect(offenders, `these announce as bare "button":\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('the scan is not vacuous — it still finds the shape when the name is removed', () => {
+    // Guards the brace-depth walk itself: if the matcher regresses to `[^>]*`, this synthetic case
+    // (an arrow-function handler, like 2 of the 3 real sites) stops being found.
+    const blob = '<Button size="sm" onClick={() => go()}><Trash2 size={14} /></Button>'
+    const start = blob.indexOf('<Button')
+    let depth = 0
+    let end = -1
+    for (let k = start; k < blob.length; k++) {
+      const c = blob[k]
+      if (c === '{') depth++
+      else if (c === '}') depth--
+      else if (c === '>' && depth === 0) { end = k; break }
+    }
+    expect(end, 'the walk must pass the > inside the arrow function').toBeGreaterThan(blob.indexOf('go()'))
+  })
+
+  it('the three named sites keep their names', () => {
+    const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
+    expect(read('pages/knowledge/KnowledgeListPage.tsx'), 'the destructive one, through the shared cap')
+      .toMatch(/ariaLabel=\{`Delete intent: \$\{rowSubject\(\[it\.goal \|\| it\.id\], 40\)\}`\}/)
+    expect(read('pages/settings/MemoryPanel.tsx')).toMatch(/ariaLabel="Reload the audit log"/)
+    expect(read('pages/projects/ProjectsSection.tsx')).toMatch(/ariaLabel="Save the project name"/)
+  })
+
+  it('Button can carry a name at all, and documents it', () => {
+    // The prop is the fix; without the forward, every call site above is inert.
+    expect(readFileSync(join(process.cwd(), 'src/ui/Button.tsx'), 'utf8')).toMatch(/aria-label=\{ariaLabel\}/)
+    expect(readFileSync(join(process.cwd(), 'src/ui/Button.doc.ts'), 'utf8')).toMatch(/name: 'ariaLabel'/)
+  })
+})
+
+describe('a hyphenated aria prop on a kit component is a dropped name', () => {
+  // TypeScript checks `ariaLabel` and ignores `aria-label`, so this class of mistake compiles, ships,
+  // and is invisible until something reads the accessibility tree. These are the kit components that
+  // declare camelCase aria props, i.e. the ones where the hyphenated form is silently inert.
+  const KIT = ['Button', 'TileButton', 'Segmented', 'HeaderSegmented', 'QuietButton', 'TextInput',
+    'TextArea', 'SearchField', 'Slider', 'HeaderControl', 'IconButton']
+
+  const walk = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walk(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+
+  it('no call site passes one', () => {
+    const SRC = join(process.cwd(), 'src')
+    const offenders: string[] = []
+    for (const abs of walk(SRC)) {
+      readFileSync(abs, 'utf8').split('\n').forEach((line, i) => {
+        for (const c of KIT) {
+          const m = new RegExp(`<${c}\\b([^>]*)`).exec(line)
+          if (m && /\saria-[a-z]+=/.test(m[1])) offenders.push(`${abs.slice(SRC.length + 1)}:${i + 1} — <${c} ${/\s(aria-[a-z]+)=/.exec(m[1])?.[1]}>`)
+        }
+      })
+    }
+    expect(offenders, `a hyphenated aria prop here is dropped in silence:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('the two week arrows carry the forwarded prop instead', () => {
+    const src = readFileSync(join(process.cwd(), 'src/pages/triggers/WeekGridView.tsx'), 'utf8')
+    expect(src).toMatch(/ariaLabel="Previous week"/)
+    expect(src).toMatch(/ariaLabel="Next week"/)
+    expect(src, 'and not the form the primitive ignores').not.toMatch(/<Button[^>]*aria-label=/)
+  })
+
+  it("the marketplace picker names itself", () => {
+    // 🪤 The first version of this assertion was `<select value={marketplace}[^>]*aria-label=…` and it
+    // FAILED on correct source — `[^>]*` stops at the `>` inside `onChange={(e) => …}`. The same trap
+    // this whole cycle is about, in the test written to catch it. Anchor on the attribute instead.
+    const src = readFileSync(join(process.cwd(), 'src/pages/skills/SkillsPage.tsx'), 'utf8')
+    expect(src).toMatch(/setMarketplace\(e\.target\.value\)\} aria-label="Marketplace"/)
   })
 })

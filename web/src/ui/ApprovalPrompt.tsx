@@ -51,7 +51,7 @@ export interface ApprovalChoice {
 }
 
 export function ApprovalPrompt({
-  tool, args, purpose, badge, meta, choices, density = 'compact', className,
+  tool, args, purpose, badge, meta, scope, choices, density = 'compact', className,
 }: {
   tool: string
   /** The tool's arguments, raw. `compact` truncates; `roomy` shows all of it. */
@@ -59,8 +59,18 @@ export function ApprovalPrompt({
   purpose?: string
   /** Optional chip beside the heading (the chat's risk indicator). */
   badge?: ReactNode
-  /** Context block under the arguments (the companion's session/source/age). */
+  /** Context block under the arguments — the chat's blast-radius chips, the
+   *  companion's session/source/age. */
   meta?: ReactNode
+  /** Optional block between the brief and the action row: how far the answer should
+   *  reach (the chat's remember-scope picker).
+   *
+   *  A SLOT rather than a shared control, because the two surfaces do not have the same
+   *  answer to give. The chat card can persist a standing grant (`trust`/`trust_agent`),
+   *  so it offers a scope; the companion's queue posts approve/reject only, so it passes
+   *  nothing and renders nothing. Nothing here is defaulted or auto-selected — the
+   *  caller owns the wording of every promise it makes about what gets remembered. */
+  scope?: ReactNode
   choices: ApprovalChoice[]
   density?: ApprovalDensity
   className?: string
@@ -93,6 +103,10 @@ export function ApprovalPrompt({
           )}
           {purpose && <p className={`mt-1 text-on-surface-low ${roomy ? 'text-[0.8125rem]' : 'text-[0.75rem]'}`}>{purpose}</p>}
           {meta}
+          {/* How far the answer reaches, read BEFORE the verbs — the scope has to be
+              settled while the reader is still weighing the call, not after they have
+              already reached for a button. */}
+          {scope}
         </div>
       </div>
       <div className={roomy ? 'flex flex-wrap items-center gap-s px-l py-l' : 'flex flex-wrap items-center gap-1.5 px-3 py-2.5'}>

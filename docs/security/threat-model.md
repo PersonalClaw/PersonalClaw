@@ -28,14 +28,55 @@ crossing is gated so the agent cannot act outside the owner's chosen posture:
 - **Task modes** (`task_modes.py`) decide *which* tools may run per session
   (`agent`/`ask`/`plan`/`build`), hard-enforced in the native runtime's
   `_guard_and_invoke` **before** approval is consulted.
-- **Command screening** (`security.py`): a deny list
-  (`BUILTIN_DENIED_COMMAND_PATTERNS`, merged with user config at read time via
-  `denied_command_patterns()`) and suspicious-pattern watchers
-  (`SUSPICIOUS_BASH_PATTERNS`).
+- **Command screening** (`security.py`): a deny list (the packaged baseline in
+  `baseline_denylist.json`, re-asserted and merged with user config at read time
+  via `denied_command_patterns()` — see [Baseline denylist
+  integrity](#baseline-denylist-integrity-anti-drift-and-anti-llm-tamper-not-anti-owner))
+  and suspicious-pattern watchers (`SUSPICIOUS_BASH_PATTERNS`).
 - **OS child sandbox** (`sandbox.py`) with a credential-env denylist so secrets
   never reach a sandboxed child.
 - **Trust/YOLO state** (`trust_mode.py`): one process-global auto-approve state,
   config-permanent or TTL'd, with `on_disable` callbacks.
+
+#### Baseline denylist integrity: anti-drift and anti-LLM-tamper, not anti-owner
+
+The always-on bash denied-command patterns ship as packaged data
+(`personalclaw/baseline_denylist.json` — `{version, sha256, patterns[]}`), verified at
+import, re-asserted on every `denied_command_patterns()` read, and re-verified by the
+`security.baseline_denylist` doctor probe. `GET /api/security/denied-commands` returns
+that state as a `baseline` block (`version`, `sha256`, enforced `count`, `verified`), and
+Settings → Security renders it beside the read-only pattern list.
+
+**What the digest does catch:**
+
+- On-disk corruption or a partial write. The module raises at import rather than coming
+  up with a shorter — or empty — denylist.
+- An edit that changed the patterns but not the `sha256` shipped beside them: the same
+  hard failure at import.
+- Mutation of the in-memory list inside a running process (a stray `.clear()`, a
+  monkeypatch, a `sitecustomize`). The next read heals it from the verified snapshot and
+  audits `baseline_denylist_reasserted` with the patterns that came back.
+- A *self-consistent* rewrite of the packaged file, patterns **and** digest changed
+  together. Because the fingerprint is held in memory from import onward, the file is
+  never consulted for content again: the divergence is audited as
+  `baseline_denylist_tamper_attempt` and the verified baseline stays in force.
+
+**What it does not do:**
+
+- It does not stop the owner. Anyone who can edit the installed package *before the
+  process starts* owns the baseline — a different `patterns[]` with a matching `sha256`
+  verifies happily, because at that point it *is* what shipped.
+- It is therefore not a tamper-**proof** control, and no surface may present it as one.
+  The panel says the baseline "matches what shipped", or that the packaged file no longer
+  matches — never "secure" and never "tamper-proof".
+
+The threat this closes is drift inside a running process, most concretely an agent asked
+to relax its own guardrails: the model can write files and run commands, so it can reach
+the list, but it cannot make a shortened list stick and it cannot make the shortening
+silent. The threat it does not close is the owner reconfiguring their own machine, which
+is a decision rather than an attack — the same posture as the auto-approve bullet under
+[What we deliberately don't defend
+against](#what-we-deliberately-dont-defend-against).
 
 ### 2. Core ↔ apps
 
@@ -130,6 +171,12 @@ design, not by omission — stating them keeps the in-scope claims credible.
   lower their own guardrails. Choosing auto-approve, or running an external ACP
   agent under YOLO (where gating rides system-prompt framing, not rails — see
   [limitations.md](limitations.md)), is an owner decision, not a vulnerability.
+- **Tampering with the installed package before startup.** The baseline denylist's
+  digest proves the patterns in force are the ones that shipped *with this process*; it
+  cannot prove which patterns were shipped. Whoever can edit the installed package
+  before PersonalClaw starts sets the baseline. That control is anti-drift and
+  anti-LLM-tamper, not anti-owner — see [Baseline denylist
+  integrity](#baseline-denylist-integrity-anti-drift-and-anti-llm-tamper-not-anti-owner).
 - **An app's own outbound network traffic.** The `network` app permission is
   declaration-only (disclosed at install consent), not a gateway-enforced
   boundary — an app backend is its own OS process with its own network stack. See

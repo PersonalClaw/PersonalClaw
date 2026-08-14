@@ -29,6 +29,33 @@ import { rowSubject } from './rowSubject'
 // MORE than a sighted one. Left alone deliberately: capping data truncates an identity, which is a
 // different thing from bounding a name you assembled. Recorded as rejected, not deferred.
 
+// ── Cycle 161: THE INBOX ROW WAS NAMED BY ITS KIND, AND 35 ROWS SHARED ONE NAME ──────────────────
+//
+// `#/inbox`'s `ListRow` passed `label={channelBacked ? sender : km.label}` — and `km.label` is the KIND
+// word. Measured on the surface, reading the computed name of every row's hit target:
+//
+//                        before        after
+//   rows                    39           39
+//   distinct names          **3**        **31**
+//   worst duplicate      ×35 "Proposals"  ×4 (rows whose first 55 chars really do coincide)
+//   whole name is a kind word  36 buttons   0
+//   longest name            —            55 (the cap), 0 over 80
+//
+// A screen-reader user tabbing the inbox heard "Proposals, button" thirty-five times while every row's
+// own text identified it ("Refine a skill knowledge-grounding — Add a reference…"). Same defect as
+// cycle 141's kind-named rows, and this helper is what cycle 142 built for it — so the fix is one call,
+// the shape `#/notifications` already uses.
+//
+// 🪤 `firstLine()` — the transform notifications passes — WAS WRONG HERE, and only re-measuring showed
+// it: an inbox message wraps its subject across lines, so the first line is often just "Refine a skill"
+// and **34 rows still collapsed to one name** after the "fix". The visible `<p>` renders those newlines
+// as spaces, so a sighted reader gets the whole subject; collapsing whitespace is what matches the
+// screen. **A helper that works on one surface's data can be the wrong transform on another's.**
+//
+// 🔑 THE REMAINING DUPLICATES ARE HONEST. Four rows share a name because their first 55 characters are
+// identical — and their visible text is equally alike, so a sighted user has the same problem. That is
+// the trade-off this file measured at three caps and settled at 55; it is not re-opened here.
+
 describe('rowSubject joins the parts that identify a row', () => {
   it('joins with an em dash', () => {
     expect(rowSubject(['Loop progress', 'cycle 4 finished'])).toBe('Loop progress — cycle 4 finished')
@@ -60,6 +87,28 @@ describe('rowSubject joins the parts that identify a row', () => {
 
   it('takes a cap override for a caller with a different budget', () => {
     expect(rowSubject(['abcdefghij'], 5)).toBe('abcd…')
+  })
+})
+
+describe('the inbox row names itself by identity, not by kind', () => {
+  const SRC2 = join(process.cwd(), 'src')
+  const code = readFileSync(join(SRC2, 'pages/inbox/InboxPage.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it('composes through the shared helper', () => {
+    expect(code).toMatch(/label=\{rowSubject\(\[channelBacked \? \(it\.sender_name \|\| it\.sender_id \|\| 'Unknown'\) : km\.label,/)
+  })
+
+  it('collapses the message whitespace rather than taking its first line', () => {
+    // 🪤 The distinction that made 34 rows distinct: an inbox subject wraps, so `firstLine` cut it at
+    // "Refine a skill". If someone swaps this back to firstLine, the names collapse again.
+    expect(code).toMatch(/\(it\.message \?\? ''\)\.replace\(\/\\s\+\/g, ' '\)\]\)/)
+    expect(code, 'firstLine is the wrong transform for this data').not.toMatch(/firstLine\(it\.message/)
+  })
+
+  it('the kind label is still the FIRST part, so the row still says what sort of thing it is', () => {
+    // The kind was not wrong, only insufficient: it leads, the identity follows.
+    expect(code).toMatch(/: km\.label, \(it\.message/)
   })
 })
 

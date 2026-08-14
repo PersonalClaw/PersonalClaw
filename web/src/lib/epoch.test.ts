@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { epochSeconds } from './epoch'
+import { epochSeconds, sessionActivitySeconds, sessionRecencyMs } from './epoch'
 import { relPast, relFuture, absTime } from '../pages/schedule/scheduleMeta'
 
 // ── "in NaNd", six times, on the first screen of the app ─────────────────────────────────
@@ -51,6 +51,48 @@ describe('epochSeconds', () => {
     // `if (!ts)` was the old guard, and it discards the epoch itself. Rare, but it is the
     // difference between a guard on READABILITY and a guard on truthiness.
     expect(epochSeconds(0)).toBe(0)
+  })
+})
+
+describe('sessionActivitySeconds — the field choice, in one place', () => {
+  const ISO = '2026-08-07T04:24:20.670204+00:00'
+
+  it('prefers last_activity_ts, then last_ts, then created', () => {
+    expect(sessionActivitySeconds({ last_activity_ts: ISO, last_ts: '2020-01-01T00:00:00Z', created: '2019-01-01T00:00:00Z' }))
+      .toBeCloseTo(Date.parse(ISO) / 1000, 3)
+    expect(sessionActivitySeconds({ last_ts: ISO, created: '2019-01-01T00:00:00Z' })).toBeCloseTo(Date.parse(ISO) / 1000, 3)
+    expect(sessionActivitySeconds({ created: ISO })).toBeCloseTo(Date.parse(ISO) / 1000, 3)
+  })
+
+  it('skips the EMPTY STRING the endpoint really sends for last_ts', () => {
+    // Measured on 31 of 32 sessions in a real dev home. `??` would pass `''` to be parsed; the
+    // whole reason this chain is `||`-shaped inside one helper instead of at each call site.
+    expect(sessionActivitySeconds({ last_activity_ts: '', last_ts: '', created: ISO }))
+      .toBeCloseTo(Date.parse(ISO) / 1000, 3)
+  })
+
+  it('is undefined — not 0 — when nothing reads', () => {
+    // A formatter must tell "no timestamp" (render nothing) from "the epoch"; only the
+    // comparator wants 0, and it does that collapse itself.
+    expect(sessionActivitySeconds({})).toBeUndefined()
+    expect(sessionActivitySeconds({ last_activity_ts: 'not a date', last_ts: '', created: '' })).toBeUndefined()
+    expect(sessionRecencyMs({})).toBe(0)
+  })
+
+  it('the sorter and the label now read the SAME field choice', () => {
+    // The defect this closes is divergence, not arithmetic: a list ordered by `last_activity_ts`
+    // beside a label that fell back to `created` sorts by a number the user cannot see.
+    const s = { last_activity_ts: ISO, last_ts: '', created: '2019-01-01T00:00:00Z' }
+    expect(sessionRecencyMs(s)).toBeCloseTo((sessionActivitySeconds(s) as number) * 1000, 0)
+  })
+
+  it('#/chat reads both through lib/epoch, with no local parse left', () => {
+    const src = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    expect(code, 'the label takes the shared field choice').toMatch(/relTimeShort\(sessionActivitySeconds\(s\)\)/)
+    expect(code, 'the formatter parses through epochSeconds').toMatch(/const at_s = epochSeconds\(at\)/)
+    expect(code, 'no hand-rolled fallback chain remains').not.toMatch(/last_activity_ts \|\| s\.last_ts/)
+    expect(code, 'no local Date.parse in the formatter').not.toMatch(/function relTimeShort[\s\S]{0,300}?Date\.parse/)
   })
 })
 
@@ -123,15 +165,21 @@ describe('every relative-time formatter in the tree coerces', () => {
     // `notificationMeta` and `taskMeta` already shipped `Date.parse` + `Number.isNaN(t)` and
     // are correct. The schedule/triggers family were outliers against a working sibling, not a
     // missing convention — so either guard passes, and unguarded arithmetic does not.
-    // ONE named exemption, with its reason: `ChatPage.relTimeShort` guards with `if (!t)`,
-    // and NaN is falsy, so it cannot emit NaN either. It has a different problem — it is fed
-    // `last_activity_ts`, a NUMBER, which `Date.parse` rejects, so it renders BLANK for a
-    // timestamp that exists. That is fabricated emptiness, not NaN, and it belongs to its own
-    // cycle with its own before/after. Named rather than silently matched by a looser rule.
-    const EXEMPT = new Set(['src/pages/ChatPage.tsx:relTimeShort'])
+    // 🔴 THE ONE EXEMPTION IS GONE, AND ITS RECORDED REASON WAS WRONG. It read: "`ChatPage`
+    // .relTimeShort … is fed `last_activity_ts`, a NUMBER, which `Date.parse` rejects, so it
+    // renders BLANK for a timestamp that exists", deferred to "its own cycle". That cycle came,
+    // and the premise did not survive contact with the wire: `/api/chat/sessions` sends
+    // `last_activity_ts`, `last_ts` and `created` as ISO STRINGS on **all 32** sessions in this
+    // dev home, `Date.parse` reads every one, and the history list rendered "3d"/"4d"/"1w" with
+    // **0 blank** of 10 sampled labels. The `number` in that claim came from `ChatSession
+    // .last_ts?: number` — a DIFFERENT interface from the `ChatSessionSummary` this list uses.
+    //
+    // 🔑 So the deferred defect was a premise mismatch, not a bug — and it is recorded here
+    // rather than quietly dropped, because the next cycle would otherwise chase it again. What
+    // was real is the duplication: that formatter re-implemented `Date.parse` + a truthiness
+    // guard. It now calls `epochSeconds`, which is why no exemption is needed to keep this green.
     const bare = formatters
       .filter((f) => !/epochSeconds\(/.test(f.body) && !/Number\.isNaN\(/.test(f.body))
-      .filter((f) => !EXEMPT.has(`${f.file}:${f.name}`))
     expect(bare.map((f) => `${f.file}:${f.name}`), 'a formatter reads a timestamp without validating it').toEqual([])
   })
 })

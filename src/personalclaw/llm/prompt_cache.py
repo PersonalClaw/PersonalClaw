@@ -50,6 +50,25 @@ CACHE_HINT_KEY = "_cache_hint"
 _VOLATILE_HINT_KEY = "_volatile"
 
 
+def effective_cache_mode(declared: PromptCache, *, enabled: bool) -> PromptCache:
+    """Fold the user's ``agent.prompt_cache_enabled`` switch into ``declared``.
+
+    The switch is the diagnosis escape hatch (PROMPT-CACHE-SUBSTRATE §C6): when it is
+    off, the loop must serve the provider exactly what it served before the marker
+    existed. That is expressed by collapsing the mode to :attr:`PromptCache.NONE` —
+    the mode that ALREADY means "hand the message list back untouched" — rather than
+    by branching around :func:`mark_cacheable_prefix`. One code path, one definition of
+    "no marker": disabling the switch takes the same route an undeclared provider takes.
+
+    What the switch does NOT do: it does not revert the §C2 wire ordering (stable
+    assembled context leads, the volatile per-turn note rides at the tail) or the §C3
+    date-line relocation. Those are unconditional correctness repairs, not cache
+    features, and forking them into two maintained orderings is exactly the dual path
+    the clean-break doctrine forbids.
+    """
+    return declared if enabled else PromptCache.NONE
+
+
 def mark_cacheable_prefix(
     messages: list[dict], mode: PromptCache, *, generation: int = 0
 ) -> list[dict]:

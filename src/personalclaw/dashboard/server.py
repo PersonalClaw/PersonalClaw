@@ -427,6 +427,16 @@ async def start_dashboard(
     app.router.add_get("/api/durability/snapshots", handlers.api_durability_snapshots)
     app.router.add_post("/api/durability/run", handlers.api_durability_run)
     app.router.add_post("/api/durability/restore", handlers.api_durability_restore)
+    # The Electron shell seam. The three POSTs are
+    # loopback-only and credential-bearing (see handlers/desktop.py); the GETs are
+    # the truth surface for Settings → Security and for apps holding a manifest
+    # ``desktop`` grant. Register the specific /capabilities/{cap} path after
+    # /state so neither shadows the other.
+    app.router.add_post("/api/desktop/register", handlers.api_desktop_register)
+    app.router.add_post("/api/desktop/unregister", handlers.api_desktop_unregister)
+    app.router.add_get("/api/desktop/state", handlers.api_desktop_state)
+    app.router.add_post("/api/desktop/state", handlers.api_desktop_state_push)
+    app.router.add_get("/api/desktop/capabilities/{cap}", handlers.api_desktop_capability)
     app.router.add_get("/api/doctor", handlers.api_doctor)
     # Specific GET sub-paths BEFORE the {capability} catch-all (aiohttp matches in
     # registration order — otherwise "fixes"/"crash"/"remediation" bind as a capability).
@@ -1305,6 +1315,20 @@ async def start_dashboard(
             logger.exception("Failed to check/resume interrupted embedding re-index")
 
     app.on_startup.append(_resume_interrupted_reindex_startup)
+
+    async def _backfill_item_chunks_startup(app_: web.Application) -> None:
+        """Chunk the items that predate chunking (KL-12), in the background.
+
+        Chunk-level retrieval only reaches items that HAVE chunks, and every item ingested
+        before KL-9 has none — so without this an existing library never gains deep-document
+        recall, however good the index is. Runs after _model_providers_startup (it needs the
+        embedder); the work itself is resumable off the rows, bounded per batch, and fully
+        best-effort. See ``embedding_reindex.start_chunk_backfill``."""
+        from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+
+        await start_chunk_backfill(app_)
+
+    app.on_startup.append(_backfill_item_chunks_startup)
 
     async def _warm_acp_pool_startup(app_: web.Application) -> None:
         """Start the ACP live-connection pool: one warmed connection per ready

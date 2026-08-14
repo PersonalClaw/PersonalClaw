@@ -234,7 +234,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
     <WorkbenchLayout
       controls={
         <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search the marketplace', label: 'Search marketplace' }}>
-          <select value={marketplace} onChange={(e) => setMarketplace(e.target.value)} className="h-10 rounded-pill bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
+          <select value={marketplace} onChange={(e) => setMarketplace(e.target.value)} aria-label="Marketplace" className="h-10 rounded-pill bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
             <option value="">All marketplaces</option>
             {marketplaces.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
           </select>

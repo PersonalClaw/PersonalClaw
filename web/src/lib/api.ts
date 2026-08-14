@@ -297,6 +297,31 @@ export interface AppPermissionsWire {
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
   // no app at all (deny by default), which the consent UI states rather than implies.
   appMessaging?: string[]
+  // Native desktop capabilities this app may reach THROUGH the gateway (apps
+  // never touch Electron IPC). Enforced — `/api/desktop/*` refuses an undeclared
+  // capability 403 + SEL `desktop.capability_denied`. Exact names only, no wildcard.
+  // Absent = no native reach at all, which the consent UI states rather than implies.
+  desktop?: string[]
+}
+// One native capability's state as the desktop shell reported it. `granted`
+// mirrors macOS's own vocabulary so nothing is translated on the way through.
+// `requestable` is false when THIS PROCESS cannot raise the OS prompt (macOS exposes
+// no API to ask for Screen Recording, and none to read notification authorization) —
+// the UI must then point at System Settings instead of offering a dead button.
+export interface DesktopCapabilityWire {
+  available: boolean
+  granted: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unavailable'
+  requestable: boolean
+  reason: string
+}
+export interface DesktopStateWire {
+  connected: boolean
+  shell: { version: string; platform: string } | null
+  // Empty whenever `connected` is false. Absence is the honest answer: a browser tab
+  // must not read as "these exist, just not granted yet".
+  capabilities: Record<string, DesktopCapabilityWire>
+  registered_at: string
+  last_seen: string
 }
 export interface AppUiPage { route: string; label: string; icon: string }
 export interface AppSummary {
@@ -339,6 +364,12 @@ export interface AppCatalogEntry {
   icon: string; heroUrl?: string; author: string
   source: string; sourceKind: 'bundled' | 'native' | 'first-party' | 'local' | 'git'
   isProvider: boolean; providerType: string; tags: string[]
+  /** The provider's DECLARED capabilities (`chat`, `stt`, `tts`, `search`, `messaging`, …).
+   *  `providerType` alone cannot tell a chat model from a speech model — faster-whisper
+   *  (stt) and piper-tts (tts) are both `providerType: 'model'` — so a surface grouping
+   *  apps by what they DO must read this, not the author-controlled `tags`. Absent for a
+   *  non-provider app or a registry pointer whose manifest isn't fetched yet. */
+  providerCapabilities?: string[]
   // P20: when this entry came from a source's registry index, the install pointer
   // (repo[#subdirectory]) to hand install — routes through the scanner unchanged. "" for
   // a dir-scanned/bundled entry (its `source` is the pointer).
@@ -1548,7 +1579,27 @@ export interface MemoryGraphNode { id: string; label: string; group?: string; ti
 export interface MemoryGraphEdge { from: string; to: string }
 export interface MemoryGraphData { nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[] }
 export interface SecurityStats { denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number }
-export interface DeniedCommands { builtin: string[]; user: string[] }
+/** The packaged baseline's identity, as served by /api/security/denied-commands.
+ *  `verified` is whether the file on disk still matches the fingerprint captured at
+ *  import — it is an anti-drift check, NOT a claim that the baseline cannot be changed
+ *  by whoever owns the machine. See docs/security/threat-model.md. */
+export interface DenylistBaseline {
+  version: number
+  sha256: string
+  /** Patterns actually enforced — unchanged by a diverged file, which is refused. */
+  count: number
+  verified: boolean
+  /** Why `verified` is false; empty when it is true. */
+  detail: string
+}
+export interface DeniedCommands {
+  builtin: string[]
+  user: string[]
+  baseline: DenylistBaseline
+  /** User patterns that genuinely widen the set — duplicates of a built-in are deduped
+   *  server-side and do NOT count, so this can be lower than `user.length`. */
+  user_additions: number
+}
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
@@ -1801,7 +1852,35 @@ export interface DashboardConfig {
   // drops the field. Do NOT re-introduce a client layout editor against it.
   dashboard_layout?: { widgets: Array<{ id: string; x: number; y: number; w: number; h: number; hidden?: boolean }>; v: number } | Record<string, never>
 }
-export interface OnboardingState { needs_model: boolean; has_model_provider: boolean; has_chat_binding: boolean }
+/** The four essential-app lanes of the first-run flow. `model`/`channel` hold the
+ *  chosen app's NAME (or null); `search`/`speech` are "did the user set one up" flags.
+ *  Mirrors `_ESSENTIALS_SCHEMA` in `personalclaw/onboarding.py`. */
+export interface OnboardingEssentials {
+  model: string | null
+  search: boolean
+  speech: boolean
+  channel: string | null
+}
+/** The resume points of the guided first run, in order — `STEPS` in `onboarding.py`. */
+export type OnboardingStep = 'name' | 'essentials' | 'first_success' | 'done'
+/** `GET /api/onboarding` — the live readiness triple PLUS the persisted first-run
+ *  progress from `entity_settings/onboarding.json`. The readiness fields are computed
+ *  per request and never stored; the progress fields are what let a reload resume. */
+export interface OnboardingState {
+  needs_model: boolean; has_model_provider: boolean; has_chat_binding: boolean
+  step?: OnboardingStep
+  essentials?: OnboardingEssentials
+  first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
+}
+/** A partial patch for `POST /api/onboarding/state`. The backend merges at BOTH
+ *  levels, so a step sends ONLY what it learned — never a read-modify-write of the
+ *  whole document, which would clobber a sibling step's progress. An unknown or
+ *  mistyped key is a 400, not a silent drop. */
+export interface OnboardingStatePatch {
+  step?: OnboardingStep
+  essentials?: Partial<OnboardingEssentials>
+  first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
+}
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
@@ -2504,6 +2583,10 @@ export const api = {
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
+  /** Record first-run progress — a PARTIAL merge at both levels, so each step sends
+   *  only what it learned. Never read-modify-write the whole document. */
+  saveOnboardingState: (patch: OnboardingStatePatch) =>
+    post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/state', patch),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
   // Re-index all knowledge + memory embeddings after the embedding model changed.
@@ -3310,6 +3393,11 @@ export const api = {
   deniedCommands: () => get<DeniedCommands>('/api/security/denied-commands'),
   setUserDeniedCommands: (patterns: string[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.denied_commands', value: patterns }),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  // The desktop shell's pushed capability manifest. In a browser tab this is
+  // `{connected: false, capabilities: {}}` — an EMPTY map, not the capability names
+  // with a placeholder state, so no surface can render a grant control for something
+  // the gateway cannot deliver.
+  desktopState: () => get<DesktopStateWire>('/api/desktop/state'),
   setSecurityEgress: (cfg: EgressPolicyConfig) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.egress', value: cfg }),
   // Tool-output projection rules (TokenJuice OP6). Read from the whole-config GET
   // (tools.projection_rules); written via the config PATCH allowlist.

@@ -635,7 +635,7 @@ function CapabilitiesStep({ skills, skillIds, workflowIds, onToggleSkill, sugges
                     {s.description && <span className="block text-on-surface-low text-[0.75rem] line-clamp-2">{s.description}</span>}
                   </span>
                   <button type="button" disabled={done || !!installing[s.id]} onClick={() => onInstall(s)}
-                    className="shrink-0 inline-flex items-center gap-1 rounded-pill border border-outline-variant/50 px-m h-7 text-[0.75rem] text-primary hover:bg-surface-high transition-colors disabled:opacity-50">
+                    className="shrink-0 inline-flex items-center gap-1 rounded-pill border border-outline-variant/50 px-m h-7 text-[0.75rem] text-primary-emphasis hover:bg-surface-high transition-colors disabled:opacity-50">
                     {done ? <><Check size={13} /> Installed</> : installing[s.id] ? 'Installing…' : <><Download size={13} /> Install</>}
                   </button>
                 </div>
@@ -896,7 +896,7 @@ function SuggestMoreSubGoals({ goal, value, onChange }: { goal: string; value: s
       disabled={busy}
       aria-disabled={tooShort || undefined}
       title={tooShort ? 'Describe the goal in a bit more detail first' : undefined}
-      className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem] text-primary hover:bg-surface-high transition-colors disabled:opacity-40 aria-disabled:opacity-40">
+      className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem] text-primary-emphasis hover:bg-surface-high transition-colors disabled:opacity-40 aria-disabled:opacity-40">
       {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Suggest more
     </button>
   )

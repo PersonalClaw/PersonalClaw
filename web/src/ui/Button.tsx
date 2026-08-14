@@ -41,7 +41,7 @@ const sizes: Record<Size, string> = {
  *  hardcoded colors/px — all via tokens. */
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
-  loading = false, className, onClick, disabled, type = 'button', title, ariaExpanded, ariaPressed,
+  loading = false, className, onClick, disabled, type = 'button', title, ariaLabel, ariaExpanded, ariaPressed,
   disabledReason,
 }: {
   children: ReactNode
@@ -54,6 +54,17 @@ export function Button({
   disabled?: boolean
   type?: 'button' | 'submit'
   title?: string
+  // The accessible name, for a button whose CHILDREN are only an icon.
+  //
+  // Measured across the tree with a depth-aware tag scan: THREE `<Button>`s wrap a single icon and
+  // nothing else, so they had no name at all — axe `button-name` [critical] on the one that renders
+  // by default (`#/knowledge` → Intents, a DESTRUCTIVE delete, both themes). A `title` alone is not
+  // an accessible name in every engine, which is why this is `aria-label` and not the tooltip.
+  //
+  // Prefer plain children where there IS a label — a name that repeats the visible text is a second
+  // string that can drift from it. This is for the icon-only case, the same role `TileButton`'s
+  // `ariaLabel` plays for a card whose content is a document.
+  ariaLabel?: string
   // A disclosure/toggle button announces its state to assistive tech. Optional so the common
   // action button carries no misleading `aria-expanded`; set it only when the button folds
   // content (e.g. the runs-inbox "Show N suppressed" archive toggle).
@@ -111,6 +122,7 @@ export function Button({
       ref={ref}
       type={type}
       title={softOff ? [title, disabledReason].filter(Boolean).join(' — ') : title}
+      aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
       aria-pressed={ariaPressed}
       // `loading` cross-fades the label to opacity 0 and swaps in an aria-hidden spinner, so
