@@ -5,7 +5,10 @@ import { spring, physics, stagger, listItemEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { kindMeta, relTime, firstLine, unreadRail, toneChipBg } from '../pages/notifications/notificationMeta'
+import { kindMeta, relTime, firstLine, toneChipBg } from '../pages/notifications/notificationMeta'
+import { RowHitTarget } from './RowHitTarget'
+import { UnreadRail } from '../pages/notifications/UnreadRail'
+import { rowSubject } from '../lib/rowSubject'
 import { fvs, withWeight } from '../design/fontWeight'
 import { accentChip } from '../design/accent'
 import { notify } from '../app/appSdk'
@@ -139,8 +142,14 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
   return (
     <motion.div layout variants={listItemEnter}
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
-      className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors"
-      style={unreadRail(km.tone, n.acked)} onClick={onOpen}>
+      // The bell's dropdown carries the SAME row as `#/notifications`, so it had the same defect:
+      // click-to-open on a bare div, no tab stop, no name. Fixed the same way, in the same change —
+      // a notification row should not behave differently depending on which surface shows it.
+      tabIndex={-1}
+      className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      onClick={onOpen}>
+      <UnreadRail tone={km.tone} acked={n.acked} radius="md" />
+      <RowHitTarget label={rowSubject([n.title, firstLine(n.body ?? '')])} />
       <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: toneChipBg(km.tone) }}><km.icon size={14} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">

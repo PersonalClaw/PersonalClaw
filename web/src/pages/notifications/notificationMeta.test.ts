@@ -1,20 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { unreadRail, toneChipBg, kindMeta } from './notificationMeta'
+import { toneChipBg, kindMeta } from './notificationMeta'
 
 // ── Consolidation guard (S2/T2.2) ──────────────────────────────────────────
-// unreadRail() and toneChipBg() replaced verbatim-duplicated inline styles in
-// NotificationsPage (Row) and NotificationBell (ShadeRow). These assertions
-// pin the EXACT output so the consolidation stays byte-identical (zero visual
-// change) and a future edit can't silently drift one call site.
+// toneChipBg() replaced a verbatim-duplicated inline style in NotificationsPage
+// (Row) and NotificationBell (ShadeRow). This assertion pins the EXACT output so
+// the consolidation stays byte-identical (zero visual change) and a future edit
+// can't silently drift one call site.
+//
+// Its sibling `unreadRail()` is gone — same two consumers, same single home, but as
+// `UnreadRail.tsx`: as an inline box-shadow it was suppressing both rows' focus ring
+// (`UnreadRail.test.tsx` carries that story and the guard).
 
 describe('notificationMeta shared visual helpers', () => {
-  it('unreadRail: unread → the exact inset accent rail; acked → undefined', () => {
-    expect(unreadRail('var(--color-primary)', false)).toEqual({
-      boxShadow: 'inset 2px 0 0 0 var(--color-primary)',
-    })
-    expect(unreadRail('var(--color-primary)', true)).toBeUndefined()
-  })
-
   it('toneChipBg: the exact 16% tint over transparent', () => {
     expect(toneChipBg('var(--color-warn)')).toBe('color-mix(in srgb, var(--color-warn) 16%, transparent)')
   })
