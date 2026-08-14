@@ -6499,12 +6499,13 @@
         {
           "id": "SH-10",
           "title": "Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26) T4.4",
           "done_when": "the /api/security/denied-commands payload + security settings page render the baseline-verified state; a tamper fixture flips the indicator; 'N user additions' shown; the anti-drift/anti-LLM-tamper-not-anti-owner threat model is documented in docs/security/",
           "deps": [
             "SH-6"
-          ]
+          ],
+          "pr": 1278
         }
       ]
     },
@@ -7920,11 +7921,6 @@
       {
         "id": "SH-9",
         "title": "External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan",
-        "plan": "SH"
-      },
-      {
-        "id": "SH-10",
-        "title": "Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented",
         "plan": "SH"
       },
       {
@@ -10249,9 +10245,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {

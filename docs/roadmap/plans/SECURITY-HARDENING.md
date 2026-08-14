@@ -136,6 +136,69 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 
 ## Execution log
 
+### 2026-08-14 — SH-10 (Amendment T4.4) the Security panel renders the verified baseline — DONE
+
+SH-6 built the verification; nothing showed it. The panel listed 112 patterns with no way to
+tell a healthy instance from a drifted one, and counted the user's config list rather than what
+that list actually adds.
+
+- **Payload** — `GET /api/security/denied-commands`
+  (`dashboard/handlers/core.py::api_security_denied_commands`) now returns, alongside the
+  existing `builtin`/`user` arrays: a `baseline` block (`version`, `sha256`, enforced `count`,
+  `verified`, `detail`) sourced from `verify_baseline_denylist()`, and `user_additions`.
+- **`user_additions` is derived, not counted** — `len(denied_command_patterns()) - len(baseline)`.
+  `len(config.security.denied_commands)` is the obvious implementation and it is wrong: a user
+  entry equal to a built-in is deduped by `denied_command_patterns()` and widens nothing. Verified
+  live: config `['aws s3 cp .* s3://.*', 'my-secret-tool .*', 'aws s3 cp .* s3://.*']` → 3 entries,
+  `user_additions: 1`.
+- **The indicator flips, and the identity shown stays the verified one** — with the packaged file
+  diverged, `verified` goes `false` and `detail` names the divergence, while `version`, `sha256` and
+  `count` keep reporting the baseline actually in force. A diverged file is reported, never adopted,
+  so the panel must not start advertising the attacker's version.
+- **Panel** (`web/src/pages/settings/SecurityPanel.tsx`) — the baseline chip's **role flips with the
+  state**: `status` when it matches what shipped, `alert` when it does not (unrequested news that
+  changes what the list below means). Both carry an explicit `aria-label` because `status`/`alert`
+  take no name from content — without one the chip would be an unnamed live region. The baseline
+  region stays read-only (asserted by role, as the *absence* of a control inside it, with the user
+  row's Remove button as the vacuity guard).
+- **Both reads went bare** — `securityStats` and `deniedCommands` dropped `.catch(() => null)`, and
+  the panel branches on `error` into `LoadError`. This is the one surface where a swallowed read is
+  worse than a blank one: an empty denylist and "nothing is blocked" are the same picture. The gate
+  is `!s`, not `s === undefined`, because the settings hub shares the `settings:security` cache key
+  and still persists a substituted `null` into `sessionStorage`.
+- **Docs** — extended `docs/security/threat-model.md` (boundary 1) with **Baseline denylist
+  integrity: anti-drift and anti-LLM-tamper, not anti-owner**: what the digest does catch (on-disk
+  corruption, a partial write, an edit that changed patterns but not the digest, in-process mutation,
+  and a *self-consistent* rewrite of both — the fingerprint is held in memory from import) and what
+  it does not (the owner; anyone who can edit the installed package before startup). A matching
+  bullet joined "What we deliberately don't defend against". `limitations.md` was left alone: this is
+  a boundary with a control and a stated non-goal, not a known gap.
+- **Tests** — `tests/test_baseline_denylist_integrity.py::TestSecurityPanelPayload` (6) and
+  `web/src/pages/settings/securityBaselineState.test.tsx` (11).
+
+**DEVIATION — fixed two swapped copy strings in the same file.** `SecurityPanel.tsx`'s two
+`unavailableWhen` reasons were exactly transposed: the shell-denylist Add said "Enter a host first"
+and the egress host Adds said "Enter a pattern first". Both land in `title`, so the wrong noun is
+what a hover and a description read. One-word correction, no mechanism change, pinned by
+`securityBaselineState.test.tsx` (falsified: re-swapping turns it red). Out of the atom's literal
+scope, but leaving a wrong string in a file being edited for legibility would be the wrong trade.
+
+**DISCOVERY — reading the panel writes SEL when the baseline has diverged.** The handler calls
+`verify_baseline_denylist()`, which logs `baseline_denylist_tamper_attempt` on a diverged file with
+no per-digest dedup on that path (unlike the unrecoverable-read path). Every panel load, including a
+background revalidation, therefore appends a row while the file stays diverged. Kept deliberately —
+an owner viewing a diverged baseline is an auditable event, and it is the same behaviour the periodic
+doctor probe already has — rather than adding a second, non-logging status accessor that could drift
+from the enforcing one. Documented in the handler docstring. If the row volume ever matters, the fix
+belongs in `security.py`'s reporting guard, not in a parallel read path.
+
+**DISCOVERY — a suite-wide `PERSONALCLAW_HOME` fails ~11 tests that are green without it.**
+Measuring the baseline with `PERSONALCLAW_HOME` exported for the whole run produced 12 failures
+across `test_portability`, `test_mcp_core`, `test_ephemeral_sessions` and
+`test_harness_workflow_resume_audit`; the same four files pass 132/132 on the same commit with the
+variable unset. The failures are the env var, not the tree. Recorded so the next session does not
+inherit a phantom baseline.
+
 ### 2026-08-14 — SH-6 (Amendment T3.4) baseline denylist as packaged data — DONE
 
 The baseline bash denylist is now a packaged, integrity-verified data file that heals

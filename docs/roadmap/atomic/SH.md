@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `SH-7` | ⬜ | Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness | `SH-5`, `SH-6` | every approval-mode fixture refuses a baseline-matched command; reordering the deny check below the approval gate turns CI red; a baseline-tamper corpus class is added to the S3 harness |
 | `SH-8` | ⬜ | SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export | — | filters work; verify endpoint returns (checked, ok) with a tamper fixture showing ok=false; page renders real SEL events and shows a deliberately-broken chain link; export reuses redact and excludes secrets (fixture-verified); both themes/WCAG; export round-trips |
 | `SH-9` | ⬜ | External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan | — | docs/security/review-scope.md lists the five high-risk paths, the review format, and the publication plan; scope approved by owner (owner task 3); review executed or scheduled with a date |
-| `SH-10` | ⬜ | Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented | `SH-6` | the /api/security/denied-commands payload + security settings page render the baseline-verified state; a tamper fixture flips the indicator; 'N user additions' shown; the anti-drift/anti-LLM-tamper-not-anti-owner threat model is documented in docs/security/ |
+| `SH-10` | ✅ | Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented | `SH-6` | the /api/security/denied-commands payload + security settings page render the baseline-verified state; a tamper fixture flips the indicator; 'N user additions' shown; the anti-drift/anti-LLM-tamper-not-anti-owner threat model is documented in docs/security/ |
 
 ## Atom scopes
 
@@ -97,7 +97,7 @@ Session 4 T4.3; Design S4 (external review); owner task 3 (decide external revie
 
 ### `SH-10` — Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented
 
-**Status:** todo
+**Status:** done
 
 Amendment (2026-07-26) T4.4
 

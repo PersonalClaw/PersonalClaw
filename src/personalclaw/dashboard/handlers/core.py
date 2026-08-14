@@ -303,13 +303,48 @@ async def api_security_stats(_request: web.Request) -> web.Response:
 async def api_security_denied_commands(_request: web.Request) -> web.Response:
     """GET /api/security/denied-commands — the bash denylist for the Security panel.
 
-    ``builtin`` is always-on and read-only; ``user`` is the editable list
-    persisted at ``security.denied_commands`` (edit via PATCH /api/config/personalclaw).
+    ``builtin`` is the packaged baseline: always-on, read-only, and served with the
+    ``baseline`` block the panel needs to say *which* baseline is in force — its
+    ``version``, the ``sha256`` captured at import, how many patterns that covers, and
+    whether the packaged file on disk still matches (``verified``). A file that has
+    diverged is reported, not adopted, so ``count`` stays the number actually enforced.
+
+    ``user_additions`` is the number of user patterns that genuinely *widen* the
+    effective set, derived as ``len(effective) - len(baseline)`` rather than by
+    counting the config list, because a user entry equal to a built-in is deduped away
+    by :func:`denied_command_patterns` and adds nothing. ``user`` is still the raw
+    editable list, persisted at ``security.denied_commands`` (edit via PATCH
+    /api/config/personalclaw); the baseline has no write path at all.
+
+    Reading this re-verifies the baseline, so viewing the panel while the packaged file
+    is diverged writes the same SEL ``baseline_denylist_tamper_attempt`` the periodic
+    doctor probe writes. That is deliberate: an owner looking at a diverged baseline is
+    an auditable event.
     """
-    from personalclaw.security import baseline_denied_command_patterns
+    from personalclaw.security import (
+        baseline_denied_command_patterns,
+        denied_command_patterns,
+        verify_baseline_denylist,
+    )
 
     user = list(AppConfig.load().security.denied_commands)
-    return web.json_response({"builtin": list(baseline_denied_command_patterns()), "user": user})
+    report = verify_baseline_denylist()
+    baseline = list(baseline_denied_command_patterns())
+    effective = denied_command_patterns()
+    return web.json_response(
+        {
+            "builtin": baseline,
+            "user": user,
+            "baseline": {
+                "version": report["version"],
+                "sha256": report["sha256"],
+                "count": report["count"],
+                "verified": report["file_verified"],
+                "detail": report["detail"],
+            },
+            "user_additions": len(effective) - len(baseline),
+        }
+    )
 
 
 async def api_security_egress(_request: web.Request) -> web.Response:
