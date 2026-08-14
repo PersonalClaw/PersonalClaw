@@ -1,12 +1,14 @@
 """Built-in security controls — deny list, sensitive path protection, and audit scanning."""
 
 import fnmatch
+import hashlib
 import json
 import logging
 import os
 import re
 import uuid
 from datetime import datetime, timezone
+from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -559,143 +561,225 @@ _RM_RF_RE = re.compile(
 # read-only in the Security settings panel; users add to it via
 # ``AppConfig.security.denied_commands`` (merged at read time by
 # ``denied_command_patterns()``), never by editing this list.
-BUILTIN_DENIED_COMMAND_PATTERNS: list[str] = [
-    # Credential exfiltration — secrets to S3 / over the wire / via env.
-    r"aws s3 cp .* s3://.*",
-    r"aws s3 mv .* s3://.*",
-    r"aws s3 sync .* s3://.*",
-    r".*echo.*\$AWS_SECRET.*",
-    r".*echo.*\$AWS_SESSION.*",
-    r".*echo.*\$AWS_ACCESS.*",
-    r".*printenv.*AWS.*",
-    r".*personalclaw.*token",
-    r".*env.*grep.*AWS.*",
-    r".*python.*boto3.*get_credentials.*",
-    r".*python.*botocore.*credentials.*",
-    r".*curl.*169\.254\.169\.254.*",
-    r".*wget.*169\.254\.169\.254.*",
-    r".*curl.*\$AWS_SECRET.*",
-    r".*curl.*\$AWS_ACCESS.*",
-    r".*curl.*\$AWS_SESSION.*",
-    # Destructive cloud operations (defense-in-depth; the agent runs unsandboxed).
-    r"aws autoscaling delete-.*",
-    r"aws cloudformation delete-stack.*",
-    r"aws cloudformation update-termination-protection.*",
-    r"aws dynamodb delete-table.*",
-    r"aws ec2 delete-.*",
-    r"aws ec2 terminate-instances.*",
-    r"aws ecr delete-.*",
-    r"aws ecs delete-.*",
-    r"aws eks delete-cluster.*",
-    r"aws elasticache delete-.*",
-    r"aws elb delete-.*",
-    r"aws elbv2 delete-.*",
-    r"aws glue delete-.*",
-    r"aws iam create-access-key.*",
-    r"aws iam delete-.*",
-    r"aws kinesis delete-.*",
-    r"aws kms schedule-key-deletion.*",
-    r"aws lambda delete-function.*",
-    r"aws logs delete-.*",
-    r"aws opensearch delete-.*",
-    r"aws rds delete-.*",
-    r"aws redshift delete-.*",
-    r"aws route53 delete-.*",
-    r"aws s3 rb.*",
-    r"aws s3 rm.*",
-    r"aws s3api delete-.*",
-    r"aws secretsmanager delete-secret.*",
-    r"aws sns delete-.*",
-    r"aws sqs delete-.*",
-    r"aws stepfunctions delete-.*",
-    r"cdk destroy.*",
-    r"kubectl delete namespace.*",
-    r"pulumi destroy.*",
-    r"terraform destroy.*",
-    # Destructive filesystem / permission changes on system paths.
-    r"chmod 777.*",
-    r"chmod.*/usr/.*",
-    r"chmod.*/etc/.*",
-    r"chmod.*/sbin/.*",
-    r"chmod.*/boot/.*",
-    r"chmod.*/lib/.*",
-    r"chmod.*/lib64/.*",
-    r"chown.*/usr/.*",
-    r"chown.*/etc/.*",
-    r"chown.*/sbin/.*",
-    r"chown.*/boot/.*",
-    r"chown.*/lib/.*",
-    r"chown.*/lib64/.*",
-    r"dd if=.*",
-    r"mkfs.*",
-    r"rm -rf /.*",
-    r"rm -rf ~.*",
-    r"git reset --hard.*",
-    # Pipe-to-shell.
-    r"curl .* \| bash",
-    r"curl .* \| sh",
-    r"wget .* \| bash",
-    # Reverse shells.
-    r"nc -e.*",
-    r"ncat -e.*",
-    # Credential / secret env export.
-    r"export AWS_ACCESS.*",
-    r"export AWS_SECRET.*",
-    # Destructive SQL.
-    r"DROP DATABASE.*",
-    r"DROP TABLE.*",
-    r"TRUNCATE TABLE.*",
-    # Unreviewed pushes (work should be reviewed before leaving the machine).
-    r".*git\s+(-\S+\s+[^-]\S*\s+|-\S+\s+)*push(\s.*|$)",
-    r"workspace snapshot push.*",
-    r"bws snapshot push.*",
-    # Reads of credential files (cat/head/tail/less/more/strings/base64/cp/python-open).
-    r".*cat.*/\.aws/.*",
-    r".*cat.*/\.ssh/.*",
-    r".*cat.*/\.gnupg/.*",
-    r".*cat.*/\.gpg/.*",
-    r".*cat.*/\.netrc.*",
-    r".*cat.*/\.git-credentials.*",
-    r".*cat.*/\.npmrc.*",
-    r".*cat.*/\.pypirc.*",
-    r".*cat.*/\.docker/config\.json.*",
-    r".*cat.*/\.kube/config.*",
-    r".*cat.*/\.personalclaw/\.env.*",
-    r".*head.*/\.aws/.*",
-    r".*tail.*/\.aws/.*",
-    r".*less.*/\.aws/.*",
-    r".*more.*/\.aws/.*",
-    r".*strings.*/\.aws/.*",
-    r".*base64.*/\.aws/.*",
-    r".*head.*/\.ssh/.*",
-    r".*tail.*/\.ssh/.*",
-    r".*less.*/\.ssh/.*",
-    r".*more.*/\.ssh/.*",
-    r".*strings.*/\.ssh/.*",
-    r".*base64.*/\.ssh/.*",
-    r".*cp.*/\.aws/.*",
-    r".*cp.*/\.ssh/.*",
-    r".*python.*open.*/\.aws/.*",
-    r".*python.*open.*/\.ssh/.*",
-    # Self-tampering — the agent must not restart/update/kill its own gateway.
-    r".*personal.?claw restart.*",
-    r".*personal.?claw update.*",
-    r".*personal.?claw gateway restart.*",
-    r".*\b(kill|pkill|killall)\b.*\bpersonal[-.]?claw\b.*",
-]
+#
+# The patterns themselves live in the packaged data file
+# ``personalclaw/baseline_denylist.json`` (``{version, sha256, patterns[]}``) so this
+# module and ``guardrails.denylist`` read ONE source instead of two in-code copies.
+# The module-level list below is a loaded copy, re-asserted against the verified
+# baseline on every read: an in-process mutation (a monkeypatch, a ``sitecustomize``,
+# a stray ``.clear()``) is healed rather than silently obeyed. Categories shipped, in
+# order: credential exfiltration, cloud-metadata SSRF, pipe-to-shell, destructive
+# filesystem, destructive cloud, disk/partition writes, reverse shells, credential env
+# export, destructive SQL, unreviewed pushes, credential-file reads, and self-tampering
+# with the running gateway.
+BASELINE_DENYLIST_FILE = "baseline_denylist.json"
+
+
+def _baseline_digest(patterns: tuple[str, ...] | list[str]) -> str:
+    """The canonical baseline fingerprint: sha256 over the newline-joined patterns.
+
+    Content- and order-sensitive, so a removal, an edit and a reordering all show up.
+    """
+    return hashlib.sha256("\n".join(patterns).encode("utf-8")).hexdigest()
+
+
+def _read_packaged_baseline() -> tuple[int, str, tuple[str, ...]]:
+    """Read and verify the packaged baseline denylist.
+
+    Raises on a missing file, malformed JSON, an empty pattern list, or a ``sha256``
+    that disagrees with the patterns shipped alongside it. That is deliberate: the
+    baseline is a required packaged asset, and a security module that cannot prove
+    which commands it must refuse has to fail loudly at import rather than come up
+    with a shorter (or empty) denylist. A packaging miss becomes a hard error instead
+    of a silent bypass.
+    """
+    raw = resources.files("personalclaw").joinpath(BASELINE_DENYLIST_FILE).read_text("utf-8")
+    doc = json.loads(raw)
+    patterns = tuple(str(p) for p in doc["patterns"])
+    if not patterns:
+        raise ValueError("packaged baseline denylist ships no patterns")
+    declared = str(doc["sha256"])
+    actual = _baseline_digest(patterns)
+    if actual != declared:
+        raise ValueError(
+            f"packaged baseline denylist integrity failure: declares {declared}, "
+            f"content hashes to {actual}"
+        )
+    return int(doc["version"]), declared, patterns
+
+
+#: The verified baseline, read once at import. ``_BASELINE_PATTERNS`` is a tuple so the
+#: snapshot cannot be emptied in place, and ``_BASELINE_SHA256`` is the fingerprint every
+#: later read is checked against. After import the *file* is no longer consulted for
+#: content, so deleting or rewriting it on disk cannot shrink what is enforced — the
+#: periodic re-verify reports the divergence instead of adopting it.
+BASELINE_DENYLIST_VERSION, _BASELINE_SHA256, _BASELINE_PATTERNS = _read_packaged_baseline()
+
+#: The live copy every consumer has always imported, kept a ``list`` for its readers.
+#: Healed from ``_BASELINE_PATTERNS`` on every ``denied_command_patterns()`` read.
+BUILTIN_DENIED_COMMAND_PATTERNS: list[str] = list(_BASELINE_PATTERNS)
+
+
+#: Digests of broken baseline states already reported, so an unrecoverable one is logged
+#: once instead of on every screened command. A heal needs no such guard: it repairs the
+#: list, so the next read takes the silent fast path.
+_BASELINE_TAMPER_REPORTED: set[str] = set()
+
+
+def _note_baseline_tamper(digest: str) -> bool:
+    """Record ``digest`` as reported; return True the first time only."""
+    if digest in _BASELINE_TAMPER_REPORTED:
+        return False
+    _BASELINE_TAMPER_REPORTED.add(digest)
+    return True
+
+
+def _log_baseline_event(event_type: str, outcome: str, detail: str, metadata: dict) -> None:
+    """Best-effort SEL write for a baseline heal or a rejected shrink.
+
+    Audit failure must never break command screening, so this swallows and logs.
+    """
+    try:
+        SecurityEventLog().log(
+            SecurityEvent(
+                event_id=uuid.uuid4().hex[:16],
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                event_type=event_type,
+                caller_identity="",
+                agent="personalclaw",
+                source="security",
+                operation="denied_command_patterns",
+                tool_kind="execute_bash",
+                outcome=outcome,
+                resources=detail,
+                metadata=metadata,
+            )
+        )
+    except Exception:  # pragma: no cover - audit must not break screening
+        logger.debug("baseline denylist SEL write failed", exc_info=True)
+
+
+def baseline_denied_command_patterns() -> tuple[str, ...]:
+    """Return the verified baseline patterns, healing tampered in-memory state.
+
+    The fast path is one sha256 over ~110 short strings and emits nothing, so a cold,
+    untampered read is silent — only a digest mismatch does any work or logs anything.
+
+    Repair order: the immutable in-process snapshot, then a fresh read of the packaged
+    file if the snapshot itself was rebound. If neither verifies, the baseline is still
+    not allowed to shrink — the union of every copy seen is returned (never fewer
+    patterns) and the rejected shrink is logged as a tamper attempt.
+    """
+    global _BASELINE_PATTERNS
+    live = BUILTIN_DENIED_COMMAND_PATTERNS
+    if _baseline_digest(live) == _BASELINE_SHA256:
+        return _BASELINE_PATTERNS
+
+    good = _BASELINE_PATTERNS
+    if _baseline_digest(good) != _BASELINE_SHA256:
+        try:
+            _, _, reread = _read_packaged_baseline()
+        except Exception:
+            reread = ()
+        if _baseline_digest(reread) == _BASELINE_SHA256:
+            good = reread
+            _BASELINE_PATTERNS = reread
+        else:
+            union = tuple(dict.fromkeys(tuple(live) + tuple(good) + tuple(reread)))
+            live[:] = list(union)
+            # Unrecoverable state persists across reads, and a bash-heavy session reads
+            # this on every command — log once per distinct broken state, not per read.
+            if _note_baseline_tamper(_baseline_digest(union)):
+                _log_baseline_event(
+                    "baseline_denylist_tamper_attempt",
+                    "rejected",
+                    "no verified baseline source available",
+                    {
+                        "expected_sha256": _BASELINE_SHA256,
+                        "effective_count": len(union),
+                        "reason": "snapshot_and_packaged_file_both_unverified",
+                    },
+                )
+            return union
+
+    restored = [p for p in good if p not in live]
+    live[:] = list(good)
+    _log_baseline_event(
+        "baseline_denylist_reasserted",
+        "healed",
+        f"restored {len(restored)} baseline pattern(s)",
+        {
+            "expected_sha256": _BASELINE_SHA256,
+            "baseline_version": BASELINE_DENYLIST_VERSION,
+            "baseline_count": len(good),
+            "restored_count": len(restored),
+            "restored_sample": restored[:5],
+        },
+    )
+    return good
 
 
 def denied_command_patterns() -> list[str]:
-    """Return the effective bash denied-command regexes: built-ins + any
+    """Return the effective bash denied-command regexes: the packaged baseline plus any
     user-configured additions from ``AppConfig.security.denied_commands``.
 
-    Built-ins are always enforced and cannot be removed via config; user
-    patterns are appended. This is the single source the native bash tool and
-    the Security panel both read.
+    The baseline is re-asserted first, so the result is always a superset of the packaged
+    baseline — built-ins cannot be removed by config *or* by mutating the in-memory list.
+    User patterns are appended and deduped against the baseline, so a user entry equal to
+    a built-in is a no-op rather than a way to shorten the set. This is the single source
+    the native bash tool, the action-provider denylist and the Security panel all read.
     """
     from personalclaw.config.loader import AppConfig
 
-    return BUILTIN_DENIED_COMMAND_PATTERNS + list(AppConfig.load().security.denied_commands)
+    baseline = baseline_denied_command_patterns()
+    seen = set(baseline)
+    additions: list[str] = []
+    for pat in AppConfig.load().security.denied_commands:
+        if isinstance(pat, str) and pat not in seen:
+            seen.add(pat)
+            additions.append(pat)
+    return list(baseline) + additions
+
+
+def verify_baseline_denylist() -> dict:
+    """Re-verify the baseline against the packaged file on disk — the periodic probe.
+
+    Heals in-memory drift the way every read does, then re-reads the packaged file and
+    compares it to the fingerprint captured at import. A file that no longer matches is
+    *not* adopted: the verified in-process baseline stays in force and the divergence is
+    logged as a tamper attempt. This is what catches an edit that rewrote the patterns
+    *and* the ``sha256`` together — self-consistent on disk, but not what we verified.
+    """
+    patterns = baseline_denied_command_patterns()
+    file_ok = True
+    file_detail = ""
+    try:
+        _, _, on_disk = _read_packaged_baseline()
+        file_ok = _baseline_digest(on_disk) == _BASELINE_SHA256
+        if not file_ok:
+            file_detail = "packaged file no longer matches the verified baseline"
+    except Exception as exc:
+        file_ok = False
+        file_detail = f"packaged file unreadable ({type(exc).__name__})"
+    if not file_ok:
+        _log_baseline_event(
+            "baseline_denylist_tamper_attempt",
+            "rejected",
+            file_detail,
+            {
+                "expected_sha256": _BASELINE_SHA256,
+                "baseline_version": BASELINE_DENYLIST_VERSION,
+                "enforced_count": len(patterns),
+                "reason": "packaged_file_diverged",
+            },
+        )
+    return {
+        "version": BASELINE_DENYLIST_VERSION,
+        "sha256": _BASELINE_SHA256,
+        "count": len(patterns),
+        "file_verified": file_ok,
+        "detail": file_detail,
+    }
 
 
 def denied_command_reason(command: str) -> str | None:

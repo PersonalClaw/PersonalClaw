@@ -306,10 +306,10 @@ async def api_security_denied_commands(_request: web.Request) -> web.Response:
     ``builtin`` is always-on and read-only; ``user`` is the editable list
     persisted at ``security.denied_commands`` (edit via PATCH /api/config/personalclaw).
     """
-    from personalclaw.security import BUILTIN_DENIED_COMMAND_PATTERNS
+    from personalclaw.security import baseline_denied_command_patterns
 
     user = list(AppConfig.load().security.denied_commands)
-    return web.json_response({"builtin": list(BUILTIN_DENIED_COMMAND_PATTERNS), "user": user})
+    return web.json_response({"builtin": list(baseline_denied_command_patterns()), "user": user})
 
 
 async def api_security_egress(_request: web.Request) -> web.Response:
