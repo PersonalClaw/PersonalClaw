@@ -423,7 +423,7 @@
           "deps": [
             "KL-9"
           ],
-          "pr": 1265
+          "pr": 1286
         },
         {
           "id": "KL-11",
@@ -434,7 +434,7 @@
           "deps": [
             "KL-10"
           ],
-          "pr": 1268,
+          "pr": 1286,
           "status_note": "Shipped in PR #1268. FOLLOW-UP (not a defect): distance_metric=cosine on the vec0 table is load-bearing but UNRAILED — swapping the real index DDL to L2 leaves all 123 knowledge tests green. The shipped metric is correct and ANN-vs-exact recall is 1.0; what is missing is the regression rail. Two approaches already failed: (1) mutating only the first `distance_metric=cosine` occurrence hits the PROBE's throwaway table (line 164), not the index DDL (line 375); (2) a two-chunk corpus asserted at candidate_chunk_ids(k=1) with far=[3,0,0,0] vs near=[0.8,0.6,0,0] does not discriminate."
         },
         {
@@ -447,7 +447,7 @@
             "KL-9",
             "KL-10"
           ],
-          "pr": 1271
+          "pr": 1286
         }
       ]
     },
@@ -831,7 +831,8 @@
         {
           "id": "PR2-11",
           "title": "Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)",
-          "status": "todo",
+          "status": "done",
+          "pr": 1240,
           "scope": "§4.4 What it absorbs (disposition)",
           "done_when": "heartbeat FTS rebuild, daily history/SEL prunes, skill-curator aging, and inbox 6h maintenance are removed from the heartbeat and run only as remediation-engine registered jobs (verify_skill_integrity finally scheduled), so success criterion #6 'old heartbeat maintenance no longer runs independently' holds after the engine has soaked.",
           "deps": [
@@ -4422,7 +4423,7 @@
             "PCS-1",
             "PCS-3"
           ],
-          "pr": 1272
+          "pr": 1286
         },
         {
           "id": "PCS-5",
@@ -4433,7 +4434,7 @@
           "deps": [
             "PCS-3"
           ],
-          "pr": 1274
+          "pr": 1286
         },
         {
           "id": "PCS-6",
@@ -4933,7 +4934,7 @@
           "id": "PT-4",
           "title": "S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only)",
           "status": "done",
-          "pr": "#1280",
+          "pr": 1290,
           "scope": "Design 'S2 ...' (errorTreatment); Task breakdown Session 2 T2.3",
           "done_when": "ErrorBoundary fallback and IncidentBanner accept an optional visual variant id from the personality context (visual skin only: same copy, same role=alert, same actions, AA-checked); forced error under each personality renders its treatment; under a standard scheme both are pixel-identical to today",
           "deps": [
@@ -5260,7 +5261,8 @@
         {
           "id": "DC-2",
           "title": "S2: Typed capability bridge + gateway seam + Settings panel + app perm",
-          "status": "todo",
+          "status": "done",
+          "pr": 1286,
           "status_note": "T2.1-T2.4 landed and gated 2026-08-13: desktop/capabilities.js state machine (6 caps x 5 grant states, injectable OS stubs, 33 node --test cases), preload collapsed to the ONE window.pclawDesktop namespace (electronAPI retired, loading.html moved with it), gateway seam handlers/desktop.py + dashboard/desktop_registry.py (loopback + X-Local-Secret -> in-memory per-session shell_token; misuse 403 + SEL desktop.register / .state.push / .unregister / .capability_denied), Settings -> Security -> Desktop capabilities panel, and the app-manifest `desktop` permission wired through Permissions -> AppPermissionsWire -> PermissionList. Driven live on an isolated home: browser tab reads {connected:false, capabilities:{}} and the panel says 'Desktop app not connected'; register/push/unregister/stale-token round-trip and the 403s verified with the SEL trail (no credential in any row). REMAINING: (1) V2's on-device walk-through — Electron was never launched here, so the real TCC prompt path and the once-only prompt property are proven only by the state-machine unit tests, not on a device; (2) owner task 2 must approve the consent copy in the panel + Store bullet. DEVIATION: T2.4's 'fixture app can fire a native notification' is enforced at the gateway-mediated capability READ (GET /api/desktop/capabilities/{cap}); no bridge-backed USE route exists until DC-3/DC-5 build one, so the gate ships ahead of its first call site by design. Shipped in PR #1258.",
           "scope": "Session 2 — Capability bridge (T2.1-T2.4, V2); Contracts C1 (preload contextBridge), C2 (gateway desktop route), C3 (app manifest desktop perm)",
           "done_when": "window.pclawDesktop.capabilities probe/request/state works per-capability with unit tests over the state machine and contextIsolation asserted (renderer cannot reach ipc channels outside the namespace); shell POSTs a capability manifest to a new loopback /api/desktop/register (per-session shell_token; misuse -> 403 + SEL) and GET /api/desktop/state reflects availability (absent/'not connected' in a browser tab); Settings -> Security -> Desktop capabilities panel renders truthful per-capability state with request buttons; a fixture app with desktop:['native_notifications'] is enforced like api/events (missing cap -> 403 + SEL capability_denied) and shown on the install consent surface. (Owner task 2 approves the consent copy.)",
@@ -6311,7 +6313,7 @@
           "deps": [
             "OU-1"
           ],
-          "pr": 1260
+          "pr": 1286
         },
         {
           "id": "OU-3",
@@ -6359,7 +6361,7 @@
           "scope": "Session 3 T3.1 (Wave 2); Contracts C2 (approval brief data model: blastRadius/rememberScope added to existing ApprovalSegment)",
           "done_when": "web/src/pages/chat/approvalMeta.ts maps tool name + existing risk + command-screening classification to writes/network/shell/readOnly chips; unit-tested against representative tools (bash, web_fetch, memory write, read-only); NO security-logic change (E4 if any gap tempts one)",
           "deps": [],
-          "pr": 1261
+          "pr": 1286
         },
         {
           "id": "OU-8",
@@ -6371,7 +6373,7 @@
             "OU-7"
           ],
           "status_note": "Four zones + toast compact form shipped and driven live. One deviation: C2's `tool_always` remember-scope is NOT shipped — nothing in the codebase remembers an approval per TOOL (trust/trust_agent/yolo are all every-tool; the one per-tool matcher, config.hooks.auto_approve_tools, has no write path and is pinned into a HookManager at gateway construction), and labelling a wider grant \"always for this tool\" would misdescribe what the click does. The two honest scopes (`no` -> approved, `session` -> trust) plus the pre-existing agent-wide grant ship instead. See the plan's Execution log.",
-          "pr": 1263
+          "pr": 1286
         },
         {
           "id": "OU-9",
@@ -6468,7 +6470,7 @@
           "scope": "Amendment (2026-07-26) T3.4",
           "done_when": "mutating the in-memory denylist at runtime is healed on next denied_command_patterns() read and SEL-logged; effective set is provably a superset of the packaged baseline (property test); user additions still merge (dedupe, no shrink path); guardrails/denylist.py loads the same packaged source",
           "deps": [],
-          "pr": 1276
+          "pr": 1286
         },
         {
           "id": "SH-7",
@@ -6506,7 +6508,7 @@
           "deps": [
             "SH-6"
           ],
-          "pr": 1278
+          "pr": 1290
         }
       ]
     },
@@ -7155,7 +7157,7 @@
           "id": "PP-4",
           "title": "Extract the ledger as a platform primitive (`ledger/` package)",
           "status": "done",
-          "pr": "#1288",
+          "pr": 1290,
           "scope": "`workflows/journal.py` is the best observability surface in the tree — append-only, `redact()` on every write, deterministic `event_id`, monotonic `seq`, epoch stamping, 40+ typed kinds, one file read two ways (resume cache + Run Ledger) — and ONLY workflows have it. `loop/store.py` persists findings/verdicts/status with no event vocabulary; tasks carry status; triggers keep their own log. `learning/mining.py:15` derives from \"the run's own journal\", so the hill-climbing loop covers exactly one of four work-unit kinds. This atom moves the mechanism, not the semantics: no new fields, no new kinds, no behaviour change for workflow runs.",
           "done_when": "A `personalclaw/ledger/` package owns the append/redact/stamp/spill machinery and the kind registry; `workflows/journal.py` becomes a thin workflow-flavoured facade over it with its ledger-kind set unchanged and `LEDGER_KINDS` still asserted by the existing drift test. Byte-identical output for a workflow run: a golden-file test captures a real run's `journal.jsonl` + `events.jsonl` before the move and diffs after, so \"pure extraction\" is proven rather than claimed. `MAX_INLINE_OUTPUT_BYTES` spilling, binary magic-prefix detection and the `result_omitted` stub move with it. No consumer outside workflows is added here — that is `PP-5`.",
           "deps": []
@@ -7471,8 +7473,18 @@
         "plan": "DC"
       },
       {
-        "id": "DC-2",
-        "title": "S2: Typed capability bridge + gateway seam + Settings panel + app perm",
+        "id": "DC-3",
+        "title": "S3: Live audio — push-to-talk mic capture to STT",
+        "plan": "DC"
+      },
+      {
+        "id": "DC-4",
+        "title": "S4: Tray/menu-bar presence + login-item + graceful quit",
+        "plan": "DC"
+      },
+      {
+        "id": "DC-5",
+        "title": "S4: Native notifications as a plan-42 rules target",
         "plan": "DC"
       },
       {
@@ -7873,11 +7885,6 @@
       {
         "id": "PR2-10",
         "title": "ACP mid-turn steer delivery path (§6.2 remainder)",
-        "plan": "PR2"
-      },
-      {
-        "id": "PR2-11",
-        "title": "Retire duplicate heartbeat maintenance jobs into the remediation engine (§4.4)",
         "plan": "PR2"
       },
       {
@@ -9753,9 +9760,9 @@
         "code": "PR2",
         "plan": "PLATFORM-RESILIENCE",
         "total_atoms": 11,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
@@ -10149,9 +10156,9 @@
         "code": "DC",
         "plan": "DESKTOP-CAPABILITIES",
         "total_atoms": 6,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
