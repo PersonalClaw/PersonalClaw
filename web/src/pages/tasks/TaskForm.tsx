@@ -193,7 +193,15 @@ function Section({ title, right, compact, children }: { title: string; right?: R
   return (
     <div className={`flex flex-col ${compact ? 'gap-m' : 'gap-l'}`}>
       <div className="flex items-center gap-s border-b border-outline-variant/30 pb-1.5">
-        <h3 className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</h3>
+        {/* 🔴 h1 → h3, MEASURED. `#/tasks/new` renders `h1 "New task"` and then these section headers as
+            h3 ×5 — the one skipped level left in the app (20 surfaces swept; every other sequence is a
+            lone h1 or a clean 1→2). A screen-reader user navigating by heading falls past a tier that
+            does not exist.
+            Both hosts want h2: on `#/tasks/new` the page h1 is "New task", and in the task detail panel
+            on `#/tasks` the page h1 is "Tasks" while the panel itself carries no heading (a docked panel
+            is not the page — `PageTitle`'s own rule), so these sections sit one level under the page
+            either way. Same resolution as the dashboard's section headers in cycle 150. */}
+        <h2 className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</h2>
         {right}
       </div>
       {children}
