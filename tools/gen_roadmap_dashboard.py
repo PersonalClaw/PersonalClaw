@@ -725,6 +725,7 @@ def render(
     return _PAGE.format(
         css=_CSS,
         stamp=time.strftime("%Y-%m-%d %H:%M", time.localtime()),
+        staleness=_render_staleness(),
         plan_pct=pct(plan_counts["done"], plan_total),
         atom_pct=pct(atom_counts["done"], atom_total) if atom_total else 0,
         atom_total=atom_total,
@@ -735,6 +736,43 @@ def render(
         validation=validation,
         grid=grid_sections,
         extras=extras,
+    )
+
+
+def _render_staleness() -> str:
+    """Say so, on the page, when this was generated from a tree that is behind `main`.
+
+    Every number here comes from CORE's WORKING TREE, so the page describes whatever
+    branch the checkout happens to be on. That is invisible in the output: the "Generated"
+    stamp refreshes on every run, so a page rebuilt hourly from a feature branch that is
+    30 commits behind `main` looks current and reports stale counts. Measured 2026-08-14:
+    the checkout sat on a feature branch 33 commits behind `main` and the page under-
+    reported done atoms by 14 while its timestamp said it was minutes old.
+
+    Best-effort and non-fatal: no network fetch (a stale `origin/main` ref just means a
+    smaller number), and any git failure renders nothing rather than blocking the page.
+    """
+    branch = sh("git rev-parse --abbrev-ref HEAD")
+    behind = sh("git rev-list --count HEAD..origin/main")
+    dirty = sh("git status --porcelain -- docs/roadmap")
+    if not behind.isdigit():
+        return ""
+    n = int(behind)
+    bits = []
+    if n:
+        bits.append(
+            f"generated from <code>{esc(branch)}</code>, which is <b>{n} commit(s) behind "
+            f"<code>origin/main</code></b> — counts below may under-report shipped work"
+        )
+    if dirty:
+        bits.append("roadmap files have uncommitted local edits")
+    if not bits:
+        return ""
+    logger_warn("dashboard generated from a tree behind origin/main: " + "; ".join(bits))
+    return (
+        '<div class="sub" style="background:#3d2b12;border:1px solid #9e6a03;'
+        'border-radius:6px;padding:8px 10px;margin:8px 0;color:#e3b341">'
+        "⚠ " + " · ".join(bits) + "</div>"
     )
 
 
@@ -1335,6 +1373,7 @@ _PAGE = """<!doctype html>
   <h1>PersonalClaw Roadmap</h1>
   <div class="sub">Generated {stamp} · {plan_pct}% of plans done ·
     {atom_pct}% of {atom_total} atoms done · from dag.json + ROADMAP + live git/exec</div>
+  {staleness}
   {hero}
   {legend}
   {working}
