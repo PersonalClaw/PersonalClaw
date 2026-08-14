@@ -1105,9 +1105,14 @@ class TestP6EndToEnd:
     def _stub_scored_judge(self, monkeypatch, score: float):
         # _observe_stage_metric calls loop.judge.assess_cycle for the graded metric.
         from personalclaw.loop import judge as judge_mod
+        from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 
-        v = judge_mod.CycleVerdict(
-            done=False, done_reason="", marginal_value=score, quality_score=score, regressed=False
+        v = JudgeVerdict(
+            verdict=verdict_for_cycle(False, False),
+            done_reason="",
+            marginal_value=score,
+            quality_score=score,
+            regressed=False,
         )
         monkeypatch.setattr(judge_mod, "assess_cycle", lambda *_a, **_k: _async(v))
 

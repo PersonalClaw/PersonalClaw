@@ -79,6 +79,31 @@ the node output, and a PASS that scored none of a declared rubric is flagged
 `protocol_error` rather than being read as "below target". Both are visible in the Run
 Ledger's `judge_verdict` event.
 
+── The THIRD vocabulary, absorbed — and why the proof precondition still does not reach a
+   loop cycle (WF2LOO-16, measured 2026-08-14) ──
+
+`loop/judge.CycleVerdict` was a third dialect over the same decision: `{done, done_reason,
+marginal_value, quality_score, regressed}`. It has been DELETED and its fields live on
+`JudgeVerdict`, because each side was missing what the other had — `marginal_value` and
+`regressed` are the product's ONLY diminishing-returns signals and this record could not
+express them, while the loop could not express proof, the ratchet or the actor matrix.
+`verdict_for_cycle` is the one place that projects the loop's boolean `done` onto the closed
+enum, and `adjudicate` — the asymmetric skeptic merge — moved here with the fields it merges.
+
+The population was measured BEFORE deciding whether the PASS preconditions apply to a loop
+cycle, and the answer was **zero**: every shape `CycleVerdict.to_dict()` could persist failed
+`validate_verdict` at the FIRST step with `unknown verdict None`, the proof check never even
+being reached, and there were 0 persisted loop verdict files to grandfather. The reason is
+upstream of the record: the bundled `task-cycle_judge` prompt asks for exactly
+`{reasoning, done, done_reason, marginal_value, quality_score, regressed}` — it names no
+`verdict`, no `proof`, no `evidence_refs` and no `scores`. Enforcing preconditions against a
+prompt that never stated them is the trap `judge_instruction` exists to prevent, so **the loop
+supervisor still routes on `done`, not on `passed`**, and no loop cycle is failed by this
+module. What DID change is that the loop now cites evidence: `loop/judge`'s
+`evidence_refs_from_observation` derives `evidence_refs` from the block
+`_observe_ground_truth` actually returned, so an anchored cycle carries proof the supervisor
+observed itself. That is the precondition becoming *satisfiable* before it becomes binding.
+
 ── The seams this does not own ──
 
 `JudgeHints.judge_samples` / `sample_count()` are NOT the gate's sample count: the gate reads
@@ -174,6 +199,29 @@ class FreedomLevel(str, Enum):
 #: the middle, and the whole point of the ratchet is that a shortfall is legible.
 SCORE_MIN = 0
 SCORE_MAX = 2
+
+#: `marginal_value` and `quality_score` are 0-5 — a DIFFERENT scale from the 0-2 rubric
+#: dimensions above, kept deliberately when the loop dialect was absorbed (WF2LOO-16).
+#: Rescaling them to 0-2 would silently re-tune three live calibrations at once:
+#: `GRANULARITY_PRESETS`' 1.0/2.0/3.0 marginal thresholds, the loop canary's
+#: `_CANARY_MIN_SEPARATION` of 1.5, and `instrument.reproduce_confirm`'s `quality_score >= 2.0`
+#: ship bar. Two scales with one clamp each beats one scale with three moved thresholds.
+MARGINAL_MIN = 0.0
+MARGINAL_MAX = 5.0
+
+
+def clamp_marginal(value: Any) -> float:
+    """Clamp a 0-5 judge signal (`marginal_value` / `quality_score`); non-numeric reads 0.
+
+    A model that answers `7` for a 0-5 field must not be able to move a threshold it was
+    never scaled against, and a model that answers `"high"` must not raise.
+    """
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return MARGINAL_MIN
+    return max(MARGINAL_MIN, min(MARGINAL_MAX, number))
+
 
 #: N-sample median aggregation on terminal gates. Single-run LLM-judge acceptance was
 #: measured to be indistinguishable from noise, so terminal accept/reject takes the
@@ -344,6 +392,33 @@ class JudgeVerdict:
     #: shape" and "the work fell short" send a reader to two different places.
     protocol_error: bool = False
 
+    # ── The loop dialect, absorbed (WF2LOO-16) ──
+    #: How much THIS cycle advanced beyond prior cycles, 0-5. The product's ONLY
+    #: diminishing-returns signal: the granularity dial and the calibrated returns band both
+    #: read it, and it existed nowhere but `loop/judge.CycleVerdict`, which is why the loop
+    #: kept a private vocabulary rather than speaking this one.
+    marginal_value: float = 0.0
+    #: Absolute quality of the work, 0-5 — the ratchet guardrail, the canary's separation
+    #: metric and an sdlc stage's metric gate all read this exact number.
+    quality_score: float = 0.0
+    #: This cycle made things WORSE than a prior one. Survives `adjudicate` if EITHER judge
+    #: flags it, which is the opposite of how `done` survives.
+    regressed: bool = False
+    #: The verdict's one-line justification. Distinct from `reasoning`, which is the bounded
+    #: chain-of-thought written BEFORE the verdict fields; this is the sentence a reader gets.
+    done_reason: str = ""
+    #: An adversarial skeptic independently cross-checked this verdict (`adjudicate` ran).
+    adversarial: bool = False
+    #: The calibrated returns band this cycle's marginal value was judged against.
+    band_used: float | None = None
+
+    def __post_init__(self) -> None:
+        # The 0-5 clamp is STRUCTURAL, not applied at call sites: a clamp every producer has
+        # to remember is a clamp the next producer forgets, and the three thresholds
+        # calibrated against this scale would then move without anyone editing them.
+        self.marginal_value = clamp_marginal(self.marginal_value)
+        self.quality_score = clamp_marginal(self.quality_score)
+
     @property
     def valid(self) -> bool:
         return not self.invalid_reason
@@ -353,17 +428,42 @@ class JudgeVerdict:
         """A PASS that survived contract validation. Anything else is not a pass."""
         return self.verdict is Verdict.PASS and self.valid and not self.escalated
 
+    @property
+    def done(self) -> bool:
+        """The judge said complete — derived, never stored, so it cannot drift from `verdict`.
+
+        `passed` is the STRONGER claim: done AND contract-valid AND not escalated. The pair is
+        deliberate. A workflow gate routes on `passed`, because its judge was handed the
+        contract by `judge_instruction`. The loop supervisor routes on `done`, because the
+        bundled `task-cycle_judge` prompt was never given the PASS preconditions — see the
+        module docstring's population measurement, which found ZERO loop verdicts that would
+        satisfy them.
+        """
+        return self.verdict is Verdict.PASS
+
     def to_dict(self) -> dict[str, Any]:
         """The record a node output carries, so a template binds VALIDATED data.
 
         `overall` is the engine-computed aggregate, never the model's — `model_overall`
         keeps the model's own claim beside it precisely so the drift is visible instead of
         being resolved silently in the model's favour.
+
+        `done`/`done_reason`/`marginal_value`/`quality_score`/`regressed` are the keys the loop
+        cockpit's ROI rail and verdict panel already read off the persisted shape, so absorbing
+        the loop dialect (WF2LOO-16) is additive on the wire: every key a stored verdict
+        carried before it is still here, spelled the same.
         """
         return {
             "verdict": self.verdict.value,
             "valid": self.valid,
             "passed": self.passed,
+            "done": self.done,
+            "done_reason": self.done_reason,
+            "marginal_value": self.marginal_value,
+            "quality_score": self.quality_score,
+            "regressed": self.regressed,
+            "adversarial": self.adversarial,
+            "band_used": None if self.band_used is None else round(self.band_used, 2),
             "reasoning": self.reasoning,
             "scores": dict(self.scores),
             "overall": self.overall,
@@ -378,6 +478,65 @@ class JudgeVerdict:
             "escalation_reason": self.escalation_reason,
             "fallback_result": self.fallback_result,
         }
+
+
+def verdict_for_cycle(done: bool, regressed: bool) -> Verdict:
+    """Project a loop cycle's boolean done-ness onto the closed enum. The ONE mapping.
+
+    `done` DOMINATES, including over `regressed`, because that is what the supervisor actually
+    does: `loop/kinds/goal._assess_open_ended` returns "complete" on `verdict.done` without
+    consulting `regressed`. A projection that made a done-and-regressed cycle REJECT would
+    describe a stricter engine than the one that runs, and a verdict label that disagrees with
+    the routing it labels is worse than no label. `regressed` is not lost — it is its own
+    field, and it is what `adjudicate` merges asymmetrically.
+
+    A non-done regression is REJECT rather than RETRY because the enum's own docstring says
+    the difference is "what a human reads — a hiccup versus a dead end", and the watchdog
+    already publishes `ratchet_regression` as a separate event and notification precisely
+    because a regression is the one a human should read differently. An ordinary unfinished
+    cycle is RETRY: literally "try the producing node again", which is what the next cycle is.
+    """
+    if done:
+        return Verdict.PASS
+    if regressed:
+        return Verdict.REJECT
+    return Verdict.RETRY
+
+
+def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerdict:
+    """Conservatively merge a primary verdict with an adversarial skeptic.
+
+    The rule is ASYMMETRIC, and the asymmetry is the point. A ``done`` survives ONLY if the
+    skeptic also says done — a claimed completion needs two independent yeses. ``regressed`` is
+    the opposite: it survives if EITHER judge flags it, because a possible regression is worth
+    stalling on. When the skeptic is unavailable (None — it failed to run) the primary stands
+    unchanged: we never manufacture a refutation we did not get.
+
+    marginal/quality/band come from the primary — the skeptic exists to veto a completion, not
+    to re-score. `reasoning` and `evidence_refs` come from the primary too: the pre-WF2LOO-16
+    loop-local version dropped both, which silently discarded the chain-of-thought and the
+    observed ground truth on exactly the high-stakes verdicts that earned a second judge.
+    """
+    if skeptic is None:
+        return primary
+    done = bool(primary.done and skeptic.done)
+    regressed = bool(primary.regressed or skeptic.regressed)
+    reason = primary.done_reason
+    if primary.done and not done:
+        reason = f"skeptic overturned completion: {skeptic.done_reason}".strip()[:500]
+    return JudgeVerdict(
+        verdict=verdict_for_cycle(done, regressed),
+        reasoning=primary.reasoning,
+        scores=dict(primary.scores),
+        evidence_refs=list(primary.evidence_refs),
+        proof=primary.proof,
+        done_reason=reason,
+        marginal_value=primary.marginal_value,
+        quality_score=primary.quality_score,
+        regressed=regressed,
+        adversarial=True,  # the skeptic ran → this verdict was adversarially cross-checked
+        band_used=primary.band_used,
+    )
 
 
 def _normalize_key(text: Any) -> str:
@@ -503,6 +662,13 @@ def validate_verdict(
         ),
         proof=str(raw.get("proof", "")),
         fallback_result=fallback_result,
+        # The absorbed loop dialect: parsed here too, so the six bundled judge STAGES whose
+        # declared schema already includes `marginal_value` stop dropping it on the floor.
+        # Clamped by `__post_init__`, so the range holds on this path as well.
+        marginal_value=clamp_marginal(raw.get("marginal_value")),
+        quality_score=clamp_marginal(raw.get("quality_score")),
+        regressed=bool(raw.get("regressed") is True),
+        done_reason=str(raw.get("done_reason", "")).strip()[:500],
     )
 
     if result.cannot_judge:

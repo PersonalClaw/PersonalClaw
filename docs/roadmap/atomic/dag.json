@@ -2479,7 +2479,8 @@
         },
         {
           "id": "WF2LOO-16",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1292",
           "deps": [
             "WF2LOO-13"
           ],
@@ -7836,6 +7837,11 @@
         "plan": "PP"
       },
       {
+        "id": "PP-5",
+        "title": "Loops emit the ledger (closes the flywheel's loop blind spot)",
+        "plan": "PP"
+      },
+      {
         "id": "PP-6",
         "title": "`workflow replay <run_id>`: recorded-response provider + trajectory diff",
         "plan": "PP"
@@ -7853,6 +7859,11 @@
       {
         "id": "PP-11",
         "title": "Extract `AdmissionPolicy` behind today's lanes (no behaviour change)",
+        "plan": "PP"
+      },
+      {
+        "id": "PP-14",
+        "title": "`SupervisorPolicy`: the declaration, its parser and its validator",
         "plan": "PP"
       },
       {
@@ -7964,11 +7975,6 @@
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
         "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LOO-16",
-        "title": "Reconcile the THIRD verdict vocabulary (loop/judge.CycleVerdict) into the contract",
-        "plan": "WF2LOO"
       },
       {
         "id": "WF2LOO-17",
@@ -9879,9 +9885,9 @@
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
         "total_atoms": 18,
-        "done": 14,
+        "done": 15,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 1
       },
       {

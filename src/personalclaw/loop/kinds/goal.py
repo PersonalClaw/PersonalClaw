@@ -275,7 +275,11 @@ class GoalKind(LoopKindStrategy):
                 )
             except Exception:
                 skeptic = None
-            verdict = judge_mod.adjudicate(verdict, skeptic)
+            # The asymmetric merge is the CONTRACT's rule, not a loop-local one (WF2LOO-16):
+            # a done needs two yeses, a regression needs only one.
+            from personalclaw.workflows.judge_contract import adjudicate
+
+            verdict = adjudicate(verdict, skeptic)
         trail = store.record_marginal_score(loop.id, verdict.marginal_value)
         # Keep the quality trail alongside (the calibrated band's variance sample + a
         # future quality-regression signal); we read the marginal trail for exhaustion.
