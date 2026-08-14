@@ -139,6 +139,16 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
 
 function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; now: number; onOpen: () => void; onAck: () => void; onDelete: () => void }) {
   const km = kindMeta(n.kind)
+  // 🔴 THE ACTIONS WERE BARE VERBS, and the row beside them already knew better. Measured in the open
+  // shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the whole
+  // dropdown — while the dashboard's Action Center rows a few pixels away announce
+  // "Reply: <subject>" / "Dismiss: <subject>". Cycle 149 fixed exactly this on `#/notifications`
+  // (83 rows sharing three names) and cycle 164 gave THIS row a named hit target, which left its two
+  // actions as the last unnamed controls on the surface. WCAG 4.1.2.
+  //
+  // Bound once, like `#/notifications` does: the row and both of its actions must announce the same
+  // subject, or "Dismiss: X" sits next to a row that calls itself Y.
+  const subject = rowSubject([n.title, firstLine(n.body ?? '')])
   return (
     <motion.div layout variants={listItemEnter}
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
@@ -149,7 +159,7 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
       className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
       onClick={onOpen}>
       <UnreadRail tone={km.tone} acked={n.acked} radius="md" />
-      <RowHitTarget label={rowSubject([n.title, firstLine(n.body ?? '')])} />
+      <RowHitTarget label={subject} />
       <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: toneChipBg(km.tone) }}><km.icon size={14} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
@@ -160,10 +170,10 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
       </div>
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {!n.acked && (
-          <button type="button" onClick={onAck} aria-label="Mark read" title="Mark read"
+          <button type="button" onClick={onAck} aria-label={`Mark read: ${subject}`} title="Mark read"
             className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><Check size={14} /></button>
         )}
-        <button type="button" onClick={onDelete} aria-label="Dismiss" title="Dismiss"
+        <button type="button" onClick={onDelete} aria-label={`Dismiss: ${subject}`} title="Dismiss"
           className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><X size={14} /></button>
       </div>
     </motion.div>
