@@ -1826,6 +1826,58 @@ class KnowledgeStore:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    #: The whitespace set ``chunking.chunk_text`` strips before deciding a document is
+    #: empty. SQLite's ``TRIM`` strips ONLY spaces unless the set is spelled out, so a
+    #: bare ``TRIM(content)`` would keep selecting a tab/newline-only item that the
+    #: chunker then declines — a backlog entry that can never drain, which makes a
+    #: "completed" backfill re-run forever instead of being a no-op.
+    _CHUNKABLE_WHITESPACE = " \t\n\r\v\f"
+
+    #: The backlog predicate, in ONE place: an item needs chunking when it is active,
+    #: not archived, carries non-whitespace content, and owns no chunk rows. Both the
+    #: COUNT and the batch selector share it so the count can never disagree with the
+    #: work — the backfill's resume state IS this query, never a persisted cursor, so no
+    #: crash window can leave a cursor claiming work that the rows say is done.
+    _CHUNK_BACKLOG_WHERE = (
+        "FROM items WHERE status = 'active' "
+        "AND COALESCE(is_archived, 0) = 0 "
+        "AND LENGTH(TRIM(COALESCE(content, ''), ?)) > 0 "
+        "AND NOT EXISTS (SELECT 1 FROM chunks WHERE chunks.item_id = items.id) "
+    )
+
+    def count_items_missing_chunks(self) -> int:
+        """How many items still need chunking (KL-12/H1.5).
+
+        Zero means the library is fully chunked, so a boot hook costs one COUNT. An item
+        leaves this backlog the instant its chunk rows commit, which is what makes an
+        interrupted backfill resumable without remembering anything.
+        """
+        row = self.db.execute(
+            f"SELECT COUNT(*) AS n {self._CHUNK_BACKLOG_WHERE}",  # noqa: S608 — fixed literal
+            (self._CHUNKABLE_WHITESPACE,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def items_missing_chunks(self, limit: int, after_id: str | None = None) -> list[dict]:
+        """One bounded batch of the chunk backlog, as ``{id, content}`` in id order.
+
+        ``after_id`` is an exclusive keyset cursor rather than an OFFSET: it bounds peak
+        memory (item content is unbounded) AND guarantees forward progress past an item
+        the chunker declines, which re-fetching the backlog head would loop on forever.
+        """
+        params: list[object] = [self._CHUNKABLE_WHITESPACE]
+        cursor = ""
+        if after_id:
+            cursor = "AND items.id > ? "
+            params.append(after_id)
+        params.append(int(limit))
+        rows = self.db.execute(
+            f"SELECT id, content {self._CHUNK_BACKLOG_WHERE}{cursor}"  # noqa: S608
+            "ORDER BY items.id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [{"id": r["id"], "content": r["content"] or ""} for r in rows]
+
     def reembed_all(self, embedder, on_progress=None) -> dict:
         """Re-embed every active knowledge item with ``embedder`` (which exposes
         ``embed_for_item(title, summary)``, matching the ingestion pipeline).

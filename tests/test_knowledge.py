@@ -1919,3 +1919,309 @@ class TestDoctorVectorIndexLine:
         assert res.evidence["extension_available"] is False
         assert "exact scan" in res.detail
         assert "sqlite-vec" in res.evidence["remedy"]
+
+
+# ── KL-12: the resumable chunk backfill ────────────────────────────────────────
+
+
+class _ChunkEmb:
+    """A deterministic stand-in for the embedding model. ``embed`` is the only method the
+    chunk path uses (the real one also has ``embed_for_item``, which the backfill must NOT
+    touch — item vectors are ``reembed_all``'s business).
+
+    The query "needle" and the document marker "sentinel" both point exactly at
+    [1,0,0,0]; anything else sits at cosine 0.30 to it — above the retriever's 0.25 floor,
+    so ordinary chunks are real candidates and the marked passage still wins. The two words
+    differ on purpose: the query term appears NOWHERE in the corpus, so the match is
+    semantic-only and the pre-chunk locator is the honest null rather than a term-scan hit.
+    """
+
+    _ALIGNED = ("needle", "sentinel")
+
+    def __init__(self):
+        self.calls = 0
+
+    def embed(self, text):
+        self.calls += 1
+        hot = any(w in (text or "") for w in self._ALIGNED)
+        return [1.0, 0.0, 0.0, 0.0] if hot else [0.30, 0.9539392, 0.0, 0.0]
+
+
+class _KilledEmb(_ChunkEmb):
+    """``_ChunkEmb`` that dies after *after* embed calls with a ``KeyboardInterrupt`` — a
+    BaseException, so it unwinds through the per-item and per-batch ``except Exception``
+    guards exactly as a Ctrl-C or a SIGINT would. Simply calling the backfill twice would
+    not test resume; this leaves the run genuinely half-done, mid-batch."""
+
+    def __init__(self, after):
+        super().__init__()
+        self.after = after
+
+    def embed(self, text):
+        if self.calls >= self.after:
+            raise KeyboardInterrupt("simulated kill mid-backfill")
+        return super().embed(text)
+
+
+def _long_doc(marker: str, *, needle_section: int | None = None, parts: int = 5) -> str:
+    """A multi-section markdown document long enough to chunk on real boundaries, with an
+    optional "needle" buried in the MIDDLE rather than at the top — the shape the whole
+    chunking arc exists for."""
+    out = [f"# {marker}", "", "Opening paragraph of the document.", ""]
+    for p in range(1, parts + 1):
+        out += [f"## Part {p} of {marker}", ""]
+        body = f"filler prose for part {p} of {marker}. " * 30
+        if needle_section == p:
+            body += "The sentinel answer lives deep in the middle of this document. "
+        out += [body, ""]
+    return "\n".join(out)
+
+
+def _prechunk_corpus(store, *, items=6, needle_at=3):
+    """A pre-KL-9 library: items with content and a whole-item vector but NO chunk rows.
+    The marked passage sits mid-document in item index *needle_at*. Returns the item ids."""
+    ids = []
+    for i in range(items):
+        iid = mk(
+            store,
+            f"doc {i}",
+            _long_doc(f"doc {i}", needle_section=3 if i == needle_at else None),
+            "note",
+            embedding=_v(0.30, 0.9539392, 0.0, 0.0),
+        )
+        ids.append(iid)
+    assert store.get_chunks(ids[0]) == []
+    return ids
+
+
+def _chunk_ids_by_item(store, item_ids):
+    return {iid: [c["id"] for c in store.get_chunks(iid)] for iid in item_ids}
+
+
+class TestChunkBacklogQuery:
+    """The backfill's resume state IS this query — so it is tested on its own."""
+
+    def test_counts_only_active_content_bearing_unchunked_items(self, store):
+        from personalclaw.knowledge.chunking import Chunk
+
+        live = mk(store, "live", "some real content", "note")
+        blank = mk(store, "blank", "", "note")
+        whitespace = mk(store, "ws", "\n\n \t\r\n", "note")
+        archived = mk(store, "archived", "content in an archived item", "note")
+        store.update_item(archived, is_archived=1)
+        assert store.count_items_missing_chunks() == 1, "only the one live, content-bearing item"
+
+        store.replace_chunks(live, [Chunk(text="x", section=None, line_start=1, line_end=1)])
+        assert store.count_items_missing_chunks() == 0
+        # The blank ones are excluded by the SAME whitespace set `chunk_text` strips, so the
+        # chunker can never decline an item the backlog insists still needs work.
+        assert (blank, whitespace) and store.items_missing_chunks(limit=10) == []
+
+    def test_the_batch_cursor_walks_forward_and_bounds_the_fetch(self, store):
+        ids = sorted(mk(store, f"d{i}", f"content {i}", "note") for i in range(7))
+        first = store.items_missing_chunks(limit=3)
+        assert [r["id"] for r in first] == ids[:3]
+        assert all(r["content"].startswith("content ") for r in first)
+        second = store.items_missing_chunks(limit=3, after_id=first[-1]["id"])
+        assert [r["id"] for r in second] == ids[3:6]
+        assert [r["id"] for r in store.items_missing_chunks(limit=3, after_id=ids[5])] == ids[6:]
+
+
+class TestChunkBackfill:
+    """H1.5 — resumable, batched, progress-reporting, and idempotent."""
+
+    def _run(self, store, emb, **kw):
+        from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
+
+        return backfill_item_chunks(store, emb, **kw)
+
+    def test_it_chunks_every_pre_existing_item_and_reports_progress(self, store):
+        ids = _prechunk_corpus(store, items=6)
+        seen = []
+        res = self._run(
+            store, _ChunkEmb(), batch_size=2, on_progress=lambda d, t: seen.append((d, t))
+        )
+        assert res["chunked"] == 6 and res["failed"] == 0 and res["unchanged"] == 0
+        assert res["remaining"] == 0 and res["total"] == 6
+        # Progress fires once per item with a stable total, like reembed_all's contract.
+        assert seen == [(i, 6) for i in range(1, 7)]
+        for iid in ids:
+            chunks = store.get_chunks(iid, with_embedding=True)
+            assert len(chunks) > 1, "a multi-section document must produce several chunks"
+            assert [c["chunk_index"] for c in chunks] == list(range(len(chunks)))
+            assert all(c["embedding"] for c in chunks), "backfilled chunks carry vectors"
+            assert any(c["section"] for c in chunks), "structural sections are preserved"
+
+    def test_it_leaves_the_items_own_whole_item_vectors_alone(self, store):
+        """Amendment Design (c) keeps re-embed a separate, migration-level concern. The
+        backfill adds the chunk layer BENEATH the item vectors; it must not rewrite them."""
+        ids = _prechunk_corpus(store, items=3)
+        before = {
+            r["id"]: r["embedding"]
+            for r in store.db.execute("SELECT id, embedding FROM items").fetchall()
+        }
+        self._run(store, _ChunkEmb())
+        after = {
+            r["id"]: r["embedding"]
+            for r in store.db.execute("SELECT id, embedding FROM items").fetchall()
+        }
+        assert before == after and all(before[i] for i in ids)
+
+    def test_max_items_bounds_one_invocation_and_the_rest_stays_pending(self, store):
+        _prechunk_corpus(store, items=6)
+        res = self._run(store, _ChunkEmb(), batch_size=2, max_items=3)
+        assert res["done"] == 3 and res["chunked"] == 3 and res["remaining"] == 3
+        assert store.count_items_missing_chunks() == 3
+        assert self._run(store, _ChunkEmb())["chunked"] == 3
+        assert store.count_items_missing_chunks() == 0
+
+    def test_a_completed_backfill_is_a_no_op_not_a_rechunk(self, store):
+        """Re-running must not mint fresh chunk uuids: a re-chunk churns the ANN index and
+        orphans the vectors keyed on the old ids (see replace_chunks)."""
+        ids = _prechunk_corpus(store, items=4)
+        self._run(store, _ChunkEmb())
+        before = _chunk_ids_by_item(store, ids)
+        emb = _ChunkEmb()
+        res = self._run(store, emb)
+        assert res == {
+            "chunked": 0,
+            "unchanged": 0,
+            "failed": 0,
+            "done": 0,
+            "remaining": 0,
+            "total": 0,
+        }
+        assert emb.calls == 0, "a no-op backfill must not even call the embedding model"
+        assert _chunk_ids_by_item(store, ids) == before
+
+    def test_an_interrupted_backfill_resumes_without_duplicating_or_skipping(self, store):
+        """The central rail. Kill the run mid-batch (a KeyboardInterrupt out of the embedder,
+        which no ``except Exception`` in the path catches), then restart it. The items already
+        committed must keep their EXACT chunk rows — an id change would mean duplicated work,
+        a churned ANN index and orphaned vectors — and the rest must all land."""
+        ids = _prechunk_corpus(store, items=6)
+        with pytest.raises(KeyboardInterrupt):
+            self._run(store, _KilledEmb(after=14), batch_size=2)
+
+        partial = [i for i in ids if store.get_chunks(i)]
+        assert 0 < len(partial) < 6, "the interrupt must land genuinely mid-run"
+        committed = _chunk_ids_by_item(store, partial)
+        assert store.count_items_missing_chunks() == 6 - len(partial)
+
+        res = self._run(store, _ChunkEmb(), batch_size=2)
+        assert res["chunked"] == 6 - len(partial), "resume does exactly the remaining work"
+        # No skipping: every item is chunked, densely, exactly once.
+        assert store.count_items_missing_chunks() == 0
+        for iid in ids:
+            got = store.get_chunks(iid)
+            assert got, f"{iid} was skipped by the resume"
+            assert [c["chunk_index"] for c in got] == list(range(len(got)))
+        # No duplicating: the pre-interrupt rows are untouched, not re-chunked.
+        assert _chunk_ids_by_item(store, partial) == committed
+        # And the whole thing equals a single clean run over the same corpus.
+        assert (
+            sum(len(v) for v in _chunk_ids_by_item(store, ids).values())
+            == store.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        )
+
+    def test_it_defers_instead_of_faking_progress_when_no_model_can_embed(self, store):
+        """Without a usable ``embed`` the chunk write path writes nothing at all, so a run
+        would report items done while the backlog stayed exactly as it was."""
+        _prechunk_corpus(store, items=3)
+
+        class _NoEmbed:
+            def embed_for_item(self, *a):  # the item-vector method is not enough
+                return [1.0, 0.0, 0.0, 0.0]
+
+        res = self._run(store, _NoEmbed())
+        assert res["skipped_no_embedder"] is True and res["done"] == 0
+        assert res["remaining"] == 3 and store.count_items_missing_chunks() == 3
+
+    def test_a_failing_item_does_not_end_the_run(self, store):
+        ids = _prechunk_corpus(store, items=4)
+        emb = _ChunkEmb()
+        real = store.replace_chunks
+
+        def boom(item_id, chunks):
+            if item_id == ids[1]:
+                raise RuntimeError("forced: chunk write failed")
+            return real(item_id, chunks)
+
+        store.replace_chunks = boom
+        try:
+            res = self._run(store, emb, batch_size=2)
+        finally:
+            store.replace_chunks = real
+        # ``unchanged``, not ``failed``: the ingest chunk unit swallows its own faults by
+        # design (a chunk hiccup must not fail an ingest), so the backfill sees "wrote no
+        # rows". What matters is that the run continued AND the item stayed pending.
+        assert res["chunked"] == 3 and res["unchanged"] == 1 and res["remaining"] == 1
+        assert self._run(store, _ChunkEmb())["chunked"] == 1
+
+    def test_the_ann_index_is_not_left_stale_by_the_bulk_write(self, store):
+        """The back-door staleness KL-11 warns about: a bulk writer that bypassed
+        ``replace_chunks`` would leave every backfilled item's vectors unindexed, and a
+        silently-unindexed chunk is a silently-unrecallable one."""
+        _prechunk_corpus(store, items=6)
+        self._run(store, _ChunkEmb(), batch_size=2)
+        live = store.db.execute(
+            "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchone()[0]
+        assert live > 6
+        cov = store.vec_index.coverage()["dimensions"]
+        assert cov == {"4": {"indexed": live, "live": live}}, "every backfilled vector is indexed"
+
+
+class TestMidBackfillSearch:
+    """A half-backfilled library must degrade to whole-item vectors, never to zero."""
+
+    def _retriever(self, store, emb):
+        from personalclaw.knowledge.retrieval import HybridRetriever
+
+        return HybridRetriever(store, embedder=emb.embed)
+
+    def test_search_stays_non_empty_and_sane_at_every_stage(self, store):
+        from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
+
+        ids = _prechunk_corpus(store, items=6, needle_at=3)
+        emb = _ChunkEmb()
+        retriever = self._retriever(store, emb)
+
+        assert retriever.search("needle", limit=10), "an unbackfilled library still answers"
+
+        backfill_item_chunks(store, emb, batch_size=2, max_items=2)
+        assert store.count_items_missing_chunks() == 4
+        mid = retriever.search("needle", limit=10)
+        assert mid, "mid-backfill search must never return zero"
+        # Both kinds of item are still reachable: the chunked ones and the ones that still
+        # have only a whole-item vector.
+        chunked = {i for i in ids if store.get_chunks(i)}
+        found = {r["id"] for r in mid}
+        assert found & chunked and found - chunked
+
+        after = None
+        backfill_item_chunks(store, emb, batch_size=2)
+        after = retriever.search("needle", limit=10)
+        assert after, "a fully backfilled library answers off chunk vectors"
+        # And once the needle's own item is chunked, the deep-middle passage wins outright.
+        assert after[0]["id"] == ids[3]
+
+    def test_the_needle_item_gains_a_section_locator_only_after_it_is_chunked(self, store):
+        """The user-visible payload: the answer buried mid-document becomes retrievable AND
+        citable to its section — which is precisely what a pre-chunking library cannot do."""
+        from personalclaw.knowledge.chunk_backfill import backfill_item_chunks
+
+        ids = _prechunk_corpus(store, items=4, needle_at=2)
+        emb = _ChunkEmb()
+        retriever = self._retriever(store, emb)
+
+        before = {r["id"]: r for r in retriever.search("needle", limit=10)}[ids[2]]
+        assert before["section"] is None and before["line_range"] is None, "the honest null"
+
+        backfill_item_chunks(store, emb)
+        after = {r["id"]: r for r in retriever.search("needle", limit=10)}[ids[2]]
+        assert "Part 3" in (after["section"] or ""), after["section"]
+        assert after["line_range"][0] > 4, "cited to the middle, not the top of the document"
+        assert after["deep_link"].endswith(
+            f"?loc=L{after['line_range'][0]}-{after['line_range'][1]}"
+        )
