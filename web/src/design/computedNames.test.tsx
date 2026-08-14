@@ -142,6 +142,29 @@ describe("the notification row actions name their row, and stay bounded", () => 
     expect(code, 'the row hit target shares the actions\' subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
   })
 
+  it("the bell's shade actions name their row too, and bind the subject once", () => {
+    // 🔴 Cycle 171: the SAME notification row, in the dropdown, still had bare verbs. Measured in the
+    // open shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the
+    // whole panel — while the Action Center rows a few pixels away already announced
+    // "Reply: <subject>". Cycle 164 had given this row a named hit target, which left its two actions
+    // as the last unnamed controls on the surface.
+    //
+    // 🔑 The rail lives beside the page's because they are ONE row shown on two surfaces: a
+    // notification must not announce itself differently depending on which surface renders it. After:
+    // 12 named controls in the shade, **0 bare verbs, 0 duplicate names**, both themes.
+    const bell = codeOf('ui/NotificationBell.tsx')
+    expect(bell, 'the subject is computed once for the row and both actions')
+      .toMatch(/const subject = rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
+    for (const verb of ['Mark read', 'Dismiss']) {
+      expect(bell, `${verb} must name its row`).toMatch(new RegExp(`aria-label=\\{\`${verb}: \\$\\{subject\\}\`\\}`))
+    }
+    expect(bell, 'the row itself shares that subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
+    // 🪤 And the VISIBLE hint stays the bare verb — cycle 119's contract. A tooltip repeating the whole
+    // subject on hover is noise for a sighted user who can already read the row.
+    expect(bell).toMatch(/title="Mark read"/)
+    expect(bell).toMatch(/title="Dismiss"/)
+  })
+
   it('the composition and its cap live in the shared helper, not here', () => {
     expect(code).toMatch(/rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
     expect(code, 'a local re-implementation is the drift this closed').not.toMatch(/function rowName/)
