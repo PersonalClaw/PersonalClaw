@@ -247,6 +247,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **Anthropic models now reuse the stable head of a conversation instead of re-reading it every
+  turn.** Anthropic bills prompt content it has already seen at a fraction of the normal input
+  price, but only when the request marks where the reusable part ends — and PersonalClaw never sent
+  that mark, so every turn paid full price for the same assembled context, memory and skills. It is
+  sent now, on the last piece of stable content in each request, which means from the second turn of
+  a conversation onward that whole prefix is billed at the reduced rate and comes back faster.
+  Nothing about *what* the model is told changes: the same words in the same order, just flagged as
+  reusable. Only Anthropic-family models are affected — providers that cache on their own
+  (OpenAI-compatible endpoints) already benefited from the prompt reordering in the previous
+  release, and a provider with no cache support sends byte-for-byte the request it sent before.
+  Anthropic reports how much of each request it served from cache; showing that back to you as a
+  per-turn saving is still to come.
+
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it
   claimed to.** If your operating system is set to reduce motion, PersonalClaw relied on a framework
   setting that neutralises movement *across the screen* but leaves the underlying spring running, so

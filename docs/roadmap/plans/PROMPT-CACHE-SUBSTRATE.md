@@ -294,3 +294,75 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   `make lint` clean (697 files); 2 new `test_context.py` cases (date survives a shrunken-cap
   truncation as the tail block; present exactly once on a small context) + full `test_context.py`
   (52) + `test_context_engine.py`/`test_thread_context.py`/`test_project_context.py` (51) pass.
+
+- **PCS-4 DONE — the Anthropic EXPLICIT translation (§C4, T2.3 + T2.5).** `llm/anthropic.py` is now
+  the one core module that names `cache_control`. `_translate_messages` reads the NEUTRAL
+  `CACHE_HINT_KEY` PCS-3 places and attaches `{"type": "ephemeral"}` to the **last content block** of
+  the hinted message: a hinted `system` message forces `system=` from a bare `str` to a
+  BLOCK-SHAPED one-element text list (§C4's asymmetry, owned entirely by the adapter); a hinted
+  plain `user`/`assistant` message becomes one marked `text` block; a hinted
+  assistant-with-`tool_calls` / `tool` message keeps its block list and only its trailing block is
+  marked. `AnthropicProvider.prompt_cache = PromptCache.EXPLICIT` (the attr `runtime.py:775` reads by
+  `getattr`, mirroring `supports_tools`), so the marker ships on real Anthropic turns as of this
+  change. A hint on an absent/empty span, or on the PCS-1 volatile note, is a NO-OP — never a marker
+  on nothing, never a breakpoint on per-turn content. The neutral hint key and its `generation` are
+  consumed, never forwarded to the wire.
+  **Guardrail 2 held and was falsified in both directions:** an unhinted list produces the pre-PCS-4
+  kwargs exactly, `system` still a `str`, pinned against a hand-written literal; making the
+  block-shaped `system=` UNCONDITIONAL turned 16 tests red (5 new + 11 of PCS-1's own byte-identity
+  cases) before being reverted, and injecting a `cache_control` literal into a second core module
+  turned the new rails sweep red (both offender and vacuity assertions) before being reverted.
+  **Scope:** PCS-4 only. `prompt_cache_enabled` stays PCS-5's (no config field added here, so the
+  marker is currently unconditional for Anthropic); the per-turn saved-USD/hit-rate readout stays
+  PCS-7's. **CHANGELOG:** yes, under Changed — a user on an Anthropic model gets a cheaper, faster
+  second turn onward starting with this change, so it is perceivable without PCS-5/PCS-7.
+  **Gates:** `make lint` clean (black/isort/flake8 + mypy 811 files); new
+  `tests/test_prompt_cache_wire_translation.py` 19/19 **serially (`-n 0`)** as well as under xdist;
+  the touched neighbours green together (`test_anthropic_wire_order.py`,
+  `test_prompt_cache_marker.py`, `test_anthropic_cache_usage.py`, `test_model_provider_complete.py` —
+  57 serially); FULL suite **19020 passed / 30 skipped / 12 xfailed / 0 failed** in 4m55s, with the
+  +19 delta over this branch point's own collection (19041 → 19060) exactly accounting for the new
+  file.
+
+- **PCS-4 DISCOVERY — the rails sweep must match vendor LITERALS, not the word "ephemeral".** The
+  `done_when` says `cache_control`/`ephemeral` may appear only in `llm/anthropic.py`, but core uses
+  the bare word for ~20 unrelated things (ephemeral ports in `gateway.py`, `LearningGate.EPHEMERAL`,
+  `skills/ephemeral.py`), so a word-level sweep would have been ~20 false positives on day one. The
+  sweep therefore matches ACTIONABLE syntax — `cache_control`, `cachePoint` (Bedrock's shape, PCS-8's
+  to translate in-app), and a `"type": "ephemeral"` literal — exactly mirroring the choice
+  `test_provider_boundary_residue.py` already documents ("it deliberately does NOT flag vendor words
+  in prose"). A vacuity assertion pins that the patterns still match the ONE file allowed to carry
+  them, so a rename can never leave a rail that passes by matching nothing.
+
+- **PCS-4 DISCOVERY — §C4's "the marker normally attaches to the last system block" is not what the
+  native loop produces today.** §C4 reasons that after §C2 the stable span IS `system=`. In the
+  as-built loop `self._messages` never holds a NON-volatile `system` message: `stream()` appends the
+  assembled context as a `user` message (`runtime.py:722`) and the turn_note as the volatile `system`
+  note (`:735`), and nothing else. `mark_cacheable_prefix` therefore selects the last
+  `user`/`assistant` message, so the breakpoint lands on that message's trailing block and `system=`
+  stays a `str` on the real path. That is the correct Anthropic incremental-caching shape and needs no
+  change — but the block-shaped `system=` branch is currently reachable only via a caller that hoists
+  stable system content, so it is implemented and tested per §C4 rather than exercised by the loop.
+  It becomes the normal case the moment the agent's system prompt moves into `self._messages`; PCS-7's
+  V2 measurement is what will show which block the provider actually cached.
+
+- **PCS-4 DECISION (not a deviation) — block-shaped `system=` is ONE text block, not one per part.**
+  It carries the same `"\n\n"`-joined string the `str` form returns, so block-shaping cannot change
+  *what the model is told* (soul guardrail 3). The breakpoint position is unaffected: a hinted system
+  message is by construction the LAST hoisted one (the neutral marker picks the last non-tool,
+  non-volatile message, so anything after it is a tool result or a volatile note), and caching
+  "everything up to and including the hinted span" is exactly one block here.
+
+- **PCS-4 DISCOVERY — PCS-3's "OpenAI adapter declares AUTOMATIC" clause is UNMET on `main`.**
+  `llm/openai.py` carries no `prompt_cache` declaration, so `OpenAIProvider` inherits
+  `PromptCache.NONE` from `ModelProvider` (`base.py:55`). Behaviour is identical today — neither
+  posture places a marker and OpenAI caches on its own — so this is a declaration/legibility gap, not
+  a defect, and it is PCS-3's row rather than PCS-4's. Left untouched here so the miss stays visible;
+  it is a one-line fix whenever PCS-3 is revisited (PCS-7's V2 asserts "OpenAI reports vendor reads
+  with no marker sent", which will read the posture).
+
+- **PCS-4 — no live cache hit observed; the evidence here is kwargs-level.** The marker was verified
+  by capturing the exact request kwargs handed to the SDK (a fake `messages.stream` records them),
+  not against a live provider response. PCS-6 already ships the reader, so a hit is observable the
+  moment a real Anthropic turn runs — soul guardrail 4's measure-before-claiming gate stays PCS-7's
+  V2 and is NOT claimed here.

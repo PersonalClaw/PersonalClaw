@@ -36,6 +36,7 @@ from personalclaw.llm.base import (
     ModelProvider,
 )
 from personalclaw.llm.credentials import Credential
+from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing
 
 logger = logging.getLogger(__name__)
@@ -126,12 +127,30 @@ def _translate_tools(tools: list[dict]) -> list[dict]:
 # Neutral message-dict marker (PCS-1 / F1): a ``role: "system"`` message carrying
 # ``{_VOLATILE_MESSAGE_KEY: True}`` holds per-turn VOLATILE content (the native loop's
 # turn_note — tool catalog + group stubs — changes every turn). The writer is the native
-# runtime; this is its sole reader. The word ``cache_control`` deliberately does not appear
-# here — this atom only relocates the volatile note; cache-point tagging is PCS-2.
+# runtime; this is its sole reader.
 _VOLATILE_MESSAGE_KEY = "_volatile"
 
+# Anthropic's wire form for a cache breakpoint (PCS-4 / §C4). THIS FILE IS THE ONLY
+# PLACE IN CORE THAT MAY NAME IT — `llm/anthropic.py` is one of the two in-core
+# protocol clients enumerated in docs/architecture/provider-boundary.md, and the
+# rails sweep in tests/test_prompt_cache_wire_translation.py fails the build if
+# ``cache_control`` / ``ephemeral`` appear in any other core module. Core emits the
+# NEUTRAL ``_cache_hint`` key (llm/prompt_cache.py); this is where it becomes vendor
+# syntax. ``ephemeral`` is Anthropic's ~5-minute TTL tier.
+_CACHE_CONTROL_EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
 
-def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+
+def _mark_block(block: dict) -> dict:
+    """Return ``block`` with Anthropic's cache breakpoint attached.
+
+    Mutates and returns the block. Every block this touches is one the translation
+    itself just constructed (or shallow-copied), never a caller's dict.
+    """
+    block["cache_control"] = dict(_CACHE_CONTROL_EPHEMERAL)
+    return block
+
+
+def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
 
     * ``role: "system"`` messages are concatenated into the returned system
@@ -154,27 +173,58 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     * Plain ``user``/``assistant`` string messages pass through as
       ``{role, content}``.
 
-    Byte-identical invariant: a ``messages`` list with NO volatile-tagged message
-    produces exactly the ``(system, out)`` this returned before PCS-1.
+    Cache translation (PCS-4 / §C4): a message carrying the NEUTRAL
+    :data:`~personalclaw.llm.prompt_cache.CACHE_HINT_KEY` is the trailing boundary of
+    the cacheable span, and Anthropic marks that boundary with ``cache_control`` on a
+    CONTENT BLOCK — so the hinted message's LAST block gets the marker:
+
+    * a hinted **system** message forces ``system=`` to become BLOCK-SHAPED (a
+      one-element list of ``{"type": "text", ...}``) so the marker has a block to sit
+      on; the text is the same string the unhinted path would have returned, so the
+      model is told byte-for-byte the same thing (soul guardrail 3). Anthropic serves
+      ``system=`` ahead of ``messages[0]``, so a breakpoint there caches the whole
+      stable head.
+    * a hinted plain ``user``/``assistant`` message becomes block-shaped the same way
+      (``content`` string → one marked ``text`` block).
+    * a hinted assistant-with-``tool_calls`` / ``tool`` message keeps its block list
+      and the marker lands on the LAST block.
+    * a hint on an ABSENT or EMPTY span is a NO-OP: there is no block to mark, so
+      nothing is emitted (never a marker on nothing).
+    * a hint on a VOLATILE note is ignored — per-turn content is not cacheable by
+      construction. (The neutral marker layer never places one there; this is the
+      belt-and-braces read.)
+
+    Byte-identical invariant: a ``messages`` list with NO volatile-tagged and NO
+    cache-hinted message produces exactly the ``(system, out)`` this returned before
+    PCS-1 — a ``str`` ``system`` included. ``system=`` is block-shaped ONLY when a
+    hinted system message is present, so an unhinted request serializes today's bytes.
     """
     system_parts: list[str] = []
     out: list[dict] = []
     # Volatile system notes, relocated to the tail after the loop (empty ⇒ the
     # return is byte-for-byte the pre-PCS-1 behavior).
     volatile_tail: list[dict] = []
+    # True once a hoisted (non-volatile, non-empty) system message carried the neutral
+    # cache hint. Only then does ``system=`` become block-shaped.
+    system_hinted = False
 
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content")
+        hinted = CACHE_HINT_KEY in msg
 
         if role == "system":
             if msg.get(_VOLATILE_MESSAGE_KEY):
                 # Volatile per-turn note → tail user message, not out-of-band system=.
+                # Never marked: its content changes every turn, so a breakpoint here
+                # would guarantee a miss.
                 if content:
                     volatile_tail.append({"role": "user", "content": str(content)})
             elif content:
                 # Stable system content → out-of-band system=, leads the prompt.
                 system_parts.append(str(content))
+                if hinted:
+                    system_hinted = True
             continue
 
         if role == "tool":
@@ -183,6 +233,8 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
                 "tool_use_id": str(msg.get("tool_call_id", "") or ""),
                 "content": "" if content is None else str(content),
             }
+            if hinted:
+                _mark_block(block)
             # Merge into the previous user turn if it is already carrying
             # tool_result blocks (parallel tool calls answered together).
             if (
@@ -220,10 +272,29 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
                         "input": parsed,
                     }
                 )
+            if hinted and blocks:
+                _mark_block(blocks[-1])
             out.append({"role": "assistant", "content": blocks})
             continue
 
-        # Plain user / assistant text message — pass through unchanged.
+        # Plain user / assistant text message — pass through unchanged UNLESS hinted,
+        # in which case it must become block-shaped to carry the marker.
+        if hinted and content:
+            if isinstance(content, list):
+                # Already block-shaped: copy the list AND the final block so the
+                # caller's dicts are never mutated, then mark the copy.
+                blocks = list(content)
+                if isinstance(blocks[-1], dict):
+                    blocks[-1] = _mark_block(dict(blocks[-1]))
+                out.append({"role": role, "content": blocks})
+            else:
+                out.append(
+                    {
+                        "role": role,
+                        "content": [_mark_block({"type": "text", "text": str(content)})],
+                    }
+                )
+            continue
         out.append({"role": role, "content": content})
 
     # Deliver any volatile notes at the TAIL, in order — after the stable context
@@ -231,7 +302,16 @@ def _translate_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     # message was tagged, keeping the untagged path byte-identical.
     out.extend(volatile_tail)
 
-    return "\n\n".join(system_parts), out
+    system_text = "\n\n".join(system_parts)
+    if system_hinted:
+        # BLOCK-SHAPED system= (§C4): ONE text block carrying the exact string the
+        # unhinted path returns, with the breakpoint on it. One block, not one per
+        # part — the hinted system message is by construction the LAST hoisted one
+        # (the neutral marker picks the last non-tool, non-volatile message), so a
+        # single block puts the breakpoint at the same place while keeping the served
+        # text identical to the string form.
+        return [_mark_block({"type": "text", "text": system_text})], out
+    return system_text, out
 
 
 class AnthropicProvider(ModelProvider):
@@ -246,6 +326,13 @@ class AnthropicProvider(ModelProvider):
     # native loop drives tool-enabled turns via complete(), which translates
     # the OpenAI-shaped messages/tools it receives into Anthropic's wire format.
     supports_tools: bool = True
+
+    # Graded prompt-cache posture (PCS-4 / §C4). Anthropic needs an EXPLICIT per-request
+    # breakpoint — it does not cache a stable prefix on its own — so the native loop
+    # places a neutral hint (it reads this attr by getattr, exactly as it reads
+    # supports_tools) and `_translate_messages` above turns that hint into
+    # ``cache_control``. A provider that leaves this NONE never sees a marker.
+    prompt_cache: PromptCache = PromptCache.EXPLICIT
 
     def __init__(
         self,
