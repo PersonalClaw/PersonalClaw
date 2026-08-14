@@ -45,6 +45,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **Honest limitation:** this is protection against drift and against an agent tampering at runtime,
   not against you. Anyone who can edit the installed package before the process starts can change
   the baseline — it is your machine.
+- **Settings → Security now shows which denylist is actually protecting you.** The panel listed 112
+  patterns without saying where they came from, so there was no way to tell a healthy instance from a
+  drifted one. It now shows the baseline's version, the sha256 recorded at release, how many patterns
+  are enforced, and whether the packaged file still matches — and if it no longer matches, the quiet
+  status line becomes an alert that says so while confirming the verified patterns are still being
+  enforced. The baseline is read-only on this surface by design: there is no control that can edit,
+  reorder or remove one of its patterns. Your own list is now summarised as **"N user additions"**
+  counted from what actually takes effect, so an entry that merely repeats a built-in is reported as
+  adding nothing instead of inflating the number. The panel states the same honest limitation the
+  release notes do — the check proves the patterns match what shipped, and anyone who can edit the
+  installed package before PersonalClaw starts owns the baseline; the full statement lives in
+  `docs/security/threat-model.md`. A failed read of either the posture counts or the denylist now
+  renders an error with the server's message and a Retry, replacing a silent empty list that was
+  indistinguishable from "nothing is blocked".
 - **Installed apps' backends no longer inherit PersonalClaw's environment.** ⚠️ **This changes
   behaviour for an app backend that read a variable it never declared.** An app with a backend runs
   it as a subprocess, and that subprocess used to start from a full copy of the gateway's own

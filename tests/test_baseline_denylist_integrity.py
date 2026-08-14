@@ -474,3 +474,122 @@ class TestExistingBehaviourUnchanged:
     )
     def test_benign_commands_are_still_allowed(self, command):
         assert security.denied_command_reason(command) is None
+
+
+class TestSecurityPanelPayload:
+    """SH-10 — ``GET /api/security/denied-commands`` renders the verified baseline state.
+
+    The panel is the only place a self-hoster ever sees which baseline is in force, so the
+    payload has to carry the identity (version + digest), the enforced count, whether the
+    packaged file still matches, and how many user patterns genuinely widen the set. A
+    hardcoded "verified" indicator would satisfy a careless reading of the requirement,
+    so the tamper fixture below asserts the flag actually FLIPS.
+    """
+
+    @staticmethod
+    async def _payload() -> dict:
+        from aiohttp.test_utils import make_mocked_request
+
+        from personalclaw.dashboard.handlers.core import api_security_denied_commands
+
+        req = make_mocked_request("GET", "/api/security/denied-commands")
+        resp = await api_security_denied_commands(req)
+        return json.loads(resp.text)
+
+    @pytest.mark.asyncio
+    async def test_the_verified_baseline_state_is_served(self):
+        body = await self._payload()
+
+        assert body["baseline"] == {
+            "version": 1,
+            "sha256": EXPECTED_BASELINE_SHA256,
+            "count": 112,
+            "verified": True,
+            "detail": "",
+        }
+        assert len(body["builtin"]) == 112
+        assert body["user"] == []
+        assert body["user_additions"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_tamper_fixture_flips_the_indicator(self, monkeypatch):
+        """The falsification guard: with the packaged file diverged, ``verified`` must go
+        False *and* the enforced count must not shrink. A hardcoded True fails here."""
+        before = await self._payload()
+        assert before["baseline"]["verified"] is True
+
+        rewritten = json.dumps(
+            {
+                "version": 7,
+                "sha256": security._baseline_digest(["only-this-one"]),
+                "patterns": ["only-this-one"],
+            }
+        )
+        monkeypatch.setattr(security, "_read_packaged_baseline", _reader_returning(rewritten))
+
+        after = await self._payload()
+
+        assert after["baseline"]["verified"] is False
+        assert after["baseline"]["detail"] == (
+            "packaged file no longer matches the verified baseline"
+        )
+        # The identity shown stays the VERIFIED one — the diverged file is reported, never
+        # adopted, so the panel must not start advertising the attacker's version 7.
+        assert after["baseline"]["version"] == 1
+        assert after["baseline"]["sha256"] == EXPECTED_BASELINE_SHA256
+        assert after["baseline"]["count"] == 112
+        assert len(after["builtin"]) == 112
+
+    @pytest.mark.asyncio
+    async def test_a_missing_file_also_flips_the_indicator(self, monkeypatch):
+        def boom() -> tuple[int, str, tuple[str, ...]]:
+            raise FileNotFoundError("baseline_denylist.json")
+
+        monkeypatch.setattr(security, "_read_packaged_baseline", boom)
+
+        body = await self._payload()
+
+        assert body["baseline"]["verified"] is False
+        assert "unreadable" in body["baseline"]["detail"]
+        assert body["baseline"]["count"] == 112
+
+    @pytest.mark.asyncio
+    async def test_user_additions_counts_the_patterns_that_widen_the_set(self, tmp_path):
+        (tmp_path / "config.json").write_text(
+            json.dumps({"security": {"denied_commands": ["my-secret-tool .*", "danger-cmd"]}})
+        )
+
+        body = await self._payload()
+
+        assert body["user"] == ["my-secret-tool .*", "danger-cmd"]
+        assert body["user_additions"] == 2
+
+    @pytest.mark.asyncio
+    async def test_a_user_pattern_duplicating_a_baseline_entry_is_not_an_addition(self, tmp_path):
+        """🪤 The count a naive ``len(config.denied_commands)`` gets WRONG.
+
+        ``denied_command_patterns()`` dedupes a user entry equal to a built-in, so it
+        changes nothing that is enforced. Counting the config list would tell the owner
+        they added three protections when they added one.
+        """
+        echoed = security.BUILTIN_DENIED_COMMAND_PATTERNS[0]
+        (tmp_path / "config.json").write_text(
+            json.dumps({"security": {"denied_commands": [echoed, "genuinely-new", echoed]}})
+        )
+
+        body = await self._payload()
+
+        # Three entries in config, exactly one of which widens the effective set.
+        assert len(body["user"]) == 3
+        assert body["user_additions"] == 1
+        assert len(body["builtin"]) == 112
+
+    @pytest.mark.asyncio
+    async def test_the_payload_offers_no_write_path_for_the_baseline(self):
+        """Read-only is a property of the API surface, not just of the UI: the only
+        writable field in this area is ``security.denied_commands`` (the user list),
+        reachable through the config PATCH allowlist. Nothing addresses the baseline."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        writable = [k for k in _EDITABLE_CONFIG if "denied" in k or "baseline" in k]
+        assert writable == ["security.denied_commands"]
