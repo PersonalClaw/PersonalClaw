@@ -22,6 +22,7 @@ import {
   getPersonality,
   resolvePersonality,
 } from './personalities'
+import { getErrorTreatment } from './errorTreatments'
 
 const SCHEME_IDS = new Set(SCHEMES.map((s) => s.id))
 
@@ -34,6 +35,7 @@ const ALLOWED_BEHAVIOR_KEYS = new Set([
   'personaSnippet',
   'uiDensity',
   'documentTitle',
+  'errorTreatment',
 ])
 
 const ALLOWED_DENSITY = new Set(['comfortable', 'dense', 'cli'])
@@ -86,6 +88,15 @@ describe('personality registry invariants', () => {
     for (const p of PERSONALITIES) {
       const snippet = p.behavior.personaSnippet
       if (snippet) expect(snippet).toBe(`persona-${p.id}`)
+    }
+  })
+
+  it('every errorTreatment id resolves in its closed map', () => {
+    // A dangling id would silently degrade to "no treatment" — the safe outcome,
+    // and therefore the one nothing would notice. §S2's structural invariant.
+    for (const p of PERSONALITIES) {
+      const id = p.behavior.errorTreatment
+      if (id) expect(getErrorTreatment(id), `${p.id} → ${id}`).not.toBeNull()
     }
   })
 
