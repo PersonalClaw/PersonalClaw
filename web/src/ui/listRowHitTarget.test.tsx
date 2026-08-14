@@ -194,6 +194,24 @@ describe('the tasks list row and card carry the same overlay', () => {
 // The ones still unfixed are listed below WITH their reason, because they are the same defect and not
 // distinctions — a deferral that reads as a judgment is how a family gets half-converged forever.
 //
+// 🔑 AND THE STRENGTHENED CHECK IMMEDIATELY EARNED ITS KEEP: it failed on `TerminalPage` the moment
+// it was written, because **cycle 167 fixed that strip and left its deferral entry behind**. Under the
+// old "still matches the scan" rule that entry could have sat here indefinitely describing a defect
+// that no longer existed. Both terminal entries are gone; what remains is one element that genuinely
+// does not want this file's shape.
+//
+// ── Cycle 170 CLOSED THE LAST ONE, and it did NOT use this file's primitive ───────────────────────
+//
+// `pages/tasks/TaskBoard.tsx`'s card: **30** of them on `#/tasks?view=board`, `role`/`tabindex`/
+// `aria-label` all null, **0 of 70** Tab presses landing on one, axe 0 blocking. It was deferred
+// because it is `draggable` — and the answer turned out to be that `RowHitTarget` is the WRONG fix
+// here. That primitive exists for a row carrying its own controls; this card has **zero** interactive
+// descendants (measured), so the wrapper can simply BE the button, and stretching an overlay across a
+// drag source would put a control between the pointer and the gesture. `role="button" tabIndex={0}` +
+// Enter/Space, the shape `pages/code/CodeSection.tsx` already ships. Verified after: Enter opens the
+// task, the coral focus outline comes free from the global `:focus-visible` rule, and native
+// `dragstart`/`dragend` still fire on a mouse drag.
+//
 // ── Cycle 168 CLOSED the largest deferral: the dashboard widget row ───────────────────────────────
 //
 // `pages/dashboard/widgets/kit.tsx`'s `WidgetRow` is shared by four widgets (Action Center, Tasks,
@@ -240,17 +258,15 @@ describe('every clickable non-interactive element has a keyboard route', () => {
 
   /** Same defect as the two fixed here, deliberately NOT fixed in this change, and why. */
   const DEFERRED: Record<string, string> = {
-    'pages/tasks/TaskBoard.tsx':
-      'the board CARD is `draggable` — an overlay button inside a drag source needs its own ' +
-      'drag-vs-activate pass, not a copy of the list-row fix',
-    'pages/terminal/TerminalPage.tsx':
-      'a `div role="tab"` with NO tabIndex and no key handler, so it cannot be focused at all — the '
-      + 'fix is the tablist pattern (roving tabindex + arrow keys), not a row hit target',
-    'pages/terminal/TerminalDrawer.tsx':
-      'the drawer copy of the same tab strip — converge both with the tablist pattern, together',
     'pages/knowledge/KnowledgeCreatePage.tsx':
-      'a file DROPZONE, not a row: its `<input type="file">` is `hidden`, so the fix is a real ' +
-      'labelled control, not a row hit target',
+      // Cycle 169 gave this its keyboard route, and it is deliberately NOT the shape this file
+      // polices: the drop area stays a plain div, and the route is the real `<input type="file">`
+      // inside it, kept focusable (`sr-only`, not `hidden`) so Space/Enter opens the native picker.
+      // `design/filePickerReachable.test.ts` owns that contract and drives it. The entry stays here
+      // because the element still has an onClick with no role — correctly, since the input is the
+      // control — so this scan must keep skipping it for a stated reason rather than by accident.
+      'a file DROPZONE, not a row: the keyboard route is the focusable `sr-only` input inside it ' +
+      '(cycle 169), policed by design/filePickerReachable.test.ts, so the div needs no role of its own',
   }
 
   const hits = () => {
@@ -298,12 +314,22 @@ describe('every clickable non-interactive element has a keyboard route', () => {
     }
   })
 
-  it('the deferrals stay honest — a listed file must still HAVE the defect', () => {
-    // If someone fixes one, this fails and the entry gets deleted. A stale allowlist is how a
-    // ratchet quietly stops ratcheting.
-    const files = new Set(hits().map((h) => h.file))
+  it('the deferrals stay honest — a listed file must still FAIL the criteria', () => {
+    // 🪤 THE FIRST VERSION OF THIS ONLY CHECKED THAT THE FILE STILL MATCHED THE SCAN, and cycle 170
+    // proved that is not the same thing: `TaskBoard`'s card was fixed (`role="button" tabIndex={0}`)
+    // and still matched, because the scan keys on `onClick` + `cursor-pointer` — which a FIXED
+    // clickable row also has. So a stale entry could sit here forever while its file was clean, which
+    // is exactly the rot this test exists to prevent. It now asserts the file still fails the
+    // accessibility criteria, which is what "deferred" is supposed to mean.
     for (const rel of Object.keys(DEFERRED)) {
-      expect(files.has(rel), `${rel} no longer matches the scan — drop it from DEFERRED`).toBe(true)
+      const tags = hits().filter((h) => h.file === rel)
+      expect(tags.length, `${rel} no longer matches the scan at all — drop it from DEFERRED`).toBeGreaterThan(0)
+      const fixed = tags.some((h) => {
+        const declaresRole = /\brole=/.test(h.tag) && /tabIndex=\{[^}]*\b0\b/.test(h.tag)
+        const usesPrimitive = /tabIndex=\{[^}]*-1/.test(h.tag) && readFileSync(join(SRC, rel), 'utf8').includes('<RowHitTarget')
+        return declaresRole || usesPrimitive
+      })
+      expect(fixed, `${rel} now satisfies the criteria — drop it from DEFERRED`).toBe(false)
     }
   })
 })
