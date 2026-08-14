@@ -13,20 +13,30 @@ compaction generation bump.
 from __future__ import annotations
 
 import inspect
+import json
+from pathlib import Path
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
+from personalclaw.config.loader import AppConfig
+from personalclaw.context import ContextBuilder
 from personalclaw.llm import prompt_cache as pc_module
+from personalclaw.llm.anthropic import _VOLATILE_MESSAGE_KEY, _translate_messages
 from personalclaw.llm.base import ModelProvider
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 from personalclaw.llm.prompt_cache import (
     CACHE_HINT_KEY,
     PromptCache,
+    effective_cache_mode,
     mark_cacheable_prefix,
 )
+from personalclaw.memory import MemoryStore
+from personalclaw.skills import SkillsLoader
 
 # ── mark_cacheable_prefix: NONE / AUTOMATIC leave the list untouched ──────────
 
@@ -254,3 +264,224 @@ def test_compaction_bumps_cache_generation(monkeypatch):
 
     rt._maybe_compact()
     assert rt._cache_generation == 1
+
+
+# ── §C6: the `agent.prompt_cache_enabled` switch ──────────────────────────────
+#
+# Five-point config wiring (dataclass+_meta, load(), to_dict(), the _EDITABLE_CONFIG
+# PATCH allowlist, the frontend control) plus the two behavioural clauses: disabled
+# reads as NONE through the SAME code path, and the §C2/§C3 ordering repairs are NOT
+# gated by it.
+
+
+@pytest.fixture()
+def cache_switch(tmp_path, monkeypatch):
+    """Write a config.json holding ``agent.prompt_cache_enabled`` and point the loader
+    at it. Deliberately goes through the real ``AppConfig.load()`` so a test using this
+    also exercises load()'s explicit mapping — drop that mapping and these go red."""
+
+    def _write(enabled: bool | None) -> Path:
+        agent: dict = {} if enabled is None else {"prompt_cache_enabled": enabled}
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps({"agent": agent}), encoding="utf-8")
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: p)
+        return p
+
+    return _write
+
+
+def test_default_is_on(cache_switch):
+    """Default True (§C6): this atom alone must not disable what PCS-4 just enabled.
+    A config with no `prompt_cache_enabled` key reads as ENABLED."""
+    cache_switch(None)
+    assert AppConfig.load().agent.prompt_cache_enabled is True
+    assert AppConfig().agent.prompt_cache_enabled is True
+
+
+@pytest.mark.parametrize("declared", list(PromptCache))
+def test_enabled_passes_the_declared_mode_through(declared):
+    assert effective_cache_mode(declared, enabled=True) is declared
+
+
+@pytest.mark.parametrize("declared", list(PromptCache))
+def test_disabled_collapses_every_declared_mode_to_none(declared):
+    """ "Middleware treats disabled as NONE" — for every mode, including NONE itself."""
+    assert effective_cache_mode(declared, enabled=False) is PromptCache.NONE
+
+
+def test_disabled_still_runs_the_marker_call_one_path_not_a_bypass():
+    """The switch is NOT a branch around ``mark_cacheable_prefix``: the call happens
+    either way and NONE's existing untouched-list contract does the work. So a
+    disabled EXPLICIT provider takes the exact route an undeclared provider takes."""
+    msgs = _sample_messages()
+    off = mark_cacheable_prefix(msgs, effective_cache_mode(PromptCache.EXPLICIT, enabled=False))
+    undeclared = mark_cacheable_prefix(msgs, PromptCache.NONE)
+    assert off is msgs and undeclared is msgs  # same object, same path
+    assert not any(CACHE_HINT_KEY in m for m in off)
+
+
+# ── the switch through the real native loop ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_runtime_explicit_with_switch_off_hands_back_the_same_object(cache_switch):
+    """The whole point of the atom: PCS-4 made the marker unconditional for an EXPLICIT
+    adapter. With the switch off, complete() sees rt's own list — no marker at all."""
+    cache_switch(False)
+    model = _RecordingModel(prompt_cache=PromptCache.EXPLICIT)
+    rt = NativeAgentRuntime(definition=_defn(), model_provider=model, tool_providers=[])
+    await rt.start()
+    await _drain(rt)
+    assert model.seen is rt._messages
+    assert not any(CACHE_HINT_KEY in m for m in model.seen)
+
+
+@pytest.mark.asyncio
+async def test_runtime_explicit_with_switch_on_still_marks(cache_switch):
+    """Positive control for the test above — proves the fixture drives the real read
+    rather than the switch-off assertion passing for some unrelated reason."""
+    cache_switch(True)
+    model = _RecordingModel(prompt_cache=PromptCache.EXPLICIT)
+    rt = NativeAgentRuntime(definition=_defn(), model_provider=model, tool_providers=[])
+    await rt.start()
+    await _drain(rt)
+    assert model.seen is not rt._messages
+    assert sum(1 for m in model.seen if CACHE_HINT_KEY in m) == 1
+
+
+def test_unreadable_config_reads_as_enabled(monkeypatch):
+    """An unparseable config must not silently change what is served: the field's
+    default is True, so a failed read reports ENABLED."""
+    rt = NativeAgentRuntime(definition=_defn(), model_provider=_RecordingModel(), tool_providers=[])
+    monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: (_ for _ in ()).throw(OSError)))
+    assert rt._prompt_cache_enabled() is True
+
+
+# ── NO DUAL PATH: the §C2/§C3 ordering repairs are not gated by the switch ────
+
+
+def test_ordering_repairs_are_not_gated_by_the_switch(cache_switch, tmp_path):
+    """PCS-1's stability-ordered wire and PCS-2's date relocation are CORRECTNESS
+    repairs, not cache features. Turning caching off must not restore the old ordering
+    — a second maintained ordering is exactly the dual path the clean-break doctrine
+    forbids. This is the ratchet that makes gating them go red.
+    """
+    cache_switch(False)
+    assert AppConfig.load().agent.prompt_cache_enabled is False  # the switch really is off
+
+    # §C2 — stable assembled context still leads; the volatile per-turn note still
+    # rides at the TAIL rather than being hoisted into the out-of-band system=.
+    system, out = _translate_messages(
+        [
+            {"role": "system", "content": "stable assembled context"},
+            {"role": "user", "content": "hello"},
+            {"role": "system", "content": "per-turn tool catalog", _VOLATILE_MESSAGE_KEY: True},
+        ]
+    )
+    assert system == "stable assembled context"
+    assert "per-turn tool catalog" not in system
+    assert out[-1] == {"role": "user", "content": "per-turn tool catalog"}
+
+    # §C3 — the assembled context still ENDS with the date line.
+    ctx = ContextBuilder(
+        memory=MemoryStore(workspace=tmp_path / "ws"),
+        skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
+    ).build_session_context(session_key="s1")
+    assert ctx.count("[CURRENT DATE]") == 1
+    tail = ctx[ctx.rindex("[CURRENT DATE]") :]
+    assert "\n\n" not in tail.rstrip("\n"), "content leaked after the date line"
+
+
+@pytest.mark.asyncio
+async def test_switch_off_keeps_the_volatile_tag_on_the_per_turn_note(cache_switch):
+    """The §C2 repair as the LOOP produces it (not just as the adapter translates it):
+    with caching off the per-turn note is still tagged volatile, so any cache-aware
+    adapter still relocates it. Gating the tag on the switch would fail here."""
+    cache_switch(False)
+    model = _RecordingModel(prompt_cache=PromptCache.EXPLICIT)
+    rt = NativeAgentRuntime(definition=_defn(), model_provider=model, tool_providers=[])
+    await rt.start()
+    # Force a per-turn note so the tagging branch is reached regardless of tool surface.
+    note = "per-turn tool catalog"
+    rt._prepare_turn_tools = lambda message: (None, note)  # type: ignore[method-assign]
+    await _drain(rt)
+    notes = [m for m in rt._messages if m.get("role") == "system"]
+    assert notes, "the per-turn note never reached the history"
+    assert all(m.get("_volatile") is True for m in notes)
+
+
+# ── the PATCH allowlist round-trips (write it, then read it back) ─────────────
+
+
+def _patch_app():
+    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+
+    app = web.Application()
+    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_patch_round_trips_through_the_editable_allowlist(cache_switch):
+    """Point 4 of the five: the field is PATCHable, the write lands in config.json, and
+    a fresh load() reads it back — proving the allowlist entry and load()'s mapping
+    agree. Then flip it back, so the round trip is proven in BOTH directions."""
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG.get("agent.prompt_cache_enabled") == {"type": "bool"}
+
+    cfg_path = cache_switch(None)  # start from the default (ON)
+    async with TestClient(TestServer(_patch_app())) as c:
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={"path": "agent.prompt_cache_enabled", "value": False},
+        )
+        assert resp.status == 200
+        assert json.loads(cfg_path.read_text())["agent"]["prompt_cache_enabled"] is False
+        assert AppConfig.load().agent.prompt_cache_enabled is False
+
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={"path": "agent.prompt_cache_enabled", "value": True},
+        )
+        assert resp.status == 200
+        assert json.loads(cfg_path.read_text())["agent"]["prompt_cache_enabled"] is True
+        assert AppConfig.load().agent.prompt_cache_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_a_non_bool(cache_switch):
+    """The allowlist's declared type is enforced, so a stray string can't wedge the
+    switch into a truthy-but-not-boolean state."""
+    cache_switch(None)
+    async with TestClient(TestServer(_patch_app())) as c:
+        resp = await c.patch(
+            "/api/config/personalclaw",
+            json={"path": "agent.prompt_cache_enabled", "value": "yes"},
+        )
+        assert resp.status == 400
+
+
+def test_to_dict_and_save_carry_the_field(cache_switch):
+    """Point 3: to_dict() emits the field (via asdict), so save() persists it rather
+    than silently dropping the user's choice on the next write."""
+    cache_switch(None)
+    cfg = AppConfig.load()
+    assert cfg.to_dict()["agent"]["prompt_cache_enabled"] is True
+    cfg.agent.prompt_cache_enabled = False
+    cfg.save()
+    assert AppConfig.load().agent.prompt_cache_enabled is False
+
+
+def test_the_field_carries_meta_for_the_settings_surface():
+    """Point 1: the dataclass field declares _meta, which is what renders it as a
+    labelled control rather than an anonymous key."""
+    from dataclasses import fields as dc_fields
+
+    from personalclaw.config.loader import AgentConfig
+
+    f = next(f for f in dc_fields(AgentConfig) if f.name == "prompt_cache_enabled")
+    assert f.default is True
+    assert f.metadata.get("label") == "Prompt Caching"
+    assert f.metadata.get("help")
