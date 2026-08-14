@@ -571,7 +571,7 @@ function AuditTab() {
           <TextInput value={filter} onChange={setFilter} placeholder="Filter by type or key" ariaLabel="Filter memory audit log"
             size="md" surface="high" leadingIcon={<Search size={14} />} />
         </div>
-        <Button variant="secondary" size="sm" onClick={reload}><RefreshCw size={14} /></Button>
+        <Button variant="secondary" size="sm" ariaLabel="Reload the audit log" onClick={reload}><RefreshCw size={14} /></Button>
       </div>
       {shown.length === 0 ? (
         <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matching events.</p>
