@@ -1197,7 +1197,20 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
           </div>
         </Section>
       ) : null}
-      {verdict?.done_reason && <Section label="Judge verdict"><p className="text-on-surface-var text-[0.8125rem]">{asText(verdict.done_reason)}{typeof verdict.band_used === 'number' && <span className="text-on-surface-low"> · returns band {verdict.band_used.toFixed(1)}</span>}</p></Section>}
+      {(verdict?.done_reason || verdict?.evidence_refs?.length) ? (
+        <Section label="Judge verdict">
+          {verdict.done_reason ? <p className="text-on-surface-var text-[0.8125rem]">{asText(verdict.done_reason)}{typeof verdict.band_used === 'number' && <span className="text-on-surface-low"> · returns band {verdict.band_used.toFixed(1)}</span>}</p> : null}
+          {/* Ground truth the SUPERVISOR observed itself — ran the verify command, read the
+              named deliverable — rather than the worker's account of its own work. Absent on a
+              transcript-only cycle and on verdicts stored before WF2LOO-16, hence the guard. */}
+          {verdict.evidence_refs?.length ? (
+            <div className="mt-1.5 flex flex-col gap-1">
+              <span className="text-on-surface-low text-[0.75rem]">Observed independently</span>
+              {verdict.evidence_refs.map((ref, i) => <span key={i} className="flex items-start gap-s text-on-surface text-[0.8125rem]"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span className="font-mono text-[0.75rem] break-words">{asText(ref)}</span></span>)}
+            </div>
+          ) : null}
+        </Section>
+      ) : null}
       {(f.sources_checked?.length || f.sources_empty?.length) ? (
         <Section label="Sources">
           <div className="flex flex-col gap-1.5">

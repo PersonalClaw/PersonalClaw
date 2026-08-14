@@ -21,6 +21,7 @@ from personalclaw.workflows.judge_contract import (
     Ratchet,
     RubricCriterion,
     Verdict,
+    adjudicate,
     aggregate_samples,
     compute_overall,
     detect_forbidden_modes,
@@ -30,6 +31,7 @@ from personalclaw.workflows.judge_contract import (
     parse_judge_json,
     score_for,
     validate_verdict,
+    verdict_for_cycle,
 )
 
 RUBRIC = [
@@ -709,3 +711,151 @@ class TestAggregationAbsorbedTheGateRules:
     def test_unanimous_RETRY_stays_RETRY(self):
         samples = [self._v("RETRY"), self._v("RETRY"), self._v("RETRY")]
         assert aggregate_samples(samples, JudgeHints()).verdict is Verdict.RETRY
+
+
+class TestThirdVocabularyAbsorbed:
+    """WF2LOO-16: `loop/judge.CycleVerdict` was a THIRD dialect over one decision. It is deleted
+    and its fields live here. These tests hold the two halves that made the merge additive rather
+    than a rename — the 0-5 signals the contract lacked, and the projection from the loop's
+    boolean done-ness onto the closed enum.
+    """
+
+    def test_cycle_verdict_is_deleted_not_bridged(self):
+        """No compat shim, no re-export, no alias. A surviving `CycleVerdict` symbol anywhere in
+        `loop.judge` would mean the third vocabulary is still constructible, which is the whole
+        thing this atom removed."""
+        from personalclaw.loop import judge as loop_judge
+
+        assert not hasattr(loop_judge, "CycleVerdict")
+        assert not hasattr(loop_judge, "adjudicate")  # the rule moved WITH its fields
+        assert not hasattr(loop_judge, "_clamp")  # the contract owns the 0-5 clamp now
+
+    def test_verdict_for_cycle_maps_every_corner(self):
+        """All four corners, including the overlap. `done` DOMINATES a regression because that is
+        what the supervisor does (`goal._assess_open_ended` completes on `done` without reading
+        `regressed`); a projection stricter than the routing it labels would be a lie."""
+        assert verdict_for_cycle(True, False) is Verdict.PASS
+        assert verdict_for_cycle(True, True) is Verdict.PASS
+        assert verdict_for_cycle(False, True) is Verdict.REJECT
+        assert verdict_for_cycle(False, False) is Verdict.RETRY
+
+    def test_done_is_derived_from_the_enum_never_stored(self):
+        """One fact, one source. A stored `done` beside a `verdict` is two places to disagree."""
+        assert JudgeVerdict(verdict=Verdict.PASS).done is True
+        assert JudgeVerdict(verdict=Verdict.RETRY).done is False
+        with pytest.raises(TypeError):
+            JudgeVerdict(verdict=Verdict.RETRY, done=True)  # type: ignore[call-arg]
+
+    def test_done_and_passed_are_not_the_same_claim(self):
+        """`done` is "the judge said complete"; `passed` adds "and it survived validation". The
+        loop routes on the first because its prompt was never given the preconditions."""
+        invalid = validate_verdict({"verdict": "PASS"}, JudgeHints())  # no proof cited
+        assert invalid.done is True and invalid.passed is False
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [(99, 5.0), (-4, 0.0), (2.5, 2.5), (5, 5.0), (0, 0.0), ("high", 0.0), (None, 0.0)],
+    )
+    def test_the_0_5_clamp_is_structural(self, raw, expected):
+        """Clamped in `__post_init__`, so EVERY producer clamps — the loop parser, `adjudicate`
+        and `validate_verdict` cannot disagree about the range. Unclamped, a model answering `9`
+        would clear `GRANULARITY_PRESETS`' exhaustive threshold of 1.0 forever and a loop would
+        never call diminishing returns."""
+        v = JudgeVerdict(verdict=Verdict.RETRY, marginal_value=raw, quality_score=raw)
+        assert v.marginal_value == expected and v.quality_score == expected
+
+    def test_clamp_holds_on_the_contract_parse_path_too(self):
+        v = validate_verdict(
+            {"verdict": "RETRY", "marginal_value": 42, "quality_score": -1}, JudgeHints()
+        )
+        assert v.marginal_value == 5.0 and v.quality_score == 0.0
+
+    def test_validate_verdict_parses_the_absorbed_fields(self):
+        """Six bundled judge STAGES already declare `marginal_value` in their schema; before the
+        merge this record could not hold it, so it was dropped on the floor."""
+        v = validate_verdict(
+            {
+                "verdict": "RETRY",
+                "marginal_value": 3.5,
+                "quality_score": 4.25,
+                "regressed": True,
+                "done_reason": "two criteria still open",
+            },
+            JudgeHints(),
+        )
+        assert v.marginal_value == 3.5 and v.quality_score == 4.25
+        assert v.regressed is True and v.done_reason == "two criteria still open"
+
+    def test_to_dict_carries_every_key_the_cockpit_reads(self):
+        """The cockpit's ROI rail and verdict chips read these off the PERSISTED shape. Dropping
+        one is a silent blank in the UI, not a test failure, so the wire contract is asserted."""
+        d = JudgeVerdict(
+            verdict=Verdict.PASS, done_reason="met", marginal_value=3.0, quality_score=4.0
+        ).to_dict()
+        for key in (
+            "done",
+            "done_reason",
+            "marginal_value",
+            "quality_score",
+            "regressed",
+            "adversarial",
+            "band_used",
+            "verdict",
+            "evidence_refs",
+        ):
+            assert key in d, f"the cockpit reads {key} and it is not on the wire"
+        assert d["done"] is True and d["marginal_value"] == 3.0
+
+
+class TestAsymmetricAdjudication:
+    """The skeptic merge, moved here with the fields it merges. The asymmetry is the mechanism:
+    a completion needs two independent yeses, a regression needs only one flag.
+    """
+
+    def _v(self, done=False, regressed=False, **kw) -> JudgeVerdict:
+        return JudgeVerdict(verdict=verdict_for_cycle(done, regressed), regressed=regressed, **kw)
+
+    def test_a_done_does_NOT_survive_a_disagreeing_skeptic(self):
+        merged = adjudicate(self._v(done=True, done_reason="met"), self._v(done=False))
+        assert merged.done is False, "a claimed completion survived on ONE yes"
+        assert merged.verdict is Verdict.RETRY  # re-projected, not left saying PASS
+        assert "overturned" in merged.done_reason
+
+    def test_a_done_survives_only_when_the_skeptic_agrees(self):
+        merged = adjudicate(self._v(done=True, done_reason="met"), self._v(done=True))
+        assert merged.done is True and merged.verdict is Verdict.PASS
+
+    def test_a_regressed_survives_EITHER_judge_flagging_it(self):
+        assert adjudicate(self._v(), self._v(regressed=True)).regressed is True
+        assert adjudicate(self._v(regressed=True), self._v()).regressed is True
+
+    def test_a_regression_flagged_by_one_judge_is_not_downgraded_to_RETRY(self):
+        merged = adjudicate(self._v(), self._v(regressed=True))
+        assert merged.verdict is Verdict.REJECT
+
+    def test_an_unavailable_skeptic_never_manufactures_a_refutation(self):
+        primary = self._v(done=True, marginal_value=2.0, quality_score=3.0)
+        result = adjudicate(primary, None)
+        assert result.done is True and result.adversarial is False
+
+    def test_the_merge_carries_the_primarys_scores_and_band(self):
+        primary = self._v(done=True, marginal_value=3.5, quality_score=4.2, band_used=1.7)
+        merged = adjudicate(primary, self._v(done=True))
+        assert merged.marginal_value == 3.5
+        assert merged.quality_score == 4.2
+        assert merged.band_used == 1.7
+        assert merged.adversarial is True
+
+    def test_the_merge_keeps_the_reasoning_and_the_observed_evidence(self):
+        """WF2LOO-16 DISCOVERY: the loop-local version rebuilt the verdict WITHOUT `reasoning`,
+        so the bounded chain-of-thought (AUTONOMY-GUARDRAILS §2.4) was discarded on exactly the
+        high-stakes verdicts that earned a second judge — and after this atom it would have
+        discarded the supervisor's observed `evidence_refs` with it."""
+        primary = self._v(
+            done=True,
+            reasoning="ran the verify command, exit 0; REPORT.md has the section",
+            evidence_refs=["command:pytest -q → PASSED (exit 0)", "file:REPORT.md"],
+        )
+        merged = adjudicate(primary, self._v(done=True))
+        assert merged.reasoning == primary.reasoning
+        assert merged.evidence_refs == primary.evidence_refs
