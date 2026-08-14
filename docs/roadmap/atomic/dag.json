@@ -4415,13 +4415,14 @@
         {
           "id": "PCS-4",
           "title": "Anthropic EXPLICIT translation (cache_control on block-shaped system=) + rails test",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 / T2.3+T2.5; §C4 (edge-only translation); soul guardrail 1",
           "done_when": "Hinted span translated to cache_control {type: ephemeral} on its last block, including the block-shaped system= (list of text blocks) required by §C4; adapter declares EXPLICIT; an unhinted list produces today's byte-identical request kwargs; rails sweep asserts cache_control/ephemeral appear ONLY in llm/anthropic.py and fails on a temporarily injected violation.",
           "deps": [
             "PCS-1",
             "PCS-3"
-          ]
+          ],
+          "pr": 1272
         },
         {
           "id": "PCS-5",
@@ -7770,13 +7771,18 @@
         "plan": "PA"
       },
       {
-        "id": "PCS-4",
-        "title": "Anthropic EXPLICIT translation (cache_control on block-shaped system=) + rails test",
+        "id": "PCS-5",
+        "title": "prompt_cache_enabled config through all five wiring points + FE control",
         "plan": "PCS"
       },
       {
-        "id": "PCS-5",
-        "title": "prompt_cache_enabled config through all five wiring points + FE control",
+        "id": "PCS-7",
+        "title": "Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2)",
+        "plan": "PCS"
+      },
+      {
+        "id": "PCS-8",
+        "title": "Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint)",
         "plan": "PCS"
       },
       {
@@ -10057,9 +10063,9 @@
         "code": "PCS",
         "plan": "PROMPT-CACHE-SUBSTRATE",
         "total_atoms": 8,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
