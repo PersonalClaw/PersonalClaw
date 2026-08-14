@@ -61,6 +61,13 @@ async function mount(opts: { denied?: Over | 'reject'; stats?: 'reject' } = {}) 
       securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: false }),
       setUserDeniedCommands: () => Promise.resolve({}),
       setSecurityEgress: () => Promise.resolve({}),
+      // DC-2's desktop-capabilities section renders inside this SAME panel. This is a
+      // TOTAL module mock (no `...actual`), so an unstubbed read is `undefined` and the
+      // panel throws before the baseline region ever renders. Not-connected is the right
+      // default here: this file is about the denylist, not the shell.
+      desktopState: () => Promise.resolve({
+        connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',
+      }),
     },
   }))
   const { SecurityPanel } = await import('./SecurityPanel')

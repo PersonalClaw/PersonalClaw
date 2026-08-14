@@ -22,7 +22,15 @@ vi.mock('../../lib/api', async (importOriginal) => {
     api: {
       ...actual.api,
       securityStats: () => Promise.resolve(STATS),
-      deniedCommands: () => Promise.resolve({ builtin: [], user: [] }),
+      // SH-10 added the `baseline` block to this payload and the panel reads its digest, so
+      // a bare two-array stub makes the panel throw before a single capability row renders.
+      // Verified-and-empty: the denylist indicator is not what this file measures.
+      deniedCommands: () => Promise.resolve({
+        builtin: [],
+        user: [],
+        baseline: { version: 1, sha256: '0'.repeat(64), count: 0, verified: true, detail: '' },
+        user_additions: 0,
+      }),
       // The panel catches this; the egress editor is not under test here.
       securityEgress: () => Promise.reject(new Error('not under test')),
       desktopState: () => desktopState(),
