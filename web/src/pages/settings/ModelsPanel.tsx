@@ -12,8 +12,9 @@ import { Button } from '../../ui/Button'
 import { SearchField } from '../../ui/SearchField'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
-import { PanelHeader, Section } from './settingsUI'
-import { ListSkeleton } from '../../ui/ListScaffold'
+import { PanelHeader, Section, ToggleRow } from './settingsUI'
+import { notify } from '../../app/appSdk'
+import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 
@@ -238,7 +239,47 @@ export function ModelsPanel() {
           )
         })}
       </Section>
+      <PromptCacheSection />
     </div>
+  )
+}
+
+/** Prompt caching (PROMPT-CACHE-SUBSTRATE §C6) — the one inference-behaviour switch that
+ *  belongs beside the model bindings, since whether it does anything depends entirely on
+ *  which provider a use-case is bound to. Default ON: caching is semantically transparent
+ *  (the model sees the same tokens either way) and a provider that doesn't support it is a
+ *  no-op. Off is the diagnosis position — it stops the cache marker, and deliberately does
+ *  NOT change the served prompt's ORDERING, which is an unconditional repair. */
+function PromptCacheSection() {
+  const { data, error: loadErr, refresh } = useCachedData('settings:models-prompt-cache', () =>
+    api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>),
+    { persist: true },
+  )
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  // A failed read must not render the switch at its fallback — an unloaded `false` would
+  // be indistinguishable from "you turned caching off".
+  if (!data && loadErr) return <LoadError what="prompt-cache setting" error={loadErr} onRetry={refresh} />
+  if (!data || !cfg) return <FormSkeleton sections={1} what="prompt-cache setting" />
+
+  // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error.
+  const patch = (key: string, value: boolean, onSaved: () => void) => {
+    const prev = cfg[key]
+    setCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`agent.${key}`, value).then(onSaved).catch((e) => {
+      setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save prompt caching: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  return (
+    <Section title="Prompt caching" hint="Reuse the stable part of the prompt across turns on providers that support it.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <ToggleRow label="Prompt caching" cfg={cfg} field="prompt_cache_enabled" patch={patch}
+          hint="Ask providers that support it to cache the stable prompt prefix, cutting cost and latency on multi-turn work. Providers without cache support are unaffected. Turn it off to rule caching out when debugging a provider — what the model is shown, and in what order, is identical either way." />
+      </div>
+    </Section>
   )
 }
 

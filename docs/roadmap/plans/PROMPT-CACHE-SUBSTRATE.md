@@ -366,3 +366,44 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   not against a live provider response. PCS-6 already ships the reader, so a hit is observable the
   moment a real Anthropic turn runs — soul guardrail 4's measure-before-claiming gate stays PCS-7's
   V2 and is NOT claimed here.
+- **PCS-5 DONE — the prompt-cache switch (T2.4 / §C6).** `agent.prompt_cache_enabled` (default
+  `True`) through all five §2.1 wiring points: the `AgentConfig` field + `_meta`
+  (`config/loader.py:427`), `load()`'s explicit mapping (`:3372`), `to_dict()` (already covered by
+  `asdict(self.agent)` — asserted rather than assumed), the `_EDITABLE_CONFIG` bool entry
+  (`dashboard/handlers/core.py:566`), and a **Prompt caching** switch in Settings → Models
+  (`web/src/pages/settings/ModelsPanel.tsx`, new `PromptCacheSection`). Regenerated
+  `config-baseline.json` in the same change.
+  **Middleware:** `llm/prompt_cache.py::effective_cache_mode(declared, *, enabled)` folds the
+  switch into the provider's declared mode; off resolves to `PromptCache.NONE`, the mode that
+  ALREADY means "hand the list back untouched". The native loop therefore keeps ONE code path —
+  `mark_cacheable_prefix` is still called either way — so disabling caching takes the exact route an
+  undeclared provider takes, instead of a second bypass branch. The loop reads the switch per turn
+  via a deferred `AppConfig` import (`runtime.py::_prompt_cache_enabled`), matching the ACP
+  concurrency gate's pattern; an unreadable config reads as ENABLED, which is the field's default.
+  **No dual path (the clause that matters):** two ratchet tests assert the §C2/§C3 ordering repairs
+  hold with the switch OFF — the adapter side (`_translate_messages` keeps stable context in
+  `system=` and the volatile note at the tail) and the loop side (the per-turn note is still tagged
+  `_volatile`), plus §C3's trailing date line. They were already ungated in code; the tests are what
+  stops a future session from gating them.
+  **DISCOVERY — PCS-4 is NOT on `origin/main`.** The session brief stated PCS-4 had shipped as
+  #1272 and left the marker unconditional. At this branch point `llm/anthropic.py` contains no
+  `cache_control` translation, no `CACHE_HINT_KEY` reader and no `EXPLICIT` declaration; the PCS-4
+  commit exists on an unmerged branch and `dag.json` still carries `PCS-5`'s sibling as `todo` with
+  no `pr`. PCS-5 was completable anyway and needed no change: the switch gates the marker PRODUCER
+  (PCS-3's middleware, which IS on main), so the mode is already collapsed before any adapter could
+  see a hint. PCS-4 inherits the switch with zero further work when it merges.
+  **Falsified twice:** (a) gating the `_volatile` tag on the switch turned
+  `test_switch_off_keeps_the_volatile_tag_on_the_per_turn_note` RED — reverted; (b) dropping
+  `load()`'s mapping turned `test_config_roundtrip.py::test_every_leaf_field_survives_save_load` RED
+  with `agent.prompt_cache_enabled: saved False but loaded True` — restored. Note that
+  `test_config_roundtrip.py` covers wiring points 1-3 only; points 4 (the PATCH allowlist) and 5
+  (the control) have no pre-existing rail, so this atom's own tests are theirs.
+  **Gates:** `make lint` clean (1582 files, mypy 811); full python suite **19018 passed, 30 skipped,
+  12 xfailed** vs a measured pre-change baseline of **19001 passed, 30 skipped, 12 xfailed** on the
+  same branch point (+17 new, no regressions), and the touched files re-run serially (`-n 0`);
+  `npm run typecheck:web` clean; full `npx vitest run` **221 files / 2183 tests** (+4 new);
+  `npm run build` clean; `make gates` all three PASS (config-baseline regenerated in this change).
+  **Driven live** on an isolated dev home: `GET /api/config/personalclaw` reported the field `True`
+  by default, `PATCH agent.prompt_cache_enabled=false` returned 200 and the value came back `False`
+  from both the API and `config.json` on disk, flipping back returned 200 and `True`, and a non-bool
+  value was refused with 400.

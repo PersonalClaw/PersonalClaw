@@ -44,7 +44,11 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     AgentEvent,
 )
-from personalclaw.llm.prompt_cache import PromptCache, mark_cacheable_prefix
+from personalclaw.llm.prompt_cache import (
+    PromptCache,
+    effective_cache_mode,
+    mark_cacheable_prefix,
+)
 from personalclaw.tool_providers.base import RiskLevel
 
 if TYPE_CHECKING:
@@ -712,6 +716,26 @@ class NativeAgentRuntime(AgentProvider):
         self._cancelled = True
         self._approval.cancel_all()
 
+    def _prompt_cache_enabled(self) -> bool:
+        """Read the user's prompt-cache switch, ``agent.prompt_cache_enabled`` (§C6).
+
+        Deferred import so this package keeps the config-free import surface its module
+        docstring promises (the same deferral ``sdlc_tools`` and the ACP concurrency gate
+        use). Read per turn rather than cached at construction: the switch exists for
+        diagnosis, and a diagnosis switch that needs a session restart is not much of a
+        switch. An unreadable config reads as ENABLED — that is the field's default, so a
+        config the loop cannot parse must not silently change what gets served.
+        """
+        from personalclaw.config.loader import AppConfig
+
+        try:
+            return bool(AppConfig.load().agent.prompt_cache_enabled)
+        except Exception:
+            logger.debug(
+                "native: prompt-cache switch unreadable — treating as ENABLED", exc_info=True
+            )
+            return True
+
     # ── the turn ──
     async def stream(self, message: str) -> AsyncIterator[AgentEvent]:
         """Run the ReAct loop for one user turn (``message`` is the full,
@@ -772,7 +796,13 @@ class NativeAgentRuntime(AgentProvider):
             # for an undeclared provider); AUTOMATIC → also unchanged (no marker needed);
             # EXPLICIT → a NEW list with one neutrally-hinted message, its own adapter
             # translating the hint (a later atom). self._messages itself is never mutated.
-            mode = getattr(self._model, "prompt_cache", PromptCache.NONE)
+            # The user's switch folds into the SAME value the provider declares
+            # (effective_cache_mode): off → NONE, which is already the untouched-list
+            # path. No second code path, and no branch that skips the call.
+            mode = effective_cache_mode(
+                getattr(self._model, "prompt_cache", PromptCache.NONE),
+                enabled=self._prompt_cache_enabled(),
+            )
             logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
             msgs = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
             async for ev in self._model.complete(
