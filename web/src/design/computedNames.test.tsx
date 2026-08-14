@@ -129,10 +129,17 @@ describe("the notification row actions name their row, and stay bounded", () => 
   it('all four actions name the row through the shared helper', () => {
     // Cycle 142 moved the composition into `lib/rowSubject` (one rule, one number, two surfaces), so
     // this asserts the call rather than a local copy of the join.
+    //
+    // Cycle 164 bound it ONCE — the row's own hit target needs the same name, and five call sites
+    // recomputing an identical expression is how two of them drift. So the shape asserted here moved
+    // from the inline call to the binding plus its uses, which also pins that they cannot diverge.
+    expect(code, 'the row subject is computed once')
+      .toMatch(/const subject = rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
     for (const verb of ['Investigate in chat', 'Mark unread', 'Mark read', 'Delete']) {
-      expect(code, `${verb} must name its row`)
-        .toMatch(new RegExp(`\`${verb}: \\$\\{rowSubject\\(\\[n\\.title, firstLine`))
+      expect(code, `${verb} must name its row`).toMatch(new RegExp(`\`${verb}: \\$\\{subject\\}\``))
     }
+    // And the row itself announces the same subject, not its whole 2001-character subtree.
+    expect(code, 'the row hit target shares the actions\' subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
   })
 
   it('the composition and its cap live in the shared helper, not here', () => {
