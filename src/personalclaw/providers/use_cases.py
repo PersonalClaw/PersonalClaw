@@ -74,11 +74,14 @@ CAPABILITIES: tuple[str, ...] = (
 # Consumers, per axis:
 #   code_tools    — the native agent runtime (provider_bridge)
 #   reasoning     — explicit one-shot judgment calls (web-extract, guarded one-shots)
+#                   and, by default, every LOOP JUDGE (loops.judge_use_case) — the
+#                   judge must not ride the binding of the work it grades
 #   background    — the _bg/personalclaw-lite session factory + one_shot_completion's
 #                   informal-label collapse (titles, tags, suggestions, digests,
 #                   consolidation)
 #   orchestration — orchestrated-chat supervising turns + model-less subagent spawns
-#   loops         — loop worker sessions + loop gates/judges (long-horizon)
+#   loops         — loop WORKER sessions (long-horizon). NOT the judges/gates that
+#                   grade them: those ride `loops.judge_use_case`.
 CHAT_SUBCATEGORIES: tuple[str, ...] = (
     "code_tools",
     "reasoning",

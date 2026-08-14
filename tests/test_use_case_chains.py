@@ -245,16 +245,26 @@ class TestConsumerAxes:
             await llm_helpers.one_shot_completion("hi", use_case="loops")
         assert resolve.call_args.args[0] == "loops"
 
-    def test_loop_judges_resolve_loops_axis(self):
+    def test_loop_judges_resolve_the_judge_axis_not_the_worker_axis(self):
+        """WF2LOO-17 inverts what this rail pins.
+
+        It used to assert the judges resolved ``"loops"`` — the WORKER's axis — which
+        is precisely the defect: a judge grading on the binding that produced the work
+        it grades (correlated reviewer mistakes). All three judge call sites now resolve
+        ``judge_use_case()`` (``loops.judge_use_case``, default ``reasoning``), and the
+        worker's literal axis must not reappear at any of them.
+        """
         from pathlib import Path
 
         from personalclaw.loop import gates, judge
 
         gates_src = Path(gates.__file__).read_text(encoding="utf-8")
         judge_src = Path(judge.__file__).read_text(encoding="utf-8")
-        assert 'resolve_provider_for_use_case("loops")' in gates_src
-        assert 'resolve_provider_for_use_case("loops")' in judge_src
-        assert 'resolve_provider_for_use_case("reasoning")' not in judge_src
+        assert 'resolve_provider_for_use_case("loops")' not in gates_src
+        assert 'resolve_provider_for_use_case("loops")' not in judge_src
+        assert "resolve_provider_for_use_case(judge_use_case())" in gates_src
+        # Both assess_cycle and assess_cycle_skeptic.
+        assert judge_src.count("resolve_provider_for_use_case(judge_use_case())") == 2
 
     def test_background_session_factory_passes_axis(self):
         from pathlib import Path

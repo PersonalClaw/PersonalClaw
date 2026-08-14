@@ -41,6 +41,7 @@ while not terminal:
 |---|---|
 | `models.py` | the spec algebra — node kinds, states, run/def records |
 | `tick.py` | `frontier()` — a PURE function from (spec, states) to what may run |
+| `admission.py` | the ordered `AdmissionPolicy` list `frontier()` composes tightest-wins |
 | `controller.py` | the conductor: one per run, the only writer of run state |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |

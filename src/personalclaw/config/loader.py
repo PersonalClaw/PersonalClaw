@@ -795,6 +795,40 @@ class LegibilityConfig:
     )
 
 
+def _judge_axis(value: object) -> str:
+    """Normalize ``loops.judge_use_case`` on load (WF2LOO-17).
+
+    Fail-SAFE, not fail-open: an unknown/blank axis collapses to ``reasoning``
+    rather than to the worker's ``loops`` axis, because the failure mode we are
+    closing is exactly "the judge silently grades on the worker's binding". A
+    typo in config.json must not re-create it. Imported lazily so the loader
+    keeps no module-level dependency on the provider package.
+    """
+    axis = str(value or "").strip()
+    if not axis:
+        return "reasoning"
+    try:
+        from personalclaw.providers.use_cases import VALID_USE_CASES
+    except Exception:
+        return axis
+    return axis if axis in VALID_USE_CASES else "reasoning"
+
+
+def _stagnation_window(value: object) -> int:
+    """Normalize ``loops.stagnation_window`` on load (WF2LOO-18).
+
+    Clamped to [2, 50] and fail-safe to the default: a garbage or missing value keeps the
+    stall detector at its shipped sensitivity rather than disabling it. The floor of 2 is
+    structural — the two worker-independent signals compare findings BETWEEN cycles, so a
+    window of 1 could only ever compare a cycle with itself and would detect nothing.
+    """
+    try:
+        window = int(str(value).strip())
+    except (TypeError, ValueError):
+        return 5
+    return max(2, min(50, window))
+
+
 @dataclass
 class LoopsConfig:
     """Settings for autonomous goal loops (the unified autonomous goal engine)."""
@@ -821,6 +855,30 @@ class LoopsConfig:
             "Trust TTL Seconds",
             "How long a loop's worker keeps auto-approved tool trust before "
             "the supervisor expires it and requires re-authorization.",
+        ),
+    )
+    judge_use_case: str = field(
+        default="reasoning",
+        metadata=_meta(
+            "Judge Model Axis",
+            "Which model axis the loop JUDGE rides — deliberately not the "
+            "`loops` axis the worker rides. Default `reasoning`: the judge that "
+            "certifies done-ness gets its own (typically stronger) binding, so a "
+            "reviewer mistake is not correlated with the mistake it is reviewing. "
+            "Set to `loops` to put judge and worker back on one binding.",
+        ),
+    )
+    stagnation_window: int = field(
+        default=5,
+        metadata=_meta(
+            "Stagnation Window",
+            "How many consecutive cycles of no progress stall a loop. The "
+            "supervisor compares the last N findings: byte-identical cycle "
+            "reports, an identical set of sources checked, or N cycles reporting "
+            "no new findings all mean the loop is spinning. Lower is more "
+            "trigger-happy; higher spends more cycles before asking for "
+            "direction. Minimum 2 — a window of 1 can only compare a cycle "
+            "with itself.",
         ),
     )
 
@@ -3405,6 +3463,8 @@ class AppConfig:
                 max_cycles_hard_cap=loops_data.get("max_cycles_hard_cap", 100),
                 default_idle_secs=loops_data.get("default_idle_secs", 120),
                 trust_ttl_secs=loops_data.get("trust_ttl_secs", 24 * 3600),
+                judge_use_case=_judge_axis(loops_data.get("judge_use_case", "reasoning")),
+                stagnation_window=_stagnation_window(loops_data.get("stagnation_window", 5)),
             ),
             memory=MemoryConfig(
                 semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),

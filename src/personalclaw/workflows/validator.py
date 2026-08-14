@@ -144,6 +144,12 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
 
     _validate_binding_targets(res, nodes, ids_seen)
     levels = _kahn_levels(res, nodes, ids_seen)
+    # ONE edge list, two rules over it: `PP-1` asks whether the producer is ordered first,
+    # `PP-3` whether the path the reader takes through its output can exist. Deriving them
+    # twice is the defect both changes exist to remove.
+    edges = dep_ordering_edges(nodes, ids_seen)
+    _validate_dep_ordering(res, edges)
+    _validate_output_contract(res, nodes, edges)
     if res.ok:
         res.levels = levels
     return res
@@ -526,6 +532,459 @@ def _validate_binding_targets(
                     f"binding references unknown node id {dep!r}",
                     path,
                 )
+
+
+@dataclass(frozen=True)
+class DepEdge:
+    """One `{{nodes.<producer>…}}` binding, and whether anything orders the producer first.
+
+    Materialized as a value rather than turned straight into an issue, because a rule that
+    examined no edges is indistinguishable from a rule that examined many and liked them
+    all — both report nothing. Only a caller that can count the edges considered can tell
+    the two apart, which is what the vacuity floor in the tests does.
+    """
+
+    reader_path: str
+    #: The reader's author-facing id, or `""` — `id` is optional on every node.
+    reader_id: str
+    producer_path: str
+    producer_id: str
+    ordered: bool
+    #: The satisfying edge when `ordered`, the missing one when not.
+    reason: str
+    #: The distinct paths this reader takes THROUGH the producer's output, as segment
+    #: tuples: `{{nodes.p.output.a.b}}` → `("a", "b")`, a bare `{{nodes.p.output}}` → `()`.
+    #: Empty overall when the binding never reaches `output` at all (`{{nodes.p.artifact}}`
+    #: is a dependency but not an output read, and `output_contract` says nothing about it).
+    output_reads: tuple[tuple[str, ...], ...] = ()
+
+
+def _parent_slots(nodes: list[tuple[str, Node]]) -> dict[str, tuple[str, str, int, str]]:
+    """child path → (parent path, slot, child index, case label).
+
+    Derived from the walk output rather than by splitting the path strings back apart: a
+    `cases[<label>]` label is author-supplied and may itself contain a dot or a bracket, so
+    parsing a path is not safe. Child paths are re-derived exactly as `walk` derives them,
+    which keeps the two constructions from drifting.
+    """
+    out: dict[str, tuple[str, str, int, str]] = {}
+    for path, node in nodes:
+        for i, child in enumerate(node.children):
+            out[f"{path}.children[{i}]"] = (path, "children", i, "")
+        if node.body is not None:
+            out[f"{path}.body"] = (path, "body", -1, "")
+        for label, _case in node.cases.items():
+            out[f"{path}.cases[{label}]"] = (path, "cases", -1, label)
+        if node.default_case is not None:
+            out[f"{path}.default"] = (path, "default", -1, "default")
+    return out
+
+
+def _chain(path: str, parents: dict[str, tuple[str, str, int, str]]) -> list[str]:
+    """`[path, parent, …, root]`. Bounded by `_MAX_DEPTH`-ish tree height in practice, and
+    by the visited set against a malformed map."""
+    out = [path]
+    seen = {path}
+    cur = path
+    while cur in parents:
+        cur = parents[cur][0]
+        if cur in seen:  # pragma: no cover — defensive; `walk` cannot produce a cycle
+            break
+        seen.add(cur)
+        out.append(cur)
+    return out
+
+
+def _slot_label(slot: tuple[str, str, int, str]) -> str:
+    """How an author would point at this slot in the spec."""
+    _parent, kind, index, label = slot
+    if kind == "children":
+        return f"child {index}"
+    if kind == "cases":
+        return f"case {label!r}"
+    if kind == "default":
+        return "the default case"
+    return "the body"
+
+
+def _needs_reaches(parent: Node, from_idx: int, to_idx: int) -> bool:
+    """Does child `from_idx` transitively `needs` child `to_idx` of this parallel?
+
+    Only the parallel's DIRECT children are consulted, because that is exactly what
+    admission consults (`tick._visit_parallel` gates on `child.needs`). A `needs` declared
+    anywhere else is inert, and treating it as an ordering edge here would make the
+    validator promise something the scheduler does not deliver.
+    """
+    by_id = {c.id: i for i, c in enumerate(parent.children) if c.id}
+    if not parent.children[to_idx].id:
+        return False  # nothing can `needs` an anonymous child
+    seen = {from_idx}
+    stack = [from_idx]
+    while stack:
+        for need in parent.children[stack.pop()].needs:
+            nxt = by_id.get(need)
+            if nxt is None or nxt in seen:
+                continue
+            if nxt == to_idx:
+                return True
+            seen.add(nxt)
+            stack.append(nxt)
+    return False
+
+
+def _ordering_verdict(
+    reader_path: str,
+    producer_path: str,
+    tree: dict[str, Node],
+    parents: dict[str, tuple[str, str, int, str]],
+) -> tuple[bool, str]:
+    """Is `producer_path` guaranteed terminal before `reader_path` can be admitted?
+
+    The comparison happens at the DIVERGENCE POINT — the lowest common ancestor — and
+    between the two branches of it that contain the reader and the producer, not between
+    the two nodes themselves. That is what makes "an earlier sibling within an enclosing
+    `sequence`" mean what an author expects: a producer buried inside an earlier sibling
+    (in a `parallel`, a `foreach` body, a `branch` case) is still terminal when that
+    sibling is, because a container completes only after its children do.
+
+    Deliberately NOT checked here: whether the producer actually RAN. A producer inside a
+    `branch` case is ordered before a later reader, but the case may not be taken. That is
+    a liveness question over a reachability graph this atom does not build — `PP-2` owns
+    it, and answering half of it here would put a second, weaker reachability rule in the
+    tree for `PP-2` to delete.
+    """
+    if reader_path == producer_path:
+        return False, "the binding reads the reader's own output"
+
+    r_chain = _chain(reader_path, parents)
+    p_chain = _chain(producer_path, parents)
+    if producer_path in r_chain:
+        return False, (
+            f"it ENCLOSES the reader ({producer_path}), and a container's output is not "
+            "available until after the children that produce it"
+        )
+    if reader_path in p_chain:
+        return False, f"it runs INSIDE the reader ({producer_path}), so it cannot precede it"
+
+    r_index = {p: i for i, p in enumerate(r_chain)}
+    lca = ""
+    p_branch = producer_path
+    for cur in p_chain[1:]:
+        if cur in r_index:
+            lca = cur
+            break
+        p_branch = cur
+    if not lca:  # pragma: no cover — both chains end at `root`, so an LCA always exists
+        return False, "the reader and the producer are in unrelated trees"
+    r_branch = r_chain[r_index[lca] - 1]
+
+    parent = tree.get(lca)
+    p_slot, r_slot = parents[p_branch], parents[r_branch]
+    kind = parent.kind if parent is not None else None
+    both_children = p_slot[1] == "children" and r_slot[1] == "children"
+
+    if kind is NodeKind.SEQUENCE and both_children:
+        if p_slot[2] < r_slot[2]:
+            return True, f"the sequence at {lca} runs child {p_slot[2]} before child {r_slot[2]}"
+        return False, (
+            f"the sequence at {lca} runs it AFTER the reader (child {p_slot[2]} vs child "
+            f"{r_slot[2]}) — move it before the reader"
+        )
+
+    if kind is NodeKind.PARALLEL and both_children:
+        assert parent is not None
+        if _needs_reaches(parent, r_slot[2], p_slot[2]):
+            return True, f"a `needs` chain inside the parallel at {lca}"
+        want = parent.children[p_slot[2]].id
+        edge = (
+            f'add `needs: ["{want}"]`'
+            if want
+            else f"give child {p_slot[2]} an id so it can be named in `needs`"
+        )
+        reader_branch = parent.children[r_slot[2]].id or _slot_label(r_slot)
+        return False, (
+            f"they run CONCURRENTLY in the parallel at {lca} — {edge} to {reader_branch}"
+        )
+
+    if kind is NodeKind.BRANCH:
+        return False, (
+            f"the branch at {lca} runs {_slot_label(p_slot)} and {_slot_label(r_slot)} "
+            "exclusively — only one of the two ever runs"
+        )
+
+    return False, (
+        f"nothing orders {_slot_label(p_slot)} before {_slot_label(r_slot)} in the "
+        f"{kind.value if kind else 'node'} at {lca}"
+    )
+
+
+def _output_reads(config: dict[str, Any]) -> dict[str, tuple[tuple[str, ...], ...]]:
+    """producer id → the distinct paths this config reads under that producer's `output`.
+
+    Built on `bindings.refs_in`, the same scan `node_deps` is built on, so the paths and the
+    dependency set cannot disagree about which producers a node reads — the whole point of
+    hanging this off `DepEdge` rather than deriving a second reference list.
+
+    A bare `{{nodes.p.output}}` yields the EMPTY tuple: it is a read, but there is no path
+    to check against a contract. A ref that never reaches `output` yields nothing at all.
+    """
+    out: dict[str, list[tuple[str, ...]]] = {}
+    for expr in refs_in(config):
+        head = expr.split("|")[0].strip()
+        segs = [s for s in head.split(".") if s]
+        if len(segs) < 3 or segs[0] != "nodes" or segs[2] != "output":
+            continue
+        paths = out.setdefault(segs[1], [])
+        path = tuple(segs[3:])
+        if path not in paths:  # the same ref may appear under several config keys
+            paths.append(path)
+    return {pid: tuple(paths) for pid, paths in out.items()}
+
+
+def dep_ordering_edges(nodes: list[tuple[str, Node]], ids: dict[str, str]) -> list[DepEdge]:
+    """Every binding-derived dependency, classified as ordered or not.
+
+    Uses `bindings.node_deps` — the same derivation the resume cache, the stale-inputs
+    check and the mutation cascade use — so this rule cannot disagree with them about what
+    a binding depends on. A reference to an unknown id is skipped: `WF_UNKNOWN_NODE_REF`
+    already owns that, and reporting both would make one typo two errors.
+    """
+    parents = _parent_slots(nodes)
+    tree = dict(nodes)
+    out: list[DepEdge] = []
+    for path, node in nodes:
+        config = node.config or {}
+        reads = _output_reads(config)
+        for dep in sorted(node_deps(config)):
+            producer_path = ids.get(dep)
+            if producer_path is None:
+                continue
+            ordered, reason = _ordering_verdict(path, producer_path, tree, parents)
+            out.append(
+                DepEdge(path, node.id, producer_path, dep, ordered, reason, reads.get(dep, ()))
+            )
+    return out
+
+
+def dep_edges_for_root(root: Node) -> list[DepEdge]:
+    """`dep_ordering_edges` for a whole tree — the shape a caller outside the validator has.
+
+    Mirrors `validate_node_tree`'s first-wins id map, so an inspection and a validation
+    cannot disagree about which node a duplicated id names (the duplicate itself is
+    `WF_DUPLICATE_NODE_ID`'s business).
+    """
+    nodes = walk(root)
+    ids: dict[str, str] = {}
+    for path, node in nodes:
+        if node.id and node.id not in ids:
+            ids[node.id] = path
+    return dep_ordering_edges(nodes, ids)
+
+
+def _validate_dep_ordering(res: ValidationResult, edges: list[DepEdge]) -> None:
+    """Refuse a binding whose producer is not ordered before its reader (`PP-1`).
+
+    The engine keeps two edge lists and nothing checked they agree. Admission reads
+    `needs` and container order only (`tick._visit_parallel`); bindings are a separate
+    graph feeding the resume cache, the stale-inputs check and the mutation cascade. So a
+    spec could bind `{{nodes.x.output}}` from a node that runs beside — or before — `x`,
+    and the run died at ready-time with *"binding failed: check the referenced node id and
+    field exist"* pointing the author at an id that was perfectly correct. Locally
+    plausible, globally wrong, and only discoverable by running it.
+
+    This adds no runtime behaviour: nothing about scheduling changes, `tick.py` is
+    untouched, and the check exists purely so the disagreement is a typed authoring-time
+    refusal instead of a mid-run failure.
+
+    Runs AFTER `_kahn_levels` and stays quiet when a cycle was found: on a cyclic graph the
+    only advice this rule can give ("order the producer first") is the advice that closes
+    the loop, so `WF_CYCLE` is both the truer fact and the one an author must fix first.
+    """
+    if any(i.code == "WF_CYCLE" for i in res.issues):
+        return
+    for edge in edges:
+        if edge.ordered:
+            continue
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        _add(
+            res,
+            "WF_UNORDERED_DEP",
+            (
+                f"{reader} binds {{{{nodes.{edge.producer_id}…}}}}, but nothing guarantees "
+                f"{edge.producer_id!r} has finished when {reader} is admitted: {edge.reason}"
+            ),
+            edge.reader_path,
+        )
+
+
+@dataclass(frozen=True)
+class ContractRead:
+    """One path taken through a producer's output, judged against that producer's contract.
+
+    Materialized as a value for the same reason `DepEdge` is: a rule that resolved NOTHING
+    against a real contract reports exactly what a rule that resolved fifty satisfiable
+    paths reports — silence. Only a caller that can count the reads whose `guaranteed` is
+    non-`None` can tell the two apart, which is what the vacuity floor in the tests does.
+    """
+
+    reader_path: str
+    #: The reader's author-facing id, or `""` — `id` is optional on every node.
+    reader_id: str
+    producer_id: str
+    producer_path: str
+    #: Segments after `output`; never empty (a bare `output` read has no path to judge).
+    path: tuple[str, ...]
+    #: Does the producer declare an `output_contract` at all?
+    declared: bool
+    #: The keys the contract GUARANTEES, or `None` when it makes no key-level promise.
+    guaranteed: tuple[str, ...] | None
+    #: `False` only when a key-level promise exists and this path's first segment is not in
+    #: it. Unknowable-therefore-allowed is `True`, so the error path can never be the
+    #: default.
+    satisfiable: bool
+
+
+def _declared_contracts(nodes: list[tuple[str, Node]]) -> dict[str, dict[str, Any]]:
+    """node id → its `output_contract`. First id wins, mirroring `validate_node_tree`'s id
+    map, so a duplicated id resolves to the same node in both (the duplicate itself is
+    `WF_DUPLICATE_NODE_ID`'s business)."""
+    out: dict[str, dict[str, Any]] = {}
+    for _path, node in nodes:
+        contract = (node.config or {}).get("output_contract")
+        if node.id and isinstance(contract, dict) and contract and node.id not in out:
+            out[node.id] = contract
+    return out
+
+
+def _guaranteed_keys(contract: dict[str, Any]) -> tuple[str, ...] | None:
+    """The keys a contract PROMISES will be present, or `None` when it promises none.
+
+    Both halves are required, matching `engine.check_output_contract` exactly:
+    `required_keys` on its own is the shape `batch_compile.schema_to_contract` emits for a
+    schema that declared no `type` (`required` present, `must_be_json` absent) — an
+    under-declared contract, not a wrong binding. Refusing on it would refuse the author
+    who described their output least, which is the opposite of the intent.
+    """
+    if not contract.get("must_be_json"):
+        return None
+    required = contract.get("required_keys")
+    if not isinstance(required, list) or not required:
+        return None
+    return tuple(str(k) for k in required)
+
+
+def output_contract_reads(
+    nodes: list[tuple[str, Node]], edges: list[DepEdge]
+) -> list[ContractRead]:
+    """Every `{{nodes.<id>.output.<path>}}` read, resolved against its producer's contract.
+
+    Only the FIRST segment is judged. `required_keys` is a promise about the top level of an
+    object and says nothing about what lives inside `output.findings`, so checking deeper
+    would mean inventing nesting vocabulary the engine cannot enforce — the one thing this
+    atom must not do.
+    """
+    contracts = _declared_contracts(nodes)
+    out: list[ContractRead] = []
+    for edge in edges:
+        contract = contracts.get(edge.producer_id)
+        guaranteed = _guaranteed_keys(contract) if contract is not None else None
+        for path in edge.output_reads:
+            if not path:  # a bare `output` read — nothing to resolve
+                continue
+            out.append(
+                ContractRead(
+                    reader_path=edge.reader_path,
+                    reader_id=edge.reader_id,
+                    producer_id=edge.producer_id,
+                    producer_path=edge.producer_path,
+                    path=path,
+                    declared=contract is not None,
+                    guaranteed=guaranteed,
+                    satisfiable=guaranteed is None or path[0] in guaranteed,
+                )
+            )
+    return out
+
+
+def contract_reads_for_root(root: Node) -> list[ContractRead]:
+    """`output_contract_reads` for a whole tree — the shape a caller outside the validator
+    has. Mirrors `dep_edges_for_root`, including its first-wins id map."""
+    nodes = walk(root)
+    ids: dict[str, str] = {}
+    for path, node in nodes:
+        if node.id and node.id not in ids:
+            ids[node.id] = path
+    return output_contract_reads(nodes, dep_ordering_edges(nodes, ids))
+
+
+def _validate_output_contract(
+    res: ValidationResult, nodes: list[tuple[str, Node]], edges: list[DepEdge]
+) -> None:
+    """Cross-check `output_contract` against the bindings that READ it (`PP-3`).
+
+    `engine.check_output_contract` is a good gate that runs before any binding resolves, and
+    it only ever looks at the producer. The reader was checked independently and the edge
+    between them never at all: a spec could bind `{{nodes.a.output.summary}}` where `a`'s
+    own contract guarantees `{"findings"}`, and the first symptom was `_walk_path` raising
+    *"unresolved reference at 'summary'"* mid-run. Note that a `| default(…)` pipe does NOT
+    rescue it — `_walk_path` raises before any pipe runs — so an unsatisfiable path is a
+    dead run, which is why it is an ERROR.
+
+    An unordered edge (`PP-1`) and an unsatisfiable path are reported TOGETHER when both
+    hold, unlike the unknown-id case PP-1 suppresses: a typo'd id is one defect wearing two
+    hats, whereas ordering and key-correctness are two independent fixes.
+
+    **The warning is scoped to specs that use contracts, and that is a deviation worth
+    naming.** Censused over the bundled library: 19 templates, 18 of them carrying 145
+    distinct `.output` reads (100 at a sub-path), and ZERO declaring an `output_contract`. An
+    unconditional warning would therefore fire 77 times across 18 of 19 shipped templates
+    (49 with the sub-path scoping alone) — every template warning on every validation, which
+    is how an author learns to skim past validator output. It would also red
+    `test_it_validates_STRICTLY`, whose stated contract is that a bundled template ships no
+    warning at all. So the warning fires only where the author has already adopted the
+    mechanism — a spec with at least one `output_contract` somewhere, the shape
+    `batch_compile` emits — and names the producer they left out. Measured volume on the
+    shipped library: zero. Contracts arriving in the library later turn it on for exactly
+    the templates that gained them.
+    """
+    reads = output_contract_reads(nodes, edges)
+    spec_uses_contracts = bool(_declared_contracts(nodes))
+
+    # producer id → (its path, [(reader label, dotted path) …]) for the aggregate warning.
+    missing: dict[str, tuple[str, list[str]]] = {}
+    for read in reads:
+        reader = repr(read.reader_id) if read.reader_id else read.reader_path
+        dotted = ".".join(read.path)
+        if not read.satisfiable:
+            assert read.guaranteed is not None  # `satisfiable` is True when it is None
+            _add(
+                res,
+                "WF_UNSATISFIABLE_OUTPUT_REF",
+                (
+                    f"{reader} reads {{{{nodes.{read.producer_id}.output.{dotted}}}}}, but "
+                    f"{read.producer_id!r} declares output_contract.required_keys "
+                    f"{list(read.guaranteed)} — {read.path[0]!r} is not among the keys it "
+                    "guarantees, so the binding cannot resolve"
+                ),
+                read.reader_path,
+            )
+        elif not read.declared and spec_uses_contracts:
+            _, readers = missing.setdefault(read.producer_id, (read.producer_path, []))
+            entry = f"{reader} reads output.{dotted}"
+            if entry not in readers:
+                readers.append(entry)
+
+    for producer_id, (producer_path, readers) in missing.items():
+        _add(
+            res,
+            "WF_UNCONTRACTED_OUTPUT_REF",
+            (
+                f"{producer_id!r} declares no output_contract, so nothing checks the paths "
+                f"read from it: {'; '.join(readers)}"
+            ),
+            producer_path,
+            SEVERITY_WARNING,
+        )
 
 
 def _kahn_levels(

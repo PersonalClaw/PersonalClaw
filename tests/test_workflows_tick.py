@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.workflows.admission import DEFAULT_LANE_CAPS
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     InstanceState,
@@ -27,7 +28,6 @@ from personalclaw.workflows.models import (
     NodeKind,
 )
 from personalclaw.workflows.tick import (
-    DEFAULT_LANE_CAPS,
     Limits,
     container_outcome,
     edge_key,

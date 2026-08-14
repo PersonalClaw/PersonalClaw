@@ -417,7 +417,18 @@ export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
   messages: number; running: boolean; stopping: boolean; pending_approval: boolean
-  memory_mode?: string; last_message?: string; last_ts?: number
+  memory_mode?: string; last_message?: string
+  /** 🔴 DECLARED `number` UNTIL CYCLE 173, AND THE ENDPOINT HAS NEVER SENT ONE. Read from the wire:
+   *  `POST /api/chat/sessions` returns `last_ts: ""`, and the sibling list (`ChatSessionSummary`,
+   *  below) has always typed the same field `string` — two shapes of ONE entity disagreeing about one
+   *  field. Nothing consumed it off this interface, so nothing broke; what it did do was make a real
+   *  defect look plausible. Cycle 166 deferred a "renders BLANK because it is fed a NUMBER" finding on
+   *  `#/chat` to its own cycle, and the number in that claim came from HERE, not from any payload.
+   *
+   *  🪤 The lesson `lib/epoch` already carries, in its own words: a type is "a declaration, not a
+   *  check — nothing validates a fetch against it". `started_at?: number` printing "in NaNd" on
+   *  `#/dashboard` was the same shape. Fetch the endpoint before believing the interface. */
+  last_ts?: string
 }
 export interface ChatSessionSummary {
   key: string; title: string; agent?: string; model?: string; messages: number
@@ -1903,11 +1914,28 @@ export interface LoopFinding {
   files_touched?: string[]
   new_findings_count?: number; evidence?: string; metric?: { name?: string; value?: number }; ts?: number
 }
+// A loop cycle's judge verdict. Since WF2LOO-16 this is the SAME record the workflows judge
+// contract uses (`judge_contract.JudgeVerdict`) — the loop's private third vocabulary was
+// deleted — so the shape gained the contract's fields. Every key below that existed before is
+// still spelled the same, and older stored verdicts can carry null scores, so the scored fields
+// stay optional-by-guard at the read sites rather than being assumed present.
 export interface LoopVerdict {
   cycle?: number; done: boolean; done_reason?: string; marginal_value: number; quality_score: number; regressed: boolean
   // P4 observability (optional — present on high-stakes/scored verdicts): whether an
   // adversarial skeptic cross-checked this verdict, and the calibrated returns-band used.
   adversarial?: boolean; band_used?: number
+  // ── From the contract. Optional: a verdict stored before the merge has none. ──
+  // The closed decision vocabulary `done` is projected onto: PASS when done, REJECT on a
+  // regression, RETRY on an ordinary unfinished cycle.
+  verdict?: 'PASS' | 'REJECT' | 'RETRY' | 'REPLAN' | 'ESCALATE' | 'NEEDS_INPUT'
+  // `passed` is STRICTER than `done` — done AND contract-valid AND not escalated. The loops UI
+  // shows `done`, because the loop judge's prompt is not given the contract's PASS preconditions.
+  passed?: boolean; valid?: boolean; invalid_reason?: string; protocol_error?: boolean
+  // Ground truth the SUPERVISOR observed itself (ran the command / read the deliverable), not a
+  // claim the worker narrated. Empty for a transcript-only cycle.
+  evidence_refs?: string[]; proof?: string
+  reasoning?: string; scores?: Record<string, number>; overall?: number
+  shortfalls?: string[]; escalated?: boolean; escalation_reason?: string
 }
 export interface LoopNudge { text: string; sent_at: number; sent_at_cycle: number; applied_cycle: number | null }
 export interface RosterMember { role: string; persona: string; role_hint?: string; agent_name?: string }

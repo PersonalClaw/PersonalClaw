@@ -622,6 +622,23 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # P25: opt-in tmux-backed terminal persistence (survives a gateway restart). Read as a
     # raw dict from config.json by handlers/terminal.py::_get_config — a 3-part nested path.
     "dashboard.terminal.persist": {"type": "bool"},
+    # The loop JUDGE's model axis, independent of the `loops` axis the
+    # graded worker rides. Runtime-editable because it is the knob a user reaches for
+    # after reading a verdict they disagree with (pin the strongest model to judgment).
+    # The closed set is the chat-family axes only: a non-chat capability (stt, embedding,
+    # image_gen…) cannot render a verdict, so offering it would be a footgun. `loops` IS
+    # offered — collapsing judge onto the worker's binding is a legitimate, explicit
+    # choice; it just stops being the silent default.
+    "loops.judge_use_case": {
+        "type": "enum",
+        "values": ["reasoning", "chat", "code_tools", "background", "orchestration", "loops"],
+    },
+    # How many consecutive no-progress cycles stall a loop. Runtime-editable
+    # because it is the knob a user reaches for after a loop either nagged too early or
+    # burned cycles before asking for direction. Floor of 2 is structural (the
+    # worker-independent signals compare findings BETWEEN cycles); the ceiling keeps a
+    # typo from parking the detector past any realistic cycle budget.
+    "loops.stagnation_window": {"type": "int", "min": 2, "max": 50},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
     # Gates the poll-based message sources (filesystem/channel apps). The UI

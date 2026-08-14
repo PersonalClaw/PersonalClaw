@@ -8,7 +8,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Runs now record what LANDED, not just what they did.**
+
 ### Changed
+- **A workflow that reads another step's output now refuses to save unless that step is guaranteed to run first.**
+
+- **A workflow step that declares what its output will contain is now checked against the steps that read it.**
+
+- **A loop that keeps working but stops getting anywhere now stalls, even when it insists it is making progress.**
+
+- **A loop's judge no longer runs on the same model as the worker it grades.**
 
 - **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
 
@@ -49,6 +60,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Anthropic models now reuse the stable head of a conversation instead of re-reading it every turn.**
 - **The Retro Terminal and Claw Arcade personalities now skin the error surfaces too.**
 
+- **A goal loop's judge verdict now shows you what the supervisor checked for itself.**
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it claimed to.**
 
 - **Housekeeping now runs when your machine actually needs it, instead of on a fixed clock — and one system does it, not two.**
