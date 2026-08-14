@@ -490,7 +490,19 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           left={
             <div className="flex items-center gap-3 min-w-0">
               <PageTitle>Apps</PageTitle>
-              <Segmented ariaLabel="Native, Library, or Store" value={view} onChange={setView}
+              {/* 🔴 THE ONLY HEADER-ROW `Segmented` IN THE APP WITH NO COLLAPSE STRATEGY, and it is the
+                  widest thing in this row. Measured at 390px: the strip spans 86..276 (**190px**) inside a
+                  ~199px slot (the header is 390 wide with 191px of shell-corner reservation), so it
+                  overflowed and axe reported `target-size` **serious** — `Library` ∩ `Install from URL`
+                  overlapping by **40×32**, plus the `Store` tab running under the terminal and
+                  notification corner controls by 26×26 each. A tap in those regions hits the wrong
+                  control.
+                  `collapse="menu"` is the same strategy every sibling Segmented in a header row already
+                  declares (`LoopComposer`'s Granularity, Mode and Project kind) and which that row's own
+                  comment prescribes: "the row can only fit by each wide control having its OWN collapse
+                  strategy". Below the fit threshold this becomes one pill naming the active view, opening
+                  the three in a popover — roles and arrow-key behaviour are untouched. */}
+              <Segmented ariaLabel="Native, Library, or Store" collapse="menu" value={view} onChange={setView}
                 options={[{ key: 'native', label: 'Native' }, { key: 'library', label: 'Library' }, { key: 'store', label: 'Store' }]} />
             </div>
           }
