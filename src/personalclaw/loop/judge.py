@@ -15,6 +15,16 @@ findings and emits a structured verdict:
 It runs in its own session with no write tools — it reads and judges, it doesn't
 act. Built on the eval :class:`LLMJudge` (the same provider seam the ratchet
 already uses) but with its own done-ness + marginal-value rubric.
+
+**The verdict object is the contract's, not this module's (WF2LOO-16).** There used to be a
+private ``CycleVerdict`` here — a third vocabulary over one decision, alongside the two
+`WF2LOO-13` already merged. It is DELETED: `assess_cycle` returns a
+:class:`~personalclaw.workflows.judge_contract.JudgeVerdict`, the boolean ``done`` above is
+projected onto the closed enum by the contract's single `verdict_for_cycle`, and the asymmetric
+skeptic merge lives with the fields it merges (`judge_contract.adjudicate`). The loop's own
+addition to the contract is evidence: `_observe_ground_truth` is unchanged, and
+:func:`evidence_refs_from_observation` turns what it observed into the contract's
+``evidence_refs`` — proof the SUPERVISOR gathered, not a claim the worker made.
 """
 
 from __future__ import annotations
@@ -22,47 +32,14 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+
+from personalclaw.workflows.judge_contract import (
+    JudgeVerdict,
+    clamp_marginal,
+    verdict_for_cycle,
+)
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class CycleVerdict:
-    """The judge's third-party assessment of one cycle."""
-
-    done: bool = False
-    done_reason: str = ""
-    marginal_value: float = 0.0  # 0-5: how much THIS cycle advanced beyond prior cycles
-    quality_score: float = 0.0  # 0-5: absolute quality of the work (ratchet guardrail)
-    regressed: bool = False
-    # A bounded chain-of-thought written BEFORE the verdict fields (AUTONOMY-
-    # GUARDRAILS §2.4): a structured-output constraint must not suppress the
-    # judge's reasoning, which is exactly the value of a third-party assessor.
-    # Optional so an older/blank response still parses.
-    reasoning: str = ""
-    # P4 observability: whether an adversarial skeptic cross-checked this (high-stakes)
-    # verdict, and the calibrated returns-band the exhaustion check used this cycle.
-    # Both optional — absent/False on ordinary cycles — so the cockpit can show "this
-    # completion survived a second refuting judge" and "the noise band was X".
-    adversarial: bool = False
-    band_used: float | None = None
-
-    def to_dict(self) -> dict:
-        d = {
-            "done": self.done,
-            "done_reason": self.done_reason,
-            "marginal_value": self.marginal_value,
-            "quality_score": self.quality_score,
-            "regressed": self.regressed,
-        }
-        if self.reasoning:
-            d["reasoning"] = self.reasoning
-        if self.adversarial:
-            d["adversarial"] = True
-        if self.band_used is not None:
-            d["band_used"] = round(self.band_used, 2)
-        return d
 
 
 def _digest(prior_findings: list[dict], limit: int = 8) -> str:
@@ -151,6 +128,36 @@ async def _observe_ground_truth(
     )
 
 
+#: The two shapes :func:`_observe_ground_truth` emits, matched so the refs are read back out of
+#: the very block the judge was shown.
+_OBSERVED_COMMAND_RE = re.compile(r"^Ran `(.+?)` → (.+)$", re.M)
+_OBSERVED_FILE_RE = re.compile(r"^Read `(.+?)`:$", re.M)
+
+
+def evidence_refs_from_observation(observed: str) -> list[str]:
+    """The ``evidence_refs`` a loop cycle can honestly cite, derived from the observation block.
+
+    This is the loop side of the contract's proof requirement (WF2LOO-16). It PARSES what
+    :func:`_observe_ground_truth` returned rather than re-deriving refs from ``verify_command``
+    /``deliverables``, and that choice is the whole guarantee: a ref built from the inputs would
+    claim an observation that may not have happened — the command can be missing, the file
+    unreadable, the deliverable absent — and a proof that can be wrong is worse than no proof.
+    Because the string parsed here is the same string the judge was shown, the refs can never
+    cite evidence the judge did not see.
+
+    Empty for a transcript-only cycle, which is honest: nothing was observed, so nothing is
+    cited. That is also why the contract's PASS precondition is not applied to a loop cycle —
+    see `judge_contract`'s population measurement.
+    """
+    text = observed or ""
+    refs = [
+        f"command:{command} → {state.rstrip('.')}"
+        for command, state in _OBSERVED_COMMAND_RE.findall(text)
+    ]
+    refs += [f"file:{name}" for name in _OBSERVED_FILE_RE.findall(text)]
+    return refs
+
+
 def _build_prompt(
     goal: str, success_criteria: str, finding: dict, prior_findings: list[dict], observed: str = ""
 ) -> str:
@@ -197,7 +204,7 @@ async def assess_cycle(
     workspace: str | None = None,
     deliverables: list[str] | None = None,
     fallback_dirs: list[str] | None = None,
-) -> CycleVerdict | None:
+) -> JudgeVerdict | None:
     """Assess one cycle with a separate judge subagent. Returns None on failure.
 
     ``provider_factory`` is injected for testing; in production it resolves the
@@ -256,7 +263,7 @@ async def assess_cycle(
             await judge.shutdown()
         except Exception:
             pass
-    return _parse_verdict(raw)
+    return _parse_verdict(raw, evidence_refs_from_observation(observed))
 
 
 async def assess_cycle_skeptic(
@@ -270,7 +277,7 @@ async def assess_cycle_skeptic(
     workspace: str | None = None,
     deliverables: list[str] | None = None,
     fallback_dirs: list[str] | None = None,
-) -> CycleVerdict | None:
+) -> JudgeVerdict | None:
     """A second, adversarial judge (P4) — same third-party independence as
     :func:`assess_cycle`, but prompted to REFUTE a claimed completion/regression: it
     defaults to *not done* / *not regressed* unless the evidence is undeniable. Used to
@@ -315,7 +322,7 @@ async def assess_cycle_skeptic(
             await judge.shutdown()
         except Exception:
             pass
-    return _parse_verdict(raw)
+    return _parse_verdict(raw, evidence_refs_from_observation(observed))
 
 
 def _build_skeptic_prompt(
@@ -357,33 +364,6 @@ def _build_skeptic_prompt(
     )
 
 
-def adjudicate(primary: CycleVerdict, skeptic: CycleVerdict | None) -> CycleVerdict:
-    """Conservatively merge a primary verdict with an adversarial skeptic (P4).
-
-    A ``done`` survives ONLY if the skeptic does not overturn it (skeptic also says done) —
-    a claimed completion needs two independent yeses. ``regressed`` is the opposite: it
-    survives if EITHER judge flags it (a possible regression is worth stalling on). When the
-    skeptic is unavailable (None — it failed to run), the primary stands unchanged: we never
-    manufacture a refutation we didn't get. marginal/quality/reason come from the primary
-    (the skeptic exists to veto done, not to re-score)."""
-    if skeptic is None:
-        return primary
-    done = bool(primary.done and skeptic.done)
-    regressed = bool(primary.regressed or skeptic.regressed)
-    reason = primary.done_reason
-    if primary.done and not done:
-        reason = f"skeptic overturned completion: {skeptic.done_reason}".strip()[:500]
-    return CycleVerdict(
-        done=done,
-        done_reason=reason,
-        marginal_value=primary.marginal_value,
-        quality_score=primary.quality_score,
-        regressed=regressed,
-        adversarial=True,  # the skeptic ran → this verdict was adversarially cross-checked
-        band_used=primary.band_used,
-    )
-
-
 async def _stream(judge, prompt: str) -> str:
     """Stream a prompt through the judge's provider and collect the text."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
@@ -404,11 +384,16 @@ async def _stream(judge, prompt: str) -> str:
     return "".join(chunks)
 
 
-def _clamp(v: float, lo: float = 0.0, hi: float = 5.0) -> float:
-    return max(lo, min(hi, v))
+def _parse_verdict(raw: str, evidence_refs: list[str] | None = None) -> JudgeVerdict | None:
+    """Parse the loop judge's JSON answer into the CONTRACT's verdict record.
 
-
-def _parse_verdict(raw: str) -> CycleVerdict | None:
+    The prompt asks for ``done``/``regressed`` booleans, so the closed enum is derived here by
+    the contract's one projection (`verdict_for_cycle`) rather than being asked for a second
+    time in a second spelling — asking a model to restate a fact it already stated is how a
+    third vocabulary starts. ``evidence_refs`` are the supervisor's, threaded in from
+    :func:`evidence_refs_from_observation`; the judge is never asked to cite proof, because the
+    bundled prompt does not offer it the field.
+    """
     m = re.search(r"\{[\s\S]*\}", raw or "")
     if not m:
         logger.warning("judge returned unparseable verdict: %s", (raw or "")[:200])
@@ -420,11 +405,14 @@ def _parse_verdict(raw: str) -> CycleVerdict | None:
         return None
     if not isinstance(data, dict):
         return None
-    return CycleVerdict(
-        done=bool(data.get("done") is True),
+    done = bool(data.get("done") is True)
+    regressed = bool(data.get("regressed") is True)
+    return JudgeVerdict(
+        verdict=verdict_for_cycle(done, regressed),
         done_reason=str(data.get("done_reason", "")).strip()[:500],
-        marginal_value=_clamp(float(data.get("marginal_value", 0) or 0)),
-        quality_score=_clamp(float(data.get("quality_score", 0) or 0)),
-        regressed=bool(data.get("regressed") is True),
+        marginal_value=clamp_marginal(data.get("marginal_value")),
+        quality_score=clamp_marginal(data.get("quality_score")),
+        regressed=regressed,
         reasoning=str(data.get("reasoning", "")).strip()[:1000],
+        evidence_refs=list(evidence_refs or []),
     )

@@ -11,7 +11,17 @@ from personalclaw.loop.granularity import (
     returns_exhausted,
     returns_exhausted_calibrated,
 )
-from personalclaw.loop.judge import CycleVerdict, adjudicate
+from personalclaw.workflows.judge_contract import JudgeVerdict, adjudicate, verdict_for_cycle
+
+
+def _v(**kw) -> JudgeVerdict:
+    """A loop-cycle verdict built the way the loop judge builds one (WF2LOO-16): the boolean
+    done-ness goes through the contract's ONE projection, so these tests exercise the real
+    mapping rather than asserting a hand-set enum."""
+    done = bool(kw.pop("done", False))
+    regressed = bool(kw.pop("regressed", False))
+    return JudgeVerdict(verdict=verdict_for_cycle(done, regressed), regressed=regressed, **kw)
+
 
 # ── calibrated band ────────────────────────────────────────────────────────
 
@@ -76,32 +86,32 @@ def test_calibrated_exhausts_after_extended_low_run_when_noisy():
 
 
 def test_adjudicate_done_needs_two_yeses():
-    primary = CycleVerdict(done=True, done_reason="met", marginal_value=1.0, quality_score=4.0)
+    primary = _v(done=True, done_reason="met", marginal_value=1.0, quality_score=4.0)
     # skeptic disagrees → completion overturned
-    overturned = adjudicate(primary, CycleVerdict(done=False, done_reason="not really"))
+    overturned = adjudicate(primary, _v(done=False, done_reason="not really"))
     assert overturned.done is False
     assert "overturned" in overturned.done_reason
     assert overturned.adversarial is True
     # skeptic agrees → completion stands
-    assert adjudicate(primary, CycleVerdict(done=True)).done is True
+    assert adjudicate(primary, _v(done=True)).done is True
 
 
 def test_adjudicate_regressed_survives_either():
-    assert adjudicate(CycleVerdict(regressed=False), CycleVerdict(regressed=True)).regressed is True
-    assert adjudicate(CycleVerdict(regressed=True), CycleVerdict(regressed=False)).regressed is True
+    assert adjudicate(_v(regressed=False), _v(regressed=True)).regressed is True
+    assert adjudicate(_v(regressed=True), _v(regressed=False)).regressed is True
 
 
 def test_adjudicate_none_skeptic_passes_primary_unchanged():
     # When the skeptic can't run we never manufacture a refutation.
-    primary = CycleVerdict(done=True, marginal_value=2.0, quality_score=3.0)
+    primary = _v(done=True, marginal_value=2.0, quality_score=3.0)
     result = adjudicate(primary, None)
     assert result.done is True
     assert result.adversarial is False  # no cross-check happened
 
 
 def test_adjudicate_carries_primary_scores():
-    primary = CycleVerdict(done=True, marginal_value=3.5, quality_score=4.2, band_used=1.7)
-    merged = adjudicate(primary, CycleVerdict(done=True))
+    primary = _v(done=True, marginal_value=3.5, quality_score=4.2, band_used=1.7)
+    merged = adjudicate(primary, _v(done=True))
     assert merged.marginal_value == 3.5 and merged.quality_score == 4.2 and merged.band_used == 1.7
 
 
@@ -112,7 +122,7 @@ def test_adjudicate_carries_primary_scores():
 async def test_canary_trustworthy_when_judge_separates():
     async def good(goal, dod, finding, prior):
         strong = "Implemented" in (finding.get("summary") or "")
-        return CycleVerdict(quality_score=4.5 if strong else 0.5)
+        return _v(quality_score=4.5 if strong else 0.5)
 
     assert await instrument.probe_judge(good) is True
 
@@ -120,7 +130,7 @@ async def test_canary_trustworthy_when_judge_separates():
 @pytest.mark.asyncio
 async def test_canary_blind_when_judge_collapses():
     async def blind(goal, dod, finding, prior):
-        return CycleVerdict(quality_score=3.0)  # identical for strong + null → no separation
+        return _v(quality_score=3.0)  # identical for strong + null → no separation
 
     assert await instrument.probe_judge(blind) is False
 
@@ -144,13 +154,20 @@ async def test_canary_defers_on_exception():
 # ── observability fields ───────────────────────────────────────────────────
 
 
-def test_verdict_to_dict_lean_by_default():
-    d = CycleVerdict(marginal_value=1.0, quality_score=2.0).to_dict()
-    assert "adversarial" not in d and "band_used" not in d
+def test_verdict_to_dict_keys_are_unconditional():
+    """WF2LOO-16 DEVIATION, recorded: `adversarial`/`band_used` used to be OMITTED when unset
+    (the deleted `CycleVerdict.to_dict` built its dict conditionally). On the contract record
+    they are two of twenty-one keys and every other one is unconditional, so they are emitted
+    always. The cockpit is unaffected either way — it guards with `verdict?.adversarial` and
+    `typeof band_used === 'number'`, both of which reject `false`/`null` — but a persisted
+    record whose key SET varies by value is harder to diff and query than one whose values do.
+    """
+    d = _v(marginal_value=1.0, quality_score=2.0).to_dict()
+    assert d["adversarial"] is False and d["band_used"] is None
 
 
 def test_verdict_to_dict_includes_set_observability():
-    d = CycleVerdict(done=True, adversarial=True, band_used=1.777).to_dict()
+    d = _v(done=True, adversarial=True, band_used=1.777).to_dict()
     assert d["adversarial"] is True and d["band_used"] == 1.78  # rounded to 2dp
 
 
@@ -189,7 +206,7 @@ async def test_reproduce_uses_kind_deliverable_when_cfg_empty(monkeypatch, tmp_p
 
     async def spy(goal, sc, finding, prior, **kw):
         captured.update(kw)  # capture the deliverables the reproduce threaded in
-        return CycleVerdict(done=True, quality_score=4.0)
+        return _v(done=True, quality_score=4.0)
 
     monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", spy)
     result = await instrument.reproduce_confirm(loop)

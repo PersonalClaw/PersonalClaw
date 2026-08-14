@@ -89,15 +89,18 @@ class TestOpenEndedJudgePath:
         from unittest.mock import AsyncMock
 
         from personalclaw.loop import kinds, store
-        from personalclaw.loop.judge import CycleVerdict
+        from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 
         kinds.ensure_loaded()
         loop = self._loop()
         monkeypatch.setattr(
             "personalclaw.loop.judge.assess_cycle",
             AsyncMock(
-                return_value=CycleVerdict(
-                    done=True, done_reason="met", marginal_value=3.0, quality_score=4.0
+                return_value=JudgeVerdict(
+                    verdict=verdict_for_cycle(True, False),
+                    done_reason="met",
+                    marginal_value=3.0,
+                    quality_score=4.0,
                 )
             ),
         )
@@ -293,8 +296,8 @@ class TestJudgeIndependence:
         from unittest.mock import AsyncMock
 
         from personalclaw.loop import kinds, store
-        from personalclaw.loop.judge import CycleVerdict
         from personalclaw.loop.loop import Loop
+        from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 
         monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
         kinds.ensure_loaded()
@@ -314,7 +317,9 @@ class TestJudgeIndependence:
                 },
             )
         )
-        spy = AsyncMock(return_value=CycleVerdict(done=True, done_reason="ok"))
+        spy = AsyncMock(
+            return_value=JudgeVerdict(verdict=verdict_for_cycle(True, False), done_reason="ok")
+        )
         monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", spy)
         await kinds.get("goal").is_done_signal(loop, [{"cycle": 1, "summary": "x"}])
         _, kwargs = spy.call_args
@@ -331,8 +336,8 @@ class TestJudgeIndependence:
         from unittest.mock import AsyncMock
 
         from personalclaw.loop import kinds, store
-        from personalclaw.loop.judge import CycleVerdict
         from personalclaw.loop.loop import Loop
+        from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 
         monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
         ctx = tmp_path / "ctx"
@@ -355,7 +360,9 @@ class TestJudgeIndependence:
                 },
             )
         )
-        spy = AsyncMock(return_value=CycleVerdict(done=False, done_reason=""))
+        spy = AsyncMock(
+            return_value=JudgeVerdict(verdict=verdict_for_cycle(False, False), done_reason="")
+        )
         monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", spy)
         await kinds.get("goal").is_done_signal(loop, [{"cycle": 1, "summary": "x"}])
         _, kwargs = spy.call_args
@@ -403,3 +410,114 @@ class TestJudgeIndependence:
             id="c", name="g", kind="code", task="t", workspace_dir=str(bound), project_id=""
         )
         assert effective_dir(brown) == str(bound)
+
+
+class TestLoopVerdictSpeaksTheContract:
+    """WF2LOO-16: the loop judge's verdict IS the contract's record, and the loop's contribution
+    back to the contract is evidence the SUPERVISOR observed rather than the worker claimed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_evidence_refs_are_derived_from_what_was_actually_observed(self, tmp_path):
+        """Derived from the observation BLOCK, never rebuilt from `verify_command`/`deliverables`
+        — a ref built from the inputs would cite a command that never ran or a file that was
+        never readable, and a proof that can be wrong is worse than no proof."""
+        from personalclaw.loop.judge import _observe_ground_truth, evidence_refs_from_observation
+
+        (tmp_path / "REPORT.md").write_text("body", encoding="utf-8")
+        block = await _observe_ground_truth("true", str(tmp_path), ["REPORT.md"])
+        assert evidence_refs_from_observation(block) == [
+            "command:true → PASSED (exit 0)",
+            "file:REPORT.md",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_deliverable_is_never_cited(self, tmp_path):
+        """The anchor was DECLARED but nothing was observed, so nothing is cited."""
+        from personalclaw.loop.judge import _observe_ground_truth, evidence_refs_from_observation
+
+        block = await _observe_ground_truth("", str(tmp_path), ["missing.md"])
+        assert block == "" and evidence_refs_from_observation(block) == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_command_is_cited_with_its_real_state(self, tmp_path):
+        """The ref carries the outcome, not just the command: citing `pytest` as proof when it
+        exited non-zero would be exactly the claim-dressed-as-evidence the contract refuses."""
+        from personalclaw.loop.judge import _observe_ground_truth, evidence_refs_from_observation
+
+        block = await _observe_ground_truth("false", str(tmp_path), [])
+        assert evidence_refs_from_observation(block) == ["command:false → FAILED (non-zero exit)"]
+
+    def test_the_boolean_prompt_answer_is_projected_onto_the_closed_enum(self):
+        """The bundled `task-cycle_judge` prompt asks for `done`/`regressed` booleans, so the
+        enum is DERIVED here rather than asked for in a second spelling — asking a model to
+        restate a fact it already stated is how a third vocabulary starts."""
+        import json as _json
+
+        from personalclaw.loop.judge import _parse_verdict
+        from personalclaw.workflows.judge_contract import Verdict
+
+        cases = {
+            (True, False): Verdict.PASS,
+            (True, True): Verdict.PASS,
+            (False, True): Verdict.REJECT,
+            (False, False): Verdict.RETRY,
+        }
+        for (done, regressed), expected in cases.items():
+            raw = _json.dumps({"done": done, "regressed": regressed, "marginal_value": 2})
+            verdict = _parse_verdict(raw)
+            assert verdict is not None
+            assert verdict.verdict is expected, f"done={done} regressed={regressed}"
+            assert verdict.done is done and verdict.regressed is regressed
+
+    @pytest.mark.asyncio
+    async def test_an_anchored_cycles_persisted_shape_satisfies_the_contract(self, tmp_path):
+        """The measured population, held as a floor. BEFORE this atom the answer was ZERO: every
+        shape the loop could persist failed `validate_verdict` at the FIRST step (`unknown verdict
+        None`), the proof check never being reached. An ANCHORED cycle now round-trips through the
+        contract as a valid PASS — which is what makes the precondition satisfiable before anyone
+        considers making it binding."""
+        import json as _json
+
+        from personalclaw.loop.judge import (
+            _observe_ground_truth,
+            _parse_verdict,
+            evidence_refs_from_observation,
+        )
+        from personalclaw.workflows.judge_contract import JudgeHints, validate_verdict
+
+        (tmp_path / "REPORT.md").write_text("body", encoding="utf-8")
+        observed = await _observe_ground_truth("true", str(tmp_path), ["REPORT.md"])
+        verdict = _parse_verdict(
+            _json.dumps({"done": True, "done_reason": "met", "quality_score": 4}),
+            evidence_refs_from_observation(observed),
+        )
+        assert verdict is not None
+        round_tripped = validate_verdict(verdict.to_dict(), JudgeHints())
+        assert round_tripped.passed is True, round_tripped.invalid_reason
+
+    @pytest.mark.asyncio
+    async def test_a_transcript_only_cycle_would_still_fail_the_proof_precondition(self, tmp_path):
+        """The other half of the measurement, asserted so the scoping decision cannot rot: a goal
+        with no runnable command and no readable deliverable cites nothing, so it would be refused
+        if the precondition were switched on. That is precisely why the loop supervisor routes on
+        `done` and not on `passed` — enforcing it today would fail every transcript-only goal,
+        which is an outage, not a gate."""
+        import json as _json
+
+        from personalclaw.loop.judge import (
+            _observe_ground_truth,
+            _parse_verdict,
+            evidence_refs_from_observation,
+        )
+        from personalclaw.workflows.judge_contract import JudgeHints, validate_verdict
+
+        observed = await _observe_ground_truth("", None, [])
+        verdict = _parse_verdict(
+            _json.dumps({"done": True, "done_reason": "met"}),
+            evidence_refs_from_observation(observed),
+        )
+        assert verdict is not None and verdict.done is True  # the loop still completes
+        refused = validate_verdict(verdict.to_dict(), JudgeHints())
+        assert refused.passed is False
+        assert refused.invalid_reason == "PASS without cited proof or evidence refs"

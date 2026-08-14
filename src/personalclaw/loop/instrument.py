@@ -55,7 +55,7 @@ async def probe_judge(assess_fn) -> bool | None:
     judge — the caller should halt rather than trust verdicts), or None if the probe
     itself couldn't run (defer — never a false blind).
 
-    ``assess_fn`` is an async callable ``(goal, dod, finding, prior) -> CycleVerdict|None``
+    ``assess_fn`` is an async callable ``(goal, dod, finding, prior) -> JudgeVerdict|None``
     — injected so this is unit-testable without a live model and so it reuses whichever
     judge the caller already resolves.
     """
