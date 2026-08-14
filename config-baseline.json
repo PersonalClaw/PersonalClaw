@@ -36,6 +36,12 @@
     "type": "bool"
   },
   {
+    "default": true,
+    "path": "agent.prompt_cache_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": "native",
     "path": "agent.provider",
     "sensitive": false,

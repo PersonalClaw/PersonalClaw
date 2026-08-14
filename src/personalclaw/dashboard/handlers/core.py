@@ -563,6 +563,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "agents_routing.cooldown_hours": {"type": "float", "min": 0.0, "max": 720.0},
     "agent.orchestrator_skill": {"type": "bool"},
     "agent.acp_concurrent_sessions": {"type": "bool"},
+    # PROMPT-CACHE-SUBSTRATE §C6 — the prompt-cache switch (default ON). Off collapses
+    # the provider's declared cache mode to NONE, which is the byte-identical no-marker
+    # path an undeclared provider already takes. It does NOT revert the §C2/§C3 wire
+    # ordering repairs, which are unconditional.
+    "agent.prompt_cache_enabled": {"type": "bool"},
     # The assistant's display name — consumed by the prompt engine ({{bot_name}}
     # template var + ContextBuilder). Sanitized at the write boundary (strip
     # markdown/braces, ≤50 chars) so the FILE matches what load() produces —

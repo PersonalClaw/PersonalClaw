@@ -338,6 +338,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Prompt caching is now a switch you can find, in Settings → Models.** Providers that support it
+  can be asked to cache the stable front of your prompt — the assembled context that does not change
+  from turn to turn — so a long conversation stops re-paying for the same tokens on every turn.
+  That was already happening; there was no way to see it or stop it. There is now a **Prompt
+  caching** switch beside your model bindings, on by default. It is on by default because caching is
+  transparent: the model is shown exactly the same tokens either way, and a provider without cache
+  support is unaffected. Turn it off when you are debugging a provider and want caching ruled out —
+  nothing else changes when you do. In particular, **what the model is shown and in what order is
+  identical either way**: the ordering of the served prompt is a correctness property, not part of
+  the caching feature, so the switch does not quietly serve you a different prompt.
+
 - **You can approve what PersonalClaw is waiting on from your phone.** A run that stops to ask
   permission used to stay stopped until you were back at a desk, because the only place the question
   appeared was the desktop dashboard. There is now a phone route at **`#/companion`** — open it on

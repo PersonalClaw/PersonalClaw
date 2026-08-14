@@ -424,6 +424,16 @@ class AgentConfig:
             "allow it.",
         ),
     )
+    prompt_cache_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Prompt Caching",
+            "Ask providers that support it to cache the stable prompt prefix. Reduces "
+            "cost and latency on multi-turn work. No effect on providers without cache "
+            "support. Turn it off to rule caching out when debugging a provider — the "
+            "served prompt's ordering is unchanged either way.",
+        ),
+    )
     bot_name: str = field(
         default="",
         metadata=_meta(
@@ -3358,6 +3368,11 @@ class AppConfig:
                 sandbox=agent_data.get("sandbox", "auto"),
                 yolo=agent_data.get("yolo", False),
                 acp_concurrent_sessions=agent_data.get("acp_concurrent_sessions", False),
+                # Defaults ON (PROMPT-CACHE-SUBSTRATE §C6): caching is semantically
+                # transparent — the model sees the same tokens either way and every
+                # provider path degrades to a byte-identical no-op — so opt-out is the
+                # honest default for a pure cost optimisation.
+                prompt_cache_enabled=bool(agent_data.get("prompt_cache_enabled", True)),
                 # Renamed conductor_skill → orchestrator_skill (2026-07). Back-read
                 # the legacy key so a pre-rename install keeps the feature enabled;
                 # the new key wins when both are present. Re-serialized under the new
