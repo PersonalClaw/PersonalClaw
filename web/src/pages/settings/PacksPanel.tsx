@@ -77,7 +77,12 @@ export function PacksPanel() {
 // ── installed packs + finish-setup chip ──────────────────────────────────────
 function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
   if (packs.length === 0) {
-    return <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">No packs installed yet.</div>
+    // 🔴 "No packs installed yet." named the emptiness and taught nothing — and this panel's whole
+    // subject is a thing that ARRIVES from elsewhere ("Importable capability bundles … one user can
+    // hand to another"), so a first-time reader had no idea what would make it fill. Same voice as
+    // the sibling empties on this screen; the card shape is kept because it sits inside a Section
+    // where the surrounding rows are cards too.
+    return <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">No packs installed yet — imported packs and their setup state appear here.</div>
   }
   return (
     <div className="flex flex-col gap-2">

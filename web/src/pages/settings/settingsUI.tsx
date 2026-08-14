@@ -70,6 +70,24 @@ export function Section({ title, hint, icon: Icon, right, children }: {
 }
 
 /** A labeled row — label/description on the left, control on the right. */
+/** A list-slot empty inside a settings panel: one muted, centred line where rows would be.
+ *
+ *  Three panels shipped this exact markup — `AuditPanel`, and the memory studio's list and its audit
+ *  trail — as `<p className="py-6 text-center text-on-surface-low text-[0.8125rem]">`, copied
+ *  verbatim. Same job, same pixels, three strings to keep in step, and a fourth site had already
+ *  drifted to `py-4`. This is that string with a name; adopting it changed nothing on screen, which
+ *  is the point.
+ *
+ *  🪤 NOT the same thing as `ui/ListScaffold`'s `EmptyState` (a page empty: icon chip, headline,
+ *  action) or the dashboard kit's `SlotEmptyState` (a dashed-border pill). Converging a settings
+ *  panel onto either of those would ADD chrome to a dozen quiet surfaces — a redesign, not a
+ *  convergence, and the owner's call rather than a scanner's. This helper deliberately carries no
+ *  icon and no border.
+ */
+export function PanelListEmpty({ children }: { children: ReactNode }) {
+  return <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">{children}</p>
+}
+
 export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">

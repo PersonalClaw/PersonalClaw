@@ -11,7 +11,7 @@ import {
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
   type MemoryGraphSummary, type MemoryLink,
 } from '../../lib/api'
-import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Field, Row, Toggle, SavedToast, PanelListEmpty } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -302,7 +302,13 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {loading ? <ListSkeleton rows={8} /> : shown.length === 0 ? (
-            <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">{q ? 'No matches.' : 'No memories yet.'}</p>
+            <PanelListEmpty>{q
+              ? 'No matches.'
+              // 🔴 "No memories yet." named the emptiness and taught nothing. Every sibling on this
+              // surface says what fills it — the graph a few hundred lines down reads "No memory graph
+              // yet — facts and their links appear here as memory grows" — so this now uses that voice
+              // rather than its own. The FIRST state a new user sees on this panel is this sentence.
+              : 'No memories yet — facts, episodes and lessons appear here as memory grows.'}</PanelListEmpty>
           ) : shown.map((it) => {
             const on = it.uid === selUid
             const Icon = STUDIO_KIND_META[it.kind].icon
@@ -574,7 +580,7 @@ function AuditTab() {
         <Button variant="secondary" size="sm" ariaLabel="Reload the audit log" onClick={reload}><RefreshCw size={14} /></Button>
       </div>
       {shown.length === 0 ? (
-        <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matching events.</p>
+        <PanelListEmpty>No matching events.</PanelListEmpty>
       ) : (
         <div className="flex flex-col gap-1">
           {shown.map((e) => <AuditRow key={e.id} ev={e} onUndone={reload} />)}

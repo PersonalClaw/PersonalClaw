@@ -4,7 +4,7 @@ import { api, type SelEvent, type SelVerify } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { confirm } from '../../ui/dialog'
 import { InvestigateButton } from '../../ui/InvestigateButton'
-import { PanelHeader } from './settingsUI'
+import { PanelHeader, PanelListEmpty } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
@@ -85,7 +85,7 @@ export function AuditPanel() {
       )}
 
       {shown.length === 0 ? (
-        <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matching events.</p>
+        <PanelListEmpty>No matching events.</PanelListEmpty>
       ) : (
         <div className="flex flex-col gap-1">
           {shown.map((e) => <EventRow key={e.event_id} ev={e} />)}
