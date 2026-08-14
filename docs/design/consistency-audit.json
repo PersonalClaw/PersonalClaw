@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-08-13T16:04:20.880Z",
+  "generatedAt": "2026-08-14T18:24:48.684Z",
   "totals": {
-    "driftHits": 7,
-    "filesScanned": 454,
-    "filesWithDrift": 6
+    "driftHits": 6,
+    "filesScanned": 455,
+    "filesWithDrift": 5
   },
   "byCategory": {
     "color": 1,
     "spacing": 1,
     "radius": 1,
-    "shadow": 1,
+    "shadow": 0,
     "duration": 3
   },
   "ranked": [
@@ -217,7 +217,7 @@
   "a11y": {
     "outlineNoneCount": 132,
     "outlineNoneFiles": 59,
-    "localFocusVisibleFiles": 19,
+    "localFocusVisibleFiles": 23,
     "reducedMotionFiles": 9,
     "animatedFiles": 160,
     "hasGlobalReducedMotion": true,
@@ -230,13 +230,6 @@
       "radius": 0,
       "shadow": 0,
       "duration": 1
-    },
-    "pages/notifications/notificationMeta.ts": {
-      "color": 0,
-      "spacing": 0,
-      "radius": 0,
-      "shadow": 1,
-      "duration": 0
     },
     "pages/settings/MemoryGraph.tsx": {
       "color": 1,
@@ -765,12 +758,6 @@
       "line": 102,
       "category": "duration",
       "snippet": "<g transform={transform} style={{ transition: drag.current ? 'none' : 'transform 200ms ease-out' }}>"
-    },
-    {
-      "file": "pages/notifications/notificationMeta.ts",
-      "line": 72,
-      "category": "shadow",
-      "snippet": "return acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${tone}` }"
     },
     {
       "file": "pages/settings/MemoryGraph.tsx",
