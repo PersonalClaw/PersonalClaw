@@ -27,11 +27,18 @@
  *  dRAID drag-factor grid (1.42-1.69x), and why it oversells…"), and the visible label truncates
  *  while the name does not — so a screen-reader user currently gets MORE than a sighted one.
  *  Capping data is not the same as bounding a name you assembled.
+ *
+ *  🪤 INTERNAL WHITESPACE IS COLLAPSED, not just trimmed. Measured on `#/dashboard` after the widget
+ *  rows adopted this: names arrived as `"skills — Refine a skill\n\nloop-worker — When pr…"`, because
+ *  an Action Center entry's `sub` carries the newlines of the message it came from. The visible row is
+ *  ONE truncated line, so the name has to be one line too — and a `\n\n` inside the 55-character
+ *  budget spends it on nothing. Same correction cycle 161 made for the inbox row, moved to where the
+ *  rule lives so every consumer inherits it.
  */
 export function rowSubject(parts: (string | null | undefined)[], cap = 55): string {
   const seen: string[] = []
   for (const raw of parts) {
-    const part = (raw ?? '').trim()
+    const part = (raw ?? '').replace(/\s+/g, ' ').trim()
     // Skip a part that repeats one already used — an inbox entry whose summary starts with its own
     // title would otherwise say it twice inside a 55-character budget.
     if (!part || seen.some((s) => s === part || s.startsWith(part) || part.startsWith(s))) continue

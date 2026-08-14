@@ -7,6 +7,7 @@ import { SlotEmptyState, WidgetRow, StatusDot } from './kit'
 import { partitionRuns } from './scheduleFold'
 import { Button } from '../../../ui/Button'
 import type { RouteProps } from '../../../app/useQueryState'
+import { rowSubject } from '../../../lib/rowSubject'
 
 /** Compact "time ago / from now" for a timestamp in EITHER wire shape.
  *
@@ -59,7 +60,8 @@ export function ScheduleWidget({ navigate }: RouteProps) {
     const o = statusMeta(r.outcome ?? r.status)
     const when = r.finished_at ?? r.started_at
     return (
-      <WidgetRow key={r.id ?? r.run_id ?? `${r.job_id}-${i}`} onClick={() => navigate('triggers')}>
+      <WidgetRow key={r.id ?? r.run_id ?? `${r.job_id}-${i}`} onClick={() => navigate('triggers')}
+        label={rowSubject([r.job_name || r.job_id || 'Schedule', statusMeta(r.outcome ?? r.status).label])}>
         <div className="flex items-center gap-s">
           <StatusDot color={o.tone} />
           <div className="min-w-0 flex-1">
