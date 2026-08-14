@@ -1548,7 +1548,27 @@ export interface MemoryGraphNode { id: string; label: string; group?: string; ti
 export interface MemoryGraphEdge { from: string; to: string }
 export interface MemoryGraphData { nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[] }
 export interface SecurityStats { denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number }
-export interface DeniedCommands { builtin: string[]; user: string[] }
+/** The packaged baseline's identity, as served by /api/security/denied-commands.
+ *  `verified` is whether the file on disk still matches the fingerprint captured at
+ *  import — it is an anti-drift check, NOT a claim that the baseline cannot be changed
+ *  by whoever owns the machine. See docs/security/threat-model.md. */
+export interface DenylistBaseline {
+  version: number
+  sha256: string
+  /** Patterns actually enforced — unchanged by a diverged file, which is refused. */
+  count: number
+  verified: boolean
+  /** Why `verified` is false; empty when it is true. */
+  detail: string
+}
+export interface DeniedCommands {
+  builtin: string[]
+  user: string[]
+  baseline: DenylistBaseline
+  /** User patterns that genuinely widen the set — duplicates of a built-in are deduped
+   *  server-side and do NOT count, so this can be lower than `user.length`. */
+  user_additions: number
+}
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
