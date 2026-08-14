@@ -230,6 +230,47 @@ describe('an entity is the destination when the URL says so', () => {
   })
 })
 
+describe('no destination skips a heading level', () => {
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+  // ── Cycle 163: the LAST skip in the app, and the sweep that proves it was the last ──────────────
+  //
+  // Every destination has an h1 now (cycles 150 and 162), so the next question is whether what follows
+  // it is an h2. Swept 20 surfaces, reading the visible heading sequence on each:
+  //
+  //   #/tasks/new   h1 → **h3** ×5 ("Basics", "Classification", …)   🔴 the only skip
+  //   everything else   a lone h1, or a clean 1→2 sequence (dashboard 12222222, settings 12222, …)
+  //
+  // `TaskForm`'s local `Section` rendered the h3, and cycle 150 deferred it because that component has
+  // TWO hosts. Measured, both want h2: on `#/tasks/new` the page h1 is "New task"; in the task detail
+  // panel on `#/tasks` the page h1 is "Tasks" and the panel carries no heading of its own (a docked
+  // panel is not the page — `PageTitle`'s own rule), so the sections sit one level under the page either
+  // way. After: **0 skips across all 20 surfaces**, and 6/6 captures pixel-identical (Tailwind's
+  // preflight resets heading margins, so the tag swap moves nothing).
+
+  it("the task form's section headers are h2, directly under the page h1", () => {
+    const src = read('pages/tasks/TaskForm.tsx')
+    expect(src).toMatch(/<h2 className="text-on-surface text-\[0\.8125rem\]" style=\{fvs\(550\)\}>\{title\}<\/h2>/)
+    expect(src, 'no h3 section header left to skip a level').not.toMatch(/<h3/)
+  })
+
+  it('nothing in pages/tasks renders an h3 at all', () => {
+    // The surface this cycle measured, held closed. Other areas still have h3s (workflows' drawers,
+    // settings' panels, DiscoverPage) — they sit under an h2 or in a panel, and the sweep found no skip
+    // in any of them, so they are deliberately untouched rather than swept on principle.
+    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((n) => {
+        const p = join(d, n)
+        if (statSync(p).isDirectory()) return walk(p)
+        return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+      })
+    const offenders = walk(join(SRC, 'pages/tasks')).filter((abs) => /<h3[\s>]/.test(readFileSync(abs, 'utf8')))
+      .map((abs) => abs.slice(SRC.length + 1))
+    expect(offenders, `these would skip h1 → h3:\n${offenders.join('\n')}`).toEqual([])
+  })
+})
+
 describe('the dashboard does not skip a heading level', () => {
   const files = ['pages/dashboard/DashboardPage.tsx', 'pages/dashboard/PinnedTiles.tsx']
 
