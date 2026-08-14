@@ -247,6 +247,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **The Retro Terminal and Claw Arcade personalities now skin the error surfaces too.** Picking one
+  of the two shipped personalities in Settings → Design changed the palette, the wordmark and the tab
+  title, but a failed page and the incident banner still looked exactly like the default identity —
+  the two moments where an identity is most noticeable stayed generic. Retro Terminal now draws them
+  as a hard-edged mono-type terminal frame and Claw Arcade as a dashed cabinet panel. This is a
+  **skin and nothing else**: the wording, the Retry and Resume buttons, and the fact that the incident
+  banner announces itself to a screen reader are byte-for-byte the same under every personality, and
+  each treatment's colours are checked against WCAG AA in both light and dark before it can ship
+  (worst measured pairing 4.98:1). If you use a standard colour scheme — which is everyone who has
+  not deliberately picked a personality — **nothing changes**: both surfaces render exactly the markup
+  they did before, asserted against the previous release's output rather than promised.
+
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it
   claimed to.** If your operating system is set to reduce motion, PersonalClaw relied on a framework
   setting that neutralises movement *across the screen* but leaves the underlying spring running, so

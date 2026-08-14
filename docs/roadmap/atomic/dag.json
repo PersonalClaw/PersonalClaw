@@ -4889,7 +4889,8 @@
         {
           "id": "PT-4",
           "title": "S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only)",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1280",
           "scope": "Design 'S2 ...' (errorTreatment); Task breakdown Session 2 T2.3",
           "done_when": "ErrorBoundary fallback and IncidentBanner accept an optional visual variant id from the personality context (visual skin only: same copy, same role=alert, same actions, AA-checked); forced error under each personality renders its treatment; under a standard scheme both are pixel-identical to today",
           "deps": [
@@ -7650,11 +7651,6 @@
         "plan": "PT"
       },
       {
-        "id": "PT-4",
-        "title": "S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only)",
-        "plan": "PT"
-      },
-      {
         "id": "PUBL-7",
         "title": "Fresh-clone getting-started walkthrough on a clean machine and fix remote friction",
         "plan": "PUBL"
@@ -9847,9 +9843,9 @@
         "code": "PT",
         "plan": "PERSONALITY-THEMES",
         "total_atoms": 6,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
