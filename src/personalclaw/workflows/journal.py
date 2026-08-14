@@ -1,4 +1,4 @@
-"""The journal — the resume cache and the Run Ledger.
+"""The journal — the resume cache and the Run Ledger, as the workflow engine flavours them.
 
 Two jobs that share one append-only file, because they are the same data read two ways.
 
@@ -28,305 +28,91 @@ prompt so a trajectory can be replayed — the acceptance bar is that prompt →
 Everything written here passes through `redact()` first. A journal is read back by the
 flywheel, shipped in bug reports, and rendered in a UI; a credential that reaches it is
 a credential leaked to all three.
+
+**What lives here and what does not (PP-4).** The mechanism — sequencing, stamping, redaction,
+the `events.jsonl` mirror, the oversize/binary spill, the event vocabulary — is
+:mod:`personalclaw.ledger`, because none of it is workflow-shaped and a second producer must
+speak the same words rather than invent a dialect. What stays is the WORKFLOW FLAVOUR, and the
+line between them is a question about node identity: everything below needs a node path, an
+`epoch`, an `InstanceState` or a `Failure` to mean anything.
+
+* the typed emitters — their arguments are engine types;
+* the resume cache's KEY and its lookup (`CacheKey`, `lookup`, `invalidate_prefix`) — an epoch is
+  a rewind counter and `SUCCESS_STATES` is an engine enum. The generic half, folding the file into
+  a key→record map, is the writer's, because that same pass recovers `seq`;
+* `spec_region_hash`, which knows that `children`/`body`/`cases`/`default` are a node's children.
+
+`LEDGER_KINDS` and every kind constant are re-exported unchanged, so the drift tests that assert
+the engine still emits all of them keep binding to this module.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
+# The vocabulary and the machinery are re-exported wholesale: 26 modules read these names off THIS
+# module, and the drift tests assert `journal.LEDGER_KINDS` by that path.
+from personalclaw.ledger import (  # noqa: F401 — re-exported for this module's importers
+    BREAKER_TRIP,
+    BUFFER_SEAL,
+    CARRYOVER,
+    CASCADE_BLOCKED,
+    CHILD_RUN_ATTACH,
+    CONFIRMATION_PENDING,
+    CONFIRMATION_RESOLVED,
+    CONSULTED,
+    CRYSTALLIZED,
+    DECISION,
+    DELAY_CLAMPED,
+    EFFECT,
+    EVENTS_FILE,
+    GATE_CRITERION,
+    GATE_REJECTED,
+    GATE_RESOLVED,
+    GATE_REVISED,
+    HANDOFF,
+    INPUTS_STALE,
+    ITEMS_COLLECTED,
+    ITERATION,
+    JOURNAL_FILE,
+    JUDGE_DIVERGENCE,
+    JUDGE_VERDICT,
+    LEDGER_KINDS,
+    MAX_INLINE_OUTPUT_BYTES,
+    MUTATION_REJECTED,
+    OUTCOME_RESOLVED,
+    PENDING_OUTCOME,
+    RUN_ABANDONED,
+    RUN_FINISHED,
+    RUN_STARTED,
+    SEEN_SET,
+    STEERING,
+    STEP_ATTEMPT,
+    STEP_CACHED,
+    STEP_COMPLETED,
+    STEP_ESCALATED,
+    STEP_FAILED,
+    STEP_SCOPE,
+    STEP_SKIPPED,
+    STEP_STARTED,
+    TASK_MATERIALIZED,
+    TASK_VERIFIED,
+    USER_EDITED_MID_FLIGHT,
+    WATCHER_REAPED,
+    WORKSPACE_PROVISIONED,
+    WORKSPACE_TEARDOWN,
+    LedgerStore,
+    LedgerWriter,
+    hash_value,
+    is_binary_payload,
+    reader,
+    redact,
+)
 from personalclaw.workflows import store
 from personalclaw.workflows.models import Failure, InstanceState
 
-logger = logging.getLogger(__name__)
-
-JOURNAL_FILE = "journal.jsonl"
-EVENTS_FILE = "events.jsonl"
-
-#: Outputs above this go to an artifact file and leave a stub behind. The same boundary
-#: the live chat sanitizer uses — a 5MB tool result must not become a 5MB journal line
-#: that every subsequent read has to parse.
-MAX_INLINE_OUTPUT_BYTES = 64 * 1024
-
-#: How much of each end of a spilled oversize body the stub keeps as a preview (WV-11). Small
-#: enough that the stub still fits an SSE frame and a journal line, large enough to orient a
-#: reader before they fetch the artifact.
-_PREVIEW_EDGE_CHARS = 140
-
-
-# ── ledger event kinds (the Learning-Flywheel contract) ──────────────────────
-
-STEP_STARTED = "step_started"
-STEP_COMPLETED = "step_completed"
-STEP_FAILED = "step_failed"
-STEP_SKIPPED = "step_skipped"
-STEP_CACHED = "step_cached"
-#: One try at one node — typed, so a retry gets actionable feedback rather than prose,
-#: and so the flywheel can later see WHICH corrections actually worked (WF2-R4).
-STEP_ATTEMPT = "step_attempt"
-#: Retries spent or the breaker tripped — a typed decision record, not a bare failure.
-STEP_ESCALATED = "step_escalated"
-GATE_REJECTED = "gate_rejected"
-GATE_CRITERION = "gate_criterion"
-#: A human answered a waiting gate (WF2-R7). Journaled with the answer so a later reader
-#: knows WHO decided what, not merely that the run continued.
-GATE_RESOLVED = "gate_resolved"
-#: A reviewer answered a gate with `revise{step_ref, comment}` (UP): one step was patched and the
-#: gate re-asks. A DISTINCT kind from `gate_resolved` on purpose — a revise is neither an approval
-#: nor a rejection, and folding it into the resolved event would make `introspection.gate_stats`
-#: count it as a said-no, reporting a reviewer who asked for a wording change as one who declined
-#: the work.
-GATE_REVISED = "gate_revised"
-EFFECT = "effect"
-#: A node wrote outside its declared `allowed_write_paths` (WF2-R19). Ledgered whether
-#: the mode was warn or reject — an escape a `warn` run continued past still has to be
-#: findable afterwards.
-STEP_SCOPE = "step_scope_violation"
-ITERATION = "iteration"
-USER_EDITED_MID_FLIGHT = "user_edited_mid_flight"
-#: A queued batch failed its TOCTOU re-verify (state moved under the preview). Journaled
-#: because a silently dropped mutation is indistinguishable from an applied one.
-MUTATION_REJECTED = "mutation_rejected"
-#: A done node whose inputs changed but which is NOT being re-run (WF2-R2 #3) — better a
-#: visible flag than an answer computed from inputs that no longer exist.
-INPUTS_STALE = "inputs_stale"
-CONSULTED = "consulted"
-CHILD_RUN_ATTACH = "child_run_attach"
-RUN_ABANDONED = "run_abandoned"
-CRYSTALLIZED = "crystallized"
-#: Context-lifecycle records (WF2-R6). Journaled rather than held in memory so a rewind or fork
-#: REPLAYS them — a handoff reconstructed after the fact is a summary, which is the thing it exists
-#: to replace.
-HANDOFF = "handoff"
-CARRYOVER = "carryover"
-DECISION = "decision"
-RUN_STARTED = "run_started"
-RUN_FINISHED = "run_finished"
-#: LOOPS-EVOLUTION R4/R14: the middleware's own observable events. `breaker_trip` and
-#: `steering` are ledger kinds because a refiner needs to know a run was nudged or
-#: steered — a verdict that followed a human's mid-run instruction is not evidence about
-#: the template, and without the event there is no way to tell the two apart.
-BREAKER_TRIP = "breaker_trip"
-STEERING = "steering"
-#: WV-13: one `foreach` with `on_item_error: collect` finished, and these items failed. A ledger
-#: kind because COLLECT's whole contract is "run everything, then hand me the failures" — the
-#: failures ARE the deliverable, and a fan-out that fails the run without saying which of its
-#: fifty items broke has collected nothing. One record per fan-out per epoch, not one per item:
-#: the point is the set, and a reader that had to reassemble it from fifty `step_failed` records
-#: would have to know the fan-out's item-path shape to do it.
-ITEMS_COLLECTED = "items_collected"
-JUDGE_VERDICT = "judge_verdict"
-JUDGE_DIVERGENCE = "judge_divergence"
-#: KNOWLEDGE-SYNTHESIS §4: long-run watcher mechanics. `watcher_reaped` is a ledger kind
-#: because a watcher stopped early produced fewer cycles than its cadence implies, and a
-#: refiner reading cycle counts without it would conclude the template under-performed.
-#: `seen_set` and `buffer_seal` are what make a months-long run's cost auditable — the whole
-#: point of the seen-set is invisible without a record of what it suppressed.
-WATCHER_REAPED = "watcher_reaped"
-SEEN_SET = "seen_set"
-BUFFER_SEAL = "buffer_seal"
-DELAY_CLAMPED = "delay_clamped"
-
-#: LEARNING-FLYWHEEL §3.3 (LEARN-R18): the pending→resolved outcome lifecycle. A
-#: decision-producing run journals `pending_outcome` {subject, metric, horizon, baseline}
-#: AT DECISION TIME — before the outcome is knowable — and the curator's resolver writes
-#: `outcome_resolved` once the horizon has elapsed and ground truth has been measured. Both
-#: are ledger kinds because a decision's later outcome is the richest refiner signal there
-#: is, and a `pending_outcome` with no matching `outcome_resolved` is the "open question"
-#: retention must never evict. Keyed to each other by `pending_event_id`, so the resolver is
-#: idempotent — a second curator tick finds the resolution and skips.
-PENDING_OUTCOME = "pending_outcome"
-OUTCOME_RESOLVED = "outcome_resolved"
-
-#: TASKS-SOPS §1/§4/§5 (S61e): the task-projection events. Ledger kinds rather than a parallel
-#: channel, because every one of them answers a question a reader asks of the ledger and nowhere
-#: else: WHY does this task exist (`task_materialized`), WHO answered this gate
-#: (`confirmation_pending`/`confirmation_resolved`), WHAT evidence flipped it (`task_verified`),
-#: and WHICH upstream failure blocked it (`cascade_blocked`). Without them a projected task's whole
-#: provenance is invisible — the board shows a task and the ledger shows the run, with nothing
-#: connecting the two.
-TASK_MATERIALIZED = "task_materialized"
-CONFIRMATION_PENDING = "confirmation_pending"
-CONFIRMATION_RESOLVED = "confirmation_resolved"
-TASK_VERIFIED = "task_verified"
-CASCADE_BLOCKED = "cascade_blocked"
-
-#: WORK-CONTAINERS §4.1 (WF2WOR-4): what happened to the run's workspace. A ledger kind because
-#: WHERE a run worked changes how its result reads — a stage that failed on a missing dependency
-#: after a setup step failed is a different fact from one that failed on its own logic, and a
-#: refiner comparing two runs of one template cannot tell them apart without this. `teardown` is
-#: separate because it fires long after the run, on a deletion path, and folding it into the
-#: provisioning record would mean rewriting a journal line after the run ended.
-WORKSPACE_PROVISIONED = "workspace_provisioned"
-WORKSPACE_TEARDOWN = "workspace_teardown"
-
-#: The subset a downstream refiner reads. Named so a drift test can assert the engine
-#: still emits all of them.
-LEDGER_KINDS = frozenset(
-    {
-        STEP_COMPLETED,
-        STEP_FAILED,
-        STEP_SKIPPED,
-        STEP_CACHED,
-        STEP_ATTEMPT,
-        STEP_ESCALATED,
-        GATE_REJECTED,
-        GATE_CRITERION,
-        GATE_RESOLVED,
-        GATE_REVISED,
-        EFFECT,
-        STEP_SCOPE,
-        MUTATION_REJECTED,
-        INPUTS_STALE,
-        ITERATION,
-        USER_EDITED_MID_FLIGHT,
-        CONSULTED,
-        CHILD_RUN_ATTACH,
-        RUN_ABANDONED,
-        CRYSTALLIZED,
-        HANDOFF,
-        CARRYOVER,
-        TASK_MATERIALIZED,
-        CONFIRMATION_PENDING,
-        CONFIRMATION_RESOLVED,
-        TASK_VERIFIED,
-        CASCADE_BLOCKED,
-        DECISION,
-        BREAKER_TRIP,
-        STEERING,
-        ITEMS_COLLECTED,
-        JUDGE_VERDICT,
-        JUDGE_DIVERGENCE,
-        WATCHER_REAPED,
-        SEEN_SET,
-        BUFFER_SEAL,
-        DELAY_CLAMPED,
-        PENDING_OUTCOME,
-        OUTCOME_RESOLVED,
-        WORKSPACE_PROVISIONED,
-        WORKSPACE_TEARDOWN,
-    }
-)
-
-
-def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-# ── redaction ────────────────────────────────────────────────────────────────
-
-
-def redact(value: Any) -> Any:
-    """Strip credentials from anything bound for the journal.
-
-    Delegates to the platform's existing redactors rather than re-deriving patterns:
-    they are already maintained, already cover the exfiltration-URL case, and a second
-    private copy of the rules would drift out of date exactly when it mattered.
-    """
-    if isinstance(value, str):
-        try:
-            from personalclaw.security import redact_credentials, redact_exfiltration_urls
-
-            text, _ = redact_exfiltration_urls(value)
-            text, _ = redact_credentials(text)
-            return text
-        except Exception:  # pragma: no cover — redaction must never break a write
-            logger.debug("redaction unavailable", exc_info=True)
-            return value
-    if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [redact(v) for v in value]
-    return value
-
-
-# ── binary detection ─────────────────────────────────────────────────────────
-
-#: Magic prefixes for the formats a node output plausibly picks up — an action provider
-#: reading a file, a screenshot tool, a fetched asset. Not exhaustive by design: this is a
-#: cheap "is this obviously not text" check, and the size boundary catches whatever slips
-#: through. Bytes rather than str because that is what a magic number IS.
-_MAGIC_PREFIXES: tuple[bytes, ...] = (
-    b"\x89PNG\r\n\x1a\n",  # PNG
-    b"\xff\xd8\xff",  # JPEG
-    b"GIF87a",
-    b"GIF89a",
-    b"%PDF-",
-    b"\x1f\x8b",  # gzip
-    b"PK\x03\x04",  # zip / docx / xlsx / jar
-    b"BZh",  # bzip2
-    b"\xfd7zXZ\x00",  # xz
-    b"\x7fELF",
-    b"OggS",
-    b"RIFF",  # wav / avi / webp container
-)
-
-#: The SAME formats as they arrive base64-encoded. This is the realistic carrier: a node
-#: output is JSON, and JSON cannot hold arbitrary bytes — so a screenshot tool or a fetched
-#: asset reaches the journal base64'd, and a raw-byte check alone would miss every one of
-#: them. Prefixes are long enough (7+ chars of a fixed header) that a false positive on prose
-#: is not a practical concern.
-_BASE64_PREFIXES: tuple[str, ...] = (
-    "iVBORw0KGgo",  # PNG
-    "/9j/",  # JPEG
-    "R0lGODdh",  # GIF87a
-    "R0lGODlh",  # GIF89a
-    "JVBERi0",  # %PDF-
-    "H4sI",  # gzip
-    "UEsDBB",  # zip
-    "f0VMRg",  # ELF
-)
-
-
-def is_binary_payload(value: Any) -> bool:
-    """True when ``value`` is a string whose leading bytes match a known binary format.
-
-    Content-based, so it catches a small binary an inline-size check never would: a 400-byte
-    PNG is under every threshold and still meaningless inline — mojibake in the widget, a
-    poisoned `{{nodes.x.output}}` binding, wasted context if it reaches a model.
-
-    Both carriers are checked. Raw bytes decoded into a `str` are recovered with latin-1
-    (which maps codepoints 0-255 back to the identical bytes) rather than UTF-8 — a PNG's
-    leading `\\x89` UTF-8-encodes to TWO bytes, so a UTF-8 round-trip silently fails to match
-    any magic number, which is exactly the bug this comment exists to prevent. Base64 is the
-    other carrier, and in practice the more common one.
-
-    Only strings are inspected. A dict or list is structure the engine created, and treating
-    a container as binary because one leaf looked like a PNG would spill a whole useful
-    output over one field.
-    """
-    if not isinstance(value, str) or not value:
-        return False
-    head = value[:16]
-    try:
-        raw = head.encode("latin-1")
-    except UnicodeEncodeError:
-        # Codepoints above 255: genuinely text (or surrogate-escaped bytes, which latin-1
-        # cannot hold either). Fall back so a lone astral character cannot mask a match.
-        raw = head.encode("utf-8", errors="surrogateescape")
-    if any(raw.startswith(m) for m in _MAGIC_PREFIXES):
-        return True
-    return value[:16].startswith(_BASE64_PREFIXES)
-
-
 # ── hashing ──────────────────────────────────────────────────────────────────
-
-
-def _stable_json(value: Any) -> str:
-    """Canonical form for hashing: sorted keys, no incidental whitespace. Two logically
-    identical inputs must hash identically or the resume cache never hits."""
-    try:
-        return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def hash_value(value: Any) -> str:
-    return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()[:16]
 
 
 def inputs_hash(resolved: dict[str, Any]) -> str:
@@ -367,41 +153,15 @@ class CacheKey:
 
 
 @dataclass
-class Journal:
-    """Append-only per-run log. Not a class for state — a thin writer over the run
-    directory, so two writers in one process cannot hold divergent views."""
+class Journal(LedgerWriter):
+    """The workflow engine's ledger: the shared writer plus the engine's typed emitters.
 
-    run_id: str
-    #: Monotonic sequence for deterministic event ids (`<run>-evt-<seq>`), which makes a
-    #: re-emit an idempotent no-op instead of a duplicate (WF2-R11).
-    seq: int = 0
-    _cache: dict[str, dict[str, Any]] | None = field(default=None, repr=False)
+    Every method below exists so a caller cannot journal a step by hand — a free-text write is how
+    a required field goes missing, and the refiner discovers it a week later as a starved query.
+    """
 
-    # ── low-level append ──
-
-    def _append(self, filename: str, record: dict[str, Any]) -> dict[str, Any]:
-        self.seq += 1
-        record = dict(record)
-        record.setdefault("ts", _now())
-        record["seq"] = self.seq
-        record["event_id"] = f"{self.run_id}-evt-{self.seq}"
-        safe = redact(record)
-        store.append_jsonl(self.run_id, filename, safe)
-        return safe
-
-    def write(self, kind: str, **fields: Any) -> dict[str, Any]:
-        """Write one journal record. The resume cache reads `journal.jsonl`; ledger
-        consumers read `events.jsonl`. Ledger kinds land in BOTH — one write, two
-        readers, no reconciliation step to get wrong."""
-        record = {"kind": kind, **fields}
-        written = self._append(JOURNAL_FILE, record)
-        if kind in LEDGER_KINDS:
-            store.append_jsonl(self.run_id, EVENTS_FILE, written)
-        if self._cache is not None and kind in (STEP_COMPLETED, STEP_CACHED):
-            key = written.get("cache_key")
-            if key:
-                self._cache[str(key)] = written
-        return written
+    #: The run store owns `runs/<id>/`, so it is what this ledger appends through.
+    _store: ClassVar[LedgerStore] = store  # type: ignore[assignment]
 
     # ── step lifecycle ──
 
@@ -737,20 +497,6 @@ class Journal:
 
     # ── resume cache ──
 
-    def _load_cache(self) -> dict[str, dict[str, Any]]:
-        """Fold the journal into a cache-key → record map. Last write wins, which is
-        correct: a later record for the same key came from a later attempt."""
-        if self._cache is None:
-            cache: dict[str, dict[str, Any]] = {}
-            for rec in store.read_jsonl(self.run_id, JOURNAL_FILE):
-                if rec.get("kind") in (STEP_COMPLETED, STEP_CACHED):
-                    key = rec.get("cache_key")
-                    if key:
-                        cache[str(key)] = rec
-                self.seq = max(self.seq, int(rec.get("seq", 0) or 0))
-            self._cache = cache
-        return self._cache
-
     def lookup(self, key: CacheKey) -> dict[str, Any] | None:
         """A cache hit, or None. Only SUCCESS states are served from cache: replaying a
         cached FAILURE would make a transient error permanent across a resume."""
@@ -777,67 +523,6 @@ class Journal:
         for k in doomed:
             cache.pop(k, None)
         return len(doomed)
-
-    # ── output spilling ──
-
-    def store_output(self, path: str, output: Any) -> tuple[str, Any]:
-        """Persist a node output, offloading oversized or binary payloads to an artifact file.
-
-        Returns `(output_ref, inline_preview)`. The preview is what bindings and the widget
-        read inline; anything past the boundary leaves a typed `result_omitted` stub so a
-        reader knows the data exists rather than seeing a truncated string it might parse.
-
-        Two spill reasons, both about what an inline value costs downstream:
-
-        * `oversize` — over :data:`MAX_INLINE_OUTPUT_BYTES`. The same boundary the live chat
-          sanitizer uses; a 5MB tool result must not become a 5MB journal line that every
-          later read re-parses, nor a 5MB SSE frame.
-        * `binary` — a magic-prefix match (PNG, JPEG, PDF, gzip, zip, ELF…). Detected by
-          CONTENT, not size: a 400-byte PNG is under every threshold and still meaningless
-          inline — it would render as mojibake in the widget, poison a `{{nodes.x.output}}`
-          binding, and (if it reached a model) burn context on noise. Path-agnostic because
-          a node's output is not a filename.
-
-        WV-11: an inline output is written to `outputs/`, byte-identical to before. An OFFLOADED
-        one is written to `runs/<id>/artifacts/` instead, so its `output_ref` does NOT start
-        with `outputs/` — the signal every reader uses to treat it as a fetch-on-demand pointer
-        (`{{nodes.x.artifact}}`, the `artifact_inspect` provider). The oversize stub keeps a
-        head+tail `preview` (both ends of the serialized body, not just the head) so a truncated
-        view still shows where the value starts AND ends; a binary stub omits it, because a slice
-        of a PNG is noise. The stub always carries `bytes` and `output_ref`, so the full value
-        stays one read away and the stub itself explains why it is a stub.
-        """
-        safe = redact(output)
-        encoded = _stable_json(safe)
-        size = len(encoded.encode("utf-8"))
-
-        reason = None
-        if is_binary_payload(safe):
-            reason = "binary"
-        elif size > MAX_INLINE_OUTPUT_BYTES:
-            reason = "oversize"
-        if reason is None:
-            # Inline path: unchanged. The body stays under `outputs/` and rides in bindings.
-            ref = store.write_output(self.run_id, path, safe)
-            return ref, safe
-
-        # Offload path: the full body goes to `artifacts/`, leaving a stub the reader can hand
-        # to a binding or a widget without paying for the blob.
-        ref = store.write_artifact(self.run_id, path, safe)
-        stub: dict[str, Any] = {
-            "result_omitted": True,
-            "reason": reason,
-            "bytes": size,
-            "output_ref": ref,
-        }
-        if reason == "oversize" and len(encoded) > 2 * _PREVIEW_EDGE_CHARS:
-            stub["preview"] = {
-                "head": encoded[:_PREVIEW_EDGE_CHARS],
-                "tail": encoded[-_PREVIEW_EDGE_CHARS:],
-            }
-        return ref, stub
-
-    # ── ledger queries ───────────────────────────────────────────────────────────
 
     # ── TASKS-SOPS projection events (S61e) ──
 
@@ -980,13 +665,13 @@ class Journal:
         self.write(WORKSPACE_TEARDOWN, workspace=redact(outcome), reason=reason)
 
 
+# ── ledger queries ───────────────────────────────────────────────────────────
+
+
 def ledger(run_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any]]:
     """Read the ledger, optionally filtered. Pass-rate, failure distribution and
     latency percentiles are queries over this — not a separate metrics store."""
-    records = store.read_jsonl(run_id, EVENTS_FILE)
-    if kinds is None:
-        return records
-    return [r for r in records if r.get("kind") in kinds]
+    return reader.read_events(store, run_id, kinds=kinds)
 
 
 def run_totals(run_id: str) -> dict[str, Any]:
@@ -995,25 +680,4 @@ def run_totals(run_id: str) -> dict[str, Any]:
     Budgets are PRE-CHARGED from this on resume (WF2-R4 invariant #1): a resumed run
     must inherit what it already spent, or a crash loop becomes an unbounded spend.
     """
-    tokens = 0
-    cost = 0.0
-    steps = 0
-    failures = 0
-    cached = 0
-    for rec in store.read_jsonl(run_id, EVENTS_FILE):
-        kind = rec.get("kind")
-        if kind == STEP_COMPLETED:
-            steps += 1
-            tokens += int(rec.get("tokens", 0) or 0)
-            cost += float(rec.get("cost_usd", 0.0) or 0.0)
-        elif kind == STEP_FAILED:
-            failures += 1
-        elif kind == STEP_CACHED:
-            cached += 1
-    return {
-        "tokens": tokens,
-        "cost_usd": round(cost, 6),
-        "steps_completed": steps,
-        "steps_failed": failures,
-        "steps_cached": cached,
-    }
+    return reader.run_totals(store, run_id)
