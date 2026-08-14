@@ -2167,3 +2167,53 @@ concluded: the remaining WF2 work is the declared multi-session back halves (Loo
 calibration + steering, Work-Containers' call-sites + FE), each needing a coherent multi-session
 program or an owner scope decision — not a single atomic session bolted on. Nothing was
 half-finished to keep a tick busy.
+
+## OWNER SCOPE DECISION — 2026-08-14: the program the two BLOCKED entries asked for
+
+The `2026-08-12` BLOCKED entry above and the `DECLARED WORK RE-EXHAUSTED` entry both close with
+the same conclusion: the remaining engine work is *"the declared multi-session back halves … each
+needing a coherent multi-session program or an owner scope decision — not a single atomic session
+bolted on."* **This is that decision.**
+
+**Plan 70 `PLATFORM-PRIMITIVES`** ([`plans/PLATFORM-PRIMITIVES.md`](plans/PLATFORM-PRIMITIVES.md),
+16 atoms in [`atomic/PP.md`](atomic/PP.md)) is the program. It came out of two research passes —
+graph-structured agent execution and loop engineering — whose twenty findings reduce to one thesis:
+**the engine's semantics are implemented three times because three primitives were never named —
+edges, verdicts and policies.** Every prior "back half" (Loops-Evolution's calibration + steering,
+Work-Containers' call sites) is a *consumer* of one of those three; that is why bolting on a single
+session kept failing to produce a coherent scope.
+
+**Start here — five atoms, all with every dependency met:**
+
+| Atom | What it is | Why it is first |
+|---|---|---|
+| `WF2LOO-16` | reconcile the THIRD verdict vocabulary (`loop/judge.CycleVerdict`) | `WF2LOO-12`'s design already NAMED it and left it unowned; `PP-14` and `PP-5` both wait on it |
+| `PP-1` | `WF_UNORDERED_DEP` — refuse a binding whose producer is not ordered before it | lint only, zero runtime change; closes a live silent-failure class |
+| `PP-4` | extract the ledger as a platform primitive | unblocks replay, trajectories, edge stats, loop→flywheel coverage |
+| `WF2LOO-17` | give the loop judge a model binding independent of the worker | ~1 line + 1 config field; closes a stated-but-unimplemented independence property |
+| `WF2LOO-18` | give the loops engine a worker-independent progress signal | the stall detector currently reads a field the worker writes, defaulting to "progressing" |
+
+**Two rules carried from `ROADMAP.md`/the high-leverage directive, restated because they apply
+directly to these atoms:**
+
+1. **Do not trust `dag.json` `status` fields as the execution driver** — they lag `origin/main`.
+   The 20 atoms added on 2026-08-14 are NEW work, so their `todo` is accurate by construction, but
+   verify every `done_when` against code before calling one done.
+2. **Measure the population before giving any control teeth.** `PP-1`, `PP-3`, `WF2LOO-16` and
+   `AG-13` each carry that step explicitly in their `done_when`. Enforcing a never-run rule against
+   a population that fails it is an outage, not a gate — the lesson `WF2LOO-12` exists to record.
+
+**Timing, which is the part that is genuinely time-boxed.** `PP-4`, `PP-5`, `PP-9` and `PP-16` are
+state-shape (class B) changes, and each is a plain clean break today — no gate, no dual path, no
+migration. `CONTRIBUTING.md` §"The lifecycle mental model" defers the migration-backed regime "until
+the architecture stops moving, on the way to 1.0", after which a B change is governed as
+gate → dual-path → migrate → cleanup. **There is no plan to wait for and nothing will announce the
+boundary** — `LIFECYCLE-DOCTRINE.md` was deleted as a plan in #897 and its guidance now lives only as
+that CONTRIBUTING mental model. The window is therefore *self-closing rather than scheduled*: these
+four get strictly more expensive the later they land.
+
+**Not in scope, recorded so a tick does not re-derive it:** folding `triggers/` into the admission
+core (it answers whether to *start*, not what may run), turning the ledger into a database,
+collapsing the cost-aware `stage`/`infer`/`transform`/`action` split, generating a compiled
+orchestrator (would kill mid-flight mutation), a worker/trigger/function substrate, and a
+bi-temporal context graph. Full reasoning in the plan's §7.
