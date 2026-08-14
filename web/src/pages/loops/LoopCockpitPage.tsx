@@ -35,6 +35,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { accentChip } from '../../design/accent'
+import { tabListKeys } from '../../lib/tabListKeys'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
@@ -913,12 +914,18 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
           <>
             {/* tab strip — contiguous tabs sitting ON the bottom border, the
                 active one carrying a primary underline (reads as real tabs) */}
-            <div className="flex-1 min-w-0 flex items-end gap-1 overflow-x-auto -mb-px">
+            {/* These already announced `role="tab"` + `aria-selected`, but with no owning
+                `role="tablist"` — which axe reports as `aria-required-parent` (critical) — and
+                every tab was its own tab stop instead of the one-stop-plus-arrows a tablist
+                promises. Same contract as the terminal strips and `#/chat`'s activity panel. */}
+            <div role="tablist" aria-label="Loop views" onKeyDown={tabListKeys((i) => setActiveId(tabs[i].id))}
+              className="flex-1 min-w-0 flex items-end gap-1 overflow-x-auto -mb-px">
               {tabs.map((t) => {
                 const on = current?.id === t.id
                 const Icon = t.kind === 'tasks' ? ListChecks : t.kind === 'deliverable' ? Spark : FileText
                 return (
                   <button key={t.id} type="button" onClick={() => setActiveId(t.id)} role="tab" aria-selected={on}
+                    tabIndex={on ? 0 : -1}
                     className={`shrink-0 inline-flex items-center gap-1.5 px-m h-9 text-[0.8125rem] max-w-[14rem] border-b-2 transition-colors ${on ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface-var'}`}
                     style={on ? fvs(600) : undefined}
                     title={t.label}>

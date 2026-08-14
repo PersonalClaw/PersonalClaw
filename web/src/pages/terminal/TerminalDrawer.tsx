@@ -8,6 +8,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { api } from '../../lib/api'
 import { TerminalView } from './TerminalView'
 import type { TermTab } from './TerminalPage'
+import { tabListKeys } from '../../lib/tabListKeys'
 
 const HEIGHT_KEY = 'terminal-drawer-h'
 const MIN_H = 160, MAX_FRAC = 0.85, DEF_H = 320
@@ -82,17 +83,34 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
           <div className="flex items-center gap-1 border-b border-outline-variant/40 px-2 py-1.5">
             <TermIcon size={13} className="ml-1 shrink-0 text-on-surface-low" />
             <div className="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto">
+              {/* The drawer carries the SAME strip as `#/terminal`, so it had the same defect: tabs
+                  announced as tabs with no owning tablist, no tab stop and no selected state. Fixed
+                  the same way, in the same change — the reasoning is written out on the page's strip.
+                  🪤 The tablist wraps ONLY the tabs: "New session" is a sibling, because a tablist
+                  whose owned children are not all tabs trips `aria-required-children` (critical). */}
+              <div role="tablist" aria-label="Terminal sessions" onKeyDown={tabListKeys((i) => setActive(tabs[i].id))}
+                className="flex items-stretch gap-1">
               {tabs.map((t) => {
                 const on = t.id === active
                 return (
-                  <div key={t.id} role="tab" onClick={() => setActive(t.id)}
-                    className="group inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md pl-2.5 pr-1.5 text-[0.75rem] transition-colors"
+                  <div key={t.id} role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
+                    onClick={() => setActive(t.id)}
+                    aria-keyshortcuts="Delete"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActive(t.id); return }
+                      if (e.key === 'Delete') { e.preventDefault(); closeSession(t.id) }
+                    }}
+                    className="group inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md pl-2.5 pr-1 text-[0.75rem] transition-colors"
                     style={on ? { background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
-                    {t.label}
-                    <button onClick={(e) => { e.stopPropagation(); closeSession(t.id) }} aria-label="Close session" className="rounded p-0.5 opacity-50 hover:bg-surface-highest hover:opacity-100"><X size={11} /></button>
+                    <span className="mr-0.5">{t.label}</span>
+                    {/* 24px hit box (SC 2.5.8 — the glyph is 11px), named per session. */}
+                    <button type="button" onClick={(e) => { e.stopPropagation(); closeSession(t.id) }}
+                      aria-label={`Close ${t.label}`} title="Close session"
+                      className="grid size-6 -mr-0.5 shrink-0 place-items-center rounded opacity-50 hover:bg-surface-highest hover:opacity-100"><X size={11} /></button>
                   </div>
                 )
               })}
+              </div>
               <SquareIconButton label="New session" onClick={() => newSession()} className="shrink-0">
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
               </SquareIconButton>

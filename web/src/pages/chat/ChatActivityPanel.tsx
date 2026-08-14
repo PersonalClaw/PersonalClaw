@@ -8,6 +8,7 @@ import { Button } from '../../ui/Button'
 import { spring } from '../../design/motion'
 import { SlotEmptyState } from '../dashboard/widgets/kit'
 import type { ChatActivity, SubagentCard } from './chatTypes'
+import { tabListKeys } from '../../lib/tabListKeys'
 
 type Tab = 'index' | 'files' | 'links' | 'subagents' | 'side'
 
@@ -47,19 +48,11 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
     ...(subagents.length ? [{ key: 'subagents' as Tab, label: 'Subagents', icon: Bot, count: subagents.length }] : []),
     ...(side ? [{ key: 'side' as Tab, label: 'Side', icon: MessagesSquare, count: side.msgs.length }] : []),
   ]
-  // Roving arrow-key nav across the tablist (←/→/Home/End), per WAI-ARIA.
-  const onTabKey = (e: React.KeyboardEvent) => {
-    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
-    if (!keys.includes(e.key)) return
-    e.preventDefault()
-    const cur = TABS.findIndex((t) => t.key === tab)
-    const last = TABS.length - 1
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? last
-      : e.key === 'ArrowLeft' ? (cur <= 0 ? last : cur - 1)
-      : (cur >= last ? 0 : cur + 1)
-    setTab(TABS[next].key)
-    document.getElementById(`act-tab-${TABS[next].key}`)?.focus()
-  }
+  // This panel's arrow-key handler was the ONLY correct one in the app, so it moved to
+  // `lib/tabListKeys` and three other strips (both terminal ones, the loop cockpit) now read
+  // from the same copy instead of each growing their own. Behaviour here is unchanged: the shared
+  // version resolves tabs from the DOM rather than from `TABS`, which is the same order.
+  const onTabKey = tabListKeys((i) => setTab(TABS[i].key))
 
   // Docked content: full-height flex column that fills the SidePanel body. The tab
   // strip is sticky at the top; the active tab-panel scrolls below it. No own
