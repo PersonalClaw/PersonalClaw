@@ -100,7 +100,18 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
         title="Choose the project this work scopes under"
         className="inline-flex h-8 items-center gap-1.5 rounded-pill bg-surface-high px-2.5 text-[0.8125rem] text-on-surface-var transition-colors hover:bg-surface-highest disabled:opacity-50">
         <FolderKanban size={14} className="shrink-0 text-primary" />
-        <span className="max-w-[140px] truncate">{label}</span>
+        {/* 🔴 THE WIDEST CONTROL IN A HEADER ROW THAT CANNOT SHRINK. `LoopComposer`'s row is
+            `[&>*]:shrink-0` **by design** — every control there must keep its natural size — and its
+            own comment records the consequence: "the row can only fit by each wide control having its
+            OWN collapse strategy — which only the granularity dial had". This is that strategy for
+            this control, and it is the app's established one (`hidden sm:inline` beside a glyph, as in
+            `ui/FilterMenu`): below `sm` the trigger is the folder glyph + chevron.
+            Measured at 390px: the trigger was **132px** (`Project: New project`), the row overflowed its
+            slot, and axe reported `target-size` **serious** on `#/loops`, `#/loop` and `#/code` because
+            the overflow left controls overlapping. Nothing is lost when the text hides — the accessible
+            name is already on the button's `aria-label` (`Project: <label>`) and the `title` explains
+            the control, so a screen-reader and a hover user both still get the full label. */}
+        <span className="hidden sm:inline max-w-[140px] truncate">{label}</span>
         {/* chevron flips on a spring so open/close settles with life */}
         <motion.span className="shrink-0 opacity-60" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
           <ChevronDown size={13} />
