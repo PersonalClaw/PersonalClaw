@@ -315,7 +315,7 @@ function linkifyMemory(children: any, citations: MemoryCitation[]): any {
         const href = `#/settings/memory?tab=studio&sel=${encodeURIComponent(`epi:${cite.id}`)}`
         parts.push(
           <a key={`${ci}-${m.index}`} href={href} title={cite.preview || `Memory ${n}`}
-            className="mx-0.5 inline-flex items-baseline rounded-sm bg-surface-high px-1.5 align-baseline text-[0.8em] text-primary no-underline decoration-primary/40 transition-colors hover:bg-surface-highest hover:underline">
+            className="mx-0.5 inline-flex items-baseline rounded-sm bg-surface-high px-1.5 align-baseline text-[0.8em] text-primary-emphasis no-underline decoration-primary/40 transition-colors hover:bg-surface-highest hover:underline">
             Memory {n}
           </a>,
         )
@@ -368,7 +368,7 @@ function componentsWith(
       if (onFileClick && !className && looksLikeFile(str)) {
         return (
           <button type="button" onClick={() => onFileClick(str.trim())} title={`Open ${str.trim()}`}
-            className="rounded-sm bg-surface-high px-1.5 py-0.5 align-baseline text-[0.85em] font-mono text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-surface-highest hover:decoration-primary">
+            className="rounded-sm bg-surface-high px-1.5 py-0.5 align-baseline text-[0.85em] font-mono text-primary-emphasis underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-surface-highest hover:decoration-primary">
             {children}
           </button>
         )

@@ -47,6 +47,19 @@ function darkSurfaceContainer(): string {
   return m[1]
 }
 
+/** `--color-surface-high` in a given mode — the ground the app's small accent CHIPS sit on (a tag
+ *  pill, a status pill, a markdown citation/file chip). Read from source in both blocks so a retint
+ *  cannot drift the guard, the same discipline as `darkSurfaceContainer` and `lightCanvas`. */
+function surfaceHigh(mode: 'dark' | 'light'): string {
+  const css = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const scope = mode === 'dark'
+    ? css                                              // the default :root block comes first
+    : /\.light\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? ''
+  const m = scope.match(/--color-surface-high:\s*(#[0-9a-fA-F]{3,8})/)
+  if (!m) throw new Error(`could not find --color-surface-high for ${mode}`)
+  return m[1]
+}
+
 const WHITE = '#ffffff'
 
 /** The LIGHT canvas — the shell paints it behind every route (`background: var(--color-canvas)`), and
@@ -78,6 +91,8 @@ function lightCanvas(): string {
 describe('scheme contrast: every scheme meets WCAG AA (not just the default)', () => {
   const DARK_SURFACE = darkSurfaceContainer()
   const LIGHT_CANVAS = lightCanvas()
+  const HIGH_LIGHT = surfaceHigh('light')
+  const HIGH_DARK = surfaceHigh('dark')
 
   it('has the full curated scheme set', () => {
     expect(SCHEMES.length).toBeGreaterThanOrEqual(11)
@@ -101,6 +116,24 @@ describe('scheme contrast: every scheme meets WCAG AA (not just the default)', (
         // The shipped rule: on the canvas, accent text uses the emphasis shade. Plain `primary` is
         // deliberately NOT asserted here — it fails in 7 of 12 schemes, which is the finding.
         expect(contrast(emphasis.light, LIGHT_CANVAS)).toBeGreaterThanOrEqual(AA)
+      })
+
+      // 🔴 THE THIRD GROUND. A small accent CHIP sits on `--color-surface-high`, not on white and not
+      // on the canvas — a status pill, a markdown citation/file chip, a "proposes skill" tag. axe found
+      // the knowledge Intents chip at **3.79 dark / 3.22 light** (it was `text-primary/80`, so the
+      // alpha made it worse), and computing the whole curated set on that ground shows plain `primary`
+      // cannot carry it either:
+      //
+      //     primary → surface-high            worst **4.26** light (fails in 10 of 12 schemes)
+      //     primary-emphasis → surface-high   worst **4.70** light, 7.01 dark — passes all 12
+      //
+      // Same answer as the canvas dimension above, third ground. Dropping the `/80` alone would NOT
+      // have fixed it, which is why the alpha was measured rather than assumed to be the whole story.
+      it('light: primary-emphasis as accent text on SURFACE-HIGH ≥ AA', () => {
+        expect(contrast(emphasis.light, HIGH_LIGHT)).toBeGreaterThanOrEqual(AA)
+      })
+      it('dark: primary-emphasis as accent text on SURFACE-HIGH ≥ AA', () => {
+        expect(contrast(emphasis.dark, HIGH_DARK)).toBeGreaterThanOrEqual(AA)
       })
 
       it('light: primary as accent text on white ≥ AA', () => {
