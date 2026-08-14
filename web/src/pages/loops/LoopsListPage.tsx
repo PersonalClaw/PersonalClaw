@@ -25,7 +25,8 @@ import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type GoalLoop } from '../../lib/api'
 import { loopKindMeta } from '../../lib/loopKind'
 import { loopToGoalLoop } from './goalAdapter'
-import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
+import { rowSubject } from '../../lib/rowSubject'
+import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
 import { LOOP_STATUS } from './loopStatusMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -192,6 +193,13 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                 const shownCycle = running ? c.total_cycles + 1 : c.total_cycles
                 const latest = c.findings?.length ? c.findings[c.findings.length - 1] : null
                 const latestText = latest?.key_insight || latest?.summary
+                // 🔴 THE ROW PRINTED THE SAME SENTENCE TWICE. The title is the loop's name and the
+                // line beneath it was `c.goal` — but a loop with no explicit name IS named from its
+                // goal, so both lines carried one truncated sentence. The second line's job is "the
+                // latest on this loop"; with no finding to report and no name of its own, it has
+                // nothing to add, and filler is worse than a shorter row.
+                const title = c.name || c.goal
+                const goalEarnsItsLine = hasDistinctName(c.name, c.goal)
                 // Right-click / long-press → the SAME actions the row's click/hover
                 // buttons already fire (peek-open, pause/resume/stop, delete), via the
                 // shared ContextMenu primitive. Zero-arg onSelect → the (e,id) handlers
@@ -220,16 +228,22 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     tabIndex={-1}
                     className={`group relative flex items-center gap-l rounded-lg px-l py-l text-left cursor-pointer transition-colors overflow-hidden has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50 ${peekId === c.id ? 'bg-surface-high ring-1 ring-primary/40' : 'bg-surface-container hover:bg-surface-high'}`}
                   >
-                    <RowHitTarget label={c.name || c.goal.slice(0, 70)} />
+                    <RowHitTarget label={rowSubject([title])} />
                     {/* running: faint left glow accent */}
                     {running && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: 'var(--color-ok)' }} />}
                     <span className="shrink-0 inline-flex items-center justify-center size-10 rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}>
                       {(() => { const KI = loopKindMeta((c as { kind?: string }).kind).icon; return <KI size={20} className="text-primary" /> })()}
                     </span>
-                    <div className="flex-1 min-w-0">
+                    {/* The floor keeps every row the same height whether or not the second line has
+                        content — a row with nothing to add stays in the list's rhythm, and no empty
+                        element is left behind to hold the space. 2.875rem = the MEASURED two-line
+                        block: 22.5px title line + 23.5px sub-line including its `mt-1`. If the type
+                        scale moves, this is the number to re-measure (a row without the second line
+                        rendered 76px against its siblings' 78px before it was pinned). */}
+                    <div className="flex-1 min-w-0 min-h-[2.875rem]">
                       <div className="flex items-center gap-s">
                         <span className="size-1.5 rounded-pill shrink-0" style={{ background: st.tone }} />
-                        <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{c.name || c.goal.slice(0, 70)}</span>
+                        <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
                         {/* kind chip: goal shows its goal-type glyph; general/design show the kind. */}
                         {(() => { const k = (c as { kind?: string }).kind
                           const label = k === 'design' ? 'design' : k === 'general' ? 'loop' : (GOAL_GLYPH[c.goal_type] ?? c.goal_type)
@@ -237,9 +251,11 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                           return <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.75rem] uppercase tracking-wide bg-surface-high text-on-surface-low" title={title}>{label}</span> })()}
                         <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {st.label}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycle}` : ` · cycle ${shownCycle}/${c.max_cycles}`)}</span>
                       </div>
-                      <p className="mt-1 text-on-surface-low text-[0.8125rem] truncate">
-                        {latestText ? <span className="text-on-surface-var">↳ {latestText}</span> : c.goal}
-                      </p>
+                      {(latestText || goalEarnsItsLine) && (
+                        <p className="mt-1 text-on-surface-low text-[0.8125rem] truncate">
+                          {latestText ? <span className="text-on-surface-var">↳ {latestText}</span> : c.goal}
+                        </p>
+                      )}
                     </div>
 
                     {/* hover quick-actions */}
