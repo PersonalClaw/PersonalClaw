@@ -6,6 +6,7 @@ import {
   resolvePersonality,
   type Personality,
 } from '../design/personalities'
+import { getErrorTreatment, type ErrorTreatment } from '../design/errorTreatments'
 
 /** Applies the active PERSONALITY's non-color behaviors (PERSONALITY-THEMES §S1).
  *
@@ -111,6 +112,24 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
   )
 
   return <PersonalityCtx.Provider value={value}>{children}</PersonalityCtx.Provider>
+}
+
+/** The active personality's error-surface treatment, or `null` for an identity
+ *  that declares none (which is every standard scheme, including the default).
+ *
+ *  Guarded on purpose. This runs while an error surface is already rendering, and
+ *  a throw there would escape the boundary that is trying to draw it — turning one
+ *  broken page into a blank app. `usePersonality` already tolerates a missing
+ *  provider and `getErrorTreatment` is total, so the `catch` only covers the last
+ *  case (a provider handing over a malformed value) — but the error path is the
+ *  one place where "shouldn't happen" is not good enough. `useContext` still runs
+ *  unconditionally, so hook order never varies between renders. */
+export function useErrorTreatment(): ErrorTreatment | null {
+  try {
+    return getErrorTreatment(usePersonality().personality.behavior.errorTreatment)
+  } catch {
+    return null
+  }
 }
 
 export function usePersonality(): Ctx {
