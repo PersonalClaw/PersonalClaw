@@ -43,7 +43,8 @@ logger = logging.getLogger(__name__)
 #: tick regardless of how many runs exist; older unresolved questions surface on later ticks.
 _MAX_RUNS = 200
 
-#: Journal timestamp format (`journal._now()`), UTC. Parsed back to an epoch to test the horizon.
+#: Journal timestamp format (`personalclaw.ledger.now()`), UTC. Parsed back to an epoch to test
+#: the horizon.
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 

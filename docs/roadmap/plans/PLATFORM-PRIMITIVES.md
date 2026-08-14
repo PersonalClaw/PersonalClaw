@@ -1,6 +1,9 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** NOT STARTED — 16 atoms in [`../atomic/PP.md`](../atomic/PP.md), five startable now.
+**Status:** IN PROGRESS — 1 of 16 atoms shipped (`PP-4`, the ledger extraction, 2026-08-14 — see
+`## Execution log`). Five startable now (`PP-1`, `PP-6`, `PP-8`, `PP-9`, `PP-11`): `PP-4` landing
+unblocked four of them. `PP-5` still waits on `WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in
+[`../atomic/PP.md`](../atomic/PP.md).
 **Pillar:** A (Execution Engine + Convergence) · **rev 17** (2026-08-14)
 
 **Soul guardrail.** Everything here stays personal-scale: one user, local files, local SQLite,
@@ -205,3 +208,55 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   re-homed to LOOPS-EVOLUTION (`WF2LOO-16`/`-17`/`-18`) and one to AUTONOMY-GUARDRAILS (`AG-13`)
   rather than duplicated here. Derived dag block regenerated: 640 atoms, 145 ready, 876 edges, 0
   dangling, no new cycles. No code touched.
+
+- **2026-08-14 — `PP-4` DONE.** `personalclaw/ledger/` now owns the mechanism: `kinds.py` (the 44
+  kind constants + `LEDGER_KINDS`), `writer.py` (`LedgerWriter` — sequencing, stamping, the
+  `events.jsonl` mirror, `MAX_INLINE_OUTPUT_BYTES`/binary spill + the `result_omitted` stub, and
+  the journal fold that recovers `seq`), `redaction.py` (`redact`, magic-prefix detection),
+  `hashing.py` (`stable_json`, `hash_value`), `reader.py` (`read_events`, `run_totals`).
+  `workflows/journal.py` went 1019 → 685 lines and is now `Journal(LedgerWriter)` with
+  `_store = workflows.store`. Nothing under `ledger/` imports `personalclaw.workflows`, and that is
+  now a RAIL rather than a convention: `test_the_ledger_package_does_not_import_the_workflow_engine`
+  AST-scans the package (statically, because the way this creeps back is a lazy function-local
+  import that no import-time probe would see) and reds naming the file and line. `PP-5` is the
+  reason it exists — a loop emitter that had to pull the engine in to journal a cycle would have
+  re-created the dependency this atom reversed.
+
+- **2026-08-14 — DISCOVERY (`PP-4`): the seam is node identity, not "generic vs specific".** The
+  first cut tried to split by "is this workflow-shaped?" and stalled on `_load_cache`, which folds
+  the file by `cache_key` (generic) but is read by `lookup` via `SUCCESS_STATES` (an engine enum).
+  The line that actually holds: a thing belongs to the facade iff it needs a node path, an `epoch`,
+  an `InstanceState` or a `Failure` to mean anything. That puts the ~26 typed emitters, `CacheKey`,
+  `lookup`, `invalidate_prefix` and `spec_region_hash` in `workflows/journal.py`, and everything
+  else in `ledger/`. `_load_cache` lands in the WRITER, because that same pass recovers `seq` —
+  a rebuilt writer that restarted its sequence would re-mint `event_id`s the file already holds,
+  which is what makes a re-emit idempotent.
+
+- **2026-08-14 — DECISION (`PP-4`): the kind constants live in `ledger/kinds.py`, not the facade.**
+  §2's "one vocabulary" is the reason: `PP-5` has loop cycles emitting `step_started`,
+  `judge_verdict`, `breaker_trip` and `watcher_reaped` — the SAME words, from a non-workflow
+  producer. A registry left inside `workflows/` would force `loop/` to import the engine (the
+  forbidden direction) or fork the vocabulary into the fifth dialect `PP-5` exists to prevent. All
+  44 are re-exported from `workflows/journal.py`, so the `LEDGER_KINDS` drift tests in
+  `test_workflows_longrun.py` and `test_workflows_projection_events.py` still bind unchanged.
+
+- **2026-08-14 — DISCOVERY (`PP-4`): the `result_omitted` stub is invisible to a journal diff.**
+  `store_output` writes the artifact and RETURNS the stub; the run journals only the `output_ref`.
+  Diffing `journal.jsonl` + `events.jsonl` alone would have left `result_omitted`, `bytes`, `reason`
+  and the head+tail `preview` — three of the four things this atom's `done_when` names — unproven.
+  `tests/fixtures/ledger_golden/emitters_spill.jsonl` captures the return value of all three spill
+  paths (inline / oversize / binary) so the stub shape is in the diff.
+
+- **2026-08-14 — `PP-4` proof.** Goldens captured on the branch point with `journal.py` unmodified
+  (`git status` clean, hashes recorded), then re-diffed after the move: byte-identical. Five
+  fixtures — a real 3-node `RunController` run (8 journal lines, 3 events, one node spilling
+  oversize and one binary), one raw `write()` per registered kind (50 journal / 47 events, which is
+  how the mirroring table itself is asserted), and the three spill returns. Falsified three times:
+  shortening the `event_id` stamp to `-ev-` reds both golden tests at line 1 of `run_journal.jsonl`
+  and `emitters_journal.jsonl`, and dropping `MUTATION_REJECTED` from the facade's re-exports reds 3
+  tests across `test_workflows_fork.py` (ImportError) and `test_workflows_mutation_queue.py`
+  (AttributeError); adding `from personalclaw.workflows import store` to `ledger/reader.py` reds the
+  boundary rail naming `reader.py:14`. Packaging: nothing to change — the wheel finds `ledger/` by
+  auto-discovery
+  (`packages.find`), and `personalclaw-backend.spec`'s `hiddenimports` exists only for
+  importlib-loaded modules, which a statically-imported pure-Python package is not.
