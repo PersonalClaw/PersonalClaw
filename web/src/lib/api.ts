@@ -417,7 +417,18 @@ export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
   messages: number; running: boolean; stopping: boolean; pending_approval: boolean
-  memory_mode?: string; last_message?: string; last_ts?: number
+  memory_mode?: string; last_message?: string
+  /** 🔴 DECLARED `number` UNTIL CYCLE 173, AND THE ENDPOINT HAS NEVER SENT ONE. Read from the wire:
+   *  `POST /api/chat/sessions` returns `last_ts: ""`, and the sibling list (`ChatSessionSummary`,
+   *  below) has always typed the same field `string` — two shapes of ONE entity disagreeing about one
+   *  field. Nothing consumed it off this interface, so nothing broke; what it did do was make a real
+   *  defect look plausible. Cycle 166 deferred a "renders BLANK because it is fed a NUMBER" finding on
+   *  `#/chat` to its own cycle, and the number in that claim came from HERE, not from any payload.
+   *
+   *  🪤 The lesson `lib/epoch` already carries, in its own words: a type is "a declaration, not a
+   *  check — nothing validates a fetch against it". `started_at?: number` printing "in NaNd" on
+   *  `#/dashboard` was the same shape. Fetch the endpoint before believing the interface. */
+  last_ts?: string
 }
 export interface ChatSessionSummary {
   key: string; title: string; agent?: string; model?: string; messages: number

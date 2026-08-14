@@ -54,6 +54,59 @@ describe('epochSeconds', () => {
   })
 })
 
+describe('the two session shapes agree about their timestamps', () => {
+  // ── Cycle 173: the declaration that made cycle 166's phantom look real ────────────────────────
+  //
+  // `ChatSession` (the `POST /api/chat/sessions` response) declared `last_ts?: number`.
+  // `ChatSessionSummary` (the GET list) declared the SAME field `string`. One entity, two shapes,
+  // disagreeing — and read from the wire, the POST returns `last_ts: ""`. **A string.**
+  //
+  // Nothing consumed it off `ChatSession`, so nothing broke. What it did was make a real-looking
+  // defect: cycle 166 found a note claiming `#/chat`'s labels "render BLANK because they are fed a
+  // NUMBER", deferred to its own cycle — and that number came from this declaration, not from any
+  // payload. A wrong type does not only fail to protect you; it actively misleads the next reader.
+  //
+  // 🪤 THE RULE THIS FILE ALREADY STATED, now enforced: a type is "a declaration, not a check —
+  // nothing validates a fetch against it". So the guard cannot be "the type is right" (nothing can
+  // know that from inside the tree); it is "the two shapes of one entity do not CONTRADICT each
+  // other", which is checkable and is exactly what went wrong.
+  const api = readFileSync(join(process.cwd(), 'src/lib/api.ts'), 'utf8')
+
+  /** The declared type of `field` inside `interface name`, comments stripped. */
+  function declared(name: string, field: string): string | null {
+    const i = api.indexOf(`export interface ${name} {`)
+    if (i < 0) return null
+    const body = api.slice(i, api.indexOf('\n}', i))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const m = body.match(new RegExp(`\\b${field}\\??:\\s*([^;\n]+)`))
+    return m ? m[1].trim() : null
+  }
+
+  it('finds both interfaces (not vacuously green)', () => {
+    expect(declared('ChatSession', 'messages'), 'ChatSession must be parseable').toBeTruthy()
+    expect(declared('ChatSessionSummary', 'messages'), 'ChatSessionSummary must be parseable').toBeTruthy()
+  })
+
+  it('last_ts is a string in BOTH, because that is what the endpoints send', () => {
+    // Measured: POST /api/chat/sessions → `last_ts: ""`; the GET list sends an ISO string, empty on
+    // 31 of 32 sessions in a real dev home (see `sessionRecencyMs` above).
+    expect(declared('ChatSession', 'last_ts')).toBe('string')
+    expect(declared('ChatSessionSummary', 'last_ts')).toBe('string')
+  })
+
+  it('no timestamp field contradicts itself across the two shapes', () => {
+    // The general form, so the next divergence fails here rather than in a future bug report.
+    const fields = ['last_ts', 'last_activity_ts', 'created', 'last_message']
+    const clashes: string[] = []
+    for (const f of fields) {
+      const a = declared('ChatSession', f)
+      const b = declared('ChatSessionSummary', f)
+      if (a && b && a !== b) clashes.push(`${f}: ChatSession=${a} vs ChatSessionSummary=${b}`)
+    }
+    expect(clashes, `one entity, two shapes, disagreeing:\n${clashes.join('\n')}`).toEqual([])
+  })
+})
+
 describe('sessionActivitySeconds — the field choice, in one place', () => {
   const ISO = '2026-08-07T04:24:20.670204+00:00'
 
