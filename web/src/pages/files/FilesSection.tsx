@@ -24,6 +24,7 @@ import { useFileTabs } from './browse/useFileTabs'
 import { newSessionTarget } from '../../ui/content/commentTarget'
 import { baseName, fileIcon } from './fileMeta'
 import { PageTitle } from '../../ui/PageTitle'
+import { tabListKeys } from '../../lib/tabListKeys'
 
 const TAB_KEY = 'files-tab'
 
@@ -265,19 +266,34 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 the explorer is a right-docked, hidable panel beside it) */}
             <div className="flex min-w-0 flex-1 flex-col">
               {fileTabs.tabs.length > 0 && (
-                <div className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">
+                // Third copy of the same strip (the two terminal ones are the others): tabs with no
+                // owning `role="tablist"` — `aria-required-parent`, critical — and here every tab
+                // carried `tabIndex={0}`, so an open editor put N separate stops in the tab order
+                // instead of one stop plus arrows, and none said which was selected.
+                // 🪤 A `{/* … */}` comment cannot go here: this is EXPRESSION position (right after
+                // `&& (`), where only `//` and bare `/* */` parse. Third time this session.
+                <div role="tablist" aria-label="Open files"
+                  onKeyDown={tabListKeys((i) => fileTabs.setActivePath(fileTabs.tabs[i].path))}
+                  className="flex items-stretch gap-1 overflow-x-auto border-b border-outline/40 px-2 pt-2">
                   {fileTabs.tabs.map((t) => {
                     const Icon = fileIcon(t.name, false)
                     const on = t.path === fileTabs.activePath
                     return (
-                      <div key={t.path} role="tab" tabIndex={0} onClick={() => fileTabs.setActivePath(t.path)} title={t.path}
+                      <div key={t.path} role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
+                        onClick={() => fileTabs.setActivePath(t.path)} title={t.path}
+                        aria-keyshortcuts="Delete"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileTabs.setActivePath(t.path); return }
+                          if (e.key === 'Delete') { e.preventDefault(); fileTabs.close(t.path) }
+                        }}
                         className="group/tab inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border border-b-0 pl-3.5 pr-2 text-[0.8125rem] transition-colors"
                         style={on ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' } : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }}>
                         <Icon size={14} className="shrink-0 opacity-70" />
                         <span className="max-w-[180px] truncate">{t.name}</span>
                         {fileTabs.dirty[t.path] && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} />}
-                        <button onClick={(e) => { e.stopPropagation(); fileTabs.close(t.path) }} aria-label={`Close ${t.name}`}
-                          className="rounded p-1 opacity-50 hover:bg-surface-high hover:opacity-100"><X size={13} /></button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); fileTabs.close(t.path) }}
+                          aria-label={`Close ${t.name}`} title="Close file"
+                          className="grid size-6 -mr-0.5 shrink-0 place-items-center rounded opacity-50 hover:bg-surface-high hover:opacity-100"><X size={13} /></button>
                       </div>
                     )
                   })}
