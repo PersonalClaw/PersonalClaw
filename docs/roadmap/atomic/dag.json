@@ -7154,7 +7154,8 @@
         {
           "id": "PP-4",
           "title": "Extract the ledger as a platform primitive (`ledger/` package)",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1288",
           "scope": "`workflows/journal.py` is the best observability surface in the tree — append-only, `redact()` on every write, deterministic `event_id`, monotonic `seq`, epoch stamping, 40+ typed kinds, one file read two ways (resume cache + Run Ledger) — and ONLY workflows have it. `loop/store.py` persists findings/verdicts/status with no event vocabulary; tasks carry status; triggers keep their own log. `learning/mining.py:15` derives from \"the run's own journal\", so the hill-climbing loop covers exactly one of four work-unit kinds. This atom moves the mechanism, not the semantics: no new fields, no new kinds, no behaviour change for workflow runs.",
           "done_when": "A `personalclaw/ledger/` package owns the append/redact/stamp/spill machinery and the kind registry; `workflows/journal.py` becomes a thin workflow-flavoured facade over it with its ledger-kind set unchanged and `LEDGER_KINDS` still asserted by the existing drift test. Byte-identical output for a workflow run: a golden-file test captures a real run's `journal.jsonl` + `events.jsonl` before the move and diffs after, so \"pure extraction\" is proven rather than claimed. `MAX_INLINE_OUTPUT_BYTES` spilling, binary magic-prefix detection and the `result_omitted` stub move with it. No consumer outside workflows is added here — that is `PP-5`.",
           "deps": []
@@ -7835,8 +7836,23 @@
         "plan": "PP"
       },
       {
-        "id": "PP-4",
-        "title": "Extract the ledger as a platform primitive (`ledger/` package)",
+        "id": "PP-6",
+        "title": "`workflow replay <run_id>`: recorded-response provider + trajectory diff",
+        "plan": "PP"
+      },
+      {
+        "id": "PP-8",
+        "title": "Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection",
+        "plan": "PP"
+      },
+      {
+        "id": "PP-9",
+        "title": "Generalize the outcome record beyond decisions (`pending_outcome`/`outcome_resolved`)",
+        "plan": "PP"
+      },
+      {
+        "id": "PP-11",
+        "title": "Extract `AdmissionPolicy` behind today's lanes (no behaviour change)",
         "plan": "PP"
       },
       {
@@ -10295,9 +10311,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 16,
+        "todo": 15,
         "blocked": 0
       }
     ],
