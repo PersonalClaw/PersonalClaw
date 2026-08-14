@@ -166,7 +166,21 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
-              <EmptyState icon={Zap} title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'} hint={q || filter !== 'all' ? 'Try a different filter.' : 'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'} action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined} />
+              // The hint names the control the user actually touched. One line for "try a
+              // different filter" was wrong whenever the search box was the thing narrowing
+              // the list, which is the common case: it pointed at a filter they never set.
+              <EmptyState
+                icon={Zap}
+                title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'}
+                hint={
+                  q && filter !== 'all' ? 'Try a different search or filter.' :
+                  q ? 'Try a different search term.' :
+                  filter !== 'all' ? 'Try a different filter.' :
+                  'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'
+                }
+                action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined}
+              />
+
             ) : (
               <div className="flex flex-col gap-s">
                 {triggers.map((t, i) => {
