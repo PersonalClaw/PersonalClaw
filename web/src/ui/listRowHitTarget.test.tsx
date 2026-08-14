@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent, screen } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ListRow } from './ListScaffold'
 
@@ -166,5 +166,130 @@ describe('the tasks list row and card carry the same overlay', () => {
     // Two tab stops per row only helps if they announce differently: "triage" opens, "Select: triage"
     // selects.
     expect(src).toMatch(/aria-label=\{`\$\{selected \? 'Deselect' : 'Select'\}: \$\{t\.title\}`\}/)
+  })
+})
+
+// ── Cycle 164: THE WHOLE FAMILY, COUNTED — because fixing rows one surface at a time never ends ──
+//
+// Cycles 159 and 161 each fixed one list's row. This censuses every clickable NON-INTERACTIVE element
+// in `pages/` + `ui/` instead, so the next mouse-only row is a red test rather than another cycle.
+// Measured: **15 such elements**, of which 9 already carried `role` + `tabIndex` and 6 did not.
+//
+// The two the ledger sent me to, driven at 1440×900 before the fix — same defect, opposite symptoms:
+//
+//   `#/notifications`    83 rows, `tabindex` NULL on every one. The row is never a tab stop, so `Open`
+//                        was reachable only via Shift+F10 on a hover action that is `opacity-0` until
+//                        hovered. WCAG 2.1.1.
+//   `#/loops/history`    the row IS focusable — `whileHover`/`whileTap` make Motion add `tabindex="0"` —
+//                        with NO role and NO key handler. Focus landed on it (2px outline) and Enter
+//                        and Space were both dead: body text frozen at 533 chars for each, while a
+//                        mouse click opened the peek panel (864). A focus stop that does nothing.
+//                        WCAG 2.1.1 + 4.1.2.
+//
+// 🪤 `#/loops` IS NOT THAT LIST. The loops list lives at `#/loops/history`; `#/loops` renders the
+// composer (`LoopsSection` routes `seg === 'history'` to `LoopsListPage`). The capture inventory only
+// had `#/loops`, so this surface had never been in a cycle's evidence set at all — `loops-history` was
+// added to `surfaces.json` in the same pass.
+//
+// The four still unfixed are listed below WITH their reason, because they are the same defect and not
+// distinctions — a deferral that reads as a judgment is how a family gets half-converged forever.
+
+describe('every clickable non-interactive element has a keyboard route', () => {
+  const SRC = join(process.cwd(), 'src')
+  const walk = (d: string): string[] =>
+    readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walk(p)
+      return /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) ? [p] : []
+    })
+
+  /** 🪤 Brace-aware: the `>` inside `onClick={() => …}` does NOT end the tag, and a matcher that
+   *  scans to the first `>` truncates it — five false positives earlier in this session. */
+  function tags(src: string, name: string) {
+    const out: string[] = []
+    const re = new RegExp(`<${name}(?=[\\s>])`, 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(src))) {
+      let i = m.index + 1 + name.length, depth = 0, quote: string | null = null
+      for (; i < src.length; i++) {
+        const c = src[i]
+        if (quote) { if (c === quote) quote = null; continue }
+        if (c === '"' || c === "'" || c === '`') { quote = c; continue }
+        if (c === '{') depth++
+        else if (c === '}') depth--
+        else if (c === '>' && depth === 0) break
+      }
+      out.push(src.slice(m.index, i + 1))
+    }
+    return out
+  }
+
+  /** Same defect as the two fixed here, deliberately NOT fixed in this change, and why. */
+  const DEFERRED: Record<string, string> = {
+    'pages/tasks/TaskBoard.tsx':
+      'the board CARD is `draggable` — an overlay button inside a drag source needs its own ' +
+      'drag-vs-activate pass, not a copy of the list-row fix',
+    'pages/dashboard/widgets/kit.tsx':
+      'the dashboard widget row is its own primitive with ~20 live nodes across widgets; ' +
+      'converging it is a widget-kit pass',
+    'pages/terminal/TerminalPage.tsx':
+      'a `div role="tab"` with NO tabIndex and no key handler, so it cannot be focused at all — the '
+      + 'fix is the tablist pattern (roving tabindex + arrow keys), not a row hit target',
+    'pages/terminal/TerminalDrawer.tsx':
+      'the drawer copy of the same tab strip — converge both with the tablist pattern, together',
+    'pages/knowledge/KnowledgeCreatePage.tsx':
+      'a file DROPZONE, not a row: its `<input type="file">` is `hidden`, so the fix is a real ' +
+      'labelled control, not a row hit target',
+  }
+
+  const hits = () => {
+    const found: { file: string; tag: string }[] = []
+    for (const abs of walk(SRC)) {
+      const src = readFileSync(abs, 'utf8')
+      for (const name of ['div', 'li', 'article', 'motion\\.div']) {
+        for (const tag of tags(src, name)) {
+          if (!/onClick=/.test(tag) || !/cursor-pointer/.test(tag)) continue
+          if (/stopPropagation/.test(tag)) continue          // a propagation shim, not a target
+          found.push({ file: abs.slice(SRC.length + 1), tag })
+        }
+      }
+    }
+    return found
+  }
+
+  it('finds the population it is meant to police', () => {
+    // 🪤 Vacuity guard: a scan that matches nothing passes silently and reads as "all clean".
+    expect(hits().length, 'the clickable-row census must not go empty').toBeGreaterThanOrEqual(12)
+  })
+
+  it('each one is either a real control, or a documented deferral', () => {
+    const bad: string[] = []
+    for (const { file, tag } of hits()) {
+      // 🪤 Not a literal `tabIndex={0}`: `ui/BoardCollapse` writes `tabIndex={onExpand ? 0 : undefined}`
+      // — a control that is only interactive in one state, which is correct and must not be flagged.
+      const declaresRole = /\brole=/.test(tag) && /tabIndex=\{[^}]*\b0\b/.test(tag)
+      const usesPrimitive = /tabIndex=\{-1\}/.test(tag) && readFileSync(join(SRC, file), 'utf8').includes('<RowHitTarget')
+      if (declaresRole || usesPrimitive || file in DEFERRED || file === 'ui/RowHitTarget.tsx') continue
+      bad.push(file)
+    }
+    expect(bad, `mouse-only click targets: add <RowHitTarget label> + tabIndex={-1}, or record the reason in DEFERRED\n${bad.join('\n')}`)
+      .toEqual([])
+  })
+
+  it('the two rows this cycle converged go through the primitive', () => {
+    for (const rel of ['pages/notifications/NotificationsPage.tsx', 'pages/loops/LoopsListPage.tsx', 'ui/NotificationBell.tsx']) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      expect(src, `${rel}: the hit target`).toMatch(/<RowHitTarget label=/)
+      expect(src, `${rel}: the ring, keyed off the overlay`).toMatch(/has-\[>button:focus-visible\]:ring-2/)
+    }
+  })
+
+  it('the deferrals stay honest — a listed file must still HAVE the defect', () => {
+    // If someone fixes one, this fails and the entry gets deleted. A stale allowlist is how a
+    // ratchet quietly stops ratcheting.
+    const files = new Set(hits().map((h) => h.file))
+    for (const rel of Object.keys(DEFERRED)) {
+      expect(files.has(rel), `${rel} no longer matches the scan — drop it from DEFERRED`).toBe(true)
+    }
   })
 })

@@ -9,6 +9,7 @@ import { IconButton } from '../../ui/IconButton'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ListControls } from '../../ui/ListControls'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
+import { RowHitTarget } from '../../ui/RowHitTarget'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
@@ -209,8 +210,17 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     whileHover={{ y: -expr(3, 0.3), boxShadow: 'var(--shadow-lift)' }}
                     whileTap={{ scale: 1 - expr(0.008, 0.3) }}
                     onClick={() => setPeekId(c.id)}
-                    className={`group relative flex items-center gap-l rounded-lg px-l py-l text-left cursor-pointer transition-colors overflow-hidden ${peekId === c.id ? 'bg-surface-high ring-1 ring-primary/40' : 'bg-surface-container hover:bg-surface-high'}`}
+                    // 🔴 THIS ROW WAS A FOCUSABLE THAT DID NOTHING — the worse half of the tasks-list
+                    // defect. `whileHover`/`whileTap` make Motion add its own `tabindex="0"`, so the
+                    // keyboard DID land here (measured: a 2px outline on a `div` with no role), and
+                    // then Enter and Space were both dead — driven on `#/loops/history`, body text
+                    // frozen at 533 chars for each, while a mouse click opened the peek panel (864).
+                    // `tabIndex={-1}` retires that nameless stop and `RowHitTarget` puts a real,
+                    // named button in its place.
+                    tabIndex={-1}
+                    className={`group relative flex items-center gap-l rounded-lg px-l py-l text-left cursor-pointer transition-colors overflow-hidden has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50 ${peekId === c.id ? 'bg-surface-high ring-1 ring-primary/40' : 'bg-surface-container hover:bg-surface-high'}`}
                   >
+                    <RowHitTarget label={c.name || c.goal.slice(0, 70)} />
                     {/* running: faint left glow accent */}
                     {running && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: 'var(--color-ok)' }} />}
                     <span className="shrink-0 inline-flex items-center justify-center size-10 rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}>

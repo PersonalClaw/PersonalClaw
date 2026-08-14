@@ -60,17 +60,14 @@ export function kindMeta(kind: string): KindMeta {
 }
 
 // ── shared visual helpers (consolidation, S2/T2.2) ──
-// The unread-item accent rail and the tinted icon-chip background were
-// duplicated verbatim across NotificationsPage (Row) and NotificationBell
-// (ShadeRow). Centralize the EXACT same values so the pattern has one home —
-// byte-identical output, zero visual change. `tone` is a kindMeta().tone
-// (already a CSS var / color token), so these stay token-routed.
-
-/** Inline style for an UNREAD notification's leading accent rail (hairline
- *  inset in the kind's tone). Returns `undefined` when acked (no rail). */
-export function unreadRail(tone: string, acked: boolean): { boxShadow: string } | undefined {
-  return acked ? undefined : { boxShadow: `inset 2px 0 0 0 ${tone}` }
-}
+// The tinted icon-chip background was duplicated verbatim across NotificationsPage
+// (Row) and NotificationBell (ShadeRow). Centralize the EXACT same value so the
+// pattern has one home. `tone` is a kindMeta().tone (already a CSS var / color
+// token), so this stays token-routed.
+//
+// The rail that used to live here as `unreadRail()` moved to `UnreadRail.tsx`: it had
+// to stop being an inline box-shadow, which was silently suppressing both rows' focus
+// ring. Same two consumers, same one home, a property that no longer collides.
 
 /** Tinted background for a kind's icon chip (16% of the tone over transparent). */
 export function toneChipBg(tone: string): string {
