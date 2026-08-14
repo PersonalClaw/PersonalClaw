@@ -941,6 +941,37 @@ async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_baseline_denylist(_ctx: DoctorContext) -> ProbeResult:
+    """security — is the enforced bash denylist still the baseline we shipped? (SH-6)
+
+    Every ``denied_command_patterns()`` read already re-asserts the in-memory list, so
+    in-process drift is healed continuously. This probe is the *periodic* half: it
+    re-reads the packaged baseline data file and compares it to the fingerprint captured
+    at import, which is the only way to notice an on-disk edit that rewrote the patterns
+    and their digest together. A diverged file is never adopted — the verified
+    baseline stays in force, so this reports the divergence rather than a shrunk denylist.
+    """
+    from personalclaw.security import verify_baseline_denylist
+
+    report = await asyncio.to_thread(verify_baseline_denylist)
+    ok = bool(report["file_verified"])
+    detail = (
+        f"baseline v{report['version']} verified — {report['count']} patterns enforced"
+        if ok
+        else f"{report['detail']} — enforcing the verified baseline ({report['count']} patterns)"
+    )
+    return ProbeResult(
+        ok=ok,
+        detail=detail,
+        evidence={
+            "version": report["version"],
+            "sha256": report["sha256"][:16],
+            "patterns": report["count"],
+            "file_verified": ok,
+        },
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -1058,6 +1089,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_knowledge_vector_index,
             "Knowledge chunk ANN index (sqlite-vec)",
+        )
+    )
+    register_probe(
+        Probe(
+            "security.baseline_denylist",
+            "security",
+            Tier.CAPABILITY,
+            _probe_baseline_denylist,
+            "Baseline command denylist integrity",
         )
     )
 
