@@ -6415,10 +6415,11 @@
         {
           "id": "SH-6",
           "title": "Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26) T3.4",
           "done_when": "mutating the in-memory denylist at runtime is healed on next denied_command_patterns() read and SEL-logged; effective set is provably a superset of the packaged baseline (property test); user additions still merge (dedupe, no shrink path); guardrails/denylist.py loads the same packaged source",
-          "deps": []
+          "deps": [],
+          "pr": 1276
         },
         {
           "id": "SH-7",
@@ -7690,11 +7691,6 @@
         "plan": "SH"
       },
       {
-        "id": "SH-6",
-        "title": "Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py",
-        "plan": "SH"
-      },
-      {
         "id": "SH-8",
         "title": "SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export",
         "plan": "SH"
@@ -7702,6 +7698,11 @@
       {
         "id": "SH-9",
         "title": "External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan",
+        "plan": "SH"
+      },
+      {
+        "id": "SH-10",
+        "title": "Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented",
         "plan": "SH"
       },
       {
@@ -9991,9 +9992,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {

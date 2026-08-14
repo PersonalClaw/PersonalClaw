@@ -71,6 +71,10 @@ def _backend_data():
         ("src/personalclaw/slack-manifest.yaml", "personalclaw"),
         ("src/personalclaw/model_tokens.json", "personalclaw"),
         ("src/personalclaw/model_pricing.json", "personalclaw"),
+        # The baseline bash denylist (SH-6) — PyInstaller's import analysis cannot see a
+        # data file, and security.py raises at import without it, so the frozen binary
+        # would refuse to start rather than run with a shorter denylist.
+        ("src/personalclaw/baseline_denylist.json", "personalclaw"),
         ("src/personalclaw/config", "personalclaw/config"),
         ("src/personalclaw/eval/scenarios", "personalclaw/eval/scenarios"),
         ("src/personalclaw/scripts", "personalclaw/scripts"),

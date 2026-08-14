@@ -187,6 +187,9 @@ personalclaw = [
     "py.typed",
     "model_tokens.json",
     "model_pricing.json",
+    # The baseline bash denylist (SH-6). security.py raises at import if this is missing,
+    # so a wheel without this line does not "degrade to no denylist" — it fails to start.
+    "baseline_denylist.json",
     "config/defaults.json",
     "config/prompts/*.md",
     "config/prompt_snippets/*.md",

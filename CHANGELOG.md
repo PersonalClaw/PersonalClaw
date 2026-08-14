@@ -10,6 +10,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **The built-in command denylist now repairs itself.** The 112 always-on patterns that refuse
+  credential exfiltration, destructive commands and self-tampering used to live only as a list
+  inside a Python module. Anything running in the same process — a stray monkeypatch, an agent that
+  talked a tool into editing module state, a future refactor — could shorten that list, and every
+  command screened afterwards would quietly obey the shorter version. The patterns now ship as a
+  packaged data file with a sha256 over their exact contents and order, and every read re-checks the
+  live list against it: a shortened, edited or reordered denylist is restored before the next command
+  is screened, and the repair is written to your security event log as
+  `baseline_denylist_reasserted` (with which patterns came back). A refused attempt to shrink the set
+  is logged as `baseline_denylist_tamper_attempt`. Your own additions in
+  `security.denied_commands` work exactly as before — they are appended, deduped against the
+  built-ins, and can only ever make the list longer. `personalclaw doctor` gained a
+  **Baseline command denylist integrity** row that re-verifies the packaged file and reports a
+  divergence without ever adopting it, so a tampered file cannot shrink what is enforced.
+  **Honest limitation:** this is protection against drift and against an agent tampering at runtime,
+  not against you. Anyone who can edit the installed package before the process starts can change
+  the baseline — it is your machine.
 - **Installed apps' backends no longer inherit PersonalClaw's environment.** ⚠️ **This changes
   behaviour for an app backend that read a variable it never declared.** An app with a backend runs
   it as a subprocess, and that subprocess used to start from a full copy of the gateway's own
