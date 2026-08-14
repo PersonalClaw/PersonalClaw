@@ -440,13 +440,14 @@
         {
           "id": "KL-12",
           "title": "Indexing H1.5: resumable batched chunk backfill + VH validation",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment task table — H1.5 (backfill) and VH (validation); Amendment Design (c) re-embed as a migration concern",
           "done_when": "a resumable, batched, progress-reporting backfill (modeled on reembed_all + the ingest queue's recover_pending) chunks existing items; interrupting and restarting resumes without duplicating or skipping; mid-backfill search returns sensible results (degrades to whole-item vectors, never zero); VH holds — a deep-answer question on a 30+ page PDF/long markdown is retrieved and cited to the right section (failing on main first), search latency measured before/after ANN on a large seeded library, backfill interrupt/resume verified, full local gate green",
           "deps": [
             "KL-9",
             "KL-10"
-          ]
+          ],
+          "pr": 1271
         }
       ]
     },
@@ -7659,11 +7660,6 @@
         "plan": "KL"
       },
       {
-        "id": "KL-12",
-        "title": "Indexing H1.5: resumable batched chunk backfill + VH validation",
-        "plan": "KL"
-      },
-      {
         "id": "LMMV-5",
         "title": "Session 4 — Sidecar isolation runner + resumable install jobs + loaded-models/memory-pressure widget",
         "plan": "LMMV"
@@ -9719,9 +9715,9 @@
         "code": "KL",
         "plan": "KNOWLEDGE-LIBRARY",
         "total_atoms": 12,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

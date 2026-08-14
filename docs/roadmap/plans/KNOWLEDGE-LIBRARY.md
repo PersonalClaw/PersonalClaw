@@ -14,13 +14,13 @@ COMPLETE** — T2.1 curation display/filters, T2.2 tags taxonomy, T2.3 bulk ops,
 **Session 3 PARTIAL** — T3.2's backend landed 2026-07-30 (`find_duplicates`/`merge_items` + the
 duplicates/merge routes) but has **no frontend consumer yet**; T3.1 (reading view) and T3.3 (library
 home) are not started.
-The 2026-07-29 indexing amendment (H1.1-H1.5) is **mostly landed**: H1.1+H1.2 (`chunks` table +
-structural chunker + chunk embedding in ingest, retiring the `content[:1000]` top-up), H1.3
-(chunk-level vector arm with MAX roll-up to items) and H1.4 (`sqlite-vec` in core + a `vec0` index
-over the chunk vectors, cached probe, fail-soft to the exact scan, Doctor capability line) are done.
-**Remaining: H1.5** — the resumable batched backfill, so libraries ingested before H1.1 gain chunks.
-(The earlier "NOT started" note here was corrected 2026-08-04 by code audit and superseded by
-`KL-9`/`KL-10`/`KL-11`.) Created 2026-07-18 (roadmap rev 10; owner ask: more
+The 2026-07-29 indexing amendment (H1.1-H1.5) is **COMPLETE** (2026-08-13): H1.1+H1.2 (`chunks`
+table + structural chunker + chunk embedding in ingest, retiring the `content[:1000]` top-up), H1.3
+(chunk-level vector arm with MAX roll-up to items), H1.4 (`sqlite-vec` in core + a `vec0` index over
+the chunk vectors, cached probe, fail-soft to the exact scan, Doctor capability line) and H1.5
+(`knowledge/chunk_backfill.py` + its boot hook, so libraries ingested before H1.1 gain chunks) are
+all done, and VH holds. (The earlier "NOT started" note here was corrected 2026-08-04 by code audit
+and superseded by `KL-9`/`KL-10`/`KL-11`/`KL-12`.) Created 2026-07-18 (roadmap rev 10; owner ask: more
 library-management capabilities for knowledge articles)
 
 ---
@@ -558,3 +558,121 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   **DISCOVERY — the repo's own coherence guard caught the Doctor probe.** `test_no_module_composes_the_knowledge_path_itself` lints the whole package for a second copy of the knowledge DB path (a duplicate once split the store's brain: workflows wrote one file, the UI read another, both "succeeded"). My probe composed `ctx.home / "workspace" / "knowledge" / "knowledge.db"` and went red on the full suite, not the targeted run. Fixed at the root: `knowledge_db_path()` now takes an optional `home` and a `create=False` flag, so a caller handed a home (the Doctor gets `DoctorContext.home`) can still come through the one owner of the path, and a read-only prober does not `mkdir` a directory that the state-inventory probe would then report as unclaimed.
 
   **Gate:** `make lint` clean (black/isort/flake8/mypy, 812 files) · `tests/test_knowledge.py` **123 passed** (110 → 123, 13 new) · full Python suite **19025 passed, 0 failed**, 30 skipped, 12 xfailed (baseline 19012 accounted; the known `test_mid_flight_kill_resumes_byte_equal` contention flake did not trip). `web/` untouched.
+
+- 2026-08-13 — **DONE (`KL-12`: Amendment H1.5 + VH).** `knowledge/chunk_backfill.py`
+  (`backfill_item_chunks`) chunks every item that predates chunking, plus
+  `dashboard/embedding_reindex.start_chunk_backfill` and the
+  `_backfill_item_chunks_startup` boot hook that runs it. **The H1.1-H1.5 indexing
+  amendment is now complete.**
+
+  **This atom is what makes H1.3/H1.4 reach real data.** KL-10 put the vector arm on chunk
+  vectors and KL-11 indexed them, but both only help items that HAVE chunks, and every item
+  ingested before H1.1 has none. Measured, not argued: on the KL-12 branch itself, a library
+  with 0 chunk rows answers the VH question exactly as `main` does — the deep answer is
+  unreachable until the backfill runs.
+
+  **Resume state is the DATA, not a cursor** — the idiom both named models already use
+  (`count_items_missing_embedding`'s boot auto-resume, `recover_pending`'s
+  `processing_status IN ('queued','processing')`). `store.count_items_missing_chunks()` /
+  `store.items_missing_chunks(limit, after_id)` define the backlog as *active, non-archived,
+  content-bearing, zero chunk rows*, so an item leaves the backlog the instant its rows
+  commit and a restart resumes by re-asking. Nothing is persisted, so no crash window can
+  leave a cursor disagreeing with the rows. **Batch bound: 25 items** (`BATCH_SIZE`), with a
+  keyset cursor on `items.id` — that bounds peak memory (item content is unbounded; a 30-page
+  PDF is ~20 KB of text) *and* guarantees forward progress within a run past an item the
+  chunker declines, which a re-fetch of the backlog head would loop on forever.
+
+  **The predicate's whitespace set is load-bearing.** SQLite's `TRIM` strips only spaces
+  unless the set is spelled out, while `chunk_text` tests `content.strip()`. Without
+  `TRIM(content, ' \t\n\r\v\f')` an item of blank-but-not-empty content is selected forever
+  and never chunks — a re-run that is not a no-op. Archived items are excluded (retrieval
+  already skips their chunks, so chunking them would only grow the DB); because the predicate
+  is re-derived rather than remembered, a RESTORED item simply re-enters the backlog.
+
+  **Chunk embeddings are in scope; item vectors are not.** The backfill calls the ingest
+  path's own unit — `_embed_chunks` promoted to public `embed_item_chunks` (clean break, one
+  name, one path) — so chunks get vectors the same way a new item's do, and every write goes
+  through `store.replace_chunks`, which is what keeps KL-11's ANN index in step. The items'
+  own whole-item vectors are never touched: that is `reembed_all`'s job on a model switch, and
+  Design (c) keeps it a separate migration-level concern. A test asserts the item `embedding`
+  column is byte-identical across a backfill. **ANN staleness proven, not assumed:** after a
+  backfill `vec_index.coverage()` is `{"384": {"indexed": 2100, "live": 2100}}` on the large
+  library and `{"384": {"indexed": 181, "live": 181}}` on the VH library — and 49/49 at the
+  moment of a mid-flight kill, because `replace_chunks` commits per item.
+
+  **VH — BEFORE, on `origin/main` (811aaee4), ingested exactly as `main` would.** Corpus: five
+  ~30 KB markdown documents (32 sections each) + a 32-page PDF, one local 384-dim
+  sentence-transformers model, one question — *"how far behind can a replica get before it
+  stops serving reads"* — whose answer is a coherent mid-document section (`## 18. Staleness
+  thresholds for query routing`, lines 224-230) of **Storage Platform Guide**, sharing no term
+  with the question but sitting in a document whose TITLE is not the closest match. `main`
+  returned **1 hit: the title trap ("Replication Architecture", which contains the answer
+  nowhere), `section=None`, and the answer's document NOT RETRIEVED AT ALL.** The same run on
+  this branch with 0 chunk rows returns the identical wrong answer.
+  **AFTER, same library / question / model, post-backfill: 2 hits, Storage Platform Guide at
+  rank 1, cited to `'18. Staleness thresholds for query routing'` lines `[224, 230]`** — which
+  is exactly the heading plus the answer paragraph.
+
+  **DISCOVERY — a chunk vector is only as good as the chunk's topical COHERENCE, and my first
+  VH corpus proved it by failing.** v2 buried the fact inside a section about something else,
+  so the chunk was ~72% off-topic filler. The chunk index still found it — **rank 1 of 181
+  chunks** — but at cosine **0.2025**, under `_VECTOR_MIN_SIMILARITY` (0.25), so it was dropped
+  and the title trap won. Restating the section as a real document's section would read it
+  (coherent prose on the actual topic) put it over the floor. Two lessons: the structural
+  chunker's value is precisely that it cuts on boundaries that make chunks topically coherent
+  — a size chunker would reproduce the diluted case; and a VH corpus can be adversarial in a
+  way that tests the floor rather than the feature. Recorded because the first reading looked
+  like "chunking does not work".
+
+  **DISCOVERY — H1.1/H1.2 (`KL-9`) is ALREADY on `origin/main`; only H1.3/H1.4 are unmerged.**
+  So the "fails on main" state is not "no chunks" but the sharper "chunks are written at
+  ingest and retrieval cannot read them" — 181 chunk rows sitting inert in `main`'s DB. Worth
+  noting for anyone reading the merge order.
+
+  **Interrupt/resume, verified with a real SIGKILL, not a second call.** The live run sends
+  `SIGKILL` to itself from inside the progress callback after 2 of 6 items (shell saw exit
+  137 — no unwinding, no `finally`, nothing flushed that sqlite had not committed). State
+  after: 2 items / 49 chunks, index 49/49, 4 pending. The resume did **`total: 4, chunked: 4`**
+  — exactly the remaining work, not 6 — and afterwards: pre-kill chunk ids **byte-identical**,
+  **0** duplicate `(item_id, chunk_index)` pairs, **0** non-dense `chunk_index` sequences, 0
+  pending, 181 chunks total (identical to a clean single run). The unit test uses a
+  `KeyboardInterrupt` from the embedder, which is a `BaseException` and so unwinds through
+  every `except Exception` in the path — a genuine mid-batch interrupt.
+
+  **Mid-backfill search never returns zero, live.** At 2-of-6 chunked, the vector arm returns
+  BOTH kinds in one result set: `'network topology and connection pooling reference'` →
+  `Networking Reference` (whole-item-vector only) ahead of two chunked items;
+  `'observability metrics standards'` likewise. The mixed state degrades in specificity, never
+  to zero — a hit on a chunk-less item just carries the honest-null locator.
+
+  **Latency before/after ANN on a large seeded library** (300 items → 2,100 chunk vectors at
+  384 dims, 10 queries × 3, through the real `_vector_search`): **5.45 ms median with the
+  `sqlite-vec` index vs 48.84 ms with `candidate_chunk_ids` force-disabled — 9.0x — at
+  recall@20 1.0000 (min 1.0000)**. Consistent with KL-11's own 40.13 → 2.23 ms at its 1,800-row
+  shape. **Storage growth, the plan's named risk, measured rather than estimated:** the same
+  backfill took the DB from **1.52 MB → 11.08 MB (+9.57 MB for 2,100 chunks)**, i.e. ~4.6 KB
+  per chunk (1,536 B of float32 vector in the row + the same again in the vec0 index + text),
+  and ran in **8.9 s (30 ms/item, 4.2 ms/chunk)** against a real model.
+
+  **Falsified the central rail (resume), twice.** (a) Dropping `NOT EXISTS (SELECT 1 FROM
+  chunks …)` from the batch query — "the restart re-chunks from zero" — turned **3** tests red,
+  the resume test on its no-skipping assertion (2 items left un-chunked, because re-work ate
+  the budget). (b) Also dropping it from the COUNT, so the budget covers every item and the
+  restart duplicates without running out — turned **5** red, including
+  `test_a_completed_backfill_is_a_no_op_not_a_rechunk`. Restored: green. The narrower
+  chunk-id-stability assertion is preempted by the count assertions in both mutations, so it
+  was checked for vacuity separately: a `replace_chunks` re-chunk does mint fresh uuids, so
+  that assertion can fail.
+
+  **The boot hook is tested as a hook, not just as a mechanism.** `start_chunk_backfill` lives
+  in `dashboard/embedding_reindex.py` beside the item-vector re-index it is deliberately
+  separate from, so it is reachable without starting a server; tests pin that it chunks a
+  pre-existing library, that it does NOT even resolve an embedder when the backlog is empty
+  (it runs on every boot), that it defers with a log when no model is ready, that it cannot
+  raise into startup — and an AST test asserts `server.py` actually appends it to
+  `on_startup`, since a startup hook nobody registers is inert.
+
+  **Gate:** `make lint` rc 0 (black/isort/flake8/mypy, 813 files) · `tests/test_knowledge.py`
+  **135 passed** (123 → 135, 12 new) · `tests/test_embedding_reindex.py` **12 passed** (7 → 12,
+  5 new) · full Python suite **19042 passed, 0 failed**, 30 skipped, 12 xfailed (baseline
+  19025 + 17 new). `web/` untouched — backend only.
