@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
 import { cx } from '../../../ui/cx'
 import { spring } from '../../../design/motion'
+import { RowHitTarget } from '../../../ui/RowHitTarget'
 
 /** Calm "all clear" dashboard-slot empty state — a compact, top-aligned strip
  *  (icon + line + optional inline action). Deliberately NOT the full-height
@@ -24,25 +25,41 @@ export function SlotEmptyState({ icon: Icon, children, action }: { icon: LucideI
 /** A row in a widget list — a tappable surface with spring press feedback + a
  *  hover lift, matching the app's pressable idiom. Optional trailing actions. */
 export function WidgetRow({
-  onClick, children, actions, className,
+  onClick, label, children, actions, className,
 }: {
-  onClick?: () => void
   children: ReactNode
   actions?: ReactNode
   className?: string
-}) {
+} & (
+  // 🔑 A CLICKABLE ROW CANNOT EXIST WITHOUT A NAME, and the type is what guarantees it rather
+  // than a convention a future widget forgets. `label` is what the row IS — the same subject its
+  // own actions announce, so "Reply: X" and the row that opens X agree.
+  | { onClick: () => void; label: string }
+  | { onClick?: undefined; label?: never }
+)) {
   return (
     <motion.div
       layout
       transition={spring.spatialDefault}
       whileHover={onClick ? { y: -1 } : undefined}
+      // 🔴 OPENING A WIDGET ROW WAS POINTER-ONLY, on the app's FIRST screen. Measured on
+      // `#/dashboard` at 1440×1000: **20** clickable rows across four widgets (Action Center,
+      // Tasks, Schedule, Pinned Artifacts), `tabindex` **null** and `role` **null** on every one,
+      // and **0 of 80** Tab presses ever landed on a row. The row's ACTION pills are reachable, so
+      // a keyboard user could reply to or dismiss an item but never open it — and axe reported
+      // **0 blocking findings**, because a div with an onclick and no role is invisible to every
+      // rule. WCAG 2.1.1. Same shape and same fix as the tasks list (cycle 159) and the
+      // notification rows (cycle 164), applied once here because four widgets share this row.
+      tabIndex={onClick ? -1 : undefined}
       className={cx(
         'flex items-center gap-s rounded-lg bg-surface-low px-m py-s',
-        onClick && 'cursor-pointer transition-colors hover:bg-surface-high',
+        onClick && 'relative cursor-pointer transition-colors hover:bg-surface-high',
+        onClick && 'has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50',
         className,
       )}
       onClick={onClick}
     >
+      {onClick && <RowHitTarget label={label} />}
       <div className="min-w-0 flex-1">{children}</div>
       {actions && <div className="flex shrink-0 items-center gap-xs" onClick={(e) => e.stopPropagation()}>{actions}</div>}
     </motion.div>

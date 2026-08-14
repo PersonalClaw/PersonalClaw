@@ -191,8 +191,22 @@ describe('the tasks list row and card carry the same overlay', () => {
 // had `#/loops`, so this surface had never been in a cycle's evidence set at all — `loops-history` was
 // added to `surfaces.json` in the same pass.
 //
-// The four still unfixed are listed below WITH their reason, because they are the same defect and not
+// The ones still unfixed are listed below WITH their reason, because they are the same defect and not
 // distinctions — a deferral that reads as a judgment is how a family gets half-converged forever.
+//
+// ── Cycle 168 CLOSED the largest deferral: the dashboard widget row ───────────────────────────────
+//
+// `pages/dashboard/widgets/kit.tsx`'s `WidgetRow` is shared by four widgets (Action Center, Tasks,
+// Schedule, Pinned Artifacts). Measured on `#/dashboard` at 1440×1000 — the app's FIRST screen:
+//
+//   clickable widget rows   **20**        `tabindex` **null** on all 20 · `role` **null** on all 20
+//   Tab presses on a row    **0 of 80**   while each row's ACTION pills ARE reachable
+//   axe                     **0 blocking** — a div with an onclick and no role is invisible to it
+//
+// So a keyboard user could reply to or dismiss an Action Center item but never OPEN one. Fixed in the
+// primitive, once, for all four widgets; each call site passes the subject its own actions already
+// announce, so "Reply: X" and the row that opens X agree. `WidgetRow`'s props are now a discriminated
+// union — `onClick` REQUIRES `label` — so the next clickable widget row cannot ship nameless.
 
 describe('every clickable non-interactive element has a keyboard route', () => {
   const SRC = join(process.cwd(), 'src')
@@ -229,9 +243,6 @@ describe('every clickable non-interactive element has a keyboard route', () => {
     'pages/tasks/TaskBoard.tsx':
       'the board CARD is `draggable` — an overlay button inside a drag source needs its own ' +
       'drag-vs-activate pass, not a copy of the list-row fix',
-    'pages/dashboard/widgets/kit.tsx':
-      'the dashboard widget row is its own primitive with ~20 live nodes across widgets; ' +
-      'converging it is a widget-kit pass',
     'pages/terminal/TerminalPage.tsx':
       'a `div role="tab"` with NO tabIndex and no key handler, so it cannot be focused at all — the '
       + 'fix is the tablist pattern (roving tabindex + arrow keys), not a row hit target',
@@ -268,7 +279,10 @@ describe('every clickable non-interactive element has a keyboard route', () => {
       // 🪤 Not a literal `tabIndex={0}`: `ui/BoardCollapse` writes `tabIndex={onExpand ? 0 : undefined}`
       // — a control that is only interactive in one state, which is correct and must not be flagged.
       const declaresRole = /\brole=/.test(tag) && /tabIndex=\{[^}]*\b0\b/.test(tag)
-      const usesPrimitive = /tabIndex=\{-1\}/.test(tag) && readFileSync(join(SRC, file), 'utf8').includes('<RowHitTarget')
+      // 🪤 Not a literal `tabIndex={-1}`: a SHARED row primitive pins it only when the row is
+      // clickable (`tabIndex={onClick ? -1 : undefined}` in the dashboard widget kit), because a
+      // non-interactive row must not claim a tab index at all.
+      const usesPrimitive = /tabIndex=\{[^}]*-1/.test(tag) && readFileSync(join(SRC, file), 'utf8').includes('<RowHitTarget')
       if (declaresRole || usesPrimitive || file in DEFERRED || file === 'ui/RowHitTarget.tsx') continue
       bad.push(file)
     }
