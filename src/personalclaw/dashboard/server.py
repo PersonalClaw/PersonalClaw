@@ -1306,6 +1306,20 @@ async def start_dashboard(
 
     app.on_startup.append(_resume_interrupted_reindex_startup)
 
+    async def _backfill_item_chunks_startup(app_: web.Application) -> None:
+        """Chunk the items that predate chunking (KL-12), in the background.
+
+        Chunk-level retrieval only reaches items that HAVE chunks, and every item ingested
+        before KL-9 has none — so without this an existing library never gains deep-document
+        recall, however good the index is. Runs after _model_providers_startup (it needs the
+        embedder); the work itself is resumable off the rows, bounded per batch, and fully
+        best-effort. See ``embedding_reindex.start_chunk_backfill``."""
+        from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+
+        await start_chunk_backfill(app_)
+
+    app.on_startup.append(_backfill_item_chunks_startup)
+
     async def _warm_acp_pool_startup(app_: web.Application) -> None:
         """Start the ACP live-connection pool: one warmed connection per ready
         runtime, serving BOTH the discovery snapshot (instant lists) AND the first

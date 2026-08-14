@@ -169,3 +169,112 @@ async def test_reindex_start_blocks_when_model_not_ready(monkeypatch):
     resp = await H.api_reindex_start(req)
     assert resp.status == 409
     assert json.loads(resp.body)["code"] == "model_not_ready"
+
+
+# ── KL-12: the chunk-backfill boot hook ──────────────────────────────────────
+#
+# The backfill's product surface is that it runs by itself: a user who upgrades gets deep
+# recall over the library they already have without knowing to ask for it. So the hook is
+# tested as a hook — that it fires, that it is cheap when there is nothing to do, and that
+# something in the app actually registers it.
+
+
+class _ChunkEmbedder:
+    def embed(self, text):
+        return [1.0, 0.0, 0.0, 0.0]
+
+    def embed_for_item(self, title, summary, content=None):
+        return [1.0, 0.0, 0.0, 0.0]
+
+
+def _app_with(store):
+    class _State:
+        knowledge_store = store
+
+    return {"state": _State()}
+
+
+def _stub_resolve(monkeypatch, embedder):
+    from personalclaw.dashboard.handlers import embedding_reindex as handler
+
+    monkeypatch.setattr(handler, "_resolve_embed", lambda app: (embedder, None, "stub:model"))
+
+
+@pytest.mark.asyncio
+async def test_start_chunk_backfill_chunks_the_pre_existing_library(tmp_path, monkeypatch):
+    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+
+    store = _kstore(tmp_path)
+    for i in range(3):
+        _add(store, f"doc {i}", f"# H{i}\n\nbody of document {i}\n")
+    assert store.count_items_missing_chunks() == 3
+    _stub_resolve(monkeypatch, _ChunkEmbedder())
+
+    task = await start_chunk_backfill(_app_with(store))
+    assert task is not None
+    await task
+    assert store.count_items_missing_chunks() == 0
+    assert all(store.get_chunks(r["id"]) for r in store.db.execute("SELECT id FROM items"))
+
+
+@pytest.mark.asyncio
+async def test_start_chunk_backfill_is_a_cheap_no_op_on_a_chunked_library(tmp_path, monkeypatch):
+    """It runs on EVERY boot, so "nothing to do" must not resolve a model or start a task."""
+    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+
+    store = _kstore(tmp_path)
+    _add(store, "blank", "")  # no content — never in the backlog
+    calls = []
+    from personalclaw.dashboard.handlers import embedding_reindex as handler
+
+    monkeypatch.setattr(handler, "_resolve_embed", lambda app: calls.append(1) or (None, None, ""))
+    assert await start_chunk_backfill(_app_with(store)) is None
+    assert calls == [], "the embedder must not be resolved when the backlog is empty"
+
+
+@pytest.mark.asyncio
+async def test_start_chunk_backfill_defers_when_no_model_is_ready(tmp_path, monkeypatch):
+    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+
+    store = _kstore(tmp_path)
+    _add(store, "doc", "# H\n\nreal content\n")
+    _stub_resolve(monkeypatch, None)
+    assert await start_chunk_backfill(_app_with(store)) is None
+    assert store.count_items_missing_chunks() == 1, "still pending, for the next boot"
+
+
+@pytest.mark.asyncio
+async def test_start_chunk_backfill_never_raises_into_startup(tmp_path, monkeypatch):
+    from personalclaw.dashboard.embedding_reindex import start_chunk_backfill
+
+    class _Exploding:
+        @property
+        def knowledge_store(self):
+            raise RuntimeError("forced: store unavailable")
+
+    assert await start_chunk_backfill({"state": _Exploding()}) is None
+
+
+def test_the_gateway_registers_the_chunk_backfill_startup_hook():
+    """The function above is only worth anything if something calls it — assert the CALL
+    SITE, not just the mechanism."""
+    import ast
+    import pathlib
+
+    src = pathlib.Path(
+        __import__("personalclaw.dashboard.server", fromlist=["x"]).__file__
+    ).read_text()
+    tree = ast.parse(src)
+    appended = {
+        node.args[0].id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "on_startup"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+    }
+    assert "_backfill_item_chunks_startup" in appended
+    assert "start_chunk_backfill" in src

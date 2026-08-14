@@ -276,6 +276,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   rather than leaving you to guess it is broken. Libraries indexed before this release are brought into
   the index automatically on the first search after upgrading.
 
+- **The library you already have becomes searchable by content, without you doing anything.** The two
+  changes above only help documents PersonalClaw has broken into passages, and it only started doing
+  that on the way in — so everything you added *before* it kept matching the old way, on its title and
+  summary alone. That was the gap: on a library of six long documents, asking "how far behind can a
+  replica get before it stops serving reads" returned one result, the document whose *title* was the
+  closest match and which did not contain the answer anywhere, with no citation, while the document
+  that actually answered it was not returned at all. PersonalClaw now indexes the passages of your
+  existing documents in the background, starting the next time it launches, and after that the same
+  question returns the right document first and cites the section that answers it — the heading and the
+  exact lines. Three things about how it does that. It works in small batches, so a library of any size
+  costs the same in memory; it can be interrupted at any point — quit, crash, power cut — and picks up
+  exactly where it stopped, without redoing or skipping a document; and searching *while* it is partway
+  through is safe: documents it has not reached yet keep matching the way they always did, so nothing
+  becomes unfindable in the meantime. Running it a second time does nothing, by design. It reads your
+  documents and adds passages; it never rewrites anything you can see, and it leaves the whole-document
+  index alone. Expect the database to grow — measured on a 300-document library, indexing 2,100
+  passages took it from 1.5 MB to 11 MB and took about nine seconds. If no embedding model is available
+  yet, it says so in the log and waits for the next launch.
+
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it
   claimed to.** If your operating system is set to reduce motion, PersonalClaw relied on a framework
   setting that neutralises movement *across the screen* but leaves the underlying spring running, so
