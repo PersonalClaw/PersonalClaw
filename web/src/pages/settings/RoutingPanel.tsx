@@ -292,17 +292,24 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
                     <span className="w-5 text-right tabular-nums text-on-surface-low">{i + 1}</span>
                     <span className="flex-1 truncate font-mono text-on-surface" title={ref}>{ref}</span>
                     <span className="text-on-surface-low text-[0.75rem]">{local ? 'local' : 'cloud'}</span>
+                    {/* `size-7` (28px), not `p-1` (21px): an icon-only control needs 24px of target.
+                        These deliberately keep `unavailableWhen` rather than adopting
+                        `SquareIconButton` — the primitive maps `disabled` to `aria-disabled` and never
+                        to the native attribute, but `unavailableWhen` goes NATIVELY disabled while
+                        `busy` on purpose, so an in-flight save cannot be fired twice. Borrowing the
+                        primitive's geometry keeps that semantic while matching how every other
+                        icon-button in the app measures. */}
                     <button type="button"
                       {...unavailableWhen(i === 0, 'Already tried first', { busy })}
                       onClick={() => move(i, -1)}
-                      className="rounded-md p-1 text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
+                      className="grid size-7 place-items-center rounded-md text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
                       aria-label={`Move ${ref} earlier`}>
                       <ArrowUp size={13} aria-hidden />
                     </button>
                     <button type="button"
                       {...unavailableWhen(i === shown.length - 1, 'Already tried last', { busy })}
                       onClick={() => move(i, 1)}
-                      className="rounded-md p-1 text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
+                      className="grid size-7 place-items-center rounded-md text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
                       aria-label={`Move ${ref} later`}>
                       <ArrowDown size={13} aria-hidden />
                     </button>
