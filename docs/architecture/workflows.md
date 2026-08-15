@@ -50,6 +50,7 @@ while not terminal:
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
 | `replay.py` | `workflow replay <run_id>` — re-drives the PURE `frontier()` against a run's OWN recorded responses (keyed by `output_ref`) and its recorded clock (the `clock_read` envelope), and diffs the resulting trajectory against the one the run took, reporting the first divergent node. Divergence is a first-class outcome, not a failure |
 | `store.py` | persistence — runs, specs, state, outputs |
+| `versions.py` | the monotonic template version store (WF2LEA-6): append-only per-version snapshots + a pinned pointer, re-pin/rollback, the typed-op diff, and the L0–L3 maturity computation |
 | `mutations.py` | the typed edit grammar and its structural rules |
 | `checkpoints.py` | fork, revert, prune |
 | `human_input.py` | typed asks and durable resume tokens |

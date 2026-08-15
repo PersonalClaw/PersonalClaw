@@ -87,11 +87,12 @@ def test_accept_applies_edits(home):
     assert "Edited desc" in content
 
 
-def test_accept_refine_updates_target_not_creates(home):
-    # Issue #303: a kind="refine" proposal names an EXISTING skill; accept must
-    # UPDATE that skill in place, not route through create-new (which 409'd because
-    # the slug already existed). This bites: before the fix, accept() raises
-    # AcceptError and the target is left byte-identical.
+def test_accept_refine_overlays_target_without_mutating_it(home):
+    # Issue #303: a kind="refine" proposal names an EXISTING skill; accept must resolve to
+    # that skill, not route through create-new (which 409'd because the slug already existed).
+    # WF2LEA-6 clean break: the refinement applies as a SIDECAR OVERLAY, so the base SKILL.md
+    # is byte-IDENTICAL after accept (its lock stays intact) while the refinement is visible at
+    # load time.
     original = (
         "---\nname: task-and-project\ndescription: manage tasks\n---\n\n"
         "# task and project\n\nOriginal body.\n"
@@ -106,11 +107,12 @@ def test_accept_refine_updates_target_not_creates(home):
     )
     name = proposals.accept(p.id)
     assert name == "task-and-project"
-    updated = target.read_text(encoding="utf-8")
-    # The original survives and the refinement is appended (least-destructive merge).
-    assert "Original body." in updated
-    assert "attach the design doc link" in updated
-    assert updated != original  # the target actually changed
+    # The base file is UNCHANGED — the overlay never rewrites it.
+    assert target.read_text(encoding="utf-8") == original
+    # …but a load merges the overlay in, so the refinement is live.
+    loaded = SkillsLoader(install_builtins=False).load_skill("task-and-project")
+    assert "Original body." in loaded
+    assert "attach the design doc link" in loaded
     # No stray auto/ skill was minted, and the proposal left the queue as handled.
     assert SkillsLoader(install_builtins=False).load_skill("auto/task-and-project") is None
     assert proposals.list_pending() == []

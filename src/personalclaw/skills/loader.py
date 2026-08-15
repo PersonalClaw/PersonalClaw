@@ -400,7 +400,13 @@ class SkillsLoader:
         for search_dir in self._search_dirs():
             skill_file = search_dir / name / "SKILL.md"
             if skill_file.exists():
-                return skill_file.read_text(encoding="utf-8")
+                content = skill_file.read_text(encoding="utf-8")
+                # WF2LEA-6: accepted refinements ride as a sidecar overlay merged HERE, at
+                # load time — the base file is never mutated (so its `.pclaw-lock.json` stays
+                # intact and revert is a one-file delete). No overlay → the body is unchanged.
+                from personalclaw.skills import overlays
+
+                return overlays.render_with_overlay(name, content)
         return None
 
     @property

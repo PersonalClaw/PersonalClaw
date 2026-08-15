@@ -83,6 +83,9 @@ EXPECTED = {
     "rich-ingest",
     "thesis-tracker",
     "publish-article",
+    # The Learning-Flywheel template refiner (WF2LEA-6): a trigger-fired run-workflow whose
+    # stage runs the propose-only `template-refiner` agent over a template's own run ledger.
+    "refine-template",
 }
 
 

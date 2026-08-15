@@ -18,6 +18,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is the question a mid-run edit really asks: *what did my change actually affect, and from where?*
   Divergence is a normal answer, not an error — a template edit is supposed to diverge, and the verb
   tells you where rather than failing.
+- **A workflow template can now learn from its own runs — and you stay in control of every change.**
+  Open a template and you'll find three new things. A **Versions** tab shows its history as an
+  append-only list: each accepted change is a new version, you can see what changed between two of
+  them as a typed diff, and **rolling back is one click** — it just re-points to an older version,
+  nothing is rewritten, and a run always records the exact version it executed. A **Run Ledger** tab
+  shows the template's recent runs at a glance. A **maturity badge** says how proven the template is
+  (a gate that has never rejected a bad run is not yet "proven", and the badge is honest about that).
+  And a **Refine now** button runs a propose-only refiner over the template's failure history: it
+  reads what went wrong, and if the evidence supports it, files ONE reviewable proposal to improve
+  the template. It can only propose — it can never edit a template, install a skill, or change what
+  makes a template fire. You accept a proposal to apply it (which creates the next version), or reject
+  it. Nothing changes until you say so.
+- **Accepting a skill refinement no longer rewrites the skill.** A refinement now applies as a small
+  sidecar file layered onto the skill when it loads, so the original is never touched — which means
+  reverting a refinement is deleting one file, and a marketplace skill's integrity lock stays intact.
 
 - **Runs now record what LANDED, not just what they did.** A workflow that made a measurable
   decision could already journal the bet it was making and have it graded once the horizon passed.

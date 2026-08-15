@@ -111,6 +111,62 @@ def _installer_for(request: web.Request):
     return _install
 
 
+async def _apply_accepted_template_diff(prop) -> dict:
+    """Apply an accepted ``template_diff`` to its target and save it as a NEW version.
+
+    The refiner FILES typed ops and never applies them; accepting is the human installing, so
+    THIS is where the diff lands (§3.1 "Accept → new template VERSION"). The ops ride the change
+    manifest's ``targeted_fix`` (the same field the inbox reads to stamp a risk tier); they are
+    applied to a deep copy via ``mutations.apply_batch`` and, only if the batch is clean, saved
+    through the writable def provider — which appends an immutable version snapshot and pins it
+    (``versions.record_version`` inside ``save_def``). Best-effort: the proposal is already
+    accepted, so a failed apply is reported, never a 500 that would strand it.
+    """
+    manifest = getattr(prop, "change_manifest", None)
+    ops_raw = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
+    name = str(getattr(prop, "target", "") or "")
+    if not name or not isinstance(ops_raw, list) or not ops_raw:
+        return {"applied": False, "reason": "no typed ops on the proposal"}
+
+    from personalclaw.workflows import defs as defs_mod
+    from personalclaw.workflows import mutations
+    from personalclaw.workflows.native_defs import NativeWorkflowDefProvider
+
+    spec = None
+    for pname in defs_mod.list_providers():
+        provider = defs_mod.get_provider(pname)
+        if provider is None:
+            continue
+        try:
+            found = await provider.get_def(name)
+        except Exception:
+            continue
+        if found is not None:
+            spec = found if isinstance(found, dict) else getattr(found, "to_dict", lambda: None)()
+            break
+    if not isinstance(spec, dict):
+        return {"applied": False, "reason": f"no definition named {name!r}"}
+
+    try:
+        ops = [mutations.Op.from_dict(o) for o in ops_raw if isinstance(o, dict)]
+    except ValueError as exc:
+        return {"applied": False, "reason": f"unparseable op: {exc}"}
+    candidate, issues = mutations.apply_batch(ops, spec, {})
+    if issues:
+        return {"applied": False, "reason": "; ".join(i.code for i in issues)}
+
+    writable = [
+        p
+        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
+        if p is not None and not p.readonly
+    ]
+    target_provider = writable[0] if writable else NativeWorkflowDefProvider()
+    saved = await target_provider.save_def(
+        **candidate, _version_source="refiner", _version_ops=ops_raw
+    )
+    return {"applied": True, "version": int(getattr(saved, "version", 0) or 0)}
+
+
 def _tier_for(prop) -> str:
     """The risk tier for one proposal, or `""`.
 
@@ -206,8 +262,15 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
         status = 404 if message.startswith("no proposal") else 403
         _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{message}")
         return web.json_response({"error": message}, status=status)
+    applied: dict | None = None
+    if str(getattr(prop, "kind", "")) == "template_diff":
+        try:
+            applied = await _apply_accepted_template_diff(prop)
+        except Exception:
+            logger.warning("template_diff %s accepted but not applied", pid, exc_info=True)
+            applied = {"applied": False, "reason": "apply failed"}
     _audit(request, "learning.proposal_accept", "ok", f"{pid}:{prop.kind}")
-    return web.json_response({"ok": True, "proposal": prop.to_dict()})
+    return web.json_response({"ok": True, "proposal": prop.to_dict(), "applied": applied})
 
 
 async def api_learning_proposal_reject(request: web.Request) -> web.Response:

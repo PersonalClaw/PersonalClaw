@@ -119,6 +119,22 @@ class NativeWorkflowDefProvider(WorkflowDefProvider):
         path = _def_path(name)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(path, json.dumps(payload, indent=2, ensure_ascii=False))
+
+        # WF2LEA-6: append an immutable version snapshot keyed by the def's own monotonic
+        # `version`, and pin it. Best-effort — the def is already on disk, so a failure to
+        # record history must never fail the save. `_version_source`/`_version_ops` are control
+        # hints (not persisted in the def) that let an accepted refiner diff mark its provenance.
+        try:
+            from personalclaw.workflows import versions
+
+            versions.record_version(
+                name,
+                payload,
+                source=str(fields.get("_version_source") or versions.SOURCE_USER),
+                ops=[o for o in (fields.get("_version_ops") or []) if isinstance(o, dict)],
+            )
+        except Exception:
+            logger.debug("versions: could not record snapshot for %s", name, exc_info=True)
         return WorkflowDef.from_dict(payload)
 
     async def delete_def(self, name: str) -> bool:
