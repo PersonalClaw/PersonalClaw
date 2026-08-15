@@ -2490,7 +2490,8 @@
         },
         {
           "id": "WF2LOO-17",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1300",
           "deps": [],
           "title": "Give the loop judge a model binding independent of the worker it grades",
           "scope": "`loop/judge.assess_cycle`'s docstring states an independence property the code does not implement: \"in production it resolves the 'reasoning' use-case (a stronger third-party check than the worker's model)\". The code returns `resolve_provider_for_use_case(\"loops\")` (`judge.py:218`), and `providers/provider_bridge.py:343` documents `\"loops\"` as the LOOP WORKER's use case. Same for the skeptic (`judge.py:286`) and for `gates.judge_verdict` (`gates.py:134`). `LoopsConfig` has no judge model field, so there is nothing to bind even if a caller wanted independence. The judge is therefore independent in session and prompt but runs on the same model binding as the work it grades — the \"correlated reviewer mistakes\" failure mode named in the review-loop literature, and the opposite of the vendor guidance to reserve the strongest model for judgment.",
@@ -7978,11 +7979,6 @@
         "plan": "WF2LOO"
       },
       {
-        "id": "WF2LOO-17",
-        "title": "Give the loop judge a model binding independent of the worker it grades",
-        "plan": "WF2LOO"
-      },
-      {
         "id": "WF2LOO-18",
         "title": "Give the loops engine a worker-independent progress signal",
         "plan": "WF2LOO"
@@ -9886,9 +9882,9 @@
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
         "total_atoms": 18,
-        "done": 14,
+        "done": 15,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 1
       },
       {

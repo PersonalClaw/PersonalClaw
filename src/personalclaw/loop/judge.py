@@ -27,6 +27,28 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+def judge_use_case() -> str:
+    """The model axis every loop judge rides — NOT the worker's ``loops`` axis (WF2LOO-17).
+
+    Reads ``loops.judge_use_case`` (default ``reasoning``). This is what makes the
+    judge a genuinely *third-party* check: independent session, independent prompt,
+    and now an independent model binding, so a reviewer mistake is not correlated
+    with the mistake it is reviewing. Config-driven rather than hardcoded so a user
+    can pin the strongest model they have to judgment specifically — and can put
+    judge and worker back on one binding (``loops``) if they want that.
+
+    Degrades to ``reasoning`` if config is unreadable: an unreadable config must not
+    silently hand judgment back to the worker's binding.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return AppConfig.load().loops.judge_use_case or "reasoning"
+    except Exception:
+        logger.debug("loop judge: config unreadable — using 'reasoning' axis", exc_info=True)
+        return "reasoning"
+
+
 @dataclass
 class CycleVerdict:
     """The judge's third-party assessment of one cycle."""
@@ -201,8 +223,9 @@ async def assess_cycle(
     """Assess one cycle with a separate judge subagent. Returns None on failure.
 
     ``provider_factory`` is injected for testing; in production it resolves the
-    'reasoning' use-case (a stronger third-party check than the worker's model),
-    matching the ratchet's existing judge wiring.
+    ``loops.judge_use_case`` axis — 'reasoning' by default (a stronger third-party
+    check than the worker's model, which rides the separate 'loops' axis), matching
+    the ratchet's existing judge wiring.
 
     Slice C (O-E2): when ``verify_command`` and/or ``deliverables`` are supplied, the
     judge INDEPENDENTLY observes ground truth — it runs the command + reads the named
@@ -215,7 +238,7 @@ async def assess_cycle(
         def provider_factory(_session_key):
             from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
-            return resolve_provider_for_use_case("loops")
+            return resolve_provider_for_use_case(judge_use_case())
 
     from personalclaw.eval.judge import LLMJudge
 
@@ -231,12 +254,14 @@ async def assess_cycle(
     except Exception:
         # A degraded done-ness brain must be VISIBLE, not silent: the judge is what
         # enforces "no agent certifies its own work", so if it can't even start (its
-        # 'reasoning' provider is unresolvable / unavailable) the caller returns None
+        # judge-axis provider is unresolvable / unavailable) the caller returns None
         # (defer, never a false complete) — but we log WARNING so the degradation is
-        # diagnosable rather than an invisible forever-defer.
+        # diagnosable rather than an invisible forever-defer. Naming the axis matters
+        # now that it is configurable: the binding to go check is loops.judge_use_case's.
         logger.warning(
             "loop judge: provider failed to start — cycle assessed as degraded "
-            "(no verdict); check the 'reasoning'/'chat' model binding",
+            "(no verdict); check the %r model binding (loops.judge_use_case)",
+            judge_use_case(),
             exc_info=True,
         )
         return None
@@ -283,7 +308,7 @@ async def assess_cycle_skeptic(
         def provider_factory(_session_key):
             from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
 
-            return resolve_provider_for_use_case("loops")
+            return resolve_provider_for_use_case(judge_use_case())
 
     from personalclaw.eval.judge import LLMJudge
 
