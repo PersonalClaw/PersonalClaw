@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -33,6 +33,7 @@ import { RoutingPanel } from './RoutingPanel'
 import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
 import { AmbientPanel } from './AmbientPanel'
+import { CompanionPanel } from './CompanionPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { PacksPanel } from './PacksPanel'
 import { GuardrailsPanel } from './GuardrailsPanel'
@@ -84,6 +85,7 @@ const SUBPAGES: SubPage[] = [
   { id: 'routing', label: 'Routing & Efficiency', icon: Route, render: (c) => <RoutingPanel query={c.query} setQuery={c.setQuery} /> },
   { id: 'legibility', label: 'Legibility', icon: Compass, render: () => <LegibilityPanel /> },
   { id: 'ambient', label: 'Ambient surfaces', icon: LayoutDashboard, render: () => <AmbientPanel /> },
+  { id: 'companion', label: 'Companion apps', icon: Smartphone, render: () => <CompanionPanel /> },
   { id: 'sources', label: 'Watched sources', icon: Rss, render: () => <SourcesPanel /> },
   { id: 'packs', label: 'Packs', icon: Package, render: () => <PacksPanel /> },
   { id: 'archive', label: 'Archive', icon: Archive, render: () => <ArchivePanel /> },
