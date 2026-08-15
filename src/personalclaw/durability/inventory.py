@@ -433,7 +433,10 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="evals",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
-        help="offline eval substrate: matrices, results ledger (studies/benchmarks later)",
+        help=(
+            "offline eval substrate: scenario library, matrices, pinned results ledger "
+            "(studies/benchmarks later)"
+        ),
     ),
     # 🔴 S179 — the ten paths `audit_home()` reports on a REAL home. The guard was correct and had
     # never been pointed at one: every existing test builds an 8-path synthetic fixture, so a store

@@ -6,24 +6,37 @@ Everything lives under ``~/.personalclaw/evals/``. Whole-file JSON artifacts
 ``open(..., "a")`` with the parent ensured, matching how the guardrails audit
 appends its jsonl.
 
-ES-1a physically supports the ``matrices/`` subtree and the ``results.tsv`` ledger.
-The ``studies/``/``benchmarks/``/``trust/`` subtrees named in §1.1 are owned by
-later atoms (ES-2/ES-5): this module does NOT create them, because a dir with no
-writer is dead scaffolding. The single ``StateEntry`` for ``evals`` (in
-``durability/inventory.py``) claims the whole tree for backup regardless of which
-subtrees exist yet.
+ES-1a physically supports the ``matrices/`` subtree and the ``results.tsv`` ledger;
+ES-2 adds the ``scenarios/`` subtree (the versioned Loop-1 library — see
+:mod:`personalclaw.evals.scenarios`). The ``studies/``/``benchmarks/``/``trust/``
+subtrees named in §1.1 are owned by later atoms (ES-5/ES-8): this module does NOT
+create them, because a dir with no writer is dead scaffolding. The single
+``StateEntry`` for ``evals`` (in ``durability/inventory.py``) claims the whole tree
+for backup regardless of which subtrees exist yet.
+
+ES-2 also makes the ledger PINNED: :func:`append_result` takes a required ``pin``
+and refuses a row whose pin is absent or incomplete. That refusal is the one
+chokepoint every future writer (matrix, study, gate) passes through, so "a run
+without a pin cannot be written to results.tsv" holds for writers that do not exist
+yet.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 
+if TYPE_CHECKING:  # pragma: no cover - typing only; importing at runtime would cycle
+    from personalclaw.evals.pinning import RunPin
+
 # The append-only cross-run ledger's stable, ordered columns (§1.1). A new column
-# must be appended, never inserted, so old rows stay parseable by position.
+# must be appended, never inserted, so old rows stay parseable by position. The
+# trailing five are the ES-2 pin columns; ``model_fp`` (declared by ES-1, written by
+# nobody until now) is the pin's fingerprint digest rather than a sixth new column.
 RESULTS_COLUMNS: tuple[str, ...] = (
     "study_id",
     "kind",
@@ -33,7 +46,16 @@ RESULTS_COLUMNS: tuple[str, ...] = (
     "k",
     "model_fp",
     "ts",
+    "scenario_id",
+    "scenario_sha256",
+    "prompt_pack_sha256",
+    "config_snapshot_ref",
+    "fixture_home",
 )
+
+
+class PinRequiredError(ValueError):
+    """Raised when a caller tries to write a ledger row without a complete RunPin."""
 
 
 # ── path helpers ─────────────────────────────────────────────────────────────
@@ -60,6 +82,13 @@ def matrix_dir(matrix_id: str) -> Path:
     return d
 
 
+def scenarios_dir() -> Path:
+    """``evals/scenarios/`` — the installed, versioned Loop-1 scenario library."""
+    d = evals_root() / "scenarios"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def results_path() -> Path:
     """``evals/results.tsv`` — the append-only cross-run ledger."""
     return evals_root() / "results.tsv"
@@ -74,7 +103,7 @@ def _tsv_cell(value: object) -> str:
     return text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
 
 
-def append_result(row: dict) -> None:
+def append_result(row: dict, *, pin: "RunPin") -> None:
     """Append one tab-separated line to ``evals/results.tsv``.
 
     The ledger is append-only (every attempt logged, including failures) — so this
@@ -82,7 +111,20 @@ def append_result(row: dict) -> None:
     files). The file is created with a header row when absent; columns are the
     stable, ordered :data:`RESULTS_COLUMNS`, and unknown keys in ``row`` are ignored
     so a caller cannot silently widen the ledger.
+
+    ``pin`` is REQUIRED (ES-2). A missing or incomplete
+    :class:`~personalclaw.evals.pinning.RunPin` raises :class:`PinRequiredError`
+    BEFORE the file is touched — an unattributable score never lands in the ledger,
+    and the pin's own columns are written from the pin, not from ``row``, so a caller
+    cannot pass a score with someone else's pin values.
     """
+    if pin is None or not pin.is_complete():
+        missing = pin.missing_parts() if pin is not None else ["<no pin>"]
+        raise PinRequiredError(
+            "refusing to write results.tsv without a complete RunPin "
+            f"(missing: {', '.join(missing)})"
+        )
+    row = {**row, **pin.to_row()}
     path = results_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     need_header = not path.exists()

@@ -530,7 +530,14 @@ def _security(args: argparse.Namespace) -> None:
 async def _run_eval(args: argparse.Namespace) -> None:
     """Run multi-session evaluation scenarios."""
 
-    scenarios_dir = Path(__file__).resolve().parent / "eval" / "scenarios"
+    # ES-2: the scenario set is no longer packaged-read-only under eval/scenarios/ —
+    # it is the versioned library installed at ~/.personalclaw/evals/scenarios/, so
+    # `personalclaw eval` runs the same files (and the same user additions) the matrix
+    # runner pins. install_library() is an idempotent backfill: safe on every call.
+    from personalclaw.evals.scenarios import install_library, installed_dir
+
+    install_library()
+    scenarios_dir = installed_dir()
 
     if args.all_scenarios:
         scenarios = load_scenarios(scenarios_dir)
