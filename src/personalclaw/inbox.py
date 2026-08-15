@@ -51,6 +51,11 @@ class ItemStatus(str, Enum):
     SENT predates the others and is specific to reply-drafts (a draft was sent at the
     source); it stays because those items exist on disk and it means something the other
     four don't.
+
+    FILTERED (INU-6) is a fifth terminal-until-restored state: a verifiable kind whose rule
+    opted into verification was REFUTED by the second-opinion pass, so its row was persisted
+    but its notification withheld. Restore flips it back to PENDING and fires the withheld
+    notification once — so a false positive is recoverable, never a silent drop.
     """
 
     PENDING = "pending"
@@ -58,6 +63,7 @@ class ItemStatus(str, Enum):
     SENT = "sent"
     DISMISSED = "dismissed"
     HANDLED = "handled"  # user replied at the source (or via inbox reply routing)
+    FILTERED = "filtered"  # withheld by verification (INU-6); restorable to PENDING
 
 
 class ItemKind(str, Enum):
@@ -465,6 +471,27 @@ def emit_attention_item(
     if dedup_key:
         item.refs["dedup_key"] = dedup_key
 
+    # INU-6 second-opinion gate. Runs ONLY for a verifiable kind whose rule opted into
+    # verify — every other emit is byte-for-byte unchanged and makes NO model call. A clear
+    # REFUTED verdict files the row as FILTERED and withholds its notification (recorded in
+    # refs so Restore can replay it exactly, once); every other verdict, and every failure
+    # path, delivers normally carrying refs["verify"].
+    withheld = False
+    if _verification_opted_in(source, kind):
+        from personalclaw.notification_verify import REFUTED, run_verification_sync
+
+        verdict = run_verification_sync(title, body)
+        item.refs["verify"] = verdict
+        if verdict == REFUTED:
+            item.status = ItemStatus.FILTERED.value
+            item.refs["verify_withheld"] = {
+                "kind": notification_kinds.kind_for_legacy_pair(source, kind),
+                "title": title,
+                "body": body,
+                "item_kind": resolved_kind,
+            }
+            withheld = True
+
     item_id = ""
     try:
         target.add(item)
@@ -473,7 +500,7 @@ def emit_attention_item(
     except Exception:
         logger.warning("attention item: inbox write failed", exc_info=True)
 
-    if state is not None:
+    if state is not None and not withheld:
         try:
             state.notify(
                 notification_kinds.kind_for_legacy_pair(source, kind),
@@ -484,6 +511,26 @@ def emit_attention_item(
         except Exception:
             logger.warning("attention item: notify failed", exc_info=True)
     return item_id
+
+
+def _verification_opted_in(source: str, kind: str) -> bool:
+    """True only when *kind* is a verifiable registration AND its rule set ``verify:true``.
+
+    Fail-CLOSED to False (deliver without verifying) on any error: a broken policy read must
+    never *start* filtering notifications that would otherwise be delivered. The registry
+    check runs first so the common non-verifiable path never touches the rules store.
+    """
+    try:
+        registered = notification_kinds.resolve_kind(source, kind)
+        if not registered.verifiable:
+            return False
+        from personalclaw import notification_rules
+
+        rule = notification_rules.resolve_rule(source, kind)
+        return bool(getattr(rule, "verify", False))
+    except Exception:
+        logger.debug("verify opt-in check failed — not verifying", exc_info=True)
+        return False
 
 
 def _find_open_by_dedup(store: "InboxStore", dedup_key: str) -> "InboxItem | None":

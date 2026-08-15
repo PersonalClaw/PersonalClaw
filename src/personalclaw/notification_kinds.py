@@ -84,6 +84,13 @@ class NotificationKind:
     #: True when this kind carries a durable inbox item rather than only a transient
     #: delivery. Set for the attention kinds folded in from Session 2 onward.
     attention: bool = False
+    #: True when this kind's payload asserts a checkable claim, so a rule MAY opt into a
+    #: second-opinion verification pass (INU-6) before delivery. Parallel to ``attention``:
+    #: ``attention`` is "does this persist a row", ``verifiable`` is "may a rule ask a model
+    #: whether the row's claim holds". Setting this alone changes nothing — verification runs
+    #: only when a rule sets ``verify:true``, which the rules PUT rejects for a
+    #: non-verifiable kind.
+    verifiable: bool = False
 
     @property
     def key(self) -> str:
@@ -211,9 +218,23 @@ _KINDS: tuple[NotificationKind, ...] = (
     # string — nothing emitted them before `emit_attention_item` existed — which is why
     # they may carry their honest severity rather than inheriting a historical rank
     # (see test_new_attention_pairs_are_unreachable_from_legacy_strings).
-    NotificationKind("skills", "proposal", "Skill proposal", "immediate", SEV_INFO, attention=True),
     NotificationKind(
-        "system", "agent_request", "Agent request", "immediate", SEV_WARNING, attention=True
+        "skills",
+        "proposal",
+        "Skill proposal",
+        "immediate",
+        SEV_INFO,
+        attention=True,
+        verifiable=True,
+    ),
+    NotificationKind(
+        "system",
+        "agent_request",
+        "Agent request",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        verifiable=True,
     ),
     NotificationKind("system", "digest", "Daily digest", "immediate", SEV_INFO, attention=True),
     # apps — an installed app's source offers a newer version (APE-7). Attention-bearing

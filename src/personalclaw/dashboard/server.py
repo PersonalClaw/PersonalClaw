@@ -1072,6 +1072,7 @@ async def start_dashboard(
     app.router.add_get("/api/inbox/status", handlers_inbox.api_inbox_status)
     app.router.add_post("/api/inbox/restart", handlers_inbox.api_inbox_restart)
     app.router.add_post("/api/inbox/dismiss-all", handlers_inbox.api_inbox_dismiss_all)
+    app.router.add_post("/api/inbox/{id}/restore", handlers_inbox.api_inbox_restore)
     app.router.add_post("/api/inbox/send", handlers_inbox.api_inbox_send)
     app.router.add_put("/api/inbox/{id}", handlers_inbox.api_inbox_update)
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)

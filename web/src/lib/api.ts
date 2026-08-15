@@ -1446,7 +1446,7 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
 export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
 // 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
-export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled'
+export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
 // What kind of attention an item wants. 'message' is the default so every item written
 // before the inbox became a general attention store stays valid.
 export type InboxItemKind =
@@ -3377,6 +3377,9 @@ export const api = {
   inboxStatus: () => get<InboxStatus>('/api/inbox/status'),
   inboxProviders: () => get<{ providers: InboxProvider[] }>('/api/inbox/providers').then((d) => d.providers),
   updateInboxItem: (id: string, body: Record<string, unknown>) => put<InboxItem>(`/api/inbox/${encodeURIComponent(id)}`, body),
+  // INU-6: undo a verification filter — flips FILTERED→PENDING and fires the ONE
+  // notification the second-opinion pass withheld (server enforces fire-exactly-once).
+  restoreInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/restore`),
   draftInboxReply: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.

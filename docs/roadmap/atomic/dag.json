@@ -188,7 +188,8 @@
         {
           "id": "INU-6",
           "title": "Second-opinion verification gate (S6)",
-          "status": "todo",
+          "status": "done",
+          "pr": 1350,
           "scope": "Amendment (2026-07-26 — verification gate): Session 6 (T6.1, T6.2, V6); C1.verifiable, C2.verify",
           "done_when": "NotificationKind.verifiable + rule verify field (rules PUT 400s verify:true on a non-verifiable kind); notification_verify.py verify_attention_item() does REFUTED-only filtering via one_shot_completion(use_case=background), metered through ModelCallGuard, fail-OPEN on every failure path (no model/timeout/parse-fail/budget → verify:skipped); ItemStatus.FILTERED added, hooked inside emit_attention_item() between construction and notify() (refuted → FILTERED + refs.verify + no notification); Filtered chip + Restore flips FILTERED->PENDING firing the withheld notification once; V6 drives true+planted-false proposals and an unbound model (both surface skipped)",
           "deps": [
@@ -7673,8 +7674,8 @@
         "plan": "HC"
       },
       {
-        "id": "INU-6",
-        "title": "Second-opinion verification gate (S6)",
+        "id": "INU-7",
+        "title": "Proposals contract + app emission path (S7)",
         "plan": "INU"
       },
       {
@@ -9685,9 +9686,9 @@
         "code": "INU",
         "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
         "total_atoms": 8,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
