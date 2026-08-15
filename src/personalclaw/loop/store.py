@@ -23,6 +23,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
+from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
 from personalclaw.loop.loop import KINDS, TERMINAL_STATUSES, Loop, LoopStatus
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sqlite_compat import sqlite3
@@ -67,8 +68,10 @@ def loop_dir(loop_id: str) -> Path | None:
     if not d.is_relative_to(root):
         return None
     d.mkdir(parents=True, exist_ok=True)
+    # The worker still writes its per-cycle deliverable to findings/ — that file is its OUTPUT,
+    # ingested once into the ledger by :func:`record_cycle_findings`. verdicts/ is gone: a verdict
+    # is now a `judge_verdict` ledger event (PP-5), never a second file store.
     (d / "findings").mkdir(exist_ok=True)
-    (d / "verdicts").mkdir(exist_ok=True)
     return d
 
 
@@ -81,6 +84,78 @@ def safe_loop_dir(loop_id: str) -> Path | None:
     if not d.is_relative_to(root) or not d.exists():
         return None
     return d
+
+
+# ── ledger store (PP-5) ──
+#
+# The four calls a :class:`personalclaw.ledger.writer.LedgerWriter` appends through, keyed by
+# loop_id. `loop.journal.LoopJournal` binds its `_store` to THIS module, so the loop is a second
+# producer of the platform ledger without the ledger primitive ever importing `personalclaw.loop`.
+
+
+def _ledger_filename(node_path: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(node_path.encode("utf-8")).hexdigest()[:16] + ".json"
+
+
+def append_jsonl(loop_id: str, filename: str, record: dict[str, Any]) -> None:
+    """Append to the loop's journal or event log. Plain append: append-only by contract."""
+    d = loop_dir(loop_id)
+    if d is None:
+        return
+    path = d / filename
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+def read_jsonl(loop_id: str, filename: str) -> list[dict[str, Any]]:
+    """Read an append-only log, skipping a half-written final line (expected after a crash)."""
+    d = safe_loop_dir(loop_id)
+    path = d / filename if d else None
+    if not path or not path.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            logger.debug("loop %s: skipping corrupt line in %s", loop_id, filename)
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def write_output(loop_id: str, node_path: str, output: Any) -> str:
+    """Persist an inline ledger output under `loop/<id>/outputs/`. Returns the loop-relative ref."""
+    d = loop_dir(loop_id)
+    if d is None:
+        return ""
+    rel = f"outputs/{_ledger_filename(node_path)}"
+    path = d / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(
+        path, json.dumps({"node_path": node_path, "output": output}, indent=2, ensure_ascii=False)
+    )
+    return rel
+
+
+def write_artifact(loop_id: str, node_path: str, output: Any) -> str:
+    """Persist an OFFLOADED ledger output under `loop/<id>/artifacts/` (the spill path)."""
+    d = loop_dir(loop_id)
+    if d is None:
+        return ""
+    rel = f"artifacts/{_ledger_filename(node_path)}"
+    path = d / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(
+        path, json.dumps({"node_path": node_path, "output": output}, indent=2, ensure_ascii=False)
+    )
+    return rel
 
 
 # ── redaction ──
@@ -816,7 +891,12 @@ def clear_stop_sentinel(loop_id: str) -> None:
 
 
 # Findings (sequential cycle_NNN.json + parallel task_<id>_NNN.json).
-def get_findings(loop_id: str) -> list[dict]:
+def _read_raw_finding_files(loop_id: str) -> list[dict]:
+    """The worker's per-cycle deliverable files, in ledger order (cycle_* by index, then task_*
+    by mtime), redacted and with `task_id` resolved from the filename. INGEST-ONLY — the reader
+    the public projections serve is the ledger, populated once by :func:`record_cycle_findings`;
+    this raw scan is how a not-yet-ledgered file gets there. `_source_file` keys the idempotency.
+    """
     d = safe_loop_dir(loop_id)
     if d is None:
         return []
@@ -850,20 +930,83 @@ def get_findings(loop_id: str) -> list[dict]:
                 tid = name[5:].rsplit("_", 1)[0]
                 if tid:
                     finding["task_id"] = tid
+        finding["_source_file"] = f.name
         out.append(finding)
+    return out
+
+
+def record_cycle_findings(loop_id: str) -> int:
+    """Ingest any worker finding files not yet on the ledger, as `step_started`/`step_completed`.
+
+    The ONE write of a cycle's finding into the durable store (PP-5): the worker authors the file,
+    this turns it into ledger events, and every reader projects from the ledger. Idempotent — keyed
+    by the source filename, so the watchdog calling it each poll (and across restarts) never
+    double-emits. Returns how many new findings were ledgered.
+    """
+    from personalclaw.loop.journal import LoopJournal
+
+    raw = _read_raw_finding_files(loop_id)
+    if not raw:
+        return 0
+    already = {
+        str(e.get("source_file") or "")
+        for e in read_jsonl(loop_id, EVENTS_FILE)
+        if e.get("kind") == STEP_COMPLETED
+    }
+    journal = LoopJournal.open(loop_id)
+    filed = 0
+    for finding in raw:
+        src = str(finding.get("_source_file") or "")
+        if src and src in already:
+            continue
+        cycle_val = finding.get("cycle")
+        try:
+            cycle = int(cycle_val)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            # A worker that omitted `cycle` still gets a monotonic ordinal, so the trajectory
+            # keeps an order rather than collapsing every such finding onto cycle 0.
+            cycle = len(already) + filed + 1
+        journal.cycle(cycle, finding)
+        filed += 1
+    return filed
+
+
+def record_breaker_trip(loop_id: str, cycle: int, reason: str) -> None:
+    """A stall → a `breaker_trip` ledger event (PP-5)."""
+    from personalclaw.loop.journal import LoopJournal
+
+    LoopJournal.open(loop_id).breaker_trip(cycle, reason)
+
+
+def record_watcher_reaped(loop_id: str, *, cycles: int, reason: str) -> None:
+    """A reap → a `watcher_reaped` ledger event (PP-5): a running watcher cut off early."""
+    from personalclaw.loop.journal import LoopJournal
+
+    LoopJournal.open(loop_id).watcher_reaped(cycles=cycles, reason=reason)
+
+
+def get_findings(loop_id: str) -> list[dict]:
+    """A loop's findings, PROJECTED off the ledger (PP-5) — the `step_completed` events'
+    carried finding payloads, in emit order. The old findings/ file glob is gone as a store; the
+    worker's files are an ingest source, not the reader's second store."""
+    out: list[dict] = []
+    for rec in read_jsonl(loop_id, EVENTS_FILE):
+        if rec.get("kind") != STEP_COMPLETED:
+            continue
+        finding = rec.get("finding")
+        if isinstance(finding, dict):
+            out.append({k: v for k, v in finding.items() if k != "_source_file"})
     return out
 
 
 def task_finding_count(loop_id: str, task_id: str) -> int:
     if not valid_task_guidance_id(task_id):
         return 0
-    d = safe_loop_dir(loop_id)
-    if d is None or not (d / "findings").is_dir():
-        return 0
-    try:
-        return sum(1 for _ in (d / "findings").glob(f"task_{task_id}_*.json"))
-    except OSError:
-        return 0
+    return sum(
+        1
+        for rec in read_jsonl(loop_id, EVENTS_FILE)
+        if rec.get("kind") == STEP_COMPLETED and str(rec.get("task_id") or "") == task_id
+    )
 
 
 # Questions (attended-mode clarification).
@@ -959,24 +1102,24 @@ def get_nudges(loop_id: str) -> list[dict]:
 
 
 # Judge verdicts (open-ended goal done-ness — the third-party ROI scores, owned by
-# the judge subagent, never the worker). File-based like findings.
+# the judge subagent, never the worker). A `judge_verdict` ledger event (PP-5), not a
+# second file store: the verdict dict is `{"cycle": n, **JudgeVerdict.to_dict()}`, so the
+# ledger record carries the reconciled vocabulary (WF2LOO-16) at top level.
 def write_verdict(loop_id: str, cycle: int, verdict: dict) -> None:
-    d = loop_dir(loop_id)
-    if d is not None:
-        (d / "verdicts" / f"cycle_{cycle:03d}.json").write_text(json.dumps(verdict, indent=2))
+    from personalclaw.loop.journal import LoopJournal
+
+    LoopJournal.open(loop_id).verdict({"cycle": cycle, **verdict})
 
 
 def get_verdicts(loop_id: str) -> list[dict]:
-    d = safe_loop_dir(loop_id)
-    if d is None or not (d / "verdicts").exists():
-        return []
-    out: list[dict] = []
-    for f in sorted((d / "verdicts").glob("cycle_*.json")):
-        try:
-            out.append(redact_finding(json.loads(f.read_text())))
-        except (json.JSONDecodeError, OSError):
-            continue
-    return out
+    """Projected off the ledger — the `judge_verdict` events' payloads (PP-5), in emit order."""
+    from personalclaw.loop.journal import strip_meta
+
+    return [
+        strip_meta(rec)
+        for rec in read_jsonl(loop_id, EVENTS_FILE)
+        if rec.get("kind") == JUDGE_VERDICT
+    ]
 
 
 # Marginal-value trail (the open-ended returns-exhaustion signal) lives in

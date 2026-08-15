@@ -336,16 +336,18 @@ def test_the_ledger_package_does_not_import_the_workflow_engine():
     """The seam guarantee, as a rail rather than a convention.
 
     `personalclaw.ledger` exists so a SECOND producer can carry a ledger. The moment anything under
-    it imports `personalclaw.workflows`, that stops being true — a loop emitter would have to pull
-    the workflow engine in to journal a cycle, which is the dependency direction the extraction
-    exists to reverse. Checked statically (an AST scan, not an import probe) because a lazy
-    function-local import is exactly how this would creep back in and would not show up at import
-    time.
+    it imports a PRODUCER — `personalclaw.workflows` (the first) or `personalclaw.loop` (the second,
+    PP-5) — that stops being true: a loop emitter would have to pull the engine in to journal a
+    cycle, which is the dependency direction the extraction exists to reverse. Both directions are
+    banned so the primitive stays below every producer. Checked statically (an AST scan, not an
+    import probe) because a lazy function-local import is exactly how this would creep back in and
+    would not show up at import time.
     """
     pkg = Path(journal_mod.__file__).parent.parent / "ledger"
     modules = sorted(pkg.glob("*.py"))
     assert len(modules) >= 6, f"expected the ledger package's modules, found {modules}"
 
+    banned = ("personalclaw.workflows", "personalclaw.loop")
     offenders: list[str] = []
     for path in modules:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -357,9 +359,9 @@ def test_the_ledger_package_does_not_import_the_workflow_engine():
             else:
                 continue
             for name in names:
-                if name.startswith("personalclaw.workflows"):
+                if any(name == b or name.startswith(b + ".") for b in banned):
                     offenders.append(f"{path.name}:{node.lineno} imports {name}")
-    assert not offenders, "personalclaw.ledger must not depend on the engine: " + "; ".join(
+    assert not offenders, "personalclaw.ledger must not depend on a producer: " + "; ".join(
         offenders
     )
 

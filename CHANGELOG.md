@@ -68,6 +68,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (a lock, "publish only after the announcement went out"); it is now checked against what the data
   already implies — the engine warns when a `needs` merely restates a binding, and refuses one the
   workflow's structure could never honour. No bundled template changed how it schedules.
+- **Autonomous loops now learn the way workflows do.** The self-improvement loop — the part of the
+  system that reviews finished work and proposes better ways to do it next time — could only ever see
+  *workflow* runs. The long-running autonomous loops (goal, code, design, research) kept their cycle
+  findings and done-ness verdicts in a separate place it never looked, so a loop that ran for weeks
+  contributed nothing to what the system learned. Loops now record their cycles, assessments, stalls
+  and reaps to the same shared log workflows use, and a finished loop mines its own history for
+  proposals — so three loops that keep taking the same successful path can now surface as "this looks
+  like a procedure worth naming." **This moves where a loop's findings and verdicts are stored.** A
+  loop that finished *before* this update keeps its files, but its old findings/verdicts won't appear
+  in the cockpit or feed learning; loops going forward are unaffected. As with any 0.x state-shape
+  change, run `personalclaw snapshot` before updating if you want a restore point.
+
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to
   run first.** The engine kept two separate pictures of how steps relate: what must run before what,
   and what reads whose output. Nothing checked they agreed, so a template could pull

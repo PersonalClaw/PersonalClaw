@@ -453,9 +453,54 @@ class LoopWatchdog:
                 lifecycle.teardown_scratch(loop_id)
         except Exception:
             logger.debug("scratch auto-teardown check failed for %s", loop_id, exc_info=True)
+        # Loop-end learning (PP-5): a terminal loop mines its own ledger — the flywheel's RUN_END
+        # cadence, now covering the loop kinds it was blind to. Best-effort; a mined draft must
+        # never cost the loop its terminal status.
+        self._capture_loop_end(loop_id)
         self._publish(
             loop_id, "complete", {"loop_id": loop_id, "reason": reason, "genuine": genuine}
         )
+
+    def _capture_loop_end(self, loop_id: str) -> None:
+        """Route a terminal loop through the LearningGate → loop-end learner (PP-5).
+
+        Mirrors the workflow controller's `_capture_run_end`: gated by the RUN_END cadence, and the
+        service is resolved best-effort. The positive-path + inversion producers run with no vector
+        store; similarity is inert without one. Fully guarded — never raises into `_complete`.
+        """
+        try:
+            from types import SimpleNamespace
+
+            from personalclaw.learning import loop_end
+            from personalclaw.learning.gate import Cadence, LearningGate
+
+            loop = store.get(loop_id)
+            if loop is None:
+                return
+            cfg = AppConfig.load().learning
+            session = SimpleNamespace(key=loop.session_key, is_restricted=False, _ephemeral=False)
+            decision = LearningGate.for_session(session, cfg).decide(
+                Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
+            )
+            if not decision.allowed:
+                logger.debug("loop %s: loop-end capture gated (%s)", loop_id, decision.reason.value)
+                return
+            loop_end.capture(loop, self._memory_service())
+        except Exception:
+            logger.debug("loop %s: loop-end capture failed", loop_id, exc_info=True)
+
+    def _memory_service(self) -> Any:
+        """The memory service, or None. Similarity mining is inert without a live vector store, so
+        None is a valid answer that still lets the no-service producers (traces, inversion) run."""
+        try:
+            from personalclaw.memory_service import service_for
+
+            cb = getattr(self._state, "context_builder", None)
+            mem = getattr(cb, "memory", None) if cb is not None else None
+            return service_for(mem) if mem is not None else None
+        except Exception:
+            logger.debug("loop-end: memory service unavailable", exc_info=True)
+            return None
 
     def _register_deliverable_artifact(self, loop_id: str) -> None:
         """On completion, surface the loop's document deliverable (REPORT.md /
@@ -621,6 +666,10 @@ class LoopWatchdog:
                 self._publish(cid, "needs_input")
                 continue
 
+            # Ingest any new worker finding files into the ledger BEFORE reading them back — the
+            # findings the rest of this poll works with are the ledger projection (PP-5).
+            # Idempotent (keyed by source file), so calling it every poll is safe.
+            store.record_cycle_findings(cid)
             findings = store.get_findings(cid)
             count = len(findings)
 
@@ -734,6 +783,10 @@ class LoopWatchdog:
                     why := check_stagnation(findings, window=cfg.stagnation_window)
                 ):
                     store.update_status(cid, LoopStatus.STAGNANT)
+                    # A stall is a `breaker_trip` on the ledger (PP-5) — the same kind the workflow
+                    # breaker emits — so the flywheel sees a loop was cut off, not just that it
+                    # produced fewer cycles.
+                    store.record_breaker_trip(cid, count, why)
                     logger.info("loop %s stalled: %s", cid, why)
                     self._publish(cid, "stagnant", {"loop_id": cid, "reason": why})
             else:
@@ -770,6 +823,9 @@ class LoopWatchdog:
                 if now - self._last_activity.get(cid, 0.0) > _unresponsive_deadline(
                     loop.idle_secs or cfg.default_idle_secs
                 ):
+                    # A finding the worker wrote mid-poll is only on the ledger once ingested, so
+                    # ingest before the "did progress land during a long turn?" re-check.
+                    store.record_cycle_findings(cid)
                     if len(store.get_findings(cid)) > count:
                         continue  # progress landed during a long turn
                     wedged = session is not None and getattr(session, "running", False)
