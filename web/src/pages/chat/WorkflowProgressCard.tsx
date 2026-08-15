@@ -130,7 +130,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
         </p>
       )}
 
-      {vm?.error && <p className="text-danger text-[0.75rem]">{vm.error}</p>}
+      {vm?.error && <p role="alert" className="text-danger text-[0.75rem]">{vm.error}</p>}
 
       {/* The currently-interesting node, not the whole list — a chat card is a glance, and
           twenty rows in a message stream is a wall. */}
