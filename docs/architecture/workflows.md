@@ -48,6 +48,7 @@ while not terminal:
 | `conditions.py` | the ONE boolean-condition dialect: gate `expr`, loop `until`, `success_when` |
 | `execution_hints.py` | the `runtime_hints.execution` half — today, WIP=1 (`single_active_feature`) |
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
+| `replay.py` | `workflow replay <run_id>` — re-drives the PURE `frontier()` against a run's OWN recorded responses (keyed by `output_ref`) and its recorded clock (the `clock_read` envelope), and diffs the resulting trajectory against the one the run took, reporting the first divergent node. Divergence is a first-class outcome, not a failure |
 | `store.py` | persistence — runs, specs, state, outputs |
 | `mutations.py` | the typed edit grammar and its structural rules |
 | `checkpoints.py` | fork, revert, prune |

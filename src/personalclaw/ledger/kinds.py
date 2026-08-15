@@ -85,6 +85,17 @@ SEEN_SET = "seen_set"
 BUFFER_SEAL = "buffer_seal"
 DELAY_CLAMPED = "delay_clamped"
 
+#: PP-6: one entry of the nondeterminism envelope a run depended on. A run's decision path is
+#: reproducible only if every non-deterministic input it read is journaled — provider responses
+#: are already spilled by `output_ref` and the resolved prompt is already stored by `_store_prompt`,
+#: which leaves the WALL CLOCK. `frontier()` is pure and reads no clock; the controller does, in
+#: `_wake_due_nodes`, where a `wait`/`gate` deadline crossing wall time is what advances the run.
+#: That read is journaled here — the value the run resolved a parked node against — so a replay can
+#: substitute a recorded clock and reach the same node in the same order. A ledger kind rather than
+#: a side file because it IS run-history a replayer reads back, and the extraction's rule is that a
+#: reader reconciles ONE vocabulary; a parallel clock channel would be a second dialect.
+CLOCK_READ = "clock_read"
+
 #: LEARNING-FLYWHEEL §3.3 (LEARN-R18), generalized by PP-9: the pending→resolved outcome
 #: lifecycle, open to ANY producer. A producer journals `pending_outcome`
 #: {producer, subject, metric, metric_source, horizon, baseline} at BET time — before the
@@ -160,6 +171,7 @@ LEDGER_KINDS = frozenset(
         SEEN_SET,
         BUFFER_SEAL,
         DELAY_CLAMPED,
+        CLOCK_READ,
         PENDING_OUTCOME,
         OUTCOME_RESOLVED,
         WORKSPACE_PROVISIONED,

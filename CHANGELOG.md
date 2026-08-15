@@ -10,6 +10,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **You can now replay a finished workflow run and see exactly where an edit would change it.**
+  `personalclaw workflow replay <run_id>` re-drives the run's decision path against its OWN recorded
+  responses — it calls no model and spends nothing — and compares the result to the path the run
+  actually took, reporting the first step that moved. Replaying an unchanged run reproduces its
+  trajectory exactly; edit a step's prompt and replay names that step as the first to diverge, which
+  is the question a mid-run edit really asks: *what did my change actually affect, and from where?*
+  Divergence is a normal answer, not an error — a template edit is supposed to diverge, and the verb
+  tells you where rather than failing.
+
 - **Runs now record what LANDED, not just what they did.** A workflow that made a measurable
   decision could already journal the bet it was making and have it graded once the horizon passed.
   That was the only thing in the system able to do it. Now any producer can open the same kind of
