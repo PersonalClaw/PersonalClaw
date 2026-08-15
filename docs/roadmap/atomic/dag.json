@@ -7221,7 +7221,8 @@
         {
           "id": "PP-10",
           "title": "Consumer-liveness detection: surface a work unit whose output nobody reads",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1314",
           "scope": "The watchdogs measure PRODUCER health — findings count, turn wall-time, stagnation, consecutive errors. Nothing asks whether a loop's output was ever read. The field post-mortem this is drawn from (2026-08-11) is a fully autonomous pipeline that had been dead for two months with nobody noticing, and its author's diagnosis was structural rather than tooling: nobody owned acting on the output. Our equivalent is a monitor-kind run writing a deliverable on a cadence into an artifact nobody opens — we detect a STALLED one and never a POINTLESS one. The raw signal already exists (artifact events, inbox read state, `pinned_artifacts`).",
           "done_when": "A dormancy sweep reports a work unit whose last N cycles produced output with no consumer touch, surfaced as a PROPOSAL to pause or retire it — never an automatic stop, because \"nobody looked yet\" and \"nobody will ever look\" are different facts and only the user knows which. Uses the `PP-9` outcome record with a consumption horizon rather than a new counter. Verified by driving a run whose artifact is never opened (sweep fires) and one whose artifact is opened (sweep stays silent) — the second half is the one that proves it is not a blanket nag.",
           "deps": [
@@ -7865,11 +7866,6 @@
       {
         "id": "PP-8",
         "title": "Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection",
-        "plan": "PP"
-      },
-      {
-        "id": "PP-10",
-        "title": "Consumer-liveness detection: surface a work unit whose output nobody reads",
         "plan": "PP"
       },
       {
@@ -10318,9 +10314,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 11,
+        "todo": 10,
         "blocked": 0
       }
     ],

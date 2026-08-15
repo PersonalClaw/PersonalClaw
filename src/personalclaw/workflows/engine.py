@@ -2089,10 +2089,12 @@ def _open_publish_outcome(run_id: str, node_id: str, payload: dict[str, Any]) ->
 
     The `publish:` producer of the general outcome facility (PP-9). Publishing records what the run
     DID; this records the bet about what it was FOR, so an artifact stream nobody reads becomes a
-    measurable fact instead of a busy outbox. `PP-10` owns the consumption counter this reads
-    (`artifact.<slug>.consumed`) and the sweep that turns a zero into a proposal; until it lands the
-    question resolves honestly as `inconclusive`, which decays fast — the correct answer for a
-    metric nothing writes yet, and the reason the horizon is generous.
+    measurable fact instead of a busy outbox. `PP-10` supplies the ground truth this asks for: a
+    :data:`~personalclaw.ledger.outcomes.SOURCE_CONSUMPTION` question is graded off the artifact's
+    own lifecycle timeline and the dashboard pin list — writers that already exist — so the answer
+    is a real `measured` 1.0/0.0 on any box, with no vector store and no new counter. `PP-10`'s
+    dormancy sweep (`learning/consumer_liveness.py`) then reads the RESOLUTIONS and proposes pausing
+    or retiring a work unit whose last N cycles all went untouched.
 
     Best-effort, like the publish journal beside it: the artifact already landed, and no ledger
     write is worth failing a completed stage over.
@@ -2107,8 +2109,8 @@ def _open_publish_outcome(run_id: str, node_id: str, payload: dict[str, Any]) ->
         Journal(run_id).open_outcome(
             producer=outcomes.PRODUCER_PUBLISH,
             subject=f"published artifact `{slug}`",
-            metric=f"artifact.{slug}.consumed",
-            metric_source=outcomes.SOURCE_MEMORY,
+            metric=outcomes.consumption_metric(slug),
+            metric_source=outcomes.SOURCE_CONSUMPTION,
             horizon_secs=PUBLISH_CONSUMPTION_HORIZON_SECS,
             # One consumption is the whole bet: a deliverable is for somebody.
             baseline=1.0,

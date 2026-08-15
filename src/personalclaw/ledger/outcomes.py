@@ -37,9 +37,16 @@ ages out fast instead of masquerading as a confirmed one.
 
 **Ground truth has a declared SOURCE.** A decision's metric lives in semantic memory; an
 escalation's lives in the producer's own ledger (did a `confirmation_resolved` citing this
-confirmation ever appear?). Naming the source on the question is what lets one resolver grade both
-without a per-producer branch, and what keeps ledger-sourced questions resolvable on a box with no
-vector store.
+confirmation ever appear?); a published artifact's lives on the ARTIFACT — did a consumer ever touch
+it (:data:`SOURCE_CONSUMPTION`, PP-10). Naming the source on the question is what lets one resolver
+grade all three without a per-producer branch, and what keeps ledger- and consumption-sourced
+questions resolvable on a box with no vector store.
+
+`PP-10` reads this facility rather than counting alongside it: a work unit whose last
+:data:`DORMANCY_CYCLES` published artifacts all resolved `UNCONSUMED` is :data:`DORMANT`
+(:func:`dormancy_verdict`), which becomes a PROPOSAL to pause or retire it and never an automatic
+stop — "nobody looked yet" and "nobody will ever look" are different facts and only the user knows
+which.
 
 Nothing here imports `personalclaw.workflows` (there is an AST rail): the workflow-shaped
 adapters — the ones that stamp `instance_path`/`node_id`/`epoch` — stay in `workflows/journal.py`
@@ -108,8 +115,91 @@ SOURCE_MEMORY = "memory"
 #: must carry, `value_field` the number to read off it (absent ⇒ mere presence scores 1.0).
 #: Resolvable with no memory service at all.
 SOURCE_LEDGER = "ledger"
+#: A CONSUMER TOUCH on the thing the producer landed (PP-10). Neither a semantic key nor an event in
+#: the producer's own log: the reader is a person on a surface the run cannot see, and their touch
+#: is recorded on the OBJECT (an artifact's lifecycle timeline, the dashboard pin list) by writers
+#: that already exist. Naming it as a third source is what keeps ONE resolver — the alternative is a
+#: `if producer == publish` branch inside the grader, which is how the facility ended up
+#: decision-shaped the first time. The reader lives in `learning.consumer_liveness`, because
+#: reading it is I/O and this module is pure.
+SOURCE_CONSUMPTION = "consumption"
 
-SOURCES = frozenset({SOURCE_MEMORY, SOURCE_LEDGER})
+SOURCES = frozenset({SOURCE_MEMORY, SOURCE_LEDGER, SOURCE_CONSUMPTION})
+
+# ── consumer liveness: is anybody reading what this work unit produces? (PP-10) ──
+
+#: A consumption measurement is binary by construction — somebody touched the output, or nobody did.
+#: Written as constants because `baseline=1.0` on the publish question means "one consumption is the
+#: whole bet", and a reader comparing against a bare literal would not say why.
+CONSUMED = 1.0
+UNCONSUMED = 0.0
+
+#: How many consecutive MATURED, unconsumed cycles make a work unit a dormancy candidate. Three,
+#: because the field post-mortem this exists for is a pipeline that ran dead for MONTHS — one
+#: unopened deliverable is a busy week, three in a row past their horizons is a pattern — and
+#: because a sweep that fires on cycle one trains the user to skim past the surface it reports on,
+#: which is the failure mode that makes a real dormancy finding invisible.
+DORMANCY_CYCLES = 3
+
+#: Nobody touched the last :data:`DORMANCY_CYCLES` outputs, every one of them past its horizon.
+DORMANT = "dormant"
+#: Somebody touched at least one recent output. The sweep says NOTHING — this is the verdict that
+#: makes it a detector rather than a nag.
+LIVE = "live"
+#: Not enough matured cycles to have an opinion, or a cycle whose consumption could not be read.
+#: A THIRD verdict on purpose: "nobody looked yet" and "we could not tell" are both different facts
+#: from "nobody reads this", and collapsing either into `DORMANT` is exactly how the control gets
+#: teeth it has not earned.
+INSUFFICIENT = "insufficient"
+
+
+#: The `metric` name a `publish:` question asks under. Built and parsed in ONE place because the
+#: resolution record carries the metric and not the slug, so the sweep recovers the artifact from
+#: this name — two hand-written format strings would drift and the sweep would silently lose its
+#: evidence refs.
+_METRIC_PREFIX = "artifact."
+_METRIC_SUFFIX = ".consumed"
+
+
+def consumption_metric(slug: str) -> str:
+    """The `metric` a `publish:` producer asks its consumption question under."""
+    return f"{_METRIC_PREFIX}{slug}{_METRIC_SUFFIX}"
+
+
+def slug_from_metric(metric: str) -> str:
+    """The artifact slug inside a consumption metric name, or "" if it is not one."""
+    name = str(metric or "")
+    if not name.startswith(_METRIC_PREFIX) or not name.endswith(_METRIC_SUFFIX):
+        return ""
+    return name[len(_METRIC_PREFIX) : -len(_METRIC_SUFFIX)]
+
+
+def dormancy_verdict(resolutions: list[dict[str, Any]], *, cycles: int = DORMANCY_CYCLES) -> str:
+    """Grade one work unit's recent consumption resolutions, oldest first.
+
+    Pure, and deliberately conservative in three directions, because the atom this implements is
+    one whose failure mode is nagging rather than missing something:
+
+    * **A touch anywhere in the window wins.** One recent read means somebody is reading, so the
+      verdict is :data:`LIVE` even if the other cycles went untouched — a fortnightly reader is a
+      reader.
+    * **An unreadable cycle is not evidence.** An `inconclusive` resolution (the artifact was
+      deleted, the timeline was unreadable) yields :data:`INSUFFICIENT`, never :data:`DORMANT`:
+      "we could not tell" must not accumulate into "nobody looked".
+    * **Fewer than `cycles` matured resolutions is :data:`INSUFFICIENT`.** Only resolutions exist
+      here, and a resolution only exists once its horizon elapsed, so this is the horizon guard —
+      a work unit publishing since yesterday cannot be called dormant at any `cycles`.
+    """
+    window = [r for r in resolutions if isinstance(r, dict)][-max(1, int(cycles)) :]
+    if any(
+        r.get("resolution") == MEASURED and _float(r.get("measured")) >= CONSUMED for r in window
+    ):
+        return LIVE
+    if len(window) < max(1, int(cycles)):
+        return INSUFFICIENT
+    if any(r.get("resolution") != MEASURED for r in window):
+        return INSUFFICIENT
+    return DORMANT
 
 
 @dataclass(frozen=True)
