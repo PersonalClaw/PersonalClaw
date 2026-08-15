@@ -164,6 +164,8 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
   const [enabled, setEnabled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  // What the last successful reorder did, for the live region below. Empty until one happens.
+  const [moved, setMoved] = useState('')
 
   const load = useCallback(() => {
     api.routingPolicy()
@@ -176,14 +178,19 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
 
   // One write per interaction, then reload — the server is the authority on what the
   // table now says (a local guess could disagree with a floored/rejected value).
-  const save = async (body: Parameters<typeof api.setRoutingPolicy>[0]) => {
+  // Returns whether the write actually landed. It swallows the error to render `note` instead of
+  // rejecting, so a caller cannot infer success from the promise settling — `move` below needs to
+  // know, because announcing a reorder that failed would be worse than announcing nothing.
+  const save = async (body: Parameters<typeof api.setRoutingPolicy>[0]): Promise<boolean> => {
     setBusy(true)
     setNote('')
     try {
       await api.setRoutingPolicy(body)
       load()
+      return true
     } catch {
       setNote("Couldn't save that — nothing changed.")
+      return false
     } finally {
       setBusy(false)
     }
@@ -209,12 +216,18 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
     ...candidates.map((c) => c.ref).filter((ref) => !order.includes(ref)),
   ]
 
+  // A reorder is a status message (WCAG 4.1.3): the only feedback is that the row visually
+  // swapped, and the ranking numbers beside each row are not in any focused control's
+  // accessible name — so a user who cannot see the list gets nothing back from pressing the
+  // button. Announce the ref AND its new position, because "moved earlier" alone does not say
+  // where it landed or when the end of the list has been reached.
   const move = (index: number, delta: number) => {
     const next = [...shown]
     const target = index + delta
     if (target < 0 || target >= next.length) return
     ;[next[index], next[target]] = [next[target], next[index]]
     void save({ use_case: useCase, query_class: queryClass, order: next })
+      .then((ok) => { if (ok) setMoved(`${next[target]} moved to position ${target + 1} of ${next.length}`) })
   }
 
   return (
@@ -306,6 +319,12 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
                 ? `Order recorded for ${queryClass} · decided by ${String(recorded.basis?.source ?? 'unknown')}.`
                 : `No order recorded for ${queryClass} yet — ${row.mode === 'off' ? 'your bound order applies' : 'the prefer-local rule applies'}.`}
           </p>
+          {/* A successful reorder is a status message, not an alert: it was requested, so it must
+              not interrupt. ALWAYS MOUNTED and empty at rest — a live region created at the same
+              moment its text appears is not reliably observed (the reasoning `ResultAnnouncement`
+              records). Visually hidden because the list already shows the new order and its
+              position numbers; this is the same fact for a user who cannot see them. */}
+          <p role="status" aria-live="polite" className="sr-only">{moved}</p>
           {/* A save that just failed is unrequested bad news, so it INTERRUPTS (FieldError
               carries role="alert"); the recorded-order line above it is normal status text. */}
           {note && <FieldError className="mt-s">{note}</FieldError>}
