@@ -297,6 +297,15 @@ export interface AppPermissionsWire {
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
   // no app at all (deny by default), which the consent UI states rather than implies.
   appMessaging?: string[]
+  // APE-10: consented cross-app read-only file sharing (the mirror of `appMessaging`).
+  // `storageShared` = this app opts IN to exposing its own data dir to a reader;
+  // `storageRead` = the apps whose data THIS app reads (exact name or trailing-`*`
+  // prefix). Enforced where storage is granted — the backend is mounted each granted
+  // sharer's data dir READ-ONLY as `PERSONALCLAW_APP_SHARED_DIR_<SHARER>`, and a read is
+  // granted only when both halves are declared (double-declaration, deny by default).
+  // Writes stay broker-only (`appMessaging`). Absent = shares/reads nothing.
+  storageShared?: boolean
+  storageRead?: string[]
   // DC-2: native desktop capabilities this app may reach THROUGH the gateway (apps
   // never touch Electron IPC). Enforced — `/api/desktop/*` refuses an undeclared
   // capability 403 + SEL `desktop.capability_denied`. Exact names only, no wildcard.

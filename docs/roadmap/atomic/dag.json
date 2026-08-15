@@ -5585,7 +5585,7 @@
         {
           "id": "APE-10",
           "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 T3.2 (consented cross-app read; folds into Session 3)",
           "done_when": "fixture consumer reads the sharer's file via PERSONALCLAW_APP_SHARED_DIR_<NAME> (read-only); undeclared pair gets no mount; a write attempt fails; consent lists the grant (capability_grant SEL); import-boundary test green",
           "deps": [
@@ -7362,11 +7362,6 @@
       {
         "id": "APE-5",
         "title": "Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles",
-        "plan": "APE"
-      },
-      {
-        "id": "APE-10",
-        "title": "storageRead/storageShared manifest pair + consent + read-only env mount + sdk/util.shared_app_data_dir",
         "plan": "APE"
       },
       {
@@ -10155,9 +10150,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {

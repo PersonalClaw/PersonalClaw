@@ -101,6 +101,33 @@ class PermissionChecker:
         gate on the sender→target edge; an undeclared pair is refused there."""
         return _matches_any(target_app, self.permissions.appMessaging)
 
+    # -- consented cross-app read-only storage (APE-10) ------------------
+    def can_expose_shared_storage(self) -> bool:
+        """Whether THIS app (a would-be SHARER) opts INTO exposing its data dir.
+
+        The sharer half of APE-10's double-declaration: an app must set
+        ``storageShared: true`` before any other app that names it in ``storageRead``
+        is handed a read-only mount of its data. Deny-by-default (a false flag exposes
+        nothing)."""
+        return self.permissions.storageShared
+
+    def can_read_shared_storage(self, target_app: str) -> bool:
+        """Whether THIS app (the CONSUMER) may read ``target_app``'s data dir read-only.
+
+        Double-declaration, deny-by-default (the file-sharing mirror of
+        ``can_use_app_messaging``): the grant holds ONLY when the consumer names
+        ``target_app`` in its ``storageRead`` (exact or trailing-``*``, ``_matches_any``)
+        AND ``target_app``'s OWN manifest declares ``storageShared: true``. Either half
+        missing → no grant, so neither app can create a one-sided share. The read is
+        mounted where storage is granted (``backend_runtime``); writes stay broker-only
+        (APE-9)."""
+        if not target_app:
+            return False
+        if not _matches_any(target_app, self.permissions.storageRead):
+            return False
+        target = checker_for(target_app)
+        return target is not None and target.can_expose_shared_storage()
+
     # -- native desktop capabilities (DC-2) ------------------------------
     def can_use_desktop(self, capability: str) -> bool:
         """Whether this app may reach ``capability`` on the desktop shell.

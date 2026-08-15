@@ -319,6 +319,21 @@ class Permissions:
     # consent surface that did not exist; ``test_app_messaging.py`` now pins the
     # server leg and ``permissionConsent.test.tsx`` the rendering.
     appMessaging: list[str] = field(default_factory=list)  # noqa: N815
+    # APE-10: consented cross-app read-only file sharing — the file-sharing mirror of
+    # APE-9's messaging broker, and it deliberately reuses APE-9's DOUBLE-DECLARATION
+    # shape rather than inventing a third. ``storageShared`` is the SHARER opting IN to
+    # exposing its own ``app_data_dir`` to a reader; ``storageRead`` is the CONSUMER
+    # naming the apps whose data it reads (an exact name or a trailing-``*`` prefix, same
+    # grammar as ``appMessaging``). A read is granted only when BOTH halves hold
+    # (consumer names the sharer AND the sharer set ``storageShared: true``) — no silent
+    # one-sided grant. Deny-by-default: an empty ``storageRead`` reads nothing.
+    # Enforcement is where storage is granted (``backend_runtime``): each granted sharer
+    # is mounted READ-ONLY into the consumer's backend env as
+    # ``PERSONALCLAW_APP_SHARED_DIR_<SHARER>`` (writes stay broker-only, APE-9), and the
+    # SDK hands the consumer a read-only handle (``sdk.util.shared_app_data_dir``). Both
+    # reach install consent via ``to_dict`` → ``catalog._manifest_consent`` → the Store.
+    storageShared: bool = False  # noqa: N815
+    storageRead: list[str] = field(default_factory=list)  # noqa: N815
     # DC-2: native desktop capabilities this app may read/use through the gateway
     # (``["audio_capture", "native_notifications"]``). Names come from
     # ``dashboard.desktop_registry.CAPABILITIES``; anything else never matches, so a
@@ -348,6 +363,10 @@ class Permissions:
             d["agent"] = True
         if self.appMessaging:
             d["appMessaging"] = self.appMessaging
+        if self.storageShared:
+            d["storageShared"] = True
+        if self.storageRead:
+            d["storageRead"] = self.storageRead
         if self.desktop:
             d["desktop"] = self.desktop
         return d
@@ -364,6 +383,8 @@ class Permissions:
             cron=bool(data.get("cron", False)),
             agent=bool(data.get("agent", False)),
             appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
+            storageShared=bool(data.get("storageShared", False)),  # noqa: N815
+            storageRead=[str(t) for t in data.get("storageRead", []) if t],  # noqa: N815
             desktop=[str(c) for c in data.get("desktop", []) if c],
         )
 
