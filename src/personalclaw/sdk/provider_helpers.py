@@ -63,6 +63,61 @@ class BrandedProviderSpec:
     # hint). An app whose family caches a stable prefix on its own sets AUTOMATIC; one
     # needing a per-request marker sets EXPLICIT. Threaded into ProviderCapability below.
     prompt_cache: PromptCache = PromptCache.NONE
+    # OPTIONAL per-model prices this app ships: {model_pattern: {in_per_mtok, out_per_mtok}}
+    # in USD per 1,000,000 tokens, where model_pattern is a model id or a glob
+    # ("claude-sonnet-*"). Prices belong beside default_model/capabilities — the same place the
+    # rest of an app's model facts live. Read by routing/rates.py:rate_for as the app-default
+    # tier, under the user's ~/.personalclaw/model_rates.json overlay (MRT-2, §5.1). Empty means
+    # "this app declares no prices", which resolves to a lower tier and never to a free model.
+    # ``hash=False`` keeps the frozen dataclass hashable despite the dict (equality still counts
+    # it); treat the map as read-only, like every other field on a frozen spec.
+    pricing: dict[str, dict[str, float]] = field(default_factory=dict, hash=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        """A JSON-round-trippable view of the spec (enums → their values, tuples → lists).
+
+        Paired with :meth:`from_dict` so ``from_dict(spec.to_dict()) == spec`` — the round-trip
+        discipline the repo enforces on every persisted/serialized shape, so a later-added field
+        (``pricing`` was one) can't silently fail to survive a save/load.
+        """
+        return {
+            "type": self.type,
+            "protocol": self.protocol,
+            "default_base_url": self.default_base_url,
+            "api_key_env": self.api_key_env,
+            "default_model": self.default_model,
+            "max_tokens": self.max_tokens,
+            "capabilities": sorted(c.value for c in self.capabilities),
+            "fallback_models": [dict(m) for m in self.fallback_models],
+            "notes": self.notes,
+            "prompt_cache": self.prompt_cache.value,
+            "pricing": {
+                str(pattern): {str(k): float(v) for k, v in dict(row).items()}
+                for pattern, row in self.pricing.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BrandedProviderSpec:
+        """Rebuild a spec from :meth:`to_dict` output. Unknown keys are ignored; absent keys take
+        the field default (so an older serialized spec still loads)."""
+        raw_cache = data.get("prompt_cache", PromptCache.NONE)
+        return cls(
+            type=str(data.get("type", "")),
+            protocol=str(data.get("protocol", "openai")),
+            default_base_url=str(data.get("default_base_url", "")),
+            api_key_env=str(data.get("api_key_env", "")),
+            default_model=str(data.get("default_model", "")),
+            max_tokens=(int(data["max_tokens"]) if data.get("max_tokens") is not None else None),
+            capabilities=frozenset(Capability(c) for c in data.get("capabilities", ()) or ()),
+            fallback_models=tuple(dict(m) for m in data.get("fallback_models", ()) or ()),
+            notes=str(data.get("notes", "")),
+            prompt_cache=PromptCache(raw_cache),
+            pricing={
+                str(pattern): {str(k): float(v) for k, v in dict(row).items()}
+                for pattern, row in (data.get("pricing", {}) or {}).items()
+            },
+        )
 
 
 def _resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:
@@ -232,6 +287,42 @@ class BrandedCatalog(ModelCatalog):
             return ConnectionResult(ok=False, detail=f"Connection failed: {str(exc)[:100]}")
 
 
+#: provider TYPE → the spec that registered it. Populated by :func:`register_branded_app` (the
+#: same import-time side effect that registers the type + catalog) so core can read an installed
+#: app's DECLARATIONS — today its prices — without the app having to push them anywhere. Last-wins
+#: on re-registration, mirroring ``register_catalog``.
+_REGISTERED_SPECS: dict[str, BrandedProviderSpec] = {}
+
+
+def registered_spec(provider: str) -> BrandedProviderSpec | None:
+    """The registered spec for ``provider``, or None.
+
+    ``provider`` may be a provider TYPE ("groq") or a user-named INSTANCE of one ("groq-work" —
+    instances are named freely in ``active_models.json``). Resolution: exact type, then
+    case-insensitive type, then — only when EXACTLY ONE registered type appears in the name — that
+    type. An ambiguous or unrecognized name resolves to None rather than to a guess.
+    """
+    name = str(provider or "").strip()
+    if not name:
+        return None
+    spec = _REGISTERED_SPECS.get(name)
+    if spec is not None:
+        return spec
+    lowered = name.lower()
+    for known, known_spec in _REGISTERED_SPECS.items():
+        if known.lower() == lowered:
+            return known_spec
+    hits = [s for known, s in _REGISTERED_SPECS.items() if known and known.lower() in lowered]
+    return hits[0] if len(hits) == 1 else None
+
+
+def spec_pricing(provider: str) -> dict[str, dict[str, float]]:
+    """The app-declared ``{model_pattern: {in_per_mtok, out_per_mtok}}`` map for ``provider``, or
+    an empty map when the provider is unknown or declares no prices (never a fabricated rate)."""
+    spec = registered_spec(provider)
+    return dict(spec.pricing) if spec is not None and spec.pricing else {}
+
+
 def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable, Callable]:
     """Wire a branded/generic protocol provider app into the default registry and
     return its ``(_factory, create_provider, create_catalog)`` trio.
@@ -338,6 +429,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
     except ProviderResolutionError:
         pass  # already registered (idempotent against reload)
     get_default_registry().register_catalog(spec.type, create_catalog)
+    _REGISTERED_SPECS[spec.type] = spec  # so core can read this app's declarations (pricing)
 
     return _factory, create_provider, create_catalog
 
@@ -349,4 +441,13 @@ def _anon_credential(spec: BrandedProviderSpec) -> Credential:
     return Credential(name=f"{spec.type}-anon", kind="none", secret="unused", source="none")
 
 
-__all__ = ["BrandedProviderSpec", "BrandedCatalog", "register_branded_app"]
+__all__ = [
+    "BrandedProviderSpec",
+    "BrandedCatalog",
+    "register_branded_app",
+    # ``registered_spec`` is deliberately NOT exported: ``spec_pricing`` is the only
+    # core-facing reader of the registry, and a public SDK export with no consumer is a
+    # declared-but-inert surface (the inert-surface ratchet catches exactly that). It
+    # stays module-internal until a real caller needs the whole spec.
+    "spec_pricing",
+]
