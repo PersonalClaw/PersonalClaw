@@ -60,7 +60,7 @@ def voice_home(tmp_path, monkeypatch):
 def _stub_synthesis(monkeypatch, sentences):
     monkeypatch.setattr(
         "personalclaw.dashboard.chat_voice.active_voice_params",
-        lambda: {
+        lambda **_kw: {
             "provider": MagicMock(),
             "voice": "en_US-lessac-medium",
             "speed": 1.0,

@@ -48,8 +48,8 @@ class UploadSession:
     filename: str
     size: int
     mime: str
-    target: str  # "attachment" | "knowledge" | "workspace"
-    target_dir: str  # for workspace target: the validated destination directory
+    target: str  # "attachment" | "knowledge" | "workspace" | "voice_profile"
+    target_dir: str  # workspace: the validated destination dir; voice_profile: profile dir
     category: str
     part_size: int
     append_mode: bool  # True = concat-in-place (append), False = separate parts
@@ -57,6 +57,10 @@ class UploadSession:
     updated_at: float
     received: list[int] = field(default_factory=list)  # part indices that landed
     completed: bool = False
+    # Which slot inside the target the finished file fills (voice_profile:
+    # "ref_audio" | "consent"). Defaulted so an in-flight session written by an
+    # older build still deserializes on resume.
+    target_key: str = ""
 
     @property
     def total_parts(self) -> int:
@@ -87,7 +91,14 @@ class UploadStore:
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def init(
-        self, *, filename: str, size: int, mime: str, target: str, target_dir: str = ""
+        self,
+        *,
+        filename: str,
+        size: int,
+        mime: str,
+        target: str,
+        target_dir: str = "",
+        target_key: str = "",
     ) -> UploadSession:
         """Validate the declared file against the size policy + free disk, then open
         a session. Rejects a too-big file before a single byte is uploaded."""
@@ -117,6 +128,7 @@ class UploadStore:
             mime=mime,
             target=target,
             target_dir=target_dir,
+            target_key=target_key,
             category=check.category,
             part_size=PART_SIZE,
             append_mode=append_mode,

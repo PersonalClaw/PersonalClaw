@@ -13,6 +13,7 @@ apps keep a tight body ceiling; large media never touches them.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -24,7 +25,10 @@ from personalclaw.uploads.store import UploadError, UploadStore
 
 logger = logging.getLogger(__name__)
 
-_VALID_TARGETS = ("attachment", "knowledge", "workspace")
+_VALID_TARGETS = ("attachment", "knowledge", "workspace", "voice_profile")
+
+# voice_profile target (MULTIMODAL-IO §1.1): which slot the finished clip fills.
+_VOICE_SLOTS = ("ref_audio", "consent")
 
 # Bounded content scan at complete: media isn't grepped line-by-line (a 2 GB video
 # won't be scanned for `rm -rf` economically), so scan only a head+tail window for
@@ -82,12 +86,40 @@ async def api_uploads_init(request: web.Request) -> web.Response:
 
     # Workspace target: validate the destination dir NOW (same gate as single-POST).
     target_dir = ""
+    target_key = ""
     if target == "workspace":
         from personalclaw.dashboard.handlers.files import _validate_dashboard_path
 
         target_dir = _validate_dashboard_path(str(body.get("path") or "")) or ""
         if not target_dir or not os.path.isdir(target_dir):
             return web.json_response({"error": "invalid or forbidden directory"}, status=400)
+
+    if target == "voice_profile":
+        # Resolve + contain the profile NOW: an upload must never open against an id
+        # that could escape the profiles dir, and a clip aimed at a profile that does
+        # not exist should fail before a byte moves.
+        from personalclaw.uploads.policy import category_for
+        from personalclaw.voice import profiles as vprof
+
+        target_key = str(body.get("kind") or _VOICE_SLOTS[0])
+        if target_key not in _VOICE_SLOTS:
+            return web.json_response(
+                {"error": f"kind must be one of {_VOICE_SLOTS}", "reason": "invalid_kind"},
+                status=400,
+            )
+        if category_for(filename, mime) != "audio":
+            return web.json_response(
+                {"error": "voice_profile uploads must be audio", "reason": "not_audio"}, status=415
+            )
+        try:
+            profile = vprof.require_profile(str(body.get("profile_id") or ""))
+            pdir = vprof.profile_dir(profile.id)
+        except vprof.VoiceProfileError as exc:
+            return web.json_response(
+                {"error": exc.message, "reason": exc.reason}, status=exc.status
+            )
+        pdir.mkdir(parents=True, exist_ok=True)
+        target_dir = str(pdir)
 
     try:
         sess = _store(request).init(
@@ -96,6 +128,7 @@ async def api_uploads_init(request: web.Request) -> web.Response:
             mime=mime or "",
             target=target,
             target_dir=target_dir,
+            target_key=target_key,
         )
     except UploadError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
@@ -281,6 +314,40 @@ async def _finalize_target(request: web.Request, sess, final_path: Path) -> dict
             "status": "processing" if is_new else (item.get("processing_status") or "done"),
             "deduped": not is_new,
         }
+
+    if sess.target == "voice_profile":
+        from personalclaw.voice import profiles as vprof
+
+        # Re-derive + re-contain the profile id from the session's dir: trusting the
+        # stored path blindly would make a tampered meta.json a write-anywhere hole.
+        try:
+            profile_id = Path(sess.target_dir).name
+            vprof.validate_id(profile_id)
+            vprof.require_profile(profile_id)
+            suffix = Path(sess.filename).suffix
+            if sess.target_key == "consent":
+                profile = vprof.attach_consent_audio(profile_id, final_path, suffix=suffix)
+            else:
+                profile = vprof.attach_ref_audio(profile_id, final_path, suffix=suffix)
+        except vprof.VoiceProfileError as exc:
+            raise UploadError(exc.message, exc.status) from exc
+        if sess.target_key == "consent":
+            try:
+                from personalclaw.dashboard.handlers.voice_profiles import _sel
+
+                _sel().log_api_access(
+                    caller=str(request.get("user", "dashboard") or "dashboard"),
+                    operation="voice_profile.consent.record",
+                    outcome="success",
+                    resources=f"{profile_id} verified={profile.verified_own_voice}",
+                )
+            except Exception:
+                logger.debug("consent SEL audit failed for %s", profile_id, exc_info=True)
+        state = request.app.get("state")
+        if state is not None:
+            with contextlib.suppress(Exception):
+                state.broadcast_ws("voice_profile_updated", vprof.profile_payload(profile))
+        return {"profile": vprof.profile_payload(profile)}
 
     if sess.target == "workspace":
         from personalclaw.dashboard.handlers.files import _validate_dashboard_path

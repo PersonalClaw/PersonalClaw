@@ -33,7 +33,10 @@ class TestVoiceSynthesize:
     @pytest.mark.asyncio
     async def test_synthesize_no_voice_selected(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
-        monkeypatch.setattr("personalclaw.dashboard.chat_voice.active_voice_params", lambda: None)
+        # MI-1: the resolver takes surface/profile_id keywords now (§3.2).
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat_voice.active_voice_params", lambda **_kw: None
+        )
         state = _make_state(tmp_path)
         async with TestClient(TestServer(_make_voice_app(state))) as client:
             resp = await client.post(
@@ -49,7 +52,7 @@ class TestVoiceSynthesize:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         monkeypatch.setattr(
             "personalclaw.dashboard.chat_voice.active_voice_params",
-            lambda: {
+            lambda **_kw: {
                 "provider": _MM(),
                 "voice": "en_US-lessac-medium",
                 "speed": 1.0,
