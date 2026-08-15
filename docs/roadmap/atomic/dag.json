@@ -7139,7 +7139,8 @@
         {
           "id": "PP-2",
           "title": "Derive `needs` from bindings; lift the sibling-only restriction",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1321",
           "scope": "`PP-1` makes the disagreement visible; this deletes the second edge list. Fluxtion's \"Graph Engineering Needs a Compiler\" (2026-07-29) names the exact defect — an explicit orchestration definition that restates relationships already present in the components is \"a second edge list\", and the remedy is to declare structure once and derive coordination. The sibling-only restriction exists to protect a hand-maintained ordering list from being wrong; once ordering is derived, the dependency graph is already global and `_kahn_levels` already proves it acyclic, so reachability can be computed over the derived graph and the restriction becomes unnecessary rather than load-bearing. This is the single biggest expressiveness gap versus the peer graph runtimes: a diamond spanning two containers is inexpressible today.",
           "done_when": "Ordering edges are DERIVED from bindings at definition time and consumed by the frontier; a hand-written `needs` survives only to express ordering that is not dataflow (a lock, an external side-effect sequence) and is checked against the derived set rather than trusted. `WF_UNKNOWN_NEEDS`' sibling-only rule is replaced by a global reachability computation over the derived graph, so a cross-container `needs` is honoured instead of refused, and a `branch` decline still marks exactly the unreachable derived targets SKIPPED (WF2-R18 preserved: a join must neither deadlock on an untaken leg nor fire early on a live one). Verified by a run whose diamond spans two containers completing correctly, and by the WF2-R18 join tests staying green. The `to_skip` reachability change is the risk surface and gets its own test matrix over decline-inside-parallel, decline-inside-foreach-body and decline-with-a-cross-container-reader.",
           "deps": [
@@ -7846,11 +7847,6 @@
         "id": "PHF-7",
         "title": "Offline fake-model E2E harness + a11y rail",
         "plan": "PHF"
-      },
-      {
-        "id": "PP-2",
-        "title": "Derive `needs` from bindings; lift the sibling-only restriction",
-        "plan": "PP"
       },
       {
         "id": "PP-5",
@@ -10318,9 +10314,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 11,
+        "todo": 10,
         "blocked": 0
       }
     ],

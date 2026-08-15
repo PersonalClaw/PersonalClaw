@@ -13,15 +13,39 @@ policy over its children. So the frontier recurses into containers and only ever
 returns leaf work. A container's own state is *derived* from its children's, which is
 why `container_outcome()` exists and why nothing writes a container's state directly.
 
+**Ordering is DERIVED, not declared (`PP-2`).** A node waits for the nodes its bindings
+read. The edge list comes from `validator.dep_ordering_edges` — the same derivation the
+validator's own rules use — so admission and validation cannot disagree about what "ordered
+first" means; keeping a second, hand-maintained list was the defect `PP-1` made visible and
+this module's gate deletes. A hand-written `needs` is folded into that same list and honoured
+GLOBALLY, so a diamond may span two containers. Nothing here trusts a `needs` on its own: an
+edge the spec's structure cannot honour is refused at authoring time and never reaches the
+frontier, because a scheduler that waits on an impossible edge hangs instead of failing.
+
+This derived ordering is ORTHOGONAL to admission (`PP-11`): ordering decides whether a node is
+even a CANDIDATE this tick (are its producers terminal?), admission decides whether a candidate
+gets a SLOT (is the lane/container/WIP budget free?). Both are built once in `frontier()` and
+threaded down the recursion — `order`/`inst` for ordering, `policies` for admission — so
+neither can become per-node-optional by accident.
+
 **Active-edge join gating (WF2-R18).** A join must not wait on a leg that will never run.
 A `branch` picking `cases[bug]` leaves `cases[feat]` unreachable; a join that waited on
 "all predecessors" would deadlock forever. Conversely a join firing on "any completed
 predecessor" fires early on a fan-out whose other legs are still waiting. Both directions
-are bugs, so the rule here is: **a `needs` edge is satisfied by any TERMINAL predecessor,
+are bugs, so the rule here is: **an ordering edge is satisfied by any TERMINAL predecessor,
 and unreachable paths are made terminal by marking them SKIPPED.** Declining is recorded
 explicitly (`declined_edges`) rather than inferred from "the source routed elsewhere" —
 inferring it would starve a sibling whose `needs` names a branch, since routing among
 cases says nothing about that sibling.
+
+Reachability is where the two directions are decided, and the asymmetry is deliberate. A
+SKIPPED predecessor SATISFIES a plain ordering edge (it is terminal — that is what keeps a
+join off an untaken leg), but a SKIPPED predecessor whose OUTPUT the reader binds makes the
+reader unreachable: the output will never exist, so waiting is a hang and running is a
+guaranteed binding failure. Only that reader is skipped, and only through a real dataflow
+edge. Skipping a reader whose producer is merely still pending would be the far worse bug — a
+join would then fire early on a live leg and the run would report a plausible wrong answer
+instead of waiting.
 
 The wait-entry subtlety still matters: a `wait`/`gate` enters WAITING rather than
 completing, and WAITING is not terminal, so a join behind it correctly keeps waiting
@@ -74,6 +98,7 @@ from personalclaw.workflows.models import (
     lane_for,
     walk,
 )
+from personalclaw.workflows.validator import EDGE_BINDING, dep_edges_for_root
 
 
 @dataclass
@@ -250,6 +275,89 @@ def _worst(states: list[InstanceState]) -> InstanceState:
     return InstanceState.DONE
 
 
+# ── derived ordering (PP-2) ──────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Ordering:
+    """The ordering graph the frontier admits work against, derived from the spec (`PP-2`).
+
+    Keyed by SPEC path — the position in the definition, `root.children[1].body`, with no
+    fan-out decoration. Instance paths (`…body#2`) are resolved per reader at admission time
+    by `_producer_instance`, because one spec-level edge inside a `foreach` body means a
+    *separate* edge per item and the frontier must gate item 2's reader on item 2's producer.
+    """
+
+    #: reader spec path → ((producer spec path, producer node id, carries dataflow) …).
+    #: `carries_data` is False for a hand-written `needs`, and that distinction is load-
+    #: bearing: only a dataflow edge can make its reader UNREACHABLE when the producer is
+    #: skipped, because only a dataflow edge needs the producer's output to exist.
+    deps: dict[str, tuple[tuple[str, str, bool], ...]] = field(default_factory=dict)
+    #: spec path → node, so a container producer's state can be derived rather than read.
+    nodes: dict[str, Node] = field(default_factory=dict)
+    #: Spec paths of `foreach`/`loop` bodies, LONGEST FIRST so the first prefix match is the
+    #: innermost enclosing fan-out.
+    iterated: tuple[str, ...] = ()
+
+
+def ordering_for(root: Node) -> Ordering:
+    """Derive the ordering graph from the spec's own bindings and `needs`.
+
+    Computed here rather than accepted as an argument on purpose: a caller that forgot to pass
+    it would get a scheduler with no ordering at all, which is the "live reader of a key nobody
+    writes" shape — silently wrong and invisible. `frontier()` is called with the spec tree it
+    needs, so it can never be handed a graph that does not describe that tree.
+
+    Edges the spec's structure cannot honour are DROPPED, not gated on. Those are exactly
+    `WF_UNORDERED_DEP`/`WF_UNSATISFIABLE_NEEDS` — a producer that encloses its reader, a
+    `sequence` that runs it afterwards, a mutually exclusive `branch` case — and gating on one
+    would turn a typed authoring-time refusal into a run that hangs. A spec that validates has
+    none; a spec saved before the rule existed still runs exactly as it did.
+    """
+    deps: dict[str, list[tuple[str, str, bool]]] = {}
+    for edge in dep_edges_for_root(root):
+        if not edge.ordered:
+            continue
+        entry = (edge.producer_path, edge.producer_id, edge.origin == EDGE_BINDING)
+        bucket = deps.setdefault(edge.reader_path, [])
+        if entry not in bucket:
+            bucket.append(entry)
+    nodes = dict(walk(root))
+    iterated = tuple(
+        sorted(
+            (
+                f"{path}.body"
+                for path, node in nodes.items()
+                if node.body is not None and node.kind in (NodeKind.FOREACH, NodeKind.LOOP)
+            ),
+            key=len,
+            reverse=True,
+        )
+    )
+    return Ordering({k: tuple(v) for k, v in deps.items()}, nodes, iterated)
+
+
+def _producer_instance(producer_spec: str, order: Ordering, inst: dict[str, str]) -> str | None:
+    """The instance path holding this producer's state, or None when there is no single one.
+
+    `inst` maps each fan-out body the walk is currently INSIDE to its instance path, so a
+    reader in item 2 resolves its producer to item 2's copy. When the producer sits inside a
+    fan-out the reader is not inside, there is no single answer — fifty items produced fifty
+    outputs and a binding naming the node id resolves to whichever wrote last — so this returns
+    None and the reader is admitted exactly as it is today. Censused before shipping: ZERO of
+    the bundled templates contain such an edge, so this is a documented boundary rather than a
+    silent gap, and inventing an answer here would be inventing fan-out aggregation semantics
+    that no other part of the engine has.
+    """
+    for body in order.iterated:
+        if producer_spec == body or producer_spec.startswith(f"{body}."):
+            base = inst.get(body)
+            if base is None:
+                return None
+            return base + producer_spec[len(body) :]
+    return producer_spec
+
+
 # ── the frontier ─────────────────────────────────────────────────────────────
 
 
@@ -289,12 +397,15 @@ def frontier(
     _visit(
         root,
         "root",
+        spec="root",
         states=states,
         edges=edges,
         iterations=dict(iterations or {}),
         ctx=ctx_base,
         fr=fr,
         enabled=True,
+        order=ordering_for(root),
+        inst={},
         policies=policies,
     )
 
@@ -322,9 +433,15 @@ def frontier(
     if _is_terminal(root_state):
         fr.complete = True
         fr.outcome = root_state
-    elif not fr.ready and not fr.deferred and not fr.running and not fr.waiting:
+    elif not fr.ready and not fr.deferred and not fr.running and not fr.waiting and not fr.to_skip:
         # Nothing terminal, nothing runnable, nothing in flight: deadlock. Naming it is
         # the whole reason this is computed rather than assumed.
+        #
+        # `to_skip` counts as progress. The controller applies it before the next tick, and
+        # each skip strictly shrinks the non-terminal set, so a run cannot loop on it. Left
+        # out, a tick whose only work was retiring an unreachable path would report deadlock
+        # and the controller would FAIL a run that was about to proceed — the reachability
+        # cascade (`PP-2`) makes exactly such a tick possible.
         fr.blocked = True
         fr.block_reason = "no runnable nodes and none in flight"
     return fr
@@ -334,12 +451,15 @@ def _visit(
     node: Node,
     path: str,
     *,
+    spec: str,
     states: dict[str, InstanceState],
     edges: set[str],
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
     enabled: bool,
+    order: Ordering,
+    inst: dict[str, str],
     item: Any = None,
     has_item: bool = False,
     iter_index: int | None = None,
@@ -347,7 +467,12 @@ def _visit(
 ) -> None:
     """Walk the tree collecting ready leaves. `enabled` is how a container gates its
     children without mutating their state — a sequence's later children are simply not
-    visited as ready until the earlier ones finish."""
+    visited as ready until the earlier ones finish.
+
+    `spec` is this node's position in the DEFINITION and `path` its position in this RUN;
+    they differ only inside a fan-out (`…body#2`). The ordering graph is keyed by the former
+    and states by the latter, which is why both travel together.
+    """
     st = _state_of(states, path)
     if st == InstanceState.RUNNING:
         fr.running.append(path)
@@ -363,6 +488,23 @@ def _visit(
         return
     if not enabled:
         return
+    # Derived ordering, applied to the whole subtree: a node waits for what its own config
+    # binds (and any `needs` it declares), and its children are not visited until then. Placed
+    # before the kind dispatch so one gate covers every shape — a leaf, a `foreach` whose
+    # `items` binds an upstream list, a `branch` whose selector does.
+    if not _ordering_satisfied(
+        node,
+        path,
+        spec,
+        states=states,
+        edges=edges,
+        iterations=iterations,
+        ctx=ctx,
+        fr=fr,
+        order=order,
+        inst=inst,
+    ):
+        return
 
     kind = node.kind
     if kind == NodeKind.SEQUENCE:
@@ -372,12 +514,15 @@ def _visit(
             _visit(
                 child,
                 cpath,
+                spec=f"{spec}.children[{i}]",
                 states=states,
                 edges=edges,
                 iterations=iterations,
                 ctx=ctx,
                 fr=fr,
                 enabled=True,
+                order=order,
+                inst=inst,
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
@@ -395,11 +540,14 @@ def _visit(
         _visit_parallel(
             node,
             path,
+            spec=spec,
             states=states,
             edges=edges,
             iterations=iterations,
             ctx=ctx,
             fr=fr,
+            order=order,
+            inst=inst,
             item=item,
             has_item=has_item,
             iter_index=iter_index,
@@ -411,11 +559,14 @@ def _visit(
         _visit_foreach(
             node,
             path,
+            spec=spec,
             states=states,
             edges=edges,
             iterations=iterations,
             ctx=ctx,
             fr=fr,
+            order=order,
+            inst=inst,
             policies=policies,
         )
         return
@@ -424,11 +575,14 @@ def _visit(
         _visit_loop(
             node,
             path,
+            spec=spec,
             states=states,
             edges=edges,
             iterations=iterations,
             ctx=ctx,
             fr=fr,
+            order=order,
+            inst=inst,
             policies=policies,
         )
         return
@@ -437,11 +591,14 @@ def _visit(
         _visit_branch(
             node,
             path,
+            spec=spec,
             states=states,
             edges=edges,
             iterations=iterations,
             ctx=ctx,
             fr=fr,
+            order=order,
+            inst=inst,
             item=item,
             has_item=has_item,
             iter_index=iter_index,
@@ -466,65 +623,117 @@ def _visit_parallel(
     node: Node,
     path: str,
     *,
+    spec: str,
     states: dict[str, InstanceState],
     edges: set[str],
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
+    order: Ordering,
+    inst: dict[str, str],
     item: Any,
     has_item: bool,
     iter_index: int | None,
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
-    """Fan-out with intra-block `needs` edges, honouring declined edges (WF2-R18)."""
-    by_id: dict[str, tuple[str, Node]] = {}
-    for i, child in enumerate(node.children):
-        if child.id:
-            by_id[child.id] = (f"{path}.children[{i}]", child)
+    """Fan-out. Every leg is visited; `_ordering_satisfied` decides which may run.
 
+    The `needs` gate used to live HERE, over a sibling-only `by_id` map, which is why a
+    `needs` naming anything else was refused by the validator and a `needs` declared anywhere
+    but a parallel child was silently inert. `PP-2` moved it into `_visit`, where the derived
+    graph applies to every node at any depth — so a leg's inner leaf can wait on another leg's
+    inner leaf, which is the cross-container diamond the tree shape used to make inexpressible.
+    """
     for i, child in enumerate(node.children):
         cpath = f"{path}.children[{i}]"
         # `_derive`, not the stored state: a `branch` stores DONE the moment it routes,
         # and testing the stored value here would skip past the case it selected.
         if _is_terminal(_derive(child, cpath, states, edges, iterations, ctx)):
             continue
-        # Gate on `needs`: a predecessor satisfies a need once it is TERMINAL — done,
-        # degraded, skipped or failed alike. "After" is the whole contract; what a failure
-        # then means is the child's `on_error` policy, not the scheduler's business.
-        #
-        # An explicitly DECLINED edge is different: it will never be satisfied by
-        # execution, so this child is unreachable and gets skipped rather than waited on.
-        ready = True
-        for need in child.needs:
-            if child.id and _edge_declined(edges, need, child.id):
-                if not _is_terminal(_state_of(states, cpath)):
-                    fr.to_skip.append(cpath)
-                ready = False
-                break
-            entry = by_id.get(need)
-            if entry is None:
-                # An unresolvable need is a validation error, not a runtime deadlock;
-                # treat it as satisfied so the run surfaces the real problem downstream.
-                continue
-            npath, nnode = entry
-            if not _is_terminal(_derive(nnode, npath, states, edges, iterations, ctx)):
-                ready = False
-                break
-        if ready:
-            _visit(
-                child,
-                cpath,
-                states=states,
-                edges=edges,
-                iterations=iterations,
-                ctx=ctx,
-                fr=fr,
-                enabled=True,
-                item=item,
-                has_item=has_item,
-                iter_index=iter_index,
-                policies=policies,
-            )
+        _visit(
+            child,
+            cpath,
+            spec=f"{spec}.children[{i}]",
+            states=states,
+            edges=edges,
+            iterations=iterations,
+            ctx=ctx,
+            fr=fr,
+            enabled=True,
+            order=order,
+            inst=inst,
+            item=item,
+            has_item=has_item,
+            iter_index=iter_index,
+            policies=policies,
+        )
+
+
+def _ordering_satisfied(
+    node: Node,
+    path: str,
+    spec: str,
+    *,
+    states: dict[str, InstanceState],
+    edges: set[str],
+    iterations: dict[str, int],
+    ctx: BindingContext,
+    fr: Frontier,
+    order: Ordering,
+    inst: dict[str, str],
+) -> bool:
+    """May this node be visited yet, given the ordering its bindings and `needs` imply?
+
+    Three outcomes, and the difference between the last two is the whole of WF2-R18:
+
+    * **Satisfied** — every producer is TERMINAL (done, degraded, skipped, failed alike).
+      "After" is the whole contract; what a failure then MEANS is the reader's `on_error`
+      policy, not the scheduler's business.
+    * **Not yet** — a producer is still live. Return False and visit nothing; the next tick
+      re-derives. This branch must never skip anything: skipping a reader whose producer is
+      merely pending would make a downstream join fire early on a live leg, and a join that
+      fires early produces a plausible WRONG answer, which is worse than a hang.
+    * **Unreachable** — a producer whose OUTPUT this node binds went SKIPPED, or the edge was
+      explicitly declined. The output will never exist, so the reader can neither wait (a
+      hang) nor run (a certain binding failure). It is skipped, which makes it terminal, which
+      lets the join behind it proceed.
+
+    Only a DATAFLOW edge can make a reader unreachable. A plain `needs` onto a skipped node is
+    SATISFIED — that is precisely how a join stays off an untaken leg — and treating it as
+    unreachable instead would cascade a skip along every ordering edge in the run.
+    """
+    deps = order.deps.get(spec)
+    if not deps:
+        return True
+    satisfied = True
+    for producer_spec, producer_id, carries_data in deps:
+        # An explicitly declined edge can never be satisfied by execution, whatever it
+        # carries: something considered this path and rejected it.
+        if node.id and _edge_declined(edges, producer_id, node.id):
+            _mark_unreachable(path, states, fr)
+            return False
+        ppath = _producer_instance(producer_spec, order, inst)
+        if ppath is None:
+            continue  # not a single producer instance — see `_producer_instance`
+        pnode = order.nodes.get(producer_spec)
+        pstate = (
+            _derive(pnode, ppath, states, edges, iterations, ctx)
+            if pnode is not None
+            else _state_of(states, ppath)
+        )
+        if pstate == InstanceState.SKIPPED and carries_data:
+            _mark_unreachable(path, states, fr)
+            return False
+        if not _is_terminal(pstate):
+            satisfied = False
+    return satisfied
+
+
+def _mark_unreachable(path: str, states: dict[str, InstanceState], fr: Frontier) -> None:
+    """Queue a node the run can never satisfy for SKIPPED. Idempotent: the controller applies
+    `to_skip` once per tick and re-deriving must not queue the same path twice."""
+    if not _is_terminal(_state_of(states, path)) and path not in fr.to_skip:
+        fr.to_skip.append(path)
 
 
 def _edge_declined(declined: set[str], src: str, dst: str) -> bool:
@@ -547,11 +756,14 @@ def _visit_foreach(
     node: Node,
     path: str,
     *,
+    spec: str,
     states: dict[str, InstanceState],
     edges: set[str],
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
+    order: Ordering,
+    inst: dict[str, str],
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """One body instance per item. Item paths are `<path>.body#<i>` — the `#i` suffix is
@@ -652,12 +864,17 @@ def _visit_foreach(
         _visit(
             node.body,
             ipath,
+            spec=f"{spec}.body",
             states=states,
             edges=edges,
             iterations=iterations,
             ctx=ctx,
             fr=fr,
             enabled=True,
+            order=order,
+            # This item's copy of the body, so a producer inside it resolves to THIS item's
+            # instance rather than to another item's or to the undecorated spec path.
+            inst={**inst, f"{spec}.body": ipath},
             item=value,
             has_item=True,
             iter_index=idx,
@@ -669,11 +886,14 @@ def _visit_loop(
     node: Node,
     path: str,
     *,
+    spec: str,
     states: dict[str, InstanceState],
     edges: set[str],
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
+    order: Ordering,
+    inst: dict[str, str],
     policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Sequential iteration: exactly one body instance in flight at a time. Iteration
@@ -688,12 +908,19 @@ def _visit_loop(
     _visit(
         node.body,
         ipath,
+        spec=f"{spec}.body",
         states=states,
         edges=edges,
         iterations=iterations,
         ctx=ctx,
         fr=fr,
         enabled=True,
+        order=order,
+        # The CURRENT iteration. An edge inside the body resolves within this iteration only:
+        # iteration 3 reading iteration 2's output would be a cross-iteration dependency the
+        # engine has no vocabulary for, and it is the previous iteration's instance path that a
+        # rewind invalidates.
+        inst={**inst, f"{spec}.body": ipath},
         iter_index=current,
         policies=policies,
     )
@@ -703,11 +930,14 @@ def _visit_branch(
     node: Node,
     path: str,
     *,
+    spec: str,
     states: dict[str, InstanceState],
     edges: set[str],
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
+    order: Ordering,
+    inst: dict[str, str],
     item: Any,
     has_item: bool,
     iter_index: int | None,
@@ -763,12 +993,15 @@ def _visit_branch(
     _visit(
         case_node,
         cpath,
+        spec=f"{spec}.cases[{label}]" if label != "__default__" else f"{spec}.default",
         states=states,
         edges=edges,
         iterations=iterations,
         ctx=ctx,
         fr=fr,
         enabled=True,
+        order=order,
+        inst=inst,
         item=item,
         has_item=has_item,
         iter_index=iter_index,
