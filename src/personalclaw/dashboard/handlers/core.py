@@ -633,6 +633,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "type": "enum",
         "values": ["reasoning", "chat", "code_tools", "background", "orchestration", "loops"],
     },
+    # WF2LOO-18 — how many consecutive no-progress cycles stall a loop. Runtime-editable
+    # because it is the knob a user reaches for after a loop either nagged too early or
+    # burned cycles before asking for direction. Floor of 2 is structural (the
+    # worker-independent signals compare findings BETWEEN cycles); the ceiling keeps a
+    # typo from parking the detector past any realistic cycle budget.
+    "loops.stagnation_window": {"type": "int", "min": 2, "max": 50},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
     # Gates the poll-based message sources (filesystem/channel apps). The UI

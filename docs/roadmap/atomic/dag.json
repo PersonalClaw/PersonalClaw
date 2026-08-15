@@ -2499,7 +2499,8 @@
         },
         {
           "id": "WF2LOO-18",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1307",
           "deps": [],
           "title": "Give the loops engine a worker-independent progress signal",
           "scope": "`loop/watchdog.check_stagnation` is the loops engine's only progress detector and it reads a field the WORKER writes: `all(int(f.get(\"new_findings_count\", 1) or 0) == 0 for f in recent)`. `agents/defaults.py:89` instructs the agent to emit `new_findings_count`, and `loop/kinds/{goal,research}.py` prompt for it. The default when the key is absent is `1` — \"progressing\". So a worker reporting any nonzero count is immune to stagnation detection forever, and a worker that omits the field is immune by default. The workflows side has a worker-INDEPENDENT backstop (`resilience.check_breaker`'s byte-identical output hashing, plus `loop_middleware`'s call and fix fingerprints); loops has only `_MAX_CONSECUTIVE_ERRORS = 2` on turn FAILURES and a wall-clock unresponsive deadline, so a confidently-looping worker producing fresh junk trips nothing. `_STAGNATION_WINDOW = 5` is also a module constant while the middleware's equivalent window is configurable.",
@@ -7979,11 +7980,6 @@
         "plan": "WF2LOO"
       },
       {
-        "id": "WF2LOO-18",
-        "title": "Give the loops engine a worker-independent progress signal",
-        "plan": "WF2LOO"
-      },
-      {
         "id": "WF2UNI-12",
         "title": "Retire the collapsed planning surfaces: delete legacy chat plan-mode (plan_memory), planning/ module + loop plan-walkthrough, and loop classifiers",
         "plan": "WF2UNI"
@@ -9882,9 +9878,9 @@
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
         "total_atoms": 18,
-        "done": 15,
+        "done": 16,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 1
       },
       {

@@ -31,10 +31,30 @@ from personalclaw.loop.loop import LoopStatus
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECS = 5
-_STAGNATION_WINDOW = 5
+#: Fallback for ``loops.stagnation_window`` when no config is reachable (WF2LOO-18).
+#: Two is the floor the detectors need: content identity is a comparison BETWEEN cycles,
+#: so a window of one can only ever compare a finding with itself.
+DEFAULT_STAGNATION_WINDOW = 5
+_MIN_STAGNATION_WINDOW = 2
 _MAX_CONSECUTIVE_ERRORS = 2
 _FIRST_CYCLE_GRACE_SECS = 600
 _MAX_TURN_SECS = 1800
+
+#: Finding keys that are BOOKKEEPING rather than work product. `cycle` changes every
+#: cycle by construction and `new_findings_count` is the worker's own progress claim —
+#: leaving either in the content hash would let a worker defeat the hash by incrementing
+#: a counter next to unchanged output, which is the exact evasion WF2LOO-18 closes.
+_NON_CONTENT_KEYS = frozenset(
+    {"cycle", "new_findings_count", "task_id", "timestamp", "ts", "created_at", "updated_at"}
+)
+
+#: Finding keys that record what a cycle went and DID — the loops-side analog of a tool
+#: call. The shipped kinds write `sources_checked` (goal/research) and `files_touched`
+#: (general/sdlc); `tool_calls`/`calls`/`commands` are honored for a kind that records
+#: raw calls. A window where any cycle recorded none of these leaves this signal SILENT
+#: (the atom's "where a cycle records tool calls") — an all-empty window is trivially
+#: identical, and treating that as a stall would stall every kind that records nothing.
+_CALL_RECORD_KEYS = ("tool_calls", "calls", "commands", "sources_checked", "files_touched")
 
 
 def registry_key(loop_id: str) -> str:
@@ -48,13 +68,117 @@ def _unresponsive_deadline(idle_secs: int) -> int:
     return max(_FIRST_CYCLE_GRACE_SECS, (idle_secs or 120) * 3)
 
 
-def check_stagnation(findings: list[dict]) -> bool:
-    """True iff the last ``_STAGNATION_WINDOW`` findings all reported zero new items
-    (the worker is cycling but surfacing nothing) — the goal-ish stall signal."""
-    if len(findings) < _STAGNATION_WINDOW:
-        return False
-    recent = findings[-_STAGNATION_WINDOW:]
-    return all(int(f.get("new_findings_count", 1) or 0) == 0 for f in recent)
+def _finding_content(finding: dict) -> dict:
+    """A finding reduced to its WORK PRODUCT — bookkeeping keys dropped."""
+    return {k: v for k, v in sorted(finding.items()) if k not in _NON_CONTENT_KEYS}
+
+
+def _cycle_calls(finding: dict) -> list[str]:
+    """Fingerprints of the calls/targets this cycle recorded, order-independent.
+
+    Reuses the engine's :func:`workflows.loop_middleware.call_fingerprint`, so "the same
+    call" means the same thing on both work-unit paths. Sorted because re-reading the same
+    three URLs in a different order is the same work, not new work.
+    """
+    from personalclaw.workflows.loop_middleware import call_fingerprint
+
+    out: list[str] = []
+    for key in _CALL_RECORD_KEYS:
+        if key not in finding:
+            continue
+        raw = finding[key]
+        if raw is None or raw == "" or raw == [] or raw == {}:
+            continue
+        items = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+        out.extend(call_fingerprint(key, item) for item in items)
+    return sorted(out)
+
+
+def _repeats_identically(values: list[Any], window: int, label: str) -> str:
+    """Non-empty detail iff ``values`` are byte-identical across the whole window.
+
+    The rule is not re-implemented here: the values are recorded into the engine's
+    :class:`workflows.resilience.BreakerState` (whose ``record`` owns the output hashing)
+    and the verdict comes from :func:`workflows.resilience.check_breaker` — the same
+    byte-identical-output detection the workflow engine already applies. The breaker reads
+    its thresholds off a node's ``config``, so the caller hands it a config-carrying node:
+    a loops CYCLE is the iteration unit the breaker was written for. Imported lazily
+    because ``workflows`` already reaches into ``loop`` (``controller`` → ``loop.gates``),
+    and a module-level import back would close that cycle at import time.
+    """
+    from personalclaw.workflows.models import Node, NodeKind
+    from personalclaw.workflows.resilience import BreakerState, check_breaker
+
+    state = BreakerState()
+    for value in values:
+        state.record(output=value)
+    # identical_streak counts repeats AFTER the first observation, so a window of N
+    # identical cycles is a streak of N-1.
+    node = Node(
+        kind=NodeKind.LOOP,
+        id=f"loop:{label}",
+        config={"identical_streak": max(1, window - 1)},
+    )
+    verdict = check_breaker(node, state)
+    if verdict.tripped and verdict.reason == "identical_output":
+        return verdict.detail
+    return ""
+
+
+def _reported_progress(finding: dict) -> bool | None:
+    """The worker's OWN progress claim for this cycle: True (claims new findings), False
+    (explicitly claims none), or None — the key is absent, so no claim was made.
+
+    None is deliberately not True. Absence used to default to ``1`` ("progressing"), which
+    made a worker that simply never wrote the field permanently immune to the stall check.
+    """
+    if "new_findings_count" not in finding:
+        return None
+    raw = finding["new_findings_count"]
+    if raw is None or raw == "":
+        return False  # a written-but-empty count is a claim of nothing, as before
+    try:
+        return int(raw) > 0
+    except (TypeError, ValueError):
+        return None
+
+
+def check_stagnation(findings: list[dict], *, window: int | None = None) -> str:
+    """Why this loop is stalling, or ``""`` while it is making progress.
+
+    THREE signals over the last ``window`` findings, only the last of which the worker
+    authors — because a detector the worker writes the input to is not a detector:
+
+    1. **Byte-identical work product** (worker-independent). The findings' content —
+       bookkeeping keys removed — is unchanged across the whole window. A worker that
+       re-emits the same cycle report while claiming five new findings trips this.
+    2. **Identical calls** (worker-independent). Every cycle in the window recorded the
+       same set of calls/targets: the prose may be freshly worded, but nothing new was
+       looked at. Silent unless every cycle in the window recorded something.
+    3. **The self-reported count** (kept — it is genuinely informative when honest, and
+       the cheapest of the three). It can no longer be the ONLY signal, it can no longer
+       VETO the two above, and its absence no longer reads as progress: a window where
+       the cycles that spoke all reported zero stalls even if the rest said nothing.
+    """
+    w = max(_MIN_STAGNATION_WINDOW, int(window or DEFAULT_STAGNATION_WINDOW))
+    if len(findings) < w:
+        return ""
+    recent = findings[-w:]
+
+    if detail := _repeats_identically([_finding_content(f) for f in recent], w, "content"):
+        return f"{detail} — the cycle report has not changed"
+
+    calls = [_cycle_calls(f) for f in recent]
+    if all(calls):
+        if detail := _repeats_identically(calls, w, "calls"):
+            return f"{detail} — every cycle checked the same sources"
+
+    claims = [_reported_progress(f) for f in recent]
+    if any(c is True for c in claims):
+        return ""
+    if any(c is False for c in claims):
+        return f"the worker reported no new findings for {w} cycles"
+    return ""
 
 
 class LoopWatchdog:
@@ -603,10 +727,15 @@ class LoopWatchdog:
 
                 self._notify_progress(cid, count, loop.max_cycles)
                 # Stagnation — disabled for monitor goals (a quiet cycle is a valid
-                # no-op there). Gated by the kind's config.
-                if not self._stagnation_disabled(loop) and check_stagnation(findings):
+                # no-op there). Gated by the kind's config. The window is a user knob
+                # (loops.stagnation_window), read per poll so a change applies to the
+                # next cycle without a restart.
+                if not self._stagnation_disabled(loop) and (
+                    why := check_stagnation(findings, window=cfg.stagnation_window)
+                ):
                     store.update_status(cid, LoopStatus.STAGNANT)
-                    self._publish(cid, "stagnant")
+                    logger.info("loop %s stalled: %s", cid, why)
+                    self._publish(cid, "stagnant", {"loop_id": cid, "reason": why})
             else:
                 # 4a. Loop exhausted — autonudge fired its full budget but some
                 # cycles produced no finding (a turn errored before writing one).

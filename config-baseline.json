@@ -755,6 +755,12 @@
     "type": "int"
   },
   {
+    "default": 5,
+    "path": "loops.stagnation_window",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
     "default": 86400,
     "path": "loops.trust_ttl_secs",
     "sensitive": false,

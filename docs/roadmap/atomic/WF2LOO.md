@@ -27,7 +27,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2LOO-15` | ✅ | judge_actors: separate the enforced invariant from the authored one, and rail the claim | `WF2LOO-12` | judge_actors' docstring distinguishes the ENFORCED invariant (judge isolation — plan_judge_session/validate_judge_model called from engine.dispatch_gate) from the AUTHORED-but-unwired one (the worker-transition rule: check_transition/resolve_transition have no production caller because node transitions carry no actor — controller.py's actor belongs to the mutation queue), and names blind_provenance/assemble_judge_evidence as unwired for the same reason; tests/test_workflows_judge_actors_claims.py pins the claim to the call graph in BOTH directions and is proven to fail when the marker is removed AND when a caller is wired while the marker stays; WF2LOO-13's scope names all four functions so the unwired judge surface has ONE owner |
 | `WF2LOO-16` | ⬜ | Reconcile the THIRD verdict vocabulary (loop/judge.CycleVerdict) into the contract | `WF2LOO-13` | `judge_contract.Verdict` absorbs what only `CycleVerdict` carried — `marginal_value` and `regressed` become contract fields with the same 0-5 clamp and the same asymmetric adjudication rule (`loop/judge.adjudicate`: a `done` survives only if the skeptic also says done; a `regressed` survives if EITHER judge flags it) — and `CycleVerdict` is DELETED, not bridged. The loop judge's ground-truth observation (`_observe_ground_truth`: runs the verify command, reads the named deliverable across workspace plus fallback dirs, injects it labelled authoritative) survives unchanged as the loop-side evidence source feeding the contract's `evidence_refs`. Population measured before enforcement, per this program's rule: how many real loop verdicts would satisfy `validate_verdict` is counted BEFORE the proof precondition applies to a loop cycle. Blast radius named: every loop kind that writes a verdict, plus `watchdog._publish_cycle_verdict` and the cockpit's ROI rail / verdict panel which read `marginal_value`/`quality_score`/`regressed` off the persisted shape. |
 | `WF2LOO-17` | ✅ | Give the loop judge a model binding independent of the worker it grades | — | A `loops.judge_use_case` config field is wired through all four config points (dataclass + `_meta`, `load()`, `to_dict()`, the `_EDITABLE_CONFIG` PATCH allowlist) defaulting to `reasoning`, and `assess_cycle` / `assess_cycle_skeptic` / `gates.judge_verdict` resolve it instead of `"loops"`. The docstring's claim becomes true rather than being softened. A test asserts the judge's resolved binding differs from the worker's whenever the two use cases resolve to different entries, and a second asserts the degraded path is unchanged (a judge whose provider cannot start still returns None — defer, never a false complete — and still logs WARNING so the degradation stays diagnosable). Cheap by construction: no new mechanism, one field and three call sites. |
-| `WF2LOO-18` | ⬜ | Give the loops engine a worker-independent progress signal | — | The loops watchdog gains a progress signal the worker cannot author: byte-identical-output detection over the cycle's finding content (the same rule `resilience.check_breaker` already applies, reused rather than reimplemented) and repeated-call fingerprinting where a cycle records tool calls. The self-reported `new_findings_count` is KEPT as a cheap first signal — it is genuinely informative when honest — but it can no longer be the only one, and its absence stops reading as progress. `_STAGNATION_WINDOW` becomes a `LoopsConfig` field wired through all four config points. Verified by a driven loop whose worker reports a nonzero count every cycle while emitting identical content: it now stalls, and the test is proven able to fail by reverting the detector. |
+| `WF2LOO-18` | ✅ | Give the loops engine a worker-independent progress signal | — | The loops watchdog gains a progress signal the worker cannot author: byte-identical-output detection over the cycle's finding content (the same rule `resilience.check_breaker` already applies, reused rather than reimplemented) and repeated-call fingerprinting where a cycle records tool calls. The self-reported `new_findings_count` is KEPT as a cheap first signal — it is genuinely informative when honest — but it can no longer be the only one, and its absence stops reading as progress. `_STAGNATION_WINDOW` becomes a `LoopsConfig` field wired through all four config points. Verified by a driven loop whose worker reports a nonzero count every cycle while emitting identical content: it now stalls, and the test is proven able to fail by reverting the detector. |
 
 ## Atom scopes
 
@@ -429,8 +429,47 @@ exactly where that file says a knob with no dashboard control belongs.
 
 ### `WF2LOO-18` — Give the loops engine a worker-independent progress signal
 
-**Status:** todo
+**Status:** done
 
 `loop/watchdog.check_stagnation` is the loops engine's only progress detector and it reads a field the WORKER writes: `all(int(f.get("new_findings_count", 1) or 0) == 0 for f in recent)`. `agents/defaults.py:89` instructs the agent to emit `new_findings_count`, and `loop/kinds/{goal,research}.py` prompt for it. The default when the key is absent is `1` — "progressing". So a worker reporting any nonzero count is immune to stagnation detection forever, and a worker that omits the field is immune by default. The workflows side has a worker-INDEPENDENT backstop (`resilience.check_breaker`'s byte-identical output hashing, plus `loop_middleware`'s call and fix fingerprints); loops has only `_MAX_CONSECUTIVE_ERRORS = 2` on turn FAILURES and a wall-clock unresponsive deadline, so a confidently-looping worker producing fresh junk trips nothing. `_STAGNATION_WINDOW = 5` is also a module constant while the middleware's equivalent window is configurable.
 
 **Done when:** The loops watchdog gains a progress signal the worker cannot author: byte-identical-output detection over the cycle's finding content (the same rule `resilience.check_breaker` already applies, reused rather than reimplemented) and repeated-call fingerprinting where a cycle records tool calls. The self-reported `new_findings_count` is KEPT as a cheap first signal — it is genuinely informative when honest — but it can no longer be the only one, and its absence stops reading as progress. `_STAGNATION_WINDOW` becomes a `LoopsConfig` field wired through all four config points. Verified by a driven loop whose worker reports a nonzero count every cycle while emitting identical content: it now stalls, and the test is proven able to fail by reverting the detector.
+
+**As landed.** `check_stagnation` now returns a REASON string (empty while progressing) and
+evaluates three signals over the last `loops.stagnation_window` findings, only the last of
+which the worker authors: (1) byte-identical cycle content, with `cycle`/`new_findings_count`
+and the timestamp keys excluded from the hash so a worker cannot buy immunity by
+incrementing a counter beside unchanged output; (2) an identical set of recorded
+calls/targets (`tool_calls`/`calls`/`commands`/`sources_checked`/`files_touched`), which
+catches the worker that re-words its report every cycle while re-reading the same pages —
+the case content hashing misses; (3) the self-reported count, KEPT because it is the
+cheapest signal and honest workers do report zero, but consulted LAST and no longer able to
+veto (1) or (2). Its absence no longer reads as progress: the old `f.get(...,  1)` default
+made silence mean "progressing", so a window whose speaking cycles all reported zero now
+stalls even if the rest said nothing.
+
+**Reuse, not re-derivation (the atom's constraint).** Both observed signals delegate to the
+workflow engine's existing rules — values are recorded into `resilience.BreakerState` and
+the verdict comes from `resilience.check_breaker` (`identical_output`), and call
+normalization uses `loop_middleware.call_fingerprint`. `check_breaker` reads its thresholds
+off a node's `config`, so the loops caller hands it a config-carrying `Node`; a loops CYCLE
+is exactly the iteration unit the breaker was written for. The imports are lazy because
+`workflows` already reaches into `loop` (`controller` → `loop.gates`), so a module-level
+import back would close the cycle at import time. `tests/test_loop_stagnation_signal.py::
+TestReusesTheEngineRules` spies on both engine functions, so a later inline re-implementation
+on the loops side goes red rather than silently drifting from the workflows rule.
+
+**The vacuity trap that shaped signal (2).** `design`/`general`/`sdlc` findings record no
+calls at all, so their fingerprint lists are empty — and an all-empty window is trivially
+"identical". Firing on that would have stalled every loop of those kinds at cycle N. The
+signal is therefore silent unless EVERY cycle in the window recorded something, and a rail
+drives a call-less kind past the window to prove it stays RUNNING. The same reasoning
+anchors signal (3): only kinds whose prompts ask for `new_findings_count` (goal/research)
+can produce an explicit zero, so absence alone can never establish a stall.
+
+`_STAGNATION_WINDOW` is gone; `loops.stagnation_window` (default 5, clamped [2, 50], fail-safe
+to 5) is wired through all four config points and read per poll, so a change applies without a
+restart. The floor of 2 is structural — the two observed signals compare findings BETWEEN
+cycles, so a window of 1 could only compare a cycle with itself. No frontend control, for the
+reason `WF2LOO-17` records: no `LoopsConfig` field has one, and the `loops.*` table in
+`docs/reference/CONFIG-REFERENCE.md` is where a knob without a dashboard control belongs.
