@@ -13,11 +13,12 @@ The facility, its producer vocabulary and its two resolutions live in
 :mod:`personalclaw.ledger.outcomes`; this module is one resolver over all of them, not one
 resolver per producer. Adding a producer means opening questions, not editing this file.
 
-**Two metric sources, two availability rules.** A memory-sourced metric (a decision's ground truth)
-needs a live vector store; with none there is nothing to read, so those questions stay OPEN rather
-than resolving as inconclusive — "nobody could look yet" is a different fact from "the metric is
-unreadable". A ledger-sourced metric (an escalation's answer) is an event the producer wrote
-itself, so it resolves on any box.
+**Three metric sources, two availability rules.** A memory-sourced metric (a decision's ground
+truth) needs a live vector store; with none there is nothing to read, so those questions stay OPEN
+rather than resolving as inconclusive — "nobody could look yet" is a different fact from "the metric
+is unreadable". A ledger-sourced metric (an escalation's answer) is an event the producer wrote
+itself, and a consumption-sourced one (PP-10: did anyone touch the published artifact?) is read off
+the artifact's own timeline and the pin list, so both resolve on any box regardless of embedder.
 
 **Propose, never install.** A graded lesson is a `lesson_batch` proposal through the shared
 human-gated queue — a measured outcome is stronger evidence than a hunch, but it still does not get
@@ -139,7 +140,7 @@ def resolve(service: Any, *, now: float | None = None, max_runs: int = _MAX_RUNS
         return report
     has_vector = bool(getattr(service, "has_vector", False))
 
-    from personalclaw.learning import proposals
+    from personalclaw.learning import consumer_liveness, proposals
     from personalclaw.workflows import journal as journal_mod
     from personalclaw.workflows import store as store_mod
 
@@ -176,6 +177,8 @@ def resolve(service: Any, *, now: float | None = None, max_runs: int = _MAX_RUNS
 
             if question.metric_source == outcomes.SOURCE_LEDGER:
                 measured = outcomes.measure_from_events(question, events)
+            elif question.metric_source == outcomes.SOURCE_CONSUMPTION:
+                measured = consumer_liveness.measure_consumption(question)
             else:
                 measured = _read_metric(service, question.metric)
             resolution = outcomes.resolution_for(measured)

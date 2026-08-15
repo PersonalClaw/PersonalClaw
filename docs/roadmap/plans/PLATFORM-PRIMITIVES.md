@@ -1,10 +1,6 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** IN PROGRESS — 3 of 16 atoms shipped (`PP-4` ledger extraction, `PP-1`
-`WF_UNORDERED_DEP` and `PP-3` the `output_contract` reader cross-check, all 2026-08-14 — see
-`## Execution log`). Startable now: `PP-2` (unblocked by `PP-1`), `PP-6`, `PP-8`, `PP-9`, `PP-11`.
-`PP-5` and `PP-14` are unblocked by `WF2LOO-16`. `PP-7` still waits on `PP-6`. 16 atoms in
-[`../atomic/PP.md`](../atomic/PP.md).
+**Status:** IN PROGRESS — 6 of 16 atoms shipped (`PP-4` ledger extraction, `PP-1` `WF_UNORDERED_DEP`, `PP-3` the `output_contract` reader cross-check, `PP-9` the general outcome record, `PP-11` the `AdmissionPolicy` seam, and `PP-10` consumer-liveness detection, all 2026-08-14 — see `## Execution log`). Startable now: `PP-2` (unblocked by `PP-1`), `PP-6`/`PP-8` (by `PP-4`), `PP-12` (by `PP-11`), and `PP-5`/`PP-14` (by `WF2LOO-16`). `PP-7` waits on `PP-6`, `PP-13` on `PP-12`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
 **Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` the ledger extraction and `PP-9` the general
 outcome record, both 2026-08-14 — see `## Execution log`). Five startable now (`PP-1`, `PP-6`,
 `PP-8`, `PP-10`, `PP-11`): `PP-4` unblocked four, and `PP-9` landing unblocked `PP-10`. `PP-5` still
@@ -597,3 +593,43 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   additively (two independent projection functions) and resolves by keeping both. No shared symbol is
   touched. `PP-4`'s ledger-boundary rail stays green: this work lives in `workflows/`, which may import
   `ledger`; the reverse import the rail guards is untouched.
+- **2026-08-14 — DONE (`PP-10`): consumer-liveness detection.** `learning/consumer_liveness.py`
+  sweeps every work unit's graded publish outcomes and files ONE `retirement` proposal for a unit
+  whose last `DORMANCY_CYCLES` (3) matured cycles all went untouched. "Consumer touch" is observed
+  entirely through writers that already exist — an artifact `referenced` / `edited` / `reverted`
+  event whose actor is not `agent` (`record_impression` from the dashboard's
+  `POST /api/artifacts/{slug}/events` and from `chat_runner`; the `update`/`revert` routes), or the
+  slug in `entity_settings/pinned_artifacts.json`. `created` and an agent `iterated` are excluded, or
+  every work unit would look consumed by itself. Driven on the curator tick in `history.py`
+  immediately AFTER `outcome_resolver.resolve`, so a cycle that matured this tick is in the window
+  rather than one tick late. Stateless: no new file, no new `StateEntry`, no counter — idempotency is
+  the proposal queue's own fingerprint plus decision memory.
+
+- **2026-08-14 — DEVIATION (`PP-10`): a THIRD metric source, and the publish producer moved onto it.**
+  `PP-9` opened the publish question against `SOURCE_MEMORY` with a semantic key
+  (`artifact.<slug>.consumed`) nothing writes, so it always closed `inconclusive` and its own docstring
+  handed the counter to `PP-10`. Rather than write that counter — a second store the atom exists to
+  avoid — `ledger/outcomes.py` gains `SOURCE_CONSUMPTION` and `engine._open_publish_outcome` declares
+  it. Consequences: the publish bet now grades as a real `measured` 1.0/0.0, and it grades on a box
+  with NO vector store (the memory-source availability gate no longer applies to it). The reader lives
+  in `learning/`, not `ledger/` — reading a provider is I/O, and `PP-4`'s rail keeps `ledger/` pure.
+  `consumption_metric()` / `slug_from_metric()` are the one place the metric name is built and parsed,
+  because the resolution record carries the metric and not the slug.
+
+- **2026-08-14 — MEASURED (`PP-10`): the firing population before the control got teeth.** Per this
+  program's standing rule (`PP-1`, `PP-3`, `WF2LOO-18`): **0 of the 19 bundled templates declare a
+  `publish:` node** (census over `workflows/bundled/*/workflow.json` for `config.publish` at any
+  nesting), so on a fresh or seeded install the sweep can fire on ZERO work units and no scoping-down
+  was needed. Firing requires a user-authored publishing work unit, at least three runs of it, and
+  every recent artifact untouched past its 7-day horizon. Three further anti-nag guards, each tested:
+  one touch anywhere in the window is `LIVE`; an `inconclusive` cycle is `INSUFFICIENT` and never
+  `DORMANT`; and the proposal BODY is stable per work unit (the volatile slugs ride in
+  `evidence_refs`, outside the fingerprint) so a re-file REINFORCES the one row and a REJECTED finding
+  is never re-filed.
+
+- **2026-08-14 — DISCOVERY (`PP-10`): an un-versioned artifact edit leaves no timeline event.**
+  `NativeArtifactProvider.update()` appends its `edited`/`iterated` event only on the
+  `snapshot=True` branch, and `PATCH /api/artifacts/{slug}` defaults `snapshot` to False — so a
+  content edit without a version bump is invisible to any consumer of the artifact timeline, this
+  sweep included. Left as-is and recorded in the module docstring: widening it changes artifact event
+  semantics for every timeline consumer. The failure direction is the safe one — a missed touch can

@@ -1378,6 +1378,23 @@ class HistoryConsolidator:
         except Exception:
             logger.debug("Outcome resolver failed", exc_info=True)
 
+        # PP-10: with the publish bets just graded, ask which work units nobody reads. Runs AFTER
+        # the resolver on purpose — the sweep reads resolutions, so grading first means a cycle that
+        # matured this tick is in the window rather than a tick late. Reports and PROPOSES only:
+        # nothing here can pause or retire a work unit, because "nobody looked yet" and "nobody will
+        # ever look" are different facts and only the user knows which.
+        liveness_note = ""
+        try:
+            from personalclaw.learning import consumer_liveness
+
+            rep = consumer_liveness.sweep()
+            if rep.get("dormant") or rep.get("proposed"):
+                liveness_note = (
+                    f"consumer liveness dormant={rep['dormant']} proposed={rep['proposed']}"
+                )
+        except Exception:
+            logger.debug("Consumer-liveness sweep failed", exc_info=True)
+
         # LEARN-R16 / criterion 9: grade every accepted change whose post-acceptance horizon has
         # elapsed. Reads the Run Ledger (not semantic memory) so it runs on every box regardless of
         # embedder; inert-by-data when nothing has been accepted, gated on `learning.attribution_*`
@@ -1409,7 +1426,7 @@ class HistoryConsolidator:
                 for rec in records
             ]
             if not candidates:
-                return "; ".join(p for p in (outcomes_note, attribution_note) if p)
+                return "; ".join(p for p in (outcomes_note, liveness_note, attribution_note) if p)
             active_dates = store.active_days()
             report = curator_mod.run_aging(candidates, active_dates=active_dates, mode="")
             curator_mod.file_review_proposals(report)
@@ -1424,7 +1441,11 @@ class HistoryConsolidator:
             if filed:
                 promo_note = f"promotion suggestions filed={filed}"
             summary = report.summary() if (report.changed or report.review_proposals) else ""
-            return "; ".join(p for p in (summary, promo_note, outcomes_note, attribution_note) if p)
+            return "; ".join(
+                p
+                for p in (summary, promo_note, outcomes_note, liveness_note, attribution_note)
+                if p
+            )
         finally:
             store.close()
 
