@@ -183,6 +183,11 @@ class Artifact:
     # artifacts library — ARTIFACTS S1). "" = uncollected. Tolerant read: pre-existing
     # meta.json without the key loads as "" (clean break under the pre-1.0 banner).
     collection: str = ""
+    # Containing library folder (ArtifactFolderStore id) — PEP-6. "" = unfiled (the
+    # library root). Tolerant read: a pre-existing meta.json without the key loads as
+    # "". Distinct from ``collection``: a collection is a free-form label the model may
+    # author, a folder is a user-placed node in the side-rail tree.
+    folder_id: str = ""
     # Frozen at creation: this body is a RECORD of something, not a working document, so
     # every content-mutating store method refuses it (SESSION-MANAGEMENT SM-9). The one
     # writer today is the session-share path — a shared chat transcript that could be
@@ -209,6 +214,7 @@ class Artifact:
             "source_path": self.source_path,
             "project_id": self.project_id,
             "collection": self.collection,
+            "folder_id": self.folder_id,
             "mime": self.mime,
             # Persisted AND on the wire: the store reads it to refuse a mutation, the
             # dashboard reads it to stop offering one. A flag enforced only server-side
@@ -239,6 +245,7 @@ class Artifact:
             live_dirty=bool(d.get("live_dirty", False)),
             project_id=str(d.get("project_id", "")),
             collection=str(d.get("collection", "")),
+            folder_id=str(d.get("folder_id", "")),
             mime=str(d.get("mime", "")),
             readonly=bool(d.get("readonly", False)),
         )

@@ -15,6 +15,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.artifacts import registry
+from personalclaw.artifacts.folders import ArtifactFolder, ArtifactFolderStore, delete_folder
 from personalclaw.artifacts.models import Artifact, ext_for_mime
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -84,6 +85,9 @@ async def api_artifacts_list(request: web.Request) -> web.Response:
         source_path=request.query.get("source_path"),
         project_id=request.query.get("project_id"),
         collection=request.query.get("collection"),
+        # `.get` (not `.get(..., "")`): an ABSENT ?folder means every folder, while
+        # an empty `?folder=` means the unfiled bucket. See provider.list.
+        folder=request.query.get("folder"),
     )
     return web.json_response({"artifacts": [_serialize(a) for a in arts]})
 
@@ -600,6 +604,143 @@ async def api_artifacts_pin(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "pinned": want, "pins": pins})
 
 
+def _folder_store(prov: Any) -> ArtifactFolderStore:
+    """A folder store rooted at the SAME tree the provider owns, so a provider on a
+    custom root (tests, a dev home) never writes folders into the default home."""
+    return ArtifactFolderStore(getattr(prov, "root", None))
+
+
+def _serialize_folder(folder: ArtifactFolder) -> dict[str, Any]:
+    d = folder.to_dict()
+    d["name"] = _redact(d.get("name", ""))
+    return d
+
+
+async def api_artifact_folders(request: web.Request) -> web.Response:
+    """GET /api/artifacts/folders — the library folder tree (flat, parent_id-linked)."""
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    folders = _folder_store(prov).list()
+    return web.json_response({"folders": [_serialize_folder(f) for f in folders]})
+
+
+async def api_artifact_folder_create(request: web.Request) -> web.Response:
+    """POST /api/artifacts/folders — create a folder (``{name, parent_id?, icon?}``)."""
+    state = request.app["state"]
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.folder_create", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    try:
+        folder = _folder_store(prov).create(
+            str(body.get("name", "")),
+            parent_id=str(body.get("parent_id", "") or ""),
+            icon=str(body.get("icon", "") or ""),
+        )
+    except ValueError as exc:
+        _audit(request, "artifact.folder_create", "denied", str(exc))
+        return web.json_response({"error": str(exc)}, status=400)
+    _audit(request, "artifact.folder_create", "allowed", folder.id)
+    return web.json_response(_serialize_folder(folder), status=201)
+
+
+async def api_artifact_folder_update(request: web.Request) -> web.Response:
+    """PATCH /api/artifacts/folders/{id} — rename / re-nest / reorder. No artifact is touched."""
+    state = request.app["state"]
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.folder_update", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    fid = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    try:
+        folder = _folder_store(prov).update(
+            fid,
+            name=str(body["name"]) if "name" in body else None,
+            parent_id=str(body["parent_id"] or "") if "parent_id" in body else None,
+            order=int(body["order"]) if "order" in body else None,
+            icon=str(body["icon"] or "") if "icon" in body else None,
+        )
+    except (ValueError, TypeError) as exc:
+        _audit(request, "artifact.folder_update", "denied", str(exc))
+        return web.json_response({"error": str(exc)}, status=400)
+    if folder is None:
+        return web.json_response({"error": "not found"}, status=404)
+    _audit(request, "artifact.folder_update", "allowed", fid)
+    return web.json_response(_serialize_folder(folder))
+
+
+async def api_artifact_folder_delete(request: web.Request) -> web.Response:
+    """DELETE /api/artifacts/folders/{id} — members fall back to unfiled; nothing is destroyed."""
+    state = request.app["state"]
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.folder_delete", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    if prov.readonly:
+        return web.json_response({"error": f"provider '{prov.name}' is read-only"}, status=400)
+    fid = request.match_info["id"]
+    deleted, unfiled = delete_folder(_folder_store(prov), prov, fid)
+    if not deleted:
+        return web.json_response({"error": "not found"}, status=404)
+    _audit(request, "artifact.folder_delete", "allowed", fid)
+    return web.json_response({"ok": True, "unfiled": unfiled})
+
+
+async def api_artifact_set_folder(request: web.Request) -> web.Response:
+    """PATCH /api/artifacts/{slug}/folder — file an artifact (``{folder_id}``; "" = unfiled).
+
+    Its own route rather than a field on PATCH /{slug}: that handler routes through
+    ``provider.update``, which bumps ``updated_at``. Filing must not.
+    """
+    state = request.app["state"]
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.set_folder", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    if prov.readonly:
+        return web.json_response({"error": f"provider '{prov.name}' is read-only"}, status=400)
+    slug = request.match_info["slug"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    folder_id = str(body.get("folder_id", "") or "").strip()
+    if folder_id and not _folder_store(prov).exists(folder_id):
+        return web.json_response({"error": "folder not found"}, status=400)
+    try:
+        art = prov.set_folder(slug, folder_id)
+    except (ValueError, PermissionError) as exc:
+        _audit(request, "artifact.set_folder", "denied", slug)
+        return web.json_response({"error": str(exc)}, status=400)
+    if art is None:
+        return web.json_response({"error": "not found"}, status=404)
+    _audit(request, "artifact.set_folder", "allowed", slug)
+    return web.json_response({"ok": True, "folder_id": art.folder_id})
+
+
 def register_artifact_routes(app: web.Application) -> None:
     """Register /api/artifacts/* routes. The native provider self-registers
     lazily via the registry; no startup registration needed."""
@@ -608,6 +749,13 @@ def register_artifact_routes(app: web.Application) -> None:
     # BEFORE `/{slug}`: aiohttp matches in registration order, so a dynamic `{slug}` registered
     # first would swallow the literal `pinned` path and answer it as an artifact named "pinned".
     app.router.add_get("/api/artifacts/pinned", api_artifacts_pinned)
+    # Same reason as `pinned`: the literal `folders` paths must precede `{slug}`, and
+    # `/folders/{id}` must precede `/{slug}/folder` so a 12-hex folder id is never
+    # read as an artifact slug.
+    app.router.add_get("/api/artifacts/folders", api_artifact_folders)
+    app.router.add_post("/api/artifacts/folders", api_artifact_folder_create)
+    app.router.add_patch("/api/artifacts/folders/{id}", api_artifact_folder_update)
+    app.router.add_delete("/api/artifacts/folders/{id}", api_artifact_folder_delete)
     app.router.add_get("/api/artifacts/{slug}", api_artifact_detail)
     app.router.add_patch("/api/artifacts/{slug}", api_artifact_update)
     app.router.add_delete("/api/artifacts/{slug}", api_artifact_delete)
@@ -619,3 +767,4 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_get("/api/artifacts/{slug}/events", api_artifact_events)
     app.router.add_post("/api/artifacts/{slug}/events", api_artifact_record_event)
     app.router.add_post("/api/artifacts/{slug}/pin", api_artifacts_pin)
+    app.router.add_patch("/api/artifacts/{slug}/folder", api_artifact_set_folder)

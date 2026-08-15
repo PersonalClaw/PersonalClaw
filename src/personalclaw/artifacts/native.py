@@ -97,6 +97,13 @@ class NativeArtifactProvider(ArtifactProvider):
     def display_name(self) -> str:
         return "Local filesystem"
 
+    @property
+    def root(self) -> Path:
+        """The artifacts tree this provider owns. Public so the folder store can be
+        pointed at the SAME tree (a test provider on a tmp root must not have its
+        folders land in the real home)."""
+        return self._root
+
     # ── path helpers (security spine) ──
 
     def _ensure_root(self) -> Path:
@@ -370,6 +377,7 @@ class NativeArtifactProvider(ArtifactProvider):
         source_path: str | None = None,
         project_id: str | None = None,
         collection: str | None = None,
+        folder: str | None = None,
     ) -> list[Artifact]:
         root = self._ensure_root()
         with self._lock:
@@ -390,6 +398,11 @@ class NativeArtifactProvider(ArtifactProvider):
             if project_id and art.project_id != project_id:
                 continue
             if collection and art.collection != collection:
+                continue
+            # Present-vs-absent, unlike every filter above: None = all folders,
+            # "" = only unfiled, id = that folder. `if folder and ...` would make
+            # the unfiled bucket unaskable (PEP-6).
+            if folder is not None and art.folder_id != folder:
                 continue
             if q:
                 hay = f"{art.name}\n{art.description}\n{' '.join(art.tags)}".lower()
@@ -798,6 +811,30 @@ class NativeArtifactProvider(ArtifactProvider):
                 self._write_meta(art)
 
             # Return the live view (content + live_dirty) like get().
+            return self.get(slug)
+
+    def set_folder(self, slug: str, folder_id: str) -> Artifact | None:
+        """File an artifact into a library folder — metadata only, no ``updated_at`` bump.
+
+        The no-bump is the contract, not an optimization: ``updated_at`` means "the
+        content changed", and the library (plus ``list``'s sort) is ordered by it.
+        If tidying bumped it, dragging ten artifacts into a folder would rewrite the
+        whole recency order and bury whatever the user was actually working on.
+
+        No ``_refuse_if_readonly`` guard, deliberately: that guard covers the three
+        CONTENT-mutating methods, and a frozen record (a shared transcript) is still
+        the owner's to organize. Filing changes no body and no version.
+
+        Existence of the folder is the caller's check (the route validates against
+        ``ArtifactFolderStore``) — this method is the storage primitive, and
+        ``delete_folder`` needs to write ``""`` regardless of tree state.
+        """
+        with self._lock:
+            art = self._read_meta(slug)
+            if art is None:
+                return None
+            art.folder_id = (folder_id or "").strip()
+            self._write_meta(art)
             return self.get(slug)
 
     def delete(self, slug: str) -> bool:

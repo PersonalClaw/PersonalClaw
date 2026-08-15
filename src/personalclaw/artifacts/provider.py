@@ -42,13 +42,29 @@ class ArtifactProvider(ABC):
         source_path: str | None = None,
         project_id: str | None = None,
         collection: str | None = None,
+        folder: str | None = None,
     ) -> list[Artifact]:
-        """Return matching artifacts (without ``content``)."""
+        """Return matching artifacts (without ``content``).
+
+        ``folder`` is present-vs-absent, not truthy: ``None`` means every folder
+        (no filter), ``""`` means only *unfiled* artifacts, and an id means that
+        folder. A truthy check would make the unfiled bucket unaskable.
+        """
         ...
 
     def find_similar(self, name: str, *, kind: str | None = None) -> Artifact | None:
         """The existing artifact whose name matches *name* by slug, or None — the
         list-before-save dedup hint. Default returns None (a backend opts in)."""
+        return None
+
+    def set_folder(self, slug: str, folder_id: str) -> Artifact | None:
+        """File *slug* into a library folder (``""`` = unfiled). Metadata only.
+
+        Deliberately NOT part of ``update``: filing is organization, not a content
+        change, so it must not bump ``updated_at`` (that would reorder every
+        recency-sorted view the moment a user tidied their library) and must not
+        snapshot a version. Default returns None (a backend opts in).
+        """
         return None
 
     @abstractmethod
