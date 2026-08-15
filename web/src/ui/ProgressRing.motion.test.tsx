@@ -29,7 +29,7 @@ function offsetOf(container: HTMLElement): number {
 
 describe('the arc tweens between values rather than jumping', () => {
   it('passes through intermediate offsets after pct changes', async () => {
-    const { container, rerender } = render(<ProgressRing pct={0} tone="var(--color-primary)" />)
+    const { container, rerender } = render(<ProgressRing label="Cycle progress" pct={0} tone={"var(--color-primary)"} />)
 
     // Mount is silent (initial={false}) — the first paint is already the true value, not zero
     // swept up from nothing.
@@ -37,7 +37,7 @@ describe('the arc tweens between values rather than jumping', () => {
 
     const seen = new Set<number>()
     await act(async () => {
-      rerender(<ProgressRing pct={1} tone="var(--color-primary)" />)
+      rerender(<ProgressRing label="Cycle progress" pct={1} tone={"var(--color-primary)"} />)
     })
     for (let i = 0; i < 40; i++) {
       await act(async () => { await new Promise((r) => setTimeout(r, 16)) })
@@ -58,9 +58,9 @@ describe('the arc tweens between values rather than jumping', () => {
 
   it('a full ring is offset 0 and an empty ring is the whole circumference', () => {
     // The two endpoints callers rely on: a completed loop reads full, a fresh one reads empty.
-    const full = render(<ProgressRing pct={1} tone="red" />)
+    const full = render(<ProgressRing label="Cycle progress" pct={1} tone={"red"} />)
     expect(offsetOf(full.container as HTMLElement)).toBeCloseTo(0, 1)
-    const empty = render(<ProgressRing pct={0} tone="red" />)
+    const empty = render(<ProgressRing label="Cycle progress" pct={0} tone={"red"} />)
     expect(offsetOf(empty.container as HTMLElement)).toBeCloseTo(C, 1)
   })
 })
