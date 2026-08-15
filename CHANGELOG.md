@@ -10,6 +10,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Evaluation scenarios are now yours to keep, version and extend.** The four bundled scenarios
+  install into `~/.personalclaw/evals/scenarios/` on first use instead of hiding inside the
+  installation, so `personalclaw eval` runs — and the offline eval substrate scores — the same
+  library you can edit and add your own scenarios to. An upgrade refreshes a bundled scenario only
+  when it ships a newer version than the copy in your home, so your edits survive updates. Each
+  scenario also names the seeded fixture home it runs over, so a run starts from a known clean state
+  rather than from whatever your home happens to contain — and nothing an eval run does can touch
+  your real home. Every recorded eval result now carries a pin (which scenario, which models, which
+  prompts, which config), and a result that can't be attributed is refused rather than filed
+  misleadingly: "did the score move, or did something underneath it move?" is now answerable.
 - **Attention notifications can now ask for a second opinion before interrupting you.** Turn on
   verification for a proposal or agent-request rule and, before its notification fires, a cheap
   background check judges whether the claim holds. Only a clear refutation withholds it — every

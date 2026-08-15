@@ -1617,7 +1617,7 @@
         {
           "id": "ES-2",
           "title": "RunPin + versioned scenario library migration (amendment E1)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 E1 — evals/pinning.py RunPin, Loop-1 scenario library, results.tsv pin",
           "done_when": "eval/scenarios/*.json migrate to versioned ~/.personalclaw/evals/scenarios/ over named seeded fixture homes; every matrix/study/gate run persists a RunPin (scenario_sha256, model_fingerprint, prompt_pack_sha256, config_snapshot_ref); re-running a scenario after a model rebind yields a different fingerprint row with the same scenario hash, and a run without a pin cannot be written to results.tsv",
           "deps": [
@@ -7599,11 +7599,6 @@
         "plan": "EIAT"
       },
       {
-        "id": "ES-2",
-        "title": "RunPin + versioned scenario library migration (amendment E1)",
-        "plan": "ES"
-      },
-      {
         "id": "ES-3",
         "title": "Retrieval eval harness with per-arm P@k/R@k ablation (both stores, read-only)",
         "plan": "ES"
@@ -9803,9 +9798,9 @@
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 11,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {

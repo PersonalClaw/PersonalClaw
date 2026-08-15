@@ -11,7 +11,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
 | `ES-1` | ⬜ | Shared eval substrate: store, experiment-matrix runner, subprocess isolation fix, config + SEL wiring | — | matrix runner (MatrixSpec/run_matrix) executes a scenario in a spawned child process with the PERSONALCLAW_WORKSPACE override in the child only (parent env never mutated); budget preflight, three-state passed/failed/verifier_absent aggregates, and per-cell artifact retention land under ~/.personalclaw/evals/matrices/; EvalsConfig round-trips through loader dataclass/load()/to_dict()/_EDITABLE_CONFIG; the evals/ store joins snapshot VALID_COMPONENTS/CORE_FILES and portability export (locked/ excluded); snapshot/restore round-trips it |
-| `ES-2` | ⬜ | RunPin + versioned scenario library migration (amendment E1) | `ES-1` | eval/scenarios/*.json migrate to versioned ~/.personalclaw/evals/scenarios/ over named seeded fixture homes; every matrix/study/gate run persists a RunPin (scenario_sha256, model_fingerprint, prompt_pack_sha256, config_snapshot_ref); re-running a scenario after a model rebind yields a different fingerprint row with the same scenario hash, and a run without a pin cannot be written to results.tsv |
+| `ES-2` | ✅ | RunPin + versioned scenario library migration (amendment E1) | `ES-1` | eval/scenarios/*.json migrate to versioned ~/.personalclaw/evals/scenarios/ over named seeded fixture homes; every matrix/study/gate run persists a RunPin (scenario_sha256, model_fingerprint, prompt_pack_sha256, config_snapshot_ref); re-running a scenario after a model rebind yields a different fingerprint row with the same scenario hash, and a run without a pin cannot be written to results.tsv |
 | `ES-3` | ⬜ | Retrieval eval harness with per-arm P@k/R@k ablation (both stores, read-only) | `ES-1`, `EXT:MEMORY-GRAPH-AND-VAULT:memory-side graph arm + push-context resolver arms for the memory ablation` | arm-masked runner reports P@5/R@5 per arm-mask for BOTH knowledge (HybridRetriever FTS5/graph/vector) and memory recall, run separately and read-only, from a personal-scale qrels set mined from surfacing/volunteer events plus a hand-label card; per-arm marginal contribution is a number and a dark-shipped arm gets its offline verdict before enablement; reports land in matrices/ via scorer:qrels |
 | `ES-4` | ⬜ | Judge benchmark harness → tier-recommendation table | `ES-1` | fixture set (real judged runs, deliberately-bad null probes, forbidden-success-mode cases) runs through the matrix over fixtures × judge tiers × judge_samples 1/3/5; the tier-recommendation table shows agreement-with-known-verdict, strong-vs-null separation, position-swap flip rate, cost and wall time per (rubric-class × tier × samples) with honest failure-mode notes, rendered on a Settings/Learning panel; rebinding a judge to the cheapest adequate tier is one user action on the Models panel |
 | `ES-5` | ⬜ | Pre-registered template A/B studies (the re-opened eval gate) | `ES-1`, `EXT:WORKFLOWS-V2:Run Ledger Slices 0-3 (§5 event table) for real-run input sampling + verdict events`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:proposal queue + LEARN-R2 harvested regression suite` | a flywheel template-diff runs a pre-registered study: k=5 paired old-vs-new over the harvested suite, immutable registration.json (rubric_sha256 pinned; mid-study rubric edit → invalidated), blinded median-of-3 position-swapped judging with agreement floor and judge_unreliable routing, locked/ checks executed supervisor-side in the child output workspace (never rendered into any worker prompt — regression-tested); verdict + agreement rate + per-run artifacts inspectable from the Learning page; a pass emits an evidence unit + results.tsv row, a fail auto-files a demotion/revert proposal |
@@ -34,9 +34,21 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `ES-2` — RunPin + versioned scenario library migration (amendment E1)
 
-**Status:** todo
+**Status:** done
 
 Amendment 2026-07-26 E1 — evals/pinning.py RunPin, Loop-1 scenario library, results.tsv pin
+
+**DONE.** `eval/scenarios/` is deleted; the shipped set is `evals/library/*.json` (each declaring
+`version` + `fixture_home`), installed into `~/.personalclaw/evals/scenarios/` by an idempotent,
+data-keyed backfill (`evals/scenarios.py`) that never clobbers a local edit at an equal-or-higher
+version. `personalclaw eval` and the matrix runner now read that one library. `evals/pinning.py`
+owns `RunPin`; `run_matrix` computes it BEFORE any cell (an incomplete pin refuses the run rather
+than burning spend), persists `matrices/<id>/pin.json` plus a per-cell pin carrying the model-axis
+override, and `store.append_result` requires a complete pin — the ledger's five new pin columns are
+written from the pin, not from the caller. Each cell now also gets its own `PERSONALCLAW_HOME`
+(child env only) seeded from the scenario's named fixture. Measured: a rebind of `active_models.json`
+between two runs yields two `model_fp` values under one `scenario_sha256` (`pin_diff`), and editing
+a scenario turn yields two scenario hashes.
 
 **Done when:** eval/scenarios/*.json migrate to versioned ~/.personalclaw/evals/scenarios/ over named seeded fixture homes; every matrix/study/gate run persists a RunPin (scenario_sha256, model_fingerprint, prompt_pack_sha256, config_snapshot_ref); re-running a scenario after a model rebind yields a different fingerprint row with the same scenario hash, and a run without a pin cannot be written to results.tsv
 

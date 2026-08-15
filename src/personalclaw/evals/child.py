@@ -38,9 +38,10 @@ CELL_RESULT_SENTINEL = "PCLAW_CELL_RESULT:"
 def parse_descriptor(text: str) -> dict:
     """Parse the cell descriptor JSON the parent handed us.
 
-    Shape: ``{"matrix_id", "coords": {axis: value}, "subject", "scorer"}``. The
-    workspace is NOT in here — it arrives via ``PERSONALCLAW_WORKSPACE`` in this
-    process's env (the §1.3 isolation seam)."""
+    Shape: ``{"matrix_id", "coords": {axis: value}, "subject", "scorer",
+    "scenario_path", "fixture_home", "pin"}``. The workspace and the throwaway home
+    are NOT in here — they arrive via ``PERSONALCLAW_WORKSPACE`` /
+    ``PERSONALCLAW_HOME`` in this process's env (the §1.3 isolation seam)."""
     data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("descriptor must be a JSON object")
@@ -86,28 +87,37 @@ def render_result_line(result: dict) -> str:
 # ── scenario resolution + model binding ──────────────────────────────────────
 
 
-def _scenarios_dir() -> Path:
-    """The packaged ``eval/scenarios/`` dir (same set the ``eval`` CLI resolves)."""
-    from personalclaw import eval as _eval_pkg
+def resolve_scenario(descriptor: dict):
+    """Load the :class:`Scenario` the PARENT already resolved for this cell.
 
-    return Path(_eval_pkg.__file__).resolve().parent / "scenarios"
-
-
-def resolve_scenario(subject: str):
-    """Resolve a matrix ``subject`` to a :class:`Scenario`.
-
-    A path to a scenario file wins; otherwise ``subject`` is a bare scenario name
-    under the packaged ``eval/scenarios/`` dir (``.json``/``.yaml``/``.yml``)."""
+    The parent writes an absolute ``scenario_path`` into the descriptor because it
+    is the process that can see the real home's scenario library
+    (:mod:`personalclaw.evals.scenarios`); this child runs with a throwaway
+    ``PERSONALCLAW_HOME`` and must never re-resolve a bare name against it — that
+    would silently run a different file than the one the pin hashed."""
     from personalclaw.eval.scenario import load_scenario
 
-    as_path = Path(subject)
-    if as_path.is_file():
-        return load_scenario(as_path)
-    for ext in (".json", ".yaml", ".yml"):
-        candidate = _scenarios_dir() / f"{subject}{ext}"
-        if candidate.is_file():
-            return load_scenario(candidate)
-    raise FileNotFoundError(f"scenario {subject!r} not found (as a path or a packaged scenario)")
+    raw = str(descriptor.get("scenario_path") or "")
+    if not raw:
+        raise FileNotFoundError("descriptor has no scenario_path (parent must resolve it)")
+    path = Path(raw)
+    if not path.is_file():
+        raise FileNotFoundError(f"scenario file {raw!r} does not exist")
+    return load_scenario(path)
+
+
+def seed_fixture_home(fixture_home: str) -> None:
+    """Seed the cell's ``PERSONALCLAW_HOME`` from the named ``tests_fixtures/`` seed.
+
+    This is the "over named seeded fixture homes" half of ES-2: the scenario declares
+    a fixture by name, and the run starts from that known state instead of from
+    whatever the invoking user's home contains. ``seed()``'s own rails still apply —
+    most importantly it refuses to write ``~/.personalclaw``, so a misconfigured cell
+    can never clobber the real home. ``replace=True`` is safe here because the target
+    is a per-cell temp dir the parent just created."""
+    from personalclaw.seed import seed
+
+    seed(fixture_home, replace=True)
 
 
 def wrap_factory_for_model(base_factory, model: str | None):
@@ -140,8 +150,13 @@ async def _run(descriptor: dict) -> dict:
         return error_result("PERSONALCLAW_WORKSPACE not set in child env")
     ws = Path(ws_raw)
 
-    subject = str(descriptor.get("subject", ""))
-    scenario = resolve_scenario(subject)
+    scenario = resolve_scenario(descriptor)
+
+    # Seed BEFORE the first config read: everything below resolves against
+    # PERSONALCLAW_HOME, and this call is what puts the declared fixture there.
+    fixture_home = str(descriptor.get("fixture_home") or "")
+    if fixture_home:
+        seed_fixture_home(fixture_home)
 
     coords = descriptor.get("coords") or {}
     model = coords.get("model") if isinstance(coords, dict) else None

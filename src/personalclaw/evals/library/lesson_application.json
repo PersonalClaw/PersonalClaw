@@ -1,5 +1,7 @@
 {
   "name": "lesson_application",
+  "version": 1,
+  "fixture_home": "empty",
   "description": "Correct the agent in session 1, verify it applies the correction in session 2. Tests cross-session learning.\n",
   "dimensions": [
     "lesson_application"
