@@ -46,6 +46,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   it. (An editor for slots arrives with the memory dashboard work; today they are reachable through
   the memory API.)
 
+- **PersonalClaw can now try a local model first for background work, and fall back to a cloud
+  model when it can't.** Bind two models to a background use case — say a local one and a cloud one
+  under Reasoning — turn routing on, and PersonalClaw will reach for the local model first, moving
+  on to the next model you bound if it's unavailable or too slow. It only ever reorders the models
+  you already chose: it never adds one, never removes one, and a model that can't be reached still
+  reports a clear error rather than being quietly swapped for something else. Settings → Models →
+  Routing gains a policy table showing exactly which model each kind of request tries first and why,
+  with three ways to overrule it: a mode (off / prefer local / learn from results), a pin (always
+  local, always cloud, or one exact model), and manual reordering. Off by default; changes to the
+  table are recorded to the security event log, since routing decides which models see your prompts.
 - **Apps can now share data with each other, read-only, only when both sides agree.** An app that
   wants to expose its stored data declares `storageShared: true`; an app that wants to read another's
   data names it in `storageRead`. A read is granted only when BOTH are declared — neither app can
