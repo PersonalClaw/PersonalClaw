@@ -1,8 +1,18 @@
 # CI — PR + feature-branch push. Fast verification gate (≤10-min budget).
 # Jobs are the stable ids other roadmap plans reference (CI-RELEASE-ENGINEERING C1):
 # lint · test · web · rails · harness · client. Heavier matrix/coverage/audit live in full.yml (main + nightly).
-# `dco` lives in its own workflow (dco.yml) — it needs pull_request_target so it is not
-# gated behind first-time-contributor run approval.
+#
+# TWO SIBLING WORKFLOWS EXIST BECAUSE THIS ONE CANNOT TALK TO A FORK PR.
+#   dco.yml          pull_request_target — so sign-off is checked without a maintainer first
+#                    approving the run, which is exactly when sign-off tends to be missing.
+#   pr-feedback.yml  workflow_run — posts this workflow's lint remediation into the PR. A
+#                    `pull_request` run from a fork gets a READ-ONLY token whatever its
+#                    `permissions:` asks for, so CI cannot comment on a fork PR itself.
+#
+# Fork PRs from accounts that are not brand new to GitHub run without approval
+# (repo setting `fork-pr-contributor-approval: first_time_contributors_new_to_github`).
+# An account created days ago is still gated, so dco.yml + pr-feedback.yml are what a
+# brand-new contributor hears from first.
 name: CI
 
 on:
@@ -23,8 +33,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: write   # post the remediation comment on failure
+      contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
+                       # regardless, so asking for write here only looked like it worked.
+                       # The remediation comment is posted by pr-feedback.yml instead.
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -69,49 +80,43 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
           exit "$status"
-      # Post the fix into the PR conversation. The violations are otherwise only in the
-      # job log, which contributors miss; every lint red so far has needed a maintainer
-      # to translate it into `make format`.
-      - name: Explain how to fix lint
+      # Hand the violations to pr-feedback.yml instead of commenting from here.
+      #
+      # WHY THIS CANNOT COMMENT ITSELF. A `pull_request` run from a FORK gets a read-only
+      # GITHUB_TOKEN no matter what `permissions:` above asks for, so the github-script step
+      # that used to live here could never post on a fork PR. Measured across every fork PR
+      # this repo has had (#678, #680, #1210, #1211): zero `lint-help` comments, ever. The
+      # contributors who most need the remediation were the only ones structurally unable to
+      # receive it, and the job still went red, so the failure looked like a normal lint red.
+      #
+      # An artifact crosses that boundary. `pr-feedback.yml` runs on `workflow_run` in the
+      # BASE repo's context, where the token really is write-capable, and posts from there.
+      - name: Hand the violations to the feedback workflow
         if: failure() && github.event_name == 'pull_request' && steps.lint.outputs.violations != ''
-        uses: actions/github-script@v7
+        # 🪤 `env:`, NOT `${{ }}` inside `run:`. A `${{ }}` expression is pasted into the shell
+        # script as TEXT before bash sees it, so the violations — which contain ``` fences —
+        # had their backticks read as command substitution. Measured: the artifact came out
+        # 54 bytes holding only the `**black**`/`**flake8**` headers, every actual violation
+        # executed as a command and replaced by its empty output. It is also an injection
+        # hole, since lint output echoes paths and source lines from the PR. Through `env:`
+        # the runner sets the value directly and `"$VIOLATIONS"` expands without re-parsing.
         env:
           VIOLATIONS: ${{ steps.lint.outputs.violations }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p /tmp/lint-feedback
+          printf '%s' "$VIOLATIONS" > /tmp/lint-feedback/violations.md
+          # `workflow_run` payloads carry an EMPTY `pull_requests` array for fork PRs, so the
+          # relay cannot look the number up — it has to be carried across in the artifact.
+          printf '%s' "$PR_NUMBER" > /tmp/lint-feedback/pr.txt
+          wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
+      - name: Upload lint feedback
+        if: failure() && github.event_name == 'pull_request' && steps.lint.outputs.violations != ''
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const marker = '<!-- lint-help -->';
-            const body = [
-              marker,
-              "### `lint` is failing",
-              "",
-              "Most of this is auto-fixable. From the repo root:",
-              "```bash",
-              "source .venv/bin/activate   # or: uv sync --extra dev",
-              "make format                 # black + isort, rewrites the files",
-              "make lint                   # must print no errors before you push",
-              "```",
-              "Commit the reformatting and push. `make format` handles the `black` and",
-              "`isort` sections below. `flake8` and `mypy` findings (a too-long line, an",
-              "unused import, a type error) need an edit.",
-              "",
-              "Run `npm install` once in your clone and the `pre-commit` hook formats staged",
-              "Python at commit time, so this stops happening.",
-              "",
-              "<details><summary>What CI saw</summary>",
-              "",
-              process.env.VIOLATIONS.trim(),
-              "",
-              "</details>",
-            ].join("\n");
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }
+          name: lint-feedback
+          path: /tmp/lint-feedback/
+          retention-days: 3
 
   test:
     runs-on: ubuntu-latest
