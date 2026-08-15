@@ -62,7 +62,10 @@ export function CompanionPanel() {
           <Field label="Instance name" hint="Friendly name companion apps show for this gateway. Empty falls back to the machine hostname.">
             <div className="flex items-center gap-s">
               <div className="flex-1" style={{ maxWidth: 280 }}>
-                <TextInput value={nameDraft} onChange={setNameDraft} placeholder="e.g. Living room Mac" />
+                {/* `surface="high"` because the wrapper above is `bg-surface-container`, which is also
+                    TextInput's DEFAULT surface — a default field here painted its own backdrop exactly
+                    (measured 1.00:1 in both themes) and, with no at-rest border or shadow, had no edge. */}
+                <TextInput value={nameDraft} onChange={setNameDraft} surface="high" placeholder="e.g. Living room Mac" />
               </div>
               <Button size="sm" variant={nameDirty ? 'primary' : 'secondary'}
                 disabled={!nameDirty} disabledReason={!nameDirty ? 'No changes to save' : undefined} onClick={saveName}>
