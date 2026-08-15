@@ -94,7 +94,11 @@ export function SourcesPanel() {
         <div className="rounded-lg bg-surface-container px-4 py-1">
           <Field label="Scratchpad path" hint="Full path to a local notes file. Each new actionable line becomes a PROPOSED plan in your inbox, linked back to its source line. Checked (- [x]) and struck-through lines are ignored. Leave empty to turn this off — no file is read.">
             <div className="flex items-center gap-s">
-              <TextInput value={scratchpad} onChange={setScratchpad} mono placeholder="~/notes/today.md"
+              {/* `surface="high"` because this row's wrapper is `bg-surface-container`, which is also
+                  TextInput's DEFAULT surface — a default field here painted exactly its own backdrop
+                  (measured rgb(30,31,32) on rgb(30,31,32) dark, rgb(255,255,255) on rgb(255,255,255)
+                  light) and, with no at-rest border or shadow, had no visible edge at all. */}
+              <TextInput value={scratchpad} onChange={setScratchpad} mono surface="high" placeholder="~/notes/today.md"
                 onKeyDown={(e) => { if (e.key === 'Enter') saveScratchpad() }} />
               <Button variant="secondary" size="sm" onClick={saveScratchpad}
                 disabled={(scratchpad ?? '').trim() === data.scratchpadPath} disabledReason={(scratchpad ?? '').trim() === data.scratchpadPath ? 'No changes to save' : undefined}>Save</Button>

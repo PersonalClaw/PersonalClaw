@@ -195,7 +195,10 @@ function TextRow({ label, hint, cfg, field, patch, placeholder }: {
   return (
     <Field label={label} hint={hint}>
       <div className="flex items-center gap-2">
-        <TextInput value={draft} onChange={setDraft} placeholder={placeholder} ariaLabel={label} mono
+        {/* `surface="high"`: every caller of this row sits inside a `bg-surface-container` block, which
+            is also TextInput's DEFAULT surface, so a default field painted exactly its own backdrop and
+            — with no at-rest border or shadow — had no visible edge (measured 1.00:1, both themes). */}
+        <TextInput value={draft} onChange={setDraft} placeholder={placeholder} ariaLabel={label} mono surface="high"
           onKeyDown={(e) => { if (e.key === 'Enter') commit() }} />
         <Button variant="ghost" size="sm" onClick={commit}>Save</Button>
         <SavedToast show={saved} />
