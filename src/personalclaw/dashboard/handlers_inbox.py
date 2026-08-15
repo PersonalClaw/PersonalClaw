@@ -708,3 +708,188 @@ async def api_inbox_providers(request: web.Request) -> web.Response:
             }
         )
     return web.json_response({"providers": result})
+
+
+# ---------------------------------------------------------------------------
+# INU-7 — the app emission path and the apply surface for the Proposals lens.
+# ---------------------------------------------------------------------------
+
+
+def _app_identity(request: web.Request) -> str:
+    """The calling app's name from its SCOPED TOKEN, never from the request body.
+
+    ``request["app"]`` is set by the app-permission middleware after it validates the
+    app-scoped token (``apps/permissions.py``). Reading a name out of the JSON body would
+    let any app claim to be any other — which is exactly the foreign-callback case the 403
+    below exists to stop, so identity has to come from the transport.
+    """
+    value = request.get("app")
+    return str(value or "")
+
+
+def _sel_proposal_emission(app_name: str, kind: str, outcome: str, error: str = "") -> None:
+    """One SEL row per app proposal emission — granted or denied.
+
+    Mirrors ``capability_grant`` (APE-10): audited at the point of enforcement, and never
+    raises, because a failed audit must not swallow the emission's own outcome.
+    """
+    try:
+        sel().log_api_access(
+            caller=f"app:{app_name}",
+            operation="inbox.proposal_emit",
+            outcome=outcome,
+            source="inbox_proposals",
+            resources=f"kind={kind}",
+            error=error,
+        )
+    except Exception:
+        logger.debug("proposal emission SEL failed for %s", app_name, exc_info=True)
+
+
+async def api_inbox_proposal_create(request: web.Request) -> web.Response:
+    """POST /api/inbox/proposals — an APP raises a proposal (INU-7 T7.2).
+
+    Deny by default, on three checks in this order:
+
+    1. **No app identity → 403.** This route exists for apps; a browser session has the
+       native producers and does not need it.
+    2. **Undeclared kind → 403.** The suffix must appear in the app's own
+       ``permissions.proposals`` — the manifest decides, so a compromised app cannot widen
+       its own reach by posting a new kind name.
+    3. **Foreign ``apply.app_callback`` → 403.** An app may only propose a callback into
+       ITSELF. Without this, app A could get the user to approve a call into app B's route,
+       laundering a cross-app invocation through the user's click.
+
+    App proposals are ``verifiable=True`` by default (the kind is registered that way at
+    enable time), so INU-6's skeptic gate applies to them once a rule opts in.
+    """
+    from personalclaw import proposals_contract as pc
+    from personalclaw.apps import app_manager
+    from personalclaw.inbox import emit_attention_item
+
+    state: "DashboardState" = request.app["state"]
+    app_name = _app_identity(request)
+    if not app_name:
+        return web.json_response(
+            {"error": "app-scoped token required"},
+            status=403,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+
+    kind_suffix = str(body.get("kind_suffix") or "")
+    manifest = app_manager._manifest_of(app_name)
+    declared = manifest.permissions.proposal_kind(kind_suffix) if manifest is not None else None
+    if declared is None:
+        _sel_proposal_emission(app_name, kind_suffix, "denied", "undeclared proposal kind")
+        return web.json_response(
+            {"error": f"proposal kind {kind_suffix!r} not declared in permissions.proposals"},
+            status=403,
+        )
+
+    raw_apply = body.get("apply")
+    apply = dict(raw_apply) if isinstance(raw_apply, dict) else {}
+    callback = apply.get("app_callback")
+    if isinstance(callback, dict):
+        target = str(callback.get("app") or app_name)
+        if target != app_name:
+            _sel_proposal_emission(app_name, kind_suffix, "denied", "foreign app_callback")
+            return web.json_response(
+                {"error": f"app {app_name!r} may not propose a callback into {target!r}"},
+                status=403,
+            )
+        callback["app"] = app_name
+
+    proposal = pc.Proposal(
+        title=str(body.get("title") or declared.label or kind_suffix),
+        preview=str(body.get("preview") or ""),
+        preview_kind=str(body.get("preview_kind") or "text"),
+        provenance=pc.app_source(app_name),
+        expires_at=str(body["expires_at"]) if body.get("expires_at") else None,
+        editable=bool(body.get("editable", False)),
+        apply=apply,
+    )
+    # A payload whose apply case cannot be named is refused HERE rather than surfaced as a
+    # row nobody can approve.
+    try:
+        proposal.apply_case()
+    except pc.ProposalError as exc:
+        _sel_proposal_emission(app_name, kind_suffix, "denied", str(exc))
+        return web.json_response({"error": str(exc)}, status=400)
+
+    _, inbox = _get_inbox(state)
+    item_id = emit_attention_item(
+        state,
+        source=pc.app_source(app_name),
+        kind=pc.app_kind(kind_suffix),
+        item_kind=ItemKind.PROPOSAL.value,
+        title=proposal.title,
+        body=proposal.preview,
+        refs={pc.REFS_KEY: proposal.to_dict(), "app": app_name},
+        store=inbox,
+        dedup_key=str(body.get("dedup_key") or ""),
+    )
+    _sel_proposal_emission(app_name, pc.app_kind(kind_suffix), "granted")
+    return web.json_response({"ok": True, "id": item_id}, status=201)
+
+
+async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
+    """POST /api/inbox/{id}/apply — approve (or edit-then-approve) one proposal.
+
+    The whole endpoint is a thin shell over :func:`proposals_contract.apply_item`: it owns
+    no dispatch of its own, and it returns **200 with ``ok:false``** on a failed apply
+    rather than a 4xx/5xx, because the failure is a described outcome the row now carries —
+    the item is still PENDING and the user can retry. A status code alone could not say
+    "nothing happened, here is why, the proposal is still there".
+
+    A batch approve is N calls to this endpoint (the frontend fans out), so per-item
+    outcomes are per-request and one failure never rolls back a sibling's success.
+    """
+    from personalclaw import proposals_contract as pc
+
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    item_id = request.match_info["id"]
+    item = inbox.items.get(item_id)
+    if item is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    edited = None
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict) and isinstance(body.get("proposal"), dict):
+            edited = dict(body["proposal"])
+
+    installer = None
+    try:
+        from personalclaw.dashboard.handlers.learning import _installer_for
+
+        installer = _installer_for(request)
+    except Exception:
+        logger.debug("proposal apply: learning installer unavailable", exc_info=True)
+
+    outcome = await pc.apply_item(item, store=inbox, edited=edited, installer=installer)
+    try:
+        sel().log_tool_invocation(
+            session_key="dashboard:inbox",
+            tool_name="inbox_proposal_apply",
+            outcome="success" if outcome.ok else "failure",
+            request_id=item_id,
+            source="dashboard",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for proposal apply", exc_info=True)
+
+    state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
+    return web.json_response(
+        {**outcome.to_dict(), "item": _redact_item(item.to_dict())},
+        status=200,
+    )

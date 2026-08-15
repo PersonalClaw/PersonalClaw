@@ -19,6 +19,7 @@ import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
+import { ProposalsLens } from './ProposalsLens'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -276,7 +277,14 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             />
           </div>
         )}
-        {filtered === null ? <ListSkeleton rows={6} what="items" /> : filtered.length === 0 ? (
+        {/* INU-7 — the Proposals LENS. Narrowing to `proposal` swaps the triage list for a
+            surface built for deciding: each row shows what approving would DO (its apply
+            case), batch-approve is offered only within one (provenance, kind) group, and an
+            editable payload can be edited before it is applied. A proposal row in the plain
+            list could only be opened, one at a time. */}
+        {filtered !== null && kind === 'proposal' ? (
+          <ProposalsLens items={filtered} onChanged={reload} />
+        ) : filtered === null ? <ListSkeleton rows={6} what="items" /> : filtered.length === 0 ? (
           // 🪤 NARROWED FIRST, THEN THE BLANK SLATE. The title always distinguished the two
           // ('Nothing here' vs 'Inbox zero'), but the HINT tested `disabled` first — so a user with
           // items who searched for something that does not match was told "Enable a source to begin",

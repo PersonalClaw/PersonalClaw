@@ -178,6 +178,17 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
   if (desktopCaps.length) {
     rows.push(`Desktop capabilities: ${desktopCaps.map((c) => c.replace(/_/g, ' ')).join(', ')}`)
   }
+  // INU-7. Raising a proposal into your inbox is an enforced grant, not a courtesy:
+  // `POST /api/inbox/proposals` 403s any kind not declared here and refuses a callback
+  // into another app, with a SEL row either way. Each entry is named by its LABEL (what
+  // the row will say) rather than its slug — the consent surface should read like the
+  // thing the user will be asked to approve.
+  const proposalKinds = perms.proposals ?? []
+  if (proposalKinds.length) {
+    rows.push(
+      `Can ask you to approve: ${proposalKinds.map((p) => p.label || p.kind_suffix).join(', ')}`,
+    )
+  }
   return (
     <div>
       <div data-type="label-m" className="mb-1 text-on-surface">Permissions the gateway enforces</div>
