@@ -244,6 +244,37 @@ rather than deferring them past it.
   identified and reverted BEFORE the work is trusted, then the work committed immediately as a
   recoverable checkpoint. A `wip:` commit costs nothing; reconstructing lost work costs a session.
 
+- **2026-08-14 — `PP-6` DONE.** `workflow replay <run_id>` (`personalclaw/workflows/replay.py` +
+  a CLI verb) re-drives the PURE `frontier()` against a run's OWN recorded responses and diffs the
+  resulting trajectory against the one the run took, reporting the FIRST divergent node. The
+  nondeterminism envelope is complete: provider responses were already spilled by `output_ref` (PP-4)
+  and the resolved prompt already stored by `_store_prompt`; the missing third — the WALL CLOCK — now
+  goes through a seam (`EngineServices.clock` → `RunController._clock`) and is journaled as a new
+  `clock_read` ledger kind whenever `_wake_due_nodes` resolves a parked node. Divergence is a
+  first-class outcome: the verb (and `replay_run`) return cleanly for both a byte-identical replay and
+  a divergent one; only an unreplayable run (no spec / no steps) raises. Verified by a 3-node infer
+  pipeline replaying byte-identical and by an edited prompt diverging at exactly the edited node with
+  the prior node proven identical; the clock seam is exercised by a `wait`-containing run.
+- **2026-08-14 — `PP-6` DEVIATION.** Replay re-drives `frontier()` in a dedicated `ReplayDriver`
+  (in the new `workflows/replay.py`), NOT by re-running `RunController`. The territory scoped the
+  controller change to the clock-read SEAM only, so the re-drive loop lives on the replay side and
+  the recorded clock is a `RecordedClock` of the same `() -> float` shape the controller's seam
+  accepts — substitutable into the controller in principle, and the seam the replayed path reads
+  through in practice. `frontier()` and `tick.py` are byte-unchanged (read, not modified). The clock
+  seam covers `_wake_due_nodes` and the `now` a `wait` computes its deadline against (one clock, or a
+  recorded `now` would set a deadline the recorded wake never crosses); the stall/duration clocks
+  stay on real `time.time()` on purpose.
+- **2026-08-14 — `PP-6` DISCOVERY.** (a) `_adaptive_duration` floors `duration_secs` with `int()`,
+  so a fractional wait (`0.01`) resolves INSTANTLY with no `WAITING` state and therefore no clock
+  read — the envelope only records for `duration_secs >= 1`, which the clock test relies on. (b) The
+  byte-identical claim is only falsifiable by a perturbed response when the perturbed node has a
+  downstream CONSUMER that binds its output: perturbing an output moves the consumer's RE-RESOLVED
+  prompt, not the node's own step (whose recorded prompt file is untouched), so the pipeline test
+  binds each node's output into the next. (c) Adding `CLOCK_READ` to `LEDGER_KINDS` re-sweeps the
+  `test_ledger_golden` emitters fixture (its `_registered_kinds()` probes every kind); the two
+  emitters goldens were regenerated deliberately (one new `clock_read` line each + seq renumbering),
+  and the RUN goldens are untouched because `GOLDEN_SPEC` has no `wait`.
+
 *(append `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKED` entries here, per the roadmap session
 discipline in [`AGENTS.md`](../../../AGENTS.md))*
 

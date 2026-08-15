@@ -185,6 +185,13 @@ class EngineServices:
     #: no-ops without `has_vector`. So a terminal-run controller test never touches the real
     #: home, and production wires `MemoryService.over_vector_store(self.vector_memory)` in.
     memory: Any = None
+    #: `() -> float` — the wall clock, as a seam (PP-6). The controller's scheduling decisions
+    #: (`_wake_due_nodes` resolving a parked node, and the `now` a `wait` computes its deadline
+    #: against) read through this rather than `time.time()` directly, so a replay can substitute
+    #: the run's OWN recorded clock and reach the same node in the same order. `frontier()` stays
+    #: pure — it reads no clock at all; the nondeterminism lives here, which is why the seam does
+    #: too. None means the real wall clock; every production and test path leaves it None.
+    clock: Any = None
 
 
 @dataclass
@@ -223,6 +230,12 @@ class RunController:
         self.root: Node = Node.from_dict(spec.get("root") or {"kind": "sequence"})
         self.instances: dict[str, NodeInstance] = store.read_state(run.id)
         self.journal = Journal(run.id)
+        #: The wall-clock seam (PP-6). Every scheduling-decision clock read routes through this so a
+        #: replay can hand the controller the run's OWN recorded clock; None is the real wall clock,
+        #: which is what every production and test path uses. The stall/duration clocks stay on
+        #: `time.time()` on purpose — they measure how long real work took, not when a parked node
+        #: was allowed to advance, so a recorded clock must not rewrite them.
+        self._clock = self.services.clock or time.time
         #: Bindings this run has already projected into Tasks (TASKS-SOPS §1, S61f). The
         #: controller is the single writer for its own run, so this is the dedup set
         #: `plan_materialization` compares against — a per-node read of the per-entity JSON
@@ -2019,8 +2032,13 @@ class RunController:
         before = scope_snapshot(watched) if enforces_scope(node.config or {}) else None
         coro = dispatch(
             node,
+            # Through the clock seam (PP-6), not `time.time()`: a `wait` computes its deadline
+            # against this `now`, and `_wake_due_nodes` later resolves that deadline against the
+            # same seam — the two clock reads that decide a parked node's fate must come from ONE
+            # clock, or a replay's recorded `now` would set a deadline the recorded wake never
+            # crosses. Every non-wait dispatcher ignores `now`.
             ctx,
-            now=time.time(),
+            now=self._clock(),
             subagents=self.services.subagents,
             depth=self.depth,
             run_id=self.run.id,
@@ -3295,15 +3313,22 @@ class RunController:
         node would wait forever, one full duration at a time. The controller is the state
         owner and already knows why the node parked, so it decides here.
         """
-        now = time.time()
+        now = self._clock()
         for path, inst in list(self.instances.items()):
             if inst.state != InstanceState.WAITING or not inst.wake_at:
                 continue
             if inst.wake_at > now:
                 continue
+            crossed = inst.wake_at
             inst.wake_at = 0.0
             node = dict(_walk(self.root)).get(_base_path(path))
             kind = node.kind if node else None
+            # The one load-bearing wall-clock read a run's trajectory depends on: THIS value, read
+            # through the seam, is what let the parked node advance. Journaled as the nondeterminism
+            # envelope (PP-6) so a replay resolves it against the recorded clock, not a live one.
+            self.journal.clock_read(
+                path, node.id if node else "", epoch=inst.epoch, clock=now, wake_at=crossed
+            )
             if kind == NodeKind.WAIT:
                 # The deadline WAS the work. Reaching it is success.
                 inst.state = InstanceState.DONE

@@ -7179,7 +7179,8 @@
         {
           "id": "PP-6",
           "title": "`workflow replay <run_id>`: recorded-response provider + trajectory diff",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1329",
           "scope": "We have a resume CACHE, not a replay. `journal.lookup` serves only SUCCESS states and the journal file is never rewritten; `harness/replay.py` replays recorded MCP traces as an offline tool server — a dev-test facility, not a run replay. The controller reads wall clock live (`_wake_due_nodes`). Fluxtion's requirement is that replay be structural rather than retrofitted: recorded inputs re-run on the same processor version reproduce a decision path. We are ~80% there and never cash it in — `_store_prompt` already persists the fully-resolved prompt and its docstring already says \"Required for trajectory replay (§5)\".",
           "done_when": "A `workflow replay <run_id>` verb re-drives `frontier()` against a provider that returns the run's own recorded responses, and diffs the resulting trajectory against the original, reporting the first divergent node. The nondeterminism envelope a run depended on is journaled so replay is possible at all: clock reads behind a seam, provider responses by `output_ref`, and the resolved prompt already stored. Divergence is a first-class outcome, not a failure — a template edit SHOULD diverge, and the verb's job is to say where. Verified by replaying a completed multi-node run to a byte-identical trajectory, and by an edited prompt diverging at exactly the edited node and nowhere earlier.",
           "deps": [
@@ -7858,8 +7859,8 @@
         "plan": "PP"
       },
       {
-        "id": "PP-6",
-        "title": "`workflow replay <run_id>`: recorded-response provider + trajectory diff",
+        "id": "PP-7",
+        "title": "Trajectory signature as a ledger projection + template regression detection",
         "plan": "PP"
       },
       {
@@ -10318,9 +10319,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 11,
+        "todo": 10,
         "blocked": 0
       }
     ],
