@@ -2765,7 +2765,8 @@
         {
           "id": "PA-1",
           "title": "Approval memory + ProactiveConfig foundation (Session 1)",
-          "status": "todo",
+          "status": "done",
+          "pr": 1363,
           "scope": "§1.4 Approval memory; Provider & Config Plug-in Map (`approval` MemoryKind, ProactiveConfig); §4 tools (triage_rules); Implementation Effort Session 1",
           "done_when": "`user.approval.` prefix resolves to an `approval` MemoryKind in `_kind_from_key` and is excluded from `_NON_FACT_KEY_CLAUSE`; deterministic most-specific/deny-wins rule matcher, reply-grammar parser, and 24h/7d/30d suppression cooldowns are unit-tested pure functions; `ProactiveConfig` round-trips through the 5-point wiring (test_config_roundtrip green); `triage_rules` tool lists/adds/revokes rules with provenance",
           "deps": []
@@ -3433,6 +3434,7 @@
           "id": "MI-3",
           "title": "Duplex-loop hardening pack (confirmation gating, echo filter + STT mute, pre-TTS cleaning, voice disclaimer, VoiceConfig)",
           "status": "done",
+          "pr": 1363,
           "scope": "§4 Duplex-Loop Hardening Pack (§4.1 confirmation-phrase gating; §4.2 TTS-echo filter + mute-during-playback; §4.3 clean_for_speech after existing redaction; §4.4 voice-origin disclaimer + input_origin metadata; §4.5 VoiceConfig via the four wiring points)",
           "done_when": "voice/duplex.py pure functions (is_confirmation/is_exit/is_echo 3-consecutive-word/clean_for_speech) with unit suite; FE hands-free transcript accumulation + mute-during-playback hook draining mic buffers; api_voice_synthesize records last-TTS-text and cleans after redact calls; api_stt_transcribe consults echo on duplex:true returning {text:'',filtered:'echo'}; voice turns carry the disclaimer + input_origin:voice in session JSONL; VoiceConfig six fields round-trip through dataclass/_meta, load(), to_dict(), _EDITABLE_CONFIG PATCH + VoicePanel.tsx controls",
           "deps": []
@@ -7773,8 +7775,8 @@
         "plan": "OU"
       },
       {
-        "id": "PA-1",
-        "title": "Approval memory + ProactiveConfig foundation (Session 1)",
+        "id": "PA-2",
+        "title": "Triage pipeline: collect → classifier gate → tiered strict-JSON proposals → rank → deliver + Morning-triage template (Session 2)",
         "plan": "PA"
       },
       {
@@ -9877,9 +9879,9 @@
         "code": "PA",
         "plan": "PROACTIVE-ASSISTANT",
         "total_atoms": 6,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {

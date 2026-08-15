@@ -38,6 +38,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   the transcript keeps the full text — and a dictated turn tells the model it came from speech so it
   self-corrects misheard words. All six knobs live in **Settings → Speech & Transcription →
   Hands-free voice**.
+- **Approval memory: teach the assistant what it may do without asking again.** A new
+  `triage_rules` tool lists, adds, and revokes standing approve/deny rules for the coming
+  proactive digest, each shown with how often it has fired and where it came from. A **deny rule
+  always beats an approve rule**, however narrowly the approve was written, so blocking a class of
+  action is the safe move. New **Proactive** settings section — the digest schedule, its
+  classifier gate, and the auto-execution cap — with triage and auto-execution both OFF by
+  default. Nothing runs or acts until you turn them on.
 - **Attention notifications can now ask for a second opinion before interrupting you.** Turn on
   verification for a proposal or agent-request rule and, before its notification fires, a cheap
   background check judges whether the claim holds. Only a clear refutation withholds it — every

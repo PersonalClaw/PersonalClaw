@@ -2865,6 +2865,83 @@ class EvalsConfig:
 
 
 @dataclass
+class ProactiveConfig:
+    """Proactive triage + the decision journal (PROACTIVE-ASSISTANT §"Config Map").
+
+    Two switches are OFF by default and stay that way: ``triage_enabled`` (nothing
+    collects or spends until you ask for a digest) and ``auto_execute_enabled``
+    (the digest proposes; it does not act). That pairing is the plan's soul
+    guardrail — proactive behaviors propose, they never silently write — so the
+    defaults are fail-closed on purpose. Do not "helpfully" flip them.
+    """
+
+    triage_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Proactive triage",
+            "Let the scheduled triage digest run — collect what accumulated across "
+            "inbox, channels and background runs, then propose what to do about it. "
+            "Off by default: nothing is collected and no model is called until you "
+            "turn this on and install a schedule.",
+        ),
+    )
+    digest_schedule: str = field(
+        default="0 8 * * *",
+        metadata=_meta(
+            "Digest schedule",
+            "When the triage digest fires, as a cron expression in your configured "
+            "timezone. 08:00 daily by default — a morning digest. Quiet hours still "
+            "apply: an info-ranked digest defers rather than waking you.",
+        ),
+    )
+    auto_execute_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Auto-execute trivial actions",
+            "Let trivial-tier proposals and patterns you explicitly taught with "
+            "'always yes' execute without another confirmation. Off by default. Even "
+            "on, external sends stay drafts until that rule is individually "
+            "graduated, and every auto-execution is a ledger row with one-click undo.",
+        ),
+    )
+    max_auto_actions_per_run: int = field(
+        default=5,
+        metadata=_meta(
+            "Max auto-actions per digest",
+            "Hard cap on how many actions one digest may auto-execute; the rest queue "
+            "as pending regardless of tier. This is a ceiling, not a target — it "
+            "bounds the blast radius of one bad classification.",
+        ),
+    )
+    classifier_gate_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Classifier gate",
+            "Filter collected items through the lightweight relevance gate before the "
+            "proposal stage. On by default: it is what keeps a quiet window from "
+            "spending anything, and turning it off sends every item to the model.",
+        ),
+    )
+    decision_default_horizon_days: int = field(
+        default=90,
+        metadata=_meta(
+            "Decision review horizon (days)",
+            "How far out a logged decision schedules its review when you do not name "
+            "a horizon. 90 days by default — long enough for an outcome to exist, "
+            "short enough that you still remember the reasoning.",
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        # A cap of 0 means "auto-execute nothing", which is a coherent position; a
+        # negative cap is not, and would read as "unbounded" to a `<` check.
+        if self.max_auto_actions_per_run < 0:
+            self.max_auto_actions_per_run = 0
+        if self.decision_default_horizon_days < 1:
+            self.decision_default_horizon_days = 1
+
+
+@dataclass
 class InboundSurfaceConfig:
     """One inbound surface's switches (MCP-READONLY-INBOUND §C4).
 
@@ -3363,6 +3440,14 @@ class AppConfig:
             "The offline eval substrate — studies, ablation, retrieval/judge benchmarks.",
         ),
     )
+    proactive: "ProactiveConfig" = field(
+        default_factory=lambda: ProactiveConfig(),
+        metadata=_meta(
+            "Proactive",
+            "The scheduled triage digest, its auto-execution bounds, and the decision "
+            "journal's default review horizon.",
+        ),
+    )
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -3428,6 +3513,9 @@ class AppConfig:
         inbound_data = data.get("inbound", {}) or {}
         durability_data = data.get("durability", {}) or {}
         evals_data = data.get("evals", {}) or {}
+        proactive_data = data.get("proactive", {}) or {}
+        if not isinstance(proactive_data, dict):
+            proactive_data = {}
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -3727,6 +3815,22 @@ class AppConfig:
                 sync_enabled=bool(durability_data.get("sync_enabled", False)),
                 sync_transport=str(durability_data.get("sync_transport", "") or ""),
                 sync_stale_after_secs=_safe_int(durability_data.get("sync_stale_after_secs"), 900),
+            ),
+            proactive=ProactiveConfig(
+                # Both switches are fail-closed: an unreadable value reads False, so a
+                # corrupt config can never start collecting or acting on its own.
+                triage_enabled=bool(proactive_data.get("triage_enabled", False)),
+                digest_schedule=str(proactive_data.get("digest_schedule", "") or "0 8 * * *"),
+                auto_execute_enabled=bool(proactive_data.get("auto_execute_enabled", False)),
+                max_auto_actions_per_run=_safe_int(
+                    proactive_data.get("max_auto_actions_per_run"), 5
+                ),
+                # The gate is the spend floor, so it fails OPEN (on) — an unreadable
+                # value must not silently send every collected item to the model.
+                classifier_gate_enabled=bool(proactive_data.get("classifier_gate_enabled", True)),
+                decision_default_horizon_days=_safe_int(
+                    proactive_data.get("decision_default_horizon_days"), 90
+                ),
             ),
             evals=EvalsConfig(
                 enabled=bool(evals_data.get("enabled", False)),
@@ -4189,6 +4293,7 @@ class AppConfig:
             "snapshot_dir": self.snapshot_dir,
             "durability": asdict(self.durability),
             "evals": asdict(self.evals),
+            "proactive": asdict(self.proactive),
             # Channel-agnostic observe-buffer sizing — top-level keys (Slack config
             # lives in the slack-channel app's own store, not here).
             "observe_max_messages": self.observe_max_messages,

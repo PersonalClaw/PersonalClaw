@@ -92,6 +92,54 @@ def _list_tools() -> list[dict[str, Any]]:
                 "required": ["query"],
             },
         },
+        {
+            "name": "triage_rules",
+            "description": (
+                "List, add, or revoke the triage approval rules — what the proactive "
+                "digest may do without asking again. action='list' shows every rule "
+                "with its hit count and where it came from; action='add' needs a "
+                "pattern (like 'archive:sender:noreply.github.com') and a verdict "
+                "('approve' or 'deny'); action='revoke' needs the rule id from list. "
+                "A deny rule always beats an approve rule, so adding a deny is the "
+                "safe way to stop a class of proposal."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "revoke"],
+                        "description": "list | add | revoke",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": (
+                            "Colon-delimited pattern, narrowest first segment is the "
+                            "action type: <action>[:<qualifier>...] (add only)"
+                        ),
+                    },
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["approve", "deny"],
+                        "description": "approve = auto-execute, deny = silently skip (add only)",
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "The rule id (user.approval.*) to revoke",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["global", "workspace"],
+                        "description": "Where the rule applies (default global)",
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "description": "Optional ISO-8601 expiry; the rule stops matching after it",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
     ]
 
 
@@ -168,7 +216,76 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return f"Error: {d['error']}"
         return d.get("result", "No matching memory found.")
 
+    if name == "triage_rules":
+        return _triage_rules(args)
+
     return f"Unknown tool: {name}"
+
+
+def _triage_rules(args: dict[str, Any]) -> str:
+    """The approval-memory management surface (PROACTIVE-ASSISTANT §4).
+
+    Every branch is explicit and an unknown action is an error, not a fallthrough
+    to `list` — a mistyped action must not silently read as the harmless one, or a
+    typo'd `add` reports success while teaching nothing.
+    """
+    action = str(args.get("action") or "").strip().lower()
+
+    if action == "list":
+        d = _get("/api/memory/approval-rules")
+        if d.get("error"):
+            return f"Error: {d['error']}"
+        rules = d.get("rules") or []
+        if not rules:
+            return "No triage approval rules. The digest asks about everything."
+        lines = []
+        for r in rules:
+            provenance = r.get("created_from_digest") or "manual"
+            expiry = f", expires {r['expires_at']}" if r.get("expires_at") else ""
+            send = ", send-capable" if r.get("send_capable") else ""
+            lines.append(
+                f"[{r.get('verdict')}] {r.get('pattern')} — {r.get('hit_count', 0)} hits, "
+                f"from {provenance}, scope {r.get('scope', 'global')}{expiry}{send} "
+                f"(id: {r.get('key')})"
+            )
+        unreadable = d.get("unreadable") or []
+        if unreadable:
+            # Surfaced, not swallowed: the matcher ignores these rows, so a user who
+            # thinks a rule is live must be told it is not.
+            lines.append(f"({len(unreadable)} unreadable rule row(s) ignored: {unreadable})")
+        return "\n".join(lines)
+
+    if action == "add":
+        pattern = str(args.get("pattern") or "").strip()
+        verdict = str(args.get("verdict") or "").strip().lower()
+        if not pattern:
+            return "Error: pattern is required to add a rule"
+        if verdict not in ("approve", "deny"):
+            return "Error: verdict must be 'approve' or 'deny'"
+        payload: dict[str, Any] = {
+            "pattern": pattern,
+            "verdict": verdict,
+            "scope": str(args.get("scope") or "global"),
+            "created_from_digest": "tool:triage_rules",
+        }
+        if args.get("expires_at"):
+            payload["expires_at"] = str(args["expires_at"])
+        d = _post("/api/memory/approval-rules", payload)
+        if d.get("error"):
+            return f"Error: {d['error']}"
+        rule = d.get("rule") or {}
+        return f"Added {verdict} rule for {pattern} (id: {rule.get('key', '?')})"
+
+    if action == "revoke":
+        rule_id = str(args.get("id") or "").strip()
+        if not rule_id:
+            return "Error: id is required to revoke a rule (get it from action='list')"
+        d = _delete(f"/api/memory/approval-rules/{urllib.parse.quote(rule_id)}", {})
+        if d.get("error"):
+            return f"Error: {d['error']}"
+        return f"Revoked rule {rule_id}"
+
+    return f"Error: unknown action {action!r} — use list, add, or revoke"
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
