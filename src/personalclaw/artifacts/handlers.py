@@ -15,6 +15,15 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.artifacts import registry
+from personalclaw.artifacts.deploy import (
+    DEPLOYABLE_KINDS,
+    SERVE_HEADERS,
+    SERVE_URL_PREFIX,
+    ArtifactDeployStore,
+    content_type_for,
+    rejects_path,
+    resolve_served_file,
+)
 from personalclaw.artifacts.folders import ArtifactFolder, ArtifactFolderStore, delete_folder
 from personalclaw.artifacts.models import Artifact, ext_for_mime
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
@@ -274,6 +283,9 @@ async def api_artifact_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid slug"}, status=400)
     if not deleted:
         return web.json_response({"error": "not found"}, status=404)
+    # Deleting the content must also un-publish it: a deployment left behind would be a
+    # deleted artifact that is still reachable at its serve URL (PEP-8's teardown clause).
+    _deploy_store(prov).teardown(slug)
     _audit(request, "artifact.delete", "ok", f"slug={slug}")
     return web.json_response({"ok": True})
 
@@ -741,9 +753,162 @@ async def api_artifact_set_folder(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "folder_id": art.folder_id})
 
 
+def _deploy_store(prov: Any) -> ArtifactDeployStore:
+    """A deploy registry rooted at the SAME tree the provider owns — same reason as
+    ``_folder_store``: a provider on a tmp root must not publish into the real home."""
+    return ArtifactDeployStore(getattr(prov, "root", None))
+
+
+async def api_artifacts_deployed(request: web.Request) -> web.Response:
+    """GET /api/artifacts/deployed — the deployed-app listing (slug + in-gateway URL)."""
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    return web.json_response({"deployments": [d.to_dict() for d in _deploy_store(prov).list()]})
+
+
+async def api_artifact_deploy(request: web.Request) -> web.Response:
+    """POST /api/artifacts/{slug}/deploy — publish the artifact at its stable serve URL.
+
+    Idempotent: re-deploying an already-deployed slug refreshes its entry rather than
+    erroring, because the UI control is "Deploy / Open" and the second press must not fail.
+    """
+    state = request.app.get("state")
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.deploy", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    slug = request.match_info["slug"]
+    try:
+        art = prov.get(slug)
+    except ValueError:
+        return web.json_response({"error": "invalid slug"}, status=400)
+    if art is None:
+        return web.json_response({"error": "not found"}, status=404)
+    if art.kind not in DEPLOYABLE_KINDS:
+        _audit(request, "artifact.deploy", "denied", f"slug={slug} kind={art.kind}")
+        return web.json_response(
+            {"error": f"kind '{art.kind}' is not deployable"},
+            status=400,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        dep = _deploy_store(prov).deploy(slug, entry=str(body.get("entry") or ""))
+    except (ValueError, PermissionError) as exc:
+        _audit(request, "artifact.deploy", "denied", f"slug={slug}: {exc}")
+        return web.json_response({"error": str(exc)}, status=400)
+    _audit(request, "artifact.deploy", "ok", f"slug={slug}")
+    return web.json_response({"ok": True, "deployment": dep.to_dict()})
+
+
+async def api_artifact_teardown(request: web.Request) -> web.Response:
+    """DELETE /api/artifacts/{slug}/deploy — tear the deployment down.
+
+    Removes the serve route for this slug and nothing else: the artifact and every
+    version it owns survive, because un-publishing is not deleting.
+    """
+    state = request.app.get("state")
+    if _is_restricted_session(state, request):
+        _audit(request, "artifact.teardown", "denied", "restricted_session")
+        return web.json_response({"error": "restricted session"}, status=403)
+    prov = _provider(request)
+    if prov is None:
+        return web.json_response({"error": "unknown provider"}, status=400)
+    slug = request.match_info["slug"]
+    removed = _deploy_store(prov).teardown(slug)
+    _audit(request, "artifact.teardown", "ok" if removed else "noop", f"slug={slug}")
+    return web.json_response({"ok": True, "removed": removed})
+
+
+def _refuse_serve(request: web.Request, slug: str, reason: str, status: int) -> web.Response:
+    """One exit for every refusal on the serve path — audited, and never echoing the
+    requested path back into the response (that body would render in a browser)."""
+    _audit(request, "artifact.serve", "denied", f"slug={slug} {reason}")
+    return web.Response(status=status, text="refused", content_type="text/plain")
+
+
+async def serve_artifact_redirect(request: web.Request) -> web.StreamResponse:
+    """GET /artifacts/serve/{slug} → 308 to the canonical trailing-slash URL.
+
+    Relative asset URLs inside the served document resolve against the directory, so
+    serving the entry from the slash-less path would break every one of them.
+    """
+    slug = request.match_info.get("slug", "")
+    raise web.HTTPPermanentRedirect(f"{SERVE_URL_PREFIX}/{slug}/")
+
+
+async def serve_deployed_artifact(request: web.Request) -> web.StreamResponse:
+    """GET /artifacts/serve/{slug}/{path:.*} — serve a deployed artifact's own bytes.
+
+    Behind session auth like every non-bypassed gateway path, fenced by
+    ``SERVE_HEADERS`` (``connect-src 'none'`` — the page cannot call ``/api``), and
+    contained by ``resolve_served_file``. Serves ONLY the artifact's own files: a
+    directory never yields an index, and an undeployed or deleted slug 404s.
+    """
+    prov = registry.get_provider("native")
+    if prov is None:  # pragma: no cover - the native provider always registers
+        return web.Response(status=404, text="not found", content_type="text/plain")
+    slug = request.match_info.get("slug", "")
+    rel = request.match_info.get("path", "") or ""
+    store = _deploy_store(prov)
+    dep = store.get(slug)
+    if dep is None:
+        # Not deployed, torn down, or an unservable slug — one answer for all three so
+        # the route cannot be used to probe which artifacts exist.
+        return _refuse_serve(request, slug, "not_deployed", 404)
+    try:
+        art = prov.get(slug)
+    except ValueError:
+        return _refuse_serve(request, slug, "invalid_slug", 404)
+    if art is None:
+        return _refuse_serve(request, slug, "artifact_missing", 404)
+    target = rel or dep.entry
+    if target.endswith("/"):
+        target = target + dep.entry
+    try:
+        files_root = store.files_root(slug)
+    except ValueError:
+        return _refuse_serve(request, slug, "invalid_slug", 404)
+    resolved = resolve_served_file(files_root, target)
+    if resolved is None:
+        # Distinguish "you asked for something you may not have" from "not there": a
+        # rejected shape is a 403 refusal, a merely absent file falls through to the body.
+        if rejects_path(target):
+            return _refuse_serve(request, slug, "traversal_refused", 403)
+        if target != dep.entry:
+            return _refuse_serve(request, slug, "file_missing", 404)
+        # Entry with no file on disk: a single-body html/widget artifact IS its entry.
+        if art.content is None:
+            return _refuse_serve(request, slug, "empty_body", 404)
+        return web.Response(
+            body=art.content.encode("utf-8"),
+            content_type="text/html",
+            charset="utf-8",
+            headers=dict(SERVE_HEADERS),
+        )
+    try:
+        data = resolved.read_bytes()
+    except OSError:
+        return _refuse_serve(request, slug, "unreadable", 404)
+    return web.Response(
+        body=data,
+        content_type=content_type_for(resolved),
+        headers=dict(SERVE_HEADERS),
+    )
+
+
 def register_artifact_routes(app: web.Application) -> None:
-    """Register /api/artifacts/* routes. The native provider self-registers
-    lazily via the registry; no startup registration needed."""
+    """Register /api/artifacts/* routes plus the artifact static-serve route.
+
+    The native provider self-registers lazily via the registry; no startup
+    registration needed."""
     app.router.add_get("/api/artifacts", api_artifacts_list)
     app.router.add_post("/api/artifacts", api_artifacts_create)
     # BEFORE `/{slug}`: aiohttp matches in registration order, so a dynamic `{slug}` registered
@@ -752,6 +917,8 @@ def register_artifact_routes(app: web.Application) -> None:
     # Same reason as `pinned`: the literal `folders` paths must precede `{slug}`, and
     # `/folders/{id}` must precede `/{slug}/folder` so a 12-hex folder id is never
     # read as an artifact slug.
+    # Same reason as `pinned`/`folders`: the literal `deployed` path must precede `{slug}`.
+    app.router.add_get("/api/artifacts/deployed", api_artifacts_deployed)
     app.router.add_get("/api/artifacts/folders", api_artifact_folders)
     app.router.add_post("/api/artifacts/folders", api_artifact_folder_create)
     app.router.add_patch("/api/artifacts/folders/{id}", api_artifact_folder_update)
@@ -768,3 +935,12 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_post("/api/artifacts/{slug}/events", api_artifact_record_event)
     app.router.add_post("/api/artifacts/{slug}/pin", api_artifacts_pin)
     app.router.add_patch("/api/artifacts/{slug}/folder", api_artifact_set_folder)
+    app.router.add_post("/api/artifacts/{slug}/deploy", api_artifact_deploy)
+    app.router.add_delete("/api/artifacts/{slug}/deploy", api_artifact_teardown)
+    # The static-serve route (PEP-8) — NOT under /api, so the CSP fence's
+    # `connect-src 'none'` reads as "this page cannot reach the gateway API". Registered
+    # here rather than in server.py so the artifact routes stay one registration.
+    # Slug-only first: it 308s to the trailing-slash form, without which every relative
+    # asset URL in the served document would resolve one directory too high.
+    app.router.add_get(f"{SERVE_URL_PREFIX}/{{slug}}", serve_artifact_redirect)
+    app.router.add_get(f"{SERVE_URL_PREFIX}/{{slug}}/{{path:.*}}", serve_deployed_artifact)

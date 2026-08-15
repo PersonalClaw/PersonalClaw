@@ -61,6 +61,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
+- `GET /api/artifacts/deployed` — the deployed-app listing (slug + in-gateway URL).
 - `GET /api/artifacts/folders` — the library folder tree (flat, parent_id-linked).
 - `POST /api/artifacts/folders` — create a folder (``{name, parent_id?, icon?}``).
 - `DELETE /api/artifacts/folders/{id}` — members fall back to unfiled; nothing is destroyed.
@@ -69,6 +70,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/artifacts/{slug}` — _(no summary)_
 - `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
 - `PATCH /api/artifacts/{slug}` — save (silent) or snapshot; or metadata-only.
+- `DELETE /api/artifacts/{slug}/deploy` — tear the deployment down.
+- `POST /api/artifacts/{slug}/deploy` — publish the artifact at its stable serve URL.
 - `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).
 - `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
 - `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.

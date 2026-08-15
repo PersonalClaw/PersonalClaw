@@ -14,6 +14,7 @@ import { artifactKindMeta, relTime } from '../files/fileMeta'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { ArtifactCompare } from './ArtifactCompare'
+import { ArtifactDeploy } from './ArtifactDeploy'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
 interface ViewerProps {
@@ -206,6 +207,12 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
             <button onClick={del} type="button" aria-label="Delete artifact" title="Delete artifact" className="inline-flex items-center gap-1 rounded-md px-2 h-7 text-[0.75rem] hover:bg-surface-high" style={{ color: 'var(--color-error)' }}><Trash2 size={13} /></button>
           </div>
         </div>
+
+        {/* Deploy / Open / Tear down (PEP-8) — only for the kinds that can be served as a
+            page, and only on the CURRENT version: a deploy serves the live body, so
+            offering it while a historical snapshot is on screen would publish something
+            other than what the user is looking at. */}
+        {isCurrent && <ArtifactDeploy slug={slug} kind={art.kind} />}
 
         {/* Why this artifact can't be edited. Without it a read-only artifact just looks
             like one whose editor is broken — the same reason the historical-version bar
