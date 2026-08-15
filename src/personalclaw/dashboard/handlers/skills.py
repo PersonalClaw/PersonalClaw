@@ -243,6 +243,10 @@ async def api_skills_search(request: web.Request) -> web.Response:
 
     Fans out the query to every registered marketplace and merges results.
     An optional ``marketplace`` param restricts to a single provider.
+
+    ``counts`` carries the per-source matched count computed BEFORE the global cap, so
+    the store's source filter can show how many of a large catalog's skills match even
+    when the merged, capped result list only shows the top few.
     """
     query = request.rel_url.query.get("q", "").strip()
     if not query:
@@ -263,23 +267,29 @@ async def api_skills_search(request: web.Request) -> web.Response:
             )
         try:
             results = mp.search(query, limit=limit)
-            return web.json_response({"results": [r.to_dict() for r in results]})
+            return web.json_response(
+                {
+                    "results": [r.to_dict() for r in results],
+                    "counts": {marketplace_name: len(results)},
+                }
+            )
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", marketplace_name, exc)
             return web.json_response({"error": str(exc)[:500]}, status=500)
 
-    return web.json_response(
-        {"results": [r.to_dict() for r in search_marketplaces(query, limit=limit)]}
-    )
+    results, counts = search_marketplaces_counted(query, limit=limit)
+    return web.json_response({"results": [r.to_dict() for r in results], "counts": counts})
 
 
-def search_marketplaces(query: str, limit: int = 20) -> list:
-    """Fan a query out to every registered marketplace, drop already-installed
-    skills, and return ``SkillEntry`` objects sorted by install count.
+def search_marketplaces_counted(query: str, limit: int = 20) -> "tuple[list, dict[str, int]]":
+    """Fan a query out to every registered marketplace and return
+    ``(results, per_source_counts)``.
 
-    Shared by the skills-search endpoint and the goal-loop intake (the planner
-    auto-searches for installable skills during classify). Never raises — a
-    failing marketplace is logged and skipped.
+    The counts are taken BEFORE the merged list is capped at *limit*, so a source that
+    matched 40 skills reports 40 even though only its top rows survive the cap. One
+    implementation: :func:`search_marketplaces` is this function without the counts.
+    Never raises — a failing marketplace (an unreachable catalog) is logged and skipped,
+    so one bad source cannot empty the store.
     """
     from personalclaw.skills.loader import SkillsLoader
     from personalclaw.skills.marketplace import get_default_skills_registry
@@ -300,8 +310,22 @@ def search_marketplaces(query: str, limit: int = 20) -> list:
     filtered = [
         r for r in all_results if r.id not in installed_names and r.name not in installed_names
     ]
+    counts: dict[str, int] = {}
+    for r in filtered:
+        counts[r.source] = counts.get(r.source, 0) + 1
     filtered.sort(key=lambda r: r.installs, reverse=True)
-    return filtered[:limit]
+    return filtered[:limit], counts
+
+
+def search_marketplaces(query: str, limit: int = 20) -> list:
+    """Fan a query out to every registered marketplace, drop already-installed
+    skills, and return ``SkillEntry`` objects sorted by install count.
+
+    Shared by the skills-search endpoint and the goal-loop intake (the planner
+    auto-searches for installable skills during classify). Never raises — a
+    failing marketplace is logged and skipped.
+    """
+    return search_marketplaces_counted(query, limit=limit)[0]
 
 
 async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
