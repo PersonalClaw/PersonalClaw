@@ -7060,7 +7060,7 @@
         {
           "id": "PEP-4",
           "title": "Onboarding import engine (scanners + writers)",
-          "status": "todo",
+          "status": "done",
           "scope": "New onboarding/import package. Define ScanResult/ImportItem/WriteOutcome types and a source registry, then implement pure, fixture-testable scanners for the two highest-value sources: Claude Code (~/.claude: instruction docs, .mcp.json, settings.json, skills/) and Codex (~/.codex: AGENTS.md, config), with env-var-then-default root resolution (additional sources are additive later, not a v1 bar). Implement per-category writers to PersonalClaw destinations (instructions -> instruction docs, memories -> memory store, mcp_servers -> MCP config, skills -> skills/imported/<source>/ via the install-scan, schedules -> triggers, settings -> a review-gated merge that never clobbers) with a four-value outcome vocabulary (imported/existing/conflict/rejected). Enforce security floors on every imported file: is_sensitive_path refusal + credential/exfiltration-URL redaction, secrets counted-and-skipped and never imported; fingerprint-idempotent (SHA over source\\0category\\0key) so re-import never duplicates.",
           "done_when": "A fixture ~/.claude yields instruction+mcp+skills items with secrets counted-and-skipped and re-scan idempotent; importing the fixture creates the memories, MCP entries, and skills/imported/claude_code/*, and a conflicting item reports 'conflict' rather than silently overwriting.",
           "deps": []
@@ -7808,8 +7808,8 @@
         "plan": "PEP"
       },
       {
-        "id": "PEP-4",
-        "title": "Onboarding import engine (scanners + writers)",
+        "id": "PEP-5",
+        "title": "Onboarding import step UI",
         "plan": "PEP"
       },
       {
