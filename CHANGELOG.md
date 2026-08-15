@@ -10,6 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A run's introspection now shows how its branches and judges actually decided, across the
+  template's history.** A workflow that routes on a condition, or gates on a judge, journaled each
+  decision one run at a time and never added them up — so a branch that has taken the same case
+  every single time, or a case no run has ever reached, was invisible. The cockpit's introspection
+  panel now has an **Edges** section: for each branch it shows the case distribution, and for each
+  judge the verdict distribution. It flags two things a legible plan should not have — a **case
+  never taken** (declared but dead), and a **selector doing no work** (a branch that always routes
+  one way, or a judge that always returns the same verdict). Both are held to the same sample bar as
+  the "never said no" gate badge: over a handful of runs a case simply hasn't been sampled yet, and
+  a warning there would just teach you to ignore the panel — so nothing fires until there is a real
+  history behind it.
+
 - **Runs now record what LANDED, not just what they did.** A workflow that made a measurable
   decision could already journal the bet it was making and have it graded once the horizon passed.
   That was the only thing in the system able to do it. Now any producer can open the same kind of

@@ -27,11 +27,16 @@ import pytest
 
 from personalclaw.workflows.introspection import (
     CHECKLIST,
+    EDGE_STATS_MIN_RUNS,
     FAKE_CHECK_MIN_RUNS,
     VERIFICATION_DEBT_WARN,
+    BranchStats,
+    EdgeStats,
     GateStats,
+    JudgeStats,
     RunStats,
     checklist_gaps,
+    edge_stats,
     gate_stats,
     percentile,
     proof_section,
@@ -466,3 +471,234 @@ def test_the_summary_states_the_counts_rather_than_a_verdict():
     summary = proof_section(RunStats(run_id="r", steps_completed=3, steps_failed=1)).summary
     assert "3 step(s) completed" in summary
     assert "1 failed" in summary
+
+
+# ── PP-8: edge-decision statistics (per-`branch` case + per-judge verdict distribution) ──
+#
+# The selected case survives in the EVENT STREAM only as the instance PATH of the case subtree:
+# the branch's `{"case": label}` output is offloaded behind an `output_ref` and its declined edges
+# are never journaled. So the projection reads `<branch>.cases[<label>]` paths — the taken case
+# runs, every untaken case's subtree is `step_skipped` (asserted against the engine's real writers
+# in `test_workflows_controller`: `root.cases[b]` and its children are skipped). These tests build
+# that exact shape.
+
+
+def _branch_run(taken: str | None, skipped: list[str], *, branch: str = "router") -> list[dict]:
+    """One run's events for a `branch` that took `taken` (or routed nowhere), skipping the rest."""
+    events: list[dict] = []
+    if taken is not None:
+        events.append(
+            {
+                "kind": "step_completed",
+                "instance_path": f"{branch}.cases[{taken}]",
+                "node_id": taken,
+            }
+        )
+    for label in skipped:
+        events.append(
+            {"kind": "step_skipped", "instance_path": f"{branch}.cases[{label}]", "node_id": label}
+        )
+    return events
+
+
+def test_edge_stats_counts_each_branch_case():
+    runs = [_branch_run("bug", ["feat"]) for _ in range(8)] + [
+        _branch_run("feat", ["bug"]) for _ in range(4)
+    ]
+    stats = edge_stats(runs).branches["router"]
+    assert stats.cases == {"bug": 8, "feat": 4}
+    assert stats.routed_runs == 12
+
+
+def test_the_edge_sample_bar_IS_the_said_no_bar():
+    """One rule for the whole surface: a branch and a gate on the same template must not disagree
+    about what "enough runs" means, so the dead-case flag reuses the fake-check threshold."""
+    assert EDGE_STATS_MIN_RUNS == FAKE_CHECK_MIN_RUNS
+
+
+def test_a_case_NEVER_taken_is_flagged_over_a_real_sample():
+    """The dead-case finding: `feat` is a declared case no routed run has ever selected."""
+    runs = [_branch_run("bug", ["feat"]) for _ in range(12)]
+    stats = edge_stats(runs).branches["router"]
+    assert stats.cases == {"bug": 12, "feat": 0}
+    assert stats.never_taken() == ["feat"]
+    assert any("feat" in w and "never took" in w for w in stats.warnings())
+
+
+def test_a_never_taken_case_is_NOT_flagged_on_a_YOUNG_template():
+    """The load-bearing sample gate. `feat` unseen over three routings is UNSAMPLED, not dead — a
+    flag here is the noise that teaches a reader to ignore the surface before it is ever right."""
+    runs = [_branch_run("bug", ["feat"]) for _ in range(3)]
+    stats = edge_stats(runs).branches["router"]
+    assert stats.routed_runs == 3
+    assert stats.never_taken() == []
+    assert stats.warnings() == []
+
+
+def test_a_DEGENERATE_selector_is_flagged():
+    """A branch that routes to one case every time over a real sample is doing no work."""
+    runs = [_branch_run("bug", ["feat"]) for _ in range(12)]
+    warning = edge_stats(runs).branches["router"].degenerate_warning()
+    assert "router" in warning and "bug" in warning
+
+
+def test_a_selector_that_uses_BOTH_cases_is_not_degenerate():
+    runs = [_branch_run("bug", ["feat"]) for _ in range(8)] + [
+        _branch_run("feat", ["bug"]) for _ in range(4)
+    ]
+    assert edge_stats(runs).branches["router"].degenerate_warning() == ""
+
+
+def test_a_degenerate_selector_is_NOT_flagged_on_a_YOUNG_template():
+    runs = [_branch_run("bug", ["feat"]) for _ in range(3)]
+    assert edge_stats(runs).branches["router"].degenerate_warning() == ""
+
+
+def test_a_single_case_branch_is_not_called_degenerate():
+    """A branch with one declared case is a spec shape, not a selector doing no work — flagging it
+    would fire on structure rather than on a decision the run declined to make."""
+    runs = [_branch_run("only", []) for _ in range(12)]
+    assert edge_stats(runs).branches["router"].degenerate_warning() == ""
+
+
+def test_a_branch_that_did_not_ROUTE_is_not_counted():
+    """An outer branch can skip this one entirely; a run where every case is skipped is not a
+    routing, so it must not inflate `routed_runs` — else a skipped branch reads as a dead-case."""
+    routed = [_branch_run("bug", ["feat"]) for _ in range(12)]
+    unrouted = [_branch_run(None, ["bug", "feat"]) for _ in range(5)]
+    stats = edge_stats(routed + unrouted).branches["router"]
+    assert stats.routed_runs == 12
+    assert stats.cases == {"bug": 12, "feat": 0}
+
+
+def test_nested_branches_attribute_to_their_OWN_prefix():
+    """`outer` takes `a`; inside `a`, `inner` takes `b` and skips `c`. Each `.cases[...]` segment is
+    attributed to its immediate prefix, so the two branches are counted independently."""
+    run = [
+        {"kind": "step_completed", "instance_path": "outer.cases[a]", "node_id": "a"},
+        {"kind": "step_skipped", "instance_path": "outer.cases[z]", "node_id": "z"},
+        {
+            "kind": "step_completed",
+            "instance_path": "outer.cases[a].inner.cases[b]",
+            "node_id": "b",
+        },
+        {"kind": "step_skipped", "instance_path": "outer.cases[a].inner.cases[c]", "node_id": "c"},
+    ]
+    branches = edge_stats([run]).branches
+    assert branches["outer"].cases == {"a": 1, "z": 0}
+    assert branches["outer.cases[a].inner"].cases == {"b": 1, "c": 0}
+
+
+def test_a_container_case_is_taken_via_its_CHILDREN():
+    """A structural container case root emits no step of its own; its children do. "Taken" reads a
+    non-skip event ANYWHERE in the subtree, so a container leg is not mistaken for never-taken."""
+    run = [
+        {"kind": "step_completed", "instance_path": "router.cases[big].child", "node_id": "child"},
+        {"kind": "step_skipped", "instance_path": "router.cases[small]", "node_id": "small"},
+    ]
+    stats = edge_stats([run]).branches["router"]
+    assert stats.cases == {"big": 1, "small": 0}
+
+
+def test_edge_stats_over_NO_runs_is_empty():
+    empty = edge_stats([])
+    assert empty.branches == {}
+    assert empty.judges == {}
+    assert empty.warnings() == []
+
+
+def test_edge_stats_reads_the_REAL_journal_path_shape(journal_home):
+    """Through the engine's own `Journal`, not hand-built dicts: the field names, redaction and the
+    `.cases[...]` path are whatever the engine writes, so this catches the projection drifting from
+    the stream it reads (the ethos this module was built on)."""
+    from personalclaw.workflows import journal as J
+
+    events = write_run(
+        "r-branch",
+        [
+            (J.STEP_COMPLETED, {"instance_path": "router.cases[bug]", "node_id": "bug"}),
+            (J.STEP_SKIPPED, {"instance_path": "router.cases[feat]", "node_id": "feat"}),
+        ],
+    )
+    stats = edge_stats([events]).branches["router"]
+    assert stats.cases == {"bug": 1, "feat": 0}
+    assert stats.routed_runs == 1
+
+
+# ── the judge half: per-gate verdict distribution ──
+
+
+def _judge_run(node_id: str, verdict: str) -> list[dict]:
+    return [{"kind": "judge_verdict", "node_id": node_id, "verdict": verdict}]
+
+
+def test_judge_verdict_distribution_is_counted():
+    runs = [_judge_run("grader", "pass") for _ in range(9)] + [
+        _judge_run("grader", "revise") for _ in range(3)
+    ]
+    stats = edge_stats(runs).judges["grader"]
+    assert stats.verdicts == {"pass": 9, "revise": 3}
+    assert stats.total == 12
+
+
+def test_a_DEGENERATE_judge_is_flagged():
+    """A judge that returns one verdict over a real sample is not discriminating — the same shape
+    as an always-one-way branch, complementary to `gate_stats`'s approve/reject said-no badge."""
+    runs = [_judge_run("grader", "pass") for _ in range(12)]
+    warning = edge_stats(runs).judges["grader"].degenerate_warning()
+    assert "grader" in warning and "pass" in warning
+
+
+def test_a_judge_with_MIXED_verdicts_is_not_degenerate():
+    runs = [_judge_run("grader", "pass") for _ in range(11)] + [_judge_run("grader", "revise")]
+    assert edge_stats(runs).judges["grader"].degenerate_warning() == ""
+
+
+def test_a_YOUNG_judge_is_not_flagged():
+    runs = [_judge_run("grader", "pass") for _ in range(3)]
+    assert edge_stats(runs).judges["grader"].degenerate_warning() == ""
+
+
+def test_a_judge_verdict_with_no_node_id_is_skipped():
+    assert edge_stats([[{"kind": "judge_verdict", "verdict": "pass"}]]).judges == {}
+
+
+def test_edge_findings_ride_the_shared_warnings_list():
+    """`EdgeStats.warnings` is what the template card folds beside the said-no warnings — both a
+    dead case and a degenerate selector are reported, and both are sample-gated."""
+    branch_runs = [_branch_run("bug", ["feat"]) for _ in range(12)]
+    judge_runs = [_judge_run("grader", "pass") for _ in range(12)]
+    warnings = edge_stats(branch_runs + judge_runs).warnings()
+    assert any("never took" in w for w in warnings)
+    assert any("doing no work" in w for w in warnings)
+    assert any("not discriminating" in w for w in warnings)
+
+
+def test_to_dict_exposes_the_distribution_and_the_findings():
+    runs = [_branch_run("bug", ["feat"]) for _ in range(12)]
+    payload = edge_stats(runs).to_dict()
+    assert payload["branches"]["router"]["cases"] == {"bug": 12, "feat": 0}
+    assert payload["branches"]["router"]["never_taken"] == ["feat"]
+    assert payload["branches"]["router"]["degenerate_warning"]
+
+
+def test_branch_stats_findings_are_configurable_per_call():
+    """A caller with a different confidence bar should not re-derive the rule — same shape as
+    `GateStats.fake_check_warning`'s `min_runs`."""
+    stats = BranchStats(path="router", cases={"bug": 3, "feat": 0}, routed_runs=3)
+    assert stats.never_taken() == []
+    assert stats.degenerate_warning() == ""
+    assert stats.never_taken(min_runs=3) == ["feat"]
+    assert stats.degenerate_warning(min_runs=3) != ""
+
+
+def test_judge_stats_degenerate_is_configurable_per_call():
+    stats = JudgeStats(node_id="grader", verdicts={"pass": 3})
+    assert stats.total == 3
+    assert stats.degenerate_warning() == ""
+    assert stats.degenerate_warning(min_runs=3) != ""
+
+
+def test_an_empty_EdgeStats_has_no_findings():
+    assert EdgeStats().warnings() == []
+    assert EdgeStats().to_dict() == {"branches": {}, "judges": {}}

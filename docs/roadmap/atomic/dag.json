@@ -7200,7 +7200,8 @@
         {
           "id": "PP-8",
           "title": "Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1332",
           "scope": "\"Put the judgment in the edges — and instrument them\" is the one graph-engineering practice we have no answer to. `branch` (binding-decided) and `gate`/`judge` (model-decided) are journaled individually and never aggregated, so a selector that has taken one case 47/47 times, or a case no run has ever reached, is invisible. `introspection.gate_stats` (said-no statistics with a sample-gated fake-check badge) is the closest existing surface and covers gates only.",
           "done_when": "A ledger projection reports, per `branch` and per judge gate, the case/verdict distribution across a template's run history, and flags a case never taken and a selector whose distribution is degenerate. Rendered on the existing introspection surface rather than a new one. Sample-gated like `gate_stats` — a distribution over three runs is not a finding, and reporting it as one is how a legible surface stops being read.",
           "deps": [
@@ -7860,11 +7861,6 @@
       {
         "id": "PP-6",
         "title": "`workflow replay <run_id>`: recorded-response provider + trajectory diff",
-        "plan": "PP"
-      },
-      {
-        "id": "PP-8",
-        "title": "Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection",
         "plan": "PP"
       },
       {
@@ -10318,9 +10314,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 11,
+        "todo": 10,
         "blocked": 0
       }
     ],

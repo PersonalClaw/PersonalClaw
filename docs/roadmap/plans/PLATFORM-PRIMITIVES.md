@@ -532,3 +532,31 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   `workflows/tick` to `workflows/admission`, is internal: it appears nowhere under
   `personalclaw/sdk/`, so no app can be depending on it. `PP-12` is the entry that will have
   something to announce.
+
+- **2026-08-15 — `PP-8` DONE.** `introspection.edge_stats(runs)` projects, across a template's
+  runs, per-`branch` case counts (`BranchStats`) and per-judge verdict counts (`JudgeStats`), and
+  flags the two findings the atom names: a **case never taken** and a **degenerate selector** (a
+  branch that always routes one way / a judge that returns one verdict). Both ride the SAME
+  sample gate as the said-no badge — `EDGE_STATS_MIN_RUNS = FAKE_CHECK_MIN_RUNS` — so a distribution
+  over three runs is never a finding. Lives beside `gate_stats` in `workflows/introspection.py`,
+  wired into `service.introspect()` (top-level `edges` + `answers.risky.edges`, findings folded into
+  the template card's shared `warnings` list), and rendered as a new **Edges** section in the
+  existing `IntrospectPanel` — no new surface. Falsified three ways (sample-gate → 0, dead-case
+  check always "taken", degeneracy check disabled); each reds the matching test and restores clean.
+- **2026-08-15 — `PP-8` DISCOVERY: the `branch` case selection is NOT recorded as a dedicated
+  inline ledger event.** `engine.dispatch_branch` produces `{"case": label}`, but that output is
+  offloaded through `store_output` behind an `output_ref` (body under `outputs/`, never inline in
+  the event), and the branch's `declined_edges` are held on the instance and never journaled
+  (`controller._decline` mutates memory only). The generic `DECISION` kind is written for
+  wip-limit holds and loop-iteration decisions, never for a `branch` route. **The selection
+  survives in the event stream only as the case subtree's instance PATH** — the taken case runs and
+  every untaken case's whole subtree is `step_skipped` at `<branch>.cases[<label>]`
+  (`tick._visit_branch` + `controller._skip`; asserted in `test_workflows_controller`). So the
+  projection reads case labels from those paths, which keeps it a PURE projection over the event
+  list like `gate_stats` — **no output-store read, no new ledger kind minted.** The judge half uses
+  the existing `JUDGE_VERDICT` events. No new writer was added; if a future need arises for the
+  declined edges to be first-class, that is a real ledger-kind decision, not a silent mint.
+- **2026-08-15 — `PP-8` DECISION: CHANGELOG entry added.** Unlike `PP-11`, this atom adds a
+  user-observable surface (a new Edges panel section with two new findings), so it is announced in
+  the in-app Updates panel. Header "N of 16 shipped" left unchanged (a pre-existing 3-way merge
+  artifact with other atoms in flight).
