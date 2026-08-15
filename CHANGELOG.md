@@ -32,6 +32,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   the rest are recorded in the run's own ledger, because "this artifact's outcome is inconclusive"
   is not something you can act on.
 
+- **You can now ask which runs of a template went a different way — and get warned when they start
+  going a worse way.** Every run now carries a *trajectory signature*: a fingerprint of the exact path
+  it took — which steps ran, in what order, how each resolved, which branches it skipped. Two runs of
+  a template that took the same path share the same signature, so "show me the runs that did something
+  different" is finally a question with an answer, per run on its introspection view and per template
+  at `GET /api/workflows/{name}/trajectory`. And when a template's recent runs shift onto a path that
+  fails more often than the one they used to take, that shift is surfaced as a risk — not on the third
+  run of a brand-new template (that is just a template that has barely run), but once there is enough
+  history for the shift to be real. It costs nothing to compute: it is read straight from the ledger
+  each run already writes, with no new tracking of any kind.
+
 ### Changed
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to
   run first.** The engine kept two separate pictures of how steps relate: what must run before what,

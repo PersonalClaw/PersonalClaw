@@ -1196,6 +1196,26 @@ def introspect(run_id: str) -> dict[str, Any]:
         )
         card = introspection.template_card(run.workflow_name, sibling_stats, warnings=warnings)
 
+    # The trajectory signature (PP-7): this run's decision PATH as a pure ledger projection, plus
+    # the template-level regression signal — have this template's recent runs shifted to a path that
+    # fails more often? Both are projections over ledgers already on disk; no new store.
+    signature = introspection.trajectory_signature(run_id, events)
+    trajectory_regression = None
+    trajectory_distribution: dict[str, int] = {}
+    if run.workflow_name:
+        # Oldest-first: the shift detector reasons about "the path it USED to take" vs the recent
+        # one, so the history it reads must run forward in time.
+        history: list[tuple[str, bool]] = []
+        for r in sorted(siblings, key=lambda s: getattr(s, "created_at", "") or ""):
+            sib_events = events if r.id == run_id else journal_mod.ledger(r.id)
+            sib_sig = introspection.trajectory_signature(r.id, sib_events).signature
+            sib_failed = (
+                stats if r.id == run_id else introspection.run_stats(r.id, sib_events)
+            ).steps_failed > 0
+            trajectory_distribution[sib_sig] = trajectory_distribution.get(sib_sig, 0) + 1
+            history.append((sib_sig, sib_failed))
+        trajectory_regression = introspection.trajectory_regression(run.workflow_name, history)
+
     from personalclaw.workflows.human_input import list_continuations
 
     nodes = _nodes_of(run_id)
@@ -1228,6 +1248,11 @@ def introspect(run_id: str) -> dict[str, Any]:
             "degraded": [n for n in nodes if n.get("state") == "degraded"],
             "gates": [g.to_dict() for g in gates.values()],
             "verification_debt": stats.verification_debt,
+            # A template drifting onto a path that fails more often is a risk the per-run numbers
+            # cannot show — it is only visible across the template's history.
+            "trajectory_regression": (
+                trajectory_regression.to_dict() if trajectory_regression else None
+            ),
         },
         # "what happens next if I say nothing" — a WAITING run does nothing until answered; a
         # terminal run is done. Stated rather than implied: the question the plan promotes to a
@@ -1241,6 +1266,13 @@ def introspect(run_id: str) -> dict[str, Any]:
         stats=stats.to_dict(),
         gates={node_id: g.to_dict() for node_id, g in gates.items()},
         template_card=card.to_dict(),
+        # This run's decision PATH plus the template's signature-class distribution and the
+        # regression signal — the "which runs of this template went a different way" query (PP-7).
+        trajectory=signature.to_dict()
+        | {
+            "distribution": trajectory_distribution,
+            "regression": trajectory_regression.to_dict() if trajectory_regression else None,
+        },
         proof=proof.to_dict(),
         timeline=answers["changed"],
         # The live touched-items feed (§6.5): what this run published and what was handed to it.
@@ -1251,6 +1283,42 @@ def introspect(run_id: str) -> dict[str, Any]:
         # Empty is the healthy answer. A non-empty list names a question this payload cannot
         # answer, which is a backend gap — the FE cannot close it by rendering harder.
         checklist_gaps=introspection.checklist_gaps(answers),
+    )
+
+
+def template_trajectory(name: str) -> dict[str, Any]:
+    """The trajectory-signature distribution and regression signal for one template (PP-7).
+
+    Queryable WITHOUT a run in hand: given a template name, this reads its recent runs' ledgers,
+    projects each to its trajectory signature, and reports the distribution of signature classes,
+    each run's class, and the sample-gated regression signal. A pure projection over ledgers already
+    on disk — no store, no model call. Bounded by `_TEMPLATE_CARD_RUNS` for the same reason the
+    introspection card is: a personal instance accumulates runs forever.
+    """
+    from personalclaw.workflows import introspection
+
+    runs, _total = store.list_runs(workflow_name=name, limit=_TEMPLATE_CARD_RUNS)
+    history: list[tuple[str, bool]] = []
+    distribution: dict[str, int] = {}
+    signatures: list[dict[str, Any]] = []
+    # Oldest-first, so the regression detector reads the template's history forward in time.
+    for run in sorted(runs, key=lambda r: getattr(r, "created_at", "") or ""):
+        run_id = getattr(run, "id", "")
+        if not run_id:
+            continue
+        events = journal_mod.ledger(run_id)
+        sig = introspection.trajectory_signature(run_id, events).signature
+        failed = introspection.run_stats(run_id, events).steps_failed > 0
+        distribution[sig] = distribution.get(sig, 0) + 1
+        history.append((sig, failed))
+        signatures.append({"run_id": run_id, "signature": sig, "failed": failed})
+    regression = introspection.trajectory_regression(name, history)
+    return _ok(
+        template=name,
+        runs=len(history),
+        distribution=distribution,
+        signatures=signatures,
+        regression=regression.to_dict() if regression else None,
     )
 
 

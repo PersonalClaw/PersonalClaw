@@ -36,6 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.ledger import hash_value
+
 #: Runs of a template before its 100%-pass rate counts as evidence of a fake check. Below this,
 #: "never rejected" is a sample-size artifact — and a badge that fires on the third run of a new
 #: template teaches the user to ignore badges before the metric has ever been right.
@@ -299,6 +301,222 @@ def gate_stats(events: list[dict[str, Any]]) -> dict[str, GateStats]:
             if int(event.get("attempt", 1) or 1) > 1:
                 out[node_id].retries_consumed += 1
     return out
+
+
+# ── trajectory signature (PP-7) ────────────────────────────────────────────────
+
+#: Runs of a template before a shift to a worse-performing signature class counts as evidence
+#: rather than noise. Mirrors FAKE_CHECK_MIN_RUNS in spirit: "the third run took a new path" is not
+#: a regression, it is a template that has barely run. Below this floor the detector stays silent.
+TRAJECTORY_REGRESSION_MIN_RUNS = 10
+
+#: A regime — the runs on one signature class, before or after a shift — must be at least this many
+#: for its failure rate to be evidence. One run on a new path is an anecdote, and a failure rate
+#: over a single run is 0% or 100% — neither is a measurement.
+TRAJECTORY_REGRESSION_MIN_CLASS_RUNS = 3
+
+#: The failure-rate jump between the old regime and the new one worth surfacing. A class that fails
+#: a hair more often than the one before it is drift, not a regression — the signal fires on a
+#: MATERIAL shift so the surface that carries it stays worth reading.
+TRAJECTORY_REGRESSION_MIN_DELTA = 0.25
+
+#: The ledger events that place a node on a run's decision PATH, each carrying a verdict. The path
+#: is the ordered sequence of these: which nodes ran, in what order, how each resolved, and which
+#: branch legs the engine skipped. Deliberately NOT deduped by path — a rewind re-runs nodes and
+#: appends their terminal events again, and those extra tuples are exactly what makes a rewound
+#: run's signature distinguishable from a clean one's.
+_TRAJECTORY_STEP_KINDS = frozenset(
+    {
+        "step_completed",
+        "step_failed",
+        "step_skipped",
+        "step_cached",
+        "gate_resolved",
+        "judge_verdict",
+    }
+)
+
+_FIXED_VERDICTS = {"step_failed": "failed", "step_skipped": "skipped", "step_cached": "cached"}
+
+
+def _trajectory_verdict(kind: str, event: dict[str, Any]) -> str:
+    """The verdict one path-shaping event carries.
+
+    A completed step's verdict is its terminal state — a `degraded` success took a different path
+    than a clean one and must not collapse into it. A gate's is approve/reject; a judge's is its
+    own verdict token. Every other terminal kind carries a fixed verdict so the sequence is a path.
+    """
+    if kind == "step_completed":
+        return str(event.get("state") or "done")
+    if kind == "gate_resolved":
+        return "gate:approved" if event.get("approved") else "gate:rejected"
+    if kind == "judge_verdict":
+        return "judge:" + str(event.get("verdict") or "").upper()
+    return _FIXED_VERDICTS[kind]
+
+
+def trajectory_steps(events: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """The ordered (node, lane, verdict) tuples a run's ledger describes — its decision PATH.
+
+    A PURE projection over the event list, in journal order, with no store of its own: PP-7's whole
+    claim is that the path is already fully recorded and only needs reading. `lane` is read from the
+    `step_started` a node emitted (the one event that carries it); a node with no recorded lane — an
+    untaken branch leg the engine skipped without launching — contributes "" rather than a guess,
+    which is deterministic and so keeps the projection pure.
+
+    NOT deduped by path (unlike replay's last-write-wins fold, which reconstructs a FINAL
+    trajectory): a signature must tell a rewound run apart from a clean one, and a rewind's mark on
+    the ledger is precisely the re-execution events it appends.
+    """
+    lane_by_path: dict[str, str] = {}
+    steps: list[tuple[str, str, str]] = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("kind") or "")
+        if kind == "step_started":
+            path = str(event.get("instance_path") or "")
+            if path:
+                lane_by_path[path] = str(event.get("lane") or "")
+            continue
+        if kind not in _TRAJECTORY_STEP_KINDS:
+            continue
+        path = str(event.get("instance_path") or "")
+        node = str(event.get("node_id") or "") or path
+        steps.append((node, lane_by_path.get(path, ""), _trajectory_verdict(kind, event)))
+    return steps
+
+
+@dataclass
+class TrajectorySignature:
+    """One run's trajectory, projected from its ledger: the ordered path plus its hash.
+
+    `signature` is the CLASS — two runs that took the same path hash equal, and that equality is the
+    whole query "which runs of this template went a different way". `steps` is kept so a surface can
+    show the path, not just its fingerprint.
+    """
+
+    run_id: str
+    signature: str
+    steps: list[tuple[str, str, str]] = field(default_factory=list)
+
+    @property
+    def length(self) -> int:
+        return len(self.steps)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "signature": self.signature,
+            "length": self.length,
+            "steps": [{"node": n, "lane": lane, "verdict": v} for n, lane, v in self.steps],
+        }
+
+
+def trajectory_signature(run_id: str, events: list[dict[str, Any]]) -> TrajectorySignature:
+    """Project a run's ledger into its trajectory signature — a PURE function of the events.
+
+    The signature is `hash_value` over the ordered tuple list, reusing the codebase's one content
+    hash rather than minting a parallel scheme (the same 16-hex digest `FailureSignature.input_hash`
+    and a node's `prompt_hash` use). Same events in, same signature out, every time: computing it
+    twice over a frozen ledger returns the same string, which is the purity bar.
+    """
+    steps = trajectory_steps(events)
+    return TrajectorySignature(run_id=run_id, signature=hash_value(steps), steps=steps)
+
+
+def _most_common_signature(runs: list[tuple[str, bool]]) -> str:
+    """The signature class most runs took. Ties broken by the signature string so the choice is
+    deterministic across calls — a nondeterministic tiebreak would leak into the regression's own
+    output and break its purity."""
+    counts: dict[str, int] = {}
+    for sig, _ in runs:
+        counts[sig] = counts.get(sig, 0) + 1
+    return max(sorted(counts), key=lambda s: counts[s]) if counts else ""
+
+
+@dataclass
+class TrajectoryRegression:
+    """A template whose recent runs shifted to a signature class that fails more often."""
+
+    template: str
+    current_signature: str
+    prior_signature: str
+    current_failure_rate: float
+    prior_failure_rate: float
+    current_runs: int
+    prior_runs: int
+
+    def message(self) -> str:
+        return (
+            f"{self.template}'s recent runs shifted to a new path (`{self.current_signature}`) "
+            f"that fails {self.current_failure_rate:.0%} of the time, up from "
+            f"{self.prior_failure_rate:.0%} on the path it took before (`{self.prior_signature}`)"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "template": self.template,
+            "current_signature": self.current_signature,
+            "prior_signature": self.prior_signature,
+            "current_failure_rate": round(self.current_failure_rate, 4),
+            "prior_failure_rate": round(self.prior_failure_rate, 4),
+            "current_runs": self.current_runs,
+            "prior_runs": self.prior_runs,
+            "message": self.message(),
+        }
+
+
+def trajectory_regression(
+    template: str,
+    runs: list[tuple[str, bool]],
+    *,
+    min_runs: int = TRAJECTORY_REGRESSION_MIN_RUNS,
+    min_class_runs: int = TRAJECTORY_REGRESSION_MIN_CLASS_RUNS,
+    min_delta: float = TRAJECTORY_REGRESSION_MIN_DELTA,
+) -> TrajectoryRegression | None:
+    """Fire when a template's runs have SHIFTED to a signature class that fails more often.
+
+    `runs` is (signature, failed) per run, OLDEST first. The detector finds the contiguous tail of
+    most-recent runs sharing the newest signature — the new regime — and compares its failure rate
+    to the runs before it. It fires only when the shift is real (the prior regime's dominant path
+    differs from the new one) and the new path fails materially more.
+
+    Sample-gated like `gate_stats`, and for the same reason: "the last two runs took a new path and
+    both failed" is not evidence a template regressed — it is a template that has barely run. Below
+    `min_runs` total, or with either regime under `min_class_runs`, the detector stays silent.
+    Dropping those floors to zero is what turns a young template's first new path into a false
+    alarm, which is exactly the failure this gate exists to prevent.
+    """
+    clean = [(str(s), bool(f)) for s, f in (runs or []) if s]
+    if len(clean) < min_runs:
+        return None
+    current_sig = clean[-1][0]
+    tail: list[tuple[str, bool]] = []
+    for sig, failed in reversed(clean):
+        if sig != current_sig:
+            break
+        tail.append((sig, failed))
+    prior = clean[: len(clean) - len(tail)]
+    if len(tail) < min_class_runs or len(prior) < min_class_runs:
+        return None
+    # A genuine shift: the path the template USED to take must differ from the one it moved to.
+    prior_dominant = _most_common_signature(prior)
+    if prior_dominant == current_sig:
+        return None
+    current_rate = sum(1 for _, f in tail if f) / len(tail)
+    prior_rate = sum(1 for _, f in prior if f) / len(prior)
+    if current_rate - prior_rate < min_delta:
+        return None
+    return TrajectoryRegression(
+        template=template,
+        current_signature=current_sig,
+        prior_signature=prior_dominant,
+        current_failure_rate=current_rate,
+        prior_failure_rate=prior_rate,
+        current_runs=len(tail),
+        prior_runs=len(prior),
+    )
 
 
 @dataclass
