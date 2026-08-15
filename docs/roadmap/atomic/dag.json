@@ -7231,7 +7231,8 @@
         {
           "id": "PP-11",
           "title": "Extract `AdmissionPolicy` behind today's lanes (no behaviour change)",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1304",
           "scope": "Four independent schedulers answer \"what may run now, given persisted state\", sharing ZERO lines: `workflows/tick.frontier()` (typed lanes + per-container `max_concurrency` + WIP=1), `loop/tick.evaluate()` (dwell / min_findings / metric_pass / metric_hold / rollback), `workflows/pool.py`'s `frontier`/`next` (priority + blocking-count + overdue with TTL'd CAS leases — verified: `pool.py` imports only stdlib), and `triggers/` `tick_once`. The first three are the same projection with different admission rules, and each has a capability the others structurally cannot express. arXiv:2604.11378's contribution is precisely that an agent loop is \"a single ready unit scheduler\" and graph engines differ from it in degree, not kind — so the unification is semantically available, not aspirational.",
           "done_when": "`frontier()`'s admission step becomes an ordered list of `AdmissionPolicy` objects, with today's lane caps, per-container `max_concurrency` and WIP=1 expressed as the first three policies and composed tightest-wins. `frontier()` stays PURE — no clock, no I/O — and its output is byte-identical for every existing spec: a golden-file test over the bundled templates' frontier decisions captures before and diffs after. `wip_held` and `deferred` keep their distinct meanings (a declared invariant being enforced vs lane pressure). No new policy is added here and no other scheduler is touched — this atom only makes the seam exist.",
           "deps": [
@@ -7877,8 +7878,8 @@
         "plan": "PP"
       },
       {
-        "id": "PP-11",
-        "title": "Extract `AdmissionPolicy` behind today's lanes (no behaviour change)",
+        "id": "PP-12",
+        "title": "Add `Lease` and `Dwell`/`MetricGate` admission policies",
         "plan": "PP"
       },
       {
