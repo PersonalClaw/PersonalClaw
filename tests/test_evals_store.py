@@ -20,6 +20,7 @@ from personalclaw.evals.matrix import (
     MatrixSpec,
     aggregate,
 )
+from personalclaw.evals.pinning import RunPin
 
 
 @pytest.fixture()
@@ -114,12 +115,27 @@ def test_path_helpers_resolve_under_the_isolated_home(eval_home):
 # ── the append-only results ledger ─────────────────────────────────────────────
 
 
+def _pin(**over):
+    """A complete RunPin — every ledger write needs one (ES-2)."""
+    parts = {
+        "scenario_id": "s",
+        "scenario_sha256": "a" * 64,
+        "model_fingerprint": {"chat": "Acme:m1"},
+        "prompt_pack_sha256": "b" * 64,
+        "config_snapshot_ref": "c" * 64,
+    }
+    parts.update(over)
+    return RunPin(**parts)
+
+
 def test_append_result_is_append_only(eval_home):
     store.append_result(
-        {"study_id": "st-1", "kind": "template_ab", "verdict": "pass", "score_new": "0.8"}
+        {"study_id": "st-1", "kind": "template_ab", "verdict": "pass", "score_new": "0.8"},
+        pin=_pin(),
     )
     store.append_result(
-        {"study_id": "st-2", "kind": "template_ab", "verdict": "fail", "score_new": "0.2"}
+        {"study_id": "st-2", "kind": "template_ab", "verdict": "fail", "score_new": "0.2"},
+        pin=_pin(),
     )
     text = store.results_path().read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -132,10 +148,43 @@ def test_append_result_is_append_only(eval_home):
 
 
 def test_append_result_neutralizes_tabs_and_newlines(eval_home):
-    store.append_result({"study_id": "st\t1\nbad", "kind": "k"})
+    store.append_result({"study_id": "st\t1\nbad", "kind": "k"}, pin=_pin())
     rows = store.read_results()
     assert rows[0]["study_id"] == "st 1 bad"
     assert rows[0]["kind"] == "k"
+
+
+def test_append_result_refuses_a_row_without_a_pin(eval_home):
+    """ES-2's ledger chokepoint: no pin ⇒ no row, and the file is never created."""
+    with pytest.raises(store.PinRequiredError):
+        store.append_result({"study_id": "st-1", "kind": "k"}, pin=None)
+    assert not store.results_path().exists()
+
+
+def test_append_result_refuses_an_incomplete_pin(eval_home):
+    """Each of the four amendment-named parts is individually load-bearing."""
+    for missing in (
+        "scenario_sha256",
+        "prompt_pack_sha256",
+        "config_snapshot_ref",
+    ):
+        with pytest.raises(store.PinRequiredError) as excinfo:
+            store.append_result({"study_id": "st-1"}, pin=_pin(**{missing: ""}))
+        assert missing in str(excinfo.value)
+    with pytest.raises(store.PinRequiredError):
+        store.append_result({"study_id": "st-1"}, pin=_pin(model_fingerprint={}))
+    assert not store.results_path().exists()
+
+
+def test_pin_columns_come_from_the_pin_not_the_caller(eval_home):
+    """A caller cannot label its score with someone else's scenario hash."""
+    store.append_result(
+        {"study_id": "st-1", "scenario_sha256": "f" * 64, "model_fp": "spoofed"},
+        pin=_pin(),
+    )
+    row = store.read_results()[0]
+    assert row["scenario_sha256"] == "a" * 64
+    assert row["model_fp"] == _pin().model_fp() != "spoofed"
 
 
 def test_read_results_empty_when_absent(eval_home):

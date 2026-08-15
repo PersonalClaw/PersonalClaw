@@ -10,6 +10,7 @@ timeout, non-zero exit / garbage stdout, and budget-exceeded).
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import types
@@ -17,6 +18,7 @@ import types
 import pytest
 
 from personalclaw.evals import runner as runner_mod
+from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
 from personalclaw.evals.child import (
     error_result,
@@ -35,12 +37,42 @@ from personalclaw.evals.matrix import (
 from personalclaw.evals.runner import run_matrix
 
 
+def write_pinnable_home(home, *, subjects=("s", "wf-x"), model="Acme:m1"):
+    """Make ``home`` a home ``run_matrix`` can PIN a run against (ES-2).
+
+    A run needs a resolvable scenario (declaring a fixture home that ships), a model
+    binding to fingerprint, and a loadable config — without all four the pin is
+    incomplete and ``run_matrix`` refuses to start. Written as files, through the real
+    resolution paths, so these tests exercise the same pin the runner computes.
+    """
+    (home / "config.json").write_text(
+        json.dumps({"providers": [{"name": "Acme"}]}), encoding="utf-8"
+    )
+    (home / "active_models.json").write_text(json.dumps({"chat": [model]}), encoding="utf-8")
+    scenarios_dir = home / "evals" / "scenarios"
+    scenarios_dir.mkdir(parents=True, exist_ok=True)
+    for name in subjects:
+        (scenarios_dir / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "name": name,
+                    "version": 1,
+                    "fixture_home": "empty",
+                    "sessions": [{"name": "s1", "turns": [{"user": "hi"}]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+    scenario_lib.install_library()
+    return home
+
+
 @pytest.fixture()
 def eval_home(tmp_path, monkeypatch):
     """Point config_dir() (which the store roots on) at an isolated home — nothing
     touches the real ``~/.personalclaw``."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    return tmp_path
+    return write_pinnable_home(tmp_path)
 
 
 class _FakeRun:

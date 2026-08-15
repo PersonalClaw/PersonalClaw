@@ -1,5 +1,7 @@
 {
   "name": "smoke_test",
+  "version": 1,
+  "fixture_home": "empty",
   "description": "Minimal 2-session smoke test. Teach one fact, recall it next session. Designed to complete in under 2 minutes.\n",
   "dimensions": [
     "memory_recall"

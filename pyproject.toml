@@ -205,7 +205,10 @@ personalclaw = [
     "config/prompt_snippets/*.md",
     "config/design/*.json",
     "tool_providers/rules_builtin.json",
-    "eval/scenarios/*.json",
+    # The shipped Loop-1 scenario library (ES-2). evals/scenarios.py installs these
+    # into ~/.personalclaw/evals/scenarios/ on first reference; a wheel without this
+    # line ships an empty library, so the line is load-bearing, not cosmetic.
+    "evals/library/*.json",
     "tests_fixtures/*/*",
     "skills/bundled/*/SKILL.md",
     # The bundled template library (WF2 §6). `workflow.json`, not the `WORKFLOW.md` this line
