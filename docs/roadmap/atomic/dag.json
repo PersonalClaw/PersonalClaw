@@ -5195,7 +5195,7 @@
         {
           "id": "WS-5",
           "title": "dir-source: signature-diff observer, debounce, archive-on-delete",
-          "status": "todo",
+          "status": "done",
           "scope": "§4 Watched Local Directories (am.5): dir-source spec + save-time validate_file_path/sensitive-path/path-cap; dependency-free mtime+size signature-diff poll (not watchdog); debounced incremental re-index; §11 step 3. Reconcile against shipped triggers/file_poll.py; fs_watch.py stays untouched",
           "done_when": "Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm)",
           "deps": [
@@ -7968,11 +7968,6 @@
         "plan": "WS"
       },
       {
-        "id": "WS-5",
-        "title": "dir-source: signature-diff observer, debounce, archive-on-delete",
-        "plan": "WS"
-      },
-      {
         "id": "WS-6",
         "title": "Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)",
         "plan": "WS"
@@ -10107,9 +10102,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {

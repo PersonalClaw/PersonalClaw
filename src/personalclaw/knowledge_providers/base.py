@@ -31,6 +31,21 @@ class KnowledgeItem:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+#: A sighting of a guid the source has never emitted before → a NEW item.
+CHANGE_CREATED = "created"
+#: A sighting of a guid that already has an item, whose content changed → the SAME
+#: item is updated and re-enqueued for re-indexing (never a second row).
+CHANGE_MODIFIED = "modified"
+#: The guid disappeared upstream → its item is ARCHIVED with a ``source_deleted_at``
+#: stamp. Never a hard delete: the upstream copy is gone, so the library row is the
+#: only remaining copy of what the user had (WATCHED-SOURCES §4, SC#5).
+CHANGE_DELETED = "deleted"
+#: The closed vocabulary. One set, read by the engine's dispatch — an unknown value
+#: is a programming error, not a silently-defaulted create (a default branch that
+#: swallowed "deleted" would hard-index a vanished file).
+SOURCE_CHANGES = frozenset({CHANGE_CREATED, CHANGE_MODIFIED, CHANGE_DELETED})
+
+
 @dataclass
 class SourceItem:
     """One item pulled from an external feed during a poll (WATCHED-SOURCES §1.1).
@@ -41,6 +56,13 @@ class SourceItem:
     engine records; ``also_seen_in`` lets a provider declare cross-source
     attribution (SC#3, e.g. the same story via HN and RSS) without the engine
     re-deriving it.
+
+    ``change`` is the sighting's KIND, from :data:`SOURCE_CHANGES` (WS-5). An
+    append-only feed only ever emits :data:`CHANGE_CREATED` (the default, so the
+    §1.1 contract is unchanged); a MUTABLE corpus — a watched local directory — also
+    emits :data:`CHANGE_MODIFIED` for an edited item and :data:`CHANGE_DELETED` for
+    one that vanished. The provider observes the change; the ENGINE owns what
+    persisting it means, so no provider can decide to hard-delete a user's item.
     """
 
     guid: str
@@ -50,6 +72,7 @@ class SourceItem:
     published_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     also_seen_in: list[str] = field(default_factory=list)
+    change: str = CHANGE_CREATED
 
 
 @dataclass
