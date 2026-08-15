@@ -24,6 +24,7 @@ from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
 
+from personalclaw import memory_slots
 from personalclaw.config.loader import config_dir
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
@@ -87,6 +88,10 @@ class SemanticRejectCode(str, Enum):
     VALUE_SIZE = "value_size"
     INJECTION = "injection_blocked"
     CONFLICT = "conflict_skip"
+    #: A `slot.*` write over that slot's per-slot cap (MGAV-8). Distinct from VALUE_SIZE
+    #: because the remedy is different and user-facing: VALUE_SIZE means "this value is
+    #: absurd", SLOT_CAP means "this register is full and here is what to drop".
+    SLOT_CAP = "slot_cap"
 
 
 _AUDITABLE_REJECT_CODES = {
@@ -94,6 +99,9 @@ _AUDITABLE_REJECT_CODES = {
     SemanticRejectCode.CONFIDENCE,
     SemanticRejectCode.INJECTION,
     SemanticRejectCode.RESERVED_PREFIX,
+    #: Auditable, not security: a refused slot append is a memory the user tried to keep and
+    #: did not get. An unlogged refusal is how "it forgot what I told it" becomes unexplainable.
+    SemanticRejectCode.SLOT_CAP,
 }
 
 _SECURITY_REJECT_CODES = {
@@ -230,6 +238,12 @@ _BUILTIN_PREFIXES = [
     "project.*",
     "user.*",
     "lesson.*",
+    #: Memory slots (MEMORY-GRAPH-AND-VAULT §6 — MGAV-8). Allowlisted rather than left to
+    #: `memory.semantic_keys`, because a slot is a BUILT-IN class of the memory system: making
+    #: the always-injected registers depend on user config would mean a default install cannot
+    #: hold a persona. Per-slot size caps are enforced in `validate_semantic` (see
+    #: `personalclaw.memory_slots`), so `slot.*` is a narrower allowance than it looks.
+    "slot.*",
 ]
 
 _INJECTION_PATTERNS = [
@@ -494,10 +508,15 @@ _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
 # is the harness's model of how the user wants it to BEHAVE, consulted by an exact
 # prefix lookup at triage time. Injected as a fact it would read as a claim about
 # the user ("archive:sender:noreply.github.com"), so it is excluded here.
+# `slot.*` joins them (MEMORY-GRAPH-AND-VAULT §6 — MGAV-8). A slot already injects through its
+# OWN bounded block in `build_session_context`, so leaving it in the fact block would charge the
+# same text to the budget twice AND miscategorise the harness-facing slots: `slot.self_notes`
+# read back as a fact would assert the assistant's working notes as claims about the user.
 _NON_FACT_KEY_CLAUSE = (
     "key NOT LIKE 'lesson.%' AND key NOT LIKE 'user.procedural.%' "
     "AND key NOT LIKE 'user.persona.%' AND key NOT LIKE 'user.commitment.%' "
-    "AND key NOT LIKE 'user.selfmodel.%' AND key NOT LIKE 'user.approval.%'"
+    "AND key NOT LIKE 'user.selfmodel.%' AND key NOT LIKE 'user.approval.%' "
+    "AND key NOT LIKE 'slot.%'"
 )
 
 
@@ -1079,6 +1098,26 @@ class VectorMemoryStore(MemoryProvider):
             )
         if _contains_injection(vj):
             return SemanticRejectCode.INJECTION, "Value contains blocked content patterns"
+        # Per-slot cap, enforced HERE rather than only in `memory_slots.append` (MGAV-8), so a
+        # direct `set_semantic("slot.persona", <huge>)` from a route or a tool cannot route
+        # around the ceiling that the always-injected Slots block depends on. The refusal is
+        # loud (a reject code the caller must handle) and carries the trim proposal's text.
+        if key.startswith(memory_slots.SLOT_PREFIX):
+            name = memory_slots.name_from_key(key)
+            cap = memory_slots.cap_for(name)
+            used = memory_slots.live_chars(value)
+            if used > cap:
+                proposal = memory_slots.TrimProposal(
+                    slot=name,
+                    cap_chars=cap,
+                    current_chars=used,
+                    incoming_chars=0,
+                    drop_candidates=[
+                        line.text
+                        for line in memory_slots.live_lines(memory_slots.parse_lines(value))
+                    ],
+                )
+                return SemanticRejectCode.SLOT_CAP, proposal.message
         return None
 
     def log_reject_event(
@@ -1158,6 +1197,11 @@ class VectorMemoryStore(MemoryProvider):
             MemoryKind.SELF_PERSONA.value,
             MemoryKind.COMMITMENT.value,
             MemoryKind.APPROVAL.value,
+            #: Slots ride the semantic table under `slot.*` (MGAV-8). Listed explicitly
+            #: because this set gates the query: omitting it would make a slot invisible to
+            #: `iter_records`, and therefore to the inventory/audit surfaces that enumerate
+            #: what memory holds — an always-injected register nobody can list.
+            MemoryKind.SLOT.value,
         }
         if want is None or (want & sem_kinds):
             where = "" if include_deleted else " WHERE is_deleted = 0"

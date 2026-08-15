@@ -77,6 +77,10 @@ OLD_HEAT_30D = 0.5 * math.exp(-1.0)
 #: What the kernel produces, per kind, same inputs. Pinned because these are the
 #: numbers the promotion gate and the retrieval boost now see.
 NEW_HEAT_30D = {
+    # A memory slot is now the slowest-decaying class (0.3 — MGAV-8): the user wrote it into
+    # an always-injected register, so decay is not the instrument that retires one (their own
+    # tombstone is). Still not exempt — see IMPORTANCE_DAMPING's docstring on pin-once rot.
+    MemoryKind.SLOT: 0.441351,
     # A user-taught approval rule is the slowest-decaying class (0.4, matching
     # "strategy") — a standing instruction outlives the digest that minted it.
     MemoryKind.APPROVAL: 0.423373,

@@ -42,6 +42,24 @@ KEY_PREFIX = "user.selfmodel"
 MIN_SEEN_COUNT = 2
 MIN_CONFIDENCE = 0.72
 
+#: Per-facet override of `MIN_SEEN_COUNT` (MGAV-8). A **principle** is the only facet that is
+#: always-on and constraint-like — it changes how the assistant behaves on every future turn —
+#: so it takes THREE reinforcements, not two. Two is the count a coincidence reaches: the same
+#: thing happening twice is the most common shape of noise in a small sample, and a principle
+#: minted from it is a behaviour change the user never asked for and cannot easily trace.
+#: The provisional facets keep the lower bar deliberately: a theory that announces itself as a
+#: guess is cheap to be wrong about, and raising its bar too would stall the one cadence that
+#: learns from what WORKS.
+MIN_SEEN_BY_FACET: dict[str, int] = {
+    "principle": 3,
+}
+
+
+def min_seen_for(facet: str) -> int:
+    """The reinforcement count *facet* needs before promotion is even considered."""
+    return MIN_SEEN_BY_FACET.get(facet, MIN_SEEN_COUNT)
+
+
 #: Hard caps, per §2.6. Bloat is prevented STRUCTURALLY: `plan_promotion` refuses to grow a full
 #: tier and returns a displacement instead, so no path quietly appends a seventh principle.
 CAPS: dict[str, int] = {
@@ -175,6 +193,14 @@ class Reinforcement:
         """
         return self.seen_count >= MIN_SEEN_COUNT and self.confidence >= MIN_CONFIDENCE
 
+    def promotable_for(self, facet: str) -> bool:
+        """The same conjunction, at *facet*'s own `seen_count` bar (MGAV-8).
+
+        `promotable` keeps the floor so existing callers are unchanged; a principle is checked
+        through here because its bar is higher — see `MIN_SEEN_BY_FACET`.
+        """
+        return self.seen_count >= min_seen_for(facet) and self.confidence >= MIN_CONFIDENCE
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "pattern": self.pattern,
@@ -285,14 +311,16 @@ def plan_promotion(
             allowed=False,
             reason=f"unknown facet {facet!r}; expected one of {', '.join(FACETS)}",
         )
-    if not reinforcement.promotable:
+    # Facet-aware threshold (MGAV-8): `promotable` alone would let a principle through on the
+    # generic floor of 2, which is the off-by-one this whole override exists to close.
+    if not reinforcement.promotable_for(facet):
         return PromotionPlan(
             facet=facet,
             pattern=reinforcement.pattern,
             allowed=False,
             reason=(
                 f"seen {reinforcement.seen_count}× at {reinforcement.confidence:.0%} confidence; "
-                f"needs {MIN_SEEN_COUNT}× and {MIN_CONFIDENCE:.0%}"
+                f"needs {min_seen_for(facet)}× and {MIN_CONFIDENCE:.0%}"
             ),
         )
 
