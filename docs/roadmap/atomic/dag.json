@@ -3051,7 +3051,7 @@
         {
           "id": "AP-5",
           "title": "Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests)",
-          "status": "todo",
+          "status": "done",
           "scope": "§5 Multi-Tool OUTBOUND Export (amendment c). Session 5 (first half). Success criterion 6. Reuses §2.2 content-layer redaction.",
           "done_when": "packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation.",
           "deps": [
@@ -7345,11 +7345,6 @@
         "plan": "AP"
       },
       {
-        "id": "AP-5",
-        "title": "Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests)",
-        "plan": "AP"
-      },
-      {
         "id": "AP-6",
         "title": "Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint)",
         "plan": "AP"
@@ -9897,9 +9892,9 @@
         "code": "AP",
         "plan": "AGENT-PACKS",
         "total_atoms": 7,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
