@@ -370,3 +370,42 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   (692 files); `test_entity_seam_handlers.py` (10) + `test_provider_registry.py` + `test_app_manifest.py`
   (incl. #47 parity) + `test_knowledge_provider*` = 80 passed. Contract-only; no user-facing surface
   yet (WS-2's SourceEngine is the consumer) → no CHANGELOG entry.
+
+- [WS-4] DONE: **§3 feed kinds + §3.3 cross-source identity + §6.3 raw mode.**
+  `knowledge_providers/feed_source.py` parses RSS 2.0/Atom (one XML parser, root-tag sniffed), JSON (one
+  declarative field-map) and CSV, with `hn_algolia`/`github_trending`/`json_feed` as entries in `PRESETS`
+  rather than code branches — a preset is a partial spec the source's own spec overrides key-by-key.
+  Conditional GET lives in the cursor (`{etag,last_modified}` → `If-None-Match`/`If-Modified-Since`; a 304
+  returns zero items and KEEPS the validators). Every byte enters through the single `fetch_fn` seam onto
+  `net.fetch` under the engine-owned `SOURCE` policy — no socket of its own, asserted structurally.
+  Identity is TWO keys (`knowledge/source_identity.py`): `compose_guid` = "same item from THIS source?"
+  (feed guid → canonical URL → `sha256(title+published_at)[:16]`; un-keyable rows are DROPPED, since the
+  seen-set can only gate what it can name), and `merge_key` = "same story from a DIFFERENT source?",
+  deliberately canonicalized-URL equality and nothing else, reusing the store's own `normalize_url` so it
+  is byte-identical to `items.url` and the lookup is one indexed equality. Two guards make "prefer two
+  items over one wrong merge" literal: no URL → no merge key, and a bare origin → no merge key (a site is
+  not a story). The merge does BOTH writes — `mark_source_seen` on the second source (this path bypasses
+  `create_typed_item`'s folded-in gate, so nothing else would record the sighting) and an APPEND to the
+  surviving item's `also_seen_in`. §6.3 raw mode is kept by ABSENCE in both halves: `FeedItemGraph` has
+  one pure-python node and no model-backed backend, and the runner does not CALL insights/entities/intents
+  for a raw item (they report `skipped`, never `done`); an item whose `sources` row has vanished degrades
+  to raw, because content whose no-AI promise can no longer be read must not be handed to a model.
+  **Corrected the briefing recon:** `graph_for` had no `enrichment=` parameter and `FeedItemGraph` did not
+  exist anywhere — both were this atom's to create, not to extend; `SourceItem.also_seen_in` did exist but
+  was INERT (no reader anywhere), so this atom is what makes it mean something.
+  **Defect found and fixed in passing:** `int(spec.get("max_items") or MAX)` swallowed an explicit `0` as
+  "unset" — a user asking for zero items got the maximum.
+  **Measured layering (independent re-falsification, recorded because it is counter-intuitive):**
+  neutering the `source_seen` novelty gate reds NOTHING — the never-pruned `UNIQUE(source_id, guid)` index
+  raises and the handler rolls back exactly as the gate would. The code already names these roles (index =
+  authoritative persist gate, seen-set = storm guard), so it is layering rather than a hole, but no test
+  distinguishes them. Breaking identity itself (`compose_guid` unstable per call) reds 6 tests including
+  `assert 6 == 3`; replacing instead of appending the attribution reds the third-feed test.
+  **Gates:** `make lint` clean (864 files, mypy); full suite **20233 passed, 30 skipped, 12 xfailed, 0
+  failed**; `tests/test_feed_source.py` = 28. No `web/` change, so no FE gate.
+  **No CHANGELOG entry, deliberately — and the reason is worth stating plainly:** `store.create_source`
+  has **zero non-test callers**. There is no HTTP route, no CLI command and no UI through which a user can
+  create a watched source of ANY kind, so `WS-2`, `WS-4` and `WS-5` are all complete and the feature as a
+  whole is still store-only. `WS-9` (Sources UI in the Knowledge section + as-a-user validation) owns that
+  surface; `WS-3` owns the web-source preview+create flow. Announcing feeds now would promise something
+  nobody can reach, so the user-facing entry lands with `WS-9`.

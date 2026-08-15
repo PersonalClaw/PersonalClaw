@@ -45,6 +45,22 @@ CHANGE_DELETED = "deleted"
 #: swallowed "deleted" would hard-index a vanished file).
 SOURCE_CHANGES = frozenset({CHANGE_CREATED, CHANGE_MODIFIED, CHANGE_DELETED})
 
+#: Full enrichment: a source's items run the whole per-type pipeline graph plus the
+#: model-backed terminal stages (insights / entities / intents).
+ENRICHMENT_FULL = "full"
+#: Raw enrichment — the no-AI contract (WATCHED-SOURCES §6.3). A raw source's items are
+#: indexed by the DETERMINISTIC stages only (the FTS row, the local embedding, dedup) and
+#: reach no model at all. Honored STRUCTURALLY: the pipeline routes a raw item through
+#: ``FeedItemGraph``, whose LLM nodes are absent rather than disabled, and the runner does
+#: not call the model-backed terminal stages. A promise kept by a flag is one config edit
+#: away from being broken; a promise kept by an absent node cannot be re-enabled at all.
+ENRICHMENT_RAW = "raw"
+#: The closed vocabulary for ``sources.enrichment``. Matched EXPLICITLY wherever it is
+#: read, so an unknown value is never treated as "full" — a default branch there would
+#: silently send a no-AI source's content to a model (the exact shape of bug the closed
+#: :data:`SOURCE_CHANGES` vocabulary exists to prevent on the change axis).
+ENRICHMENTS = frozenset({ENRICHMENT_FULL, ENRICHMENT_RAW})
+
 
 @dataclass
 class SourceItem:
