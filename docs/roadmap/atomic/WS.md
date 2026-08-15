@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `WS-1` | ⬜ | Source-provider contract + make the dormant knowledge seam real | — | KnowledgeSourceProvider/SourceItem/SourcePollResult defined and re-exported via sdk/knowledge.py; EntitySeamHandler no-op for `knowledge` replaced by a real KnowledgeTypeHandler (load_factory->register into knowledge_providers.registry); create_native_provider returns a real factory (no longer None); a KnowledgeProvider-shaped fixture registers and appears in list_provider_info as kind:external; test_manifest_types_match_handlers stays green |
 | `WS-2` | ⬜ | WatchedSource store + SourceEngine poll loop + SourcesConfig + SOURCE egress policy | `WS-1` | knowledge.db migration adds sources/source_cursors/source_seen tables + source_id/guid item columns with UNIQUE(source_id,guid); SourceEngine single re-armed asyncio loop enrolls poll-capable providers and polls a fixture source on schedule, writing items via store.create_typed_item(provider,source_id,guid)+ingest_queue.enqueue; SOURCE EgressPolicy profile added via egress_policy_for; SourcesConfig knobs round-trip (SC#12); kill-mid-poll+restart yields no dup/no loss via cursor+seen-set atomicity + recover_pending (SC#4) |
-| `WS-3` | ⬜ | web-source: five-detector stack, selector configs, escalating fetch, preview+create flow | `WS-2` | Pasting a real changelog/blog URL yields a correct zero-LLM item preview via auto-detection and a homepage yields the pick-a-listing-page guidance; a manual selector config rescues a JS-lite failure (SC#1); a JS-heavy source succeeds only after render-tier escalation within max_requests with the escalation recorded, and allow_render:false degrades to a 'needs render tier' health status (SC#2) |
+| `WS-3` | ✅ | web-source: five-detector stack, selector configs, escalating fetch, preview+create flow | `WS-2` | Pasting a real changelog/blog URL yields a correct zero-LLM item preview via auto-detection and a homepage yields the pick-a-listing-page guidance; a manual selector config rescues a JS-lite failure (SC#1); a JS-heavy source succeeds only after render-tier escalation within max_requests with the escalation recorded, and allow_render:false degrades to a 'needs render tier' health status (SC#2) |
 | `WS-4` | ✅ | feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph | `WS-2` | Polling the same feed twice produces zero duplicate items and the same story arriving via HN Algolia AND RSS produces ONE item with both attributions (also_seen_in) (SC#3); a raw source's items reach FTS + vector search with zero LLM calls, asserted structurally that the raw graph contains no LLM nodes (SC#6) |
 | `WS-5` | ✅ | dir-source: signature-diff observer, debounce, archive-on-delete | `WS-2` | Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm) |
 | `WS-6` | ⬜ | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) | `WS-2` | An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9) |
@@ -40,11 +40,70 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `WS-3` — web-source: five-detector stack, selector configs, escalating fetch, preview+create flow
 
-**Status:** todo
+**Status:** done
 
 §2.1 five detectors; §2.2 declarative selector configs + schema-derived validate_spec; §2.3 outcome-driven escalating fetch (net.fetch tier1 + web/render.py tier2) under one budget; §2.4 preview-then-save; §11 step 2. Reconcile against shipped triggers/web_poll.py extraction/budget rather than re-derive
 
 **Done when:** Pasting a real changelog/blog URL yields a correct zero-LLM item preview via auto-detection and a homepage yields the pick-a-listing-page guidance; a manual selector config rescues a JS-lite failure (SC#1); a JS-heavy source succeeds only after render-tier escalation within max_requests with the escalation recorded, and allow_render:false degrades to a 'needs render tier' health status (SC#2)
+
+**DONE.** `knowledge_providers/web_source.py` — the five §2.1 detectors as five pure functions over
+one dependency-free HTML tree (`knowledge_providers/html_dom.py`: stdlib `html.parser` plus a CSS
+SUBSET — type/`*`/`#id`/`.class`/`[attr]`/`[attr=v]`/descendant/child/comma — that RAISES on anything
+outside it, because a selector quietly meaning something other than what the user wrote is worse than
+one refused with a reason). Structural parsing runs on RAW markup for the reason `browse/extraction.py`
+already documents: nh3's prose allowlist strips `<script>` (where `json_ld` and `json_state` live) and
+drops `class`/`id` (the entire input to `selector_frequency` and to a user's config). Sanitization is
+not skipped, it is MOVED to the extracted item's html field, which is where the untrusted bytes go.
+
+**Two ordering decisions carry the detection quality, and both are falsifiable.**
+`selector_frequency` runs LAST rather than fourth (§2.1's table order otherwise kept): it is the only
+detector that infers structure the page never declared, so ahead of `json_state` a heuristic would
+outrank a declaration. And hygiene runs INSIDE the stack loop, per detector — a detector whose every
+candidate fails the §2.2 floors found NOTHING and the stack falls through. Deciding on raw candidates
+is how a page's sponsored rail becomes "the source found nothing today". A spec's `detectors` list is
+a FILTER over the order, never a re-ordering.
+
+**§2.2 is schema-FIRST, which inverts the atom's wording deliberately.** `SPEC_SCHEMA` is a JSON
+Schema subset and `validate_spec` is a generic walker over it, rather than hand-written checks a
+generator later mirrors into a schema. Deriving a schema from imperative validators produces a second
+artifact that can drift; interpreting the schema means there is no second artifact. The walker RAISES
+on a schema `type` it does not implement, so a keyword nobody enforces cannot silently accept
+everything, and the `detectors` enum IS `DETECTOR_ORDER` — a sixth detector cannot exist without the
+schema admitting it. Fail-closed, and re-validated at POLL time (the stakes here are the fetch
+TARGET, not just a parse).
+
+**Escalation is decided by outcome, and by a MEASURED discrimination.** Zero items on a page that
+rendered plenty of text is the WRONG URL → §2.1's listing-page guidance and no render attempt (a
+browser finds the same nothing, more expensively). Zero items on a page carrying script with under
+400 chars of visible text is a JS shell → one render attempt if `budget.allow_render` is true, else
+the distinct `needs render tier` health status. Without that split both failures would surface as
+"found nothing" with opposite remediations. Tier 1, the WordPress sub-request and the render all draw
+on ONE `budget.max_requests`.
+
+**Contract additions:** `SourcePollResult` gains `escalations` + `health_status` (a provider that
+knows WHY it found nothing says so; the engine no longer flattens it into `degraded`),
+`SourcePreview` is the §2.4 dry run, `HEALTH_*` becomes a closed vocabulary in `base.py`, and
+`sources.last_escalations` persists the last poll's tiers (overwritten per poll — a rollup column is
+not a log). Conditional-GET validator plumbing was LIFTED into `knowledge_providers/conditional_get.py`
+and `feed_source` refactored onto it: two copies of a persisted cursor's shape would be one fix away
+from disagreeing.
+
+Tests: `tests/test_web_source.py` (46). Falsified 18 ways; three mutations reded NOTHING and each was
+fixed rather than noted — per-detector hygiene, the identity guard (shadowed by the title-or-
+description floor until the fixture was given real body text and nothing else), and the `sanitize_html`
+default (masked by `html_to_markdown`, now isolated with an `sanitize_html: false` counterpart). A
+fourth, the implicit `parse_uri` on an `href`, reded nothing because `apply_hygiene` already resolves
+the url field for both paths — so the redundant branch was DELETED and resolution now has one
+falsifiable point (removing it reds 12 tests).
+
+**Test added during independent verification (the 46th).** Reversing `DETECTOR_ORDER`'s last two
+entries — the atom's own DEVIATION from §2.1's table — reded exactly ONE test, and it was the
+schema-enum parity assertion on the literal sequence. Nothing proved the *outcome* the deviation
+exists for. `test_a_declared_state_blob_outranks_a_frequent_selector` now feeds one page carrying BOTH
+a real `__NEXT_DATA__` blob and a thrice-repeated card signature, and asserts `json_state` wins with
+the state's items; reversing the order reds it with "a heuristic must not outrank a declaration". A
+sequence assertion reds on any reorder, including a harmless one, so it could never have been the
+evidence for this claim.
 
 ### `WS-4` — feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph
 

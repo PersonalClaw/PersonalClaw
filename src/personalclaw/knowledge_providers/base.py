@@ -61,6 +61,23 @@ ENRICHMENT_RAW = "raw"
 #: :data:`SOURCE_CHANGES` vocabulary exists to prevent on the change axis).
 ENRICHMENTS = frozenset({ENRICHMENT_FULL, ENRICHMENT_RAW})
 
+#: A poll that produced its items normally.
+HEALTH_OK = "ok"
+#: A poll that failed in a recoverable way (a timeout, a malformed page, a soft provider
+#: error). The source stays enabled and the cursor is kept, so the next poll retries.
+HEALTH_DEGRADED = "degraded"
+#: A poll that could not run at all (no enrolled provider, a provider that raised).
+HEALTH_ERROR = "error"
+#: The page needs the render tier and is not allowed to use it (WATCHED-SOURCES §2.3, SC#2).
+#: A DISTINCT status rather than a generic ``degraded`` because the remediation is a specific
+#: one the user can act on — turn on ``budget.allow_render`` (or install the render extra) —
+#: and a source silently returning nothing forever is the failure this whole status exists to
+#: prevent. The engine records whatever status a provider declares here, so a provider that
+#: knows WHY it found nothing is not flattened into "degraded".
+HEALTH_NEEDS_RENDER = "needs render tier"
+#: The closed vocabulary for ``sources.health_status``.
+SOURCE_HEALTH = frozenset({HEALTH_OK, HEALTH_DEGRADED, HEALTH_ERROR, HEALTH_NEEDS_RENDER})
+
 
 @dataclass
 class SourceItem:
@@ -101,10 +118,51 @@ class SourcePollResult:
     and hands back on the next poll (an etag, a last-seen id, a timestamp), so a
     provider can poll incrementally. ``error`` set (with ``items`` empty) reports a
     soft failure the engine can surface without treating the source as dead.
+
+    ``escalations`` are the human-readable markers of any tier a poll had to climb — or was
+    refused. §2.3 requires an escalation to be RECORDED, because an escalation nobody can
+    see is indistinguishable from a cheap poll, and the render tier is the expensive one.
+    They are recorded on the poll record whether the poll succeeded or not.
+
+    ``health_status`` lets a provider that knows WHY a poll produced nothing say so
+    (:data:`HEALTH_NEEDS_RENDER`); empty means "the engine decides" — :data:`HEALTH_OK` on
+    success, :data:`HEALTH_DEGRADED` when ``error`` is set. Without it, a source needing the
+    render tier would be flattened into the same ``degraded`` a timeout produces and the user
+    would never learn that one knob fixes it.
     """
 
     items: list[SourceItem] = field(default_factory=list)
     cursor: str = ""
+    error: str = ""
+    escalations: list[str] = field(default_factory=list)
+    health_status: str = ""
+
+
+@dataclass
+class SourcePreview:
+    """A dry run of a source's extraction, for the paste-URL create flow (§2.4).
+
+    Preview answers the only question that matters before saving a source: *would this spec
+    produce the items I expect?* So it returns the items it WOULD have written plus which
+    detector produced them — the user tunes a named detector, not a black box — and any
+    escalation the attempt needed.
+
+    It persists nothing (no item, no cursor, no seen-set row) but it DOES spend the poll's
+    request budget, because a preview is a real fetch at somebody else's server and
+    pretending otherwise is how a tuning loop becomes a hammer.
+
+    ``guidance`` is the remediation to show when ``items`` is empty: §2.1's
+    pick-a-listing-page advice for a page that rendered fine and simply is not a listing, or
+    the render-tier advice for a JS shell. ``error`` is a hard failure (an egress denial, an
+    invalid spec) as distinct from an empty extraction, which is a tuning problem.
+    """
+
+    items: list[SourceItem] = field(default_factory=list)
+    detector: str = ""
+    escalations: list[str] = field(default_factory=list)
+    requests_used: int = 0
+    guidance: str = ""
+    health_status: str = ""
     error: str = ""
 
 
