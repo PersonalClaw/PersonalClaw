@@ -207,6 +207,10 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
   const [marketplace, setMarketplace] = useQueryParam(query, setQuery, 'mkt', '') // '' = all
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [results, setResults] = useState<SkillSearchResult[] | null>(null)
+  // Per-source matched counts from the search (computed server-side BEFORE the global
+  // cap), so the source filter shows how many of a large catalog matched — not just how
+  // many of its rows survived into this page of results.
+  const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
   const [installedIds, setInstalledIds] = useState<Set<string>>(new Set())
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
@@ -214,10 +218,14 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
 
   async function search() {
     const query = q.trim()
-    if (!query) { setResults(null); return }
+    if (!query) { setResults(null); setCounts({}); return }
     setLoading(true)
-    try { setResults(await api.searchSkills(query, marketplace || undefined)) }
-    catch { setResults([]) }
+    try {
+      const { results: rows, counts: bySource } = await api.searchSkillsCounted(query, marketplace || undefined)
+      setResults(rows)
+      setCounts(bySource)
+    }
+    catch { setResults([]); setCounts({}) }
     finally { setLoading(false) }
   }
   // Live-search as the user types (debounced) and when the marketplace scope changes.
@@ -229,14 +237,15 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
   }, [q, marketplace])
 
   const open = results?.find((r) => r.id === openId) ?? null
+  const totalMatches = Object.values(counts).reduce((a, b) => a + b, 0)
 
   return (
     <WorkbenchLayout
       controls={
         <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search the marketplace', label: 'Search marketplace' }}>
           <select value={marketplace} onChange={(e) => setMarketplace(e.target.value)} aria-label="Marketplace" className="h-10 rounded-pill bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
-            <option value="">All marketplaces</option>
-            {marketplaces.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+            <option value="">{totalMatches ? `All marketplaces (${totalMatches})` : 'All marketplaces'}</option>
+            {marketplaces.map((m) => <option key={m.name} value={m.name}>{counts[m.name] ? `${m.name} (${counts[m.name]})` : m.name}</option>)}
           </select>
         </ListControls>
       }

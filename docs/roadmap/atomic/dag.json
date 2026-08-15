@@ -3061,7 +3061,7 @@
         {
           "id": "AP-6",
           "title": "Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint)",
-          "status": "todo",
+          "status": "done",
           "scope": "§6 INBOUND Skill-Catalog Importer (amendment d, first half); §8 skills path. Session 5 (second half). Success criterion 5. Needs PacksConfig.skill_catalogs.",
           "done_when": "packs/catalog_marketplace.py CatalogMarketplace(SkillsMarketplace) registers each configured catalog (packs.skill_catalogs) on get_default_skills_registry at COMMUNITY tier; fetch() pulls files via net.fetch under the CONNECTOR egress profile returning SkillDetail so install_guarded does quarantine/scan/commit/lock; installing a catalog skill produces a standard .pclaw-lock.json and passes verify_skill_integrity (zero chokepoint bypass); Skills store gains a source filter + per-source counts; a large index browses client-side without entering the agent budget until install.",
           "deps": [
@@ -7353,11 +7353,6 @@
         "plan": "AP"
       },
       {
-        "id": "AP-6",
-        "title": "Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint)",
-        "plan": "AP"
-      },
-      {
         "id": "APE-1",
         "title": "Manifest: backgroundTasks + eventSubscriptions permissions (parse/serialize/consent)",
         "plan": "APE"
@@ -9890,9 +9885,9 @@
         "code": "AP",
         "plan": "AGENT-PACKS",
         "total_atoms": 7,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

@@ -1240,6 +1240,25 @@ async def start_dashboard(
 
     app.on_startup.append(_projection_rules_startup)
 
+    async def _skill_catalogs_startup(app_: web.Application) -> None:
+        """Register the operator's configured skill catalogs (``packs.skill_catalogs``,
+        AP-6) on the shared skills registry so the Skills store can browse them.
+
+        Each catalog registers at COMMUNITY tier and installs through the same
+        ``install_guarded`` chokepoint as every other marketplace. Fail-soft per
+        catalog inside ``register_skill_catalogs``; a total failure is logged, never
+        fatal — an unreachable catalog must not cost the bundled marketplaces."""
+        try:
+            from personalclaw.packs.catalog_marketplace import register_skill_catalogs
+
+            names = register_skill_catalogs()
+            if names:
+                logger.info("Registered %d skill catalog(s): %s", len(names), ", ".join(names))
+        except Exception:
+            logger.exception("Failed to register configured skill catalogs")
+
+    app.on_startup.append(_skill_catalogs_startup)
+
     async def _model_providers_startup(app_: web.Application) -> None:
         """Replay config.json providers[] into the model ProviderRegistry.
 
