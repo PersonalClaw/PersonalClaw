@@ -616,3 +616,31 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   deaths — the backend landed as a wip checkpoint, then tests + FE + tracking were completed inline; the
   PR squashes both into one commit. Falsified three ways (PUT-400 removed, REFUTED-only inverted,
   fail-open path made blocking) — each reds the naming test.
+
+- **INU-7 DONE (2026-08-15) — Proposals contract (C6) + app emission path + Proposals lens.**
+  New `proposals_contract.py` owns the payload and the dispatcher; **it executes nothing itself** —
+  each of the four cases calls the dispatcher that already exists (`action` → the action-provider
+  registry + `provider.execute`; `workflow` → `workflows.service.start_run`; `skill_promotion` →
+  `learning.proposals.accept(pid, installer=…)`; `app_callback` → `app_routes.resolve_route` +
+  `call_app_route`). T4.1 is re-expressed rather than forked: `learning/proposals._surface_in_inbox`
+  now attaches `refs["proposal"]` with `apply={"skill_promotion": {"pid"}}` and keeps
+  `refs["learning_proposal"]`, so the skills accept path is unchanged and is simply one case of the
+  contract. The case set is **closed** (`apply_case()` raises on zero/two/unknown; `_DISPATCH` asserted
+  total against `ApplyCase` at import) because a default branch swallowing an unmapped value is a
+  measured defect class here. **A failed apply keeps the item PENDING** and records
+  `refs["proposal_error"]`, proven per case. App emission: `permissions.proposals[]` (`ProposalKind`,
+  slug-validated at manifest-validate time), registered at enable as `("app:<name>",
+  "proposal:<suffix>")` with `verifiable=True` so INU-6's skeptic may apply, deregistered on
+  disable/uninstall via a new `notification_kinds.unregister` (a kind outliving its app is the phantom
+  INU-8's `deregister` lesson names). `POST /api/inbox/proposals` reads identity from `request["app"]`
+  only and 403s an undeclared kind or a foreign `app_callback`, one SEL row per emission either way;
+  `POST /api/inbox/{id}/apply` answers 200 + `ok:false` on a failed apply because a status code cannot
+  say "nothing happened and it is still here". FE `ProposalsLens` (inbox narrowed to `proposal`):
+  batch-approve enabled only for one `(provenance, item_kind)` group — mixed selection renders
+  `aria-disabled` + the reason on `title` (this kit's `disabledReason` convention: a natively disabled
+  button leaves the tab order) — a batch is N applies with per-row outcomes, and edit-then-approve
+  edits the **apply** payload, not the prose preview.
+  **DEVIATION:** `apply.workflow` takes `ref` only, dropping C6's `{ref | inline}` sketch — nothing
+  existing starts an unsaved inline def, and a declarable-but-dead shape is the #47 defect this plan
+  keeps closing. Falsified four ways (failed apply marked handled; the undeclared-kind 403 skipped; a
+  foreign `app_callback` allowed; batch-approve enabled for a mixed selection) — each reds its test.

@@ -46,15 +46,15 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.gateway", "the clock/file trigger fire path"),
     ("personalclaw.event_triggers", "the data-event fire path"),
     ("personalclaw.dashboard.handlers.triggers", "the manual Run path"),
+    # INU-7: approving an inbox proposal whose apply case is `action` dispatches a provider
+    # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
+    # so it carries `manual_refusal` — the manual Run path's gate — rather than the unattended
+    # denylist seam; `test_the_denylist_seam_list_covers_every_unattended_execution_site`
+    # therefore lists it beside that documented exemption.
+    ("personalclaw.proposals_contract", "the inbox proposal apply path"),
 )
 
-#: The ONE site that resolves an action provider to UNDO an action rather than to run one
-#: (AUTONOMY-GUARDRAILS §6.1). Exempt from the execution invariant, and asserted separately by
-#: `test_the_reversal_site_undoes_and_never_executes` rather than merely trusted. Why it is
-#: exempt: it calls `reverse`, never `execute`; the provider it may reach is bounded by the
-#: recorded action type's own declaration plus the handle kind that provider claims; and the
-#: request is user-initiated and autonomy-REDUCING. An `incident_active` check here would refuse
-#: to take back exactly the automatic action a user turned the kill switch on because of.
+
 REVERSAL_SITE = "personalclaw.guardrails.ladder"
 
 #: Any one of these, present in the module, satisfies the invariant. A LIST rather than one name
@@ -94,6 +94,21 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
 #: instead. Asserted in `test_the_manual_run_path_is_the_documented_denylist_exemption` rather
 #: than merely stated.
 MANUAL_SEAM = "personalclaw.dashboard.handlers.triggers"
+
+#: The ONE site that resolves an action provider to UNDO an action rather than to run one
+#: (AUTONOMY-GUARDRAILS §6.1). Exempt from the execution invariant, and asserted separately by
+#: `test_the_reversal_site_undoes_and_never_executes` rather than merely trusted. Why it is
+#: exempt: it calls `reverse`, never `execute`; the provider it may reach is bounded by the
+#: recorded action type's own declaration plus the handle kind that provider claims; and the
+#: request is user-initiated and autonomy-REDUCING. An `incident_active` check here would refuse
+#: to take back exactly the automatic action a user turned the kill switch on because of.
+#: The execution sites a USER CLICKS. Each is exempt from the unattended denylist seam, and each
+#: is exempt ONLY while it still carries `manual_refusal` — asserted per-member below, so an
+#: exemption cannot outlive its own gate. Adding a member here is an argument, not a shortcut.
+USER_CLICKED_SEAMS: tuple[str, ...] = (
+    MANUAL_SEAM,
+    "personalclaw.proposals_contract",  # INU-7: Approve on an inbox proposal
+)
 
 
 def _source(module_name: str) -> str:
@@ -156,7 +171,7 @@ def test_the_denylist_seam_list_covers_every_unattended_execution_site():
     provider-execution path cannot be added without either carrying the denylist or being
     argued into an exemption here.
     """
-    unattended = {m for m, _ in EXECUTION_SITES} - {MANUAL_SEAM}
+    unattended = {m for m, _ in EXECUTION_SITES} - set(USER_CLICKED_SEAMS)
     declared = {m for m, _ in DENYLIST_SEAMS}
     assert unattended == declared, (
         "the denylist seam list drifted from the execution-site list: "
@@ -164,13 +179,14 @@ def test_the_denylist_seam_list_covers_every_unattended_execution_site():
     )
 
 
-def test_the_manual_run_path_is_the_documented_denylist_exemption():
+@pytest.mark.parametrize("module_name", USER_CLICKED_SEAMS)
+def test_the_manual_run_path_is_the_documented_denylist_exemption(module_name):
     """The exemption asserted rather than assumed: it must still be gated by `manual_refusal`.
 
     If that check ever disappears, this path becomes an unattended-equivalent execution site with
     no policy gate at all — so the exemption is only valid while its own gate is present.
     """
-    src = _source(MANUAL_SEAM)
+    src = _source(module_name)
     assert "manual_refusal" in src, (
         "the manual Run path is exempt from the denylist because a human initiates it and "
         "`manual_refusal` gates it. That gate is gone, so the exemption no longer holds."

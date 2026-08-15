@@ -25,6 +25,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (ids and verdicts only, never the recording or what you said). If you create no profiles,
   nothing changes: speech resolves exactly as it did before.
 
+- **Proposals are now one thing you approve in one place — and an app can raise one.** Anything that
+  suggests a change (a skill the system wants to extract, a workflow it wants to run, an action, or
+  an installed app's own suggestion) files the same kind of proposal, and the Inbox's new Proposals
+  view shows what approving would actually DO before you click. Approving runs it through the
+  machinery that already exists for that kind of work — no separate approval path per producer — and
+  **if the apply fails, the proposal stays in your inbox with the error on it** rather than quietly
+  disappearing as if it had worked. Batch approve is deliberately narrow: it lights up only when
+  every selected proposal comes from the same source and is the same kind, so "approve all" can never
+  sweep together four unrelated changes you reviewed as one. Proposals whose payload is marked
+  editable can be edited before approving, and what you edited is exactly what runs. An app must
+  declare each proposal kind it may raise in its manifest (`permissions.proposals`), which you see at
+  install time; an undeclared kind is refused, and one app can never propose an action that calls
+  into another app. Every app-raised proposal is recorded in the security event log.
 - **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.** Add a
   catalog under `packs.skill_catalogs` — a JSON index endpoint, or a repo laid out as
   `skills/<slug>/SKILL.md` — and it shows up as one more source alongside the bundled skills, with

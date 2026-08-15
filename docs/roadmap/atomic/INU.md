@@ -16,7 +16,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `INU-4` | ✅ (##114) | Fold the proposal surfaces (S4) | `INU-1`, `INU-2` | skills enqueue() also emits a proposal item (refs.pid); inbox row accept/reject call skills/proposals.accept/reject resolving HANDLED/DISMISSED; idempotent backfill gives each pending proposal without an item exactly one (re-run no-op); skills approval tab cross-links the filtered inbox (single install path); outlived tool approvals mirror an agent_request item after a grace period (asyncio.shield-protected), answering either surface resolves both |
 | `INU-5` | ✅ (##115) | Digest + demotion (S5) | `INU-1`, `INU-2` | notification-digest deterministic action provider registered as a silent system cron drains digest_queue.jsonl into one grouped digest inbox item (empty queue produces nothing); unread_count() derives from inbox PENDING and the notification log loses acked/unread semantics (becomes read-only delivery audit); CHANGELOG entry names the one-time badge reset with personalclaw snapshot advised |
 | `INU-6` | ✅ | Second-opinion verification gate (S6) | `INU-1`, `INU-2`, `INU-3` | NotificationKind.verifiable + rule verify field (rules PUT 400s verify:true on a non-verifiable kind); notification_verify.py verify_attention_item() does REFUTED-only filtering via one_shot_completion(use_case=background), metered through ModelCallGuard, fail-OPEN on every failure path (no model/timeout/parse-fail/budget → verify:skipped); ItemStatus.FILTERED added, hooked inside emit_attention_item() between construction and notify() (refuted → FILTERED + refs.verify + no notification); Filtered chip + Restore flips FILTERED->PENDING firing the withheld notification once; V6 drives true+planted-false proposals and an unbound model (both surface skipped) |
-| `INU-7` | ⬜ | Proposals contract + app emission path (S7) | `INU-4`, `INU-6` | C6 Proposal dataclass + apply dispatcher routes the four apply cases (action/workflow/skill_promotion/app_callback) through EXISTING dispatchers, a failed apply keeps the item PENDING with the error, and T4.1's skill path is re-expressed as skill_promotion; app emission adds permissions.proposals manifest field + kind registration at enable-time + POST /api/inbox/proposals (scoped-token identity, 403 on undeclared kind or foreign app_callback, SEL per emission, app proposals verifiable=True by default); inbox Proposals lens with same-(provenance,kind)-only batch-approve (mixed sweeps impossible in UI) + edit-then-approve for editable payloads |
+| `INU-7` | ✅ | Proposals contract + app emission path (S7) | `INU-4`, `INU-6` | C6 Proposal dataclass + apply dispatcher routes the four apply cases (action/workflow/skill_promotion/app_callback) through EXISTING dispatchers, a failed apply keeps the item PENDING with the error, and T4.1's skill path is re-expressed as skill_promotion; app emission adds permissions.proposals manifest field + kind registration at enable-time + POST /api/inbox/proposals (scoped-token identity, 403 on undeclared kind or foreign app_callback, SEL per emission, app proposals verifiable=True by default); inbox Proposals lens with same-(provenance,kind)-only batch-approve (mixed sweeps impossible in UI) + edit-then-approve for editable payloads |
 
 ## Atom scopes
 | `INU-8` | ✅ | Resolve app-contributed inbox sources through the app registry's manifest factory (`InboxTypeHandler`) + make the `PROVIDER_TYPES`/handler guard bidirectional | — | An app declaring `{"type":"inbox","implementation":"mod:factory"}` has its provider resolved+registered at enable-time by a real `InboxTypeHandler` (the same `load_factory` path every other type uses) and deregistered on disable/uninstall; `get_default_provider` resolves app sources with documented precedence and the class-vs-instance mismatch handled explicitly; a fixture app's source is driven end-to-end; the #47 guard asserts BOTH directions with a reason-carrying allowlist and `agent` / `notification` / `skills` are each resolved (handler, removal, or allowlist naming the real mechanism) |
@@ -71,11 +71,38 @@ Amendment (2026-07-26 — verification gate): Session 6 (T6.1, T6.2, V6); C1.ver
 
 ### `INU-7` — Proposals contract + app emission path (S7)
 
-**Status:** todo
+**Status:** done
 
 Amendment (2026-07-26 — round 2, Proposals contract): Session 7 (T7.1-T7.3) + T4.1 re-expression; C6
 
 **Done when:** C6 Proposal dataclass + apply dispatcher routes the four apply cases (action/workflow/skill_promotion/app_callback) through EXISTING dispatchers, a failed apply keeps the item PENDING with the error, and T4.1's skill path is re-expressed as skill_promotion; app emission adds permissions.proposals manifest field + kind registration at enable-time + POST /api/inbox/proposals (scoped-token identity, 403 on undeclared kind or foreign app_callback, SEL per emission, app proposals verifiable=True by default); inbox Proposals lens with same-(provenance,kind)-only batch-approve (mixed sweeps impossible in UI) + edit-then-approve for editable payloads
+
+**DONE (2026-08-15).** `proposals_contract.py` owns C6 (`Proposal` + `ApplyOutcome`) and the
+dispatcher; every case CALLS an existing dispatcher and this module executes nothing itself:
+`action` → `action_providers.registry.get_action_provider` + `provider.execute(config, ActionContext)`;
+`workflow` → `workflows.service.start_run` (idempotency key `proposal:<item id>`, so a double-click is
+a retry); `skill_promotion` → `learning.proposals.accept(pid, installer=…)`, the T4.1 path re-expressed
+as one case (its `_surface_in_inbox` now attaches `refs["proposal"]` with
+`apply={"skill_promotion": {"pid"}}` and keeps `refs["learning_proposal"]` for existing readers);
+`app_callback` → `tool_providers.app_routes.resolve_route` + `call_app_route` (the owner's reverse
+proxy, `agentCallable` gate and app-scoped token included). The case set is closed: `apply_case()`
+raises on zero/two/unknown keys and `_DISPATCH` is asserted total against `ApplyCase` at import, so no
+unmapped value can fall through a default. A failed apply leaves the status untouched and records
+`refs["proposal_error"]` (asserted per case). App emission: `permissions.proposals[]` (`ProposalKind`,
+round-tripped + validated as a slug so a bad suffix can't break the `<source>/<kind>` rules key),
+registered at enable time as `("app:<name>", "proposal:<suffix>")` with `attention=True` +
+`verifiable=True`, deregistered on disable/uninstall (new `notification_kinds.unregister`) so no
+phantom kind outlives its app; `POST /api/inbox/proposals` takes identity from `request["app"]` only
+and 403s an undeclared kind or a foreign `app_callback`, with a SEL row per emission (granted and
+denied). `POST /api/inbox/{id}/apply` returns 200 + `ok:false` on failure — the row is still PENDING.
+Frontend: narrowing the inbox to `proposal` swaps in `ProposalsLens`, where batch-approve is enabled
+only for a single `(provenance, item_kind)` group (mixed → `aria-disabled` + a reason on `title`), a
+batch is N applies with per-row outcomes, and an `editable` payload is edited as the **apply** payload
+(editing the prose preview would have been an inert control).
+
+DEVIATION: `apply.workflow` accepts `ref` only, not C6's sketched `{ref | inline}` — no existing
+dispatcher starts an unsaved inline definition, and declaring a shape nothing serves is the repo's #47
+defect. A producer saves the def first, then proposes its name.
 
 ### `INU-8` — Inbox provider-seam resolution: app-contributed sources + a bidirectional #47 guard (S8)
 

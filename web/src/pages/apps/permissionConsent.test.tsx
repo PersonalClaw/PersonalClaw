@@ -158,3 +158,36 @@ describe('PermissionList — desktop capabilities are disclosed as enforced', ()
     expect(container.textContent ?? '').not.toMatch(/Desktop capabilities: none/)
   })
 })
+
+// ── INU-7: a declared proposal kind reaches install consent ───────────────────────────
+//
+// The same APE-12 leg, for the newest enforced grant: `POST /api/inbox/proposals` refuses
+// an undeclared kind 403 + SEL, and refuses a callback into another app, so "what may this
+// app ask you to approve" is an enforced capability — and a capability the Store never
+// renders is a grant the user never consented to. Annotated `AppPermissionsWire`, NOT cast:
+// a wire type missing the field must fail `tsc --noEmit` here, which is how the appMessaging
+// defect would have been caught. Named by the LABEL, because that is the wording the inbox
+// row will carry.
+const PROPOSALS_PAYLOAD: AppPermissionsWire = {
+  proposals: [
+    { kind_suffix: 'draft', label: 'Draft replies' },
+    { kind_suffix: 'retire' },
+  ],
+}
+
+describe('PermissionList — declared proposal kinds are disclosed as enforced', () => {
+  it('names every declared kind inside the ENFORCED bullets', () => {
+    const { container } = render(<PermissionList perms={PROPOSALS_PAYLOAD} />)
+    const row = enforcedRows(container).find((r) => /Can ask you to approve/.test(r))
+    expect(row).toBeDefined()
+    expect(row).toContain('Draft replies')
+    // No label declared → the slug is shown rather than an empty entry.
+    expect(row).toContain('retire')
+    expect(row).not.toMatch(/advisory|does not confine/i)
+  })
+
+  it('says nothing about proposals for an app that declared none', () => {
+    const { container } = render(<PermissionList perms={{ cron: true }} />)
+    expect(container.textContent ?? '').not.toMatch(/Can ask you to approve/)
+  })
+})

@@ -237,6 +237,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/dismiss-all` — dismiss all pending items.
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
+- `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
 - `GET /api/inbox/providers` — list registered inbox message source providers.
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
 - `POST /api/inbox/seen` — mark items SEEN (the read/unread boundary).
@@ -245,6 +246,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/inbox/settings` — _(no summary)_
 - `GET /api/inbox/status` — current config status.
 - `PUT /api/inbox/{id}` — update draft, status, etc.
+- `POST /api/inbox/{id}/apply` — approve (or edit-then-approve) one proposal.
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
 - `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate

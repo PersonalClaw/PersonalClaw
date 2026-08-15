@@ -86,7 +86,11 @@ def _permissions_with_every_field_set() -> Permissions:
     without a wire declaration is exactly the defect this rail exists to catch."""
     kwargs: dict[str, object] = {}
     for f in fields(Permissions):
-        if f.default_factory is not MISSING:  # the list scopes
+        if f.name == "proposals":  # INU-7: a list of typed entries, not of name strings
+            from personalclaw.apps.manifest import ProposalKind
+
+            kwargs[f.name] = [ProposalKind(kind_suffix="x", label="X")]
+        elif f.default_factory is not MISSING:  # the list scopes
             kwargs[f.name] = ["x"]
         elif isinstance(f.default, bool):
             kwargs[f.name] = True
