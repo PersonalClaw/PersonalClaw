@@ -466,6 +466,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="per-day model spend (drives the budget caps)",
     ),
     StateEntry(
+        # AUTONOMY-GUARDRAILS §4.3: per-project Trust/Preview decisions keyed by resolved dir.
+        # LWW — a decision is a small last-writer-wins flag, not an append log.
+        id="project_trust",
+        kind=KIND_JSON_FILE,
+        path="project_trust.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="per-project Trust/Preview decisions (Preview → read-only project-script execution)",
+    ),
+    StateEntry(
         id="model_calls",
         kind=KIND_JSONL_APPEND,
         path="model_calls.jsonl",

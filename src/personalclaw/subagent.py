@@ -274,6 +274,34 @@ _SYSTEM_PREFIX = (
 )
 
 
+# Capability class for a spawn's tool surface (AUTONOMY-GUARDRAILS §4.1). The values mirror the
+# workflow-leaf vocabulary (``workflows.batch_compile.Capability``) so a research SUBAGENT and a
+# research batch LEAF mean the same thing — write/execute tools are denied — and there is one
+# write-tool policy, not two that drift. The denial is enforced at the tool-approval layer (the
+# ``_run_inner`` permission loop below), NOT by handing the worker a filtered ``.tools`` list: the
+# native ACP runtime does not enforce such a list (WF2LEA-6 measured this), so a research spawn that
+# was only *told* its tools would still be able to call a write tool. The seam that actually answers
+# the tool call is the only seam where the class can be made true.
+CAPABILITY_RESEARCH = "research"
+CAPABILITY_MUTATING = "mutating"
+
+
+def resolve_capability_class(*, capability_class: str, approval_mode: str) -> str:
+    """The effective capability class for a spawn (§4.1).
+
+    An explicit ``research``/``mutating`` always wins — a caller that decided is obeyed. An unset
+    class defaults BY CONSTRUCTION: ``research`` (read-only) for an AUTO-FIRED spawn
+    (``approval_mode == "auto"`` — a cron/unattended run with no human watching), ``mutating`` for a
+    human-watched spawn. This is the plan's "auto-fired runs default read-only" rule: write/execute
+    on an unattended run is a creation-time grant a caller passes explicitly (``capability_class=
+    "mutating"``), never a capability an auto-fired run acquires by default.
+    """
+    cc = (capability_class or "").strip().lower()
+    if cc in (CAPABILITY_RESEARCH, CAPABILITY_MUTATING):
+        return cc
+    return CAPABILITY_RESEARCH if approval_mode == "auto" else CAPABILITY_MUTATING
+
+
 @dataclass
 class SubagentInfo:
     """Metadata for a running subagent."""
@@ -288,6 +316,11 @@ class SubagentInfo:
     parent_session_key: str = ""
     agent: str = ""
     approval_mode: str = ""  # "auto" to skip tool approvals in the subagent session
+    # Tool-capability class (§4.1): "research" (read-only — write/execute tools default-denied at
+    # the approval layer) or "mutating" (full grant). Empty resolves by construction via
+    # ``resolve_capability_class`` — auto-fired spawns default to research so an unattended run
+    # cannot write without an explicit creation-time grant.
+    capability_class: str = ""
     dry_run: bool = False  # observe-mode: write-capable tools don't execute (T9 replay)
     silent: bool = False  # suppress completion notification (dashboard + channel)
     turns: int = 0
@@ -963,6 +996,7 @@ class SubagentManager:
         model: str | None = None,
         cwd: str = "",
         approval_mode: str | None = None,
+        capability_class: str | None = None,
         silent: bool = False,
         dry_run: bool = False,
         parent_run: str = "",
@@ -1155,6 +1189,7 @@ class SubagentManager:
             parent_session_key=parent_session_key,
             agent=agent,
             approval_mode=approval_mode or "",
+            capability_class=capability_class or "",
             dry_run=dry_run,
             silent=silent,
             max_turns=max_turns,
@@ -1978,6 +2013,15 @@ class SubagentManager:
 
         _rp = _agent_dir(info.id) / "result.txt"
         info.result_path = str(_rp)
+        # §4.1 read-only research class: resolve ONCE per run. An auto-fired spawn defaults to the
+        # research (read-only) class, so its write/execute tools are denied at the approval loop
+        # below. Resolved here (not per event) because the class is fixed for the run's lifetime.
+        _research_readonly = (
+            resolve_capability_class(
+                capability_class=info.capability_class, approval_mode=info.approval_mode
+            )
+            == CAPABILITY_RESEARCH
+        )
         async for event in client.stream(full_message):
             if event.kind == EVENT_TEXT_CHUNK:
                 result_text += event.text
@@ -2009,6 +2053,30 @@ class SubagentManager:
                     logger.warning("Subagent %s hit turn limit (%d)", info.id, turn_limit)
                     self._write_tombstone(info, "turn_limit")
                     return
+                # §4.1: a research-class spawn is read-only. Its write/execute tools are DENIED
+                # HERE, at the tool-approval layer, BEFORE any auto-approve branch below can admit
+                # them. Placement is load-bearing: an auto-fired research run resolves
+                # parent_policy="auto" (from approval_mode="auto"), so a denial placed AFTER that
+                # branch would be dead code and the class would be a label, not a control. Uses the
+                # SAME ``is_write_tool`` policy the workflow research leaf uses
+                # (``leaf_tool_denial``) — a research subagent and a research leaf deny alike.
+                if _research_readonly:
+                    from personalclaw.workflows.batch_compile import is_write_tool
+
+                    if is_write_tool(event.title or ""):
+                        await self._reject_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            error="research_capability_deny",
+                            metadata={
+                                "subagent_id": info.id,
+                                "capability_class": CAPABILITY_RESEARCH,
+                                "tool": event.title or "",
+                            },
+                        )
+                        continue
                 tool_result = self._ctx_builder.hooks.on_tool_call(event.title)
                 if tool_result.action == TOOL_DENY:
                     await self._reject_and_log(

@@ -961,7 +961,8 @@
         {
           "id": "AG-11",
           "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
-          "status": "todo",
+          "status": "done",
+          "pr": 1348,
           "scope": "Session-4 deferrals: §4.1 read-only research subagent class (SubagentManager.spawn capability_class; default-deny write/execute enforced by the tool-approval layer); the live cron-approval rewire from the ad-hoc AUTO_APPROVE/HOOK_BASED branch to profile_for_session; §4.3 Trust/Preview project-folder gate (project_trust.json, Preview→REVIEW_ONLY) for project-script execution",
           "done_when": "auto-fired research spawns default-deny write/execute tools; gateway approval resolves through profile_for_session; a project folder's first script touch prompts Trust vs Preview and persists the decision",
           "deps": [
@@ -7332,11 +7333,6 @@
         "plan": "AG"
       },
       {
-        "id": "AG-11",
-        "title": "Deferred profile/trust enforcement behaviors awaiting engine consumers",
-        "plan": "AG"
-      },
-      {
         "id": "AP-4",
         "title": "Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization",
         "plan": "AP"
@@ -9743,9 +9739,9 @@
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 13,
-        "done": 11,
+        "done": 12,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

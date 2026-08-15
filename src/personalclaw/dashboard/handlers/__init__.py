@@ -98,6 +98,7 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     api_models_health,
     api_personalclaw_config,
     api_personalclaw_config_patch,
+    api_project_trust,
     api_security_denied_commands,
     api_security_egress,
     api_security_stats,

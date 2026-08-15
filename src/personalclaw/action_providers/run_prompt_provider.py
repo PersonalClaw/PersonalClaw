@@ -215,6 +215,20 @@ class RunPromptActionProvider(ActionProvider):
 
         dry_run = bool(action_config.get("dry_run", False))
 
+        # §4.1 creation-time write grant. This fire is auto-fired (``approval_mode="auto"``), so the
+        # spawn defaults to the read-only RESEARCH class unless the automation was created with an
+        # explicit ``capability: "mutating"`` grant — "auto-fired runs default read-only; write is a
+        # creation-time grant reviewed when the automation is created." An untrusted project folder
+        # (§4.3) forces research regardless of this grant; that gate is applied below.
+        capability_class = str(action_config.get("capability") or "").strip().lower() or None
+        # §4.3: a project-bound run (a project ``<cwd>/loop.md`` or project scripts) touches a
+        # project folder. An untrusted/Preview folder runs read-only (REVIEW_ONLY) — a write grant
+        # cannot silently execute project scripts in a folder the user never trusted.
+        if cwd:
+            from personalclaw.guardrails.project_trust import gate_project_capability
+
+            capability_class = gate_project_capability(cwd, capability_class)
+
         async def _spawn() -> None:
             try:
                 services.subagents.spawn(  # type: ignore[union-attr]
@@ -225,6 +239,7 @@ class RunPromptActionProvider(ActionProvider):
                     model=model,
                     cwd=cwd,
                     approval_mode="auto",
+                    capability_class=capability_class,
                     silent=False,
                     dry_run=dry_run,
                 )

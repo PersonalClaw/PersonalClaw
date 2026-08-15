@@ -175,6 +175,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Unattended automations now run read-only by default, and you're asked before one runs scripts
+  in a project folder.** Three changes narrow what work runs while no one is watching. A background
+  *research* spawn — the kind a cron or an agent fires with no human present — now starts in a
+  read-only capability class: it can read, search and fetch, but a write or execute tool (including
+  a shell) is refused at the tool-approval layer unless the automation was created with an explicit
+  write grant (`capability: mutating` on the trigger). A read-only research run that quietly gains
+  write is exactly the escalation this closes. Second, when a finished background run hands its
+  result back into an unattended session for follow-up, that turn no longer blanket-auto-approves
+  whatever tool it reaches for — it resolves through the one safety-profile path the rest of
+  unattended work already uses, so the security hooks screen it; an interactive chat, where you are
+  present, is unchanged. Third, the first time an automation wants to run scripts in a project
+  folder it stays in **Preview** — read-only, no script execution — and asks you to **Trust** the
+  folder; the decision persists (`project_trust.json`, keyed by the resolved directory), so it asks
+  once, and only Trust lets it write or run project scripts there. Manage it at
+  `POST /api/guardrails/project-trust`. **Honest limitation:** these bound what an *unattended* run
+  may do by default; a run you explicitly grant `mutating`, or a folder you Trust, has the access
+  you gave it — the point is that it is a decision you made, not a default it inherited.
 - **The built-in command denylist now repairs itself.** The 112 always-on patterns that refuse
   credential exfiltration, destructive commands and self-tampering used to live only as a list
   inside a Python module. Anything running in the same process — a stray monkeypatch, an agent that

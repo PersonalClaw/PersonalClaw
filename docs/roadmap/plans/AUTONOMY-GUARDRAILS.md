@@ -1038,6 +1038,82 @@ Gate: `make lint` clean; targeted suites green; full suite `python -m pytest --n
 Two pre-existing `tests/test_guardrails_ladder.py` failures are inherited from the PP-14 base
 (reproduced identically at commit `6de2130e` with no AG-13 change) and are NOT attributable here.
 
+### 2026-08-15 — Atom AG-11 (§4.1 research subagent class + cron-approval rewire + §4.3 project trust) — DONE
+
+The three Session-4 deferrals, wired to what exists on `main`. **Deliberately NOT re-pointed at
+AG-13's consolidated `SupervisorPolicy`** — that object ships in an unmerged stacked PR (#1333) and
+is off-limits; the atom's done-when is "resolves through `profile_for_session`", which works on
+`main` today. AG-13's log line ("AG-11 re-pointed at the consolidated object") is aspirational; the
+enabling half (a shared object) is not a dependency of these three behaviours. The `scope.py`
+write-scope repoint AG-13 flagged as "PP-15/AG-11 territory" needs that consolidated matcher too, so
+it stays with the wiring owners — not done here.
+
+**§4.1 — read-only research subagent class (enforced at the tool-approval layer).**
+`SubagentManager.spawn` gains `capability_class`; `resolve_capability_class` defaults an AUTO-FIRED
+spawn (`approval_mode="auto"`) to `research` and a human-watched one to `mutating`; an explicit class
+always wins. The denial is enforced in `subagent._run_inner`'s permission loop — a research spawn's
+`is_write_tool(event.title)` request is `reject_tool`'d BEFORE any auto-approve branch (placement is
+load-bearing: an auto-fired research run resolves `parent_policy="auto"`, so a denial after that
+branch would be dead code). It reuses `workflows.batch_compile.is_write_tool` — the SAME policy the
+workflow research leaf uses (`mcp_shared.leaf_tool_denial`) — so a research subagent and a research
+leaf deny identically (a coherence test asserts the three capability constants are equal). This is
+enforcement, not a `.tools` list the native runtime ignores (WF2LEA-6). Callers: `run-prompt` /
+`invoke-agent` default `research` (an `capability: mutating` action-config field is the creation-time
+write grant); `workflows/engine.py` passes `capability_class` mirroring `cfg.capability` — ONE
+capability decision now drives BOTH the leaf-env read-only flag (MCP tools, handler seam) AND the
+subagent class (NATIVE tools, approval loop), closing the native-write gap the MCP-only seam left for
+a research leaf; `dashboard/handlers/apps.py` app-run passes explicit `mutating`
+(behaviour-preservation — an app-run agent is an established write surface).
+
+**Cron-approval rewire.** DISCOVERY: the literal `AUTO_APPROVE if approval_mode=="auto" else
+HOOK_BASED` ternary the S4 DEVIATION named no longer exists — AG-5 (#872) already rewired the
+heartbeat to `approval_policy_for_session`, and the subagent SPAWN grant is deliberately
+ceiling-bounded via `ceiling_permits_approval` (PHF-8), NOT profile-routed (routing it through
+`profile_for_session` would let HEADLESS veto the trust toggle — the exact thing PHF-8's docstring
+forbids). The one remaining un-routed ad-hoc AUTO_APPROVE in an unattended path was the subagent
+RESULT-INJECTION turn (`gateway._subagent_done` → `_inject_with_retry`), which defaulted to
+AUTO_APPROVE for a cron/channel parent. New `gateway.injection_approval_policy(parent_key)` routes an
+UNATTENDED parent through `approval_policy_for_session` (→ `profile_for_session`) and keeps an
+INTERACTIVE parent on AUTO_APPROVE. Behaviour-preserving for already-approved cases: an announce that
+calls no tool is unaffected, and under HOOK_BASED the security hooks still auto-approve hook-neutral
+tools — only the dangerous tools they already deny elsewhere are now gated on an unattended announce.
+
+**§4.3 — project Trust/Preview gate.** New `guardrails/project_trust.py`:
+`gate_project_capability(cwd, requested)` returns the grant for a **Trusted** folder and forces
+`research` (read-only, REVIEW_ONLY) for a **Preview**/undecided one — Preview reuses the §4.1 class,
+one read-only control with two entry points. The FIRST touch persists a Preview record
+(`project_trust.json`, LWW, keyed by resolved dir — a new `durability/inventory.py` StateEntry) and
+raises a needs-input inbox row (reusing the existing `system`/`agent_request` attention pair — no new
+notification kind), deduped so it prompts ONCE. Fail-OPEN store / fail-CLOSED decision (a corrupt
+file → Preview, never trusted). Wired at the `run-prompt` project-`cwd` seam and exposed at
+`GET|POST /api/guardrails/project-trust` so a user can act on the prompt. Offline `reference/routes.md`
+regenerated (+2 routes).
+
+Falsifications (each mutated, verified red naming the right thing, restored from `cp` backup, tree
+byte-clean after; markers grepped to 0): (1) research gate admits writes (`if False and
+is_write_tool…`) → `test_auto_fired_research_spawn_denies_write_tool` + `…_bash_execute` red
+(`reject_tool` awaited 0 times); (2) `injection_approval_policy` bypassed to always AUTO_APPROVE →
+`test_injection_policy_unattended_resolves_through_profile` reds (`AUTO_APPROVE is not HOOK_BASED`);
+(3) Preview returns the grant instead of read-only → `test_first_touch_persists_preview_and_forces_readonly`
++ `test_preview_folder_stays_readonly` red (`'mutating' == 'research'`).
+
+Gate: `make lint` clean (black/isort/flake8/mypy, 1616 files); the new suite
+`tests/test_ag11_profile_trust.py` — 16 passed. Collection diff vs the fork base `origin/main`
+(`94711166`): **+16, zero removed** (19474 → 19490 — the sixteen AG-11 tests). The first full-suite
+run surfaced FOUR attributable reds, all fixed in this commit: the two
+`test_action_schema_executor_parity` reds ([invoke-agent] + [run-prompt]) were the new `capability`
+config key being READ by the executor but not DECLARED in the action manifest — so it is now a
+declared `settingsSchema` enum on both native action apps (which also gives the Triggers "Advanced"
+form the write-grant control, the product half); the two `test_app_agent_run` 500s were the test's
+`_FakeSubagents.spawn` double lacking the new `capability_class` kwarg — the fake now mirrors the
+real signature. After the fix, full suite `python -m pytest --no-cov -q` (PERSONALCLAW_HOME unset):
+**19450 passed, 30 skipped, 12 xfailed, 0 failed** (+4 vs the pre-fix run — exactly the four fixed).
+A separate `-n 0` targeted run flagged two `tests/test_guardrails_ladder.py` order-isolation reds
+and some subagent/`TestOnDoneTimeout` reds; both classes are PRE-EXISTING and non-attributable —
+the ladder pair reproduces identically on `94711166` (a `test_a_provider_that_refuses…` →
+`test_create_task…` order bug), and the subagent reds are CPU-contention flakes that pass in
+isolation and did not recur under the parallel run. Base worktree removed after the diff.
+
 ---
 
 ## Status: all four sessions COMPLETE (2026-07-25)
