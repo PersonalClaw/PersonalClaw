@@ -33,8 +33,11 @@ describe('the onboarding name field is programmatically labelled', () => {
 
   it('the accessible name matches the visible StepRow title (no Label-in-Name conflict)', () => {
     const src = onboarding()
-    // The visible label is the StepRow title; both must read "Your name".
-    expect(src).toMatch(/title="Your name"/)
+    // The visible label is the StepRow title, now sourced from the single `TITLES` map (cycle 194
+    // hoisted it so the spoken step name can't drift from the visible one). Both resolve to
+    // "Your name": the map entry, the row's `title={TITLES.name}`, and the input's aria-label.
+    expect(src).toMatch(/TITLES: Record<StepId, string> = \{ name: 'Your name'/)
+    expect(src).toMatch(/title=\{TITLES\.name\}/)
     expect(src).toMatch(/aria-label="Your name"/)
   })
 
