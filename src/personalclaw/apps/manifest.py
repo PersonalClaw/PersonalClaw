@@ -294,6 +294,35 @@ class BackendConfig:
 
 
 @dataclass
+class ProposalKind:
+    """One proposal kind an app declares it may emit (INU-7, ``permissions.proposals[]``).
+
+    ``kind_suffix`` is namespaced under the app at registration
+    (``("app:<name>", "proposal:<kind_suffix>")``), so two apps declaring ``draft`` never
+    collide and the user's notification rules address each app's kind separately. It is
+    slug-shaped on purpose: a suffix carrying ``/`` or whitespace would break the
+    ``<source>/<kind>`` rules-store key.
+    """
+
+    kind_suffix: str
+    label: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind_suffix": self.kind_suffix, "label": self.label}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProposalKind":
+        suffix = str(data.get("kind_suffix") or "")
+        return cls(kind_suffix=suffix, label=str(data.get("label") or suffix))
+
+    def is_valid(self) -> bool:
+        return bool(_PROPOSAL_SUFFIX_RE.match(self.kind_suffix))
+
+
+_PROPOSAL_SUFFIX_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+@dataclass
 class Permissions:
     """Declared permissions for an app."""
 
@@ -342,6 +371,17 @@ class Permissions:
     # ``desktop.capability_denied``. Apps never touch Electron IPC — the gateway
     # mediates every call — so this list plus ``api`` is the whole reach.
     desktop: list[str] = field(default_factory=list)
+    # INU-7: proposal kinds this app may emit into the inbox. Each entry registers as the
+    # notification pair ``("app:<name>", "proposal:<kind_suffix>")`` at ENABLE time, and
+    # ``POST /api/inbox/proposals`` refuses (403) a suffix that is not declared here — so
+    # the manifest, not the request body, decides what an app may raise. Deny by default:
+    # an empty list means the app may emit NO proposal. Reaches install consent the same
+    # way ``appMessaging``/``storageRead`` do (``to_dict`` → the Store's permission list).
+    # Like APE-9's messaging broker this is a DOUBLE declaration, on purpose and by
+    # precedent: reaching the route at all still requires ``/api/inbox/proposals`` in
+    # ``api`` (the middleware's path gate), and this list decides WHICH kinds may be
+    # raised. Neither half alone grants anything.
+    proposals: list["ProposalKind"] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -369,6 +409,8 @@ class Permissions:
             d["storageRead"] = self.storageRead
         if self.desktop:
             d["desktop"] = self.desktop
+        if self.proposals:
+            d["proposals"] = [p.to_dict() for p in self.proposals]
         return d
 
     @classmethod
@@ -386,7 +428,17 @@ class Permissions:
             storageShared=bool(data.get("storageShared", False)),  # noqa: N815
             storageRead=[str(t) for t in data.get("storageRead", []) if t],  # noqa: N815
             desktop=[str(c) for c in data.get("desktop", []) if c],
+            proposals=[
+                ProposalKind.from_dict(p) for p in data.get("proposals", []) if isinstance(p, dict)
+            ],
         )
+
+    def proposal_kind(self, kind_suffix: str) -> "ProposalKind | None":
+        """The declared kind for *kind_suffix*, or None — the 403 check reads THIS."""
+        for entry in self.proposals:
+            if entry.kind_suffix == kind_suffix:
+                return entry
+        return None
 
 
 @dataclass
@@ -1050,6 +1102,22 @@ class AppManifest:
                 errors.append(
                     f"cron entry {cron.name!r} must specify either 'every' or 'cron_expr'"
                 )
+
+        # Declared proposal kinds (INU-7) — validated HERE so a bad suffix is an install
+        # error, not a broken rules-store key discovered at enable time.
+        seen_suffixes: set[str] = set()
+        for pk in self.permissions.proposals:
+            if not pk.kind_suffix:
+                errors.append("permissions.proposals entry missing required field: kind_suffix")
+            elif not pk.is_valid():
+                errors.append(
+                    f"proposal kind_suffix must be a slug (lowercase alphanumeric, "
+                    f"'-' or '_'), got: {pk.kind_suffix!r}"
+                )
+            elif pk.kind_suffix in seen_suffixes:
+                errors.append(f"duplicate proposal kind_suffix: {pk.kind_suffix!r}")
+            else:
+                seen_suffixes.add(pk.kind_suffix)
 
         # Declared backend routes (§4.2) — statically checkable without app code.
         seen_ops: set[str] = set()

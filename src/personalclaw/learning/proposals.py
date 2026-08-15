@@ -783,6 +783,20 @@ def _surface_in_inbox(prop: Proposal) -> None:
             logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
 
         title = _KIND_LABELS.get(prop.kind, "Proposal")
+        # INU-7: the row carries the C6 payload, so approving it dispatches through the
+        # ONE proposals contract (`apply.skill_promotion` → this module's `accept`) instead
+        # of the inbox handler hard-wiring this queue by name. `refs["learning_proposal"]`
+        # stays for the existing readers — the contract is additive, not a replacement.
+        from personalclaw.proposals_contract import REFS_KEY, Proposal
+
+        payload = Proposal(
+            title=prop.title or title,
+            preview=prop.body or prop.title or "",
+            preview_kind="text",
+            provenance="learning",
+            editable=False,
+            apply={"skill_promotion": {"pid": prop.id}},
+        )
         emit_attention_item(
             state,
             source="learning",
@@ -790,7 +804,11 @@ def _surface_in_inbox(prop: Proposal) -> None:
             item_kind=ItemKind.PROPOSAL.value,
             title=title,
             body=f"{prop.title}",
-            refs={"learning_proposal": prop.id, "session": prop.session_key},
+            refs={
+                "learning_proposal": prop.id,
+                "session": prop.session_key,
+                REFS_KEY: payload.to_dict(),
+            },
             dedup_key=f"learning_proposal:{prop.id}",
         )
     except Exception:

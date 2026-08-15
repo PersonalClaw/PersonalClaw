@@ -1077,6 +1077,10 @@ async def start_dashboard(
     app.router.add_get("/api/inbox/status", handlers_inbox.api_inbox_status)
     app.router.add_post("/api/inbox/restart", handlers_inbox.api_inbox_restart)
     app.router.add_post("/api/inbox/dismiss-all", handlers_inbox.api_inbox_dismiss_all)
+    # INU-7 — the literal `proposals` path is registered BEFORE `/api/inbox/{id}/...` so a
+    # dynamic id segment can never shadow it.
+    app.router.add_post("/api/inbox/proposals", handlers_inbox.api_inbox_proposal_create)
+    app.router.add_post("/api/inbox/{id}/apply", handlers_inbox.api_inbox_proposal_apply)
     app.router.add_post("/api/inbox/{id}/restore", handlers_inbox.api_inbox_restore)
     app.router.add_post("/api/inbox/send", handlers_inbox.api_inbox_send)
     app.router.add_put("/api/inbox/{id}", handlers_inbox.api_inbox_update)

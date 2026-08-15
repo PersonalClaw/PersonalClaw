@@ -201,7 +201,7 @@
         {
           "id": "INU-7",
           "title": "Proposals contract + app emission path (S7)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment (2026-07-26 — round 2, Proposals contract): Session 7 (T7.1-T7.3) + T4.1 re-expression; C6",
           "done_when": "C6 Proposal dataclass + apply dispatcher routes the four apply cases (action/workflow/skill_promotion/app_callback) through EXISTING dispatchers, a failed apply keeps the item PENDING with the error, and T4.1's skill path is re-expressed as skill_promotion; app emission adds permissions.proposals manifest field + kind registration at enable-time + POST /api/inbox/proposals (scoped-token identity, 403 on undeclared kind or foreign app_callback, SEL per emission, app proposals verifiable=True by default); inbox Proposals lens with same-(provenance,kind)-only batch-approve (mixed sweeps impossible in UI) + edit-then-approve for editable payloads",
           "deps": [
@@ -7665,11 +7665,6 @@
         "plan": "HC"
       },
       {
-        "id": "INU-7",
-        "title": "Proposals contract + app emission path (S7)",
-        "plan": "INU"
-      },
-      {
         "id": "KL-6",
         "title": "S3 dedup/merge frontend: near-duplicate surfacing UI with merge action",
         "plan": "KL"
@@ -9652,9 +9647,9 @@
         "code": "INU",
         "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
         "total_atoms": 8,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

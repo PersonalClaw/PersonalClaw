@@ -328,6 +328,35 @@ def _deregister_mcp(name: str) -> None:
         logger.debug("app %s: MCP deregister failed", name, exc_info=True)
 
 
+def _register_proposal_kinds(manifest: AppManifest, name: str) -> None:
+    """Register the app's declared ``permissions.proposals`` kinds (INU-7).
+
+    At enable time, so a declared kind is REGISTERED before the app can post one — the
+    ``POST /api/inbox/proposals`` 403 reads the manifest, and delivery policy reads the
+    registry, and neither works if the pair was never minted.
+    """
+    if not manifest.permissions.proposals:
+        return
+    try:
+        from personalclaw.proposals_contract import register_app_proposal_kinds
+
+        register_app_proposal_kinds(name, manifest)
+    except Exception:
+        logger.debug("app %s: proposal kind register failed", name, exc_info=True)
+
+
+def _deregister_proposal_kinds(manifest: AppManifest, name: str) -> None:
+    """Drop the app's proposal kinds so a disabled app leaves no phantom kind."""
+    if not manifest.permissions.proposals:
+        return
+    try:
+        from personalclaw.proposals_contract import deregister_app_proposal_kinds
+
+        deregister_app_proposal_kinds(name, manifest)
+    except Exception:
+        logger.debug("app %s: proposal kind deregister failed", name, exc_info=True)
+
+
 def _seed_app_prompts(manifest: AppManifest, name: str) -> None:
     """Seed the app's declared prompts/snippets into the native store (an app OWNS
     its prompts). Best-effort: a seeding failure never breaks the lifecycle."""
@@ -967,6 +996,7 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
         _seed_app_prompts(manifest, name)  # the app OWNS its prompts; seed on enable
         _seed_app_skills(manifest, name, origin=meta.origin)  # + its skills (via the gate)
         _register_mcp(manifest)
+        _register_proposal_kinds(manifest, name)  # INU-7: declared → registered kind pair
         _start_backend(manifest)
     _audit("enable", "ok", name, caller=caller)
     return True
@@ -999,6 +1029,7 @@ def disable(name: str, *, caller: str = "app_manager") -> bool:
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
         _remove_app_skills(manifest, name)  # drop the app's own seeded skills
+        _deregister_proposal_kinds(manifest, name)  # INU-7: no phantom kind survives
         try:
             _run_hook(
                 manifest.setup.onDisable,
@@ -1073,6 +1104,7 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     if manifest is not None:
         _remove_app_prompts(manifest, name)  # drop the app's own seeded prompts
         _remove_app_skills(manifest, name)  # drop the app's own seeded skills
+        _deregister_proposal_kinds(manifest, name)  # INU-7: no phantom kind survives
         try:
             _run_hook(
                 manifest.setup.onUninstall,
