@@ -28,6 +28,7 @@ export const StepRow = forwardRef<HTMLDivElement, {
     <motion.div
       ref={ref}
       layout
+      aria-current={active ? 'step' : undefined}
       transition={spring.spatialDefault}
       onClick={!active && done && onActivate ? onActivate : undefined}
       className="overflow-hidden"
