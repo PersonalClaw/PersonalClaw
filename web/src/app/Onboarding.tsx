@@ -106,6 +106,14 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
       <input autoFocus value={value} onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') onSubmit() }}
         placeholder="Your name"
+        // The placeholder was this field's ONLY accessible name — it vanishes on the first
+        // keystroke and is unreliably announced, so the very first control a new user meets had
+        // no stable programmatic label (WCAG 1.3.1 / 3.3.2 / 4.1.2). `aria-label` matches the
+        // visible StepRow title ("Your name") verbatim, so the name is stable and the accessible
+        // name equals the visible label (no 2.5.3 conflict). StepRow's title is a generic slot with
+        // no id, so aria-labelledby would mean threading one through three call sites — a heavier
+        // change for the same result; this is the field-local fix.
+        aria-label="Your name"
         className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1.0625rem] placeholder:text-on-surface-low outline-none" />
       <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
         {...unavailableWhen(!value.trim(), 'Enter your name first')}
