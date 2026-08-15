@@ -532,3 +532,40 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   `workflows/tick` to `workflows/admission`, is internal: it appears nowhere under
   `personalclaw/sdk/`, so no app can be depending on it. `PP-12` is the entry that will have
   something to announce.
+
+- **2026-08-14 — `PP-14` DONE.** `workflows/supervisor_policy.py` lands the ONE `SupervisorPolicy`
+  declaration the two half-policies converge on, plus its tolerant parser and (in
+  `workflows/validator.py`) six typed authoring-time codes. **All ten fields REUSE the types that
+  already exist** — no parallel vocabulary was minted: `RubricCriterion`/`clamp_marginal` from
+  `judge_contract`, `Rung`/`DEFAULT_LADDER`/`FailureClass` (and the canonical `_resolve_ladder`
+  parser) from `loop_middleware`, `StepConfig` from `loop.tick`, `Attention` from `autonomy`,
+  `ScopeMode` from `scope`, and the `reasoning|standard|fast` tier set the `WF_BAD_MODEL_TIER` lint
+  already owns. The only new structure is `WriteScope` (a paths+`ScopeMode` bundle) and the closed
+  `POLICY_FIELDS` set, which is the contract itself.
+- **2026-08-14 — `PP-14` the honesty rail (the atom's centre).** A static AST **call/construction
+  census** over `src/personalclaw` (excluding tests and the declaration itself) counts code that
+  CONSTRUCTS a `SupervisorPolicy` or invokes `parse_supervisor_policy` — the acts that WIRE it in.
+  Following the `detectors.gate` precedent it is call-based, NOT import-based, so the authoring-time
+  validator consulting `POLICY_FIELDS` is correctly not a caller and `POLICY_FIELDS` can stay a single
+  source of truth. Railed both directions: **direction 1** asserts `callers == 0` (a new caller reds
+  it); **direction 2** asserts the module still carries its `zero production callers` / `PP-15` marker
+  (stripping it reds it); a coupling test asserts `HAS_ZERO_PRODUCTION_CALLERS == (callers == 0)` so
+  the claim can never silently drift. **Two-sided vacuity floor:** a positive control proves the
+  detector returns 2 on a snippet that DOES call, and a scan floor asserts ≥50 modules were seen.
+- **2026-08-14 — `PP-14` DECISION: tolerant reads vs the closed set.** The parser never raises —
+  missing/blank/malformed values all fall to the strict defaults (the `hints_from_dict` pattern), and
+  it IGNORES unknown top-level keys. The closed-set contract lives in the VALIDATOR, which emits
+  `WF_SUPERVISOR_UNKNOWN_FIELD` for a stray key and `WF_SUPERVISOR_{NOT_OBJECT,BAD_TIER,BAD_RUNG,
+  BAD_HITL,BAD_FAILURE_CLASS}` for bad shapes/values — accumulated, never one-per-turn. Zero runtime
+  change: `loop/tick.py` and `controller.py` are untouched; the new codes fire only in
+  `validate_node_tree`. Census of the shipped population: **zero bundled templates declare a
+  `supervisor` key**, so the new codes ship against a population that trivially passes them.
+- **2026-08-14 — `PP-14` DECISION: no CHANGELOG entry.** The declaration is deliberately inert — no
+  user can observe a `SupervisorPolicy` until `PP-15` wires it into `evaluate`. The CHANGELOG is
+  user-facing (the in-app Updates panel), so the entry belongs to `PP-15`.
+- **2026-08-14 — `PP-14` falsifications (all reverted from `cp` backups, probe markers grepped).**
+  (1) a fake `parse_supervisor_policy(...)` caller added under `src/` reds
+  `test_DIRECTION_1_no_production_caller_exists_while_the_marker_claims_zero` + the coupling test;
+  (2) stripping `zero production callers` from the module reds
+  `test_DIRECTION_2_the_inert_module_declares_itself_inert`; (3) disabling the unknown-field check
+  reds `test_an_unknown_field_is_a_typed_error` while the missing-field tolerance test stays green.
