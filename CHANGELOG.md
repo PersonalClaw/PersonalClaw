@@ -42,6 +42,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   run of a brand-new template (that is just a template that has barely run), but once there is enough
   history for the shift to be real. It costs nothing to compute: it is read straight from the ledger
   each run already writes, with no new tracking of any kind.
+- **Work that nobody reads now says so.** Every watchdog until now measured whether a scheduled run
+  was still *working* — findings, wall-time, errors, stagnation. None asked whether anyone ever
+  opened what it produced, so a template quietly writing a deliverable on a cadence into a document
+  nobody reads looked perfectly healthy. Now, when the last three deliverables of one work unit each
+  sat a full week without being opened, pinned or edited, it appears in your review queue as a
+  proposal to **pause or retire** it, naming the runs and the documents involved.
+  It **never stops anything by itself.** "Nobody has looked yet" and "nobody will ever look" are
+  different facts and only you can tell them apart, so this reports and waits — accepting the
+  proposal does not change a schedule either. Three further restraints so it stays worth reading:
+  one open, one pin or one edit anywhere in those three cycles and it stays silent; a document that
+  was deleted counts as *unknown*, never as unread; and if you reject the finding once, it is not
+  raised again.
 
 ### Changed
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to

@@ -328,7 +328,10 @@ def test_publishing_an_artifact_opens_an_outcome(home, monkeypatch):
     (question,) = journal_mod.ledger(run.id, kinds={journal_mod.PENDING_OUTCOME})
     assert question["producer"] == outcomes.PRODUCER_PUBLISH
     assert question["metric"] == "artifact.weekly-digest.consumed"
-    assert question["metric_source"] == outcomes.SOURCE_MEMORY
+    # PP-10 moved this off `SOURCE_MEMORY`: the metric was a semantic key nothing wrote, so the bet
+    # always closed `inconclusive`. Consumption is read off the artifact's own timeline and the pin
+    # list instead, which grades for real and needs no vector store.
+    assert question["metric_source"] == outcomes.SOURCE_CONSUMPTION
     # the bet: a deliverable is for somebody, so one consumption is the baseline to beat
     assert question["baseline"] == 1.0
     assert question["horizon_secs"] > 0.0

@@ -80,7 +80,12 @@ from personalclaw.ledger.kinds import (
     WORKSPACE_TEARDOWN,
 )
 from personalclaw.ledger.outcomes import (
+    CONSUMED,
+    DORMANCY_CYCLES,
+    DORMANT,
     INCONCLUSIVE,
+    INSUFFICIENT,
+    LIVE,
     MEASURED,
     PRODUCER_CONTROL,
     PRODUCER_DECISION,
@@ -88,10 +93,13 @@ from personalclaw.ledger.outcomes import (
     PRODUCER_PROPOSAL,
     PRODUCER_PUBLISH,
     PRODUCERS,
+    SOURCE_CONSUMPTION,
     SOURCE_LEDGER,
     SOURCE_MEMORY,
+    UNCONSUMED,
     OutcomeLedger,
     OutcomeQuestion,
+    dormancy_verdict,
     open_questions,
 )
 from personalclaw.ledger.reader import read_events, run_totals
@@ -131,8 +139,17 @@ __all__ = [
     "PRODUCER_ESCALATION",
     "PRODUCER_PROPOSAL",
     "PRODUCER_PUBLISH",
+    "SOURCE_CONSUMPTION",
     "SOURCE_LEDGER",
     "SOURCE_MEMORY",
+    # consumer liveness (PP-10)
+    "dormancy_verdict",
+    "CONSUMED",
+    "UNCONSUMED",
+    "DORMANCY_CYCLES",
+    "DORMANT",
+    "LIVE",
+    "INSUFFICIENT",
     # vocabulary
     "LEDGER_KINDS",
     "BREAKER_TRIP",

@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PP-7` | ✅ | Trajectory signature as a ledger projection + template regression detection | `PP-4`, `PP-6` | A `trajectory_signature` is derived as a PURE projection over the existing ledger (ordered node/lane/verdict tuples) with no new store, exposed on the run projection and queryable per template. A regression signal fires when a template's runs shift to a signature class that historically failed more often. Verified: two runs of one template with the same inputs produce equal signatures; a rewind produces a distinguishable one; the projection is proven pure by computing it twice over a frozen ledger and comparing. |
 | `PP-8` | ⬜ | Edge-decision statistics: per-`branch`/`gate` distribution + dead-case detection | `PP-4` | A ledger projection reports, per `branch` and per judge gate, the case/verdict distribution across a template's run history, and flags a case never taken and a selector whose distribution is degenerate. Rendered on the existing introspection surface rather than a new one. Sample-gated like `gate_stats` — a distribution over three runs is not a finding, and reporting it as one is how a legible surface stops being read. |
 | `PP-9` | ✅ | Generalize the outcome record beyond decisions (`pending_outcome`/`outcome_resolved`) | `PP-4` | The outcome pair becomes a general ledger facility any producer may open: a published artifact, an escalation, a proposal, a declared control. The horizon resolver stays idempotent via `pending_event_id` and still distinguishes measured from inconclusive. At least two non-decision producers are wired in the same change so the generalization is exercised rather than merely available (a `publish:` artifact and a gate escalation). Coordinated with PROACTIVE-ASSISTANT's `PA-4` decision journal so there is ONE outcome facility, not a decision-shaped one plus a general one. |
-| `PP-10` | ⬜ | Consumer-liveness detection: surface a work unit whose output nobody reads | `PP-9` | A dormancy sweep reports a work unit whose last N cycles produced output with no consumer touch, surfaced as a PROPOSAL to pause or retire it — never an automatic stop, because "nobody looked yet" and "nobody will ever look" are different facts and only the user knows which. Uses the `PP-9` outcome record with a consumption horizon rather than a new counter. Verified by driving a run whose artifact is never opened (sweep fires) and one whose artifact is opened (sweep stays silent) — the second half is the one that proves it is not a blanket nag. |
+| `PP-10` | ✅ | Consumer-liveness detection: surface a work unit whose output nobody reads | `PP-9` | A dormancy sweep reports a work unit whose last N cycles produced output with no consumer touch, surfaced as a PROPOSAL to pause or retire it — never an automatic stop, because "nobody looked yet" and "nobody will ever look" are different facts and only the user knows which. Uses the `PP-9` outcome record with a consumption horizon rather than a new counter. Verified by driving a run whose artifact is never opened (sweep fires) and one whose artifact is opened (sweep stays silent) — the second half is the one that proves it is not a blanket nag. |
 | `PP-11` | ✅ | Extract `AdmissionPolicy` behind today's lanes (no behaviour change) | `PP-4` | `frontier()`'s admission step becomes an ordered list of `AdmissionPolicy` objects, with today's lane caps, per-container `max_concurrency` and WIP=1 expressed as the first three policies and composed tightest-wins. `frontier()` stays PURE — no clock, no I/O — and its output is byte-identical for every existing spec: a golden-file test over the bundled templates' frontier decisions captures before and diffs after. `wip_held` and `deferred` keep their distinct meanings (a declared invariant being enforced vs lane pressure). No new policy is added here and no other scheduler is touched — this atom only makes the seam exist. |
 | `PP-12` | ⬜ | Add `Lease` and `Dwell`/`MetricGate` admission policies | `PP-11` | `Lease(ttl)` reuses `pool.py`'s proven compare-and-swap decision functions rather than a second lease implementation (S57 measured `unlink`-based single-use failing 36 of 40 races, and a lease that loses a race is worse than no lease), and `Dwell`/`MetricGate` reuse `loop/tick.StepConfig`'s parsed thresholds. Both are additive: a spec declaring neither behaves exactly as before, proven by re-running `PP-11`'s golden frontier file. Verified by a fan-out that genuinely serializes on a leased resource across a gateway restart, and by a metric regression rolling a step back inside a workflow run. |
 | `PP-13` | ⬜ | Retire `pool.py`'s private frontier onto the unified core | `PP-12` | `pool.frontier`/`pool.next` are DELETED and the Work board's ready projection is computed by the unified core with a `Lease` policy plus the pool's existing priority/blocking-count/overdue ordering expressed as a comparator. The lease decision functions survive (they are the policy's implementation); only the duplicate projection goes. Verified: the Work board renders an identical ready set before and after over a seeded fixture, leases still survive a gateway kill, and `dependency_failed` cascade plus burst coalescing still fire. Retiring a legacy path is never a pure deletion — the sweep names every caller before the delete lands. |
@@ -174,11 +174,52 @@ The platform records what it DID and not what LANDED. That single shape produces
 
 ### `PP-10` — Consumer-liveness detection: surface a work unit whose output nobody reads
 
-**Status:** todo
+**Status:** done
 
 The watchdogs measure PRODUCER health — findings count, turn wall-time, stagnation, consecutive errors. Nothing asks whether a loop's output was ever read. The field post-mortem this is drawn from (2026-08-11) is a fully autonomous pipeline that had been dead for two months with nobody noticing, and its author's diagnosis was structural rather than tooling: nobody owned acting on the output. Our equivalent is a monitor-kind run writing a deliverable on a cadence into an artifact nobody opens — we detect a STALLED one and never a POINTLESS one. The raw signal already exists (artifact events, inbox read state, `pinned_artifacts`).
 
 **Done when:** A dormancy sweep reports a work unit whose last N cycles produced output with no consumer touch, surfaced as a PROPOSAL to pause or retire it — never an automatic stop, because "nobody looked yet" and "nobody will ever look" are different facts and only the user knows which. Uses the `PP-9` outcome record with a consumption horizon rather than a new counter. Verified by driving a run whose artifact is never opened (sweep fires) and one whose artifact is opened (sweep stays silent) — the second half is the one that proves it is not a blanket nag.
+
+**Design** (as built, 2026-08-14)
+
+*"Consumer touch" is observed through writers that already exist.* A touch is an artifact lifecycle
+event of type `referenced` / `edited` / `reverted` whose actor is not `agent`, or the slug appearing
+in the dashboard pin list:
+
+| Signal | Existing writer | Meaning |
+|---|---|---|
+| `referenced` | `record_impression` via `POST /api/artifacts/{slug}/events` | the user opened the artifact in the dashboard |
+| `referenced` | `record_impression` via `dashboard/chat_runner.py` | the user pulled the artifact into a chat turn |
+| `edited` / `reverted` | the `update`/`revert` routes with a non-agent actor | the user changed it |
+| pin | `workflows/pinned.py` → `entity_settings/pinned_artifacts.json` | "I care about this now" |
+
+`created` and `iterated` are EXCLUDED: those are the producer writing its own output, and counting
+them makes every work unit look consumed by itself. Known blind spot, recorded rather than worked
+around: `update()` appends a timeline event only on its `snapshot=True` branch and the route defaults
+`snapshot` to False, so an un-versioned edit is invisible — widening that means changing artifact
+event semantics for every timeline consumer.
+
+*It reuses `PP-9`'s record with a consumption horizon, adding no counter.* The `publish:` producer's
+question already carries the slug, the 7-day horizon and `baseline=1.0`. `PP-10` adds a THIRD metric
+source, `SOURCE_CONSUMPTION`, so the ONE resolver grades a publish bet as `measured` 1.0/0.0 instead
+of always `inconclusive` — and grades it on a box with no vector store, which the semantic-memory
+metric could never do. The sweep then reads the `outcome_resolved` rows, groups them by work unit
+(the template, not the run) and applies `outcomes.dormancy_verdict`. It is STATELESS: no new file, no
+new `StateEntry`, idempotency from the proposal queue's own fingerprint.
+
+*Three verdicts, not two.* `DORMANT` needs `DORMANCY_CYCLES` (3) matured, unconsumed cycles.
+`LIVE` on one touch anywhere in the window. `INSUFFICIENT` for a short window OR any `inconclusive`
+cycle — "nobody looked yet" and "we could not tell" are both different facts from "nobody reads
+this", and collapsing either is how the control gets teeth it has not earned.
+
+*Measured population before giving it teeth:* **0 of 19 bundled templates declare a `publish:`
+node**, so on a fresh or seeded install the firing population is EMPTY and no scoping-down was
+needed. Firing requires a user-authored publishing work unit, ≥3 runs, and every recent artifact
+untouched past its horizon.
+
+*It cannot act.* The sweep files one `retirement` proposal and returns. Guarded two ways: an AST rail
+over `learning/consumer_liveness.py` forbidding any `pause`/`retire`/`cancel`/`save`-class call, and a
+functional test asserting every run is byte-identical after a firing sweep.
 
 ### `PP-11` — Extract `AdmissionPolicy` behind today's lanes (no behaviour change)
 
