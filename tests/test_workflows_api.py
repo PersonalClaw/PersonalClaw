@@ -837,6 +837,16 @@ class TestIntrospectRoute:
         kinds = {row["kind"] for row in body["timeline"]}
         assert "step_completed" in kinds, kinds
 
+    async def test_the_edge_distribution_rides_the_real_response(self, provider) -> None:
+        """PP-8 wired-vs-inert: the edge-decision projection must be CALLED by the route, not
+        merely exist. A run with no branch has an empty distribution — but the key, and its shape,
+        prove the route reads it. `risky.edges` carries the same object so the "what is risky"
+        answer sees a dead case the way it sees a fake check."""
+        run_id = await self._started(provider, "intro-edges")
+        body = await self._introspect(run_id)
+        assert body["edges"] == {"branches": {}, "judges": {}}, body["edges"]
+        assert body["answers"]["risky"]["edges"] == {"branches": {}, "judges": {}}
+
     async def test_the_projection_agrees_with_the_engines_own_totals(self, provider) -> None:
         """Two aggregates over one journal that disagreed would put different numbers for the same
         run on the cockpit strip and the run row, with no way to tell which lied."""

@@ -3,48 +3,49 @@
 {"event_id": "RUN-evt-3", "kind": "carryover", "marker": "probe:carryover", "seq": 3, "ts": "TS"}
 {"event_id": "RUN-evt-4", "kind": "cascade_blocked", "marker": "probe:cascade_blocked", "seq": 4, "ts": "TS"}
 {"event_id": "RUN-evt-5", "kind": "child_run_attach", "marker": "probe:child_run_attach", "seq": 5, "ts": "TS"}
-{"event_id": "RUN-evt-6", "kind": "confirmation_pending", "marker": "probe:confirmation_pending", "seq": 6, "ts": "TS"}
-{"event_id": "RUN-evt-7", "kind": "confirmation_resolved", "marker": "probe:confirmation_resolved", "seq": 7, "ts": "TS"}
-{"event_id": "RUN-evt-8", "kind": "consulted", "marker": "probe:consulted", "seq": 8, "ts": "TS"}
-{"event_id": "RUN-evt-9", "kind": "crystallized", "marker": "probe:crystallized", "seq": 9, "ts": "TS"}
-{"event_id": "RUN-evt-10", "kind": "decision", "marker": "probe:decision", "seq": 10, "ts": "TS"}
-{"event_id": "RUN-evt-11", "kind": "delay_clamped", "marker": "probe:delay_clamped", "seq": 11, "ts": "TS"}
-{"event_id": "RUN-evt-12", "kind": "effect", "marker": "probe:effect", "seq": 12, "ts": "TS"}
-{"event_id": "RUN-evt-13", "kind": "gate_criterion", "marker": "probe:gate_criterion", "seq": 13, "ts": "TS"}
-{"event_id": "RUN-evt-14", "kind": "gate_rejected", "marker": "probe:gate_rejected", "seq": 14, "ts": "TS"}
-{"event_id": "RUN-evt-15", "kind": "gate_resolved", "marker": "probe:gate_resolved", "seq": 15, "ts": "TS"}
-{"event_id": "RUN-evt-16", "kind": "gate_revised", "marker": "probe:gate_revised", "seq": 16, "ts": "TS"}
-{"event_id": "RUN-evt-17", "kind": "handoff", "marker": "probe:handoff", "seq": 17, "ts": "TS"}
-{"event_id": "RUN-evt-18", "kind": "inputs_stale", "marker": "probe:inputs_stale", "seq": 18, "ts": "TS"}
-{"event_id": "RUN-evt-19", "kind": "items_collected", "marker": "probe:items_collected", "seq": 19, "ts": "TS"}
-{"event_id": "RUN-evt-20", "kind": "iteration", "marker": "probe:iteration", "seq": 20, "ts": "TS"}
-{"event_id": "RUN-evt-21", "kind": "judge_divergence", "marker": "probe:judge_divergence", "seq": 21, "ts": "TS"}
-{"event_id": "RUN-evt-22", "kind": "judge_verdict", "marker": "probe:judge_verdict", "seq": 22, "ts": "TS"}
-{"event_id": "RUN-evt-23", "kind": "mutation_rejected", "marker": "probe:mutation_rejected", "seq": 23, "ts": "TS"}
-{"event_id": "RUN-evt-24", "kind": "outcome_resolved", "marker": "probe:outcome_resolved", "seq": 24, "ts": "TS"}
-{"event_id": "RUN-evt-25", "kind": "pending_outcome", "marker": "probe:pending_outcome", "seq": 25, "ts": "TS"}
-{"event_id": "RUN-evt-26", "kind": "run_abandoned", "marker": "probe:run_abandoned", "seq": 26, "ts": "TS"}
-{"event_id": "RUN-evt-27", "kind": "run_finished", "marker": "probe:run_finished", "seq": 27, "ts": "TS"}
-{"event_id": "RUN-evt-28", "kind": "run_started", "marker": "probe:run_started", "seq": 28, "ts": "TS"}
-{"event_id": "RUN-evt-29", "kind": "seen_set", "marker": "probe:seen_set", "seq": 29, "ts": "TS"}
-{"event_id": "RUN-evt-30", "kind": "steering", "marker": "probe:steering", "seq": 30, "ts": "TS"}
-{"event_id": "RUN-evt-31", "kind": "step_attempt", "marker": "probe:step_attempt", "seq": 31, "ts": "TS"}
-{"event_id": "RUN-evt-32", "kind": "step_cached", "marker": "probe:step_cached", "seq": 32, "ts": "TS"}
-{"event_id": "RUN-evt-33", "kind": "step_completed", "marker": "probe:step_completed", "seq": 33, "ts": "TS"}
-{"event_id": "RUN-evt-34", "kind": "step_escalated", "marker": "probe:step_escalated", "seq": 34, "ts": "TS"}
-{"event_id": "RUN-evt-35", "kind": "step_failed", "marker": "probe:step_failed", "seq": 35, "ts": "TS"}
-{"event_id": "RUN-evt-36", "kind": "step_scope_violation", "marker": "probe:step_scope_violation", "seq": 36, "ts": "TS"}
-{"event_id": "RUN-evt-37", "kind": "step_skipped", "marker": "probe:step_skipped", "seq": 37, "ts": "TS"}
-{"event_id": "RUN-evt-38", "kind": "step_started", "marker": "probe:step_started", "seq": 38, "ts": "TS"}
-{"event_id": "RUN-evt-39", "kind": "task_materialized", "marker": "probe:task_materialized", "seq": 39, "ts": "TS"}
-{"event_id": "RUN-evt-40", "kind": "task_verified", "marker": "probe:task_verified", "seq": 40, "ts": "TS"}
-{"event_id": "RUN-evt-41", "kind": "user_edited_mid_flight", "marker": "probe:user_edited_mid_flight", "seq": 41, "ts": "TS"}
-{"event_id": "RUN-evt-42", "kind": "watcher_reaped", "marker": "probe:watcher_reaped", "seq": 42, "ts": "TS"}
-{"event_id": "RUN-evt-43", "kind": "workspace_provisioned", "marker": "probe:workspace_provisioned", "seq": 43, "ts": "TS"}
-{"event_id": "RUN-evt-44", "kind": "workspace_teardown", "marker": "probe:workspace_teardown", "seq": 44, "ts": "TS"}
-{"cache_key": "main.children[0]|2|abc|def", "cost_usd": 0.123457, "degraded_reason": "token absent", "duration_secs": 0.0, "epoch": 2, "event_id": "RUN-evt-45", "instance_path": "main.children[0]", "kind": "step_completed", "model": "m", "node_id": "gather", "output_ref": "outputs/gather.json", "provider": "p", "resolved_prompt_ref": "prompts/gather.txt", "retries": 1, "seq": 45, "state": "degraded", "tokens": 42, "ts": "TS"}
-{"attempt": 2, "epoch": 2, "error": "connection reset", "event_id": "RUN-evt-46", "failure": {"cause_plain": "connection reset", "class": "network", "recoverable": true, "remediation": "retry", "retryable": true, "suggestion": "", "terminal_reason": ""}, "failure_signature": {"class": "network"}, "instance_path": "main.children[1]", "kind": "step_failed", "node_id": "bulk", "retries_exhausted": true, "seq": 46, "ts": "TS"}
-{"criterion": "builds", "event_id": "RUN-evt-47", "instance_path": "main.children[0]", "kind": "task_verified", "node_id": "gather", "passed": false, "seq": 47, "task_id": "t1", "ts": "TS", "unrunnable": true}
-{"baseline": 1.234568, "epoch": 1, "event_id": "RUN-evt-48", "horizon_secs": 3.142, "instance_path": "main.children[0]", "kind": "pending_outcome", "metric": "latency", "metric_source": "memory", "node_id": "gather", "producer": "decision", "seq": 48, "subject": "ship it", "ts": "TS"}
-{"baseline": 1.234568, "decay_profile": "speculative", "event_id": "RUN-evt-49", "instance_path": "main.children[0]", "kind": "outcome_resolved", "measured": null, "metric": "latency", "node_id": "gather", "pending_event_id": "RUN-evt-48", "producer": "decision", "resolution": "inconclusive", "score": 0.987654, "seq": 49, "subject": "ship it", "ts": "TS"}
-{"event_id": "RUN-evt-50", "kind": "workspace_provisioned", "seq": 50, "ts": "TS", "workspace": {"env": {"token": "[REDACTED: credential]"}, "mode": "worktree"}}
+{"event_id": "RUN-evt-6", "kind": "clock_read", "marker": "probe:clock_read", "seq": 6, "ts": "TS"}
+{"event_id": "RUN-evt-7", "kind": "confirmation_pending", "marker": "probe:confirmation_pending", "seq": 7, "ts": "TS"}
+{"event_id": "RUN-evt-8", "kind": "confirmation_resolved", "marker": "probe:confirmation_resolved", "seq": 8, "ts": "TS"}
+{"event_id": "RUN-evt-9", "kind": "consulted", "marker": "probe:consulted", "seq": 9, "ts": "TS"}
+{"event_id": "RUN-evt-10", "kind": "crystallized", "marker": "probe:crystallized", "seq": 10, "ts": "TS"}
+{"event_id": "RUN-evt-11", "kind": "decision", "marker": "probe:decision", "seq": 11, "ts": "TS"}
+{"event_id": "RUN-evt-12", "kind": "delay_clamped", "marker": "probe:delay_clamped", "seq": 12, "ts": "TS"}
+{"event_id": "RUN-evt-13", "kind": "effect", "marker": "probe:effect", "seq": 13, "ts": "TS"}
+{"event_id": "RUN-evt-14", "kind": "gate_criterion", "marker": "probe:gate_criterion", "seq": 14, "ts": "TS"}
+{"event_id": "RUN-evt-15", "kind": "gate_rejected", "marker": "probe:gate_rejected", "seq": 15, "ts": "TS"}
+{"event_id": "RUN-evt-16", "kind": "gate_resolved", "marker": "probe:gate_resolved", "seq": 16, "ts": "TS"}
+{"event_id": "RUN-evt-17", "kind": "gate_revised", "marker": "probe:gate_revised", "seq": 17, "ts": "TS"}
+{"event_id": "RUN-evt-18", "kind": "handoff", "marker": "probe:handoff", "seq": 18, "ts": "TS"}
+{"event_id": "RUN-evt-19", "kind": "inputs_stale", "marker": "probe:inputs_stale", "seq": 19, "ts": "TS"}
+{"event_id": "RUN-evt-20", "kind": "items_collected", "marker": "probe:items_collected", "seq": 20, "ts": "TS"}
+{"event_id": "RUN-evt-21", "kind": "iteration", "marker": "probe:iteration", "seq": 21, "ts": "TS"}
+{"event_id": "RUN-evt-22", "kind": "judge_divergence", "marker": "probe:judge_divergence", "seq": 22, "ts": "TS"}
+{"event_id": "RUN-evt-23", "kind": "judge_verdict", "marker": "probe:judge_verdict", "seq": 23, "ts": "TS"}
+{"event_id": "RUN-evt-24", "kind": "mutation_rejected", "marker": "probe:mutation_rejected", "seq": 24, "ts": "TS"}
+{"event_id": "RUN-evt-25", "kind": "outcome_resolved", "marker": "probe:outcome_resolved", "seq": 25, "ts": "TS"}
+{"event_id": "RUN-evt-26", "kind": "pending_outcome", "marker": "probe:pending_outcome", "seq": 26, "ts": "TS"}
+{"event_id": "RUN-evt-27", "kind": "run_abandoned", "marker": "probe:run_abandoned", "seq": 27, "ts": "TS"}
+{"event_id": "RUN-evt-28", "kind": "run_finished", "marker": "probe:run_finished", "seq": 28, "ts": "TS"}
+{"event_id": "RUN-evt-29", "kind": "run_started", "marker": "probe:run_started", "seq": 29, "ts": "TS"}
+{"event_id": "RUN-evt-30", "kind": "seen_set", "marker": "probe:seen_set", "seq": 30, "ts": "TS"}
+{"event_id": "RUN-evt-31", "kind": "steering", "marker": "probe:steering", "seq": 31, "ts": "TS"}
+{"event_id": "RUN-evt-32", "kind": "step_attempt", "marker": "probe:step_attempt", "seq": 32, "ts": "TS"}
+{"event_id": "RUN-evt-33", "kind": "step_cached", "marker": "probe:step_cached", "seq": 33, "ts": "TS"}
+{"event_id": "RUN-evt-34", "kind": "step_completed", "marker": "probe:step_completed", "seq": 34, "ts": "TS"}
+{"event_id": "RUN-evt-35", "kind": "step_escalated", "marker": "probe:step_escalated", "seq": 35, "ts": "TS"}
+{"event_id": "RUN-evt-36", "kind": "step_failed", "marker": "probe:step_failed", "seq": 36, "ts": "TS"}
+{"event_id": "RUN-evt-37", "kind": "step_scope_violation", "marker": "probe:step_scope_violation", "seq": 37, "ts": "TS"}
+{"event_id": "RUN-evt-38", "kind": "step_skipped", "marker": "probe:step_skipped", "seq": 38, "ts": "TS"}
+{"event_id": "RUN-evt-39", "kind": "step_started", "marker": "probe:step_started", "seq": 39, "ts": "TS"}
+{"event_id": "RUN-evt-40", "kind": "task_materialized", "marker": "probe:task_materialized", "seq": 40, "ts": "TS"}
+{"event_id": "RUN-evt-41", "kind": "task_verified", "marker": "probe:task_verified", "seq": 41, "ts": "TS"}
+{"event_id": "RUN-evt-42", "kind": "user_edited_mid_flight", "marker": "probe:user_edited_mid_flight", "seq": 42, "ts": "TS"}
+{"event_id": "RUN-evt-43", "kind": "watcher_reaped", "marker": "probe:watcher_reaped", "seq": 43, "ts": "TS"}
+{"event_id": "RUN-evt-44", "kind": "workspace_provisioned", "marker": "probe:workspace_provisioned", "seq": 44, "ts": "TS"}
+{"event_id": "RUN-evt-45", "kind": "workspace_teardown", "marker": "probe:workspace_teardown", "seq": 45, "ts": "TS"}
+{"cache_key": "main.children[0]|2|abc|def", "cost_usd": 0.123457, "degraded_reason": "token absent", "duration_secs": 0.0, "epoch": 2, "event_id": "RUN-evt-46", "instance_path": "main.children[0]", "kind": "step_completed", "model": "m", "node_id": "gather", "output_ref": "outputs/gather.json", "provider": "p", "resolved_prompt_ref": "prompts/gather.txt", "retries": 1, "seq": 46, "state": "degraded", "tokens": 42, "ts": "TS"}
+{"attempt": 2, "epoch": 2, "error": "connection reset", "event_id": "RUN-evt-47", "failure": {"cause_plain": "connection reset", "class": "network", "recoverable": true, "remediation": "retry", "retryable": true, "suggestion": "", "terminal_reason": ""}, "failure_signature": {"class": "network"}, "instance_path": "main.children[1]", "kind": "step_failed", "node_id": "bulk", "retries_exhausted": true, "seq": 47, "ts": "TS"}
+{"criterion": "builds", "event_id": "RUN-evt-48", "instance_path": "main.children[0]", "kind": "task_verified", "node_id": "gather", "passed": false, "seq": 48, "task_id": "t1", "ts": "TS", "unrunnable": true}
+{"baseline": 1.234568, "epoch": 1, "event_id": "RUN-evt-49", "horizon_secs": 3.142, "instance_path": "main.children[0]", "kind": "pending_outcome", "metric": "latency", "metric_source": "memory", "node_id": "gather", "producer": "decision", "seq": 49, "subject": "ship it", "ts": "TS"}
+{"baseline": 1.234568, "decay_profile": "speculative", "event_id": "RUN-evt-50", "instance_path": "main.children[0]", "kind": "outcome_resolved", "measured": null, "metric": "latency", "node_id": "gather", "pending_event_id": "RUN-evt-49", "producer": "decision", "resolution": "inconclusive", "score": 0.987654, "seq": 50, "subject": "ship it", "ts": "TS"}
+{"event_id": "RUN-evt-51", "kind": "workspace_provisioned", "seq": 51, "ts": "TS", "workspace": {"env": {"token": "[REDACTED: credential]"}, "mode": "worktree"}}

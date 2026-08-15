@@ -211,6 +211,18 @@ async def api_def_detail(request: web.Request) -> web.Response:
     return _reply(await service.get_def(request.match_info.get("name", "")))
 
 
+async def api_template_trajectory(request: web.Request) -> web.Response:
+    """The trajectory-signature distribution and regression signal for one template (PP-7).
+
+    Queryable per template WITHOUT a run in hand: it projects each of the template's recent runs to
+    its decision-path signature, reports the distribution of signature classes, and carries the
+    sample-gated regression signal — has the template shifted to a path that fails more often. A
+    pure read over ledgers already on disk; the run projection at `/runs/{run_id}/introspect` shows
+    the same signal for one run in the context of its siblings.
+    """
+    return _reply(service.template_trajectory(request.match_info.get("name", "")))
+
+
 async def api_def_save(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_def_save")
     if denied is not None:
@@ -886,4 +898,5 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows", api_defs_list)
     app.router.add_post("/api/workflows", api_def_save)
     app.router.add_get("/api/workflows/{name}", api_def_detail)
+    app.router.add_get("/api/workflows/{name}/trajectory", api_template_trajectory)
     app.router.add_delete("/api/workflows/{name}", api_def_delete)

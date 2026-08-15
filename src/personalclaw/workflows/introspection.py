@@ -33,8 +33,11 @@ Pure functions over event lists. The caller reads the journal; these decide what
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from personalclaw.ledger import hash_value
 
 #: Runs of a template before its 100%-pass rate counts as evidence of a fake check. Below this,
 #: "never rejected" is a sample-size artifact — and a badge that fires on the third run of a new
@@ -299,6 +302,465 @@ def gate_stats(events: list[dict[str, Any]]) -> dict[str, GateStats]:
             if int(event.get("attempt", 1) or 1) > 1:
                 out[node_id].retries_consumed += 1
     return out
+
+
+# ── trajectory signature ───────────────────────────────────────────────────────
+
+#: Runs of a template before a shift to a worse-performing signature class counts as evidence
+#: rather than noise. Mirrors FAKE_CHECK_MIN_RUNS in spirit: "the third run took a new path" is not
+#: a regression, it is a template that has barely run. Below this floor the detector stays silent.
+TRAJECTORY_REGRESSION_MIN_RUNS = 10
+
+#: A regime — the runs on one signature class, before or after a shift — must be at least this many
+#: for its failure rate to be evidence. One run on a new path is an anecdote, and a failure rate
+#: over a single run is 0% or 100% — neither is a measurement.
+TRAJECTORY_REGRESSION_MIN_CLASS_RUNS = 3
+
+#: The failure-rate jump between the old regime and the new one worth surfacing. A class that fails
+#: a hair more often than the one before it is drift, not a regression — the signal fires on a
+#: MATERIAL shift so the surface that carries it stays worth reading.
+TRAJECTORY_REGRESSION_MIN_DELTA = 0.25
+
+#: The ledger events that place a node on a run's decision PATH, each carrying a verdict. The path
+#: is the ordered sequence of these: which nodes ran, in what order, how each resolved, and which
+#: branch legs the engine skipped. Deliberately NOT deduped by path — a rewind re-runs nodes and
+#: appends their terminal events again, and those extra tuples are exactly what makes a rewound
+#: run's signature distinguishable from a clean one's.
+_TRAJECTORY_STEP_KINDS = frozenset(
+    {
+        "step_completed",
+        "step_failed",
+        "step_skipped",
+        "step_cached",
+        "gate_resolved",
+        "judge_verdict",
+    }
+)
+
+_FIXED_VERDICTS = {"step_failed": "failed", "step_skipped": "skipped", "step_cached": "cached"}
+
+
+def _trajectory_verdict(kind: str, event: dict[str, Any]) -> str:
+    """The verdict one path-shaping event carries.
+
+    A completed step's verdict is its terminal state — a `degraded` success took a different path
+    than a clean one and must not collapse into it. A gate's is approve/reject; a judge's is its
+    own verdict token. Every other terminal kind carries a fixed verdict so the sequence is a path.
+    """
+    if kind == "step_completed":
+        return str(event.get("state") or "done")
+    if kind == "gate_resolved":
+        return "gate:approved" if event.get("approved") else "gate:rejected"
+    if kind == "judge_verdict":
+        return "judge:" + str(event.get("verdict") or "").upper()
+    return _FIXED_VERDICTS[kind]
+
+
+def trajectory_steps(events: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """The ordered (node, lane, verdict) tuples a run's ledger describes — its decision PATH.
+
+    A PURE projection over the event list, in journal order, with no store of its own: PP-7's whole
+    claim is that the path is already fully recorded and only needs reading. `lane` is read from the
+    `step_started` a node emitted (the one event that carries it); a node with no recorded lane — an
+    untaken branch leg the engine skipped without launching — contributes "" rather than a guess,
+    which is deterministic and so keeps the projection pure.
+
+    NOT deduped by path (unlike replay's last-write-wins fold, which reconstructs a FINAL
+    trajectory): a signature must tell a rewound run apart from a clean one, and a rewind's mark on
+    the ledger is precisely the re-execution events it appends.
+    """
+    lane_by_path: dict[str, str] = {}
+    steps: list[tuple[str, str, str]] = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("kind") or "")
+        if kind == "step_started":
+            path = str(event.get("instance_path") or "")
+            if path:
+                lane_by_path[path] = str(event.get("lane") or "")
+            continue
+        if kind not in _TRAJECTORY_STEP_KINDS:
+            continue
+        path = str(event.get("instance_path") or "")
+        node = str(event.get("node_id") or "") or path
+        steps.append((node, lane_by_path.get(path, ""), _trajectory_verdict(kind, event)))
+    return steps
+
+
+@dataclass
+class TrajectorySignature:
+    """One run's trajectory, projected from its ledger: the ordered path plus its hash.
+
+    `signature` is the CLASS — two runs that took the same path hash equal, and that equality is the
+    whole query "which runs of this template went a different way". `steps` is kept so a surface can
+    show the path, not just its fingerprint.
+    """
+
+    run_id: str
+    signature: str
+    steps: list[tuple[str, str, str]] = field(default_factory=list)
+
+    @property
+    def length(self) -> int:
+        return len(self.steps)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "signature": self.signature,
+            "length": self.length,
+            "steps": [{"node": n, "lane": lane, "verdict": v} for n, lane, v in self.steps],
+        }
+
+
+def trajectory_signature(run_id: str, events: list[dict[str, Any]]) -> TrajectorySignature:
+    """Project a run's ledger into its trajectory signature — a PURE function of the events.
+
+    The signature is `hash_value` over the ordered tuple list, reusing the codebase's one content
+    hash rather than minting a parallel scheme (the same 16-hex digest `FailureSignature.input_hash`
+    and a node's `prompt_hash` use). Same events in, same signature out, every time: computing it
+    twice over a frozen ledger returns the same string, which is the purity bar.
+    """
+    steps = trajectory_steps(events)
+    return TrajectorySignature(run_id=run_id, signature=hash_value(steps), steps=steps)
+
+
+def _most_common_signature(runs: list[tuple[str, bool]]) -> str:
+    """The signature class most runs took. Ties broken by the signature string so the choice is
+    deterministic across calls — a nondeterministic tiebreak would leak into the regression's own
+    output and break its purity."""
+    counts: dict[str, int] = {}
+    for sig, _ in runs:
+        counts[sig] = counts.get(sig, 0) + 1
+    return max(sorted(counts), key=lambda s: counts[s]) if counts else ""
+
+
+@dataclass
+class TrajectoryRegression:
+    """A template whose recent runs shifted to a signature class that fails more often."""
+
+    template: str
+    current_signature: str
+    prior_signature: str
+    current_failure_rate: float
+    prior_failure_rate: float
+    current_runs: int
+    prior_runs: int
+
+    def message(self) -> str:
+        return (
+            f"{self.template}'s recent runs shifted to a new path (`{self.current_signature}`) "
+            f"that fails {self.current_failure_rate:.0%} of the time, up from "
+            f"{self.prior_failure_rate:.0%} on the path it took before (`{self.prior_signature}`)"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "template": self.template,
+            "current_signature": self.current_signature,
+            "prior_signature": self.prior_signature,
+            "current_failure_rate": round(self.current_failure_rate, 4),
+            "prior_failure_rate": round(self.prior_failure_rate, 4),
+            "current_runs": self.current_runs,
+            "prior_runs": self.prior_runs,
+            "message": self.message(),
+        }
+
+
+def trajectory_regression(
+    template: str,
+    runs: list[tuple[str, bool]],
+    *,
+    min_runs: int = TRAJECTORY_REGRESSION_MIN_RUNS,
+    min_class_runs: int = TRAJECTORY_REGRESSION_MIN_CLASS_RUNS,
+    min_delta: float = TRAJECTORY_REGRESSION_MIN_DELTA,
+) -> TrajectoryRegression | None:
+    """Fire when a template's runs have SHIFTED to a signature class that fails more often.
+
+    `runs` is (signature, failed) per run, OLDEST first. The detector finds the contiguous tail of
+    most-recent runs sharing the newest signature — the new regime — and compares its failure rate
+    to the runs before it. It fires only when the shift is real (the prior regime's dominant path
+    differs from the new one) and the new path fails materially more.
+
+    Sample-gated like `gate_stats`, and for the same reason: "the last two runs took a new path and
+    both failed" is not evidence a template regressed — it is a template that has barely run. Below
+    `min_runs` total, or with either regime under `min_class_runs`, the detector stays silent.
+    Dropping those floors to zero is what turns a young template's first new path into a false
+    alarm, which is exactly the failure this gate exists to prevent.
+    """
+    clean = [(str(s), bool(f)) for s, f in (runs or []) if s]
+    if len(clean) < min_runs:
+        return None
+    current_sig = clean[-1][0]
+    tail: list[tuple[str, bool]] = []
+    for sig, failed in reversed(clean):
+        if sig != current_sig:
+            break
+        tail.append((sig, failed))
+    prior = clean[: len(clean) - len(tail)]
+    if len(tail) < min_class_runs or len(prior) < min_class_runs:
+        return None
+    # A genuine shift: the path the template USED to take must differ from the one it moved to.
+    prior_dominant = _most_common_signature(prior)
+    if prior_dominant == current_sig:
+        return None
+    current_rate = sum(1 for _, f in tail if f) / len(tail)
+    prior_rate = sum(1 for _, f in prior if f) / len(prior)
+    if current_rate - prior_rate < min_delta:
+        return None
+    return TrajectoryRegression(
+        template=template,
+        current_signature=current_sig,
+        prior_signature=prior_dominant,
+        current_failure_rate=current_rate,
+        prior_failure_rate=prior_rate,
+        current_runs=len(tail),
+        prior_runs=len(prior),
+    )
+
+
+#: Runs before an EDGE'S decision distribution counts as evidence — deliberately the SAME bar as
+#: the said-no badge. A `branch` case unseen across three routings is UNSAMPLED, not dead, and a
+#: dead-case flag that fires on the third run of a new template is the same noise `gate_stats`'s
+#: sample gate exists to prevent — the badge that fires before the metric has ever been right is
+#: the one that teaches a reader to ignore the surface. Reusing `FAKE_CHECK_MIN_RUNS` rather than
+#: minting a second threshold keeps ONE sample bar across the whole surface: a branch and a gate on
+#: the same template must not disagree about what "enough runs" means.
+EDGE_STATS_MIN_RUNS = FAKE_CHECK_MIN_RUNS
+
+#: A branch's cases live at the instance path `<branch>.cases[<label>]` (see `tick._visit_branch`).
+#: This is the only place the selected case survives in the EVENT STREAM: the branch node's own
+#: `{"case": label}` output is offloaded behind an `output_ref`, and its declined edges are held in
+#: memory and never journaled. But the taken case runs (a non-`step_skipped` event in its subtree)
+#: and every untaken case is SKIPPED with its whole subtree (`controller._skip`) — so the routing is
+#: recoverable from paths alone, which keeps this a pure projection over the event list like
+#: `gate_stats`, with no output-store read and no new ledger kind.
+_CASE_SEGMENT = re.compile(r"\.cases\[(?P<label>[^\]]+)\]")
+
+
+def _branch_routing(
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """One run's `branch` routing, as (cases_seen, cases_taken) keyed by branch instance path.
+
+    A case is SEEN if its subtree appears at all (taken or skipped); it is TAKEN if any event in its
+    subtree is not a `step_skipped`. Nested branches attribute each `.cases[...]` segment to its own
+    immediate prefix, so `outer.cases[a].inner.cases[b]` records `a` for `outer` and `b` for the
+    inner branch independently. Reading "taken" as "has a non-skip event" rather than "the case root
+    emitted a step" is what makes a CONTAINER case work: a structural container root emits nothing
+    of its own, but its children do — and an untaken container's whole subtree is skipped, so it has
+    no non-skip event to confuse the count.
+    """
+    seen: dict[str, set[str]] = {}
+    taken: dict[str, set[str]] = {}
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        path = str(event.get("instance_path") or "")
+        if ".cases[" not in path:
+            continue
+        is_skip = str(event.get("kind") or "") == "step_skipped"
+        for match in _CASE_SEGMENT.finditer(path):
+            branch_path = path[: match.start()]
+            label = match.group("label")
+            seen.setdefault(branch_path, set()).add(label)
+            if not is_skip:
+                taken.setdefault(branch_path, set()).add(label)
+    return seen, taken
+
+
+@dataclass
+class BranchStats:
+    """Case distribution for one `branch` selector, across a template's routed runs.
+
+    `cases` enumerates EVERY case the branch ever exposed — a never-taken case is a real `0`, not an
+    absent key, because a projection that only listed cases it had seen taken could never report the
+    dead one. `routed_runs` counts only the runs where the branch actually routed (an outer branch
+    can skip this one entirely), so the sample gate measures decisions the selector made, not runs
+    of the template.
+    """
+
+    path: str
+    cases: dict[str, int] = field(default_factory=dict)
+    routed_runs: int = 0
+
+    def never_taken(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> list[str]:
+        """Cases no routed run has ever selected — but only once there is a real sample.
+
+        Below `min_runs` this is empty on purpose: a case unseen over three routings is unsampled,
+        and "dead" and "not yet reached" are different facts. Reporting the first as the second is
+        exactly how a legible surface stops being read.
+        """
+        if self.routed_runs < min_runs:
+            return []
+        return sorted(label for label, count in self.cases.items() if count == 0)
+
+    def degenerate_warning(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> str:
+        """The warning when a real alternative exists but the selector always makes the same choice.
+
+        Requires a real sample AND more than one declared case: a branch with a single case is a
+        spec shape, not a selector doing no work. "" when there is no evidence, mirroring
+        `GateStats.fake_check_warning` so a reader learns one rule for the whole surface.
+        """
+        if self.routed_runs < min_runs or len(self.cases) < 2:
+            return ""
+        chosen = [(label, count) for label, count in self.cases.items() if count > 0]
+        if len(chosen) == 1 and chosen[0][1] == self.routed_runs:
+            others = len(self.cases) - 1
+            return (
+                f"`{self.path}` routed to `{chosen[0][0]}` in all {self.routed_runs} runs that "
+                f"reached it — its other {others} case(s) are declared but never chosen, so the "
+                "selector is doing no work"
+            )
+        return ""
+
+    def warnings(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> list[str]:
+        """This branch's findings for the template card — degenerate first, then dead cases."""
+        out: list[str] = []
+        degenerate = self.degenerate_warning(min_runs=min_runs)
+        if degenerate:
+            out.append(degenerate)
+        dead = self.never_taken(min_runs=min_runs)
+        if dead:
+            joined = ", ".join(f"`{label}`" for label in dead)
+            out.append(
+                f"`{self.path}` never took {joined} across {self.routed_runs} runs — a case the "
+                "selector has never reached is dead unless a future input routes to it"
+            )
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "cases": dict(self.cases),
+            "routed_runs": self.routed_runs,
+            "never_taken": self.never_taken(),
+            "degenerate_warning": self.degenerate_warning(),
+        }
+
+
+@dataclass
+class JudgeStats:
+    """Verdict distribution for one judge gate, across a template's runs.
+
+    Derived from `JUDGE_VERDICT` (the judge's own raw verdict), so it reports the FULL vocabulary a
+    judge used — where `gate_stats` collapses the same gate to approve/reject. The two are
+    complementary: a judge can pass every gate (no said-no) while returning the same verdict every
+    time, and only this surface shows the second.
+    """
+
+    node_id: str
+    verdicts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def total(self) -> int:
+        return sum(self.verdicts.values())
+
+    def degenerate_warning(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> str:
+        """The warning when a judge returns one verdict over a real sample — a do-nothing selector.
+
+        Same sample discipline as everything else on this surface: one outcome over three calls is a
+        young judge, not a broken one, and a badge that fires there is the noise the gate exists to
+        avoid.
+        """
+        if self.total < min_runs:
+            return ""
+        chosen = [(verdict, count) for verdict, count in self.verdicts.items() if count > 0]
+        if len(chosen) == 1:
+            return (
+                f"`{self.node_id}` returned `{chosen[0][0]}` on all {self.total} verdicts — a "
+                "judge with one outcome over this many calls is not discriminating"
+            )
+        return ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "verdicts": dict(self.verdicts),
+            "total": self.total,
+            "degenerate_warning": self.degenerate_warning(),
+        }
+
+
+@dataclass
+class EdgeStats:
+    """The edge-decision projection (PP-8): per-`branch` case and per-judge verdict distributions.
+
+    A pure projection over a template's runs, alongside `gate_stats` on the same surface and under
+    the same sample gate. It answers the graph-engineering question `branch`/`gate`/`judge` records
+    left unaskable: a selector that has taken one case every time, or a case no run has ever
+    reached, was journaled per-run and never aggregated.
+    """
+
+    branches: dict[str, BranchStats] = field(default_factory=dict)
+    judges: dict[str, JudgeStats] = field(default_factory=dict)
+
+    def warnings(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> list[str]:
+        """Every edge finding, for folding into the template card beside the said-no warnings."""
+        out: list[str] = []
+        for path in sorted(self.branches):
+            out.extend(self.branches[path].warnings(min_runs=min_runs))
+        for node_id in sorted(self.judges):
+            warning = self.judges[node_id].degenerate_warning(min_runs=min_runs)
+            if warning:
+                out.append(warning)
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "branches": {path: b.to_dict() for path, b in self.branches.items()},
+            "judges": {node_id: j.to_dict() for node_id, j in self.judges.items()},
+        }
+
+
+def edge_stats(runs: list[list[dict[str, Any]]]) -> EdgeStats:
+    """Aggregate `branch` case and judge verdict distributions across a template's runs.
+
+    Takes a LIST of runs' event lists rather than one run's, because a distribution over a single
+    run is not a distribution — "always case A" is only a finding once there is a history, and the
+    cross-run count is the whole point. Pure over the events: the caller reads the sibling ledgers
+    (it already does, for the template card) and this decides what the numbers mean.
+    """
+    seen_all: dict[str, set[str]] = {}
+    routed_runs: dict[str, int] = {}
+    case_counts: dict[str, dict[str, int]] = {}
+    for events in runs or []:
+        seen, taken = _branch_routing(events)
+        for branch_path, labels in seen.items():
+            seen_all.setdefault(branch_path, set()).update(labels)
+        for branch_path, labels in taken.items():
+            if not labels:
+                continue  # the branch itself was skipped this run — it did not route
+            routed_runs[branch_path] = routed_runs.get(branch_path, 0) + 1
+            counts = case_counts.setdefault(branch_path, {})
+            for label in labels:
+                counts[label] = counts.get(label, 0) + 1
+
+    branches: dict[str, BranchStats] = {}
+    for branch_path, labels in seen_all.items():
+        counts = case_counts.get(branch_path, {})
+        branches[branch_path] = BranchStats(
+            path=branch_path,
+            cases={label: counts.get(label, 0) for label in sorted(labels)},
+            routed_runs=routed_runs.get(branch_path, 0),
+        )
+
+    judges: dict[str, JudgeStats] = {}
+    for events in runs or []:
+        for event in events or []:
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("kind") or "") != "judge_verdict":
+                continue
+            node_id = str(event.get("node_id") or "")
+            if not node_id:
+                continue
+            verdict = str(event.get("verdict") or "")
+            stats = judges.setdefault(node_id, JudgeStats(node_id=node_id))
+            stats.verdicts[verdict] = stats.verdicts.get(verdict, 0) + 1
+
+    return EdgeStats(branches=branches, judges=judges)
 
 
 @dataclass

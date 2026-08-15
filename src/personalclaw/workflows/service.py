@@ -1177,24 +1177,58 @@ def introspect(run_id: str) -> dict[str, Any]:
     # The template card, across this template's recent runs. The current run is included —
     # excluding it would make the card disagree with the strip directly above it.
     card = introspection.TemplateCard(template=run.workflow_name)
+    edges = introspection.EdgeStats()
     if run.workflow_name:
         siblings, _total = store.list_runs(
             workflow_name=run.workflow_name, limit=_TEMPLATE_CARD_RUNS
         )
-        sibling_stats = [
-            introspection.run_stats(r.id, journal_mod.ledger(r.id)) if r.id != run_id else stats
-            for r in siblings
+        # Read each sibling's ledger ONCE and reuse it for every cross-run projection: the run
+        # economics, the said-no badge and the edge distribution all ask the same events, and a
+        # personal instance's card must not get slower by reading them three times.
+        sibling_ledgers = [
+            (r.id, events if r.id == run_id else journal_mod.ledger(r.id)) for r in siblings
         ]
+        sibling_stats = [
+            stats if rid == run_id else introspection.run_stats(rid, evs)
+            for rid, evs in sibling_ledgers
+        ]
+        # Per-branch case and per-judge verdict distributions across the template. Sample-
+        # gated exactly like the said-no badge below: "always case A" and "case B never taken" are
+        # claims about the selector's HISTORY, and one run can never carry the sample for either.
+        edges = introspection.edge_stats([evs for _rid, evs in sibling_ledgers])
         # Gate warnings are the template's, not the run's: "this gate has never rejected" is a
-        # claim about the gate's history, and one run can never carry the sample for it.
+        # claim about the gate's history, and one run can never carry the sample for it. The edge
+        # findings (dead cases, degenerate selectors) ride the same list — they are the same shape
+        # of claim over the same sample, and a reader should meet them in one place.
         warnings = sorted(
             {
                 w
-                for g in _template_gates(siblings, run_id, gates).values()
+                for g in _template_gates(sibling_ledgers, run_id, gates).values()
                 if (w := g.fake_check_warning())
             }
+            | set(edges.warnings())
         )
         card = introspection.template_card(run.workflow_name, sibling_stats, warnings=warnings)
+
+    # The trajectory signature: this run's decision PATH as a pure ledger projection, plus
+    # the template-level regression signal — have this template's recent runs shifted to a path that
+    # fails more often? Both are projections over ledgers already on disk; no new store.
+    signature = introspection.trajectory_signature(run_id, events)
+    trajectory_regression = None
+    trajectory_distribution: dict[str, int] = {}
+    if run.workflow_name:
+        # Oldest-first: the shift detector reasons about "the path it USED to take" vs the recent
+        # one, so the history it reads must run forward in time.
+        history: list[tuple[str, bool]] = []
+        for r in sorted(siblings, key=lambda s: getattr(s, "created_at", "") or ""):
+            sib_events = events if r.id == run_id else journal_mod.ledger(r.id)
+            sib_sig = introspection.trajectory_signature(r.id, sib_events).signature
+            sib_failed = (
+                stats if r.id == run_id else introspection.run_stats(r.id, sib_events)
+            ).steps_failed > 0
+            trajectory_distribution[sib_sig] = trajectory_distribution.get(sib_sig, 0) + 1
+            history.append((sib_sig, sib_failed))
+        trajectory_regression = introspection.trajectory_regression(run.workflow_name, history)
 
     from personalclaw.workflows.human_input import list_continuations
 
@@ -1223,11 +1257,19 @@ def introspect(run_id: str) -> dict[str, Any]:
         "approval": open_asks,
         "failed": [n for n in nodes if n.get("state") in ("failed", "scope_violation")],
         "cost": stats.to_dict(),
-        # "what is risky" — the degraded nodes plus every said-no warning the gates earned.
+        # "what is risky" — the degraded nodes, every said-no warning the gates earned, and the
+        # edge findings (a dead case or a selector doing no work is a risk the same way a fake check
+        # is: the plan declares a decision the run never actually makes).
         "risky": {
             "degraded": [n for n in nodes if n.get("state") == "degraded"],
             "gates": [g.to_dict() for g in gates.values()],
+            "edges": edges.to_dict(),
             "verification_debt": stats.verification_debt,
+            # A template drifting onto a path that fails more often is a risk the per-run numbers
+            # cannot show — it is only visible across the template's history.
+            "trajectory_regression": (
+                trajectory_regression.to_dict() if trajectory_regression else None
+            ),
         },
         # "what happens next if I say nothing" — a WAITING run does nothing until answered; a
         # terminal run is done. Stated rather than implied: the question the plan promotes to a
@@ -1240,7 +1282,18 @@ def introspect(run_id: str) -> dict[str, Any]:
         workflow=run.workflow_name,
         stats=stats.to_dict(),
         gates={node_id: g.to_dict() for node_id, g in gates.items()},
+        # Per-branch case and per-judge verdict distributions across the template, beside the
+        # said-no gate table rather than on a surface of their own — a routing decision and a gate
+        # decision are the same kind of edge, and a reader should meet them in one place.
+        edges=edges.to_dict(),
         template_card=card.to_dict(),
+        # This run's decision PATH plus the template's signature-class distribution and the
+        # regression signal — the "which runs of this template went a different way" query.
+        trajectory=signature.to_dict()
+        | {
+            "distribution": trajectory_distribution,
+            "regression": trajectory_regression.to_dict() if trajectory_regression else None,
+        },
         proof=proof.to_dict(),
         timeline=answers["changed"],
         # The live touched-items feed: what this run published and what was handed to it.
@@ -1251,6 +1304,42 @@ def introspect(run_id: str) -> dict[str, Any]:
         # Empty is the healthy answer. A non-empty list names a question this payload cannot
         # answer, which is a backend gap — the FE cannot close it by rendering harder.
         checklist_gaps=introspection.checklist_gaps(answers),
+    )
+
+
+def template_trajectory(name: str) -> dict[str, Any]:
+    """The trajectory-signature distribution and regression signal for one template (PP-7).
+
+    Queryable WITHOUT a run in hand: given a template name, this reads its recent runs' ledgers,
+    projects each to its trajectory signature, and reports the distribution of signature classes,
+    each run's class, and the sample-gated regression signal. A pure projection over ledgers already
+    on disk — no store, no model call. Bounded by `_TEMPLATE_CARD_RUNS` for the same reason the
+    introspection card is: a personal instance accumulates runs forever.
+    """
+    from personalclaw.workflows import introspection
+
+    runs, _total = store.list_runs(workflow_name=name, limit=_TEMPLATE_CARD_RUNS)
+    history: list[tuple[str, bool]] = []
+    distribution: dict[str, int] = {}
+    signatures: list[dict[str, Any]] = []
+    # Oldest-first, so the regression detector reads the template's history forward in time.
+    for run in sorted(runs, key=lambda r: getattr(r, "created_at", "") or ""):
+        run_id = getattr(run, "id", "")
+        if not run_id:
+            continue
+        events = journal_mod.ledger(run_id)
+        sig = introspection.trajectory_signature(run_id, events).signature
+        failed = introspection.run_stats(run_id, events).steps_failed > 0
+        distribution[sig] = distribution.get(sig, 0) + 1
+        history.append((sig, failed))
+        signatures.append({"run_id": run_id, "signature": sig, "failed": failed})
+    regression = introspection.trajectory_regression(name, history)
+    return _ok(
+        template=name,
+        runs=len(history),
+        distribution=distribution,
+        signatures=signatures,
+        regression=regression.to_dict() if regression else None,
     )
 
 
@@ -1316,22 +1405,24 @@ def touched_items(run_id: str) -> list[dict[str, Any]]:
 _TEMPLATE_CARD_RUNS = 50
 
 
-def _template_gates(siblings: list[Any], run_id: str, own: dict[str, Any]) -> dict[str, Any]:
-    """Per-gate stats ACROSS the template's runs, reusing this run's already-read events.
+def _template_gates(
+    sibling_ledgers: list[tuple[str, list[dict[str, Any]]]],
+    run_id: str,
+    own: dict[str, Any],
+) -> dict[str, Any]:
+    """Per-gate stats ACROSS the template's runs, over ledgers the caller already read.
 
     The fake-check badge needs a SAMPLE: `FAKE_CHECK_MIN_RUNS` gate resolutions is a claim
     about the gate's history, and computing it from one run would leave the badge permanently
-    unarmed — the exact "declared but can never fire" shape this atom exists to close.
+    unarmed — the exact "declared but can never fire" shape this atom exists to close. Takes the
+    pre-read ledgers so the run-economics, said-no and edge-distribution projections share one read
+    of each sibling rather than three.
     """
     from personalclaw.workflows import introspection
 
     merged: dict[str, Any] = {}
-    for sibling in siblings:
-        gates = (
-            own
-            if sibling.id == run_id
-            else introspection.gate_stats(journal_mod.ledger(sibling.id))
-        )
+    for rid, events in sibling_ledgers:
+        gates = own if rid == run_id else introspection.gate_stats(events)
         for node_id, stats in gates.items():
             into = merged.setdefault(node_id, introspection.GateStats(node_id=node_id))
             into.passes += stats.passes

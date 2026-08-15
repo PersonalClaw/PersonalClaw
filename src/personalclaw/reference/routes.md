@@ -649,6 +649,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
+- `GET /api/workflows/{name}/trajectory` — The trajectory-signature distribution and regression signal for one template (PP-7).
 
 ## Websocket / internal routes
 

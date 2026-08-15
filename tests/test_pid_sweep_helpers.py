@@ -319,7 +319,7 @@ class TestWriteBackPidFile:
 
 
 class TestPeriodicPidSweep:
-    def test_only_sweeps_own_gateway_entries(self, session_pid_file: Path) -> None:
+    def test_sweeps_own_and_dead_gateway_entries(self, session_pid_file: Path) -> None:
         from personalclaw.session_pid import _periodic_pid_sweep
 
         my_gw = os.getpid()
@@ -327,15 +327,36 @@ class TestPeriodicPidSweep:
         session_pid_file.write_text(f"{my_gw}:99999\n{other_gw}:88888\n")
 
         def fake_kill(pid: int, sig: int) -> None:
-            raise ProcessLookupError()  # all dead
+            raise ProcessLookupError()  # all dead (including other gateway)
 
         with patch("os.kill", side_effect=fake_kill):
             killed_or_dead, candidates = _periodic_pid_sweep(my_gw, set())
 
-        # Own gateway's dead entry identified, other gateway's preserved
+        # Both gateways' dead entries identified (other_gw is confirmed dead)
+        assert f"{my_gw}:99999" in killed_or_dead
+        assert f"{other_gw}:88888" in killed_or_dead
+        assert candidates == []  # dead PIDs are not candidates
+
+    def test_preserves_alive_other_gateway_entries(self, session_pid_file: Path) -> None:
+        from personalclaw.session_pid import _periodic_pid_sweep
+
+        my_gw = os.getpid()
+        other_gw = my_gw + 1  # guaranteed different from my_gw
+        session_pid_file.write_text(f"{my_gw}:99999\n{other_gw}:88888\n")
+
+        def fake_kill(pid: int, sig: int) -> None:
+            # other_gw is alive; child PIDs are dead
+            if pid == other_gw:
+                return  # alive — no error
+            raise ProcessLookupError()
+
+        with patch("os.kill", side_effect=fake_kill):
+            killed_or_dead, candidates = _periodic_pid_sweep(my_gw, set())
+
+        # Own gateway's dead entry identified, alive other gateway's preserved
         assert f"{my_gw}:99999" in killed_or_dead
         assert f"{other_gw}:88888" not in killed_or_dead
-        assert candidates == []  # dead PIDs are not candidates
+        assert candidates == []
 
     def test_skips_active_pids(self, session_pid_file: Path) -> None:
         from personalclaw.session_pid import _periodic_pid_sweep
@@ -352,15 +373,20 @@ class TestPeriodicPidSweep:
         assert len(killed_or_dead) == 0
         assert 99999 not in candidates  # managed — not a candidate
 
-    def test_skips_bare_entries(self, session_pid_file: Path) -> None:
+    def test_processes_bare_entries(self, session_pid_file: Path) -> None:
         from personalclaw.session_pid import _periodic_pid_sweep
 
         session_pid_file.write_text("99999\n")
 
-        killed_or_dead, candidates = _periodic_pid_sweep(os.getpid(), set())
+        def fake_kill(pid: int, sig: int) -> None:
+            raise ProcessLookupError()  # dead
 
-        # Bare entries skipped (startup handles them)
-        assert len(killed_or_dead) == 0
+        with patch("os.kill", side_effect=fake_kill):
+            killed_or_dead, candidates = _periodic_pid_sweep(os.getpid(), set())
+
+        # Bare entries now processed (dead ones pruned) — the periodic sweep
+        # acts as the real safety net regardless of gateway restart.
+        assert "99999" in killed_or_dead
         assert candidates == []
 
     def test_returns_candidates_for_orphaned_pids(self, session_pid_file: Path) -> None:

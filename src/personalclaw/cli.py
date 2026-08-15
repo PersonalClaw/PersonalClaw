@@ -485,6 +485,17 @@ Examples:
     )
     proj_import.add_argument("--passphrase", default="", help="Passphrase for an encrypted archive")
 
+    workflow_parser = sub.add_parser("workflow", help="Inspect and replay workflow runs")
+    workflow_sub = workflow_parser.add_subparsers(dest="workflow_command")
+    wf_replay = workflow_sub.add_parser(
+        "replay",
+        help="Re-drive a completed run's decision path and report the first divergent node",
+    )
+    wf_replay.add_argument("run_id", help="The run id to replay")
+    wf_replay.add_argument(
+        "--json", action="store_true", help="Emit the trajectory diff as JSON instead of text"
+    )
+
     rest_parser = sub.add_parser("restore", help="Restore PersonalClaw state from a snapshot")
     rest_parser.add_argument("snapshot", nargs="?", help="Path to snapshot .tar.gz")
     rest_parser.add_argument("--mode", choices=("replace", "merge"))
@@ -977,6 +988,10 @@ Examples:
         rc = project_main(args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "workflow":
+        rc = _workflow_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "restore":
         from personalclaw.snapshot import restore_main
 
@@ -1040,6 +1055,63 @@ from personalclaw.cli_setup import (  # noqa: E402
 )
 from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
 from personalclaw.inbound.auth import inbound_cmd as _inbound_cmd  # noqa: E402
+
+
+def _workflow_cmd(args) -> int:  # noqa: ANN001
+    """`workflow replay <run_id>` — re-drive a run and name the first node that moved.
+
+    Divergence is a first-class outcome, not a failure (PP-6): a template edit is supposed to
+    diverge, and a divergent replay still exits 0. Only a run that cannot be replayed at all — no
+    spec, no recorded steps — is an error exit.
+    """
+    import json as _json
+
+    from personalclaw.workflows.replay import ReplayError, replay_run
+
+    if getattr(args, "workflow_command", None) != "replay":
+        print("usage: personalclaw workflow replay <run_id>", file=sys.stderr)
+        return 2
+    try:
+        result = replay_run(args.run_id)
+    except ReplayError as exc:
+        print(f"cannot replay: {exc}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "json", False):
+        div = result.first_divergence
+        print(
+            _json.dumps(
+                {
+                    "run_id": result.run_id,
+                    "identical": result.identical,
+                    "nodes": len(result.original),
+                    "first_divergence": (
+                        None
+                        if div is None
+                        else {
+                            "index": div.index,
+                            "path": div.path,
+                            "node_id": div.node_id,
+                            "field": div.field,
+                            "recorded": div.original,
+                            "replayed": div.replayed,
+                        }
+                    ),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    div = result.first_divergence
+    if result.identical or div is None:
+        print(
+            f"run {result.run_id}: replayed byte-identical across "
+            f"{len(result.original)} node(s) — no divergence"
+        )
+        return 0
+    print(f"run {result.run_id}: DIVERGED — {div.describe()}")
+    return 0
 
 
 def _handle_skills(args) -> None:  # noqa: ANN001

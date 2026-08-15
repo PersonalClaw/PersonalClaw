@@ -136,6 +136,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host-fact: process start-time probe"
     ),
     "acp/transport.py::_is_our_child::subprocess.check_output": "host-fact: PID-recycle probe",
+    "acp/transport.py::_kill_escaped_children::subprocess.check_output": (
+        "host-fact: pgid membership scan for escaped children"
+    ),
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
     "apps/app_manager.py::_install_python_deps::subprocess.run": "operator: app dep install",

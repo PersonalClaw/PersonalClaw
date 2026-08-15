@@ -59,6 +59,7 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     CARRYOVER,
     CASCADE_BLOCKED,
     CHILD_RUN_ATTACH,
+    CLOCK_READ,
     CONFIRMATION_PENDING,
     CONFIRMATION_RESOLVED,
     CONSULTED,
@@ -501,6 +502,28 @@ class Journal(LedgerWriter):
             output_id=output_id,
             compensation_ref=compensation_ref,
             detail=detail,
+        )
+
+    def clock_read(
+        self, path: str, node_id: str, *, epoch: int, clock: float, wake_at: float = 0.0
+    ) -> None:
+        """One load-bearing wall-clock read the run resolved a parked node against (PP-6).
+
+        `frontier()` is pure; the controller's `_wake_due_nodes` is the one place a run reads the
+        wall clock to make a scheduling decision — a `wait` deadline or a `gate` timeout crossing
+        wall time. `clock` is the value it read and `wake_at` the deadline that value crossed. This
+        is the missing third of the nondeterminism envelope (provider responses are spilled by
+        `output_ref`, the resolved prompt by `_store_prompt`): journaled so a replay can substitute
+        a recorded clock and resolve the same node at the same point in the trajectory rather than
+        against a live clock that would never match.
+        """
+        self.write(
+            CLOCK_READ,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            clock=round(float(clock), 6),
+            wake_at=round(float(wake_at), 6),
         )
 
     # ── resume cache ──

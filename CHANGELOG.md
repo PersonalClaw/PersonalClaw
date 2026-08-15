@@ -10,9 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **You can now replay a finished workflow run and see exactly where an edit would change it.**
+- **A run's introspection now shows how its branches and judges actually decided, across the template's history.**
+
 - **Runs now record what LANDED, not just what they did.**
 
+- **You can now ask which runs of a template went a different way — and get warned when they start going a worse way.**
+- **Work that nobody reads now says so.**
+
 ### Changed
+- **A step that reads another step's output no longer needs a hand-written ordering — and steps in different branches of a workflow can now feed each other.**
+- **Autonomous loops now learn the way workflows do.**
+
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to run first.**
 
 - **A workflow step that declares what its output will contain is now checked against the steps that read it.**
