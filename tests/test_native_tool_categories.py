@@ -87,6 +87,14 @@ _RESIDUAL_CORE_TOOLS = {
     # WORKFLOW run, files into the LEARNING proposal queue, and installs (once accepted) into the
     # SKILL library — the same three-category span that put template_save_from_session here.
     "skill_promote",
+    # The template refiner's tool pair (WF2LEA-6). refiner_evidence READS a workflow def's run
+    # ledger; propose_template_diff files into the LEARNING proposal queue against that def —
+    # spanning the WORKFLOW and LEARNING categories while owning neither, exactly like
+    # template_save_from_session. Naming either `workflow_*` would put it in the workflows
+    # category (a 19-tool count + prefix it does not fit) and make that module own a learning
+    # proposal path it does not own.
+    "refiner_evidence",
+    "propose_template_diff",
 }
 
 

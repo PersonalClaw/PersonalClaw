@@ -11,7 +11,9 @@ carrying the synthesized skill (slug/description/triggers/procedure) + provenanc
 a **fenced** excerpt of the source trace (so the reviewer sees what drove it without
 that text being executable if it's ever re-fed to a model). Accept installs the
 proposal — a ``kind="new"`` proposal via the auto-skill writer, a ``kind="refine"``
-proposal by UPDATING its named target skill in place — and reject drops the record.
+proposal as a SIDECAR OVERLAY on its named target skill (``overlays.py``; the base
+``SKILL.md`` is never rewritten, so a locked skill stays verifiable and revert is a
+one-file delete) — and reject drops the record.
 The queue is the single sink for autonomous synthesis — there is no auto-install
 path (by design).
 """
@@ -21,7 +23,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -315,74 +316,47 @@ class AcceptError(Exception):
     """Raised when a proposal can't be accepted (invalid / write failed)."""
 
 
-def _apply_refinement(
-    existing: str, *, description: str, procedure_md: str, created_at: str
-) -> str:
-    """Merge a ``kind="refine"`` proposal into an existing skill's SKILL.md by
-    APPENDING its procedure under a labelled heading — never replacing the body.
-
-    Why append, not replace: the after-turn skill-ladder (``after_turn_review.py``)
-    synthesizes ``procedure_md`` from ONE reviewed turn, and the review LLM never
-    sees the target skill's existing body — so the text is a *delta* (a lesson
-    learned this turn), not a rewrite of the whole skill. Replacing an 8 KB
-    bundled skill (e.g. ``loop-worker``) with a few lines distilled from one turn
-    would destroy it. Appending is the least-destructive merge and preserves both
-    the original skill and every prior refinement.
-    """
-    stamp = (created_at or "").split("T", 1)[0]
-    heading = f"## Refinement ({stamp})" if stamp else "## Refinement"
-    lead = re.sub(r"\s+", " ", description or "").strip()
-    block_lines = [heading, ""]
-    if lead:
-        block_lines += [f"_{lead}_", ""]
-    block_lines.append(procedure_md.replace("\r\n", "\n").strip())
-    block = "\n".join(block_lines)
-    return existing.rstrip() + "\n\n" + block + "\n"
-
-
 def accept(pid: str, *, description: str | None = None, procedure_md: str | None = None) -> str:
     """Accept a pending proposal and clear it from the queue.
 
-    A ``kind="refine"`` proposal that names a resolvable ``refine_target`` UPDATES
-    that skill in place (its SKILL.md gets the proposal's procedure appended, via
-    the same ``update_skill`` write path the "Edit SKILL.md" UI uses). Everything
-    else — ``kind="new"``, or a refine whose target no longer exists — CREATES a
-    new ``auto/`` skill.
+    A ``kind="refine"`` proposal that names a resolvable ``refine_target`` applies as a SIDECAR
+    OVERLAY on that skill (``skills/overlays.py``) — a single file merged onto the base body at
+    load time, never a rewrite of ``SKILL.md``. This is WF2LEA-6's clean break over the old
+    in-body append: the base bytes (and a marketplace skill's ``.pclaw-lock.json`` hashes) stay
+    intact, and reverting the refinement is the deletion of exactly one file. Everything else —
+    ``kind="new"``, or a refine whose target no longer exists — CREATES a new ``auto/`` skill.
 
     Optional ``description``/``procedure_md`` apply reviewer edits. Returns the
     written/updated skill name. Raises ``AcceptError`` on failure."""
     prop = _load(pid)
     if prop is None:
         raise AcceptError(f"no proposal {pid!r}")
+    from personalclaw.skills import overlays
     from personalclaw.skills.loader import AutoSkillProvenance, SkillsLoader
 
     loader = SkillsLoader(install_builtins=False)
     eff_description = description or prop.description
     eff_procedure = procedure_md or prop.procedure_md
 
-    # ── refine: update the named target rather than minting a new skill ──
+    # ── refine: overlay the named target rather than minting a new skill ──
     # This is issue #303: accept() used to route EVERY proposal through
     # create_auto_skill(slug), so a refine-of-existing (slug already present)
     # returned falsy and 409'd forever. We branch on kind here.
     if prop.kind == "refine" and prop.refine_target:
-        existing = loader.load_skill(prop.refine_target)
-        if existing is not None:
-            merged = _apply_refinement(
-                existing,
-                description=eff_description,
-                procedure_md=eff_procedure,
-                created_at=prop.created_at,
-            )
-            # update_skill reuses the existing write path (loader base dir); a
-            # bundled skill's synced copy lives there, so refining one persists
-            # and — because the rewrite bumps the copy's mtime past the bundled
-            # source — survives the next boot's builtin re-sync.
-            if not loader.update_skill(prop.refine_target, merged):
-                raise AcceptError(f"could not update skill {prop.refine_target!r} (not writable)")
+        if loader.load_skill(prop.refine_target) is not None:
+            try:
+                overlays.apply_overlay(
+                    prop.refine_target,
+                    description=eff_description,
+                    procedure_md=eff_procedure,
+                    created_at=prop.created_at,
+                )
+            except (OSError, ValueError) as exc:
+                raise AcceptError(f"could not overlay skill {prop.refine_target!r}: {exc}") from exc
             name = prop.refine_target
             reject(pid)  # clear the now-accepted proposal
             _resolve_inbox_item(pid, "handled")
-            logger.info("Accepted refine proposal %s → updated %s", pid, name)
+            logger.info("Accepted refine proposal %s → overlaid %s", pid, name)
             return name
         # Target vanished (deleted since proposal) — fall through to create-new
         # rather than 500'ing, so the Accept button still resolves the proposal.

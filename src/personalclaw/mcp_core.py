@@ -614,6 +614,64 @@ def _list_tools() -> list[dict[str, Any]]:
                 "required": ["shape"],
             },
         },
+        {
+            # WF2LEA-6: the template refiner's READ tool. Screened + fenced by construction, so a
+            # poisoned run transcript can neither steer clustering nor reach the prompt.
+            "name": "refiner_evidence",
+            "description": (
+                "Read a workflow template's own run-ledger failures, already screened for "
+                "injection and clustered worst-first, plus the top cluster worth targeting. "
+                "Read-only: this is the ONLY evidence the template refiner proposes against."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workflow_name": {
+                        "type": "string",
+                        "description": "The template whose run history to read.",
+                    }
+                },
+                "required": ["workflow_name"],
+            },
+        },
+        {
+            # WF2LEA-6: the refiner's PROPOSE tool. It files a reviewable proposal and stops — it
+            # cannot apply the diff. The frozen-region + legal-op gate runs first, so a diff
+            # touching id/triggers/surfacing metadata is refused rather than filed.
+            "name": "propose_template_diff",
+            "description": (
+                "Propose (never apply) a typed diff to a workflow template. The diff is a list "
+                "of the engine's own ops (update_node/insert/delete/move/set_input); an op "
+                "touching the template's id, name, triggers, or surfacing metadata is refused. "
+                "A legal diff is filed as a human-reviewable proposal — you do not install it."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workflow_name": {"type": "string"},
+                    "ops": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Typed engine ops. Each: {op, node_id?, fields?, ...}.",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Why, grounded in the cluster — a reviewer reads this.",
+                    },
+                    "run_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "The runs whose failures motivate the diff (the evidence).",
+                    },
+                    "predicted_fixes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "What the diff is predicted to fix (graded post-accept).",
+                    },
+                },
+                "required": ["workflow_name", "ops", "rationale"],
+            },
+        },
     ]
 
 
@@ -1202,6 +1260,27 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     if name == "suggest_template":
         return _suggest_template(args)
+
+    if name == "refiner_evidence":
+        from personalclaw.learning import refiner_tools
+
+        evidence = refiner_tools.gather_evidence(str(args.get("workflow_name", "") or ""))
+        return json.dumps({"ok": True, **evidence}, indent=2, ensure_ascii=False, default=str)
+
+    if name == "propose_template_diff":
+        from personalclaw.learning import refiner_tools
+
+        ops = args.get("ops")
+        if not isinstance(ops, list) or not ops:
+            return "Error [WF_REFINE_NO_OPS]: 'ops' must be a non-empty array of typed ops."
+        result = refiner_tools.file_template_diff(
+            str(args.get("workflow_name", "") or ""),
+            ops=[o for o in ops if isinstance(o, dict)],
+            rationale=str(args.get("rationale", "") or ""),
+            run_ids=[str(r) for r in (args.get("run_ids") or [])],
+            predicted_fixes=[str(p) for p in (args.get("predicted_fixes") or [])],
+        )
+        return json.dumps({"ok": True, **result}, indent=2, ensure_ascii=False, default=str)
 
     return f"Unknown tool: {name}"
 

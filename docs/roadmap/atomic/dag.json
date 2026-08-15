@@ -3202,7 +3202,8 @@
         {
           "id": "WF2LEA-6",
           "title": "Step 6: template refiner AGENT + version store + Versions/Ledger FE tabs + skill sidecar overlays",
-          "status": "todo",
+          "status": "done",
+          "pr": 1344,
           "scope": "§3.1 refiner substrate/trust/tiers/shape (R3), §3.1 accept→new version, §6 template-detail Versions/Ledger tabs + maturity badge, §7 step 6",
           "done_when": "Refiner ships as a trigger-fired run-workflow template with a propose_*-only tool set (consuming S73/S79 decision functions + fenced_evidence); monotonic template version store with re-pin/rollback; runs pin executed version; Versions (typed-op diff) + Run Ledger FE tabs + maturity badge + Refine-now button; accepted skill proposals apply as sidecar overlays (revert = delete one file, install_guarded locks intact)",
           "deps": [
@@ -7956,11 +7957,6 @@
         "plan": "WF2KNO"
       },
       {
-        "id": "WF2LEA-6",
-        "title": "Step 6: template refiner AGENT + version store + Versions/Ledger FE tabs + skill sidecar overlays",
-        "plan": "WF2LEA"
-      },
-      {
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
         "plan": "WF2LEA"
@@ -9936,9 +9932,9 @@
         "code": "WF2LEA",
         "plan": "WORKFLOWS-V2-LEARNING-FLYWHEEL",
         "total_atoms": 14,
-        "done": 12,
+        "done": 13,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
