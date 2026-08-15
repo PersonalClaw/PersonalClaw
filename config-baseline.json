@@ -1205,6 +1205,51 @@
     "type": "list[ProjectionRuleConfig]"
   },
   {
+    "default": true,
+    "path": "voice.clean_for_speech_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [
+      "do it",
+      "go ahead",
+      "send it",
+      "execute"
+    ],
+    "path": "voice.confirmation_phrases",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": true,
+    "path": "voice.duplex_mute_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "voice.echo_filter_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [
+      "cancel",
+      "never mind",
+      "forget it"
+    ],
+    "path": "voice.exit_phrases",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": true,
+    "path": "voice.voice_disclaimer_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 604800,
     "path": "workflows.confirmation_ttl_secs",
     "sensitive": false,

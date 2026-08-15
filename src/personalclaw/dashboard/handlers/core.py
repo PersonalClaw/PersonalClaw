@@ -148,10 +148,23 @@ async def favicon(request: web.Request) -> web.StreamResponse:
 
 
 async def api_stt_transcribe(request: web.Request) -> web.Response:
-    """POST /api/stt/transcribe — transcribe uploaded audio via the active STT model."""
+    """POST /api/stt/transcribe — transcribe uploaded audio via the active STT model.
+
+    Two duplex-loop behaviors ride on this endpoint (MULTIMODAL-IO §4). Both keyed
+    off the query string, because the body is a streamed multipart upload whose
+    first part must stay the audio:
+
+    * ``?duplex=true&session=<key>`` — a hands-free capture. The transcript is
+      checked against the last text spoken for that session; speaker bleed comes
+      back as ``{"text": "", "filtered": "echo"}`` so the dashboard can say why
+      nothing happened instead of looking deaf.
+    * The response carries ``input_origin: "voice"`` and, when the disclaimer is
+      enabled, the line the frontend submits with the turn (§4.4).
+    """
     import tempfile  # noqa: F811
 
     from personalclaw.transcribe import is_available, transcribe_audio  # noqa: F811
+    from personalclaw.voice.duplex import VOICE_DISCLAIMER, is_echo
 
     if not await is_available():
         return web.json_response({"error": "STT not available"}, status=503)
@@ -214,7 +227,19 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
 
             text, _ = redact_exfiltration_urls(text)
             text, _ = redact_credentials(text)
-        return web.json_response({"text": text or ""})
+        text = text or ""
+
+        cfg = AppConfig.load().voice
+        duplex = str(request.query.get("duplex", "")).strip().lower() in ("1", "true", "yes")
+        if duplex and text and cfg.echo_filter_enabled:
+            spoken = request.app["state"].last_spoken(request.query.get("session", ""))
+            if spoken and is_echo(text, spoken):
+                return web.json_response({"text": "", "filtered": "echo"})
+
+        payload: dict[str, object] = {"text": text, "input_origin": "voice"}
+        if text and cfg.voice_disclaimer_enabled:
+            payload["disclaimer"] = VOICE_DISCLAIMER
+        return web.json_response(payload)
     except Exception:
         logger.exception("STT transcribe failed")
         return web.json_response({"error": "transcription failed"}, status=500)
@@ -523,6 +548,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.autonomy.max_rejections": {"type": "int", "min": 0, "max": 100},
     "guardrails.autonomy.cooldown_days": {"type": "int", "min": 0, "max": 365},
     "guardrails.autonomy.evidence_window_days": {"type": "int", "min": 1, "max": 365},
+    # MULTIMODAL-IO §4.5 — the hands-free voice loop. All six are convenience
+    # knobs (comfort, not safety): the phrase lists drive frontend gating, the
+    # booleans switch echo filtering, mute-during-playback, pre-speech cleaning
+    # and the voice-origin disclaimer.
+    "voice.confirmation_phrases": {"type": "str_list", "max_items": 20},
+    "voice.exit_phrases": {"type": "str_list", "max_items": 20},
+    "voice.echo_filter_enabled": {"type": "bool"},
+    "voice.duplex_mute_enabled": {"type": "bool"},
+    "voice.clean_for_speech_enabled": {"type": "bool"},
+    "voice.voice_disclaimer_enabled": {"type": "bool"},
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
     "resilience.mid_turn_policy": {

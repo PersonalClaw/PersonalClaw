@@ -10,6 +10,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Voice input can now run hands-free, and spoken replies stop talking over you.** Beside the
+  push-to-talk mic there is a hands-free toggle: keep talking and your dictation accumulates in the
+  composer, and nothing is sent until you say a confirmation phrase ("go ahead", "do it") — say
+  "cancel" and the draft is thrown away, so a half-finished thought can't become an executed
+  instruction. While a reply plays aloud the microphone is released and whatever it captured is
+  discarded, and any transcription that repeats three consecutive words the assistant just said is
+  dropped as echo, with the dashboard saying so rather than looking deaf. Spoken text is cleaned
+  first — code blocks, URLs, file paths and CLI flags are no longer read out letter by letter, while
+  the transcript keeps the full text — and a dictated turn tells the model it came from speech so it
+  self-corrects misheard words. All six knobs live in **Settings → Speech & Transcription →
+  Hands-free voice**.
 - **Attention notifications can now ask for a second opinion before interrupting you.** Turn on
   verification for a proposal or agent-request rule and, before its notification fires, a cheap
   background check judges whether the claim holds. Only a clear refutation withholds it — every

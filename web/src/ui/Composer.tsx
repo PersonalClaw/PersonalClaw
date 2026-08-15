@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Loader2, Paperclip, Check } from 'lucide-react'
+import { ArrowUp, Square, CornerDownLeft, Sparkles, Mic, Ear, Loader2, Paperclip, Check } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { spring, physics, expr } from '../design/motion'
 import { AgentPill, ModelPill, ApprovalPill, ReasoningPill, effortsForAgent, PlusMenu } from './composer/controls'
@@ -26,7 +26,7 @@ export function Composer({
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, minChars = 1,
-  openModelSignal, openAgentSignal, openReasoningSignal,
+  openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -69,10 +69,24 @@ export function Composer({
   const inputRef = useRef<MarkdownInputHandle>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Hands-free (MULTIMODAL-IO §4.1): the loop is a composer-local mode, so the
+  // toggle and the mode live together. Dictation lands in the draft (the surface
+  // the user is already watching) and only a confirmation phrase sends it.
+  const [listening, setListening] = useState(false)
+  const canHandsFree = !!handsFree && !!onHandsFreeSubmit && !!onTranscribe
+  useEffect(() => { if (!canHandsFree) setListening(false) }, [canHandsFree])
+
   // mic → STT: insert the transcript at the caret (or append) when it returns.
   const mic = useMicRecorder(onTranscribe, (text) => {
     inputRef.current?.insertAtCaret(text)
-  }, onMicError)
+  }, onMicError, canHandsFree ? {
+    enabled: listening,
+    confirmationPhrases: handsFree!.confirmationPhrases,
+    exitPhrases: handsFree!.exitPhrases,
+    muted: (handsFree!.muteWhileSpeaking ?? true) && !!handsFree!.speaking,
+    onBuffer: (text) => onChange(text),
+    onSubmit: (text) => { onChange(text); onHandsFreeSubmit!(text) },
+  } : undefined)
 
   // `restH` is the user-set resting height — the editor is at least this tall
   // even when empty (so the handle resizes it at rest), and auto-grows with
@@ -105,6 +119,13 @@ export function Composer({
 
   // Right-hand action cluster: optimize · voice · send/stop/queue.
   const micLabel = mic.state === 'recording' ? 'Stop recording' : mic.state === 'transcribing' ? 'Transcribing…' : 'Voice input'
+  // The label states what the control does, never why it is unavailable — a reason
+  // folded into the name makes the action unfindable by the name it has when it works.
+  const handsFreeLabel = !listening
+    ? 'Hands-free voice'
+    : mic.muted
+      ? 'Hands-free voice — paused while speaking'
+      : `Hands-free voice — say “${handsFree?.confirmationPhrases[0] ?? 'go ahead'}” to send`
   const actions = (
     <div className="flex items-center gap-1">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
@@ -119,11 +140,21 @@ export function Composer({
           className={optimizing ? '[&_svg]:animate-spin' : undefined}
           onClick={optimizing || !canSend ? undefined : onOptimize} />
       )}
-      {controls.mic && onTranscribe && (
+      {controls.mic && onTranscribe && !listening && (
         <IconButton icon={mic.state === 'transcribing' ? Loader2 : Mic} label={micLabel}
           active={mic.state !== 'idle'} size={40}
           className={mic.state === 'transcribing' ? '[&_svg]:animate-spin' : undefined}
           onClick={mic.state === 'transcribing' ? undefined : mic.toggle} />
+      )}
+      {/* Hands-free: keeps listening and only sends when a confirmation phrase lands.
+          It replaces the push-to-talk button while active so there is one mic owner —
+          two live capture paths would fight over the same track. */}
+      {controls.mic && canHandsFree && (
+        <IconButton icon={Ear} label={handsFreeLabel}
+          active={listening} size={40}
+          disabled={!listening && mic.state !== 'idle'}
+          disabledReason="Finish the current recording first"
+          onClick={() => setListening((v) => !v)} />
       )}
       {/* The send/stop/steer/sent/processing choice is a pure state machine
           (resolveSendButton) so it's unit-testable without mounting the composer. */}

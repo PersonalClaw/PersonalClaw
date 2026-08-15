@@ -869,6 +869,31 @@ class DashboardState:
         from personalclaw.dashboard.file_index import FileIndexRegistry
 
         self.file_indexes = FileIndexRegistry()
+        # MULTIMODAL-IO §4.2 — the last text spoken per session, so a hands-free
+        # transcription can be recognized as the speaker bleeding back into the
+        # microphone. Bounded and in-memory only: this is echo-suppression
+        # scratch, never history, and must not survive a restart.
+        self._last_spoken: dict[str, str] = {}
+
+    _LAST_SPOKEN_MAX_SESSIONS = 32
+    _LAST_SPOKEN_MAX_CHARS = 4000
+
+    def record_spoken(self, session_key: str, text: str) -> None:
+        """Remember what was just synthesized for ``session_key`` (latest wins)."""
+
+        key = str(session_key or "")
+        if not isinstance(text, str) or not text.strip():
+            return
+        self._last_spoken.pop(key, None)
+        self._last_spoken[key] = text[-self._LAST_SPOKEN_MAX_CHARS :]
+        while len(self._last_spoken) > self._LAST_SPOKEN_MAX_SESSIONS:
+            # dicts preserve insertion order — drop the least recently spoken.
+            self._last_spoken.pop(next(iter(self._last_spoken)))
+
+    def last_spoken(self, session_key: str) -> str:
+        """The last text synthesized for ``session_key``, or ``""``."""
+
+        return self._last_spoken.get(str(session_key or ""), "")
 
     def wire_session_compact_callback(self) -> None:
         """Register the dashboard's compaction callback on the session manager."""

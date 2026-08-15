@@ -3,8 +3,9 @@ import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
-import { PanelHeader, Section, Row, Field, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { ChipInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
@@ -100,8 +101,81 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
           )
         }}
       />
+      <HandsFreeSection />
       <VocabularySection scrollTo={query?.section === 'vocabulary'} />
     </div>
+  )
+}
+
+/** Hands-free voice loop (MULTIMODAL-IO §4.5) — the six `voice.*` config fields.
+ *
+ *  All six are comfort knobs, not safety guards: turning one off makes the loop
+ *  noisier (more echo, code read aloud), never less safe. Each control patches one
+ *  config path and flashes its own "Saved ✓". The phrase lists are what the composer's
+ *  hands-free toggle gates on, so an empty list would make the mode deaf — the backend
+ *  falls back to the shipped defaults rather than accepting one. */
+function HandsFreeSection() {
+  const { data, error, refresh } = useCachedData('settings:voice-loop', async () => {
+    const cfg = await api.personalclawConfig()
+    return (cfg.voice ?? {}) as Record<string, unknown>
+  }, { persist: true })
+  const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => { if (data) setCfg(data) }, [data])
+
+  // Error first: `data` is undefined for loading AND for failure. A silent fallback
+  // here would render every switch at its default — indistinguishable from "this is
+  // what you saved", on controls that PATCH on change.
+  if (!data && error) return <LoadError what="hands-free voice settings" error={error} onRetry={refresh} />
+  if (!cfg) return <FormSkeleton sections={1} what="hands-free voice settings" />
+
+  const patch = (key: string, value: unknown, onSaved: () => void) => {
+    const prev = cfg
+    setCfg({ ...cfg, [key]: value })
+    api.patchConfig(`voice.${key}`, value).then(onSaved).catch(() => setCfg(prev))
+  }
+  const phrases = (key: string) => {
+    const v = cfg[key]
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  }
+
+  return (
+    <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
+      <div className="rounded-lg bg-surface-container px-4 py-1">
+        <PhraseRow label="Confirmation phrases"
+          hint="Dictation accumulates in the composer until one of these ends what you just said — so a half-finished thought is never sent."
+          values={phrases('confirmation_phrases')} onChange={(v, cb) => patch('confirmation_phrases', v, cb)} />
+        <PhraseRow label="Exit phrases" hint="Saying one of these throws the accumulated dictation away."
+          values={phrases('exit_phrases')} onChange={(v, cb) => patch('exit_phrases', v, cb)} />
+        <ToggleRow label="Mute while speaking" hint="Release the microphone and discard what it captured while a reply plays aloud. This is what stops the assistant hearing itself."
+          cfg={cfg} field="duplex_mute_enabled" patch={patch} />
+        <ToggleRow label="Echo filter" hint="Also drop any transcription that repeats three consecutive words the assistant just spoke — the backstop for speaker bleed."
+          cfg={cfg} field="echo_filter_enabled" patch={patch} />
+        <ToggleRow label="Clean text before speaking" hint="Strip code blocks, shorten URLs to their domain and paths to their filename, and drop CLI flags. The transcript always keeps the full text."
+          cfg={cfg} field="clean_for_speech_enabled" patch={patch} />
+        <ToggleRow label="Voice-origin disclaimer" hint="Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them."
+          cfg={cfg} field="voice_disclaimer_enabled" patch={patch} />
+      </div>
+    </Section>
+  )
+}
+
+/** One editable phrase list. Chips, not a comma-separated string: a phrase can
+ *  contain a comma, and the chip form makes each phrase individually removable. */
+function PhraseRow({ label, hint, values, onChange }: {
+  label: string
+  hint: string
+  values: string[]
+  onChange: (next: string[], onSaved: () => void) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <ChipInput values={values} onChange={(v) => onChange(v, flash)} max={20} placeholder="Add a phrase…" ariaLabel={label} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
   )
 }
 
