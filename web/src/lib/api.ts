@@ -2326,6 +2326,21 @@ export interface TelemetryRow {
   on_frontier: boolean
 }
 
+/** One use case's row in the routing policy table (MODEL-ROUTING-TELEMETRY §6.1, MRT-4).
+ *
+ *  `mode` is the per-use-case lever (off | heuristic | learned), `pin` short-circuits
+ *  ordering entirely ('local' | 'cloud' | a ref | ''), `candidates` are the refs actually
+ *  bound to this use case (the router only ever REORDERS these — it never invents one),
+ *  and `classes` holds any recorded per-query-class order with the `basis` that decided
+ *  it, so the table can always explain itself. */
+export interface RoutingPolicyRow {
+  use_case: string
+  mode: 'off' | 'heuristic' | 'learned'
+  pin: string
+  candidates: Array<{ ref: string; local: boolean }>
+  classes: Record<string, { order: string[]; basis: Record<string, unknown> }>
+}
+
 /** Build the ?since=&until=&session=&group_by= query for the usage endpoints
  *  (empty/absent params omitted). */
 function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
@@ -2383,6 +2398,23 @@ export const api = {
     get<{ use_case: string; query_class: string; rows: TelemetryRow[] }>(
       `/api/models/telemetry?use_case=${encodeURIComponent(opts.use_case)}&query_class=${encodeURIComponent(opts.query_class)}`,
     ),
+  // The routing POLICY table (MRT-4): one row per routed use case with its mode, pin,
+  // bound candidates and recorded per-class orders. Read-only view; the three user
+  // levers write through setRoutingPolicy. Both are fail-open server-side — an
+  // unreadable table returns an empty list rather than an error, so the tab renders
+  // "no opinion yet" instead of blanking.
+  routingPolicy: () =>
+    get<{ enabled: boolean; use_cases: RoutingPolicyRow[] }>('/api/models/routing-policy'),
+  // Set ONE lever at a time (mode, pin, or a per-class order). Fields are applied only
+  // when present, so a client never reverts a control it didn't render. `order` requires
+  // `query_class` — an order is always per class.
+  setRoutingPolicy: (body: {
+    use_case: string
+    mode?: 'off' | 'heuristic' | 'learned'
+    pin?: string
+    query_class?: string
+    order?: string[]
+  }) => put<{ ok: boolean; use_case: string; applied: string[] }>('/api/models/routing-policy', body),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),

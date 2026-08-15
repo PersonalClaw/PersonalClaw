@@ -133,6 +133,18 @@ def _safe_int(value: object, default: int) -> int:
         return default
 
 
+def _safe_float(value: object, default: float) -> float:
+    """Convert *value* to float, returning *default* on failure (the ``_safe_int`` sibling).
+
+    A malformed number in config.json must degrade to the shipped default, not raise — a config
+    typo should never make the whole file unloadable.
+    """
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def _compose_voice(voice: str, system_prompt: str) -> str:
     """Prepend an agent's VOICE layer (#42) high-priority to its operating rules.
 
@@ -1933,6 +1945,104 @@ class GuardrailsConfig:
 
 
 @dataclass
+class RoutingWeightsConfig:
+    """Score weights for the learned routing stage (MODEL-ROUTING-TELEMETRY §4.2)."""
+
+    success: float = field(
+        default=0.60,
+        metadata=_meta(
+            "Success Weight",
+            "How much a model's observed success rate counts toward its routing score.",
+        ),
+    )
+    feedback: float = field(
+        default=0.40,
+        metadata=_meta(
+            "Feedback Weight",
+            "How much observed output quality (ledger/judge feedback) counts toward a "
+            "model's routing score. With no feedback recorded yet, this weight collapses "
+            "onto the success rate rather than penalizing an unrated model.",
+        ),
+    )
+
+
+@dataclass
+class RoutingConfig:
+    """Telemetry-driven model routing (MODEL-ROUTING-TELEMETRY §7).
+
+    Routing REORDERS the models a user already bound to a use case; it never invents
+    a model or changes what resolution means. ``enabled`` is the master switch and is
+    OFF by default: with it off, resolution walks the bound order exactly as it always
+    did. Per-use-case mode and pin deliberately live NOT here but in
+    ``use_case_settings/{uc}.json`` + ``routing_policy.json`` — they are
+    bindings-adjacent state, beside the use case's other behavior settings.
+    """
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Enable Routing",
+            "Master switch. When off, every use case resolves in the exact order you "
+            "bound its models. Turn it on to let PersonalClaw prefer a local model for "
+            "work it handles well and fall back to a cloud model when it can't.",
+        ),
+    )
+    local_timeout_secs: float = field(
+        default=20.0,
+        metadata=_meta(
+            "Local Attempt Timeout (seconds)",
+            "How long a local model gets before the call falls back to the next model "
+            "you bound. Keeps a slow local model from stalling background work.",
+        ),
+    )
+    min_samples: int = field(
+        default=5,
+        metadata=_meta(
+            "Minimum Samples",
+            "How many recorded calls a model needs for a kind of request before its "
+            "measured score is allowed to influence order. Below this, the simple "
+            "local-first rule stands.",
+        ),
+    )
+    weights: RoutingWeightsConfig = field(
+        default_factory=RoutingWeightsConfig,
+        metadata=_meta("Score Weights", "How success and quality combine into one score."),
+    )
+    hysteresis: float = field(
+        default=0.05,
+        metadata=_meta(
+            "Hysteresis Margin",
+            "How much better a model's score must be before the order actually changes. "
+            "Prevents routing flip-flopping between two near-equal models.",
+        ),
+    )
+    cloud_quality_margin: float = field(
+        default=0.10,
+        metadata=_meta(
+            "Cloud Quality Margin",
+            "How much better a cloud model must score than a local one to be tried "
+            "first. Free and private wins ties.",
+        ),
+    )
+    energy_sampling: bool = field(
+        default=False,
+        metadata=_meta(
+            "Energy Sampling",
+            "Record a rough energy estimate for local calls, so local cost is visible "
+            "as something other than $0.",
+        ),
+    )
+    reproposal_cooldown_days: int = field(
+        default=14,
+        metadata=_meta(
+            "Re-proposal Cooldown (days)",
+            "After you reject a routing suggestion, how long before the same change "
+            "may be suggested again.",
+        ),
+    )
+
+
+@dataclass
 class RemediationConfig:
     """Health-scored self-remediation engine tuning (PLATFORM-RESILIENCE §4).
 
@@ -3313,6 +3423,13 @@ class AppConfig:
         default_factory=AuthConfigSection,
         metadata=_meta("Login", "Owner login — an additional front door, off by default."),
     )
+    routing: RoutingConfig = field(
+        default_factory=RoutingConfig,
+        metadata=_meta(
+            "Model Routing",
+            "Which of your bound models handles which kind of request.",
+        ),
+    )
     guardrails: GuardrailsConfig = field(
         default_factory=GuardrailsConfig,
         metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
@@ -3548,6 +3665,12 @@ class AppConfig:
         if not isinstance(auth_data, dict):
             auth_data = {}
 
+        routing_data = data.get("routing", {})
+        if not isinstance(routing_data, dict):
+            routing_data = {}
+        routing_weights_data = routing_data.get("weights", {})
+        if not isinstance(routing_weights_data, dict):
+            routing_weights_data = {}
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
             guardrails_data = {}
@@ -4032,6 +4155,31 @@ class AppConfig:
                 lockout_threshold=max(1, _safe_int(auth_data.get("lockout_threshold", 5), 5)),
                 lockout_window=str(auth_data.get("lockout_window", "15m") or "15m"),
             ),
+            # Routing (MODEL-ROUTING-TELEMETRY §7 wiring point (b)): explicit field-by-field
+            # mapping — an omission here is a silently dropped setting, which is why the
+            # round-trip test exists. Every number is floored so a typo degrades to something
+            # workable instead of, say, a zero timeout that fails every local attempt.
+            routing=RoutingConfig(
+                enabled=bool(routing_data.get("enabled", False)),
+                local_timeout_secs=max(
+                    0.0, _safe_float(routing_data.get("local_timeout_secs", 20.0), 20.0)
+                ),
+                min_samples=max(1, _safe_int(routing_data.get("min_samples", 5), 5)),
+                weights=RoutingWeightsConfig(
+                    success=max(0.0, _safe_float(routing_weights_data.get("success", 0.60), 0.60)),
+                    feedback=max(
+                        0.0, _safe_float(routing_weights_data.get("feedback", 0.40), 0.40)
+                    ),
+                ),
+                hysteresis=max(0.0, _safe_float(routing_data.get("hysteresis", 0.05), 0.05)),
+                cloud_quality_margin=max(
+                    0.0, _safe_float(routing_data.get("cloud_quality_margin", 0.10), 0.10)
+                ),
+                energy_sampling=bool(routing_data.get("energy_sampling", False)),
+                reproposal_cooldown_days=max(
+                    0, _safe_int(routing_data.get("reproposal_cooldown_days", 14), 14)
+                ),
+            ),
             guardrails=GuardrailsConfig(
                 budgets=BudgetConfig(
                     max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
@@ -4286,6 +4434,7 @@ class AppConfig:
             "security": asdict(self.security),
             "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
+            "routing": asdict(self.routing),
             "resilience": asdict(self.resilience),
             "voice": asdict(self.voice),
             "timezone": self.timezone,

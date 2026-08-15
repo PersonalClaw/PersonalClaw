@@ -732,6 +732,29 @@ def resolve_provider_for_use_case(
     # sub-category with no chain of its own borrows the parent ``chat`` chain
     # (active_model_refs handles that).
     _refs = list(active_model_refs(use_case))
+    # ── Step (2) routing seam (MODEL-ROUTING-TELEMETRY §3.2, MRT-4) ──
+    # ONE call, ONE site, immediately before the active-ref loop: route_refs is a PURE REORDER of
+    # the refs the user bound (§3.1) — it never invents, adds, or drops a candidate, so everything
+    # below (the breaker skip, the provider_hint build, the pinned-ref-raises rule) is untouched;
+    # only the order it walks them in changes. Both earlier steps bypass routing structurally
+    # because they already returned: step (0) is the native-agent branch (interactive chat is
+    # human-watched and out of scope v1) and step (1) is an explicit model_override (a caller's
+    # explicit choice always wins). Enabled per use case only — with routing off, ``_refs`` is the
+    # bound order byte-for-byte and nothing here changes latency or semantics.
+    # ``routing_query_class`` is the class of THIS request when a caller knows it (the guard
+    # classifies from the prompt, which resolution doesn't have); absent, the use-case-level
+    # ordering applies. Popped unconditionally so it never leaks into the build kwargs.
+    _query_class = str(kwargs.pop("routing_query_class", "") or "")
+    _routed = False
+    try:
+        from personalclaw.routing.policy import route_refs, routing_active
+
+        _routed = routing_active(use_case)
+        if _routed:
+            _refs = route_refs(use_case, _query_class, _refs)
+    except Exception:  # noqa: BLE001 — routing must never break resolution (fail-open, §3.1)
+        logger.debug("routing seam skipped for %s", use_case, exc_info=True)
+        _routed = False
     _last_dead: tuple[str, str] | None = None  # (ref, provider_name) of a dead entry
     for i, ref in enumerate(_refs):
         parsed = split_ref(ref)
@@ -752,6 +775,19 @@ def resolve_provider_for_use_case(
                 continue
         except Exception:  # noqa: BLE001 — breaker introspection must never break resolution
             pass
+        # Routing provenance (§3.3): a routed resolution stamps ``routed`` on every attempt, and
+        # one that landed on a LATER entry — because the routed-first candidate's breaker was OPEN
+        # or it wasn't buildable — stamps ``routed_fallback`` too. That is the cloud-rescue signal,
+        # and it is deliberately DISTINCT from ``degraded``: degraded says "a fallback ref served
+        # this", routed_fallback says "the ordering the ROUTER chose didn't hold". Attribution
+        # needs both, because a cloud rescue of a router's local-first bet is a routing outcome,
+        # not a user-chain outcome. No extra attempt is made and no timeout is stacked: this rides
+        # the existing chain walk, which has already skipped the dead entry.
+        _rk = dict(kwargs)
+        if _routed:
+            _rk["_guard_routed"] = True
+            if i > 0:
+                _rk["_guard_routed_fallback"] = True
         pinned = _resolve_from_config_registry(
             capability,
             session_key=session_key,
@@ -759,7 +795,7 @@ def resolve_provider_for_use_case(
             model_override=model_id,
             cwd=cwd,
             provider_hint=provider_name,
-            **kwargs,
+            **_rk,
         )
         if pinned is not None:
             return pinned
@@ -934,6 +970,10 @@ def _resolve_from_config_registry(
     # build kwargs / factory; when set, the built provider is wrapped in a
     # ModelCallGuard just before return (§2 chokepoint).
     guard_use_case = str(kwargs.pop("_guard_use_case", "") or "")
+    # Routing provenance flags (§3.3). Popped UNCONDITIONALLY — like _guard_use_case — so they can
+    # never leak into the build kwargs / factory of a provider that knows nothing about routing.
+    guard_routed = bool(kwargs.pop("_guard_routed", False))
+    guard_routed_fallback = bool(kwargs.pop("_guard_routed_fallback", False))
 
     registry = get_default_registry()
     entries = list(registry.list_entries())
@@ -1086,6 +1126,22 @@ def _resolve_from_config_registry(
         except Exception:
             logger.debug("guardrails config read failed; using safe defaults", exc_info=True)
 
+        # §4.1: a ROUTED local attempt runs under ``routing.local_timeout_secs`` instead of the
+        # guard's generic default — the whole point of ordering a local model first is that it is
+        # cheap to *try*, which is only true if a stalled local model gives up quickly and lets the
+        # chain reach the cloud ref. ONE timeout, on the one attempt: nothing is stacked, because
+        # this replaces the guard's default rather than adding to it, and only for the local leg.
+        _timeout_kw: dict[str, Any] = {}
+        if guard_routed:
+            try:
+                from personalclaw.routing.policy import is_local_ref, local_timeout_secs
+
+                if is_local_ref(candidate.name):
+                    _secs = local_timeout_secs()
+                    if _secs > 0:
+                        _timeout_kw["timeout_secs"] = _secs
+            except Exception:  # noqa: BLE001 — fail-open to the guard's own default
+                logger.debug("routing local timeout read failed", exc_info=True)
         return wrap_model_call_guard(
             built,
             use_case=guard_use_case,
@@ -1095,6 +1151,9 @@ def _resolve_from_config_registry(
             run_budget=run_budget,
             scan_mode=scan_mode,
             breaker=breaker,
+            routed=guard_routed,
+            routed_fallback=guard_routed_fallback,
+            **_timeout_kw,
         )
     return built
 

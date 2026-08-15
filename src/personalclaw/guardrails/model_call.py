@@ -122,6 +122,8 @@ class ModelCallGuard(ModelProvider):
         run_budget: "Budget | None" = None,
         meter: "SpendMeter | None" = None,
         scan_mode: str = "warn",
+        routed: bool = False,
+        routed_fallback: bool = False,
     ) -> None:
         self._inner = inner
         self._use_case = use_case
@@ -148,6 +150,11 @@ class ModelCallGuard(ModelProvider):
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
         # audit row (MODEL-ROUTING-TELEMETRY §2, MRT-1b). "" until a call classifies.
         self._query_class = ""
+        # Routing provenance for EVERY attempt this provider makes (§3.3, MRT-4). Set once at
+        # wrap time by the resolution seam, not per call: the routing decision happened when the
+        # ref ORDER was chosen, so it is a property of this resolved provider, not of the prompt.
+        self._routed = bool(routed)
+        self._routed_fallback = bool(routed_fallback)
 
     # ── The intercepted generation paths ────────────────────────────────
 
@@ -457,6 +464,8 @@ class ModelCallGuard(ModelProvider):
             passed=passed,
             strategy=strategy,
             query_class=self._query_class,
+            routed=self._routed,
+            routed_fallback=self._routed_fallback,
         )
         record_attempt(rec)
         # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY
@@ -564,6 +573,8 @@ def wrap_model_call_guard(
     scan_mode: str = "warn",
     breaker: CircuitBreaker | None = None,
     timeout_secs: float = _DEFAULT_TIMEOUT_SECS,
+    routed: bool = False,
+    routed_fallback: bool = False,
 ) -> ModelProvider:
     """Wrap ``provider`` in a :class:`ModelCallGuard` for a non-interactive call.
 
@@ -585,4 +596,6 @@ def wrap_model_call_guard(
         scan_mode=effective_scan,
         breaker=breaker,
         timeout_secs=timeout_secs,
+        routed=routed,
+        routed_fallback=routed_fallback,
     )

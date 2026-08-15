@@ -123,6 +123,13 @@ CORE_FILES: dict[str, tuple[str, ...]] = {
         "project_dir",
         "workspace_dir",
         "autonomy_rungs.json",
+        # `routing_policy.json` rides here for the same reason as `autonomy_rungs.json`
+        # (MODEL-ROUTING-TELEMETRY §7): it holds DECISIONS — the per-use-case routing mode,
+        # the pin, and any manual reorder. Losing it is not catastrophic (routing falls back
+        # to off/heuristic) but it is a choice the user made by hand, so it travels.
+        # `routing_stats.json` deliberately does NOT: it is a derived fold, rebuildable from
+        # `model_calls.jsonl`, so backing it up would only duplicate recoverable data.
+        "routing_policy.json",
     ),
     "notifications": ("notifications.jsonl",),
     "security": ("sel_hmac.key", "telemetry_salt"),

@@ -301,6 +301,7 @@
           "id": "MGAV-8",
           "title": "Memory slots: bounded always-injected registers + reflection append hook + self-model",
           "status": "done",
+          "pr": 1379,
           "scope": "§6 Memory Slots, §6.1 the self-model slot; Session 5 (backend + slot primitive)",
           "done_when": "slot.<name> prefix added to _BUILTIN_PREFIXES with per-slot size cap enforced at put (over-cap append fails loudly as a trim proposal); lazy built-ins (persona/preferences/pending_items/self_notes/glossary(workspace)/self_model); one bounded Slots block injected in build_session_context adjacent to persona/USER PROFILE; after_turn_review append-only hook (WAL, undo, human-tombstone respected); self-model promotes a line to a behavioral principle only after >=3 reinforcements",
           "deps": []
@@ -3122,7 +3123,8 @@
         {
           "id": "MRT-4",
           "title": "Heuristic router + policy table + RoutingConfig",
-          "status": "todo",
+          "status": "done",
+          "pr": 1379,
           "scope": "§3 Routing Seam & Candidate Pool, §4.1 HeuristicPolicy (local-first + cloud-fallback-on-timeout), §6.1-6.2 policy table + overrides, §7 config/provider-fidelity wiring; Session 2 (§9)",
           "done_when": "routing/policy.py:route_refs is a pure reorder called at resolve_provider_for_use_case step (2), enabled per-use-case only, with model_override (step 1) and native-agent (step 0) bypassing it; binding local+cloud on reasoning and enabling heuristic routes background one_shot_completion local-first, and killing ollama produces cloud-rescued calls stamped routed_fallback:true (distinct from degraded) within one breaker window with no stacked timeouts (SC #3); model_override and per-use-case pin bypass/short-circuit, verified by routed provenance (SC #4); unresolvable pinned first-ordered ref still raises ProviderResolutionError and a ref removed from active_models.json drops from candidates on next load (SC #6); routing_policy.json + read-only table UI with mode/pin/reorder controls; RoutingConfig wired through all 4 points (test_config_roundtrip green)",
           "deps": [
@@ -7742,8 +7744,8 @@
         "plan": "MRT"
       },
       {
-        "id": "MRT-4",
-        "title": "Heuristic router + policy table + RoutingConfig",
+        "id": "MRT-5",
+        "title": "Learned policy + cost-aware ordering + propose-don't-write proposals",
         "plan": "MRT"
       },
       {
@@ -9888,9 +9890,9 @@
         "code": "MRT",
         "plan": "MODEL-ROUTING-TELEMETRY",
         "total_atoms": 5,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

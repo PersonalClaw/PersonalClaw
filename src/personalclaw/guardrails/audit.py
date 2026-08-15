@@ -58,6 +58,17 @@ class AttemptRecord:
     # pure classifier — "" when routing/classification didn't run. The stats layer folds
     # per (use_case, query_class), so it's a first-class column, not an ``extra`` field.
     query_class: str = ""
+    # Routing provenance (MODEL-ROUTING-TELEMETRY §3.3, MRT-4). ``routed`` = the router reordered
+    # the candidate refs for this resolution; ``routed_fallback`` = the routed-FIRST candidate did
+    # not serve it and a later ref (typically cloud) did — the "cloud rescue" signal.
+    #
+    # Deliberately DISTINCT from ``degraded`` above, which they will often co-occur with: degraded
+    # answers "did a fallback ref serve this?", routed_fallback answers "did the ROUTER's chosen
+    # ordering hold?". Collapsing them would make a router's local-first bet indistinguishable
+    # from a user's own chain falling through, and the two need opposite responses — one retunes
+    # the policy, the other tells the user a bound provider is down.
+    routed: bool = False
+    routed_fallback: bool = False
     extra: dict = field(default_factory=dict)
 
     def to_json_line(self) -> str:
