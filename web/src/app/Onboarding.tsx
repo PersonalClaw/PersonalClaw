@@ -15,6 +15,9 @@ import { EssentialsStep } from './onboarding/EssentialsStep'
 
 type StepId = 'name' | 'essentials' | 'ready'
 const ORDER: StepId[] = ['name', 'essentials', 'ready']
+// One source for each step's title — used by both the StepRow headings and the live region that
+// announces progress, so the spoken step name can never drift from the visible one.
+const TITLES: Record<StepId, string> = { name: 'Your name', essentials: 'Essential apps', ready: 'All set' }
 
 /** First-run welcome — a full-screen branded moment over the chat 3D dot-wave.
  *  A vertically-stacked stepper: each step expands when active and collapses to
@@ -89,14 +92,21 @@ export function Onboarding() {
 
           {/* vertical collapsing stepper — the centered focal element */}
           <div className="flex w-full flex-col gap-2">
-            <StepRow ref={rowRefs.name} index={0} icon={User} title="Your name"
+            {/* Announces step progress to assistive tech. The rows are not focusable and the step
+                title is not in any focused control's accessible name, so without this a screen-reader
+                user is never told they advanced (WCAG 4.1.3). Always mounted so the text change is
+                observed; polite so it does not interrupt. */}
+            <p role="status" aria-live="polite" className="sr-only">
+              {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
+            </p>
+            <StepRow ref={rowRefs.name} index={0} icon={User} title={TITLES.name}
               subtitle="How the system addresses you. Saved on the server, so it follows you across devices."
               state={stateOf('name')} doneSummary={savedName ? `${savedName}` : undefined}
               onActivate={() => setStep('name')}>
               <NameStep value={name} onChange={setNameDraft} onSubmit={commitName} />
             </StepRow>
 
-            <StepRow ref={rowRefs.essentials} index={1} icon={Boxes} title="Essential apps"
+            <StepRow ref={rowRefs.essentials} index={1} icon={Boxes} title={TITLES.essentials}
               subtitle="Install what the agent needs to work. A model provider is required; the rest are optional."
               state={stateOf('essentials')} doneSummary={modelDone || undefined}
               onActivate={() => setStep('essentials')}>
@@ -110,7 +120,7 @@ export function Onboarding() {
                   </div>}
             </StepRow>
 
-            <StepRow ref={rowRefs.ready} index={2} icon={Sparkles} title="All set"
+            <StepRow ref={rowRefs.ready} index={2} icon={Sparkles} title={TITLES.ready}
               subtitle={`You're ready, ${firstNameOf(savedName)}.`}
               state={stateOf('ready')}>
               <ReadyStep name={savedName} modelSummary={modelDone} onFinish={finish} />
@@ -128,6 +138,7 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
     <div className="flex items-center gap-s rounded-pill bg-surface-high px-s py-1.5 ring-1 ring-outline/40 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
       <input autoFocus value={value} onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') onSubmit() }}
+        aria-label="Your name"
         placeholder="Your name"
         className="min-w-0 flex-1 bg-transparent px-m text-on-surface text-[1.0625rem] placeholder:text-on-surface-low outline-none" />
       <motion.button whileTap={{ scale: 0.96 }} transition={spring.spatialFast} onClick={onSubmit} type="button"
