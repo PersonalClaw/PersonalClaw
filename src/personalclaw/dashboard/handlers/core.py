@@ -757,6 +757,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "ambient.genui_enabled": {"type": "bool"},
     "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
     "ambient.tray_enabled": {"type": "bool"},
+    # Companion apps (COMPANION-APPS CA-4) — LAN discovery advertisement + the friendly
+    # instance name a client shows. discovery_enabled is off by default; toggling it here
+    # is the opt-in to announcing this gateway on the local network.
+    "companion.discovery_enabled": {"type": "bool"},
+    "companion.instance_name": {"type": "str", "max_len": 64},
     # Watched sources (WATCHED-SOURCES SC#12) — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively.

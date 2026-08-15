@@ -625,6 +625,37 @@ class AmbientConfig:
 
 
 @dataclass
+class CompanionConfig:
+    """Companion-app settings (COMPANION-APPS — native clients over the gateway).
+
+    The gateway can advertise itself on the local network so a companion client
+    (phone/desktop) can find and pair with it without a typed URL. ``discovery_enabled``
+    gates that advertisement — OFF by default, because announcing a service on the LAN is
+    a posture choice the user must opt into, not a silent behavior. ``instance_name`` is
+    the friendly label a client shows for this gateway; empty means the advertiser (CA-5)
+    falls back to the machine hostname.
+    """
+
+    discovery_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "LAN discovery",
+            "Advertise this gateway on the local network so companion apps can find it "
+            "without a typed URL. Off by default — announcing a service on your LAN is an "
+            "opt-in.",
+        ),
+    )
+    instance_name: str = field(
+        default="",
+        metadata=_meta(
+            "Instance name",
+            "Friendly name companion apps show for this gateway. Empty falls back to the "
+            "machine hostname.",
+        ),
+    )
+
+
+@dataclass
 class SourcesConfig:
     """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
 
@@ -3176,6 +3207,12 @@ class AppConfig:
         default_factory=AmbientConfig,
         metadata=_meta("Ambient", "Composable home + generative UI + tray companion settings."),
     )
+    companion: CompanionConfig = field(
+        default_factory=CompanionConfig,
+        metadata=_meta(
+            "Companion apps", "LAN discovery + instance name for native companion clients."
+        ),
+    )
     sources: SourcesConfig = field(
         default_factory=SourcesConfig,
         metadata=_meta("Watched sources", "Poll engine for watched feeds, pages and directories."),
@@ -3292,6 +3329,9 @@ class AppConfig:
         ambient_data = data.get("ambient", {})
         if not isinstance(ambient_data, dict):
             ambient_data = {}
+        companion_data = data.get("companion", {})
+        if not isinstance(companion_data, dict):
+            companion_data = {}
         sources_data = data.get("sources", {})
         if not isinstance(sources_data, dict):
             sources_data = {}
@@ -3550,6 +3590,13 @@ class AppConfig:
                 # turned itself on when config is unreadable would spawn a native
                 # process unexpectedly.
                 tray_enabled=bool(ambient_data.get("tray_enabled", False)),
+            ),
+            companion=CompanionConfig(
+                # Opt-in: a plain read defaulting False — a gateway that advertised
+                # itself on the LAN when config is unreadable would announce a service
+                # the user never asked to expose.
+                discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
+                instance_name=str(companion_data.get("instance_name", "") or ""),
             ),
             sources=SourcesConfig(
                 enabled=bool(sources_data.get("enabled", True)),
@@ -4015,6 +4062,7 @@ class AppConfig:
             "dashboard": asdict(self.dashboard),
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
+            "companion": asdict(self.companion),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
             "hooks": self.hooks,
