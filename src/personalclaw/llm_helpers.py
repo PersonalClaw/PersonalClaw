@@ -292,6 +292,7 @@ async def one_shot_completion(
     use_case: str = "background",
     output_type: type | None = None,
     model: str = "",
+    temperature: float | None = None,
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
@@ -331,6 +332,15 @@ async def one_shot_completion(
     producing stage's model, and pins it here so the judge provably runs on the model
     it was checked against. The default ``""`` keeps today's use-case-only resolution
     byte-for-byte.
+
+    ``temperature`` pins the SAMPLING temperature for this one call (HARNESS-CRAFT
+    §2.1): it rides the bridge as a build kwarg into the provider's ``extra_options``,
+    where both protocol clients already forward call params into the request. This is
+    what makes best-of-N sampling genuinely varied rather than N identical calls. Two
+    honest caveats: an Anthropic model in extended-thinking mode forbids a custom
+    temperature and drops it (``llm/anthropic.py``), and a provider that ignores the
+    parameter simply returns its default — a temperature is a request, not a promise.
+    ``None`` (the default) sends nothing, keeping every existing call site unchanged.
     """
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
@@ -346,6 +356,11 @@ async def one_shot_completion(
         resolved_uc = "reasoning"
 
     from personalclaw.guardrails.failure import OutputContractError
+
+    # A pinned sampling temperature rides EVERY resolution path as a build kwarg
+    # (pin / chain-advance / plain), so a fallback entry samples at the temperature the
+    # caller asked for rather than silently reverting to the provider default.
+    _bridge_kw: dict = {} if temperature is None else {"temperature": float(temperature)}
 
     async def _run(provider) -> str:
         try:
@@ -377,7 +392,9 @@ async def one_shot_completion(
     # use-case fallback chain would defeat the pin: a fallback entry could be the
     # very family the isolation control excluded. Resolve the one model and run it.
     if model:
-        return await _run(resolve_provider_for_use_case(resolved_uc, model_override=model))
+        return await _run(
+            resolve_provider_for_use_case(resolved_uc, model_override=model, **_bridge_kw)
+        )
 
     # Call-failure chain advance (MODEL-USE-CASES-V2 T2.4): with a multi-entry
     # chain declared, a CircuitOpenError/provider failure from entry N advances to
@@ -395,7 +412,9 @@ async def one_shot_completion(
         last_exc: Exception | None = None
         for i, ref in enumerate(_chain):
             try:
-                entry_provider = resolve_provider_for_use_case(resolved_uc, model_override=ref)
+                entry_provider = resolve_provider_for_use_case(
+                    resolved_uc, model_override=ref, **_bridge_kw
+                )
             except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
                 last_exc = exc
                 continue
@@ -422,7 +441,7 @@ async def one_shot_completion(
 
     provider = None
     try:
-        provider = resolve_provider_for_use_case(resolved_uc)
+        provider = resolve_provider_for_use_case(resolved_uc, **_bridge_kw)
     except Exception:
         logger.debug(
             "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True

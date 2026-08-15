@@ -69,6 +69,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Unattended SDLC loops can run the same derivation after a stage's gate passes
   (`loops.check_work_stages`, off by default) — which catches the case a gate command can't see: the
   command passed, but the stage claimed a file it never wrote.
+- **Ask for a few versions and get the best one, with the others one click away.** Say "give me 3
+  versions and pick the best" and PersonalClaw drafts the candidates **in parallel** — each at a
+  different temperature, so they are genuinely different answers rather than the same one three
+  times — then judges them against criteria you confirm and leads with the winner. The runners-up sit
+  in a collapsible list with their scores, and "use #2" switches to that candidate verbatim, no
+  re-drafting. Because N candidates cost N model calls, it always confirms the count (capped at 5)
+  and what "best" means before spending anything, and every call is metered and logged like any other
+  model call. If one candidate fails you still get the rest, judged; if the judge is unavailable you
+  get one answer clearly labeled as unranked; if everything fails it says so instead of inventing an
+  answer. Each run also records an anonymous line — how many candidates, how far apart their scores
+  were, which one won — so it can eventually tell you when sampling is actually worth the extra cost
+  and when it isn't.
 - **Apps can now share data with each other, read-only, only when both sides agree.** An app that
   wants to expose its stored data declares `storageShared: true`; an app that wants to read another's
   data names it in `storageRead`. A read is granted only when BOTH are declared — neither app can

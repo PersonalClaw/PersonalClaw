@@ -134,3 +134,31 @@ Session 1 is fully independent (Wave 2, or whenever fan-out slowness is observed
 6. With `loop.check_work_stages` on, an SDLC stage whose gate command passes but whose deliverable misses a claimed file is caught at the post-gate hook.
 7. All three config fields round-trip through Settings (visible, editable, persisted) — the four-wiring-points lint passes.
 8. With WORKFLOWS-V2 Slice 3 landed: the `best-of-n` and `check-work` templates run engine-side, behaviorally identical to their skill halves (shared-core test green).
+
+## Execution log
+
+- **[2026-08-15][S2] HC-3 IMPLEMENTATION COMPLETE, ATOM BLOCKED on an owner live-run.**
+  `src/personalclaw/sampling.py` ships the core: N temperature-varied `one_shot_completion`
+  calls fanned out concurrently (in-flight counter peaks at N *and* a fan-out span assertion,
+  so a sequential loop cannot pass), an `LLMJudge` pass returning winner+candidates+judgments,
+  and a bounded record appended to `~/.personalclaw/sampling_outcomes.jsonl` (declared as a
+  `StateEntry`, snapshot-excluded). Fail-open in two tiers: one failed sample loses only that
+  candidate; all-N-failed returns an explicit `winner=None` envelope rather than raising or
+  fabricating an answer; a dead judge returns the slate `judged=False`. Determinism: highest
+  score, ties to the lowest candidate index — proven across two runs whose N calls complete in
+  opposite order. Mapped in `_CALL_SITE_SURFACES` as `assistant_reasoning`.
+  `skills/bundled/best-of-n/SKILL.md` + a `best_of_n` MCP tool (schema, `TOOL_META`,
+  regenerated reference) make it reachable from chat rather than an inert export.
+  **MEASURED FINDING:** `one_shot_completion` had **no temperature parameter**, so
+  "temperature-varied" was unbuildable as written. Added `temperature: float | None`, threaded
+  through all three resolution paths and read into `extra_options` by the branded factory —
+  the `embedding_model` precedent. Passing `extra_options=` as a build kwarg would have been
+  *silently swallowed* by that factory (a live reader of an unwritten key), so the named-kwarg
+  route is asserted behaviourally. Caveat documented: a model in extended-thinking mode drops a
+  custom temperature, collapsing the ladder to a zero-spread slate.
+  **BLOCKED, not done:** the third `done_when` clause — *"chat 'give me 3 versions and pick the
+  best' validated end-to-end with all N calls visible in `model_calls.jsonl`"* — requires a
+  running gateway bound to a real model. No agent can perform it (and doing so spends real
+  money), so claiming `done` would assert a validation nobody ran. Every seam is unit-proven;
+  what remains is one owner run on the dev instance. Status is `blocked` so a later tick does
+  not re-implement the core.

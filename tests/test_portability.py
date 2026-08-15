@@ -960,6 +960,13 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # fix (nothing claimed them); backing them up would ship a cache in every snapshot.
         "session_search_db",
         "codegraph",
+        # platform: the best-of-N outcome ledger (HC-3). `derived=True` telemetry-of-self —
+        # one bounded line per sampling call ({ts,n,criteria_digest,winner_idx,score_spread,
+        # tokens_total}, no prompt or candidate text) feeding the learning/eval question "did
+        # sampling help?". Claimed so `audit_home` sees it, deliberately not backed up: it
+        # holds no user content to lose and restoring last week's spread would say nothing
+        # about this week's bindings. The atom's own done_when specifies snapshot-excluded.
+        "sampling_outcomes",
     }
 )
 

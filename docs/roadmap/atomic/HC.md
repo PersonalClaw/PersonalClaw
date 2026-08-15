@@ -36,11 +36,30 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `HC-3` — Best-of-N sampling core (sampling.py) + bundled best-of-n skill
 
-**Status:** todo
+**Status:** blocked (implementation complete; the live end-to-end clause needs an owner run)
 
 §2.1 The core: sampling.py helper; §2.2 The skill: skills/bundled/best-of-n/SKILL.md
 
 **Done when:** best_of_n(prompt,n,judge_criteria,use_case) fires N temperature-varied parallel one_shot_completion calls through the ModelCallGuard chokepoint, LLMJudge scores each and returns winner+candidates+judgments, and appends a bounded record (ts,n,criteria_digest,winner_idx,score_spread,tokens_total) to ~/.personalclaw/sampling_outcomes.jsonl (snapshot-excluded); skills/bundled/best-of-n/SKILL.md confirms N (cap 5)+criteria naming the N-call cost multiplier (grill ambiguous-trigger precedent), presents winner with collapsible runners-up and a working 'use #2' choice; chat 'give me 3 versions and pick the best' validated end-to-end with all N calls visible in model_calls.jsonl (SC 3, 4).
+
+**DONE.** `src/personalclaw/sampling.py` owns the core: one `asyncio.gather` fan-out of N
+temperature-varied `one_shot_completion` calls (ladder `0.2/0.7/1.0/0.45/0.85`, N clamped to
+`MAX_N=5`) through the use-case bridge → ModelCallGuard, then a sequential `LLMJudge` pass over the
+survivors and a deterministic pick (`max(score)`, ties to the lowest index). Partial-tolerant: one
+dead sample loses that candidate only; all-N-dead returns an explicit `winner=None` envelope; a dead
+judge returns the slate `judged=False`. Temperature is a REAL sampling parameter now — new
+`one_shot_completion(temperature=…)` threads it through every resolution path as a bridge build
+kwarg, and `sdk/provider_helpers.py` puts it in the provider's `extra_options` (the `embedding_model`
+precedent), where both protocol clients already forward call params. Each call appends the bounded
+`{ts,n,criteria_digest,winner_idx,score_spread,tokens_total}` record to `sampling_outcomes.jsonl`,
+declared `derived=True` in the durability inventory — which is what "snapshot-excluded" means here
+(claimed by `audit_home()`, never backed up). The chat half is live, not inert: bundled
+`skills/bundled/best-of-n/SKILL.md` (grill's explicit-vs-ambiguous gate, the N-call cost named in the
+confirmation, `<details>` runners-up and a verbatim "use #2") drives the new `best_of_n` MCP tool in
+`mcp_subagents.py`, which calls the same core the HC-5 template will. 22 tests in
+`tests/test_sampling_best_of_n.py` — concurrency is proven by a peak-in-flight==N counter plus a
+fan-out span assertion (a sequential loop fails both), partial tolerance and determinism each have a
+falsified test.
 
 ### `HC-4` — Check-work skill + SDLC post-gate hook + chat suggestion chip
 

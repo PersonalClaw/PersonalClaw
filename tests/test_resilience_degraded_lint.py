@@ -62,6 +62,13 @@ _CALL_SITE_SURFACES = {
     # proposal_error. A missing model costs the suggestion, never the conflict — and it can
     # never resolve one, because this surface only ever proposes (§7).
     "durability/conflict_merge.py": "assistant_reasoning",
+    # HC-3 best-of-N sampling (HARNESS-CRAFT §2.1): N temperature-varied background
+    # one-shots + an LLMJudge pass. Its no-model floor is BUILT IN and two-tiered —
+    # a failed sample loses that candidate only, and if EVERY sample fails the caller
+    # gets an explicit no-candidate envelope (winner=None + note) rather than an error
+    # or a fabricated answer; a dead judge returns the slate judged=False with the
+    # lowest-temperature survivor. Fail-open, never a raise.
+    "sampling.py": "assistant_reasoning",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")
