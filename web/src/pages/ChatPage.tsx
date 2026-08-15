@@ -67,6 +67,7 @@ import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from './chat/FindBar'
 import { FollowupChips } from './chat/FollowupChips'
+import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
@@ -558,6 +559,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // never block/shift the composer; reset per session.
   const [followups, setFollowups] = useState<string[]>([])
   useEffect(() => { setFollowups([]) }, [sessionId])
+  // "Check this work" offer (HARNESS-CRAFT §3.3): pushed over chat_check_work_offer when
+  // the completed turn did 3+ tool calls AND claimed completion. An OFFER only — clicking
+  // sends the prompt, so verification is never spent without the user asking for it.
+  const [checkWorkOffer, setCheckWorkOffer] = useState<{ label: string; prompt: string } | null>(null)
+  useEffect(() => { setCheckWorkOffer(null) }, [sessionId])
   // Agent routing suggestion (AGENT-ROUTING S2): a non-blocking chip proposing a
   // better-fit specialist for this default-agent chat. Cleared on send / agent
   // switch / session change; arrives via the routing_suggestion WS push.
@@ -1061,6 +1067,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         setFollowups(items)
         break
       }
+      // "Check this work" offer (HARNESS-CRAFT §3.3) for the just-completed turn.
+      case 'chat_check_work_offer': {
+        if (d.session !== sessionRef.current) break
+        const prompt = String(d.prompt ?? 'check your work')
+        setCheckWorkOffer({ label: String(d.label ?? 'Check this work'), prompt })
+        break
+      }
       // Agent routing suggestion (AGENT-ROUTING S2): a specialist fits this message
       // better — surface the routing chip above the composer (non-blocking proposal).
       case 'routing_suggestion': {
@@ -1416,6 +1429,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Sending dismisses any follow-up chips from the prior turn (CHAT-CRAFT S3) and
     // clears a pending routing suggestion (AGENT-ROUTING S2) — the moment passed.
     if (followups.length) setFollowups([])
+    if (checkWorkOffer) setCheckWorkOffer(null)
     if (routingSuggestion) setRoutingSuggestion(null)
     // Use the synchronous streamingRef (not the `streaming` state) for the queue-vs-
     // fresh-turn decision: two sends in one tick both see the stale state, but the
@@ -2472,6 +2486,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                             once the reply has settled — click fills, send-glyph sends. */}
                         {turn.role === 'assistant' && isLast && !streaming && followups.length > 0 && (
                           <FollowupChips items={followups} onPick={(t) => { setInput(t); setFollowups([]) }} onSend={(t) => { setFollowups([]); void send(t) }} />
+                        )}
+                        {/* "Check this work" offer (HARNESS-CRAFT §3.3) — user-clicked only. */}
+                        {turn.role === 'assistant' && isLast && !streaming && checkWorkOffer && (
+                          <CheckWorkChip label={checkWorkOffer.label}
+                            onRun={() => { const p = checkWorkOffer.prompt; setCheckWorkOffer(null); void send(p) }} />
                         )}
                       </div>
                     )

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
@@ -44,6 +45,69 @@ def _followups_enabled() -> bool:
         return bool(AppConfig.load().dashboard.followup_chips)
     except Exception:
         return True
+
+
+#: HARNESS-CRAFT §3.3 — a turn only earns the "Check this work" offer when it both DID
+#: multi-step work and CLAIMED it finished. Three tool calls is the floor: one or two is
+#: a lookup, not a build worth re-verifying.
+_CHECK_WORK_MIN_TOOL_CALLS = 3
+_COMPLETION_CLAIM = re.compile(
+    r"\b(done|complete|completed|finished|implemented|added|created|wrote|updated|fixed|"
+    r"working now|all set|ready|shipped|landed|passes|passing|green)\b",
+    re.IGNORECASE,
+)
+
+
+def _check_work_offer_enabled() -> bool:
+    """Read the 'Check this work' chip config flag (default on)."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return bool(AppConfig.load().dashboard.offer_check_work)
+    except Exception:
+        return True
+
+
+def turn_earns_check_work_offer(assistant_text: str, tool_calls: int) -> bool:
+    """The §3.3 heuristic, deterministic and free: ≥3 tool calls in the turn AND
+    completion language in the reply. No model call — an offer must never cost
+    anything, since the user may not click it."""
+    if (tool_calls or 0) < _CHECK_WORK_MIN_TOOL_CALLS:
+        return False
+    return bool(_COMPLETION_CLAIM.search((assistant_text or "")[-_REPLY_CAP:]))
+
+
+def maybe_offer_check_work(
+    state: "DashboardState", session: "_ChatSession", tool_calls: int
+) -> None:
+    """Broadcast the "Check this work" offer for a just-completed turn, if it earned one.
+
+    OFFER only: this never invokes the ``check-work`` skill. Invocation is always the
+    user's click on the chip, which sends "check your work" as a normal message — so the
+    cost and latency of verification stay user-consented (§3.3). Synchronous and
+    model-free, so it cannot delay or fail the turn. Independent of ``followup_chips``:
+    an operator who turned suggestions off may still want the verification offer.
+    """
+    try:
+        if not _check_work_offer_enabled():
+            return
+        if getattr(session, "is_restricted", False):
+            return
+        if getattr(session, "_last_turn_errored", False):
+            return
+        assistant_text = ""
+        for m in reversed(session.messages):
+            if m.get("role") == "assistant" and (m.get("content") or "").strip():
+                assistant_text = m["content"]
+                break
+        if not turn_earns_check_work_offer(assistant_text, tool_calls):
+            return
+        state.broadcast_ws(
+            "chat_check_work_offer",
+            {"session": session.key, "prompt": "check your work", "label": "Check this work"},
+        )
+    except Exception:
+        logger.debug("check-work offer failed for %s", session.key, exc_info=True)
 
 
 def _build_exchange(session: "_ChatSession") -> str:
