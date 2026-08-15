@@ -85,6 +85,12 @@ KIND_MULTIPLIERS: dict[str, float] = {
     #: outlive the digest that minted it; its staleness signal is `hit_count` +
     #: `expires_at` (PROACTIVE-ASSISTANT §1.4), not decay.
     "approval": 0.4,
+    #: 0.3 — slower than every other class, and deliberately not 0.0 (MGAV-8). A slot is
+    #: written BY the user into an always-injected register, so decay is the wrong instrument
+    #: for retiring one: the user's own tombstone is. But exempting it entirely is the failure
+    #: mode `IMPORTANCE_DAMPING`'s docstring names — a register full of things pinned once and
+    #: never revisited — so it still ages, just slowest.
+    "slot": 0.3,
     "lesson": 0.7,
     "commitment": 0.7,  # live until met; a missed obligation is still evidence
     "skill": 1.0,  # the reference point
