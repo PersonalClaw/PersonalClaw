@@ -97,6 +97,13 @@ function ClearButton({ show, onClear, label, dense }: { show: boolean; onClear: 
 interface SearchFieldProps {
   value: string
   onChange: (v: string) => void
+  /** Forwarded to the input for a field that DRIVES a listbox elsewhere (the command palette, the
+   *  composer menus): the field keeps focus while an option is "active", so assistive tech needs the
+   *  relationship spelled out. Follows `ui/composer/MarkdownInput`'s documented choice — haspopup +
+   *  controls + activedescendant, deliberately NOT `role="combobox"`. */
+  ariaHasPopup?: 'listbox'
+  ariaControls?: string
+  ariaActiveDescendant?: string
   placeholder?: string
   /** Accessible name. Falls back to the placeholder when omitted — a search field
    *  outside a labeled Field must still name itself. */
@@ -143,6 +150,7 @@ export function SearchField({
   value, onChange, placeholder, ariaLabel, autoFocus, name, onKeyDown, trailingSlot, clearable = true,
   variant = 'overlay', size = 'lg', surface = 'high',
   inlineIconSize = 14, clearOnEscape, inputRef, spellCheck, autoCapitalize, autoCorrect, onFocus,
+  ariaHasPopup, ariaControls, ariaActiveDescendant,
 }: SearchFieldProps) {
   const autoName = useId()
   const fieldName = name ?? `search-${autoName}`
@@ -163,6 +171,7 @@ export function SearchField({
     ref: inputRef, value, onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value),
     onKeyDown: handleKeyDown, onFocus, type: 'search' as const, name: fieldName, id: fieldName,
     'aria-label': label, placeholder, autoFocus, spellCheck, autoCapitalize, autoCorrect,
+    'aria-haspopup': ariaHasPopup, 'aria-controls': ariaControls, 'aria-activedescendant': ariaActiveDescendant,
   }
   const clearLabel = `Clear ${label.toLowerCase()}`
 

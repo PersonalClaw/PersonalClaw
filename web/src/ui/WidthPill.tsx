@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId, useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { RectangleVertical, RectangleHorizontal, StretchHorizontal, MoveHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -19,14 +19,36 @@ const OPTS: { key: WidthPreset; icon: LucideIcon; label: string }[] = [
 export function WidthPill() {
   const { widthPreset, setWidthPreset } = useAppearance()
   const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
   const active = OPTS.find((o) => o.key === widthPreset) ?? OPTS[1]
   const ActiveIcon = active.icon
   const indicatorId = `widthpill-active-${useId()}`
 
+  // 🔴 THIS MENU WAS HOVER-ONLY, so it could not be opened at all without a pointer. Driven on
+  // `#/dashboard`: focus the trigger, press Enter → `aria-expanded` stayed **false** and nothing
+  // opened; the popover appeared only on `onMouseEnter` of the wrapper. Its four options are real
+  // named buttons, so once open they are fine — they were simply unreachable. WCAG 2.1.1.
+  //
+  // 🪤 AND THE TRIGGER PROMISED A MENU IT NEVER DELIVERED: `aria-haspopup="menu"` with **0**
+  // `role="menu"` and **0** menuitems, measured hover-open. The options carry `aria-pressed`, which is
+  // this app's recorded idiom for "one of N is chosen" (the Mode row, bento's SegToggle), so the fix
+  // is to correct the DECLARATION rather than to convert working buttons into menuitems and fight
+  // that convention. `aria-expanded` alone is the honest description of a disclosure.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); btnRef.current?.focus() } }
+    const onDown = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown) }
+  }, [open])
+
   return (
-    <div className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      {/* Collapsed trigger — the current preset's icon. */}
-      <button type="button" aria-haspopup="menu" aria-expanded={open}
+    <div ref={wrapRef} className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      {/* Collapsed trigger — the current preset's icon. Click/Enter/Space toggle it; hover stays as a
+          pointer-only convenience on top of that, not as the only way in. */}
+      <button ref={btnRef} type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
         title={`Content width: ${active.label}`} aria-label={`Content width: ${active.label}`}
         className="grid size-7 place-items-center rounded-pill transition-colors text-on-surface-low hover:text-on-surface">
         {/* the collapsed icon morphs (quick scale+fade key-swap) when the active

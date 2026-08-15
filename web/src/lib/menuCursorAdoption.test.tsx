@@ -68,11 +68,39 @@ describe('the declaration-implies-implementation census', () => {
    *  their own arrow handling; what they still lack is `aria-activedescendant`, i.e. this family's
    *  defect in its third variant — deferred, not forgotten, because wiring it means reaching into
    *  the CodeMirror contenteditable that holds focus, not adding an attribute. */
-  const COMBOBOX = ['ui/composer/SlashMenu.tsx', 'ui/composer/MentionMenu.tsx']
+  //
+  //  🔑 `app/CommandPalette.tsx` joined this family in cycle 181, and it is the variant that CLOSED the
+  //  gap named above: focus stays in its search field and `aria-activedescendant` now tracks the active
+  //  option (measured: `opt-0` → `opt-1` on ArrowDown, with the option's `aria-selected` following and
+  //  focus never leaving the input). Before it, the palette declared no listbox, no options and no
+  //  activedescendant at all — 22 commands with a purely visual highlight. The two composer menus keep
+  //  their deferral, for the reason stated: their focus lives in a CodeMirror contenteditable.
+  const COMBOBOX = ['ui/composer/SlashMenu.tsx', 'ui/composer/MentionMenu.tsx', 'app/CommandPalette.tsx']
   const focusMoving = [...declaring.keys()].filter((rel) => !COMBOBOX.includes(rel))
 
   it('finds the popups — the scan is not vacuous', () => {
     expect(declaring.size, 'containers declaring menu/listbox').toBeGreaterThanOrEqual(5)
+  })
+
+  it('a combobox popup is EXEMPT from the hook but not from the pattern', () => {
+    // The exemption above is a classification, not a pass: keeping focus in the field only works if
+    // something else tells assistive tech which option is active. So a file in COMBOBOX owes
+    // `aria-activedescendant` + `role="option"` — unless it is one of the two whose focus lives in a
+    // CodeMirror contenteditable, which is the deferral the comment above states and dates.
+    const DEFERRED = ['ui/composer/SlashMenu.tsx', 'ui/composer/MentionMenu.tsx']
+    for (const rel of COMBOBOX) {
+      if (DEFERRED.includes(rel)) {
+        // The deferral must stay HONEST: if one of these grows an activedescendant, it graduates and
+        // this list should shrink rather than keep excusing it.
+        expect(codeOf(rel), `${rel} now wires activedescendant — remove it from DEFERRED`)
+          .not.toMatch(/aria-activedescendant/)
+        continue
+      }
+      const code = codeOf(rel)
+      expect(code, `${rel}: a combobox owes aria-activedescendant`).toMatch(/aria-activedescendant|ariaActiveDescendant/)
+      expect(code, `${rel}: its popup children must be options`).toMatch(/role="option"/)
+      expect(code, `${rel}: an active option must say so`).toMatch(/aria-selected/)
+    }
   })
 
   it('every declaring file wires the shared cursor', () => {

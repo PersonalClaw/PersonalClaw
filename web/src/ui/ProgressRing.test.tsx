@@ -38,7 +38,7 @@ function arcOf(container: HTMLElement): SVGCircleElement {
 
 describe('ProgressRing geometry', () => {
   it('renders a track and an arc with the shared geometry', () => {
-    const { container } = render(<ProgressRing pct={0.5} tone="var(--color-primary)" />)
+    const { container } = render(<ProgressRing label="Cycle progress" pct={0.5} tone="var(--color-primary)" />)
     const svg = container.querySelector('svg')!
     expect(svg.getAttribute('width')).toBe('28')
     expect(svg.getAttribute('viewBox')).toBe('0 0 28 28')
@@ -51,7 +51,7 @@ describe('ProgressRing geometry', () => {
   })
 
   it('starts the arc at 12 o_clock and takes the caller tone', () => {
-    const { container } = render(<ProgressRing pct={0.25} tone="var(--color-warn)" />)
+    const { container } = render(<ProgressRing label="Cycle progress" pct={0.25} tone="var(--color-warn)" />)
     const arc = arcOf(container as HTMLElement)
     expect(arc.getAttribute('stroke')).toBe('var(--color-warn)')
     expect(arc.getAttribute('stroke-linecap')).toBe('round')
@@ -60,7 +60,7 @@ describe('ProgressRing geometry', () => {
   })
 
   it('honours size, and scales the radius with it', () => {
-    const { container } = render(<ProgressRing pct={1} tone="red" size={40} />)
+    const { container } = render(<ProgressRing label="Cycle progress" pct={1} tone="red" size={40} />)
     expect(container.querySelector('svg')!.getAttribute('width')).toBe('40')
     expect(container.querySelector('circle')!.getAttribute('r')).toBe('17.5')
   })
@@ -68,7 +68,7 @@ describe('ProgressRing geometry', () => {
   it('takes pct as a FRACTION: the dash array is the full circumference', () => {
     // 0..1, not 0..100 — the contract both call sites already relied on (they pass
     // Math.min(1, total/max)). A 0..100 reading would wind the arc round 100 times.
-    const { container } = render(<ProgressRing pct={0.5} tone="red" />)
+    const { container } = render(<ProgressRing label="Cycle progress" pct={0.5} tone="red" />)
     const c = 2 * Math.PI * 11.5
     expect(Number(arcOf(container as HTMLElement).getAttribute('stroke-dasharray'))).toBeCloseTo(c, 3)
   })
@@ -114,5 +114,69 @@ describe('the divergence this primitive resolves', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '')
     expect(/strokeDashoffset/.test(code)).toBe(false)
+  })
+})
+
+describe('the ring announces itself, and its abbreviation has a full word', () => {
+  // ── Cycle 178: a graphic that was the only carrier of a number, and said nothing ──────────────
+  //
+  // Read from the live AX tree on BOTH call sites (`#/loops/history` and `#/dashboard`): the svg had
+  // **no `role`, no `aria-label`, no `aria-hidden` and no `<title>`**. Not named, and not marked
+  // decorative either — so assistive tech got nothing where a sighted user reads a progress arc.
+  // WCAG 1.1.1 / 4.1.2.
+  //
+  // 🔑 THE SEMANTICS CONVERGE ON `ui/WavyProgress`, this app's other progress indicator, which already
+  // ships `role="progressbar"` + `aria-valuemin/max/now`. What that one does NOT ship is a NAME, so a
+  // screen-reader user hears a bare percentage with no subject — which is why `label` is REQUIRED
+  // here rather than optional. Making it required also proved its worth immediately: TypeScript
+  // listed every call site, including four in this file's sibling motion test, so none could be
+  // missed.
+  //
+  // 🪤 AND THE ABBREVIATION BESIDE IT. "0 fnd" is an abbreviation nothing else in the app uses, and a
+  // screen reader reads it literally. The visible form CANNOT grow — the box is `w-9` (36px, measured
+  // unchanged after the fix) and widening it reflows the row — so the abbreviation stays for the eye
+  // while the full word is added for assistive tech through the `sr-only` idiom already used in 19
+  // places, with `title` giving a sighted user the same expansion on hover.
+  //
+  // Verified after: `#/loops/history` → one progressbar named "Cycle progress: 0 of 30"
+  // (`aria-valuenow=0`, `aria-valuemax=100`), abbreviation visible "0 fnd" / AT "0 findings", box
+  // still 36px. `#/dashboard` → one progressbar named "Cycle progress for <loop name>", valuenow 40.
+
+  it('is a progressbar with a value, not a bare svg', () => {
+    const { container } = render(<ProgressRing label="Cycle progress" pct={0.4} tone="red" />)
+    const svg = container.querySelector('svg')!
+    expect(svg.getAttribute('role')).toBe('progressbar')
+    expect(svg.getAttribute('aria-valuemin')).toBe('0')
+    expect(svg.getAttribute('aria-valuemax')).toBe('100')
+    expect(svg.getAttribute('aria-valuenow')).toBe('40')
+  })
+
+  it('carries the name its caller gave it', () => {
+    const { container } = render(<ProgressRing label="Cycle progress: 3 of 8" pct={0.375} tone="red" />)
+    expect(container.querySelector('svg')!.getAttribute('aria-label')).toBe('Cycle progress: 3 of 8')
+  })
+
+  it('clamps the reported value the way the arc does', () => {
+    // A loop that ran past its budget reads full rather than reporting 140%.
+    const over = render(<ProgressRing label="x" pct={1.4} tone="red" />).container.querySelector('svg')!
+    const under = render(<ProgressRing label="x" pct={-0.2} tone="red" />).container.querySelector('svg')!
+    expect(over.getAttribute('aria-valuenow')).toBe('100')
+    expect(under.getAttribute('aria-valuenow')).toBe('0')
+  })
+
+  it('every call site names what it is counting', () => {
+    const SRC = join(process.cwd(), 'src')
+    const sites = ['pages/loops/LoopsListPage.tsx', 'pages/dashboard/widgets/ActiveWork.tsx']
+    for (const rel of sites) {
+      const src = readFileSync(join(SRC, rel), 'utf8')
+      expect(src, `${rel} must pass a label`).toMatch(/<ProgressRing[\s\S]{0,220}?label=\{`Cycle progress/)
+    }
+  })
+
+  it("the loops row's abbreviation keeps a full-word equivalent", () => {
+    const src = readFileSync(join(process.cwd(), 'src/pages/loops/LoopsListPage.tsx'), 'utf8')
+    expect(src, 'the eye keeps the abbreviation').toMatch(/aria-hidden="true">\{c\.findings\?\.length \?\? 0\} fnd</)
+    expect(src, 'assistive tech gets the word').toMatch(/className="sr-only">\{c\.findings\?\.length \?\? 0\} findings</)
+    expect(src, 'and a hover expansion').toMatch(/title=\{`\$\{c\.findings\?\.length \?\? 0\} findings`\}/)
   })
 })

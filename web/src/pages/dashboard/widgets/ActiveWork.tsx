@@ -72,7 +72,9 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
     >
       <div className="flex items-center gap-s">
         <button type="button" onClick={() => navigate(`loops/${loop.id}`)} className="flex min-w-0 flex-1 items-center gap-s text-left">
-          {pct != null ? <ProgressRing pct={pct} tone={meta.tone} /> : <StatusDot color={meta.tone} pulse={loop.status === 'running'} />}
+          {pct != null
+            ? <ProgressRing pct={pct} tone={meta.tone} label={`Cycle progress for ${loop.name || loop.task || 'this loop'}`} />
+            : <StatusDot color={meta.tone} pulse={loop.status === 'running'} />}
           <div className="min-w-0">
             <p data-type="title-m" className="truncate text-on-surface">{loopLabel}</p>
             <p data-type="body-m" className="truncate text-on-surface-low">

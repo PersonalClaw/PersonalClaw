@@ -9,6 +9,9 @@ const doc: UiDoc = {
   description:
     'The one compound-search field — a leading magnifier plus a trailing affordance (a spring-pop clear-X, a keyboard hint, or a spinner), the chrome a plain TextInput lacks. Two structural variants: overlay (default) is the dominant list/page search — a solid box owning type="search", Escape-to-clear, and the size→height/radius scale; inline is the ⌘K/⌘P palette shell — a transparent flex child whose surrounding row the caller styles. Codification, not redesign: every value is a shape the app already ships. Controlled via value + onChange.',
   props: [
+    { name: 'ariaHasPopup', description: "Set to 'listbox' when this field DRIVES a list of options that lives elsewhere (the command palette, the composer menus). Forwarded to the input as aria-haspopup." },
+    { name: 'ariaControls', description: 'Id of the listbox this field drives — forwarded as aria-controls, so assistive tech can tie the field to the results it filters.' },
+    { name: 'ariaActiveDescendant', description: "Id of the currently ACTIVE option while the field keeps focus — forwarded as aria-activedescendant. Without it, arrowing through results moves a purely visual highlight and announces nothing; measured exactly that in the command palette (22 options, activedescendant null). Follows MarkdownInput's documented pattern: haspopup + controls + activedescendant, deliberately not role='combobox'." },
     { name: 'value', description: 'The current query (controlled).' },
     { name: 'onChange', description: 'Fires with the new query string on every keystroke (and with `\'\'` on clear).' },
     { name: 'placeholder', description: 'Placeholder text; also the accessible-name fallback when ariaLabel is omitted.' },
