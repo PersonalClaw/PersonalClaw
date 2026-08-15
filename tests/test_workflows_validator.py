@@ -141,9 +141,10 @@ class TestStructuralRules:
         assert "WF_EMPTY_CONTAINER" in _codes(_wrap({"kind": "sequence", "children": []}))
         assert "WF_EMPTY_CONTAINER" in _codes(_wrap({"kind": "parallel", "children": []}))
 
-    def test_needs_may_only_name_siblings(self) -> None:
-        """A cross-container edge would make the tree a graph and break the frontier's
-        locality."""
+    def test_needs_naming_an_unknown_node_is_refused(self) -> None:
+        """`WF_UNKNOWN_NEEDS` is now an EXISTENCE check over the whole spec (`PP-2`), no longer
+        a sibling-scope check: a `needs` naming a node that does not exist anywhere is the one
+        thing left to refuse."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -154,6 +155,33 @@ class TestStructuralRules:
             }
         )
         assert "WF_UNKNOWN_NEEDS" in _codes(spec)
+
+    def test_a_cross_container_needs_to_a_real_node_is_honoured(self) -> None:
+        """The sibling-only restriction is gone (`PP-2`). A `needs` that names a real node in
+        another container is accepted — the frontier derives and holds the global edge — where
+        `PP-1` refused it as 'not a sibling in this parallel block'."""
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": "first", "config": {"prompt": "x"}},
+                    {
+                        "kind": "parallel",
+                        "id": "p",
+                        "children": [
+                            {
+                                "kind": "infer",
+                                "id": "b",
+                                "config": {"prompt": "y"},
+                                "needs": ["first"],
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
 
     def test_foreach_requires_items_and_body(self) -> None:
         codes = _codes(_wrap({"kind": "foreach", "id": "f", "config": {}}))
@@ -362,14 +390,18 @@ class TestMalformedInput:
 
 
 class TestDependencyOrdering:
-    """`WF_UNORDERED_DEP` (PP-1) — the engine's two edge lists, reconciled.
+    """`WF_UNORDERED_DEP` (PP-1) — the engine's two edge lists, reconciled, then unified (PP-2).
 
-    Admission comes from container order plus sibling-only `needs`; bindings are a separate
-    graph that never admitted anything. A spec could therefore read
-    `{{nodes.x.output}}` from a node running beside `x`, and the only symptom was a mid-run
-    `USER` failure telling the author to check an id that was correct.
+    Admission came from container order plus sibling-only `needs`; bindings were a separate
+    graph that never admitted anything. A spec could therefore read `{{nodes.x.output}}` from a
+    node running beside `x`, and the only symptom was a mid-run `USER` failure telling the
+    author to check an id that was correct.
 
-    Authoring-time only: no scheduling changes here, and `tick.py` is untouched.
+    `PP-2` closed the gap the other way: the frontier now DERIVES ordering from the same
+    bindings and holds the reader itself, so a concurrent-parallel binding is honoured rather
+    than refused (the `tick.py`-untouched promise of `PP-1` no longer holds). What
+    `WF_UNORDERED_DEP` still refuses is a STRUCTURAL contradiction no wait can resolve —
+    enclosure, `sequence`-after, `branch`-exclusivity.
     """
 
     @staticmethod
@@ -378,9 +410,12 @@ class TestDependencyOrdering:
             i.message for i in validate_spec(spec).issues if i.code == "WF_UNORDERED_DEP"
         )
 
-    # ── the `parallel` half: only a `needs` chain orders two branches ──
+    # ── the `parallel` half: a binding now ORDERS its two branches (PP-2) ──
 
-    def test_a_parallel_sibling_binding_without_needs_is_refused(self) -> None:
+    def test_a_parallel_sibling_binding_is_ordered_by_derivation(self) -> None:
+        """`PP-1` refused this; `PP-2` honours it. A `parallel` child that binds a sibling's
+        output no longer needs a hand-written `needs` — the frontier derives the edge and
+        holds the reader until the producer is terminal, across concurrent legs."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -391,24 +426,30 @@ class TestDependencyOrdering:
                 ],
             }
         )
-        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert validate_spec(spec).ok
+        (edge,) = [
+            e for e in dep_edges_for_root(Node.from_dict(spec["root"])) if e.reader_id == "b"
+        ]
+        assert edge.ordered and "concurrent legs" in edge.reason
 
-    def test_the_message_names_the_reader_the_producer_and_the_missing_edge(self) -> None:
-        """Three facts, so an author can act without reading the engine."""
+    def test_the_unordered_message_names_the_reader_the_producer_and_the_fix(self) -> None:
+        """Three facts, so an author can act without reading the engine. The refusal now fires
+        only on a STRUCTURAL contradiction — here a `sequence` that runs the producer after the
+        reader — because concurrency alone is no longer a refusal (`PP-2`)."""
         spec = _wrap(
             {
-                "kind": "parallel",
-                "id": "p",
+                "kind": "sequence",
+                "id": "s",
                 "children": [
-                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
-                    {"kind": "infer", "id": "b", "config": {"prompt": "{{nodes.a.output}}"}},
+                    {"kind": "infer", "id": "a", "config": {"prompt": "{{nodes.b.output}}"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "x"}},
                 ],
             }
         )
         msg = self._msg(spec)
-        assert "'b'" in msg  # the reader
-        assert "'a'" in msg  # the producer
-        assert 'needs: ["a"]' in msg  # the missing edge, spelled as JSON
+        assert "'a'" in msg  # the reader
+        assert "'b'" in msg  # the producer
+        assert "move it before the reader" in msg  # the fix
 
     def test_a_needs_edge_satisfies_it(self) -> None:
         spec = _wrap(
@@ -448,9 +489,11 @@ class TestDependencyOrdering:
         )
         assert validate_spec(spec).ok
 
-    def test_a_needs_edge_that_does_not_reach_the_producer_does_not_satisfy_it(self) -> None:
-        """Having *some* `needs` is not ordering. Nor is reversing the edge a fix: `needs`
-        and bindings feed one Kahn graph, so a backwards `needs` is already a `WF_CYCLE`."""
+    def test_a_binding_is_ordered_even_when_needs_names_a_different_sibling(self) -> None:
+        """Under `PP-1` a `needs` that did not reach the bound producer left the binding
+        unordered. Under `PP-2` the binding itself orders `b` after `a` by derivation, and the
+        separate `needs: [c]` is just an additional (honourable) ordering edge onto `c` — so
+        the spec is clean, not refused."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -467,12 +510,13 @@ class TestDependencyOrdering:
                 ],
             }
         )
-        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert validate_spec(spec).ok
 
-    def test_the_needs_edge_is_wanted_between_the_two_parallel_BRANCHES(self) -> None:
-        """The comparison happens at the divergence point, so the edge an author must add
-        joins the two branches of the parallel — which may be ancestors of the reader and
-        the producer, not the nodes themselves."""
+    def test_a_diamond_spanning_two_parallel_branches_is_now_expressible(self) -> None:
+        """The capability `PP-2` exists to add. A reader nested inside one leg of a `parallel`
+        binds a producer nested inside ANOTHER leg — a diamond spanning two containers. `PP-1`
+        refused it ('needs: ["left"]' between the branches, which could never reach across the
+        nesting); the derived edge now holds the reader across the concurrent legs."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -497,15 +541,12 @@ class TestDependencyOrdering:
                 ],
             }
         )
-        msg = self._msg(spec)
-        assert 'needs: ["left"]' in msg and "right" in msg
-        # …and declaring exactly that edge clears it.
-        spec["root"]["children"][1]["needs"] = ["left"]
         assert validate_spec(spec).ok
 
-    def test_an_anonymous_parallel_branch_says_to_give_it_an_id(self) -> None:
-        """`needs` addresses siblings by id, so an anonymous branch cannot be named. The
-        message has to say that rather than suggest an empty edge."""
+    def test_an_anonymous_parallel_branch_producer_is_orderable(self) -> None:
+        """`PP-1` refused this because `needs` addresses siblings by id and an anonymous branch
+        could not be named. `PP-2` derives the edge from the BINDING, not from a `needs`-by-id,
+        so the producer's anonymity no longer matters — the reader is held until it finishes."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -523,7 +564,7 @@ class TestDependencyOrdering:
                 ],
             }
         )
-        assert "give child 0 an id" in self._msg(spec)
+        assert validate_spec(spec).ok
 
     # ── the `sequence` half: earlier sibling, at whatever depth ──
 
@@ -672,10 +713,11 @@ class TestDependencyOrdering:
         assert "only one of the two ever runs" in self._msg(spec)
 
     def test_a_branch_case_producer_stays_readable_after_the_branch(self) -> None:
-        """Deliberate scope line: the branch IS ordered before a later sibling, so this is
-        not an ordering defect even though the case may not be taken. Whether the producer
-        actually ran is a reachability question `PP-2` owns; answering half of it here
-        would leave a weaker second reachability rule for `PP-2` to delete."""
+        """The branch IS ordered before a later sibling, so this is not an authoring-time
+        ordering defect even though the case may not be taken. Whether the producer actually
+        ran is the runtime reachability question `PP-2` now answers in the frontier — a reader
+        whose bound producer went SKIPPED is itself skipped, not hung — so the validator does
+        not need to (and must not) pre-judge it here."""
         spec = _wrap(
             {
                 "kind": "sequence",
@@ -740,9 +782,10 @@ class TestDependencyOrdering:
         assert "WF_UNKNOWN_NODE_REF" in codes
         assert "WF_UNORDERED_DEP" not in codes
 
-    def test_an_anonymous_reader_is_still_checked(self) -> None:
-        """`_kahn_levels` only tracks nodes that have an id, so an anonymous reader's
-        bindings were invisible to every existing dependency check."""
+    def test_an_anonymous_reader_binding_is_ordered_by_derivation(self) -> None:
+        """The derived edge is keyed by PATH, not by the reader's id, so an anonymous reader's
+        binding is ordered exactly like a named one — `PP-2` honours it rather than (as `PP-1`
+        did) refusing a concurrent-parallel binding the author forgot to hand-order."""
         spec = _wrap(
             {
                 "kind": "parallel",
@@ -753,8 +796,88 @@ class TestDependencyOrdering:
                 ],
             }
         )
-        assert "WF_UNORDERED_DEP" in _codes(spec)
-        assert "root.children[1]" in self._msg(spec)
+        assert validate_spec(spec).ok
+        (edge,) = [
+            e
+            for e in dep_edges_for_root(Node.from_dict(spec["root"]))
+            if e.reader_path == "root.children[1]"
+        ]
+        assert edge.ordered
+
+
+class TestNeedsCrossCheck:
+    """`PP-2` — a hand-written `needs` is CHECKED against the derived set, not trusted.
+
+    `needs` used to be the only admission input and was refused unless it named a sibling of
+    the same `parallel`. Now ordering is derived from bindings, so `needs` has one job left:
+    ordering that is NOT dataflow. Two checks follow — an error when the structure cannot
+    honour the edge, a warning when a binding already implies it.
+    """
+
+    def test_a_needs_the_structure_cannot_honour_is_an_error(self) -> None:
+        """`needs: ["later"]` on the FIRST child of a `sequence` that runs `later` third is a
+        contradiction: the frontier would hold the reader for a producer the sequence will not
+        start until the reader finishes, and the run hangs. Before `PP-2` a `needs` outside a
+        `parallel` was inert, so this silently did nothing."""
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {
+                        "kind": "infer",
+                        "id": "first",
+                        "config": {"prompt": "x"},
+                        "needs": ["later"],
+                    },
+                    {"kind": "infer", "id": "mid", "config": {"prompt": "y"}},
+                    {"kind": "infer", "id": "later", "config": {"prompt": "z"}},
+                ],
+            }
+        )
+        assert "WF_UNSATISFIABLE_NEEDS" in _codes(spec)
+
+    def test_a_needs_the_binding_already_implies_is_a_warning(self) -> None:
+        """`needs: ["a"]` on a node whose own config reads `{{nodes.a.output}}` is a second
+        edge list one entry long. Deleting it changes nothing about the schedule, which is why
+        it is a WARNING, not an error — the spec still validates."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {
+                        "kind": "infer",
+                        "id": "b",
+                        "config": {"prompt": "{{nodes.a.output}}"},
+                        "needs": ["a"],
+                    },
+                ],
+            }
+        )
+        r = validate_spec(spec)
+        assert r.ok  # a warning, not an error
+        assert "WF_REDUNDANT_NEEDS" in {i.code for i in r.warnings}
+
+    def test_a_non_dataflow_needs_is_neither_error_nor_warning(self) -> None:
+        """The field's one legitimate use: ordering that is not dataflow. `b` runs after `a`
+        (a lock, an external side-effect sequence) but binds nothing of `a`'s. It is honourable
+        (concurrent legs) and not redundant, so it is silently accepted — no warning at every
+        save, which is the deliberate deviation from the plan's step-3 'warn on absence'."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "y"}, "needs": ["a"]},
+                ],
+            }
+        )
+        r = validate_spec(spec)
+        assert r.ok
+        assert not any(i.code in ("WF_REDUNDANT_NEEDS", "WF_UNSATISFIABLE_NEEDS") for i in r.issues)
 
 
 class TestOutputContractCrossCheck:
@@ -917,14 +1040,16 @@ class TestOutputContractCrossCheck:
 
     def test_an_unordered_edge_and_an_unsatisfiable_path_are_both_reported(self) -> None:
         """Two independent defects, two fixes — unlike the unknown-id case, where one typo
-        wears two hats."""
+        wears two hats. The unordered edge is a `sequence` that runs the producer AFTER the
+        reader, since concurrency alone is no longer unordered (`PP-2`); the path defect
+        rides on the same edge."""
         spec = _wrap(
             {
-                "kind": "parallel",
-                "id": "p",
+                "kind": "sequence",
+                "id": "s",
                 "children": [
-                    self._producer("a", self.JSON_FINDINGS),
                     self._reader("b", "{{nodes.a.output.summary}}"),
+                    self._producer("a", self.JSON_FINDINGS),
                 ],
             }
         )
