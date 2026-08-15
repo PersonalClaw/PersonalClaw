@@ -266,6 +266,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         </Row>
         <Row label="Follow-up suggestions" hint="After each reply, show 2-3 suggested next messages (one small background call; never blocks the turn). Skipped for temporary/incognito chats; silent with no model bound.">
           <Toggle on={cfg.followup_chips} onChange={(v) => save({ followup_chips: v })} label="Follow-up suggestions" />
+          <Toggle on={cfg.offer_check_work} onChange={(v) => save({ offer_check_work: v })} label="Offer 'Check this work'" />
         </Row>
         <Row label="Streaming text reveal" hint="Smooth: steady word-by-word reveal decoupled from network chunks (never lags). Immediate: render each chunk the instant it arrives.">
           <SegPills value={cfg.stream_reveal} onChange={(v) => save({ stream_reveal: v as 'smooth' | 'immediate' })}

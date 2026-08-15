@@ -183,6 +183,63 @@ def capture_preference_facet(service, user_message: str) -> str | None:
         return None
 
 
+def capture_slot_lines(
+    service,
+    slot: str,
+    lines,
+    *,
+    reinforce: bool = True,
+    on_trim_needed=None,
+) -> int:
+    """Append reflection output into a memory slot. Append-only (MGAV-8). Returns lines written.
+
+    The reflection half of the slots feature: the after-turn pass observes something worth
+    keeping as standing state and offers it here. Three constraints, all delegated to
+    `memory_slots.append` so they cannot drift apart from the primitive that owns them:
+
+    * **Append-only.** Existing lines are never rewritten or reordered — a change is a new line
+      plus a tombstone. That is what makes the memory event log (WAL) and `undo_event` a real
+      history of the slot rather than a series of overwrites.
+    * **Human tombstones are final.** A line the user deleted is never re-added, however many
+      times the reflection pass re-derives it. Re-adding it does not read as a duplicate row to
+      a user; it reads as the assistant overruling them.
+    * **Over-cap is reported, not swallowed.** A full slot raises a trim proposal, which is
+      handed to *on_trim_needed* if the caller supplied one. Without a handler the proposal is
+      logged at WARNING and the line is not written — the one thing never done is a silent
+      truncation of what the user just said.
+
+    *reinforce* bumps an existing line's `reinforcements` count instead of duplicating it, which
+    is how repeated observation accumulates evidence without growing the slot.
+    """
+    if service is None or not getattr(service, "has_vector", False):
+        return 0
+    vs = getattr(service, "_vs", None)
+    if vs is None:
+        return 0
+    from personalclaw import memory_slots
+
+    written = 0
+    for text in lines or []:
+        candidate = str(text or "").strip()
+        if not candidate:
+            continue
+        before = len(memory_slots.live_lines(memory_slots.load(vs, slot)))
+        try:
+            after = memory_slots.append(vs, slot, candidate, reinforce=reinforce)
+        except memory_slots.SlotCapExceeded as exc:
+            if on_trim_needed is not None:
+                on_trim_needed(exc.proposal)
+            else:
+                logger.warning("slot %r append refused: %s", slot, exc.proposal.message)
+            continue
+        except Exception:
+            logger.debug("slot append failed for %r", slot, exc_info=True)
+            continue
+        if len(memory_slots.live_lines(after)) > before:
+            written += 1
+    return written
+
+
 def run_after_turn_review(
     *,
     service,

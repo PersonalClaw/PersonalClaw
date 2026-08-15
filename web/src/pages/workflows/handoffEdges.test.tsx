@@ -50,6 +50,10 @@ async function mount(hands_off_to: unknown[] | undefined) {
         provider: 'bundled',
       }),
       startWorkflowRun: () => Promise.resolve({ run_id: 'r1' }),
+      workflowVersions: () => Promise.resolve({
+        versions: [], pinned: 0,
+        maturity: { level: 0, label: 'draft', signals: {}, clean_runs: 0, evaluator_rejected: false },
+      }),
     },
   }))
   const { WorkflowDefDetail } = await import('./WorkflowDefDetail')

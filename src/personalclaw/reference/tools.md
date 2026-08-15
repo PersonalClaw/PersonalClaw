@@ -725,6 +725,63 @@ Review THIS conversation and propose updates to the current project's context �
 }
 ```
 
+### `propose_template_diff`
+
+Propose (never apply) a typed diff to a workflow template. The diff is a list of the engine's own ops (update_node/insert/delete/move/set_input); an op touching the template's id, name, triggers, or surfacing metadata is refused. A legal diff is filed as a human-reviewable proposal — you do not install it.
+
+**Response type:** `refiner.proposal.result`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `ops` (array, required) — Typed engine ops. Each: {op, node_id?, fields?, ...}.
+- `predicted_fixes` (array, optional) — What the diff is predicted to fix (graded post-accept).
+- `rationale` (string, required) — Why, grounded in the cluster — a reviewer reads this.
+- `run_ids` (array, optional) — The runs whose failures motivate the diff (the evidence).
+- `workflow_name` (string, required)
+
+**Example — Propose a typed diff to a template, citing the runs that motivate it:**
+
+```json
+{
+  "ops": [
+    {
+      "fields": {
+        "retries": 2
+      },
+      "node_id": "build",
+      "op": "update_node"
+    }
+  ],
+  "rationale": "The build step fails transiently; a retry clears it.",
+  "run_ids": [
+    "r1",
+    "r2",
+    "r3"
+  ],
+  "workflow_name": "code-project"
+}
+```
+
+### `refiner_evidence`
+
+Read a workflow template's own run-ledger failures, already screened for injection and clustered worst-first, plus the top cluster worth targeting. Read-only: this is the ONLY evidence the template refiner proposes against.
+
+**Response type:** `refiner.evidence`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `workflow_name` (string, required) — The template whose run history to read.
+
+**Example — Read a template's clustered, screened failure evidence:**
+
+```json
+{
+  "workflow_name": "code-project"
+}
+```
+
 ### `skill_invoke`
 
 Load a skill's full instructions by name. Your context carries only a compact INDEX of available skills (name + one-line description); when a listed skill fits the task, call this to pull its complete step-by-step body before acting. Prefer this over reading the skill file directly — it records the skill as used so the library can keep what helps and retire what doesn't.
@@ -1100,6 +1157,49 @@ Save a learned correction or preference that persists across all future sessions
 {
   "category": "style",
   "rule": "Prefer concise commit messages"
+}
+```
+
+### `triage_rules`
+
+List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and a verdict ('approve' or 'deny'); action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal.
+
+**Response type:** `memory.triage_rules`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `action` (string, required) — list | add | revoke
+- `expires_at` (string, optional) — Optional ISO-8601 expiry; the rule stops matching after it
+- `id` (string, optional) — The rule id (user.approval.*) to revoke
+- `pattern` (string, optional) — Colon-delimited pattern, narrowest first segment is the action type: <action>[:<qualifier>...] (add only)
+- `scope` (string, optional) — Where the rule applies (default global)
+- `verdict` (string, optional) — approve = auto-execute, deny = silently skip (add only)
+
+**Example — List the taught triage rules:**
+
+```json
+{
+  "action": "list"
+}
+```
+
+**Example — Always approve archiving newsletters:**
+
+```json
+{
+  "action": "add",
+  "pattern": "archive:newsletter",
+  "verdict": "approve"
+}
+```
+
+**Example — Revoke a rule by id:**
+
+```json
+{
+  "action": "revoke",
+  "id": "user.approval.archive:newsletter"
 }
 ```
 

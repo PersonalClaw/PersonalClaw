@@ -297,6 +297,15 @@ export interface AppPermissionsWire {
   // app-to-app path and refuses an undeclared target 403 + SEL. Absent = may message
   // no app at all (deny by default), which the consent UI states rather than implies.
   appMessaging?: string[]
+  // Consented cross-app read-only file sharing (the mirror of `appMessaging`).
+  // `storageShared` = this app opts IN to exposing its own data dir to a reader;
+  // `storageRead` = the apps whose data THIS app reads (exact name or trailing-`*`
+  // prefix). Enforced where storage is granted — the backend is mounted each granted
+  // sharer's data dir READ-ONLY as `PERSONALCLAW_APP_SHARED_DIR_<SHARER>`, and a read is
+  // granted only when both halves are declared (double-declaration, deny by default).
+  // Writes stay broker-only (`appMessaging`). Absent = shares/reads nothing.
+  storageShared?: boolean
+  storageRead?: string[]
   // Native desktop capabilities this app may reach THROUGH the gateway (apps
   // never touch Electron IPC). Enforced — `/api/desktop/*` refuses an undeclared
   // capability 403 + SEL `desktop.capability_denied`. Exact names only, no wildcard.
@@ -752,6 +761,39 @@ export interface WorkflowHandoff {
   condition?: string
   context_fields?: string[]
   requires_user_request?: boolean
+}
+/** One recorded template version. Immutable once written; a run pins the number it
+ *  executed, and re-pin/rollback moves only the active pointer. */
+export interface WorkflowVersionRow {
+  version: number
+  source: string // 'user' | 'refiner'
+  created_at: string
+  note: string
+  run_ids: string[]
+  ops_count: number
+}
+/** One typed op in a version-to-version diff (the engine's own vocabulary). */
+export interface WorkflowVersionOp {
+  op: string // insert | delete | update_node | move | set_input
+  node_id?: string
+  kind?: string
+  fields?: string[]
+}
+/** A template's maturity (R11): L0 draft → L3 mature, from static signals + ledger activity. */
+export interface WorkflowMaturity {
+  level: number
+  label: string // draft | shaping | proven | mature
+  signals: Record<string, boolean>
+  clean_runs: number
+  evaluator_rejected: boolean
+}
+/** One row of the Run Ledger tab: a past run of this template with its totals. */
+export interface WorkflowLedgerRow {
+  run_id: string
+  status: string
+  spec_version: number
+  created_at?: string
+  totals: { tokens?: number; cost_usd?: number; steps_completed?: number; steps_failed?: number }
 }
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
@@ -1413,7 +1455,7 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
 export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
 // 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
-export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled'
+export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
 // What kind of attention an item wants. 'message' is the default so every item written
 // before the inbox became a general attention store stays valid.
 export type InboxItemKind =
@@ -1882,7 +1924,7 @@ export interface DashboardConfig {
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
   simplified_tool_names: boolean; confirm_close_session: boolean
   // Follow-up chips after each reply (default on) + streaming reveal cadence.
-  followup_chips: boolean; stream_reveal: 'smooth' | 'immediate'
+  followup_chips: boolean; offer_check_work: boolean; stream_reveal: 'smooth' | 'immediate'
   // Vestigial server field from the retired customizable-bento dashboard (the
   // grid + per-user layout persistence were dropped in the v2 launcher-forward
   // redesign — everyone gets one curated content-first layout now). No FE
@@ -2284,6 +2326,21 @@ export interface TelemetryRow {
   on_frontier: boolean
 }
 
+/** One use case's row in the routing policy table.
+ *
+ *  `mode` is the per-use-case lever (off | heuristic | learned), `pin` short-circuits
+ *  ordering entirely ('local' | 'cloud' | a ref | ''), `candidates` are the refs actually
+ *  bound to this use case (the router only ever REORDERS these — it never invents one),
+ *  and `classes` holds any recorded per-query-class order with the `basis` that decided
+ *  it, so the table can always explain itself. */
+export interface RoutingPolicyRow {
+  use_case: string
+  mode: 'off' | 'heuristic' | 'learned'
+  pin: string
+  candidates: Array<{ ref: string; local: boolean }>
+  classes: Record<string, { order: string[]; basis: Record<string, unknown> }>
+}
+
 /** Build the ?since=&until=&session=&group_by= query for the usage endpoints
  *  (empty/absent params omitted). */
 function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
@@ -2341,6 +2398,23 @@ export const api = {
     get<{ use_case: string; query_class: string; rows: TelemetryRow[] }>(
       `/api/models/telemetry?use_case=${encodeURIComponent(opts.use_case)}&query_class=${encodeURIComponent(opts.query_class)}`,
     ),
+  // The routing POLICY table: one row per routed use case with its mode, pin,
+  // bound candidates and recorded per-class orders. Read-only view; the three user
+  // levers write through setRoutingPolicy. Both are fail-open server-side — an
+  // unreadable table returns an empty list rather than an error, so the tab renders
+  // "no opinion yet" instead of blanking.
+  routingPolicy: () =>
+    get<{ enabled: boolean; use_cases: RoutingPolicyRow[] }>('/api/models/routing-policy'),
+  // Set ONE lever at a time (mode, pin, or a per-class order). Fields are applied only
+  // when present, so a client never reverts a control it didn't render. `order` requires
+  // `query_class` — an order is always per class.
+  setRoutingPolicy: (body: {
+    use_case: string
+    mode?: 'off' | 'heuristic' | 'learned'
+    pin?: string
+    query_class?: string
+    order?: string[]
+  }) => put<{ ok: boolean; use_case: string; applied: string[] }>('/api/models/routing-policy', body),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
@@ -2730,18 +2804,30 @@ export const api = {
   // composer tools: prompt optimizer + speech-to-text transcription.
   optimizePrompt: (prompt: string, context = '') =>
     post<{ optimized?: string; changed?: boolean }>('/api/optimizer/optimize', { prompt, context }),
-  transcribeAudio: async (blob: Blob): Promise<{ text?: string; error?: string }> => {
+  /** Transcribe a recording. `duplex` marks a hands-free capture: the backend then
+   *  checks the transcript against what it last spoke and answers
+   *  `{ text: '', filtered: 'echo' }` when the microphone heard the assistant
+   *  (MULTIMODAL-IO §4.2). `input_origin`/`disclaimer` ride back so the turn can be
+   *  honest about having been dictated. */
+  transcribeAudio: async (
+    blob: Blob,
+    opts?: { duplex?: boolean; session?: string },
+  ): Promise<{ text?: string; error?: string; filtered?: string; input_origin?: string; disclaimer?: string }> => {
     const fd = new FormData()
     fd.append('audio', blob, 'recording.webm')
-    const r = await fetch('/api/stt/transcribe', { method: 'POST', headers: { ...SK }, body: fd })
+    const qs = new URLSearchParams()
+    if (opts?.duplex) qs.set('duplex', 'true')
+    if (opts?.session) qs.set('session', opts.session)
+    const url = qs.toString() ? `/api/stt/transcribe?${qs}` : '/api/stt/transcribe'
+    const r = await fetch(url, { method: 'POST', headers: { ...SK }, body: fd })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { error: data?.error || `HTTP ${r.status}` }
     return data
   },
 
   // send / control
-  sendChat: (message: string, session: string, meta?: object, queue_mode?: string) =>
-    post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}) }),
+  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) =>
+    post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}) }),
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
   stopChat: (session: string, force = false) => post(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
@@ -3083,6 +3169,10 @@ export const api = {
     del(`/api/skills/ephemeral/${encodeURIComponent(session)}/${encodeURIComponent(slug)}`),
   skillMarketplaces: () => get<SkillMarketplace[]>('/api/skills/marketplaces'),
   // marketplace omitted → search across ALL marketplaces; pass one to scope.
+  // `counts` is the per-source matched count BEFORE the global cap, so the source filter
+  // can say how many of a large catalog matched even though only the top rows come back.
+  searchSkillsCounted: (q: string, marketplace?: string, limit = 30) =>
+    get<{ results: SkillSearchResult[]; counts?: Record<string, number> }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {} })),
   searchSkills: (q: string, marketplace?: string, limit = 30) =>
     get<{ results: SkillSearchResult[] }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => d.results),
   skillMarketplaceDetail: (id: string, marketplace = 'skills.sh') =>
@@ -3344,6 +3434,9 @@ export const api = {
   inboxStatus: () => get<InboxStatus>('/api/inbox/status'),
   inboxProviders: () => get<{ providers: InboxProvider[] }>('/api/inbox/providers').then((d) => d.providers),
   updateInboxItem: (id: string, body: Record<string, unknown>) => put<InboxItem>(`/api/inbox/${encodeURIComponent(id)}`, body),
+  // Undo a verification filter — flips FILTERED→PENDING and fires the ONE
+  // notification the second-opinion pass withheld (server enforces fire-exactly-once).
+  restoreInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/restore`),
   draftInboxReply: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.
@@ -3611,6 +3704,32 @@ export const api = {
   saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
     post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
+
+  // ── template versions + refiner ──
+  /** The monotonic version history, the pinned (active) version, and the maturity badge. */
+  workflowVersions: (name: string) =>
+    get<{ versions: WorkflowVersionRow[]; pinned: number; maturity: WorkflowMaturity }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions`,
+    ),
+  /** The typed-op diff between two versions (add/remove/reorder/update-node ops). */
+  workflowVersionDiff: (name: string, a: number, b: number) =>
+    get<{ a: number; b: number; ops: WorkflowVersionOp[] }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions/diff?a=${a}&b=${b}`,
+    ),
+  /** Rollback / re-pin the active version. Moves only the pointer; history is never rewritten. */
+  repinWorkflowVersion: (name: string, version: number) =>
+    post<{ ok: boolean; name: string; pinned: number }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions/repin`,
+      { version },
+    ),
+  /** Recent runs of this template with their ledger totals — the Run Ledger tab. */
+  workflowLedger: (name: string) =>
+    get<{ name: string; runs: WorkflowLedgerRow[]; total: number }>(
+      `/api/workflows/${encodeURIComponent(name)}/ledger`,
+    ),
+  /** Fire the propose-only refiner over this template on demand ("Refine now"). */
+  refineWorkflow: (name: string) =>
+    post<{ run_id?: string; status?: string }>(`/api/workflows/${encodeURIComponent(name)}/refine`, {}),
 
   workflowRuns: (f?: { workflow?: string; status?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams(

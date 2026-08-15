@@ -125,7 +125,15 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
 
   return (
     <div className="flex flex-col items-center gap-4 rounded-xl border border-outline-variant/40 bg-surface-container py-2xl px-l">
-      {err && <p className="text-danger text-[0.8125rem] text-center">{err}</p>}
+      {/* Recording state was conveyed to sighted users only — a red mic + a growing level ring — so a
+          screen-reader user clicking "Start recording" got NO confirmation it began, and no signal on
+          pause/resume/stop (WCAG 4.1.3). This polite live region (the app's `role="status"` idiom, as in
+          ui/Toaster) announces each transition once. Always mounted (never conditional) so it is
+          observed when its text changes; it does NOT carry the ticking duration, which would spam. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {state === 'recording' ? 'Recording' : state === 'paused' ? 'Recording paused' : state === 'done' ? 'Recording complete' : ''}
+      </div>
+      {err && <p role="alert" className="text-danger text-[0.8125rem] text-center">{err}</p>}
 
       {state === 'done' && url ? (
         <>
@@ -148,7 +156,11 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
             </span>
           </div>
 
-          <div className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(500)}>{fmtDuration(duration)}</div>
+          {/* `role="timer"` (not a bare div, whose `role=generic` does not reliably expose an
+              aria-label) so a screen reader hears "Recording time, 0:03" not a context-free "0:03".
+              timer's implicit `aria-live` is "off", so it does NOT announce on every 5×/sec tick — the
+              status region above carries the state; this is a queryable readout. */}
+          <div role="timer" aria-label="Recording time" className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(500)}>{fmtDuration(duration)}</div>
 
           <div className="flex items-center gap-2">
             {state === 'idle' && (

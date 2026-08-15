@@ -189,6 +189,18 @@
     "type": "bool"
   },
   {
+    "default": false,
+    "path": "companion.discovery_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "companion.instance_name",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": true,
     "path": "dashboard.auto_open_browser",
     "sensitive": false,
@@ -227,6 +239,12 @@
   {
     "default": false,
     "path": "dashboard.merge_queued_messages",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "dashboard.offer_check_work",
     "sensitive": false,
     "type": "bool"
   },
@@ -737,6 +755,12 @@
     "type": "bool"
   },
   {
+    "default": false,
+    "path": "loops.check_work_stages",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 120,
     "path": "loops.default_idle_secs",
     "sensitive": false,
@@ -935,6 +959,42 @@
     "type": "str"
   },
   {
+    "default": false,
+    "path": "proactive.auto_execute_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "proactive.classifier_gate_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 90,
+    "path": "proactive.decision_default_horizon_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "0 8 * * *",
+    "path": "proactive.digest_schedule",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 5,
+    "path": "proactive.max_auto_actions_per_run",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "proactive.triage_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 2.0,
     "path": "resilience.cancel_replace_min_interval_secs",
     "sensitive": false,
@@ -987,6 +1047,60 @@
     "path": "resilience.remediation.tick_minutes_degraded",
     "sensitive": false,
     "type": "int"
+  },
+  {
+    "default": 0.1,
+    "path": "routing.cloud_quality_margin",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": false,
+    "path": "routing.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "routing.energy_sampling",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.05,
+    "path": "routing.hysteresis",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 20.0,
+    "path": "routing.local_timeout_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 5,
+    "path": "routing.min_samples",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 14,
+    "path": "routing.reproposal_cooldown_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0.4,
+    "path": "routing.weights.feedback",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 0.6,
+    "path": "routing.weights.success",
+    "sensitive": false,
+    "type": "float"
   },
   {
     "default": [],
@@ -1191,6 +1305,51 @@
     "path": "tools.projection_rules",
     "sensitive": false,
     "type": "list[ProjectionRuleConfig]"
+  },
+  {
+    "default": true,
+    "path": "voice.clean_for_speech_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [
+      "do it",
+      "go ahead",
+      "send it",
+      "execute"
+    ],
+    "path": "voice.confirmation_phrases",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": true,
+    "path": "voice.duplex_mute_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "voice.echo_filter_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": [
+      "cancel",
+      "never mind",
+      "forget it"
+    ],
+    "path": "voice.exit_phrases",
+    "sensitive": false,
+    "type": "list[str]"
+  },
+  {
+    "default": true,
+    "path": "voice.voice_disclaimer_enabled",
+    "sensitive": false,
+    "type": "bool"
   },
   {
     "default": 604800,

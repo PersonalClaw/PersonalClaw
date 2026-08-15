@@ -103,6 +103,11 @@ class InvokeAgentActionProvider(ActionProvider):
                 logger.debug("invoke-agent: auto-approve config lookup failed", exc_info=True)
 
         parent_key = str((ctx.payload or {}).get("session_key", "") or "")
+        # §4.1 creation-time write grant. An auto-fired fire (``approval_mode="auto"``) defaults the
+        # spawn to the read-only RESEARCH class unless the hook declares an explicit
+        # ``capability: "mutating"`` grant — write on an unattended agent is created deliberately,
+        # never acquired by default.
+        capability_class = str(action_config.get("capability") or "").strip().lower() or None
 
         async def _spawn() -> None:
             try:
@@ -113,6 +118,7 @@ class InvokeAgentActionProvider(ActionProvider):
                     max_turns=max_turns,
                     model=model,
                     approval_mode=approval_mode,
+                    capability_class=capability_class,
                     silent=False,
                 )
             except Exception:

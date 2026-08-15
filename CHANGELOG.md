@@ -10,8 +10,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A voice is now a thing you own, not a dropdown value.**
+
+- **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.**
+- **When two machines edit the same thing while offline, nothing is overwritten — you get asked.**
+- **Memory now has slots: a handful of small, always-there notes about you, instead of facts the assistant has to go looking for.**
+
+- **PersonalClaw can now try a local model first for background work, and fall back to a cloud model when it can't.**
+- **"Check this work" — verification that actually runs, instead of a second opinion from the same voice.**
+- **Apps can now share data with each other, read-only, only when both sides agree.**
+- **Evaluation scenarios are now yours to keep, version and extend.**
+- **Voice input can now run hands-free, and spoken replies stop talking over you.**
+- **Approval memory: teach the assistant what it may do without asking again.**
+- **Attention notifications can now ask for a second opinion before interrupting you.**
+- **A Companion apps settings section — turn on LAN discovery so phone/desktop clients can find this gateway.**
 - **You can now replay a finished workflow run and see exactly where an edit would change it.**
 - **A run's introspection now shows how its branches and judges actually decided, across the template's history.**
+- **A workflow template can now learn from its own runs — and you stay in control of every change.**
+- **Accepting a skill refinement no longer rewrites the skill.**
 
 - **Runs now record what LANDED, not just what they did.**
 
@@ -19,6 +35,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Work that nobody reads now says so.**
 
 ### Changed
+- **The assistant now needs to see a habit work three times, not twice, before it offers to make it a standing principle.**
 - **A step that reads another step's output no longer needs a hand-written ordering — and steps in different branches of a workflow can now feed each other.**
 - **Autonomous loops now learn the way workflows do.**
 
@@ -34,6 +51,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Unattended automations now run read-only by default, and you're asked before one runs scripts in a project folder.**
 - **The built-in command denylist now repairs itself.**
 - **Settings → Security now shows which denylist is actually protecting you.**
 - **Installed apps' backends no longer inherit PersonalClaw's environment.**

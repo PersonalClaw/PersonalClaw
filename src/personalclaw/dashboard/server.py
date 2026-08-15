@@ -487,6 +487,7 @@ async def start_dashboard(
         api_ephemeral_skill_promote,
         api_ephemeral_skills_list,
         api_skill_files,
+        api_skill_overlay_revert,
         api_skill_proposal_accept,
         api_skill_proposal_detail,
         api_skill_proposal_reject,
@@ -515,6 +516,9 @@ async def start_dashboard(
     app.router.add_get("/api/skills/proposals/{id}", api_skill_proposal_detail)
     app.router.add_post("/api/skills/proposals/{id}/accept", api_skill_proposal_accept)
     app.router.add_delete("/api/skills/proposals/{id}", api_skill_proposal_reject)
+    # Accepted-refinement sidecar overlays — revert = delete one file. Literal
+    # 'overlay' segment, registered before the catch-all /{name} routes below.
+    app.router.add_post("/api/skills/overlay/revert", api_skill_overlay_revert)
     # Provider-backed file browser — must precede the catch-all skill-detail GET.
     app.router.add_get("/api/skills/{name}/files", api_skill_files)
     app.router.add_post("/api/skills/{name}/verify", api_skill_verify)
@@ -603,6 +607,11 @@ async def start_dashboard(
     register_lexicon_routes(app)
 
     # Vector Memory (Semantic)
+    app.router.add_get("/api/memory/approval-rules", handlers.api_memory_approval_rules)
+    app.router.add_post("/api/memory/approval-rules", handlers.api_memory_approval_rule_add)
+    app.router.add_delete(
+        "/api/memory/approval-rules/{key:.+}", handlers.api_memory_approval_rule_delete
+    )
     app.router.add_get("/api/memory/semantic", handlers.api_memory_semantic)
     app.router.add_put("/api/memory/semantic", handlers.api_memory_semantic_write)
     app.router.add_delete("/api/memory/semantic/{key:.+}", handlers.api_memory_semantic_delete)
@@ -703,6 +712,8 @@ async def start_dashboard(
     app.router.add_get("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
+    app.router.add_get("/api/guardrails/project-trust", handlers.api_project_trust)
+    app.router.add_post("/api/guardrails/project-trust", handlers.api_project_trust)
     app.router.add_get("/api/models/health", handlers.api_models_health)
     # The earned-autonomy ladder. One read + three writes, and only ONE of the three
     # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.
@@ -915,6 +926,29 @@ async def start_dashboard(
     app.router.add_patch("/api/chat/tag-columns/{id}", chat.api_chat_tag_column_update)
     app.router.add_delete("/api/chat/tag-columns/{id}", chat.api_chat_tag_column_delete)
     app.router.add_post("/api/voice/synthesize", chat.api_voice_synthesize)
+
+    # Voice profiles + per-surface bindings.
+    from personalclaw.dashboard.handlers import voice_profiles as _vprof
+
+    app.router.add_get("/api/voice/profiles", _vprof.api_voice_profiles_list)
+    app.router.add_post("/api/voice/profiles", _vprof.api_voice_profile_create)
+    app.router.add_get("/api/voice/bindings", _vprof.api_voice_bindings_get)
+    app.router.add_put("/api/voice/bindings", _vprof.api_voice_bindings_put)
+    app.router.add_delete("/api/voice/bindings", _vprof.api_voice_bindings_delete)
+    app.router.add_get("/api/voice/resolve", _vprof.api_voice_resolve)
+    app.router.add_get("/api/voice/profiles/{id}", _vprof.api_voice_profile_get)
+    app.router.add_put("/api/voice/profiles/{id}", _vprof.api_voice_profile_update)
+    app.router.add_delete("/api/voice/profiles/{id}", _vprof.api_voice_profile_delete)
+    app.router.add_get("/api/voice/profiles/{id}/audio", _vprof.api_voice_profile_audio)
+    app.router.add_post("/api/voice/profiles/{id}/lock", _vprof.api_voice_profile_lock)
+    app.router.add_post("/api/voice/profiles/{id}/unlock", _vprof.api_voice_profile_unlock)
+    app.router.add_post("/api/voice/profiles/{id}/consent", _vprof.api_voice_profile_consent_record)
+    app.router.add_post(
+        "/api/voice/profiles/{id}/consent/verify", _vprof.api_voice_profile_consent_verify
+    )
+    app.router.add_delete(
+        "/api/voice/profiles/{id}/consent", _vprof.api_voice_profile_consent_revoke
+    )
     app.router.add_post("/api/chat/sessions/{session}/handoff", chat.api_chat_session_handoff)
     app.router.add_post(
         "/api/chat/sessions/{session}/channel-link", chat.api_chat_session_channel_link
@@ -1066,6 +1100,7 @@ async def start_dashboard(
     app.router.add_get("/api/inbox/status", handlers_inbox.api_inbox_status)
     app.router.add_post("/api/inbox/restart", handlers_inbox.api_inbox_restart)
     app.router.add_post("/api/inbox/dismiss-all", handlers_inbox.api_inbox_dismiss_all)
+    app.router.add_post("/api/inbox/{id}/restore", handlers_inbox.api_inbox_restore)
     app.router.add_post("/api/inbox/send", handlers_inbox.api_inbox_send)
     app.router.add_put("/api/inbox/{id}", handlers_inbox.api_inbox_update)
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)
@@ -1227,6 +1262,25 @@ async def start_dashboard(
             logger.exception("Failed to install tool-output projection rules")
 
     app.on_startup.append(_projection_rules_startup)
+
+    async def _skill_catalogs_startup(app_: web.Application) -> None:
+        """Register the operator's configured skill catalogs (``packs.skill_catalogs``,
+        AP-6) on the shared skills registry so the Skills store can browse them.
+
+        Each catalog registers at COMMUNITY tier and installs through the same
+        ``install_guarded`` chokepoint as every other marketplace. Fail-soft per
+        catalog inside ``register_skill_catalogs``; a total failure is logged, never
+        fatal — an unreachable catalog must not cost the bundled marketplaces."""
+        try:
+            from personalclaw.packs.catalog_marketplace import register_skill_catalogs
+
+            names = register_skill_catalogs()
+            if names:
+                logger.info("Registered %d skill catalog(s): %s", len(names), ", ".join(names))
+        except Exception:
+            logger.exception("Failed to register configured skill catalogs")
+
+    app.on_startup.append(_skill_catalogs_startup)
 
     async def _model_providers_startup(app_: web.Application) -> None:
         """Replay config.json providers[] into the model ProviderRegistry.
@@ -1770,7 +1824,14 @@ async def start_dashboard(
     # fully best-effort — a source-engine fault never blocks or crashes startup.
     try:
         from personalclaw.knowledge.source_engine import SourceEngine
+        from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+        from personalclaw.knowledge_providers.registry import register_provider
 
+        # Watched local directories are a CORE source kind, so the
+        # observer is registered here rather than through an app: without this the engine
+        # would enrol no provider for a `watched-dir` source and every dir source the user
+        # created would sit permanently unpolled.
+        register_provider(DirSourceProvider(state.knowledge_store))
         state._source_engine = SourceEngine(  # prevent GC
             state.knowledge_store,
             state.knowledge_ingest_queue(),

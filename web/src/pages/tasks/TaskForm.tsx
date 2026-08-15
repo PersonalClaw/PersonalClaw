@@ -160,7 +160,7 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
           <Button variant="primary" size="md" disabled={busy || !newName.trim()} disabledReason={!newName.trim() ? 'Enter a name first' : undefined} onClick={isProject ? createProject : createList}>{busy ? 'Adding…' : 'Add'}</Button>
           <Button variant="ghost" size="md" onClick={() => { setCreating(null); setNewName(''); setErr('') }}>Cancel</Button>
         </div>
-        {err && <p className="mt-1 text-danger text-[0.75rem]">{err}</p>}
+        {err && <p role="alert" className="mt-1 text-danger text-[0.75rem]">{err}</p>}
       </Field>
     )
   }

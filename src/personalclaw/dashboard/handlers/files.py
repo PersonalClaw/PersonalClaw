@@ -2825,6 +2825,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "show_thinking_inline",
             "simplified_tool_names",
             "followup_chips",
+            "offer_check_work",
             "stream_reveal",
             "confirm_close_session",
             # home dashboard widget layout (customization; per-user)
@@ -2918,6 +2919,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "show_thinking_inline",
             "simplified_tool_names",
             "followup_chips",
+            "offer_check_work",
             "confirm_close_session",
             "auto_tag_sessions",
         ):
@@ -2968,6 +2970,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "show_thinking_inline": cfg.dashboard.show_thinking_inline,
             "simplified_tool_names": cfg.dashboard.simplified_tool_names,
             "followup_chips": cfg.dashboard.followup_chips,
+            "offer_check_work": cfg.dashboard.offer_check_work,
             "stream_reveal": cfg.dashboard.stream_reveal,
             "confirm_close_session": cfg.dashboard.confirm_close_session,
             "dashboard_layout": cfg.dashboard.dashboard_layout or {},

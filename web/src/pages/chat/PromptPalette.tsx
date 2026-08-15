@@ -189,7 +189,7 @@ function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; o
   }
   if (v.type === 'select') {
     return (
-      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base} [color-scheme:dark]`}>
+      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>

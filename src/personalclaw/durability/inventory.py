@@ -433,7 +433,10 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="evals",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
-        help="offline eval substrate: matrices, results ledger (studies/benchmarks later)",
+        help=(
+            "offline eval substrate: scenario library, matrices, pinned results ledger "
+            "(studies/benchmarks later)"
+        ),
     ),
     # 🔴 S179 — the ten paths `audit_home()` reports on a REAL home. The guard was correct and had
     # never been pointed at one: every existing test builds an 8-path synthetic fixture, so a store
@@ -464,6 +467,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="per-day model spend (drives the budget caps)",
+    ),
+    StateEntry(
+        # Per-project Trust/Preview decisions keyed by resolved dir.
+        # LWW — a decision is a small last-writer-wins flag, not an append log.
+        id="project_trust",
+        kind=KIND_JSON_FILE,
+        path="project_trust.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_LWW,
+        help="per-project Trust/Preview decisions (Preview → read-only project-script execution)",
     ),
     StateEntry(
         id="model_calls",
@@ -654,6 +667,28 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="search provider bindings",
     ),
     StateEntry(
+        id="voice_profiles",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="voice_profiles",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_UNION_BY_ID,
+        tombstones=True,
+        help="voice profiles: records, reference audio, locked clips, consent recordings",
+        # A generation-history clip is disposable render output (bounded LRU, re-derived
+        # by simply speaking again) — a backup should not carry it. The reference clip,
+        # the locked clip and the consent recording ARE authoritative user content and
+        # stay covered: losing them loses the voice and its provenance.
+        derived_within=("*/history",),
+    ),
+    StateEntry(
+        id="voice_bindings",
+        kind=KIND_JSON_FILE,
+        path="voice_bindings.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-surface voice profile bindings (channel/agent/client + default)",
+    ),
+    StateEntry(
         id="active_prompts",
         kind=KIND_JSON_FILE,
         path="active_prompts.json",
@@ -766,6 +801,14 @@ INVENTORY: tuple[StateEntry, ...] = (
 IGNORED: tuple[str, ...] = (
     "snapshots",  # backup output — never backed up recursively
     "outbox",  # sync staging (S3)
+    # The sync root: the pull cursor's per-peer high-water marks, the outbox's delivery
+    # obligations, and the conflict review queue (S3/DAS-7) — all MACHINE-LOCAL. Carrying them
+    # into a snapshot would make a restored copy claim another machine's cursor position, and a
+    # conflict is *this* machine's unresolved decision (both versions durably persist in the
+    # shared store, so the queue is bookkeeping, not the only copy of anything).
+    # Declaring it instead would export the queue into the very shards a pull rewrites
+    # mid-cycle — a self-referential synced store.
+    "sync",
     "shards",  # shard export output
     "locks",  # runtime lock files
     "__pycache__",

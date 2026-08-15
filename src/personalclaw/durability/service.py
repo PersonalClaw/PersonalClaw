@@ -360,6 +360,8 @@ def run_sync_job() -> JobResult:
             # push means peers may not have pulled the delete yet.
             if report.ok:
                 _prune_tombstones(home, float(getattr(cfg, "sync_stale_after_secs", 900) or 900))
+            if report.conflicts:
+                _draft_conflict_proposals(home)
         except Exception as exc:  # noqa: BLE001 — a failed sync must not kill the loop
             logger.warning("durability: sync cycle raised", exc_info=True)
             _audit("durability_sync", f"failed: {exc}", outcome="denied")
@@ -379,6 +381,29 @@ def run_sync_job() -> JobResult:
             "seq_published": report.seq_published,
         },
     )
+
+
+def _draft_conflict_proposals(home: Path) -> None:
+    """Run the background propose-only merge pass over the fresh conflicts (DAS-7, §4.2).
+
+    Best-effort and fail-open in BOTH directions: the pass itself never raises (a missing
+    model leaves each record needs-review with no proposal), and this wrapper swallows even a
+    loop/import failure — a conflict is already durably recorded and the local version is
+    already authoritative, so a failed draft costs a suggestion, never a conflict.
+
+    The durability jobs run on the service's executor thread, which owns no event loop, so
+    ``asyncio.run`` is the correct bridge to the async model call here.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from personalclaw.durability.conflict_merge import draft_proposals
+
+        now = datetime.now(timezone.utc).isoformat()
+        report = asyncio.run(draft_proposals(home, now=now))
+        logger.info("durability: conflict merge pass — %s", report.detail)
+    except Exception:  # noqa: BLE001 — a draft is a suggestion; never fail the sync for it
+        logger.warning("durability: conflict merge pass failed", exc_info=True)
 
 
 def _prune_tombstones(home: Path, stale_after_secs: float) -> None:

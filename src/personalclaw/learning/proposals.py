@@ -149,7 +149,10 @@ class ChangeManifest:
     failure_pattern: str = ""
     evidence_refs: list[str] = field(default_factory=list)
     root_cause: str = ""
-    targeted_fix: str = ""
+    # A prose description for most kinds; for a `template_diff` it carries the refiner's TYPED
+    # ops list (the inbox's `_tier_for` reads exactly this to stamp a risk tier, and the accept
+    # path applies it), so the type is honestly either.
+    targeted_fix: str | list[dict[str, Any]] = ""
     predicted_fixes: list[str] = field(default_factory=list)
     risk_tasks: list[str] = field(default_factory=list)
 

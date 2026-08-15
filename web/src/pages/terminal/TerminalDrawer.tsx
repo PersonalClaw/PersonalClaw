@@ -9,6 +9,7 @@ import { api } from '../../lib/api'
 import { TerminalView } from './TerminalView'
 import type { TermTab } from './TerminalPage'
 import { tabListKeys } from '../../lib/tabListKeys'
+import { useResizablePanel } from '../../ui/useResizablePanel'
 
 const HEIGHT_KEY = 'terminal-drawer-h'
 const MIN_H = 160, MAX_FRAC = 0.85, DEF_H = 320
@@ -27,11 +28,14 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
   const [active, setActive] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [height, setHeight] = useState<number>(() => {
-    const v = Number(localStorage.getItem(HEIGHT_KEY))
-    return v >= MIN_H ? v : DEF_H
-  })
-  useEffect(() => { localStorage.setItem(HEIGHT_KEY, String(height)) }, [height])
+  // Height + drag/keyboard handlers from the shared window-splitter primitive. This drawer is
+  // the one adopter that needed the primitive's two generalisations: a DYNAMIC max (the ceiling
+  // is `innerHeight × MAX_FRAC`, viewport-relative, which a static `max` can't express), and a
+  // `storageKey` override — its key `terminal-drawer-h` predates the `-w` convention, so pinning
+  // it here preserves every saved height. side 'bottom': the handle is the drawer's top edge and
+  // dragging/ArrowUp grows it upward.
+  const { width: height, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+    'terminal-drawer', { storageKey: HEIGHT_KEY, def: DEF_H, min: MIN_H, max: () => window.innerHeight * MAX_FRAC, side: 'bottom' })
 
   // Lazily open one session the first time the drawer is shown.
   useEffect(() => {
@@ -58,15 +62,6 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
     })
   }, [])
 
-  const onResize = useCallback((e: React.PointerEvent) => {
-    e.preventDefault()
-    const sy = e.clientY, sh = height
-    const move = (ev: PointerEvent) => setHeight(Math.max(MIN_H, Math.min(window.innerHeight * MAX_FRAC, sh + (sy - ev.clientY))))
-    const up = () => { document.body.style.userSelect = ''; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
-    document.body.style.userSelect = 'none'
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
-  }, [height])
-
   return createPortal(
     <AnimatePresence>
       {open && (
@@ -74,9 +69,13 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
           className="fixed inset-x-0 bottom-0 z-40 flex flex-col border-t border-outline-variant/50 bg-surface/97 shadow-2xl backdrop-blur-md"
           style={{ height }}
           initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={spring.spatialDefault}>
-          {/* top drag-resize edge */}
-          <div onPointerDown={onResize} className="group absolute inset-x-0 -top-1 z-10 h-2 cursor-ns-resize">
-            <span className="absolute inset-x-0 top-1 h-px bg-transparent transition-colors group-hover:bg-primary/60" />
+          {/* top drag-resize edge — WAI-ARIA window-splitter: focusable, arrow-key operable,
+              reports its height. A horizontal separator (it resizes the vertical axis). */}
+          <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="horizontal"
+            tabIndex={0} aria-label="Resize terminal drawer — arrow keys to resize"
+            aria-valuenow={Math.round(height)} aria-valuemin={min} aria-valuemax={Math.round(max)}
+            className="group absolute inset-x-0 -top-1 z-10 h-2 cursor-ns-resize outline-none">
+            <span className="absolute inset-x-0 top-1 h-px bg-transparent transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary" />
           </div>
 
           {/* header: tabs + actions */}

@@ -57,6 +57,16 @@ class MemoryKind(str, Enum):
     PROCEDURAL = "procedural"  # how-to-work prior (tool/source outcomes)
     COMMITMENT = "commitment"  # inferred future check-in obligation
     SELF_PERSONA = "self_persona"  # the agent's positive self-model
+    #: A user-taught approve/deny/suppress rule the triage digest consults
+    #: (PROACTIVE-ASSISTANT §1.4). Policy, not a fact about the user — hence its
+    #: `user.approval.` prefix is excluded from `_NON_FACT_KEY_CLAUSE`, and lookup
+    #: is an exact prefix query, never vector search.
+    APPROVAL = "approval"
+    #: A bounded, always-injected register. A semantic row
+    #: keyed `slot.*`. Its own kind rather than SEMANTIC because a slot is not retrieved and
+    #: does not age like a fact: it injects unconditionally and is curated by the user, so the
+    #: fact decay rate would quietly erode context the user expects to be permanent.
+    SLOT = "slot"
 
 
 #: MemoryKind → the decay kernel's profile name (LEARN-R6f).
@@ -77,6 +87,8 @@ _DECAY_PROFILES: dict["MemoryKind", str] = {
     MemoryKind.PROCEDURAL: "procedural",
     MemoryKind.COMMITMENT: "commitment",
     MemoryKind.SELF_PERSONA: "self_persona",
+    MemoryKind.APPROVAL: "approval",
+    MemoryKind.SLOT: "slot",
 }
 
 
@@ -125,6 +137,14 @@ _DEFAULT_TIER: dict[str, MemoryTier] = {
     MemoryKind.PROCEDURAL: MemoryTier.SEMANTIC,
     MemoryKind.COMMITMENT: MemoryTier.EPISODIC,
     MemoryKind.SELF_PERSONA: MemoryTier.SEMANTIC,
+    # An approval rule is a durable policy row: it lives until revoked or expired.
+    MemoryKind.APPROVAL: MemoryTier.SEMANTIC,
+    # A slot is a durable register the user maintains (persona, preferences,
+    # self_notes) — standing state, not a dated event, so it belongs in the
+    # semantic tier. Mapped explicitly rather than left to __post_init__'s
+    # ``.get(kind, SEMANTIC)`` fallback: the fallback would give the right tier by
+    # accident today and silently give the wrong one if the default ever changes.
+    MemoryKind.SLOT: MemoryTier.SEMANTIC,
 }
 
 
@@ -389,6 +409,10 @@ def _kind_from_key(key: str) -> MemoryKind:
         return MemoryKind.SELF_PERSONA
     if key.startswith("user.commitment."):
         return MemoryKind.COMMITMENT
+    if key.startswith("user.approval."):
+        return MemoryKind.APPROVAL
+    if key.startswith("slot."):
+        return MemoryKind.SLOT
     return MemoryKind.SEMANTIC
 
 

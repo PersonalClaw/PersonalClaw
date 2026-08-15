@@ -97,6 +97,20 @@
               "advanced"
             ]
           }
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "research",
+            "mutating"
+          ],
+          "x-meta": {
+            "label": "Capability",
+            "help": "Read-only by default: an unattended run gets read/search tools only, and write/execute is denied. Set 'mutating' to grant this automation write and execute tools (the creation-time write grant).",
+            "tags": [
+              "advanced"
+            ]
+          }
         }
       }
     }

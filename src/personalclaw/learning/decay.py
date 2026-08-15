@@ -80,6 +80,17 @@ KIND_MULTIPLIERS: dict[str, float] = {
     "preference": 0.5,  # the user's tastes change slowly
     "semantic": 0.5,  # a distilled fact is as durable as a preference
     "self_persona": 0.5,  # who the agent is becoming changes slowly
+    #: 0.4, matching "strategy": an approval rule the user explicitly taught
+    #: ("always no 3") is a standing instruction, not an observation. It should
+    #: outlive the digest that minted it; its staleness signal is `hit_count` +
+    #: `expires_at`, not decay.
+    "approval": 0.4,
+    #: 0.3 — slower than every other class, and deliberately not 0.0. A slot is
+    #: written BY the user into an always-injected register, so decay is the wrong instrument
+    #: for retiring one: the user's own tombstone is. But exempting it entirely is the failure
+    #: mode `IMPORTANCE_DAMPING`'s docstring names — a register full of things pinned once and
+    #: never revisited — so it still ages, just slowest.
+    "slot": 0.3,
     "lesson": 0.7,
     "commitment": 0.7,  # live until met; a missed obligation is still evidence
     "skill": 1.0,  # the reference point

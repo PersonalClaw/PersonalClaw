@@ -344,6 +344,150 @@ async def api_memory_semantic_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_memory_approval_rules(request: web.Request) -> web.Response:
+    """GET /api/memory/approval-rules — the triage approval rules, with provenance.
+
+    A plain prefix scan over the semantic table (PROACTIVE-ASSISTANT §1.4: approval
+    lookups are exact, never vector search). Undecodable rows are reported in
+    ``unreadable`` instead of being silently dropped — a rule the matcher ignores
+    but the user believes in is exactly the confusion the rules manager exists to
+    end.
+    """
+    from personalclaw.proactive.approval import APPROVAL_KEY_PREFIX, rule_from_row, rule_to_value
+
+    svc = _get_service(request.app["state"])
+    rules: list[dict] = []
+    unreadable: list[str] = []
+    for entry in svc.get_all_semantic():
+        row = dict(entry)
+        key = str(row.get("key") or "")
+        if not key.startswith(APPROVAL_KEY_PREFIX):
+            continue
+        rule = rule_from_row(key, row.get("value_json"))
+        if rule is None:
+            unreadable.append(key)
+            continue
+        payload = rule_to_value(rule)
+        payload["key"] = rule.key
+        payload["specificity"] = rule.specificity
+        payload["created_at"] = row.get("created_at")
+        payload["updated_at"] = row.get("updated_at")
+        rules.append(payload)
+    rules.sort(key=lambda r: (str(r.get("pattern")), str(r.get("key"))))
+    return web.json_response({"rules": rules, "unreadable": unreadable})
+
+
+async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
+    """POST /api/memory/approval-rules — teach one approve/deny rule.
+
+    Writes through the guarded ``MemoryService.set_semantic`` path (§1.4: the rule
+    text still passes the write-injection scanner even though the user ratified it).
+    """
+    from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
+
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="approval_rule.write",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    pattern = str(body.get("pattern") or "").strip()
+    if not pattern:
+        return web.json_response({"error": "pattern required"}, status=400)
+    try:
+        # Only the two TAUGHT verdicts are writable here. `suppressed` is a shadow
+        # row the digest maintains from declines; letting a caller mint one would
+        # make a cooldown indistinguishable from a rule the user actually stated.
+        verdict = Verdict(str(body.get("verdict") or ""))
+        if verdict is Verdict.SUPPRESSED:
+            raise ValueError("suppressed is not user-writable")
+    except ValueError:
+        return web.json_response({"error": "verdict must be 'approve' or 'deny'"}, status=422)
+    try:
+        rule = ApprovalRule(
+            pattern=pattern,
+            verdict=verdict,
+            scope=str(body.get("scope") or "global"),
+            created_from_digest=body.get("created_from_digest"),
+            expires_at=body.get("expires_at"),
+            send_capable=bool(body.get("send_capable")),
+        )
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    svc = _get_service(request.app["state"])
+    err = svc.set_semantic(rule.key, rule_to_value(rule), 1.0, "user_explicit")
+    sk = request.headers.get("X-Session-Key", "")
+    if err is not None:
+        code, message = err
+        _sel().log_api_access(
+            caller=sk,
+            operation="approval_rule.write",
+            outcome="rejected",
+            source="dashboard",
+            resources=f"{code.value}:{rule.key}",
+        )
+        msg, _ = redact_exfiltration_urls(message)
+        msg, _ = redact_credentials(msg)
+        status = 409 if code == SemanticRejectCode.CONFLICT else 422
+        return web.json_response({"error": msg}, status=status)
+    _sel().log_api_access(
+        caller=sk,
+        operation="approval_rule.write",
+        outcome="success",
+        source="dashboard",
+        resources=f"{verdict.value}:{rule.key}",
+    )
+    payload = rule_to_value(rule)
+    payload["key"] = rule.key
+    return web.json_response({"ok": True, "rule": payload})
+
+
+async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
+    """DELETE /api/memory/approval-rules/{key} — revoke one rule."""
+    from personalclaw.proactive.approval import APPROVAL_KEY_PREFIX
+
+    if _is_restricted_session(request.app["state"], request):
+        sk = request.headers.get("X-Session-Key", "")
+        _sel().log_api_access(
+            caller=sk,
+            operation="approval_rule.delete",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
+    key = request.match_info["key"]
+    if not key.startswith(APPROVAL_KEY_PREFIX):
+        # Scoped on purpose: this route revokes approval rules, so it must not
+        # become a second, unaudited way to tombstone arbitrary memory keys.
+        return web.json_response({"error": "not an approval rule key"}, status=400)
+    svc = _get_service(request.app["state"])
+    if not svc.delete_semantic(key, source="user_explicit"):
+        return web.json_response({"error": "not found"}, status=404)
+    _sel().log_api_access(
+        caller=request.headers.get("X-Session-Key", ""),
+        operation="approval_rule.delete",
+        outcome="success",
+        source="dashboard",
+        resources=key,
+    )
+    return web.json_response({"ok": True})
+
+
 async def api_memory_events(request: web.Request) -> web.Response:
     """GET /api/memory/events — paginated audit trail."""
     svc = _get_service(request.app["state"])

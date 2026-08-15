@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import { useFocusReturn } from './useFocusReturn'
+import { useResizablePanel } from './useResizablePanel'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { X, Maximize2, Minimize2 } from 'lucide-react'
@@ -57,18 +58,30 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   children: ReactNode
 }) {
   const reduce = useReducedMotion()
+  // The docked inspector is a named landmark region: `role="region"` + `aria-labelledby` pointing at
+  // its title. Measured before this (on `#/tasks`, panel open): the panel root had role/aria-label/
+  // aria-labelledby all null, its title was a bare <span> (0 headings, 0 landmarks) — so a screen
+  // reader entering the panel got a stream of controls with no region to navigate to and no name for
+  // what it was. `aria-labelledby` (not `aria-label`) because `title` may be a ReactNode; the name is
+  // computed from the rendered title. Zero visual change — this only adds attributes + an id.
+  const titleId = useId()
   // When URL-bound, closing the panel (X / Escape / parent) also clears its query
   // key so the URL + the open state can't diverge. One close path, both effects.
   const close = useCallback(() => {
     if (urlKey) urlKey.setQuery({ [urlKey.key]: null })
     onClose()
   }, [urlKey, onClose])
-  const [width, setWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem(storeKey))
-    return v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
-  })
+  // Width + the drag/keyboard handlers come from the shared window-splitter primitive
+  // (`ui/useResizablePanel`) so this dock resizes the same way the Code cockpit's panels
+  // do — and, unlike the hand-rolled version this replaced, it is keyboard-operable and
+  // uses pointer capture. The stored key is preserved EXACTLY: every `storeKey` in the app
+  // ends in `-w`, and the hook persists at `${key}-w`, so stripping that suffix round-trips
+  // to the same localStorage entry — no saved width is reset. Collapse is opt-out here (a
+  // dock is opened/closed by its parent and separately EXPANDED to full-screen; it is never
+  // "collapsed"), so the primitive writes no `-collapsed` key for it.
+  const { width, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+    storeKey.replace(/-w$/, ''), { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
-  useEffect(() => { localStorage.setItem(storeKey, String(width)) }, [width, storeKey])
   // Track the viewport so the clamp follows a resize / rotation instead of only
   // applying at mount — a phone rotated to portrait must re-clamp, and a desktop
   // window dragged narrow must too.
@@ -102,17 +115,14 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   // Measured before: focusing Close and pressing Escape left `document.activeElement === body`.
   const focusReturnRef = useFocusReturn<HTMLDivElement>()
 
-  const onHandleDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault()
-    const startX = e.clientX, startW = width
-    const move = (ev: PointerEvent) => setWidth(Math.max(MIN_W, Math.min(MAX_W, startW + (startX - ev.clientX))))
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
-  }, [width])
-
   const header = (
     <div className="shrink-0 bg-surface/95 px-l py-m flex items-center justify-between border-b border-outline-variant/40">
-      <div className="flex items-center gap-s min-w-0">{icon}<span data-type="title-l" className="text-on-surface truncate">{title}</span></div>
+      {/* The title is an <h2>, not a span: inside the panel's `role="region"` (named by this element
+          via aria-labelledby) it gives the region a heading, so a screen reader can jump to it with
+          heading navigation — measured before this, the panel had 0 headings. Preflight resets h2 to
+          margin:0 / font-weight:inherit, and `data-type="title-l"` sets size/line-height/wght, so the
+          rendering is byte-for-byte the span's (verified: 20px/24px, wght 470, margins 0, unchanged). */}
+      <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate">{title}</h2></div>
       <div className="flex items-center gap-1 shrink-0">
         <IconButton icon={expanded ? Minimize2 : Maximize2}
           label={expanded ? 'Collapse to panel' : (onExpand ? 'Open full page' : 'Expand to full width')}
@@ -136,7 +146,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // wipe. Wipe speed/overshoot scale with expressiveness; reduced-motion → no clip.
     const furled = `inset(0px 0px 0px calc(100dvw - ${dockW}px))`
     return createPortal(
-      <motion.div className="fixed inset-0 z-50 flex flex-col bg-surface"
+      <motion.div role="region" aria-labelledby={titleId} className="fixed inset-0 z-50 flex flex-col bg-surface"
         initial={reduce ? { opacity: 0 } : { clipPath: furled }}
         animate={reduce ? { opacity: 1 } : { clipPath: 'inset(0px 0px 0px 0px)' }}
         exit={reduce ? { opacity: 0 } : { clipPath: furled }}
@@ -165,15 +175,20 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // INNER (left) corners — the edge facing the content — to read as a floating
     // panel rather than a full-bleed column. Radius via a token (--radius-xl); the
     // outer (right) edge stays flush to the browser edge (square).
-    <motion.div ref={focusReturnRef} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
+    <motion.div ref={focusReturnRef} role="region" aria-labelledby={titleId} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
       style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
       initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
       {/* left-edge resize handle — the visible seam springs thicker + brighter on
           hover (scaled by expr) so it telegraphs "drag to resize" with a little
-          life instead of a bare 1px color swap. */}
-      <div onPointerDown={onHandleDown} className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 group">
+          life instead of a bare 1px color swap. It is the WAI-ARIA window-splitter:
+          focusable, arrow-key operable, and it reports its width — the handle sits on
+          the dock's inner (left) edge, so dragging/ArrowLeft grows it (side: 'right'). */}
+      <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
+        tabIndex={0} aria-label="Resize panel — arrow keys to resize"
+        aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group">
         <motion.span
-          className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary transition-colors"
+          className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors"
           initial={false}
           animate={{ width: 1 }}
           whileHover={{ width: 1 + expr(2.5, 0.3) }}

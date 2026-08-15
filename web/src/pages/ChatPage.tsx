@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
+
+/** Hands-free voice knobs the composer needs (`voice.*`). */
+interface VoiceLoopConfig {
+  confirmation_phrases: string[]
+  exit_phrases: string[]
+  duplex_mute_enabled: boolean
+}
+// Mirrors DEFAULT_CONFIRMATION_PHRASES / DEFAULT_EXIT_PHRASES in
+// src/personalclaw/voice/duplex.py — only used when the config read fails.
+const DEFAULT_CONFIRMATION_PHRASES = ['do it', 'go ahead', 'send it', 'execute']
+const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
@@ -56,6 +67,7 @@ import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from './chat/FindBar'
 import { FollowupChips } from './chat/FollowupChips'
+import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useCachedData, invalidateCache } from '../lib/useCachedData'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
@@ -547,6 +559,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // never block/shift the composer; reset per session.
   const [followups, setFollowups] = useState<string[]>([])
   useEffect(() => { setFollowups([]) }, [sessionId])
+  // "Check this work" offer: pushed over chat_check_work_offer when
+  // the completed turn did 3+ tool calls AND claimed completion. An OFFER only — clicking
+  // sends the prompt, so verification is never spent without the user asking for it.
+  const [checkWorkOffer, setCheckWorkOffer] = useState<{ label: string; prompt: string } | null>(null)
+  useEffect(() => { setCheckWorkOffer(null) }, [sessionId])
   // Agent routing suggestion: a non-blocking chip proposing a
   // better-fit specialist for this default-agent chat. Cleared on send / agent
   // switch / session change; arrives via the routing_suggestion WS push.
@@ -1050,6 +1067,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         setFollowups(items)
         break
       }
+      // "Check this work" offer for the just-completed turn.
+      case 'chat_check_work_offer': {
+        if (d.session !== sessionRef.current) break
+        const prompt = String(d.prompt ?? 'check your work')
+        setCheckWorkOffer({ label: String(d.label ?? 'Check this work'), prompt })
+        break
+      }
       // Agent routing suggestion: a specialist fits this message
       // better — surface the routing chip above the composer (non-blocking proposal).
       case 'routing_suggestion': {
@@ -1399,12 +1423,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  async function send(text = input, opts?: { original?: string }) {
+  async function send(text = input, opts?: { original?: string; inputOrigin?: string }) {
     const t = text.trim()
     if (!t) return
     // Sending dismisses any follow-up chips from the prior turn and
     // clears a pending routing suggestion — the moment passed.
     if (followups.length) setFollowups([])
+    if (checkWorkOffer) setCheckWorkOffer(null)
     if (routingSuggestion) setRoutingSuggestion(null)
     // Use the synchronous streamingRef (not the `streaming` state) for the queue-vs-
     // fresh-turn decision: two sends in one tick both see the stale state, but the
@@ -1500,7 +1525,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the post-create remount paints it immediately (no skeleton over the user's
       // own words) — mirrors the persisted history shape hydrateTurns expects.
       const seed: HistMsg[] = [{ role: 'user', content: llmText, ts: clientTs, meta: meta as HistMsg['meta'] }]
-      await api.sendChat(llmText, await ensureSession(seed), meta)
+      await api.sendChat(llmText, await ensureSession(seed), meta, undefined, opts?.inputOrigin)
     }
     catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
   }
@@ -1551,8 +1576,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       setTurns([...rehydrated, assistantTurn(r.notice)])
     } catch { /* leave the transcript as-is on failure */ }
   }
-  async function transcribe(blob: Blob): Promise<string> {
-    const r = await api.transcribeAudio(blob)
+  async function transcribe(blob: Blob, opts?: { duplex?: boolean }): Promise<string> {
+    const r = await api.transcribeAudio(blob, { duplex: opts?.duplex, session: sessionRef.current || '' })
     // Surface failures: otherwise a denied/unconfigured STT just drops the
     // recording silently after the spinner — the user has no idea why no text
     // appeared. The notice auto-clears so it doesn't linger.
@@ -1562,6 +1587,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         : `Couldn’t transcribe audio: ${r.error}`
       setMicError(msg)
       window.setTimeout(() => setMicError(null), 6000)
+      return ''
+    }
+    // The echo filter dropped this capture. Say so — silence
+    // here is indistinguishable from a deaf microphone.
+    if (r.filtered === 'echo') {
+      setMicError('Ignored the assistant’s own voice coming back through the microphone.')
+      window.setTimeout(() => setMicError(null), 4000)
       return ''
     }
     setMicError(null)
@@ -1712,6 +1744,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Which assistant turn is currently being spoken (drives the play/stop button).
   // Set when Speak is clicked, cleared when the last scheduled chunk finishes or
   // the user stops. Generation counter ignores stale chunks after a stop/restart.
+  // Hands-free voice knobs. Cached + persisted like the other
+  // config reads: a failed read falls back to the shipped phrase defaults so the
+  // toggle still works rather than becoming deaf to every confirmation.
+  const { data: voiceCfgRaw } = useCachedData('chat:voice-config', () => api.personalclawConfig().then((c) => c.voice as VoiceLoopConfig), { persist: true })
+  const voiceCfg: VoiceLoopConfig = {
+    confirmation_phrases: voiceCfgRaw?.confirmation_phrases?.length ? voiceCfgRaw.confirmation_phrases : DEFAULT_CONFIRMATION_PHRASES,
+    exit_phrases: voiceCfgRaw?.exit_phrases?.length ? voiceCfgRaw.exit_phrases : DEFAULT_EXIT_PHRASES,
+    duplex_mute_enabled: voiceCfgRaw?.duplex_mute_enabled ?? true,
+  }
   const [speakingTurn, setSpeakingTurn] = useState<number | null>(null)
   const speakGenRef = useRef(0)
 
@@ -2227,7 +2268,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
-          onTranscribe={transcribe} onMicError={(m) => { setMicError(m); window.setTimeout(() => setMicError(null), 6000) }} canQueue contextPct={contextPct} />
+          onTranscribe={transcribe} onMicError={(m) => { setMicError(m); window.setTimeout(() => setMicError(null), 6000) }} canQueue contextPct={contextPct}
+          handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
+          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })} />
       </div>
       {/* CREATE-TIME session setup — project binding + memory mode. Both are frozen
           once the chat starts, so they are NOT composer controls (the composer's
@@ -2443,6 +2486,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                             once the reply has settled — click fills, send-glyph sends. */}
                         {turn.role === 'assistant' && isLast && !streaming && followups.length > 0 && (
                           <FollowupChips items={followups} onPick={(t) => { setInput(t); setFollowups([]) }} onSend={(t) => { setFollowups([]); void send(t) }} />
+                        )}
+                        {/* "Check this work" offer — user-clicked only. */}
+                        {turn.role === 'assistant' && isLast && !streaming && checkWorkOffer && (
+                          <CheckWorkChip label={checkWorkOffer.label}
+                            onRun={() => { const p = checkWorkOffer.prompt; setCheckWorkOffer(null); void send(p) }} />
                         )}
                       </div>
                     )

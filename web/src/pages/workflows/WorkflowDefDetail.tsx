@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Play } from 'lucide-react'
+import { ArrowLeft, Play, Sparkles, RotateCcw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
+import { HeaderActions } from '../../ui/HeaderActions'
+import { Segmented } from '../../ui/Segmented'
 import { Field, TextInput } from '../../ui/forms'
 import { PageTitle } from '../../ui/PageTitle'
-import { api, type WorkflowDef, type WorkflowNode } from '../../lib/api'
+import {
+  api,
+  type WorkflowDef,
+  type WorkflowNode,
+  type WorkflowVersionRow,
+  type WorkflowVersionOp,
+  type WorkflowMaturity,
+  type WorkflowLedgerRow,
+} from '../../lib/api'
 import { notify } from '../../app/appSdk'
 
 interface FlatNode { depth: number; kind: string; id: string; label: string; summary: string }
@@ -41,7 +51,26 @@ function flatten(node: WorkflowNode, depth = 0, label = ''): FlatNode[] {
   return out
 }
 
-/** One workflow definition — its tree, its declared inputs, and a way to run it.
+/** The maturity badge (R11). Level and label come from the backend; the tone rises with it so a
+ *  glance says "proven" vs "draft" — a check that has never rejected a bad run is not yet proven,
+ *  and the badge is honest about that. */
+function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {
+  const strong = maturity.level >= 2
+  const tone = strong ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-pill px-2 py-0.5 text-[0.75rem]"
+      style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}
+      title={`Maturity L${maturity.level}: ${maturity.clean_runs} clean run(s)`
+        + (maturity.evaluator_rejected ? ', gate has rejected a bad run' : ', gate not yet proven')}
+    >
+      {maturity.label} · L{maturity.level}
+    </span>
+  )
+}
+
+/** One workflow definition — its tree, its declared inputs, its version history and run ledger,
+ *  and a way to run or refine it.
  *
  *  Read-mostly by design: authoring a spec by hand is what `workflow_author` and the chat
  *  planner are for, and a half-built visual editor here would be worse than either. What
@@ -56,6 +85,31 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   const [loading, setLoading] = useState(true)
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [starting, setStarting] = useState(false)
+  const [tab, setTab] = useState<'steps' | 'versions' | 'ledger'>('steps')
+  const [versions, setVersions] = useState<WorkflowVersionRow[]>([])
+  const [pinned, setPinned] = useState<number | null>(null)
+  const [maturity, setMaturity] = useState<WorkflowMaturity | null>(null)
+  const [diffOps, setDiffOps] = useState<WorkflowVersionOp[] | null>(null)
+  const [ledger, setLedger] = useState<WorkflowLedgerRow[] | null>(null)
+  const [refining, setRefining] = useState(false)
+
+  const loadVersions = useCallback(() => {
+    api.workflowVersions(name)
+      .then((v) => {
+        setVersions(v.versions)
+        setPinned(v.pinned)
+        setMaturity(v.maturity)
+        // A typed-op diff of the two most recent versions — the shape the refiner proposes and
+        // the user rolls back. Only meaningful once a second version exists.
+        if (v.versions.length >= 2) {
+          const [a, b] = [v.versions[v.versions.length - 2].version, v.versions[v.versions.length - 1].version]
+          api.workflowVersionDiff(name, a, b).then((d) => setDiffOps(d.ops)).catch(() => setDiffOps(null))
+        } else {
+          setDiffOps(null)
+        }
+      })
+      .catch(() => { setVersions([]); setPinned(null); setMaturity(null) })
+  }, [name])
 
   useEffect(() => {
     let alive = true
@@ -64,15 +118,19 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       .then((d) => { if (alive) setDef(d.definition) })
       .catch(() => { if (alive) setDef(null) })
       .finally(() => { if (alive) setLoading(false) })
+    loadVersions()
     return () => { alive = false }
-  }, [name])
+  }, [name, loadVersions])
+
+  // The Run Ledger tab is a per-run history read; load it lazily the first time it is opened.
+  useEffect(() => {
+    if (tab === 'ledger' && ledger === null) {
+      api.workflowLedger(name).then((l) => setLedger(l.runs)).catch(() => setLedger([]))
+    }
+  }, [tab, ledger, name])
 
   const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
   const declared = useMemo(() => Object.entries(def?.inputs ?? {}), [def])
-  // Mirror `handoffs_from_def`'s filter: an entry with no `target_def` is dropped there because
-  // "an edge pointing nowhere would render as a suggestion the user cannot accept, and a dead
-  // affordance teaches them to ignore the live ones". Applying it here too keeps this view and the
-  // engine's edge set in agreement instead of showing a row the backend refuses to build.
   const handoffs = useMemo(
     () => (def?.metadata?.hands_off_to ?? []).filter((h) => (h?.target_def ?? '').trim()),
     [def],
@@ -81,9 +139,6 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   const start = useCallback(async () => {
     setStarting(true)
     try {
-      // Declared inputs are typed on the backend; the form collects strings and only sends
-      // the ones actually filled, so an untouched optional input keeps its default rather
-      // than being overridden with "".
       const payload: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(inputs)) if (value !== '') payload[key] = value
       const res = await api.startWorkflowRun({ name, inputs: payload })
@@ -95,21 +150,50 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
     }
   }, [inputs, name, onStarted])
 
+  // "Refine now": fire the propose-only refiner over this template. It launches a run that
+  // proposes a diff for review — it never edits the template — so we navigate to that run.
+  const refine = useCallback(async () => {
+    if (refining) return
+    setRefining(true)
+    try {
+      const res = await api.refineWorkflow(name)
+      if (res.run_id) onStarted(res.run_id)
+      else notify('Refiner started')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not start the refiner')
+    } finally {
+      setRefining(false)
+    }
+  }, [name, onStarted, refining])
+
+  const rollback = useCallback(async (version: number) => {
+    try {
+      await api.repinWorkflowVersion(name, version)
+      loadVersions()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Could not roll back')
+    }
+  }, [name, loadVersions])
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
         keepCornerPadding
         left={<div className="flex min-w-0 items-center gap-m">
           <QuietButton onClick={onBack} title="Back to workflows"><ArrowLeft size={13} /> Workflows</QuietButton>
-          {/* Same route family as the run detail: `#/workflows/defs/<name>` is the definition's own
-              destination. Unmeasured only because this dev home has no saved definition to open. */}
           <PageTitle className="truncate">{name}</PageTitle>
           {def?.source === 'bundled' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">bundled</span>}
+          {maturity && <MaturityBadge maturity={maturity} />}
         </div>}
         right={def ? (
-          <Button onClick={start} loading={starting} disabled={starting}>
-            <Play size={14} /> Run
-          </Button>
+          <HeaderActions>
+            <QuietButton onClick={refine} title="Propose an improvement to this template from its run history">
+              <Sparkles size={13} /> {refining ? 'Refining…' : 'Refine now'}
+            </QuietButton>
+            <Button onClick={start} loading={starting} disabled={starting}>
+              <Play size={14} /> Run
+            </Button>
+          </HeaderActions>
         ) : undefined}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
@@ -119,91 +203,157 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
             {def.description && <p className="text-on-surface text-[0.8125rem]">{def.description}</p>}
 
-            {declared.length > 0 && (
-              <div className="flex flex-col gap-s">
-                <span data-type="title-m" className="text-on-surface">Inputs</span>
-                {declared.map(([key, meta]) => (
-                  <Field
-                    key={key}
-                    label={`${key}${meta.required ? ' *' : ''}`}
-                    hint={meta.help || (meta.default !== undefined && meta.default !== null ? `Default: ${String(meta.default)}` : undefined)}
-                  >
-                    <TextInput
-                      value={inputs[key] ?? ''}
-                      onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
-                      placeholder={meta.default !== undefined && meta.default !== null ? String(meta.default) : ''}
-                      ariaLabel={key}
-                    />
-                  </Field>
-                ))}
-              </div>
-            )}
+            <Segmented
+              ariaLabel="Definition view"
+              value={tab}
+              onChange={(k) => setTab(k as 'steps' | 'versions' | 'ledger')}
+              options={[
+                { key: 'steps', label: 'Steps' },
+                { key: 'versions', label: 'Versions' },
+                { key: 'ledger', label: 'Run Ledger' },
+              ]}
+            />
 
-            <div className="flex flex-col gap-2xs">
-              <span data-type="title-m" className="text-on-surface">Steps</span>
-              {rows.map((r, i) => (
-                <div
-                  key={`${r.depth}-${r.id || r.kind}-${i}`}
-                  className="flex items-baseline gap-m py-2xs"
-                  style={{ paddingLeft: `calc(${r.depth} * 1rem)` }}
-                >
-                  <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{r.kind}</span>
-                  <div className="min-w-0 flex-1">
-                    {r.id && <span className="text-on-surface text-[0.8125rem]">{r.id}</span>}
-                    {r.label && <span className="ml-s text-on-surface-low text-[0.75rem]">{r.label}</span>}
-                    {r.summary && <div className="truncate text-on-surface-low text-[0.75rem]">{r.summary}</div>}
+            {tab === 'steps' && (
+              <>
+                {declared.length > 0 && (
+                  <div className="flex flex-col gap-s">
+                    <span data-type="title-m" className="text-on-surface">Inputs</span>
+                    {declared.map(([key, meta]) => (
+                      <Field
+                        key={key}
+                        label={`${key}${meta.required ? ' *' : ''}`}
+                        hint={meta.help || (meta.default !== undefined && meta.default !== null ? `Default: ${String(meta.default)}` : undefined)}
+                      >
+                        <TextInput
+                          value={inputs[key] ?? ''}
+                          onChange={(v) => setInputs((p) => ({ ...p, [key]: v }))}
+                          placeholder={meta.default !== undefined && meta.default !== null ? String(meta.default) : ''}
+                          ariaLabel={key}
+                        />
+                      </Field>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
+                )}
 
-            {/* Where this workflow leads next. `hands_off_to` exists so a transition is a graph
-                EDGE instead of something the user has to remember — the backend's own words: "what
-                a user remembers is not a procedure". It was parsed on the def load path, built into
-                `HandOff` edges, and shipped on both the def and surfacing payloads, but no surface
-                ever read it, so the edge was declared and invisible.
-
-                On the def page rather than the list row: an outgoing edge is a property OF the
-                definition, and a list row already carries freshness + mode + packs. */}
-            {handoffs.length > 0 && (
-              <div className="flex flex-col gap-2xs">
-                <span data-type="title-m" className="text-on-surface">Hands off to</span>
-                {handoffs.map((h) => (
-                  <div key={h.target_def} className="flex items-baseline gap-m py-2xs">
-                    <span className="shrink-0 text-on-surface text-[0.8125rem]">{h.target_def}</span>
-                    <div className="min-w-0 flex-1">
-                      {/* The condition is WHEN to take the edge. Without it a handoff reads as
-                          "always next", which is the improvisation the field exists to replace. */}
-                      {h.condition && <span className="text-on-surface-low text-[0.75rem]">{h.condition}</span>}
-                      {/* What carries over. A user deciding whether to accept a handoff needs to
-                          know what the next workflow starts with. */}
-                      {!!h.context_fields?.length && (
-                        <div className="text-on-surface-low text-[0.75rem]">
-                          carries {h.context_fields.join(', ')}
-                        </div>
-                      )}
+                <div className="flex flex-col gap-2xs">
+                  <span data-type="title-m" className="text-on-surface">Steps</span>
+                  {rows.map((r, i) => (
+                    <div
+                      key={`${r.depth}-${r.id || r.kind}-${i}`}
+                      className="flex items-baseline gap-m py-2xs"
+                      style={{ paddingLeft: `calc(${r.depth} * 1rem)` }}
+                    >
+                      <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{r.kind}</span>
+                      <div className="min-w-0 flex-1">
+                        {r.id && <span className="text-on-surface text-[0.8125rem]">{r.id}</span>}
+                        {r.label && <span className="ml-s text-on-surface-low text-[0.75rem]">{r.label}</span>}
+                        {r.summary && <div className="truncate text-on-surface-low text-[0.75rem]">{r.summary}</div>}
+                      </div>
                     </div>
-                    {/* An edge the system must never take on its own. Marked, not hidden: the
-                        difference between "this can happen automatically" and "only if you ask"
-                        is the whole autonomy question for a chained workflow. */}
-                    {h.requires_user_request && (
-                      <span className="shrink-0 text-on-surface-low text-[0.75rem]">only on request</span>
-                    )}
+                  ))}
+                </div>
+
+                {handoffs.length > 0 && (
+                  <div className="flex flex-col gap-2xs">
+                    <span data-type="title-m" className="text-on-surface">Hands off to</span>
+                    {handoffs.map((h) => (
+                      <div key={h.target_def} className="flex items-baseline gap-m py-2xs">
+                        <span className="shrink-0 text-on-surface text-[0.8125rem]">{h.target_def}</span>
+                        <div className="min-w-0 flex-1">
+                          {h.condition && <span className="text-on-surface-low text-[0.75rem]">{h.condition}</span>}
+                          {!!h.context_fields?.length && (
+                            <div className="text-on-surface-low text-[0.75rem]">
+                              carries {h.context_fields.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                        {h.requires_user_request && (
+                          <span className="shrink-0 text-on-surface-low text-[0.75rem]">only on request</span>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+
+                {def.metadata?.requirements && Object.keys(def.metadata.requirements).length > 0 && (
+                  <div className="flex flex-col gap-2xs">
+                    <span data-type="title-m" className="text-on-surface">Requires</span>
+                    {Object.entries(def.metadata.requirements).map(([group, items]) => (
+                      <span key={group} className="text-on-surface-low text-[0.75rem]">
+                        {group}: {items.join(', ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === 'versions' && (
+              <div className="flex flex-col gap-l">
+                <div className="flex flex-col gap-2xs">
+                  <span data-type="title-m" className="text-on-surface">Versions</span>
+                  {versions.length === 0 ? (
+                    <p className="text-on-surface-low text-[0.75rem]">No version history yet.</p>
+                  ) : (
+                    [...versions].reverse().map((v) => (
+                      <div key={v.version} className="flex items-baseline gap-m py-2xs">
+                        <span className="shrink-0 font-mono text-on-surface text-[0.8125rem]">v{v.version}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-on-surface-low text-[0.75rem]">{v.source}</span>
+                          {v.created_at && <span className="ml-s text-on-surface-low text-[0.75rem]">{v.created_at}</span>}
+                        </div>
+                        {v.version === pinned ? (
+                          <span className="shrink-0 text-on-surface-low text-[0.75rem]">pinned</span>
+                        ) : (
+                          <QuietButton onClick={() => rollback(v.version)} title={`Roll back to v${v.version}`}>
+                            <RotateCcw size={12} /> Roll back
+                          </QuietButton>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {diffOps && diffOps.length > 0 && (
+                  <div className="flex flex-col gap-2xs">
+                    <span data-type="title-m" className="text-on-surface">Latest change</span>
+                    {diffOps.map((op, i) => (
+                      <div key={`${op.op}-${op.node_id ?? ''}-${i}`} className="flex items-baseline gap-m py-2xs">
+                        <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{op.op}</span>
+                        <div className="min-w-0 flex-1 text-on-surface text-[0.8125rem]">
+                          {op.node_id}
+                          {op.fields?.length ? <span className="text-on-surface-low"> — {op.fields.join(', ')}</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Requirements are what preflight will check at start — showing them here means
-                a user learns about a missing credential before they press Run, not after. */}
-            {def.metadata?.requirements && Object.keys(def.metadata.requirements).length > 0 && (
+            {tab === 'ledger' && (
               <div className="flex flex-col gap-2xs">
-                <span data-type="title-m" className="text-on-surface">Requires</span>
-                {Object.entries(def.metadata.requirements).map(([group, items]) => (
-                  <span key={group} className="text-on-surface-low text-[0.75rem]">
-                    {group}: {items.join(', ')}
-                  </span>
-                ))}
+                <span data-type="title-m" className="text-on-surface">Run Ledger</span>
+                {ledger === null ? (
+                  <Loading what="the run ledger" />
+                ) : ledger.length === 0 ? (
+                  <p className="text-on-surface-low text-[0.75rem]">This template has no recorded runs yet.</p>
+                ) : (
+                  ledger.map((run) => (
+                    <div key={run.run_id} className="flex items-baseline gap-m py-2xs">
+                      <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{run.run_id}</span>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-on-surface text-[0.8125rem]">{run.status}</span>
+                        <span className="ml-s text-on-surface-low text-[0.75rem]">v{run.spec_version}</span>
+                      </div>
+                      <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+                        {run.totals?.steps_completed ?? 0} done
+                        {run.totals?.steps_failed ? `, ${run.totals.steps_failed} failed` : ''}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
             )}
           </div>

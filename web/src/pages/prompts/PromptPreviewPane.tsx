@@ -116,7 +116,7 @@ function SampleField({ v, value, onChange }: { v: PromptVariable; value: unknown
   if (v.type === 'select') {
     return (
       <div className="flex flex-col gap-1">{label}
-        <select value={sval} onChange={(e) => onChange(e.target.value)} aria-label={v.name} className={`${base} h-8 [color-scheme:dark]`}>
+        <select value={sval} onChange={(e) => onChange(e.target.value)} aria-label={v.name} className={`${base} h-8`}>
           <option value="">—</option>
           {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>

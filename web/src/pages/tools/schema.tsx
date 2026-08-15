@@ -93,7 +93,7 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
     control = <div role="group" aria-labelledby={`${id}-label`}>{customWidget({ value, onChange, schema, placeholder: meta.help })}</div>
   } else if (schema.enum?.length) {
     control = (
-      <select id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base} [color-scheme:dark]`}>
+      <select id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
         <option value="">—</option>
         {schema.enum.map((o) => <option key={String(o)} value={String(o)}>{String(o)}</option>)}
       </select>

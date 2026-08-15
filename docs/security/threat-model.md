@@ -129,7 +129,7 @@ Data leaving the running system:
 
 - **Tamper-evident audit** (`sel.py::SecurityEventLog`): HMAC-chained,
   append-only events (caller, operation, outcome).
-- **Redacted archive reads** (`history.py`: `redact_credentials`,
+- **Redacted archive reads** (`security.py`: `redact_credentials`,
   `redact_exfiltration_urls`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.

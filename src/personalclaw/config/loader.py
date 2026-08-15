@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw.voice.duplex import DEFAULT_CONFIRMATION_PHRASES, DEFAULT_EXIT_PHRASES
+
 try:
     import jsonschema
 
@@ -127,6 +129,18 @@ def _safe_int(value: object, default: int) -> int:
     """Convert *value* to int, returning *default* on failure."""
     try:
         return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float) -> float:
+    """Convert *value* to float, returning *default* on failure (the ``_safe_int`` sibling).
+
+    A malformed number in config.json must degrade to the shipped default, not raise — a config
+    typo should never make the whole file unloadable.
+    """
+    try:
+        return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
 
@@ -328,6 +342,14 @@ def _slug_username(value: object) -> str:
 # stays ENABLED. Mirrors ``guardrails.flags.guard_flag`` but is defined locally to
 # keep the config loader free of a guardrails import (avoids an import cycle).
 _GUARD_FALSE = frozenset({"0", "false", "no", "off", "disable", "disabled", "n", "f"})
+
+
+def _voice_phrases(value: object) -> list[str]:
+    """Normalize a voice phrase list: strings only, trimmed, blanks dropped."""
+
+    if not isinstance(value, list):
+        return []
+    return [p.strip() for p in value if isinstance(p, str) and p.strip()]
 
 
 def _guard_flag(value: object) -> bool:
@@ -625,6 +647,37 @@ class AmbientConfig:
 
 
 @dataclass
+class CompanionConfig:
+    """Companion-app settings (COMPANION-APPS — native clients over the gateway).
+
+    The gateway can advertise itself on the local network so a companion client
+    (phone/desktop) can find and pair with it without a typed URL. ``discovery_enabled``
+    gates that advertisement — OFF by default, because announcing a service on the LAN is
+    a posture choice the user must opt into, not a silent behavior. ``instance_name`` is
+    the friendly label a client shows for this gateway; empty means the advertiser (CA-5)
+    falls back to the machine hostname.
+    """
+
+    discovery_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "LAN discovery",
+            "Advertise this gateway on the local network so companion apps can find it "
+            "without a typed URL. Off by default — announcing a service on your LAN is an "
+            "opt-in.",
+        ),
+    )
+    instance_name: str = field(
+        default="",
+        metadata=_meta(
+            "Instance name",
+            "Friendly name companion apps show for this gateway. Empty falls back to the "
+            "machine hostname.",
+        ),
+    )
+
+
+@dataclass
 class SourcesConfig:
     """Watched-source engine settings (WATCHED-SOURCES §Plug-in Map, SC#12).
 
@@ -879,6 +932,17 @@ class LoopsConfig:
             "trigger-happy; higher spends more cycles before asking for "
             "direction. Minimum 2 — a window of 1 can only compare a cycle "
             "with itself.",
+        ),
+    )
+    check_work_stages: bool = field(
+        default=False,
+        metadata=_meta(
+            "Check Work After Stage Gates",
+            "After an SDLC stage's gate passes, re-derive 2-4 executable checks from "
+            "what the stage CLAIMED and run them (the `check-work` skill's module). "
+            "Catches the 'gate command passed but the claim was broader than the "
+            "command' case — e.g. a deliverable file the stage said it wrote but "
+            "didn't. Off by default: it adds a filesystem pass per stage advance.",
         ),
     )
 
@@ -1177,6 +1241,16 @@ class DashboardConfig:
             "After each reply, show 2-3 suggested next messages (one small background model "
             "call; never blocks the turn). Skipped for temporary/incognito chats; silent when "
             "no model is bound.",
+        ),
+    )
+    offer_check_work: bool = field(
+        default=True,
+        metadata=_meta(
+            "Offer 'Check this work'",
+            "After a turn that claims a multi-step task is complete (3+ tool calls plus "
+            "completion language), offer a 'Check this work' chip beside the follow-up "
+            "suggestions. The chip only OFFERS — check-work runs when you click it, "
+            "never automatically, so the cost and latency stay yours to spend.",
         ),
     )
     stream_reveal: str = field(
@@ -1887,6 +1961,104 @@ class GuardrailsConfig:
             # this default, so it must be SAFE. Enforced by test_guardrails_flags.py.
             guard_class=True,
             safe_values=["redact", "block"],
+        ),
+    )
+
+
+@dataclass
+class RoutingWeightsConfig:
+    """Score weights for the learned routing stage (MODEL-ROUTING-TELEMETRY §4.2)."""
+
+    success: float = field(
+        default=0.60,
+        metadata=_meta(
+            "Success Weight",
+            "How much a model's observed success rate counts toward its routing score.",
+        ),
+    )
+    feedback: float = field(
+        default=0.40,
+        metadata=_meta(
+            "Feedback Weight",
+            "How much observed output quality (ledger/judge feedback) counts toward a "
+            "model's routing score. With no feedback recorded yet, this weight collapses "
+            "onto the success rate rather than penalizing an unrated model.",
+        ),
+    )
+
+
+@dataclass
+class RoutingConfig:
+    """Telemetry-driven model routing (MODEL-ROUTING-TELEMETRY §7).
+
+    Routing REORDERS the models a user already bound to a use case; it never invents
+    a model or changes what resolution means. ``enabled`` is the master switch and is
+    OFF by default: with it off, resolution walks the bound order exactly as it always
+    did. Per-use-case mode and pin deliberately live NOT here but in
+    ``use_case_settings/{uc}.json`` + ``routing_policy.json`` — they are
+    bindings-adjacent state, beside the use case's other behavior settings.
+    """
+
+    enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Enable Routing",
+            "Master switch. When off, every use case resolves in the exact order you "
+            "bound its models. Turn it on to let PersonalClaw prefer a local model for "
+            "work it handles well and fall back to a cloud model when it can't.",
+        ),
+    )
+    local_timeout_secs: float = field(
+        default=20.0,
+        metadata=_meta(
+            "Local Attempt Timeout (seconds)",
+            "How long a local model gets before the call falls back to the next model "
+            "you bound. Keeps a slow local model from stalling background work.",
+        ),
+    )
+    min_samples: int = field(
+        default=5,
+        metadata=_meta(
+            "Minimum Samples",
+            "How many recorded calls a model needs for a kind of request before its "
+            "measured score is allowed to influence order. Below this, the simple "
+            "local-first rule stands.",
+        ),
+    )
+    weights: RoutingWeightsConfig = field(
+        default_factory=RoutingWeightsConfig,
+        metadata=_meta("Score Weights", "How success and quality combine into one score."),
+    )
+    hysteresis: float = field(
+        default=0.05,
+        metadata=_meta(
+            "Hysteresis Margin",
+            "How much better a model's score must be before the order actually changes. "
+            "Prevents routing flip-flopping between two near-equal models.",
+        ),
+    )
+    cloud_quality_margin: float = field(
+        default=0.10,
+        metadata=_meta(
+            "Cloud Quality Margin",
+            "How much better a cloud model must score than a local one to be tried "
+            "first. Free and private wins ties.",
+        ),
+    )
+    energy_sampling: bool = field(
+        default=False,
+        metadata=_meta(
+            "Energy Sampling",
+            "Record a rough energy estimate for local calls, so local cost is visible "
+            "as something other than $0.",
+        ),
+    )
+    reproposal_cooldown_days: int = field(
+        default=14,
+        metadata=_meta(
+            "Re-proposal Cooldown (days)",
+            "After you reject a routing suggestion, how long before the same change "
+            "may be suggested again.",
         ),
     )
 
@@ -2824,6 +2996,83 @@ class EvalsConfig:
 
 
 @dataclass
+class ProactiveConfig:
+    """Proactive triage + the decision journal (PROACTIVE-ASSISTANT §"Config Map").
+
+    Two switches are OFF by default and stay that way: ``triage_enabled`` (nothing
+    collects or spends until you ask for a digest) and ``auto_execute_enabled``
+    (the digest proposes; it does not act). That pairing is the plan's soul
+    guardrail — proactive behaviors propose, they never silently write — so the
+    defaults are fail-closed on purpose. Do not "helpfully" flip them.
+    """
+
+    triage_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Proactive triage",
+            "Let the scheduled triage digest run — collect what accumulated across "
+            "inbox, channels and background runs, then propose what to do about it. "
+            "Off by default: nothing is collected and no model is called until you "
+            "turn this on and install a schedule.",
+        ),
+    )
+    digest_schedule: str = field(
+        default="0 8 * * *",
+        metadata=_meta(
+            "Digest schedule",
+            "When the triage digest fires, as a cron expression in your configured "
+            "timezone. 08:00 daily by default — a morning digest. Quiet hours still "
+            "apply: an info-ranked digest defers rather than waking you.",
+        ),
+    )
+    auto_execute_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Auto-execute trivial actions",
+            "Let trivial-tier proposals and patterns you explicitly taught with "
+            "'always yes' execute without another confirmation. Off by default. Even "
+            "on, external sends stay drafts until that rule is individually "
+            "graduated, and every auto-execution is a ledger row with one-click undo.",
+        ),
+    )
+    max_auto_actions_per_run: int = field(
+        default=5,
+        metadata=_meta(
+            "Max auto-actions per digest",
+            "Hard cap on how many actions one digest may auto-execute; the rest queue "
+            "as pending regardless of tier. This is a ceiling, not a target — it "
+            "bounds the blast radius of one bad classification.",
+        ),
+    )
+    classifier_gate_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Classifier gate",
+            "Filter collected items through the lightweight relevance gate before the "
+            "proposal stage. On by default: it is what keeps a quiet window from "
+            "spending anything, and turning it off sends every item to the model.",
+        ),
+    )
+    decision_default_horizon_days: int = field(
+        default=90,
+        metadata=_meta(
+            "Decision review horizon (days)",
+            "How far out a logged decision schedules its review when you do not name "
+            "a horizon. 90 days by default — long enough for an outcome to exist, "
+            "short enough that you still remember the reasoning.",
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        # A cap of 0 means "auto-execute nothing", which is a coherent position; a
+        # negative cap is not, and would read as "unbounded" to a `<` check.
+        if self.max_auto_actions_per_run < 0:
+            self.max_auto_actions_per_run = 0
+        if self.decision_default_horizon_days < 1:
+            self.decision_default_horizon_days = 1
+
+
+@dataclass
 class InboundSurfaceConfig:
     """One inbound surface's switches (MCP-READONLY-INBOUND §C4).
 
@@ -3084,6 +3333,72 @@ class SandboxConfig:
 
 
 @dataclass
+class VoiceConfig:
+    """Hands-free voice-loop knobs (MULTIMODAL-IO §4.5).
+
+    Guard-class note: the four booleans are convenience features, not safety
+    guards — plain defaults, no fail-safe parsing. Turning one off degrades the
+    voice loop's comfort (more echo, code read aloud), never its safety, so a
+    config typo must not be second-guessed here.
+    """
+
+    confirmation_phrases: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CONFIRMATION_PHRASES),
+        metadata=_meta(
+            "Confirmation Phrases",
+            "In hands-free mode a dictated transcript accumulates and is only sent "
+            "once one of these phrases ends what you just said, so a half-finished "
+            "thought never becomes an executed instruction. Push-to-talk and typed "
+            "input ignore this entirely.",
+        ),
+    )
+    exit_phrases: list[str] = field(
+        default_factory=lambda: list(DEFAULT_EXIT_PHRASES),
+        metadata=_meta(
+            "Exit Phrases",
+            "Saying one of these in hands-free mode clears the accumulated "
+            "transcript without sending it.",
+        ),
+    )
+    echo_filter_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Echo Filter",
+            "Drop a transcription that shares three consecutive words with what the "
+            "assistant just spoke — the speaker bleeding back into the microphone. "
+            "Applies only to hands-free requests; the dashboard shows the drop "
+            "instead of looking deaf.",
+        ),
+    )
+    duplex_mute_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Mute While Speaking",
+            "Suspend the microphone and discard queued audio while a spoken reply "
+            "plays. This is what kills most echo; the filter above is the backstop.",
+        ),
+    )
+    clean_for_speech_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Clean Text Before Speaking",
+            "Strip code blocks, reduce URLs to their domain and paths to their "
+            "filename, and drop CLI flags before synthesis. The chat transcript "
+            "always keeps the full text — only the audio is cleaned.",
+        ),
+    )
+    voice_disclaimer_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Voice-Origin Disclaimer",
+            "Append a one-line note to a dictated message telling the model the text "
+            "came from speech recognition and may be misheard, so it self-corrects on "
+            "garbled homophones instead of confidently misreading them.",
+        ),
+    )
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = field(
         default_factory=AgentConfig,
@@ -3129,6 +3444,13 @@ class AppConfig:
         default_factory=AuthConfigSection,
         metadata=_meta("Login", "Owner login — an additional front door, off by default."),
     )
+    routing: RoutingConfig = field(
+        default_factory=RoutingConfig,
+        metadata=_meta(
+            "Model Routing",
+            "Which of your bound models handles which kind of request.",
+        ),
+    )
     guardrails: GuardrailsConfig = field(
         default_factory=GuardrailsConfig,
         metadata=_meta("Guardrails", "Autonomy safety floor — budgets, breaker, scan."),
@@ -3136,6 +3458,10 @@ class AppConfig:
     resilience: ResilienceConfig = field(
         default_factory=ResilienceConfig,
         metadata=_meta("Resilience", "Doctor health surface + no-model degraded indicator."),
+    )
+    voice: VoiceConfig = field(
+        default_factory=VoiceConfig,
+        metadata=_meta("Voice", "Hands-free voice loop — gating, echo filter, spoken text."),
     )
     inbox: InboxConfig = field(
         default_factory=InboxConfig,
@@ -3175,6 +3501,12 @@ class AppConfig:
     ambient: AmbientConfig = field(
         default_factory=AmbientConfig,
         metadata=_meta("Ambient", "Composable home + generative UI + tray companion settings."),
+    )
+    companion: CompanionConfig = field(
+        default_factory=CompanionConfig,
+        metadata=_meta(
+            "Companion apps", "LAN discovery + instance name for native companion clients."
+        ),
     )
     sources: SourcesConfig = field(
         default_factory=SourcesConfig,
@@ -3246,6 +3578,14 @@ class AppConfig:
             "The offline eval substrate — studies, ablation, retrieval/judge benchmarks.",
         ),
     )
+    proactive: "ProactiveConfig" = field(
+        default_factory=lambda: ProactiveConfig(),
+        metadata=_meta(
+            "Proactive",
+            "The scheduled triage digest, its auto-execution bounds, and the decision "
+            "journal's default review horizon.",
+        ),
+    )
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -3292,6 +3632,9 @@ class AppConfig:
         ambient_data = data.get("ambient", {})
         if not isinstance(ambient_data, dict):
             ambient_data = {}
+        companion_data = data.get("companion", {})
+        if not isinstance(companion_data, dict):
+            companion_data = {}
         sources_data = data.get("sources", {})
         if not isinstance(sources_data, dict):
             sources_data = {}
@@ -3308,6 +3651,9 @@ class AppConfig:
         inbound_data = data.get("inbound", {}) or {}
         durability_data = data.get("durability", {}) or {}
         evals_data = data.get("evals", {}) or {}
+        proactive_data = data.get("proactive", {}) or {}
+        if not isinstance(proactive_data, dict):
+            proactive_data = {}
         if not isinstance(feedback_data, dict):
             feedback_data = {}
         agents_routing_data = data.get("agents_routing", {})
@@ -3340,9 +3686,18 @@ class AppConfig:
         if not isinstance(auth_data, dict):
             auth_data = {}
 
+        routing_data = data.get("routing", {})
+        if not isinstance(routing_data, dict):
+            routing_data = {}
+        routing_weights_data = routing_data.get("weights", {})
+        if not isinstance(routing_weights_data, dict):
+            routing_weights_data = {}
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
             guardrails_data = {}
+        voice_data = data.get("voice", {})
+        if not isinstance(voice_data, dict):
+            voice_data = {}
         resilience_data = data.get("resilience", {})
         if not isinstance(resilience_data, dict):
             resilience_data = {}
@@ -3465,6 +3820,7 @@ class AppConfig:
                 trust_ttl_secs=loops_data.get("trust_ttl_secs", 24 * 3600),
                 judge_use_case=_judge_axis(loops_data.get("judge_use_case", "reasoning")),
                 stagnation_window=_stagnation_window(loops_data.get("stagnation_window", 5)),
+                check_work_stages=bool(loops_data.get("check_work_stages", False)),
             ),
             memory=MemoryConfig(
                 semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),
@@ -3527,6 +3883,7 @@ class AppConfig:
                 show_thinking_inline=dashboard_data.get("show_thinking_inline", False),
                 simplified_tool_names=dashboard_data.get("simplified_tool_names", False),
                 followup_chips=dashboard_data.get("followup_chips", True),
+                offer_check_work=bool(dashboard_data.get("offer_check_work", True)),
                 stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
                 confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
@@ -3550,6 +3907,13 @@ class AppConfig:
                 # turned itself on when config is unreadable would spawn a native
                 # process unexpectedly.
                 tray_enabled=bool(ambient_data.get("tray_enabled", False)),
+            ),
+            companion=CompanionConfig(
+                # Opt-in: a plain read defaulting False — a gateway that advertised
+                # itself on the LAN when config is unreadable would announce a service
+                # the user never asked to expose.
+                discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
+                instance_name=str(companion_data.get("instance_name", "") or ""),
             ),
             sources=SourcesConfig(
                 enabled=bool(sources_data.get("enabled", True)),
@@ -3597,6 +3961,22 @@ class AppConfig:
                 sync_enabled=bool(durability_data.get("sync_enabled", False)),
                 sync_transport=str(durability_data.get("sync_transport", "") or ""),
                 sync_stale_after_secs=_safe_int(durability_data.get("sync_stale_after_secs"), 900),
+            ),
+            proactive=ProactiveConfig(
+                # Both switches are fail-closed: an unreadable value reads False, so a
+                # corrupt config can never start collecting or acting on its own.
+                triage_enabled=bool(proactive_data.get("triage_enabled", False)),
+                digest_schedule=str(proactive_data.get("digest_schedule", "") or "0 8 * * *"),
+                auto_execute_enabled=bool(proactive_data.get("auto_execute_enabled", False)),
+                max_auto_actions_per_run=_safe_int(
+                    proactive_data.get("max_auto_actions_per_run"), 5
+                ),
+                # The gate is the spend floor, so it fails OPEN (on) — an unreadable
+                # value must not silently send every collected item to the model.
+                classifier_gate_enabled=bool(proactive_data.get("classifier_gate_enabled", True)),
+                decision_default_horizon_days=_safe_int(
+                    proactive_data.get("decision_default_horizon_days"), 90
+                ),
             ),
             evals=EvalsConfig(
                 enabled=bool(evals_data.get("enabled", False)),
@@ -3798,6 +4178,31 @@ class AppConfig:
                 lockout_threshold=max(1, _safe_int(auth_data.get("lockout_threshold", 5), 5)),
                 lockout_window=str(auth_data.get("lockout_window", "15m") or "15m"),
             ),
+            # Routing (MODEL-ROUTING-TELEMETRY §7 wiring point (b)): explicit field-by-field
+            # mapping — an omission here is a silently dropped setting, which is why the
+            # round-trip test exists. Every number is floored so a typo degrades to something
+            # workable instead of, say, a zero timeout that fails every local attempt.
+            routing=RoutingConfig(
+                enabled=bool(routing_data.get("enabled", False)),
+                local_timeout_secs=max(
+                    0.0, _safe_float(routing_data.get("local_timeout_secs", 20.0), 20.0)
+                ),
+                min_samples=max(1, _safe_int(routing_data.get("min_samples", 5), 5)),
+                weights=RoutingWeightsConfig(
+                    success=max(0.0, _safe_float(routing_weights_data.get("success", 0.60), 0.60)),
+                    feedback=max(
+                        0.0, _safe_float(routing_weights_data.get("feedback", 0.40), 0.40)
+                    ),
+                ),
+                hysteresis=max(0.0, _safe_float(routing_data.get("hysteresis", 0.05), 0.05)),
+                cloud_quality_margin=max(
+                    0.0, _safe_float(routing_data.get("cloud_quality_margin", 0.10), 0.10)
+                ),
+                energy_sampling=bool(routing_data.get("energy_sampling", False)),
+                reproposal_cooldown_days=max(
+                    0, _safe_int(routing_data.get("reproposal_cooldown_days", 14), 14)
+                ),
+            ),
             guardrails=GuardrailsConfig(
                 budgets=BudgetConfig(
                     max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
@@ -3827,6 +4232,22 @@ class AppConfig:
                     if guardrails_data.get("scan_mode", "redact") in ("warn", "redact", "block")
                     else "redact"
                 ),
+            ),
+            voice=VoiceConfig(
+                # Convenience knobs, not guards: an empty/malformed phrase list falls
+                # back to the shipped defaults so hands-free mode stays operable, and
+                # each boolean parses as a plain bool with its documented default.
+                confirmation_phrases=(
+                    _voice_phrases(voice_data.get("confirmation_phrases"))
+                    or list(DEFAULT_CONFIRMATION_PHRASES)
+                ),
+                exit_phrases=(
+                    _voice_phrases(voice_data.get("exit_phrases")) or list(DEFAULT_EXIT_PHRASES)
+                ),
+                echo_filter_enabled=bool(voice_data.get("echo_filter_enabled", True)),
+                duplex_mute_enabled=bool(voice_data.get("duplex_mute_enabled", True)),
+                clean_for_speech_enabled=bool(voice_data.get("clean_for_speech_enabled", True)),
+                voice_disclaimer_enabled=bool(voice_data.get("voice_disclaimer_enabled", True)),
             ),
             resilience=ResilienceConfig(
                 # Guard-class: parse fail-safe — missing/unknown ⇒ enabled.
@@ -3914,11 +4335,13 @@ class AppConfig:
                 LITE_AGENT_NAME,
                 LOOP_PLANNER_AGENT_NAME,
                 LOOP_WORKER_AGENT_NAME,
+                TEMPLATE_REFINER_AGENT_NAME,
                 make_code_planner_profile,
                 make_coder_profile,
                 make_lite_agent_profile,
                 make_loop_planner_profile,
                 make_loop_worker_profile,
+                make_template_refiner_profile,
             )
 
             if LOOP_WORKER_AGENT_NAME not in cfg.agents:
@@ -3952,6 +4375,15 @@ class AppConfig:
             # of falling through to an unnamed default.
             if LITE_AGENT_NAME not in cfg.agents:
                 cfg.agents[LITE_AGENT_NAME] = make_lite_agent_profile(AgentProfile)
+                needs_migration = True
+
+            # Seed the built-in propose-only template refiner if absent. Same
+            # idempotent add-if-missing contract — ships with the package, inert until the
+            # `refine-template` workflow runs it over a template's run ledger.
+            if TEMPLATE_REFINER_AGENT_NAME not in cfg.agents:
+                cfg.agents[TEMPLATE_REFINER_AGENT_NAME] = make_template_refiner_profile(
+                    AgentProfile
+                )
                 needs_migration = True
 
             # Prune retired system agents left behind in an existing config.json.
@@ -4004,6 +4436,7 @@ class AppConfig:
             "dashboard": asdict(self.dashboard),
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
+            "companion": asdict(self.companion),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
             "hooks": self.hooks,
@@ -4024,12 +4457,15 @@ class AppConfig:
             "security": asdict(self.security),
             "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
+            "routing": asdict(self.routing),
             "resilience": asdict(self.resilience),
+            "voice": asdict(self.voice),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,
             "durability": asdict(self.durability),
             "evals": asdict(self.evals),
+            "proactive": asdict(self.proactive),
             # Channel-agnostic observe-buffer sizing — top-level keys (Slack config
             # lives in the slack-channel app's own store, not here).
             "observe_max_messages": self.observe_max_messages,

@@ -148,10 +148,23 @@ async def favicon(request: web.Request) -> web.StreamResponse:
 
 
 async def api_stt_transcribe(request: web.Request) -> web.Response:
-    """POST /api/stt/transcribe — transcribe uploaded audio via the active STT model."""
+    """POST /api/stt/transcribe — transcribe uploaded audio via the active STT model.
+
+    Two duplex-loop behaviors ride on this endpoint (MULTIMODAL-IO §4). Both keyed
+    off the query string, because the body is a streamed multipart upload whose
+    first part must stay the audio:
+
+    * ``?duplex=true&session=<key>`` — a hands-free capture. The transcript is
+      checked against the last text spoken for that session; speaker bleed comes
+      back as ``{"text": "", "filtered": "echo"}`` so the dashboard can say why
+      nothing happened instead of looking deaf.
+    * The response carries ``input_origin: "voice"`` and, when the disclaimer is
+      enabled, the line the frontend submits with the turn (§4.4).
+    """
     import tempfile  # noqa: F811
 
     from personalclaw.transcribe import is_available, transcribe_audio  # noqa: F811
+    from personalclaw.voice.duplex import VOICE_DISCLAIMER, is_echo
 
     if not await is_available():
         return web.json_response({"error": "STT not available"}, status=503)
@@ -214,7 +227,19 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
 
             text, _ = redact_exfiltration_urls(text)
             text, _ = redact_credentials(text)
-        return web.json_response({"text": text or ""})
+        text = text or ""
+
+        cfg = AppConfig.load().voice
+        duplex = str(request.query.get("duplex", "")).strip().lower() in ("1", "true", "yes")
+        if duplex and text and cfg.echo_filter_enabled:
+            spoken = request.app["state"].last_spoken(request.query.get("session", ""))
+            if spoken and is_echo(text, spoken):
+                return web.json_response({"text": "", "filtered": "echo"})
+
+        payload: dict[str, object] = {"text": text, "input_origin": "voice"}
+        if text and cfg.voice_disclaimer_enabled:
+            payload["disclaimer"] = VOICE_DISCLAIMER
+        return web.json_response(payload)
     except Exception:
         logger.exception("STT transcribe failed")
         return web.json_response({"error": "transcription failed"}, status=500)
@@ -514,6 +539,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
     "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
+    # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
+    # subset: the master switch plus the tuning numbers a user reaches for after watching
+    # what routing actually did. Per-use-case mode/pin are NOT here: they live in
+    # use_case_settings/{uc}.json + routing_policy.json, beside the other bindings state.
+    "routing.enabled": {"type": "bool"},
+    "routing.local_timeout_secs": {"type": "float", "min": 0.0, "max": 600.0},
+    "routing.min_samples": {"type": "int", "min": 1, "max": 10_000},
+    "routing.hysteresis": {"type": "float", "min": 0.0, "max": 1.0},
+    "routing.cloud_quality_margin": {"type": "float", "min": 0.0, "max": 1.0},
+    "routing.energy_sampling": {"type": "bool"},
+    "routing.reproposal_cooldown_days": {"type": "int", "min": 0, "max": 365},
     # §5 earned-autonomy thresholds. Runtime-editable because these are the knobs a
     # user reaches for after seeing what the ladder actually proposed. Bounded on both
     # sides: `clean_approvals` floors at 1 (a bar of zero would offer a promotion to a
@@ -523,6 +559,16 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.autonomy.max_rejections": {"type": "int", "min": 0, "max": 100},
     "guardrails.autonomy.cooldown_days": {"type": "int", "min": 0, "max": 365},
     "guardrails.autonomy.evidence_window_days": {"type": "int", "min": 1, "max": 365},
+    # The hands-free voice loop. All six are convenience
+    # knobs (comfort, not safety): the phrase lists drive frontend gating, the
+    # booleans switch echo filtering, mute-during-playback, pre-speech cleaning
+    # and the voice-origin disclaimer.
+    "voice.confirmation_phrases": {"type": "str_list", "max_items": 20},
+    "voice.exit_phrases": {"type": "str_list", "max_items": 20},
+    "voice.echo_filter_enabled": {"type": "bool"},
+    "voice.duplex_mute_enabled": {"type": "bool"},
+    "voice.clean_for_speech_enabled": {"type": "bool"},
+    "voice.voice_disclaimer_enabled": {"type": "bool"},
     "resilience.doctor_enabled": {"type": "bool"},
     "resilience.degraded_indicator": {"type": "bool"},
     "resilience.mid_turn_policy": {
@@ -561,6 +607,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "evals.judge_agreement_floor": {"type": "float", "min": 0.0, "max": 1.0},
     "evals.ablation_cadence_days": {"type": "int", "min": 1, "max": 365},
     "evals.default_budget_usd": {"type": "float", "min": 0.0, "max": 1000.0},
+    # The runtime-editable triage subset.
+    # `auto_execute_enabled` IS here on purpose: it is the plan's one-click revoke, so
+    # a user who dislikes what the digest did must be able to switch acting off from
+    # the surface that showed them. Its blast radius is bounded elsewhere (the frozen
+    # capability set, the per-run cap, the guardrails budget floor), not by hiding it.
+    "proactive.triage_enabled": {"type": "bool"},
+    "proactive.digest_schedule": {"type": "str", "max_len": 64},
+    "proactive.auto_execute_enabled": {"type": "bool"},
+    "proactive.max_auto_actions_per_run": {"type": "int", "min": 0, "max": 50},
+    "proactive.classifier_gate_enabled": {"type": "bool"},
+    "proactive.decision_default_horizon_days": {"type": "int", "min": 1, "max": 3650},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
@@ -639,6 +696,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # worker-independent signals compare findings BETWEEN cycles); the ceiling keeps a
     # typo from parking the detector past any realistic cycle budget.
     "loops.stagnation_window": {"type": "int", "min": 2, "max": 50},
+    # The SDLC post-gate check-work hook. Off by default; on, a
+    # passing stage gate additionally re-derives checks from the stage's own claims.
+    "loops.check_work_stages": {"type": "bool"},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
     # Gates the poll-based message sources (filesystem/channel apps). The UI
@@ -757,6 +817,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "ambient.genui_enabled": {"type": "bool"},
     "ambient.surfaces_max_layer": {"type": "int", "min": 0, "max": 2},
     "ambient.tray_enabled": {"type": "bool"},
+    # Companion apps — LAN discovery advertisement + the friendly
+    # instance name a client shows. discovery_enabled is off by default; toggling it here
+    # is the opt-in to announcing this gateway on the local network.
+    "companion.discovery_enabled": {"type": "bool"},
+    "companion.instance_name": {"type": "str", "max_len": 64},
     # Watched sources — the poll engine's runtime knobs. The
     # network floor is bounded at 300s (the R1-class rate floor) so a UI edit cannot make
     # the engine poll a third party abusively.
@@ -1127,6 +1192,34 @@ async def api_incident_resume(request: web.Request) -> web.Response:
         return web.json_response({"error": 'resume requires {"confirm": true}'}, status=400)
     st = _incident.resume()
     return web.json_response({"active": st.active})
+
+
+async def api_project_trust(request: web.Request) -> web.Response:
+    """GET /api/guardrails/project-trust — the whole store;
+    POST /api/guardrails/project-trust — record a Trust/Preview decision.
+
+    POST body: ``{dir: str, trusted: bool}``. ``trusted=true`` is the explicit **Trust**
+    (the folder may run/write project scripts); ``trusted=false`` keeps **Preview**
+    (read-only). Recording is SEL-audited and keyed by the RESOLVED directory.
+    """
+    from personalclaw.guardrails import project_trust as _pt
+
+    if request.method == "GET":
+        return web.json_response({"projects": _pt._read_store()})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    directory = str(body.get("dir", "") or "").strip()
+    if not directory:
+        return web.json_response({"error": "dir is required"}, status=400)
+    trusted = body.get("trusted")
+    if not isinstance(trusted, bool):
+        return web.json_response({"error": "trusted must be a boolean"}, status=400)
+    record = _pt.record_project_trust(directory, trusted=trusted)
+    return web.json_response({"dir": _pt.resolve_dir(directory), **record})
 
 
 # ── Provider health view ───────────────────────────────────────────────

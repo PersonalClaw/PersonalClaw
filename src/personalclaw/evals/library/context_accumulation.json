@@ -1,5 +1,7 @@
 {
   "name": "context_accumulation",
+  "version": 1,
+  "fixture_home": "empty",
   "description": "Seed a user profile, build up context across 3 sessions, and verify the agent integrates seeded + taught information in the final session.\n",
   "dimensions": [
     "context_accumulation",

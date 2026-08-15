@@ -32,6 +32,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.evals import pinning
+from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
 from personalclaw.evals.child import CELL_RESULT_SENTINEL
 from personalclaw.evals.matrix import (
@@ -111,28 +113,50 @@ def _spawn_cell(
     matrix_id: str,
     cell_index: int,
     timeout_secs: float,
+    pin: pinning.RunPin,
 ) -> CellResult:
     """Run ONE cell in a child process and map its outcome to a ``CellResult``.
 
     Env construction is the load-bearing §1.3 isolation code: we ``os.environ.copy()``
-    (a COPY — the parent's env is never mutated) and set ``PERSONALCLAW_WORKSPACE`` on
-    the COPY only, so the workspace override exists in the child and nowhere else."""
+    (a COPY — the parent's env is never mutated) and set ``PERSONALCLAW_WORKSPACE``
+    and ``PERSONALCLAW_HOME`` on the COPY only, so both overrides exist in the child
+    and nowhere else. ``PERSONALCLAW_HOME`` points at an empty per-cell dir the child
+    seeds from the scenario's named ``fixture_home`` (ES-2): the run executes over a
+    known clean state, and everything the child writes lands in the throwaway home
+    rather than in the user's.
+
+    The cell's own pin (the matrix pin with the model-axis override applied) is
+    persisted beside the cell artifact, so a surprising cell is attributable without
+    re-deriving which model produced it."""
     cell_dir = store.matrix_dir(matrix_id) / f"cell-{cell_index:04d}"
     cell_dir.mkdir(parents=True, exist_ok=True)
+    cell_pin = pin.with_model_override(coords.get("model") if isinstance(coords, dict) else None)
+    pinning.write_pin(cell_dir, cell_pin)
     descriptor_path = cell_dir / "descriptor.json"
     descriptor = {
         "matrix_id": matrix_id,
         "coords": coords,
         "subject": spec.subject,
         "scorer": spec.scorer,
+        # Resolved in the PARENT (which can see the real home's scenario library);
+        # the child runs with a throwaway home and could not resolve a bare name.
+        "scenario_path": str(scenario_lib.resolve_scenario_path(spec.subject)),
+        "fixture_home": cell_pin.fixture_home,
+        "pin": cell_pin.to_dict(),
     }
     descriptor_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True), encoding="utf-8")
     artifact_ref = str(cell_dir)
 
-    with tempfile.TemporaryDirectory(prefix="pclaw_matrix_cell_") as ws:
+    with tempfile.TemporaryDirectory(prefix="pclaw_matrix_cell_") as cell_tmp:
+        ws = Path(cell_tmp) / "workspace"
+        ws.mkdir(parents=True, exist_ok=True)
+        # The child seeds this path itself; ``seed()`` refuses a non-empty target
+        # without ``replace=True``, so we deliberately do NOT create it here.
+        cell_home = Path(cell_tmp) / "home"
         # ── §1.3 isolation: env override on a COPY, parent env never touched ──
         env = os.environ.copy()
         env["PERSONALCLAW_WORKSPACE"] = str(ws)
+        env["PERSONALCLAW_HOME"] = str(cell_home)
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "personalclaw.evals.child", str(descriptor_path)],
@@ -195,8 +219,26 @@ def run_matrix(
     a SpendMeter preflight (``EXCEEDED`` → ``VERIFIER_ABSENT``, no spawn), else a
     child spawn with the per-cell workspace in the child's env only. Persists
     ``aggregates.json`` + ``trials.json``, appends a ``results.tsv`` row, and
-    SEL-logs matrix-run start + completion (best-effort)."""
+    SEL-logs matrix-run start + completion (best-effort).
+
+    ES-2: the pin is computed FIRST, before any cell runs, and persisted as
+    ``matrices/<id>/pin.json``. A scenario that cannot be resolved — or that names a
+    fixture home that does not ship — raises
+    :class:`~personalclaw.evals.scenarios.ScenarioLibraryError` out of here, on
+    purpose: the "never raises out" contract covers a CELL's infra failure (mapped to
+    ``VERIFIER_ABSENT``), not a whole run that could only produce unattributable
+    scores."""
+    pin = pinning.compute_pin(spec.subject)
+    if not pin.is_complete():
+        # Fail fast, BEFORE any cell burns a model call: an incomplete pin means the
+        # row could not be written at the end anyway, and a run whose result cannot
+        # enter the ledger is wasted spend, not evidence.
+        raise store.PinRequiredError(
+            f"refusing to run matrix {matrix_id}: incomplete RunPin "
+            f"(missing: {', '.join(pin.missing_parts())})"
+        )
     store.write_matrix_experiment(matrix_id, spec.to_dict())
+    pinning.write_pin(store.matrix_dir(matrix_id), pin)
     _sel_log(matrix_id, spec, outcome="started")
 
     cells: list[CellResult] = []
@@ -213,6 +255,7 @@ def run_matrix(
                 matrix_id=matrix_id,
                 cell_index=cell_index,
                 timeout_secs=timeout_secs,
+                pin=pin,
             )
         )
 
@@ -227,7 +270,8 @@ def run_matrix(
             "score_new": aggregates.get("mean_score"),
             "k": spec.trial_count,
             "ts": datetime.now(tz=timezone.utc).isoformat(),
-        }
+        },
+        pin=pin,
     )
     result = MatrixResult(spec=spec, cells=cells, aggregates=aggregates)
     _sel_log(matrix_id, spec, outcome="completed")

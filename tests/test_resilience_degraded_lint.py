@@ -51,6 +51,17 @@ _CALL_SITE_SURFACES = {
     # The Doctor per-provider selftest fires a tiny one-token completion to
     # ground-truth the chat capability — user-click only, covered by the chat contract.
     "dashboard/handlers/doctor.py": "chat",
+    # INU-6 second-opinion verification (verify_attention_item). Background reasoning
+    # one-shot whose no-model floor is BUILT IN: no model / timeout / budget / parse-fail →
+    # verdict "skipped", so the attention notification is DELIVERED unverified rather than
+    # blocked (fail-open). Same shape as the built-in-floor reasoning call sites above.
+    "notification_verify.py": "assistant_reasoning",
+    # DAS-7 propose-only sync conflict merge. Background reasoning one-shot whose no-model
+    # floor is BUILT IN: no model / open breaker / timeout / budget / unparseable answer →
+    # the conflict record STAYS needs-review with no proposal and a recorded
+    # proposal_error. A missing model costs the suggestion, never the conflict — and it can
+    # never resolve one, because this surface only ever proposes.
+    "durability/conflict_merge.py": "assistant_reasoning",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")

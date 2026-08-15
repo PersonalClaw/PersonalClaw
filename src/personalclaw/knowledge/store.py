@@ -1099,6 +1099,46 @@ class KnowledgeStore:
             self.db.commit()
         return item_id
 
+    def find_source_item(self, source_id: str, guid: str) -> dict | None:
+        """The item a source already wrote for this ``guid``, or None (§3.3, WS-5).
+
+        The read side of the ``(source_id, guid)`` identity that ``create_typed_item``
+        writes: a MUTABLE source (a watched directory) needs to reach the EXISTING row
+        for a re-index or an archive, and the partial UNIQUE index makes that lookup
+        single-row by construction. Archived rows are included on purpose — a deleted
+        file that comes back must revive its original item, not mint a second one.
+        """
+        if not (source_id and guid):
+            return None
+        row = self.db.execute(
+            "SELECT * FROM items WHERE source_id = ? AND guid = ?", (source_id, guid)
+        ).fetchone()
+        return self._serialize_item(row) if row else None
+
+    def archive_source_item(self, item_id: str, *, deleted_at: str = "") -> bool:
+        """Archive a source item whose upstream copy is gone, stamping when (SC#5).
+
+        This is deliberately the ONLY thing the engine can do about an upstream delete,
+        and it is an UPDATE — never a DELETE. Once the file is gone from the watched
+        directory the library row is the last remaining copy of what the user had, so
+        removing it would destroy data on a filesystem event the user may not even have
+        meant (a moved folder, an unmounted volume, a synced-away directory). Archived
+        items already drop out of retrieval/FTS scope everywhere, so the item stops
+        surfacing without being lost, and ``source_deleted_at`` on the item's metadata
+        records exactly when the source stopped carrying it.
+        """
+        item = self.get_item(item_id)
+        if not item:
+            return False
+        meta = item.get("file_metadata")
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        meta["source_deleted_at"] = deleted_at or datetime.now().isoformat()
+        # touch=False: the source vanishing is not the user editing the item, so it must
+        # not masquerade as recent user activity in "Last updated" / recency ordering.
+        self.update_item(item_id, touch=False, is_archived=1, file_metadata=meta)
+        self.db.commit()
+        return True
+
     def get_item(self, item_id):
         row = self.db.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return self._serialize_item(row) if row else None

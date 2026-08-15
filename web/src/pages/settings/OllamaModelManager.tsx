@@ -198,7 +198,7 @@ function SearchRow({ provider, result }: { provider: string; result: OllamaSearc
       {state === 'pulling' ? (
         <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{pct > 0 ? `${msg} · ${pct}%` : msg}</span>
       ) : state === 'error' ? (
-        <span className="shrink-0 truncate text-danger text-[0.75rem]" title={msg}>{msg}</span>
+        <span role="alert" className="shrink-0 truncate text-danger text-[0.75rem]" title={msg}>{msg}</span>
       ) : state === 'cancelled' ? (
         <span className="shrink-0 text-on-surface-low text-[0.75rem]">stopped</span>
       ) : null}

@@ -1,5 +1,7 @@
 {
   "name": "memory_recall_basic",
+  "version": 1,
+  "fixture_home": "empty",
   "description": "Teach the agent facts in session 1, then verify recall in session 2. Tests cross-session memory persistence.\n",
   "dimensions": [
     "memory_recall"

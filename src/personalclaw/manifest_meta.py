@@ -270,6 +270,33 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "refiner_evidence": {
+        "response_type": "refiner.evidence",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Read a template's clustered, screened failure evidence",
+                "args": {"workflow_name": "code-project"},
+            },
+        ],
+    },
+    "propose_template_diff": {
+        "response_type": "refiner.proposal.result",
+        # Refusals (empty diff, illegal/frozen ops) are readable text with a bracketed code,
+        # not `errors.ERROR_CODES` entries — same convention as the planning tools above.
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose a typed diff to a template, citing the runs that motivate it",
+                "args": {
+                    "workflow_name": "code-project",
+                    "ops": [{"op": "update_node", "node_id": "build", "fields": {"retries": 2}}],
+                    "rationale": "The build step fails transiently; a retry clears it.",
+                    "run_ids": ["r1", "r2", "r3"],
+                },
+            },
+        ],
+    },
     # ── personalclaw-artifacts ───────────────────────────────────────────────
     "artifact_save": {
         "response_type": "artifact.detail",
@@ -599,6 +626,28 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "response_type": "memory.list",
         "error_codes": [],
         "examples": [{"summary": "List all remembered rules", "args": {}}],
+    },
+    "triage_rules": {
+        # The taught approve/deny rules the proactive digest consults. `suppressed`
+        # is not an assertable verdict (a cooldown is derived from declines), so the
+        # examples only show what a caller may actually write.
+        "response_type": "memory.triage_rules",
+        "error_codes": [],
+        "examples": [
+            {"summary": "List the taught triage rules", "args": {"action": "list"}},
+            {
+                "summary": "Always approve archiving newsletters",
+                "args": {
+                    "action": "add",
+                    "pattern": "archive:newsletter",
+                    "verdict": "approve",
+                },
+            },
+            {
+                "summary": "Revoke a rule by id",
+                "args": {"action": "revoke", "id": "user.approval.archive:newsletter"},
+            },
+        ],
     },
     "memory_forget": {
         "response_type": "memory.forget.result",

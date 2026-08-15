@@ -61,6 +61,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
+- `GET /api/artifacts/folders` — the library folder tree (flat, parent_id-linked).
+- `POST /api/artifacts/folders` — create a folder (``{name, parent_id?, icon?}``).
+- `DELETE /api/artifacts/folders/{id}` — members fall back to unfiled; nothing is destroyed.
+- `PATCH /api/artifacts/folders/{id}` — rename / re-nest / reorder. No artifact is touched.
 - `GET /api/artifacts/pinned` — the dashboard pin list (WORK-CONTAINERS §6.5d).
 - `DELETE /api/artifacts/{slug}` — _(no summary)_
 - `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
@@ -68,6 +72,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).
 - `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
 - `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.
+- `PATCH /api/artifacts/{slug}/folder` — file an artifact (``{folder_id}``; "" = unfiled).
 - `POST /api/artifacts/{slug}/pin` — pin or unpin (``{"pinned": bool}``).
 - `GET /api/artifacts/{slug}/raw` — stream a binary artifact's bytes.
 - `POST /api/artifacts/{slug}/regenerate` — re-run image generation at this slug.
@@ -223,6 +228,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/file-watch` — SSE stream of file content changes.
 - `POST /api/file-write` — write file content from the markdown panel.
 - `GET /api/genui/library` — the generative-UI component catalog + the mechanically
+- `GET /api/guardrails/project-trust` — the whole store;
+- `POST /api/guardrails/project-trust` — the whole store;
 - `GET /api/healthz` — Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP.
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
@@ -241,6 +248,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
 - `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate
+- `POST /api/inbox/{id}/restore` — undo a verification filter (INU-6).
 - `GET /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
@@ -358,6 +366,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/mcp/toggle-all` — enable or disable all MCP servers.
 - `POST /api/mcp/toggle-tool` — enable or disable a specific tool in an MCP server.
 - `POST /api/memory/activate-model` — switch the active embedding model.
+- `GET /api/memory/approval-rules` — the triage approval rules, with provenance.
+- `POST /api/memory/approval-rules` — teach one approve/deny rule.
+- `DELETE /api/memory/approval-rules/{key}` — revoke one rule.
 - `POST /api/memory/consolidate` — trigger immediate consolidation for testing.
 - `GET /api/memory/context-preview` — preview what gets injected into prompts.
 - `GET /api/memory/daily-digests` — the per-day rollup nodes (mem-tree),
@@ -426,6 +437,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/models/health` — derived per-provider health (breaker state, latency
 - `GET /api/models/local/{provider}/search` — search a searchable provider's
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
+- `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
+- `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).
 - `GET /api/models/telemetry` — per-model efficiency rows.
 - `GET /api/models/use-cases/{use_case}/settings` — _(no summary)_
 - `PUT /api/models/use-cases/{use_case}/settings` — _(no summary)_
@@ -532,6 +545,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/skills/install` — install a skill from a marketplace.
 - `GET /api/skills/marketplace/detail` — _(no summary)_
 - `GET /api/skills/marketplaces` — list registered skill marketplaces.
+- `POST /api/skills/overlay/revert` — drop a skill's accepted-refinement overlay.
 - `GET /api/skills/proposals` — the pending autonomous-synthesis proposals
 - `DELETE /api/skills/proposals/{id}` — drop a proposal (never installed).
 - `GET /api/skills/proposals/{id}` — full proposal incl. procedure + fenced source.
@@ -618,6 +632,21 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).
 - `GET /api/usage/rollup` — aggregated ledger rows.
 - `GET /api/usage/totals` — the grand total over the window.
+- `DELETE /api/voice/bindings` — unbind one surface.
+- `GET /api/voice/bindings` — the surface → profile map.
+- `PUT /api/voice/bindings` — {surface, profile_id} — bind one surface.
+- `GET /api/voice/profiles` — every profile plus the binding map.
+- `POST /api/voice/profiles` — {name, kind, provider, model, …}.
+- `DELETE /api/voice/profiles/{id}` — record, artifacts, and any bindings.
+- `GET /api/voice/profiles/{id}` — _(no summary)_
+- `PUT /api/voice/profiles/{id}` — patch the mutable fields.
+- `GET /api/voice/profiles/{id}/audio` — _(no summary)_
+- `DELETE /api/voice/profiles/{id}/consent` — delete the recording, clear the fields.
+- `POST /api/voice/profiles/{id}/consent` — {consent_text}.
+- `POST /api/voice/profiles/{id}/consent/verify` — recompute from the artifacts.
+- `POST /api/voice/profiles/{id}/lock` — {history_index} — pin seed + locked.wav.
+- `POST /api/voice/profiles/{id}/unlock` — variation returns.
+- `GET /api/voice/resolve` — which level wins, and why.
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
 - `GET /api/workflows` — _(no summary)_
 - `POST /api/workflows` — _(no summary)_
@@ -649,7 +678,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
+- `GET /api/workflows/{name}/ledger` — recent runs of this template with their ledger totals.
+- `POST /api/workflows/{name}/refine` — fire the refiner over this template on demand.
 - `GET /api/workflows/{name}/trajectory` — The trajectory-signature distribution and regression signal for one template (PP-7).
+- `GET /api/workflows/{name}/versions` — the monotonic version history + pin + maturity.
+- `GET /api/workflows/{name}/versions/diff` — the typed-op diff between two versions.
+- `POST /api/workflows/{name}/versions/repin` — {version} — rollback / re-pin the active version.
 
 ## Websocket / internal routes
 

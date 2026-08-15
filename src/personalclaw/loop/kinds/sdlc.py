@@ -1096,6 +1096,87 @@ class CodeKind(LoopKindStrategy):
             return True
         return False
 
+    async def _check_work_post_gate(self, loop: Loop, idx: int, findings: list[dict], ctx) -> bool:
+        """HARNESS-CRAFT §3.2 post-gate hook — the unattended half of check-work.
+
+        Runs only when ``loops.check_work_stages`` is on (default off). The stage gate
+        above verifies the DECLARED deliverable and the configured verify/test command;
+        it cannot see the case where the worker's own findings claim MORE than the gate
+        command covers ("also wrote `docs/x.md`" when nothing wrote it). So this
+        re-derives 2-4 executable checks from what the stage actually claimed and runs
+        them against the filesystem — the same ``personalclaw.check_work`` module the
+        bundled ``check-work`` skill uses, so there is one behavior under one name.
+
+        Returns the (possibly downgraded) gate verdict: ``False`` when a derived check
+        FAILED, which holds the stage exactly as a failed exit criterion would.
+        Unverifiable and underivable checks never downgrade a pass — the hook adds
+        ground truth, it does not invent doubt.
+        """
+        try:
+            from personalclaw.config import AppConfig
+
+            if not bool(AppConfig.load().loops.check_work_stages):
+                return True
+        except Exception:
+            logger.debug("check_work_stages config unreadable; hook skipped", exc_info=True)
+            return True
+        try:
+            from personalclaw.check_work import derive_and_run
+            from personalclaw.loop.loop import effective_dir
+
+            ws = effective_dir(loop)
+            if not ws:
+                return True
+            plan = loop.plan or []
+            phase = plan[idx] if 0 <= idx < len(plan) else {}
+            stage = self.phase_key(phase)
+            claim_text = "\n".join(
+                [
+                    str(phase.get("deliverable", "") or ""),
+                    *(
+                        str(f.get("summary", "") or f.get("key_insight", "") or "")
+                        for f in self._findings_for_stage(loop, idx, findings)
+                    ),
+                ]
+            )
+            report = derive_and_run(claim_text, root=ws)
+            if not report.results:
+                return True
+            ctx.publish(
+                loop.id,
+                "gate_check",
+                {
+                    "loop_id": loop.id,
+                    "label": "check_work",
+                    "stage": stage,
+                    "ok": report.verdict != "fail",
+                    "verdict": report.verdict,
+                    "checks": [
+                        {
+                            "label": r.check.label,
+                            "how": r.check.how,
+                            "status": r.status,
+                            "evidence": r.evidence[:300],
+                        }
+                        for r in report.results
+                    ],
+                },
+            )
+            if report.failed:
+                logger.info(
+                    "check-work post-gate held stage %s of %s: %s",
+                    stage,
+                    loop.id,
+                    "; ".join(f"{r.check.label}: {r.evidence}" for r in report.failed)[:500],
+                )
+                return False
+            return True
+        except Exception:
+            # Fail OPEN: the hook is an extra observation, never a new way to wedge a
+            # loop. A broken hook must not hold a stage the real gate passed.
+            logger.debug("check-work post-gate hook failed for %s", loop.id, exc_info=True)
+            return True
+
     async def autopilot_queue(self, loop: Loop) -> Loop | None:
         """Autopilot tick: queue every not-terminal task of the ACTIVE stage that
         isn't already queued, so the scheduler always has the full stage to drive.
@@ -1182,6 +1263,8 @@ class CodeKind(LoopKindStrategy):
         from personalclaw.loop import tick
 
         gate_passed = await self._stage_gate_passed(loop, idx, findings, ctx)
+        if gate_passed:
+            gate_passed = await self._check_work_post_gate(loop, idx, findings, ctx)
         metric = (
             await self._observe_stage_metric(loop, idx, stage, findings, ctx)
             if gate_passed

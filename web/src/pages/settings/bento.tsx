@@ -199,7 +199,7 @@ export function InlineSelect({ value, options, onPick, ariaLabel }: {
     <select value={value} aria-label={ariaLabel} disabled={busy}
       onClick={(e) => e.stopPropagation()}
       onChange={async (e) => { e.stopPropagation(); setBusy(true); try { await onPick(e.target.value) } finally { setBusy(false) } }}
-      className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark] disabled:opacity-60">
+      className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-60">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
