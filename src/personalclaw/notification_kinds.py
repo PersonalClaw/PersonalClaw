@@ -113,6 +113,18 @@ def register(k: NotificationKind) -> None:
     _REGISTRY[ident] = k
 
 
+def unregister(source: str, kind: str) -> bool:
+    """Drop a dynamically registered kind. Returns True when one was removed.
+
+    Only the app-contributed kinds (INU-7) use this: an app's proposal kind must not
+    outlive the app that declared it, or a disabled app leaves a phantom kind in the rules
+    UI and in ``resolve_kind`` — the same phantom-source failure ``deregister()`` exists to
+    prevent on the provider seam. The built-in kinds are registered once at import and
+    never removed.
+    """
+    return _REGISTRY.pop((source, kind), None) is not None
+
+
 def all_kinds() -> list[NotificationKind]:
     """Every registered kind, ordered by source then kind (stable for the rules UI)."""
     return sorted(_REGISTRY.values(), key=lambda k: (k.source, k.kind))

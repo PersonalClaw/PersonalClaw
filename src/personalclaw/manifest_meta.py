@@ -670,6 +670,20 @@ TOOL_META: dict[str, dict[str, Any]] = {
         ],
     },
     # ── personalclaw-subagents ───────────────────────────────────────────────
+    "best_of_n": {
+        "response_type": "sampling.best_of_n",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Draft three subject lines and pick the best",
+                "args": {
+                    "prompt": "Write a subject line for the launch email.",
+                    "n": 3,
+                    "criteria": "specific, under 60 characters, no hype",
+                },
+            },
+        ],
+    },
     "subagent_run": {
         "response_type": "subagent.run.result",
         "error_codes": [],

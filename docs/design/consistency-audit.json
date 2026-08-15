@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-08-15T19:51:31.236Z",
+  "generatedAt": "2026-08-15T22:23:49.153Z",
   "totals": {
     "driftHits": 7,
-    "filesScanned": 463,
+    "filesScanned": 465,
     "filesWithDrift": 6
   },
   "byCategory": {

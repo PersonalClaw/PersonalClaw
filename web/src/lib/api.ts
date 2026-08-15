@@ -311,7 +311,15 @@ export interface AppPermissionsWire {
   // capability 403 + SEL `desktop.capability_denied`. Exact names only, no wildcard.
   // Absent = no native reach at all, which the consent UI states rather than implies.
   desktop?: string[]
+  // Proposal kinds this app may raise into your inbox. Enforced —
+  // `POST /api/inbox/proposals` 403s a kind that is not declared here, and an app can
+  // never propose a callback into ANOTHER app. Absent = it may raise no proposal at all,
+  // which the consent UI states rather than implies.
+  proposals?: AppProposalKindWire[]
 }
+/** One declared proposal kind. `kind_suffix` is namespaced under the app at
+ *  registration (`app:<name>` / `proposal:<suffix>`); `label` is what the user sees. */
+export interface AppProposalKindWire { kind_suffix: string; label?: string }
 // One native capability's state as the desktop shell reported it. `granted`
 // mirrors macOS's own vocabulary so nothing is translated on the way through.
 // `requestable` is false when THIS PROCESS cannot raise the OS prompt (macOS exposes
@@ -1478,7 +1486,31 @@ export interface InboxItem {
   // Attention store: what kind of attention this wants, and the ids of the
   // things it is ABOUT — refs is what makes a needs_input row deep-link to its loop.
   item_kind?: InboxItemKind
-  refs?: Record<string, string>
+  // A ref value is usually an id STRING (`refs.loop`, `refs.session`), but the C6
+  // payload rides here too under `refs.proposal` — hence the widened value type. Read the
+  // typed payload through `proposalOf()` rather than indexing this directly.
+  refs?: Record<string, any>
+}
+/** INU-7 C6 — the proposal payload carried in `refs.proposal` on a `proposal` item.
+ *  `apply` holds EXACTLY ONE of `action` / `workflow` / `skill_promotion` / `app_callback`;
+ *  the backend refuses zero, two, or an unknown key rather than guessing. */
+export interface InboxProposal {
+  title: string
+  preview: string
+  preview_kind: 'text' | 'diff'
+  provenance: string
+  expires_at?: string | null
+  editable: boolean
+  apply: Record<string, Record<string, unknown>>
+}
+/** What one apply returned. `ok:false` arrives with HTTP 200: the apply failed, the item is
+ *  still PENDING, and `error` is what to show — a status code could not say that. */
+export interface InboxProposalApplyResult {
+  ok: boolean
+  case?: string
+  result?: Record<string, unknown>
+  error?: string
+  item?: InboxItem
 }
 /** One row of the inbox kind-filter chips: what's present, and how much is unresolved. */
 export interface InboxKindCount { kind: InboxItemKind; total: number; open: number; channel: boolean }
@@ -2299,6 +2331,16 @@ export interface Artifact {
    *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
    *  letting the user type into an editor whose save always 400s. */
   readonly: boolean
+}
+
+/** One deployed artifact. `url` is the stable in-gateway path the artifact is
+ *  served at — always `/artifacts/serve/<slug>/`, never a public URL: local-only
+ *  deploy, so it is reachable exactly to whoever holds a dashboard session. */
+export interface ArtifactDeployment {
+  slug: string
+  entry: string
+  created_at: string
+  url: string
 }
 
 // One usage-ledger aggregate. `priced` is false when
@@ -3437,6 +3479,15 @@ export const api = {
   // Undo a verification filter — flips FILTERED→PENDING and fires the ONE
   // notification the second-opinion pass withheld (server enforces fire-exactly-once).
   restoreInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/restore`),
+  // Approve one proposal through the C6 apply dispatcher. `edited` is the
+  // edit-then-approve payload and REPLACES the stored one (server refuses it for a
+  // non-editable proposal). Resolves with ok:false on a failed apply — the item is still
+  // PENDING and carries the error, so the caller renders the failure instead of throwing.
+  applyInboxProposal: (id: string, edited?: InboxProposal) =>
+    post<InboxProposalApplyResult>(
+      `/api/inbox/${encodeURIComponent(id)}/apply`,
+      edited ? { proposal: edited } : {},
+    ),
   draftInboxReply: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.
@@ -3860,6 +3911,17 @@ export const api = {
   artifactVersions: (slug: string) => get<{ slug: string; versions: number[] }>(`/api/artifacts/${encodeURIComponent(slug)}/versions`),
   artifactVersion: (slug: string, n: number) => get<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}/versions/${n}`),
   artifactEvents: (slug: string) => get<{ slug: string; events: ArtifactEvent[] }>(`/api/artifacts/${encodeURIComponent(slug)}/events`),
+
+  // ── local static artifact deploy ──
+  // Deploying publishes an html/widget artifact at a stable IN-GATEWAY url
+  // (`/artifacts/serve/<slug>/`) behind the same session auth as the dashboard and a
+  // strict CSP fence (`connect-src 'none'` — the served page cannot call /api).
+  // Teardown removes the route; the artifact itself is untouched.
+  deployedArtifacts: () => get<{ deployments: ArtifactDeployment[] }>('/api/artifacts/deployed').then((d) => d.deployments),
+  deployArtifact: (slug: string, body?: { entry?: string }) =>
+    post<{ ok: boolean; deployment: ArtifactDeployment }>(`/api/artifacts/${encodeURIComponent(slug)}/deploy`, body ?? {}),
+  teardownArtifact: (slug: string) =>
+    del(`/api/artifacts/${encodeURIComponent(slug)}/deploy`),
 
   // ── dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1) ──
   // Presets are read-only: updateView/deleteView on a preset return 403. Pinning

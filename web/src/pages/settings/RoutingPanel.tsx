@@ -10,12 +10,19 @@ import { PanelHeader, Section } from './settingsUI'
 
 /** Routing & Efficiency.
  *
- *  A read-only visualization of the per-model efficiency the router observes for
- *  each kind of request: success rate, feedback, latency (p50/p95) and cost per
- *  call, one row per model that has handled this (use_case, query_class) bucket.
- *  This surface ONLY visualizes — it never changes routing (that is a later
- *  capability); it shows which model is efficient for which work. A model is "on
- *  the frontier" when no other model beats it on all of quality, speed, and cost.
+ *  Two halves, and the distinction is the whole point of the page:
+ *
+ *  · The TELEMETRY table observes — per-model success rate, feedback, latency
+ *    (p50/p95) and cost per call, one row per model that has handled this
+ *    (use_case, query_class) bucket. A model is "on the frontier" when no other
+ *    model beats it on all of quality, speed, and cost.
+ *  · `RoutingPolicySection` below DECIDES — mode, pin and per-class order, each
+ *    written through `api.setRoutingPolicy`.
+ *
+ *  Until MRT-4 this surface only visualized, and both this comment and the panel's
+ *  own hint said so ("Observation only: this does not change routing — that's a
+ *  later capability"). MRT-4 shipped that capability directly below the sentence
+ *  denying it, so the page told a user its controls did nothing.
  *
  *  Data comes from GET /api/models/telemetry (api.modelsTelemetry); the bucket is
  *  chosen by two selectors whose state round-trips to the URL so a reload restores
@@ -96,7 +103,7 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Routing & Efficiency"
-        hint="Real per-model efficiency for each kind of request — success rate, feedback, latency, and cost per call, measured as models handle work. Observation only: this does not change routing (that's a later capability); it shows which model is efficient for which work. A model is on the frontier when no other model beats it on all of quality, speed, and cost." />
+        hint="Real per-model efficiency for each kind of request — success rate, feedback, latency, and cost per call, measured as models handle work. A model is on the frontier when no other model beats it on all of quality, speed, and cost. Routing policy, below, turns that observation into a decision: which of your bound models this use case tries first." />
 
       <div className="mb-l flex flex-wrap items-end gap-l">
         <Field label="Use case">
@@ -292,17 +299,24 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
                     <span className="w-5 text-right tabular-nums text-on-surface-low">{i + 1}</span>
                     <span className="flex-1 truncate font-mono text-on-surface" title={ref}>{ref}</span>
                     <span className="text-on-surface-low text-[0.75rem]">{local ? 'local' : 'cloud'}</span>
+                    {/* `size-7` (28px), not `p-1` (21px): an icon-only control needs 24px of target.
+                        These deliberately keep `unavailableWhen` rather than adopting
+                        `SquareIconButton` — the primitive maps `disabled` to `aria-disabled` and never
+                        to the native attribute, but `unavailableWhen` goes NATIVELY disabled while
+                        `busy` on purpose, so an in-flight save cannot be fired twice. Borrowing the
+                        primitive's geometry keeps that semantic while matching how every other
+                        icon-button in the app measures. */}
                     <button type="button"
                       {...unavailableWhen(i === 0, 'Already tried first', { busy })}
                       onClick={() => move(i, -1)}
-                      className="rounded-md p-1 text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
+                      className="grid size-7 place-items-center rounded-md text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
                       aria-label={`Move ${ref} earlier`}>
                       <ArrowUp size={13} aria-hidden />
                     </button>
                     <button type="button"
                       {...unavailableWhen(i === shown.length - 1, 'Already tried last', { busy })}
                       onClick={() => move(i, 1)}
-                      className="rounded-md p-1 text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
+                      className="grid size-7 place-items-center rounded-md text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
                       aria-label={`Move ${ref} later`}>
                       <ArrowDown size={13} aria-hidden />
                     </button>

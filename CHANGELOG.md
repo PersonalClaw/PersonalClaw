@@ -12,12 +12,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A voice is now a thing you own, not a dropdown value.**
 
+- **Proposals are now one thing you approve in one place — and an app can raise one.**
+- **An HTML artifact can now be opened as a real page, not just previewed in a card.**
 - **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.**
 - **When two machines edit the same thing while offline, nothing is overwritten — you get asked.**
 - **Memory now has slots: a handful of small, always-there notes about you, instead of facts the assistant has to go looking for.**
 
 - **PersonalClaw can now try a local model first for background work, and fall back to a cloud model when it can't.**
 - **"Check this work" — verification that actually runs, instead of a second opinion from the same voice.**
+- **Ask for a few versions and get the best one, with the others one click away.**
 - **Apps can now share data with each other, read-only, only when both sides agree.**
 - **Evaluation scenarios are now yours to keep, version and extend.**
 - **Voice input can now run hands-free, and spoken replies stop talking over you.**

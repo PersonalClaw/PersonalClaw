@@ -61,6 +61,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
+- `GET /api/artifacts/deployed` — the deployed-app listing (slug + in-gateway URL).
 - `GET /api/artifacts/folders` — the library folder tree (flat, parent_id-linked).
 - `POST /api/artifacts/folders` — create a folder (``{name, parent_id?, icon?}``).
 - `DELETE /api/artifacts/folders/{id}` — members fall back to unfiled; nothing is destroyed.
@@ -69,6 +70,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/artifacts/{slug}` — _(no summary)_
 - `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
 - `PATCH /api/artifacts/{slug}` — save (silent) or snapshot; or metadata-only.
+- `DELETE /api/artifacts/{slug}/deploy` — tear the deployment down.
+- `POST /api/artifacts/{slug}/deploy` — publish the artifact at its stable serve URL.
 - `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).
 - `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
 - `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.
@@ -237,6 +240,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/dismiss-all` — dismiss all pending items.
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
+- `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
 - `GET /api/inbox/providers` — list registered inbox message source providers.
 - `POST /api/inbox/restart` — stop and reinitialize the inbox service.
 - `POST /api/inbox/seen` — mark items SEEN (the read/unread boundary).
@@ -245,6 +249,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/inbox/settings` — _(no summary)_
 - `GET /api/inbox/status` — current config status.
 - `PUT /api/inbox/{id}` — update draft, status, etc.
+- `POST /api/inbox/{id}/apply` — approve (or edit-then-approve) one proposal.
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
 - `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate

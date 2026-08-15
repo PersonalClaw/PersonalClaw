@@ -225,6 +225,38 @@ def _list_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "best_of_n",
+            "description": (
+                "Sample N candidate answers to the SAME prompt in parallel (each at a "
+                "different temperature), have a judge score them against your criteria, "
+                "and return the winner plus the full slate. COSTS N MODEL CALLS — confirm "
+                "N and the criteria with the user first (the best-of-n skill owns that "
+                "gate). N is capped at 5. Use for 'give me N versions and pick the best', "
+                "'try a few options', 'sample and choose'."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The prompt every candidate answers (identical for all N).",
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "How many candidates to sample (1-5, default 3).",
+                    },
+                    "criteria": {
+                        "type": "string",
+                        "description": (
+                            "What 'best' means here — the judge scores each candidate "
+                            "against this. Confirm it with the user."
+                        ),
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+        {
             "name": "subagent_list",
             "description": "List all running and completed subagents (read-only, no commands executed)",  # noqa: E501
             "inputSchema": {"type": "object", "properties": {}},
@@ -249,7 +281,39 @@ def _list_tools() -> list[dict[str, Any]]:
     ]
 
 
+def _best_of_n(args: dict[str, Any]) -> str:
+    """`best_of_n` — the chat/tool entry point for the sampling core (HARNESS-CRAFT §2.1).
+
+    A thin wrapper over ``personalclaw.sampling.best_of_n``: the fan-out, judging,
+    selection, metering and outcome record all live in the core so this tool, the
+    bundled ``best-of-n`` skill and the HC-5 workflow template share ONE
+    implementation. Returns the whole slate as JSON so the presenting model can show
+    the winner, collapse the runners-up, and honor "use #2" verbatim.
+    """
+    import json as _json
+
+    from personalclaw.mcp_artifacts import _run_async  # shared sync→async bridge
+    from personalclaw.sampling import best_of_n
+
+    prompt = str(args.get("prompt", "") or "").strip()
+    if not prompt:
+        return "Error: provide a `prompt` to sample."
+    n = int(args.get("n") or 3)
+    criteria = str(args.get("criteria", "") or "")
+    try:
+        result = _run_async(best_of_n(prompt, n, criteria))
+    except Exception as exc:  # noqa: BLE001 — a tool must answer, not traceback
+        return f"Error: best-of-N sampling failed: {type(exc).__name__}: {exc}"
+    if result["winner"] is None:
+        return (
+            f"No candidate: {result['note']}. Nothing was selected — try again or answer directly."
+        )
+    return _json.dumps(result, ensure_ascii=False)
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
+    if name == "best_of_n":
+        return _best_of_n(args)
     if name == "subagent_run":
         # Re-validate to make schema enforcement visible at the extraction point.
         # _call_tool() already validates, but defense-in-depth ensures agent/agents

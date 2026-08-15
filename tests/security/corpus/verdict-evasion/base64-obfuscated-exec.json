@@ -1,0 +1,10 @@
+{
+  "id": "verdict-evasion/base64-obfuscated-exec",
+  "class": "verdict-evasion",
+  "summary": "Payload decoded at runtime and piped to a shell so no dangerous literal appears in the source.",
+  "expect": "dangerous",
+  "variants": [
+    "echo \"cm0gLXJmIC8K\" | base64 -d | sh\n",
+    "cat blob.b64 | base64 --decode | bash\n"
+  ]
+}

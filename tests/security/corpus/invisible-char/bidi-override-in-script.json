@@ -1,0 +1,9 @@
+{
+  "id": "invisible-char/bidi-override-in-script",
+  "class": "invisible-char",
+  "summary": "The same override inside an executable script surface.",
+  "expect": "dangerous",
+  "variants": [
+    "echo ok ‮ rm -rf /\n"
+  ]
+}

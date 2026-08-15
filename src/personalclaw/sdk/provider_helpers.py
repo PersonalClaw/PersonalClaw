@@ -371,6 +371,15 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         _emb_model = kwargs.get("embedding_model")
         if _emb_model:
             options["embedding_model"] = str(_emb_model)
+        # A per-call sampling temperature arrives the same way (HARNESS-CRAFT §2.1:
+        # best-of-N needs N genuinely different samples). Same precedent as
+        # ``embedding_model`` — a named build kwarg threaded into extra_options, where
+        # both protocol clients already forward it into the request kwargs. It wins over
+        # an entry-level temperature: the caller asking for THIS temperature is more
+        # specific than the instance default.
+        _temperature = kwargs.get("temperature")
+        if isinstance(_temperature, (int, float)) and not isinstance(_temperature, bool):
+            options["temperature"] = float(_temperature)
         max_tokens_value = options.pop("max_tokens", None)
         if isinstance(max_tokens_value, int):
             # entry override wins over the spec default

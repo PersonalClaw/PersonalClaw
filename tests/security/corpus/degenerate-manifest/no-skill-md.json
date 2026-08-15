@@ -1,0 +1,12 @@
+{
+  "id": "degenerate-manifest/no-skill-md",
+  "class": "degenerate-manifest",
+  "summary": "A payload of scripts with no manifest at all — nothing declares what the skill is, and the writer must not create a nameless skill dir.",
+  "expect": "manifest_rejected",
+  "files": [
+    {
+      "path": "scripts/setup.sh",
+      "contents": "echo hello\n"
+    }
+  ]
+}
