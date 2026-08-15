@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-08-15T18:46:34.589Z",
+  "generatedAt": "2026-08-15T19:51:31.236Z",
   "totals": {
-    "driftHits": 6,
+    "driftHits": 7,
     "filesScanned": 463,
-    "filesWithDrift": 5
+    "filesWithDrift": 6
   },
   "byCategory": {
-    "color": 1,
+    "color": 2,
     "spacing": 1,
     "radius": 1,
     "shadow": 0,
@@ -244,6 +244,13 @@
       "radius": 0,
       "shadow": 0,
       "duration": 1
+    },
+    "pages/settings/SourcesPanel.tsx": {
+      "color": 1,
+      "spacing": 0,
+      "radius": 0,
+      "shadow": 0,
+      "duration": 0
     },
     "ui/composer/liveMarkdown.ts": {
       "color": 0,
@@ -636,6 +643,11 @@
       "raw-input": 4,
       "raw-dialog": 0
     },
+    "pages/settings/RoutingPanel.tsx": {
+      "raw-button": 2,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
     "pages/settings/SearchPanel.tsx": {
       "raw-button": 2,
       "raw-input": 0,
@@ -776,6 +788,12 @@
       "line": 86,
       "category": "duration",
       "snippet": "<ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'trans"
+    },
+    {
+      "file": "pages/settings/SourcesPanel.tsx",
+      "line": 99,
+      "category": "color",
+      "snippet": "(measured rgb(30,31,32) on rgb(30,31,32) dark, rgb(255,255,255) on rgb(255,255,255)"
     },
     {
       "file": "ui/composer/liveMarkdown.ts",

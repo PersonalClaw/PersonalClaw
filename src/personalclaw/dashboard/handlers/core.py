@@ -539,6 +539,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "guardrails.breaker.failure_threshold": {"type": "int", "min": 1, "max": 100},
     "guardrails.breaker.recovery_secs": {"type": "float", "min": 0.0, "max": 3600.0},
     "guardrails.scan_mode": {"type": "enum", "values": ["warn", "redact", "block"]},
+    # Model routing (MODEL-ROUTING-TELEMETRY §7 wiring point (d)) — the runtime-editable
+    # subset: the master switch plus the tuning numbers a user reaches for after watching
+    # what routing actually did. Per-use-case mode/pin are NOT here: they live in
+    # use_case_settings/{uc}.json + routing_policy.json, beside the other bindings state.
+    "routing.enabled": {"type": "bool"},
+    "routing.local_timeout_secs": {"type": "float", "min": 0.0, "max": 600.0},
+    "routing.min_samples": {"type": "int", "min": 1, "max": 10_000},
+    "routing.hysteresis": {"type": "float", "min": 0.0, "max": 1.0},
+    "routing.cloud_quality_margin": {"type": "float", "min": 0.0, "max": 1.0},
+    "routing.energy_sampling": {"type": "bool"},
+    "routing.reproposal_cooldown_days": {"type": "int", "min": 0, "max": 365},
     # §5 earned-autonomy thresholds. Runtime-editable because these are the knobs a
     # user reaches for after seeing what the ladder actually proposed. Bounded on both
     # sides: `clean_approvals` floors at 1 (a bar of zero would offer a promotion to a

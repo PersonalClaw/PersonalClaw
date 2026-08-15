@@ -1,9 +1,11 @@
-import { Trophy } from 'lucide-react'
-import { api, type TelemetryRow } from '../../lib/api'
+import { ArrowDown, ArrowUp, Trophy } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { api, type RoutingPolicyRow, type TelemetryRow } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
-import { Field, Select } from '../../ui/forms'
+import { Field, FieldError, Select } from '../../ui/forms'
+import { unavailableWhen } from '../../ui/unavailable'
 import { PanelHeader, Section } from './settingsUI'
 
 /** Routing & Efficiency (MODEL-ROUTING-TELEMETRY, MRT-1e).
@@ -138,7 +140,178 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
           </>
         )}
       </Section>
+
+      <RoutingPolicySection useCase={useCase} queryClass={queryClass} />
     </div>
+  )
+}
+
+/** The routing POLICY table (MODEL-ROUTING-TELEMETRY §6.1-6.2, MRT-4).
+ *
+ *  The table above says which model is *efficient*; this one says which model routing
+ *  actually tries FIRST, and lets the user overrule it. Three levers, in descending
+ *  authority — a pin beats the policy, and a manual order beats the heuristic:
+ *
+ *    • mode  — off (resolve in the order you bound) | heuristic (prefer local) | learned
+ *    • pin   — always local / always cloud / one exact model; skips ordering entirely
+ *    • order — drag-free reorder buttons that record YOUR order for this request kind
+ *
+ *  The order is a RANKING, not a filter: a model missing from it is tried last, never
+ *  dropped, which is why reordering can't accidentally unbind a provider. Every recorded
+ *  order shows the basis that decided it, so the table always explains itself. */
+function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryClass: string }) {
+  const [rows, setRows] = useState<RoutingPolicyRow[] | null | undefined>(undefined)
+  const [enabled, setEnabled] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  const load = useCallback(() => {
+    api.routingPolicy()
+      .then((d) => { setRows(d.use_cases); setEnabled(d.enabled) })
+      .catch(() => setRows(null))
+  }, [])
+  useEffect(load, [load])
+
+  const row = rows?.find((r) => r.use_case === useCase)
+
+  // One write per interaction, then reload — the server is the authority on what the
+  // table now says (a local guess could disagree with a floored/rejected value).
+  const save = async (body: Parameters<typeof api.setRoutingPolicy>[0]) => {
+    setBusy(true)
+    setNote('')
+    try {
+      await api.setRoutingPolicy(body)
+      load()
+    } catch {
+      setNote("Couldn't save that — nothing changed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (rows === null) {
+    return (
+      <Section>
+        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
+          Couldn't read the routing policy right now. Your bound models are unaffected — resolution
+          falls back to the order you bound them in.
+        </div>
+      </Section>
+    )
+  }
+
+  const recorded = row?.classes?.[queryClass]
+  const order = recorded?.order ?? []
+  const candidates = row?.candidates ?? []
+  // The effective order shown: the recorded ranking first, then any newly-bound model.
+  const shown = [
+    ...order.filter((ref) => candidates.some((c) => c.ref === ref)),
+    ...candidates.map((c) => c.ref).filter((ref) => !order.includes(ref)),
+  ]
+
+  const move = (index: number, delta: number) => {
+    const next = [...shown]
+    const target = index + delta
+    if (target < 0 || target >= next.length) return
+    ;[next[index], next[target]] = [next[target], next[index]]
+    void save({ use_case: useCase, query_class: queryClass, order: next })
+  }
+
+  return (
+    <Section title="Routing policy">
+      <p className="mb-m text-on-surface-var text-[0.8125rem]">
+        Which of your bound models this use case tries first. Routing only reorders the models you
+        already bound — it never adds or removes one, and an unavailable model still reports an
+        error rather than being quietly swapped.
+        {!enabled && ' Routing is currently off globally, so this order is not applied yet.'}
+      </p>
+
+      {!row ? (
+        <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+          Routing doesn't apply to this use case — it runs on background work (reasoning, loops,
+          orchestration), not on interactive chat.
+        </div>
+      ) : (
+        <>
+          <div className="mb-l flex flex-wrap items-end gap-l">
+            <div className="min-w-[13rem]">
+              <Field label="Mode" hint="How the first model gets chosen.">
+                <Select
+                  value={row.mode}
+                  disabled={busy}
+                  onChange={(v) => void save({ use_case: useCase, mode: v as RoutingPolicyRow['mode'] })}
+                  options={[
+                    { value: 'off', label: 'Off — use my order' },
+                    { value: 'heuristic', label: 'Prefer local' },
+                    { value: 'learned', label: 'Learn from results' },
+                  ]}
+                />
+              </Field>
+            </div>
+            <div className="min-w-[15rem]">
+              <Field label="Pin" hint="Overrules the mode for this use case.">
+                <Select
+                  value={row.pin}
+                  disabled={busy}
+                  onChange={(v) => void save({ use_case: useCase, pin: v })}
+                  options={[
+                    { value: '', label: 'No pin' },
+                    { value: 'local', label: 'Always local' },
+                    { value: 'cloud', label: 'Always cloud' },
+                    ...candidates.map((c) => ({ value: c.ref, label: `Always ${c.ref}` })),
+                  ]}
+                />
+              </Field>
+            </div>
+          </div>
+
+          {shown.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+              No models bound to this use case yet. Bind two — one local, one cloud — to give routing
+              a choice to make.
+            </div>
+          ) : (
+            <ol className="flex flex-col gap-1.5">
+              {shown.map((ref, i) => {
+                const local = candidates.find((c) => c.ref === ref)?.local
+                return (
+                  <li key={ref} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2 text-[0.8125rem]">
+                    <span className="w-5 text-right tabular-nums text-on-surface-low">{i + 1}</span>
+                    <span className="flex-1 truncate font-mono text-on-surface" title={ref}>{ref}</span>
+                    <span className="text-on-surface-low text-[0.75rem]">{local ? 'local' : 'cloud'}</span>
+                    <button type="button"
+                      {...unavailableWhen(i === 0, 'Already tried first', { busy })}
+                      onClick={() => move(i, -1)}
+                      className="rounded-md p-1 text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
+                      aria-label={`Move ${ref} earlier`}>
+                      <ArrowUp size={13} aria-hidden />
+                    </button>
+                    <button type="button"
+                      {...unavailableWhen(i === shown.length - 1, 'Already tried last', { busy })}
+                      onClick={() => move(i, 1)}
+                      className="rounded-md p-1 text-on-surface-var hover:bg-surface-high aria-disabled:opacity-40 disabled:opacity-40"
+                      aria-label={`Move ${ref} later`}>
+                      <ArrowDown size={13} aria-hidden />
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+
+          <p className="mt-m text-on-surface-low text-[0.75rem]">
+            {row.pin
+              ? `Pinned to ${row.pin} — the order below is recorded but not applied while the pin is set.`
+              : recorded
+                ? `Order recorded for ${queryClass} · decided by ${String(recorded.basis?.source ?? 'unknown')}.`
+                : `No order recorded for ${queryClass} yet — ${row.mode === 'off' ? 'your bound order applies' : 'the prefer-local rule applies'}.`}
+          </p>
+          {/* A save that just failed is unrequested bad news, so it INTERRUPTS (FieldError
+              carries role="alert"); the recorded-order line above it is normal status text. */}
+          {note && <FieldError className="mt-s">{note}</FieldError>}
+        </>
+      )}
+    </Section>
   )
 }
 

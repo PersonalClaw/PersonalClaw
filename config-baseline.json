@@ -1037,6 +1037,60 @@
     "type": "int"
   },
   {
+    "default": 0.1,
+    "path": "routing.cloud_quality_margin",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": false,
+    "path": "routing.enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "routing.energy_sampling",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.05,
+    "path": "routing.hysteresis",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 20.0,
+    "path": "routing.local_timeout_secs",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 5,
+    "path": "routing.min_samples",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 14,
+    "path": "routing.reproposal_cooldown_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 0.4,
+    "path": "routing.weights.feedback",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
+    "default": 0.6,
+    "path": "routing.weights.success",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
     "default": [],
     "path": "sandbox.env_passthrough",
     "sensitive": false,
