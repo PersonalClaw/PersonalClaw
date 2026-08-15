@@ -2301,6 +2301,16 @@ export interface Artifact {
   readonly: boolean
 }
 
+/** One deployed artifact (PEP-8). `url` is the stable in-gateway path the artifact is
+ *  served at — always `/artifacts/serve/<slug>/`, never a public URL: local-only
+ *  deploy, so it is reachable exactly to whoever holds a dashboard session. */
+export interface ArtifactDeployment {
+  slug: string
+  entry: string
+  created_at: string
+  url: string
+}
+
 // One usage-ledger aggregate (COST-AND-TOKEN-OBSERVABILITY). `priced` is false when
 // the group/window mixes a model with no price row → the cost is a partial, render
 // "unpriced"/a partial marker, never a confidently-complete figure.
@@ -3860,6 +3870,17 @@ export const api = {
   artifactVersions: (slug: string) => get<{ slug: string; versions: number[] }>(`/api/artifacts/${encodeURIComponent(slug)}/versions`),
   artifactVersion: (slug: string, n: number) => get<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}/versions/${n}`),
   artifactEvents: (slug: string) => get<{ slug: string; events: ArtifactEvent[] }>(`/api/artifacts/${encodeURIComponent(slug)}/events`),
+
+  // ── local static artifact deploy (PEP-8) ──
+  // Deploying publishes an html/widget artifact at a stable IN-GATEWAY url
+  // (`/artifacts/serve/<slug>/`) behind the same session auth as the dashboard and a
+  // strict CSP fence (`connect-src 'none'` — the served page cannot call /api).
+  // Teardown removes the route; the artifact itself is untouched.
+  deployedArtifacts: () => get<{ deployments: ArtifactDeployment[] }>('/api/artifacts/deployed').then((d) => d.deployments),
+  deployArtifact: (slug: string, body?: { entry?: string }) =>
+    post<{ ok: boolean; deployment: ArtifactDeployment }>(`/api/artifacts/${encodeURIComponent(slug)}/deploy`, body ?? {}),
+  teardownArtifact: (slug: string) =>
+    del(`/api/artifacts/${encodeURIComponent(slug)}/deploy`),
 
   // ── dashboard-as-views registry (AMBIENT-SURFACES §1 / A2-1) ──
   // Presets are read-only: updateView/deleteView on a preset return 403. Pinning

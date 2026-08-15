@@ -16,6 +16,7 @@ import { promptInput } from '../../ui/dialog'
 import { ARTIFACT_KINDS } from '../files/fileMeta'
 import { ArtifactGrid } from './ArtifactGrid'
 import { ArtifactViewer } from './ArtifactViewer'
+import { DeployedAppsMenu } from './ArtifactDeploy'
 import { PageTitle } from '../../ui/PageTitle'
 
 const SOURCES = ['chat', 'cron', 'subagent', 'manual', 'import'] as const
@@ -165,6 +166,8 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
               <FilterMenu label={col || 'All collections'} value={col} onPick={setCol}
                 options={[{ key: '', label: 'All collections' }, ...collections.map((c) => ({ key: c, label: c }))]} />
             )}
+            {/* The deployed-app listing (PEP-8) — absent when nothing is served. */}
+            <DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} />
             <div className="ml-auto"><Segmented ariaLabel="Sort artifacts" value={sort} onChange={setSort} options={SORTS.map((s) => ({ key: s.key, label: s.label }))} /></div>
             {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
                 already uses it to tell an empty library from a filtered-to-nothing one, so the
