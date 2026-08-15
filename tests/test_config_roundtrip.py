@@ -57,6 +57,35 @@ def test_save_load_roundtrip_skills(cfg_file):
     assert raw["skills"]["max_triggered"] == 5
 
 
+def test_save_load_roundtrip_companion(cfg_file):
+    """Companion config (CA-4) must survive a save/load cycle to disk AND back through load()."""
+    cfg = AppConfig()
+    cfg.companion.discovery_enabled = True
+    cfg.companion.instance_name = "Living room Mac"
+    cfg.save()
+
+    raw = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert raw["companion"]["discovery_enabled"] is True
+    assert raw["companion"]["instance_name"] == "Living room Mac"
+
+    loaded = AppConfig.load()
+    assert loaded.companion.discovery_enabled is True
+    assert loaded.companion.instance_name == "Living room Mac"
+
+
+def test_companion_fields_in_editable_allowlist():
+    """CA-4: both companion fields are PATCH-editable (the write path of the round-trip)."""
+    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG.get("companion.discovery_enabled") == {"type": "bool"}
+    assert _EDITABLE_CONFIG.get("companion.instance_name", {}).get("type") == "str"
+
+
+def test_companion_discovery_defaults_off():
+    """Announcing a service on the LAN is an opt-in — discovery must default OFF."""
+    assert AppConfig().companion.discovery_enabled is False
+
+
 # ---------------------------------------------------------------------------
 # Exhaustive leaf-field round-trip: save() → load() must preserve EVERY field.
 #
@@ -87,6 +116,7 @@ _SECTIONS = [
     "resilience",
     "evals",
     "packs",
+    "companion",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,

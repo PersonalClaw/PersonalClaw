@@ -4051,7 +4051,8 @@
         {
           "id": "CA-4",
           "title": "S2 config: new `companion` section wired through all 5 config points",
-          "status": "todo",
+          "status": "done",
+          "pr": 1354,
           "scope": "Session 2 T2.1; Contracts C4; config/loader.py dataclass+_meta+load()+to_dict(), _EDITABLE_CONFIG PATCH allowlist in dashboard/handlers/core.py, FE control; companion.discovery_enabled (default off) + companion.instance_name",
           "done_when": "test_config_roundtrip green; PATCH toggles discovery_enabled and sets instance_name; both fields round-trip through load()/to_dict()",
           "deps": []
@@ -7424,8 +7425,8 @@
         "plan": "CA"
       },
       {
-        "id": "CA-4",
-        "title": "S2 config: new `companion` section wired through all 5 config points",
+        "id": "CA-5",
+        "title": "S2 discovery: optional mDNS advertiser + client resolver + guide",
         "plan": "CA"
       },
       {
@@ -10010,9 +10011,9 @@
         "code": "CA",
         "plan": "COMPANION-APPS",
         "total_atoms": 9,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {
