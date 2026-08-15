@@ -106,6 +106,7 @@ class TestLoopFindingResolver:
         (d / "findings" / "cycle_002.json").write_text(
             json.dumps({"cycle": 2, "summary": "Found three competitors", "key_insight": "B2B gap"})
         )
+        loop_store.record_cycle_findings("aabbccdd")  # PP-5: ingest into the ledger
         return loop
 
     @pytest.mark.asyncio
@@ -382,6 +383,7 @@ class TestLoopCycleResolver:
         (d / "findings" / "cycle_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "wired the seam"})
         )
+        loop_store.record_cycle_findings("ccddeeff")  # PP-5: ingest into the ledger
         return "ccddeeff"
 
     @pytest.mark.asyncio

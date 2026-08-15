@@ -7168,7 +7168,8 @@
         {
           "id": "PP-5",
           "title": "Loops emit the ledger (closes the flywheel's loop blind spot)",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1331",
           "scope": "Measured: `learning/` has ZERO references to `loop.store` or `get_findings`. The five loop kinds — where the long-horizon autonomous work actually runs today — generate no learning signal at all, so LangChain's fourth loop (\"the return arrow reaches inside and updates the agent loop directly\", 2026-06-16) closes over workflow runs only. Depends on `WF2LOO-16` because a loop cycle cannot emit `judge_verdict` until the third verdict vocabulary speaks the contract; emitting `CycleVerdict`'s shape would add a fifth dialect to the ledger rather than closing the gap.",
           "done_when": "Loop cycles emit to the `PP-4` ledger: a cycle becomes `step_started`/`step_completed`, a supervisor assessment becomes `judge_verdict` in the reconciled vocabulary, a stall becomes `breaker_trip`, a reap becomes `watcher_reaped`. `loop/store.py`'s findings/verdicts files become projections over the ledger rather than a second store (clean break — no dual write). Verified by driving a real loop and reading its trajectory back from the ledger alone, and by `learning/mining.py` returning a non-empty result for a loop run where it previously returned nothing — the acceptance bar is the flywheel producing a proposal from loop evidence, not merely the rows existing.",
           "deps": [
@@ -7850,11 +7851,6 @@
       {
         "id": "PP-2",
         "title": "Derive `needs` from bindings; lift the sibling-only restriction",
-        "plan": "PP"
-      },
-      {
-        "id": "PP-5",
-        "title": "Loops emit the ledger (closes the flywheel's loop blind spot)",
         "plan": "PP"
       },
       {
@@ -10318,9 +10314,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 11,
+        "todo": 10,
         "blocked": 0
       }
     ],

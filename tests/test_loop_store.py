@@ -158,10 +158,17 @@ class TestFileHelpers:
         (d / "findings" / "task_t-abc_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "task work"})
         )
+        # PP-5: the worker's files are ingested ONCE into the ledger; get_findings projects it back.
+        store.record_cycle_findings(g.id)
         f = store.get_findings(g.id)
         assert f[0]["summary"] == "did x"
-        # task finding gets its task_id derived from the filename
+        # task finding gets its task_id derived from the filename (resolved at ingest)
         assert any(x.get("task_id") == "t-abc" for x in f)
+        # task_finding_count is a ledger projection too
+        assert store.task_finding_count(g.id, "t-abc") == 1
+        # Idempotent — a second ingest of the same files adds nothing.
+        assert store.record_cycle_findings(g.id) == 0
+        assert len(store.get_findings(g.id)) == 2
 
     def test_nudges_applied_stamp(self):
         g = _goal()
@@ -224,6 +231,7 @@ class TestRedactedView:
         (store.loop_dir(g.id) / "findings" / "cycle_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "found it"})
         )
+        store.record_cycle_findings(g.id)  # PP-5: ingest into the ledger the list view projects
         _goal(project_id="p-2")
         rows = store.list_redacted()
         row = next(r for r in rows if r["id"] == g.id)

@@ -532,3 +532,51 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   `workflows/tick` to `workflows/admission`, is internal: it appears nowhere under
   `personalclaw/sdk/`, so no app can be depending on it. `PP-12` is the entry that will have
   something to announce.
+
+- **2026-08-15 — `PP-5` DONE.** The loop engine is the SECOND producer of the ledger.
+  `loop/journal.py`'s `LoopJournal(LedgerWriter)` binds `_store` to `loop.store` (now a
+  `LedgerStore`: `append_jsonl`/`read_jsonl`/`write_output`/`write_artifact`, keyed by loop_id) and
+  emits the four kinds the atom names — a cycle → `step_started`/`step_completed` carrying the
+  finding, a supervisor assessment → `judge_verdict`, a stall → `breaker_trip`, an orphan reap →
+  `watcher_reaped` — reusing `ledger/kinds.py`, minting nothing. The four live emit points:
+  `store.record_cycle_findings` (watchdog `_poll_once`, ingesting the worker's finding files),
+  `store.write_verdict` (goal/sdlc kinds), `store.record_breaker_trip` (watchdog stagnation),
+  `manager.reap_orphaned_loops` (`store.record_watcher_reaped`). `store.get_findings`/`get_verdicts`
+  became PROJECTIONS over the ledger's `step_completed`/`judge_verdict` events — the findings/ and
+  verdicts/ FILE store is retired as a reader source (clean break, no dual write). `learning/
+  loop_end.py` mirrors `run_end.py`: a terminal loop mines its own ledger via the `journal=`/`store=`
+  seams `learning.mining` already exposed, wired behind the RUN_END LearningGate in the watchdog's
+  `_complete`. Verified by driving real loop cycles through the ingest path and reading the
+  trajectory back FROM THE LEDGER ALONE, and by the flywheel filing a TEMPLATE proposal from three
+  loops' evidence where it saw nothing before.
+
+- **2026-08-15 — DEVIATION (`PP-5`): the worker's finding FILE stays; it is the ingest source, not a
+  second store.** The atom says the findings/verdicts files "become projections over the ledger". A
+  verdict was a platform write (`store.write_verdict`), so it moved wholesale — verdicts/ is gone.
+  But a FINDING is authored by the worker subagent writing `findings/cycle_NNN.json` as its per-cycle
+  deliverable (baked into every kind's prompt + the `loop-worker` skill), so that file is the worker's
+  OUTPUT, not the reader's store — analogous to a workflow node's raw output under `outputs/`. The
+  clean break is that `get_findings`/`get_verdicts` no longer READ a parallel file store: the
+  controller ingests each file ONCE into the ledger (`record_cycle_findings`, idempotent by source
+  filename) and every reader projects the ledger. Rewriting the worker's file interface would be a
+  different atom (`PP-16`'s "a Loop becomes a WorkflowRun"), not this one.
+
+- **2026-08-15 — DISCOVERY (`PP-5`): `step_started` is journal-only, not a durable ledger kind.**
+  `LEDGER_KINDS` (from PP-4) contains `step_completed` but NOT `step_started`, so
+  `LedgerWriter.write` mirrors a cycle's completion to `events.jsonl` (what `learning.mining` reads)
+  while `step_started` lands only in `journal.jsonl` — exactly the workflow engine's own split
+  between the durable Run Ledger and the resume/progress log. The loop inherits it for free: the
+  flywheel mines completed steps, and the full ordered trajectory (started + completed markers) is in
+  the journal for a trajectory reader. The ledger-boundary rail was hardened to ban
+  `personalclaw.loop` under `ledger/` too (not just `personalclaw.workflows`), since the loop is now
+  the second producer and the reverse-import ban must cover it.
+
+- **2026-08-15 — `PP-5` proof.** Falsified three times, each target line read first and restored from
+  a `cp` backup (never `git checkout --`): suppressing the `step_completed` emit in `LoopJournal.cycle`
+  reds the headline `test_flywheel_produces_a_proposal_from_loop_evidence` (and
+  `test_mining_reads_loop_steps_off_the_ledger`) — the load-bearing flywheel bar, since a loop with no
+  completed steps mines no trace; emitting the supervisor assessment as a bare `{cycle, note}` instead
+  of the reconciled `JudgeVerdict` shape reds
+  `test_judge_verdict_carries_the_reconciled_vocabulary`; perturbing the projection (`get_findings`
+  dropping its first finding) reds `test_trajectory_reconstructs_from_the_ledger_alone`, which
+  reconstructs the findings/verdicts view purely from the ledger after the raw files are deleted.
