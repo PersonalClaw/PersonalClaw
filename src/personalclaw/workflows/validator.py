@@ -287,6 +287,10 @@ def _validate_shape(
                     "responds and exhaust the run budget",
                     path,
                 )
+        # A loop MAY declare a `SupervisorPolicy` (PP-14). It is authoring-time validated but
+        # deliberately not yet read by the engine — PP-15 is the wiring owner.
+        if "supervisor" in cfg:
+            _validate_supervisor(res, path, cfg.get("supervisor"))
 
     elif kind == NodeKind.BRANCH:
         if not cfg.get("on"):
@@ -415,6 +419,59 @@ def _validate_shape(
             base = ref.split("@", 1)[0]
             if not valid_name(base):
                 _add(res, "WF_BAD_REF", f"subworkflow ref {ref!r} is not a valid name", path)
+
+
+def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:
+    """Authoring-time validation of a loop's `SupervisorPolicy` declaration (PP-14).
+
+    The closed field set IS the contract: an UNKNOWN top-level field is an error, while a
+    missing one is tolerated by the parser's defaults. Bad enum VALUES are flagged too, each
+    against the vocabulary that already owns it (reused, never re-minted). This is a pure
+    authoring check — nothing here reads a parsed policy, and the engine is unchanged (PP-15
+    is the wiring owner). Imported lazily so `validator` stays import-cheap and cycle-free.
+    """
+    # Local import: keeps the declaration module (and its transitive loop/judge imports) off
+    # `validator`'s import path, matching the lazy-import pattern already used for PIPES below.
+    from personalclaw.workflows.supervisor_policy import (
+        FAILURE_CLASS_VALUES,
+        HITL_POSTURE_VALUES,
+        LADDER_RUNG_VALUES,
+        POLICY_FIELDS,
+        SUPERVISOR_MODEL_TIERS,
+    )
+
+    if not isinstance(raw, dict):
+        _add(res, "WF_SUPERVISOR_NOT_OBJECT", "supervisor must be an object", path)
+        return
+    for key in raw:
+        if key not in POLICY_FIELDS:
+            _add(res, "WF_SUPERVISOR_UNKNOWN_FIELD", f"unknown supervisor field {key!r}", path)
+    tier = raw.get("judge_model_tier")
+    if tier is not None and str(tier) not in SUPERVISOR_MODEL_TIERS:
+        _add(
+            res,
+            "WF_SUPERVISOR_BAD_TIER",
+            f"judge_model_tier {tier!r} must be reasoning|standard|fast",
+            path,
+        )
+    ladder = raw.get("escalation_ladder")
+    if isinstance(ladder, list):
+        for rung in ladder:
+            if str(rung) not in LADDER_RUNG_VALUES:
+                _add(res, "WF_SUPERVISOR_BAD_RUNG", f"unknown escalation rung {rung!r}", path)
+    mutations = raw.get("failure_mutations")
+    if isinstance(mutations, dict):
+        for cls in mutations:
+            if str(cls) not in FAILURE_CLASS_VALUES:
+                _add(
+                    res,
+                    "WF_SUPERVISOR_BAD_FAILURE_CLASS",
+                    f"unknown failure class {cls!r}",
+                    path,
+                )
+    hitl = raw.get("hitl_posture")
+    if hitl is not None and str(hitl) not in HITL_POSTURE_VALUES:
+        _add(res, "WF_SUPERVISOR_BAD_HITL", f"hitl_posture {hitl!r} must be afk|hitl", path)
 
 
 def _validate_bindings(res: ValidationResult, path: str, node: Node, *, strict: bool) -> None:
