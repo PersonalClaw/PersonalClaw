@@ -257,7 +257,7 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
   const autoId = useId()
   return (
     <input type="date" value={value} id={autoId} aria-labelledby={labelId} onChange={(e) => onChange(e.target.value)}
-      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
+      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
   )
 }
 
@@ -267,7 +267,7 @@ export function Select({ value, onChange, options, disabled, name }: { value: st
   const autoId = useId()
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId} aria-labelledby={!name && labelId ? labelId : undefined}
-      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-50 [color-scheme:dark]">
+      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-50">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )

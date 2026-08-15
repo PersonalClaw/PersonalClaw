@@ -123,7 +123,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       {draft.kind === 'at' && (
         <input type="datetime-local" value={draft.at} onChange={(e) => set('at', e.target.value)}
           name="run-at" aria-label="Run once at date and time"
-          className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]" />
+          className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
       )}
 
       {/* ── WHAT (omitted in triggerOnly — action is configured separately) ── */}
@@ -222,7 +222,7 @@ function NativeSelect({ value, onChange, options, label, name }: { value: string
   return (
     <div className="relative">
       <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} name={name}
-        className="h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
+        className="h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
       <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />

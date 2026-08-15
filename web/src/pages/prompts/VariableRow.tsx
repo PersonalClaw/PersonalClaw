@@ -33,7 +33,7 @@ export function VariableRow({ v, onChange, onRemove, descriptionPlaceholder = 'D
           className="flex-1 h-8 rounded-md bg-surface px-m font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
         <div className="relative">
           <select value={v.type} onChange={(e) => onChange({ type: e.target.value as PromptVarType })} aria-label={`Type of variable ${which}`} name={`var-type-${rid}`}
-            className="h-8 appearance-none rounded-md bg-surface pl-m pr-7 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
+            className="h-8 appearance-none rounded-md bg-surface pl-m pr-7 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
             {VAR_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
           </select>
         </div>

@@ -243,7 +243,7 @@ function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown
   }
   if (v.type === 'select') {
     return (
-      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base} [color-scheme:dark]`}>
+      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
