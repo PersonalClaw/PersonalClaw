@@ -68,10 +68,26 @@ export interface ComposerProps {
   optimizing?: boolean
   /** Prior user messages, oldest→newest, for ↑/↓ history recall in an empty draft. */
   history?: string[]
-  /** Transcribe a recorded audio blob to text (host inserts it into the draft). */
-  onTranscribe?: (blob: Blob) => Promise<string>
+  /** Transcribe a recorded audio blob to text (host inserts it into the draft).
+   *  `opts.duplex` marks a hands-free capture so the host can ask the backend to
+   *  filter the assistant's own speech back out. */
+  onTranscribe?: (blob: Blob, opts?: { duplex?: boolean }) => Promise<string>
   /** Report a voice-input failure (mic blocked / no STT) so the host can surface it. */
   onMicError?: (msg: string) => void
+  /** Hands-free voice loop (MULTIMODAL-IO §4). Supplying it adds the hands-free
+   *  toggle beside the mic: dictation accumulates in the draft and is sent only when
+   *  a confirmation phrase lands. Without it the mic stays push-to-talk. */
+  handsFree?: {
+    confirmationPhrases: readonly string[]
+    exitPhrases: readonly string[]
+    /** True while a spoken reply plays — mutes the mic and drops its buffered audio. */
+    speaking?: boolean
+    /** True when the loop should mute during playback at all (voice.duplex_mute_enabled). */
+    muteWhileSpeaking?: boolean
+  }
+  /** Called with the accumulated dictation once a confirmation phrase fires the
+   *  turn. Required for the hands-free toggle to appear. */
+  onHandsFreeSubmit?: (text: string) => void
   /** When true, the send button becomes a "queue" affordance — the host runs the
    *  message after the in-flight turn finishes instead of dropping it. */
   canQueue?: boolean

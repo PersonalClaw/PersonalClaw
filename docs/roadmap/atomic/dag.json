@@ -3432,7 +3432,7 @@
         {
           "id": "MI-3",
           "title": "Duplex-loop hardening pack (confirmation gating, echo filter + STT mute, pre-TTS cleaning, voice disclaimer, VoiceConfig)",
-          "status": "todo",
+          "status": "done",
           "scope": "§4 Duplex-Loop Hardening Pack (§4.1 confirmation-phrase gating; §4.2 TTS-echo filter + mute-during-playback; §4.3 clean_for_speech after existing redaction; §4.4 voice-origin disclaimer + input_origin metadata; §4.5 VoiceConfig via the four wiring points)",
           "done_when": "voice/duplex.py pure functions (is_confirmation/is_exit/is_echo 3-consecutive-word/clean_for_speech) with unit suite; FE hands-free transcript accumulation + mute-during-playback hook draining mic buffers; api_voice_synthesize records last-TTS-text and cleans after redact calls; api_stt_transcribe consults echo on duplex:true returning {text:'',filtered:'echo'}; voice turns carry the disclaimer + input_origin:voice in session JSONL; VoiceConfig six fields round-trip through dataclass/_meta, load(), to_dict(), _EDITABLE_CONFIG PATCH + VoicePanel.tsx controls",
           "deps": []
@@ -7733,11 +7733,6 @@
         "plan": "MI"
       },
       {
-        "id": "MI-3",
-        "title": "Duplex-loop hardening pack (confirmation gating, echo filter + STT mute, pre-TTS cleaning, voice disclaimer, VoiceConfig)",
-        "plan": "MI"
-      },
-      {
         "id": "MI-4",
         "title": "Screen-context observation channel — opt-in ephemeral screen share into interactive chat (§5 live-session remainder only)",
         "plan": "MI"
@@ -9936,9 +9931,9 @@
         "code": "MI",
         "plan": "MULTIMODAL-IO",
         "total_atoms": 5,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

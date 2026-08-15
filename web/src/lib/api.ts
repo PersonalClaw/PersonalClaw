@@ -2772,18 +2772,30 @@ export const api = {
   // composer tools: prompt optimizer + speech-to-text transcription.
   optimizePrompt: (prompt: string, context = '') =>
     post<{ optimized?: string; changed?: boolean }>('/api/optimizer/optimize', { prompt, context }),
-  transcribeAudio: async (blob: Blob): Promise<{ text?: string; error?: string }> => {
+  /** Transcribe a recording. `duplex` marks a hands-free capture: the backend then
+   *  checks the transcript against what it last spoke and answers
+   *  `{ text: '', filtered: 'echo' }` when the microphone heard the assistant
+   *  (MULTIMODAL-IO §4.2). `input_origin`/`disclaimer` ride back so the turn can be
+   *  honest about having been dictated. */
+  transcribeAudio: async (
+    blob: Blob,
+    opts?: { duplex?: boolean; session?: string },
+  ): Promise<{ text?: string; error?: string; filtered?: string; input_origin?: string; disclaimer?: string }> => {
     const fd = new FormData()
     fd.append('audio', blob, 'recording.webm')
-    const r = await fetch('/api/stt/transcribe', { method: 'POST', headers: { ...SK }, body: fd })
+    const qs = new URLSearchParams()
+    if (opts?.duplex) qs.set('duplex', 'true')
+    if (opts?.session) qs.set('session', opts.session)
+    const url = qs.toString() ? `/api/stt/transcribe?${qs}` : '/api/stt/transcribe'
+    const r = await fetch(url, { method: 'POST', headers: { ...SK }, body: fd })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { error: data?.error || `HTTP ${r.status}` }
     return data
   },
 
   // send / control
-  sendChat: (message: string, session: string, meta?: object, queue_mode?: string) =>
-    post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}) }),
+  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) =>
+    post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}) }),
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
   stopChat: (session: string, force = false) => post(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),

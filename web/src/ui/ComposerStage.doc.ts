@@ -34,6 +34,8 @@ const doc: UiDoc = {
     { name: 'history', description: 'Prior user messages oldest→newest, for ↑/↓ history recall in an empty draft.' },
     { name: 'onTranscribe', description: 'Transcribes a recorded audio blob to text — required (with controls.mic) to enable voice input.' },
     { name: 'onMicError', description: 'Reports a voice-input failure (mic blocked / no STT) so the host can surface it.' },
+    { name: 'handsFree', description: 'Hands-free voice loop config (phrase lists + mute-while-speaking) — with onHandsFreeSubmit it adds the hands-free toggle beside the mic.' },
+    { name: 'onHandsFreeSubmit', description: 'Receives the accumulated dictation once a confirmation phrase fires the turn; required for the hands-free toggle to appear.' },
     { name: 'canQueue', description: 'When true, the send button becomes a "queue" affordance — the host runs the message after the in-flight turn instead of dropping it.' },
     { name: 'contextPct', description: '0–100 context-window usage for the bound session → ring on the model pill.' },
     { name: 'minChars', description: 'Minimum trimmed length before Send enables (default 1); a surface needing a longer draft raises it so Send reads as disabled, not a silent no-op.' },
