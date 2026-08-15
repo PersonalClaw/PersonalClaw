@@ -1663,3 +1663,106 @@ tests while `test_config_roundtrip.py` stays green; (3) breaking the defer reds 
 Gate: `make lint` green (black/isort/flake8/mypy, 1597 files / 821 source files);
 `config-baseline.json` regenerated in the same commit (a new config field legitimately grows it).
 No `web/` change, so no web gate.
+
+### WF2LOO-18 — the loops stall detector no longer depends on the worker's own report
+
+**DONE — `loop/watchdog.check_stagnation` gained two signals the worker cannot author, and the
+window became a config field.** The detector read exactly one field, `new_findings_count`, which
+the worker writes, and defaulted it to `1` when absent. Both halves were escapes: a worker
+reporting any nonzero count was immune to stagnation detection forever, and a worker that never
+wrote the field was immune by default. `_MAX_CONSECUTIVE_ERRORS = 2` only counts turn FAILURES and
+the unresponsive deadline only counts wall-clock silence, so a confidently-looping worker producing
+fresh junk tripped nothing at all.
+
+`check_stagnation(findings, *, window=None)` now returns a REASON string (empty while progressing)
+and evaluates three signals over the last `loops.stagnation_window` findings, in this order:
+
+1. **Byte-identical work product** (observed). The findings' content — `cycle`,
+   `new_findings_count` and the timestamp keys excluded — is unchanged across the window. Excluding
+   the counter is what stops a worker buying immunity by incrementing a number beside unchanged
+   output.
+2. **Identical calls** (observed). Every cycle recorded the same set of calls/targets
+   (`tool_calls`/`calls`/`commands`/`sources_checked`/`files_touched`), order-independent. This
+   catches the case content hashing misses: a worker that re-words its report every cycle while
+   re-reading the same three pages.
+3. **The self-reported count** (KEPT). Cheapest of the three and genuinely informative when honest,
+   so it stays — but it is consulted LAST, it can no longer veto (1) or (2), and its absence no
+   longer reads as progress.
+
+**DEVIATION — the reuse of `check_breaker` is a lazy import into `loop/`, not an extraction.** The
+atom requires the byte-identical rule be reused rather than reimplemented, but it lives in
+`workflows/resilience.py` and its entry point takes engine types (`Node`, `BreakerState`). Three
+options existed: import it, extract the shared predicate to a neutral home, or reimplement (which
+the atom forbids). Extraction was rejected because it necessarily edits `workflows/resilience.py`
+to consume the new home — otherwise there would be two copies of the rule, which is the clean-break
+violation the atom is trying to avoid — and `workflows/` was concurrently owned by other atoms.
+So: **import it.** `_repeats_identically` records values into `BreakerState` (whose `record` owns
+the output hashing) and takes its verdict from `check_breaker`, handing it a config-carrying `Node`
+because the breaker reads its thresholds off `node.config`; a loops CYCLE is exactly the iteration
+unit the breaker was written for. Call normalization reuses `loop_middleware.call_fingerprint` the
+same way. The imports are **lazy**, because `workflows` already reaches into `loop`
+(`controller` → `loop.gates`, `verify` → `loop.gates`, `provisioning` → `loop.worktree`), so a
+module-level import back would close that cycle at import time. The coupling points the same
+direction `PP-16` will take when it unifies the two work-unit paths, and
+`TestReusesTheEngineRules` spies on both engine functions so a later inline re-implementation on
+the loops side goes red instead of drifting quietly.
+
+**DISCOVERY — signal (2) had a vacuity trap that would have been an outage.**
+`design`/`general`/`sdlc` findings record no calls at all (measured: only `goal` and `research`
+prompt for `sources_checked`; `general`/`sdlc` write `files_touched`; `design` writes `artifacts`),
+so their per-cycle fingerprint lists are empty — and an all-empty window is *trivially* identical.
+Firing on that would have stalled every loop of those kinds at cycle N regardless of progress. The
+signal is therefore silent unless EVERY cycle in the window recorded something, with a rail that
+drives a call-less kind past the window and asserts it stays RUNNING.
+
+**DISCOVERY — "absence stops reading as progress" cannot mean "absence establishes a stall."** The
+same measurement applies to signal (3): only `goal`/`research` prompt for `new_findings_count`, so
+flipping the absent-default from `1` to `0` would have stalled every `design`/`general`/`sdlc` loop
+after N cycles. The landed rule is anchored on an explicit claim instead: the window stalls when the
+cycles that *spoke* all reported zero and none reported progress. Silence cannot rescue a window
+(the defect) and cannot condemn one either (the outage). A written `null` still counts as a claim of
+zero, matching the old `or 0`, so no case that previously tripped now passes.
+
+**DEVIATION — no frontend control (config point 5),** for the reason `WF2LOO-17` records
+verbatim: no `LoopsConfig` field has one, so a lone control would mean building a new settings
+surface. `loops.stagnation_window` (default 5, clamped `[2, 50]`, fail-safe to 5) is wired through
+the dataclass + `_meta`, `load()`, `to_dict()` (via `asdict`) and the `_EDITABLE_CONFIG` PATCH
+allowlist, documented in `docs/reference/CONFIG-REFERENCE.md`'s `loops.*` table, and read per poll
+so a change applies without a restart. The floor of 2 is structural: the two observed signals
+compare findings BETWEEN cycles, so a window of 1 could only compare a cycle with itself.
+
+The stall now publishes its REASON (`stagnant` SSE payload + an INFO log line) instead of an
+unexplained status change — three detectors with one indistinguishable outcome would leave a user
+guessing which one fired.
+
+Falsification, all three restored from file backups and md5-verified (never `git checkout --`):
+
+**(1) The detector reverted to the old one-line body — 12 red / 10 pass**, including the atom's
+named acceptance case: `test_identical_content_stalls_a_loop_claiming_five_new_findings`,
+`test_identical_sources_stall_a_reworded_report`, `test_source_order_is_not_progress`,
+`test_absence_no_longer_reads_as_progress`,
+`test_an_unparseable_count_is_no_claim_rather_than_progress`,
+`test_a_claimed_count_cannot_veto_the_content_signal`,
+`test_the_counter_is_excluded_from_the_content_hash`, both `TestReusesTheEngineRules` rails,
+`test_a_shorter_window_stalls_the_loop_sooner`, `test_a_longer_window_buys_more_cycles`,
+`test_a_patched_window_reaches_the_running_watchdog`. Side finding: the old body reds
+`test_an_unparseable_count_...` by raising `ValueError: invalid literal for int()` — a
+non-numeric count aborted the whole poll into "loop watchdog poll errored" rather than being
+read as an unusable claim. The new parser cannot raise.
+
+**(2) Only the absent-means-`1` default restored** (`_reported_progress` returns True for a
+missing key) — **1 red**, `test_absence_no_longer_reads_as_progress`, with the other 21 green.
+That isolation is the point: the two observed signals do not depend on the self-report at all.
+
+**(3) The `_EDITABLE_CONFIG` entry deleted** — 2 red (`test_patch_persists_and_reloads`,
+`test_a_patched_window_reaches_the_running_watchdog`; PATCH → 400 "field not editable")
+**while `test_config_roundtrip.py` stays 6/6 green** — the asymmetry `WF2LOO-17` measured,
+re-confirmed. Note the third rail, `test_patch_refuses_a_window_below_the_floor`, stays GREEN
+under this probe: it asserts a 400, and a missing allowlist entry also produces a 400. A
+reject-only rail cannot detect an unwired field; the two positive-drive rails are what do.
+
+Gate: `make lint` green (black/isort/flake8/mypy, 1598 files / 821 source files);
+`pytest -n 0 tests/test_loop_*.py tests/test_config*.py` 540 passed / 1 skipped; full
+`pytest --no-cov -q` 19205 passed / 30 skipped / 12 xfailed / 0 failed, collection 19245 vs the
+stacked base's 19223 (+22 new, 0 removed); `config-baseline.json` regenerated in the same commit
+(a new config field legitimately grows it). No `web/` change, so no web gate.

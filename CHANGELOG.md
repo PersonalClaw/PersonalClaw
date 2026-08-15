@@ -10,6 +10,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A loop that keeps working but stops getting anywhere now stalls, even when it insists it is
+  making progress.** The supervisor's stall detector used to read one number the worker itself
+  writes — `new_findings_count` — and treated a missing number as "progressing". So a worker that
+  reported *any* nonzero count, or simply stopped reporting one, could spin for its entire cycle
+  budget on your money without anything noticing. The supervisor now also watches two things the
+  worker cannot write for itself: whether the cycle report is **byte-identical** to the previous
+  cycles', and whether every cycle **checked the same sources or touched the same files**. Either
+  one stalls the loop to *"needs direction"* with the reason on the card, so you can steer it
+  instead of paying for another ten identical cycles. The self-reported count is still used — it is
+  the cheapest and clearest signal when it is honest — it just can no longer overrule what the
+  supervisor can see, and its silence no longer counts as progress.
+  A monitor loop still never stalls (a quiet cycle is the point), and a loop kind that records
+  nothing to compare is judged only on content, so nothing stalls for lack of data. The number of
+  no-progress cycles it takes is now a setting, `loops.stagnation_window` (default 5, minimum 2),
+  read live — no restart needed.
+
 - **A loop's judge no longer runs on the same model as the worker it grades.** Autonomous goal
   loops never let the worker certify its own work — a separate judge, in its own session with its
   own prompt and no write tools, decides whether a cycle is done. But that judge was resolving the

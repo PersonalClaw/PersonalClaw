@@ -593,7 +593,7 @@ class TestStagnation:
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
         _run(wd._poll_once())  # seed
-        for i in range(1, W._STAGNATION_WINDOW + 1):
+        for i in range(1, W.DEFAULT_STAGNATION_WINDOW + 1):
             _write_finding(c.id, i, new_findings_count=0)
             _run(wd._poll_once())
         assert store.get(c.id).status == LoopStatus.STAGNANT.value
