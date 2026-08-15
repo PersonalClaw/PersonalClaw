@@ -627,6 +627,28 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [{"summary": "List all remembered rules", "args": {}}],
     },
+    "triage_rules": {
+        # PA-1: the taught approve/deny rules the proactive digest consults. `suppressed`
+        # is not an assertable verdict (a cooldown is derived from declines), so the
+        # examples only show what a caller may actually write.
+        "response_type": "memory.triage_rules",
+        "error_codes": [],
+        "examples": [
+            {"summary": "List the taught triage rules", "args": {"action": "list"}},
+            {
+                "summary": "Always approve archiving newsletters",
+                "args": {
+                    "action": "add",
+                    "pattern": "archive:newsletter",
+                    "verdict": "approve",
+                },
+            },
+            {
+                "summary": "Revoke a rule by id",
+                "args": {"action": "revoke", "id": "user.approval.archive:newsletter"},
+            },
+        ],
+    },
     "memory_forget": {
         "response_type": "memory.forget.result",
         "error_codes": [],

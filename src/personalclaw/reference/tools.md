@@ -1160,6 +1160,49 @@ Save a learned correction or preference that persists across all future sessions
 }
 ```
 
+### `triage_rules`
+
+List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and a verdict ('approve' or 'deny'); action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal.
+
+**Response type:** `memory.triage_rules`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `action` (string, required) — list | add | revoke
+- `expires_at` (string, optional) — Optional ISO-8601 expiry; the rule stops matching after it
+- `id` (string, optional) — The rule id (user.approval.*) to revoke
+- `pattern` (string, optional) — Colon-delimited pattern, narrowest first segment is the action type: <action>[:<qualifier>...] (add only)
+- `scope` (string, optional) — Where the rule applies (default global)
+- `verdict` (string, optional) — approve = auto-execute, deny = silently skip (add only)
+
+**Example — List the taught triage rules:**
+
+```json
+{
+  "action": "list"
+}
+```
+
+**Example — Always approve archiving newsletters:**
+
+```json
+{
+  "action": "add",
+  "pattern": "archive:newsletter",
+  "verdict": "approve"
+}
+```
+
+**Example — Revoke a rule by id:**
+
+```json
+{
+  "action": "revoke",
+  "id": "user.approval.archive:newsletter"
+}
+```
+
 ## personalclaw-project-tools
 
 ### `project_run_create`

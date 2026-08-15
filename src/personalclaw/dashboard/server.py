@@ -607,6 +607,11 @@ async def start_dashboard(
     register_lexicon_routes(app)
 
     # Vector Memory (Semantic)
+    app.router.add_get("/api/memory/approval-rules", handlers.api_memory_approval_rules)
+    app.router.add_post("/api/memory/approval-rules", handlers.api_memory_approval_rule_add)
+    app.router.add_delete(
+        "/api/memory/approval-rules/{key:.+}", handlers.api_memory_approval_rule_delete
+    )
     app.router.add_get("/api/memory/semantic", handlers.api_memory_semantic)
     app.router.add_put("/api/memory/semantic", handlers.api_memory_semantic_write)
     app.router.add_delete("/api/memory/semantic/{key:.+}", handlers.api_memory_semantic_delete)

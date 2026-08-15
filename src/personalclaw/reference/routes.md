@@ -361,6 +361,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/mcp/toggle-all` — enable or disable all MCP servers.
 - `POST /api/mcp/toggle-tool` — enable or disable a specific tool in an MCP server.
 - `POST /api/memory/activate-model` — switch the active embedding model.
+- `GET /api/memory/approval-rules` — the triage approval rules, with provenance.
+- `POST /api/memory/approval-rules` — teach one approve/deny rule.
+- `DELETE /api/memory/approval-rules/{key}` — revoke one rule.
 - `POST /api/memory/consolidate` — trigger immediate consolidation for testing.
 - `GET /api/memory/context-preview` — preview what gets injected into prompts.
 - `GET /api/memory/daily-digests` — the per-day rollup nodes (mem-tree),

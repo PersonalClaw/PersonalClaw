@@ -947,6 +947,42 @@
     "type": "str"
   },
   {
+    "default": false,
+    "path": "proactive.auto_execute_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
+    "path": "proactive.classifier_gate_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 90,
+    "path": "proactive.decision_default_horizon_days",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": "0 8 * * *",
+    "path": "proactive.digest_schedule",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": 5,
+    "path": "proactive.max_auto_actions_per_run",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": false,
+    "path": "proactive.triage_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 2.0,
     "path": "resilience.cancel_replace_min_interval_secs",
     "sensitive": false,

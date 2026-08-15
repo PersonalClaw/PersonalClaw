@@ -490,10 +490,14 @@ _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
 # its OWN working patterns would have rendered as a FACT ABOUT THE USER. It is a
 # statement about the harness, and only §2.6's compact snapshot may inject it —
 # never the fact block.
+# `user.approval.*` joins them (PROACTIVE-ASSISTANT §1.4 — PA-1). An approval rule
+# is the harness's model of how the user wants it to BEHAVE, consulted by an exact
+# prefix lookup at triage time. Injected as a fact it would read as a claim about
+# the user ("archive:sender:noreply.github.com"), so it is excluded here.
 _NON_FACT_KEY_CLAUSE = (
     "key NOT LIKE 'lesson.%' AND key NOT LIKE 'user.procedural.%' "
     "AND key NOT LIKE 'user.persona.%' AND key NOT LIKE 'user.commitment.%' "
-    "AND key NOT LIKE 'user.selfmodel.%'"
+    "AND key NOT LIKE 'user.selfmodel.%' AND key NOT LIKE 'user.approval.%'"
 )
 
 
@@ -1153,6 +1157,7 @@ class VectorMemoryStore(MemoryProvider):
             MemoryKind.PROCEDURAL.value,
             MemoryKind.SELF_PERSONA.value,
             MemoryKind.COMMITMENT.value,
+            MemoryKind.APPROVAL.value,
         }
         if want is None or (want & sem_kinds):
             where = "" if include_deleted else " WHERE is_deleted = 0"

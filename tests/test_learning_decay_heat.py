@@ -77,6 +77,9 @@ OLD_HEAT_30D = 0.5 * math.exp(-1.0)
 #: What the kernel produces, per kind, same inputs. Pinned because these are the
 #: numbers the promotion gate and the retrieval boost now see.
 NEW_HEAT_30D = {
+    # A user-taught approval rule is the slowest-decaying class (0.4, matching
+    # "strategy") — a standing instruction outlives the digest that minted it.
+    MemoryKind.APPROVAL: 0.423373,
     MemoryKind.SEMANTIC: 0.406126,
     MemoryKind.PREFERENCE: 0.406126,
     MemoryKind.SELF_PERSONA: 0.406126,

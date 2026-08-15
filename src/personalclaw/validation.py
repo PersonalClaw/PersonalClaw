@@ -408,6 +408,20 @@ MEMORY_RECALL_SCHEMA = ToolSchema(
     ],
 )
 
+TRIAGE_RULES_SCHEMA = ToolSchema(
+    tool_name="triage_rules",
+    fields=[
+        FieldSpec("action", str, required=True, allowed=frozenset({"list", "add", "revoke"})),
+        FieldSpec("pattern", str, max_len=MAX_SHORT_STRING),
+        # `suppressed` is deliberately NOT accepted: a cooldown is something the
+        # digest derives from declines, not a verdict a caller may assert.
+        FieldSpec("verdict", str, allowed=frozenset({"approve", "deny"})),
+        FieldSpec("id", str, max_len=MAX_SHORT_STRING),
+        FieldSpec("scope", str, allowed=frozenset({"global", "workspace"}), default="global"),
+        FieldSpec("expires_at", str, max_len=MAX_SHORT_STRING),
+    ],
+)
+
 SPAWN_STATUS_SCHEMA = ToolSchema(
     tool_name="subagent_status",
     fields=[
@@ -958,6 +972,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "memory_remember": LEARN_ADD_SCHEMA,
     "memory_forget": LEARN_REMOVE_SCHEMA,
     "memory_recall": MEMORY_RECALL_SCHEMA,
+    "triage_rules": TRIAGE_RULES_SCHEMA,
     "notify": SEND_MESSAGE_SCHEMA,
     "wait": WAIT_SCHEMA,
     "hook_register": REGISTER_HOOK_SCHEMA,
