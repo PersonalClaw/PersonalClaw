@@ -30,6 +30,10 @@ export const StepRow = forwardRef<HTMLDivElement, {
       layout
       transition={spring.spatialDefault}
       onClick={!active && done && onActivate ? onActivate : undefined}
+      // Mark the current step in the process (WAI-ARIA `aria-current="step"`). The rows are
+      // not focusable, so this is what lets a screen-reader user exploring the page tell which
+      // step is live; step CHANGES are announced separately by the live region in Onboarding.
+      aria-current={active ? 'step' : undefined}
       className="overflow-hidden"
       style={{
         // match the DotGlow bloom's corner radius exactly so the glow halo hugs
