@@ -5016,7 +5016,7 @@
         {
           "id": "HC-4",
           "title": "Check-work skill + SDLC post-gate hook + chat suggestion chip",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.1 The skill: skills/bundled/check-work/SKILL.md; §3.2 Composition, not duplication (SDLC post-gate hook + QA-Companion boundary doc); §3.3 Chat surfacing",
           "done_when": "skills/bundled/check-work/SKILL.md reconstructs session claims, derives 2-4 executable checks, runs them with real tool calls (unverifiable checks reported as such, never assumed passing), and reports pass/fail with evidence; an adversarial planted-flaw case is caught with zero self-reported passes; loop.check_work_stages (default off) runs the same check-derivation module after a passing SDLC gate and catches a claimed-but-missing file; chat.offer_check_work (default on) offers a 'Check this work' chip after >=3-tool-call completion turns (invocation always user-clicked); the QA-Companion light-vs-deep boundary doc is present; both config bools round-trip through the four wiring points (SC 5, 6, 7). Soft, non-blocking: delegates deep-verify escalation to SELF-VERIFICATION S3 QA Companion only if that has landed.",
           "deps": []
@@ -7662,11 +7662,6 @@
         "plan": "HC"
       },
       {
-        "id": "HC-4",
-        "title": "Check-work skill + SDLC post-gate hook + chat suggestion chip",
-        "plan": "HC"
-      },
-      {
         "id": "INU-7",
         "title": "Proposals contract + app emission path (S7)",
         "plan": "INU"
@@ -10073,9 +10068,9 @@
         "code": "HC",
         "plan": "HARNESS-CRAFT",
         "total_atoms": 5,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

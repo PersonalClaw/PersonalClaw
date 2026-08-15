@@ -21,7 +21,7 @@ from personalclaw.config.loader import (
 )
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context
-from personalclaw.dashboard.chat_followups import _maybe_followups
+from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import _build_history_prefix, _save_session_to_history
 from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
@@ -3355,6 +3355,9 @@ async def _run_chat(
             # Follow-up chips (CHAT-CRAFT S3): suggest 2-3 next messages via one cheap
             # background call. Fire-and-forget — never blocks the turn; the handle is
             # stored so the next _run_chat dispatch cancels a still-pending generation.
+            # "Check this work" offer (HARNESS-CRAFT §3.3): deterministic, model-free,
+            # OFFER-only — the skill runs when the user clicks the chip, never here.
+            maybe_offer_check_work(state, session, _turn_tool_call_count)
             ft = asyncio.create_task(_maybe_followups(state, session))
             session._followups_task = ft
             state._background_tasks.add(ft)

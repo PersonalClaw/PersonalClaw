@@ -243,6 +243,12 @@
     "type": "bool"
   },
   {
+    "default": true,
+    "path": "dashboard.offer_check_work",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": "",
     "path": "dashboard.public_url",
     "sensitive": false,
@@ -745,6 +751,12 @@
   {
     "default": true,
     "path": "legibility.discover_tips",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": false,
+    "path": "loops.check_work_stages",
     "sensitive": false,
     "type": "bool"
   },

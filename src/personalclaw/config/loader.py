@@ -922,6 +922,17 @@ class LoopsConfig:
             "with itself.",
         ),
     )
+    check_work_stages: bool = field(
+        default=False,
+        metadata=_meta(
+            "Check Work After Stage Gates",
+            "After an SDLC stage's gate passes, re-derive 2-4 executable checks from "
+            "what the stage CLAIMED and run them (the `check-work` skill's module). "
+            "Catches the 'gate command passed but the claim was broader than the "
+            "command' case — e.g. a deliverable file the stage said it wrote but "
+            "didn't. Off by default: it adds a filesystem pass per stage advance.",
+        ),
+    )
 
 
 @dataclass
@@ -1218,6 +1229,16 @@ class DashboardConfig:
             "After each reply, show 2-3 suggested next messages (one small background model "
             "call; never blocks the turn). Skipped for temporary/incognito chats; silent when "
             "no model is bound.",
+        ),
+    )
+    offer_check_work: bool = field(
+        default=True,
+        metadata=_meta(
+            "Offer 'Check this work'",
+            "After a turn that claims a multi-step task is complete (3+ tool calls plus "
+            "completion language), offer a 'Check this work' chip beside the follow-up "
+            "suggestions. The chip only OFFERS — check-work runs when you click it, "
+            "never automatically, so the cost and latency stay yours to spend.",
         ),
     )
     stream_reveal: str = field(
@@ -3676,6 +3697,7 @@ class AppConfig:
                 trust_ttl_secs=loops_data.get("trust_ttl_secs", 24 * 3600),
                 judge_use_case=_judge_axis(loops_data.get("judge_use_case", "reasoning")),
                 stagnation_window=_stagnation_window(loops_data.get("stagnation_window", 5)),
+                check_work_stages=bool(loops_data.get("check_work_stages", False)),
             ),
             memory=MemoryConfig(
                 semantic_confidence_threshold=memory_data.get("semantic_confidence_threshold", 0.8),
@@ -3738,6 +3760,7 @@ class AppConfig:
                 show_thinking_inline=dashboard_data.get("show_thinking_inline", False),
                 simplified_tool_names=dashboard_data.get("simplified_tool_names", False),
                 followup_chips=dashboard_data.get("followup_chips", True),
+                offer_check_work=bool(dashboard_data.get("offer_check_work", True)),
                 stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
                 confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),

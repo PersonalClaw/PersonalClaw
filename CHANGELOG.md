@@ -32,6 +32,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   model configured (or when the model is unavailable) the conflict still appears — just without a
   suggestion. A one-sided change, where only one machine moved, keeps merging automatically as before.
 
+- **"Check this work" — verification that actually runs, instead of a second opinion from the same
+  voice.** A new bundled `check-work` skill answers "did that actually work?" by reconstructing what
+  the session CLAIMED, deriving 2-4 executable checks from those specific claims (does the file
+  exist, does it contain the symbol the claim named, does the command re-run clean), running them
+  with real tool calls, and reporting pass/fail with the observed line quoted as evidence. A check it
+  cannot execute is reported **unverifiable** with the reason — never assumed passing — and a session
+  from which no check can be derived is told so rather than handed a generic checklist. After a turn
+  that did real multi-step work and said it was done, chat now offers a **Check this work** chip: it
+  only offers, and the checks run when you click it, so verification never spends your tokens or your
+  latency without you asking (**Settings → Chat → Offer 'Check this work'**, on by default).
+  Unattended SDLC loops can run the same derivation after a stage's gate passes
+  (`loops.check_work_stages`, off by default) — which catches the case a gate command can't see: the
+  command passed, but the stage claimed a file it never wrote.
 - **Apps can now share data with each other, read-only, only when both sides agree.** An app that
   wants to expose its stored data declares `storageShared: true`; an app that wants to read another's
   data names it in `storageRead`. A read is granted only when BOTH are declared — neither app can

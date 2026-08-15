@@ -1924,7 +1924,7 @@ export interface DashboardConfig {
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
   simplified_tool_names: boolean; confirm_close_session: boolean
   // Follow-up chips after each reply (default on) + streaming reveal cadence.
-  followup_chips: boolean; stream_reveal: 'smooth' | 'immediate'
+  followup_chips: boolean; offer_check_work: boolean; stream_reveal: 'smooth' | 'immediate'
   // Vestigial server field from the retired customizable-bento dashboard (the
   // grid + per-user layout persistence were dropped in the v2 launcher-forward
   // redesign — everyone gets one curated content-first layout now). No FE

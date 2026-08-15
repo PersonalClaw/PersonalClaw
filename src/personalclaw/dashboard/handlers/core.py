@@ -685,6 +685,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # worker-independent signals compare findings BETWEEN cycles); the ceiling keeps a
     # typo from parking the detector past any realistic cycle budget.
     "loops.stagnation_window": {"type": "int", "min": 2, "max": 50},
+    # HARNESS-CRAFT §3.2 — the SDLC post-gate check-work hook. Off by default; on, a
+    # passing stage gate additionally re-derives checks from the stage's own claims.
+    "loops.check_work_stages": {"type": "bool"},
     "inbox.engagement_ranking_enabled": {"type": "bool"},
     "inbox.engagement_half_life_days": {"type": "float", "min": 0.0, "max": 365.0},
     # Gates the poll-based message sources (filesystem/channel apps). The UI
