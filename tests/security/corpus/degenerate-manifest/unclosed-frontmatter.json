@@ -1,0 +1,12 @@
+{
+  "id": "degenerate-manifest/unclosed-frontmatter",
+  "class": "degenerate-manifest",
+  "summary": "Frontmatter opened and never closed, so a naive parser reads the whole file as metadata.",
+  "expect": "manifest_rejected",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "contents": "---\nname: helper\ndescription: x\n"
+    }
+  ]
+}

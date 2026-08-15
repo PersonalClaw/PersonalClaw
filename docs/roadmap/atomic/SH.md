@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `SH-2` | ⬜ | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action | `SH-1` | migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded |
 | `SH-3` | ⬜ | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable | — | signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state |
 | `SH-4` | ⬜ | Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing | `SH-3`, `EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts (present/done)`, `EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity` | released bundles carry valid signatures verified in CI; registry validation script records signer per listing |
-| `SH-5` | ⬜ | Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc | — | each of the five attack classes has >=1 asserting test; a swap-after-scan race fixture proves scanned-bytes==installed-bytes holds; nightly job in full.yml runs the corpus; docs/security/scanner-testing.md lets an outsider reproduce; a deliberate scanner weakness on a branch turns the corpus red |
+| `SH-5` | ✅ | Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc | — | each of the five attack classes has >=1 asserting test; a swap-after-scan race fixture proves scanned-bytes==installed-bytes holds; nightly job in full.yml runs the corpus; docs/security/scanner-testing.md lets an outsider reproduce; a deliberate scanner weakness on a branch turns the corpus red |
 | `SH-6` | ✅ | Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py | — | mutating the in-memory denylist at runtime is healed on next denied_command_patterns() read and SEL-logged; effective set is provably a superset of the packaged baseline (property test); user additions still merge (dedupe, no shrink path); guardrails/denylist.py loads the same packaged source |
 | `SH-7` | ⬜ | Mode-independence matrix: baseline-matched command refused under default/auto/yolo/acceptEdits and trust simulators, deny-before-approval ordering regression-pinned, baseline-tamper corpus class added to S3 harness | `SH-5`, `SH-6` | every approval-mode fixture refuses a baseline-matched command; reordering the deny check below the approval gate turns CI red; a baseline-tamper corpus class is added to the S3 harness |
 | `SH-8` | ⬜ | SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export | — | filters work; verify endpoint returns (checked, ok) with a tamper fixture showing ok=false; page renders real SEL events and shows a deliberately-broken chain link; export reuses redact and excludes secrets (fixture-verified); both themes/WCAG; export round-trips |
@@ -57,11 +57,30 @@ Session 2 T2.3
 
 ### `SH-5` — Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc
 
-**Status:** todo
+**Status:** done
 
 Session 3 — Adversarial gate testing / T3.1, T3.2, T3.3, V3; Design S3; Contracts C3; owner task 4 (approve publishing corpus)
 
 **Done when:** each of the five attack classes has >=1 asserting test; a swap-after-scan race fixture proves scanned-bytes==installed-bytes holds; nightly job in full.yml runs the corpus; docs/security/scanner-testing.md lets an outsider reproduce; a deliberate scanner weakness on a branch turns the corpus red
+
+**DONE (2026-08-15):** `tests/security/corpus/<class>/` carries 21 inert JSON cases across the
+five classes named by SECURITY-HARDENING C3 (archive, integrity-race, verdict-evasion,
+invisible-char, degenerate-manifest); `tests/security/test_scanner_adversarial.py` drives each
+through `supply_chain.py::SkillScanner` and `skills/marketplace.py::install_scanned`, asserting the
+specific refusal (not merely that a scan ran). The race invariant is measured, not argued: the
+harness digests the quarantine tree at scan time (wrapping `supply_chain.py::scan_dir`, which
+`install_scanned` resolves at call time) and asserts **map equality** against the installed tree
+under three swap shapes — re-fetch, quarantine rewrite from a second thread, and in-memory payload
+mutation — plus `fetch_calls == 1`. A `security-corpus` job in `full.yml` runs the corpus nightly.
+`docs/security/scanner-testing.md` publishes the method, the five classes, the red-on-weakness
+recipe table and four named residual risks. The weakness clause ships as a permanent meta-test
+(`TestCorpusRedsOnAWeakenedScanner`): one control per class is weakened by monkeypatch and the
+matching rail must red — no branch to remember to delete, and the shipped scanner is never weak.
+Falsified on disk twice: blanking the `destructive_root` pattern reds 6 tests across three classes;
+making the commit write bytes other than the scanned ones reds the race trio on
+"installed bytes differ from scanned bytes". DEVIATION: no `hypothesis` strategies (T3.1 names
+them) — it is not a dependency of this repo and adding one for a security-test atom is not worth
+the supply-chain surface; the variant matrices in the corpus cases carry that coverage instead.
 
 ### `SH-6` — Baseline denylist as packaged data file (baseline_denylist.json + sha256) with integrity re-assert on read + periodic re-verify, SEL baseline_denylist_reasserted/_tamper_attempt events, strictly-additive user config, shared source with guardrails/denylist.py
 

@@ -1,0 +1,12 @@
+{
+  "id": "degenerate-manifest/missing-frontmatter",
+  "class": "degenerate-manifest",
+  "summary": "SKILL.md with no YAML frontmatter at all.",
+  "expect": "manifest_rejected",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "contents": "just prose, no frontmatter\n"
+    }
+  ]
+}
