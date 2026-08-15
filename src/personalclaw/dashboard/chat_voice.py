@@ -13,9 +13,11 @@ import tempfile
 
 from aiohttp import web
 
+from personalclaw.config import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tts.registry import active_voice_params
+from personalclaw.voice.duplex import clean_for_speech
 from personalclaw.voice_reply import stitch_wavs, streaming_voice_reply
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,21 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
 
     text, _ = redact_exfiltration_urls(text)
     text, _ = redact_credentials(text)
+
+    # MULTIMODAL-IO §4.3 — clean AFTER redaction, on the synthesis path only. The
+    # chat transcript keeps the full text; only the audio drops code, URLs, paths
+    # and flags. A degenerate message that cleans away to nothing (a lone CLI
+    # flag) is spoken as-is rather than turned into a hollow success or an error.
+    if AppConfig.load().voice.clean_for_speech_enabled:
+        spoken = clean_for_speech(text)
+        if spoken:
+            text = spoken
+        else:
+            logger.debug("clean_for_speech emptied the text; speaking it unchanged")
+
+    # §4.2 — record what we are about to say so a hands-free transcription can be
+    # recognized as our own speaker bleed (see api_stt_transcribe).
+    state.record_spoken(session_name, text)
 
     params = active_voice_params()
     if params is None:

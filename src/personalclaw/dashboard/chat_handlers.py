@@ -83,6 +83,19 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 client_ts = ""  # malformed → fall back to server-stamped ts
         if not user_meta:
             user_meta = None
+    # MULTIMODAL-IO §4.4 — a dictated turn is honest about where it came from.
+    # ``input_origin`` is a closed set of one: anything else is treated as typed.
+    # The disclaimer goes on the message the runner sees (so the model
+    # self-corrects on homophones) and the origin goes into the persisted turn's
+    # meta, so the session JSONL records that this text was heard, not typed.
+    if str(body.get("input_origin", "")).strip().lower() == "voice":
+        from personalclaw.voice.duplex import VOICE_DISCLAIMER
+
+        user_meta = {**(user_meta or {}), "input_origin": "voice"}
+        if message and AppConfig.load().voice.voice_disclaimer_enabled:
+            if VOICE_DISCLAIMER not in message:
+                message = f"{message}\n\n{VOICE_DISCLAIMER}"
+
     # Validate against the SAME closed set the injector uses, so the accepted
     # values and the injectable personas cannot drift apart.
     from personalclaw.dashboard.chat_utils import persona_themes

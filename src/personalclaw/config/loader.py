@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw.voice.duplex import DEFAULT_CONFIRMATION_PHRASES, DEFAULT_EXIT_PHRASES
+
 try:
     import jsonschema
 
@@ -328,6 +330,14 @@ def _slug_username(value: object) -> str:
 # stays ENABLED. Mirrors ``guardrails.flags.guard_flag`` but is defined locally to
 # keep the config loader free of a guardrails import (avoids an import cycle).
 _GUARD_FALSE = frozenset({"0", "false", "no", "off", "disable", "disabled", "n", "f"})
+
+
+def _voice_phrases(value: object) -> list[str]:
+    """Normalize a voice phrase list: strings only, trimmed, blanks dropped."""
+
+    if not isinstance(value, list):
+        return []
+    return [p.strip() for p in value if isinstance(p, str) and p.strip()]
 
 
 def _guard_flag(value: object) -> bool:
@@ -3115,6 +3125,72 @@ class SandboxConfig:
 
 
 @dataclass
+class VoiceConfig:
+    """Hands-free voice-loop knobs (MULTIMODAL-IO §4.5).
+
+    Guard-class note: the four booleans are convenience features, not safety
+    guards — plain defaults, no fail-safe parsing. Turning one off degrades the
+    voice loop's comfort (more echo, code read aloud), never its safety, so a
+    config typo must not be second-guessed here.
+    """
+
+    confirmation_phrases: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CONFIRMATION_PHRASES),
+        metadata=_meta(
+            "Confirmation Phrases",
+            "In hands-free mode a dictated transcript accumulates and is only sent "
+            "once one of these phrases ends what you just said, so a half-finished "
+            "thought never becomes an executed instruction. Push-to-talk and typed "
+            "input ignore this entirely.",
+        ),
+    )
+    exit_phrases: list[str] = field(
+        default_factory=lambda: list(DEFAULT_EXIT_PHRASES),
+        metadata=_meta(
+            "Exit Phrases",
+            "Saying one of these in hands-free mode clears the accumulated "
+            "transcript without sending it.",
+        ),
+    )
+    echo_filter_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Echo Filter",
+            "Drop a transcription that shares three consecutive words with what the "
+            "assistant just spoke — the speaker bleeding back into the microphone. "
+            "Applies only to hands-free requests; the dashboard shows the drop "
+            "instead of looking deaf.",
+        ),
+    )
+    duplex_mute_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Mute While Speaking",
+            "Suspend the microphone and discard queued audio while a spoken reply "
+            "plays. This is what kills most echo; the filter above is the backstop.",
+        ),
+    )
+    clean_for_speech_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Clean Text Before Speaking",
+            "Strip code blocks, reduce URLs to their domain and paths to their "
+            "filename, and drop CLI flags before synthesis. The chat transcript "
+            "always keeps the full text — only the audio is cleaned.",
+        ),
+    )
+    voice_disclaimer_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Voice-Origin Disclaimer",
+            "Append a one-line note to a dictated message telling the model the text "
+            "came from speech recognition and may be misheard, so it self-corrects on "
+            "garbled homophones instead of confidently misreading them.",
+        ),
+    )
+
+
+@dataclass
 class AppConfig:
     agent: AgentConfig = field(
         default_factory=AgentConfig,
@@ -3167,6 +3243,10 @@ class AppConfig:
     resilience: ResilienceConfig = field(
         default_factory=ResilienceConfig,
         metadata=_meta("Resilience", "Doctor health surface + no-model degraded indicator."),
+    )
+    voice: VoiceConfig = field(
+        default_factory=VoiceConfig,
+        metadata=_meta("Voice", "Hands-free voice loop — gating, echo filter, spoken text."),
     )
     inbox: InboxConfig = field(
         default_factory=InboxConfig,
@@ -3383,6 +3463,9 @@ class AppConfig:
         guardrails_data = data.get("guardrails", {})
         if not isinstance(guardrails_data, dict):
             guardrails_data = {}
+        voice_data = data.get("voice", {})
+        if not isinstance(voice_data, dict):
+            voice_data = {}
         resilience_data = data.get("resilience", {})
         if not isinstance(resilience_data, dict):
             resilience_data = {}
@@ -3875,6 +3958,22 @@ class AppConfig:
                     else "redact"
                 ),
             ),
+            voice=VoiceConfig(
+                # Convenience knobs, not guards: an empty/malformed phrase list falls
+                # back to the shipped defaults so hands-free mode stays operable, and
+                # each boolean parses as a plain bool with its documented default.
+                confirmation_phrases=(
+                    _voice_phrases(voice_data.get("confirmation_phrases"))
+                    or list(DEFAULT_CONFIRMATION_PHRASES)
+                ),
+                exit_phrases=(
+                    _voice_phrases(voice_data.get("exit_phrases")) or list(DEFAULT_EXIT_PHRASES)
+                ),
+                echo_filter_enabled=bool(voice_data.get("echo_filter_enabled", True)),
+                duplex_mute_enabled=bool(voice_data.get("duplex_mute_enabled", True)),
+                clean_for_speech_enabled=bool(voice_data.get("clean_for_speech_enabled", True)),
+                voice_disclaimer_enabled=bool(voice_data.get("voice_disclaimer_enabled", True)),
+            ),
             resilience=ResilienceConfig(
                 # Guard-class (§5): parse fail-safe — missing/unknown ⇒ enabled.
                 doctor_enabled=_guard_flag(resilience_data.get("doctor_enabled")),
@@ -4084,6 +4183,7 @@ class AppConfig:
             "auth": asdict(self.auth),
             "guardrails": asdict(self.guardrails),
             "resilience": asdict(self.resilience),
+            "voice": asdict(self.voice),
             "timezone": self.timezone,
             "auto_update": self.auto_update,
             "snapshot_dir": self.snapshot_dir,
