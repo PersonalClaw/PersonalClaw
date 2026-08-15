@@ -39,6 +39,7 @@ function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospecti
   return {
     run_id: 'r1', workflow: 'weekly-report', stats,
     gates: {},
+    edges: { branches: {}, judges: {} },
     template_card: {
       template: 'weekly-report', runs: 12, cost_p50: 0.03, cost_p95: 0.09,
       duration_p50: 90, duration_p95: 240, failure_rate: 0.25, warnings: [],
@@ -55,7 +56,7 @@ function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospecti
       approval: [],
       failed: [{ node_id: 'publish' }],
       cost: stats,
-      risky: { degraded: [], gates: [], verification_debt: 0.75 },
+      risky: { degraded: [], gates: [], edges: { branches: {}, judges: {} }, verification_debt: 0.75 },
       next: { action: 'nothing', detail: 'this run is complete', queued: [] },
       proof,
     },
@@ -161,6 +162,53 @@ describe('the said-no fake-check badge', () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     await screen.findByText('review')
     expect(screen.queryByText(/never said no/i)).toBeNull()
+  })
+})
+
+describe('the edge-decision distribution (PP-8)', () => {
+  it('renders a branch case distribution with its dead-case and degenerate warnings verbatim', async () => {
+    // Verbatim, for the same reason as the said-no badge: the SAMPLE rule that earns each string
+    // lives in the backend, and a second phrasing here would drift from the rule that fired.
+    const degenerate =
+      '`router` routed to `bug` in all 12 runs that reached it — its other 1 case(s) are declared but never chosen, so the selector is doing no work'
+    introspect = async () =>
+      payload({
+        edges: {
+          branches: {
+            router: {
+              path: 'router', cases: { bug: 12, feat: 0 }, routed_runs: 12,
+              never_taken: ['feat'], degenerate_warning: degenerate,
+            },
+          },
+          judges: {},
+        },
+      })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText('router')).toBeTruthy()
+    expect(screen.getByText(degenerate)).toBeTruthy()
+    expect(screen.getByText(/Never taken: feat/)).toBeTruthy()
+    expect(screen.getByText(/does no work/i)).toBeTruthy()
+  })
+
+  it('renders a degenerate judge verdict distribution', async () => {
+    const warning =
+      '`grader` returned `pass` on all 12 verdicts — a judge with one outcome over this many calls is not discriminating'
+    introspect = async () =>
+      payload({
+        edges: {
+          branches: {},
+          judges: { grader: { node_id: 'grader', verdicts: { pass: 12 }, total: 12, degenerate_warning: warning } },
+        },
+      })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText('grader')).toBeTruthy()
+    expect(screen.getByText(warning)).toBeTruthy()
+    expect(screen.getByText(/one verdict/i)).toBeTruthy()
+  })
+
+  it('states the empty case in words when a template has no edges', async () => {
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText(/no branch or judge edges/i)).toBeTruthy()
   })
 })
 
