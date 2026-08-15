@@ -61,6 +61,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/{name}/update` — atomic update from ``{source, confirm?}``.
 - `GET /api/artifacts` — list (no content). Filters: tag, kind, q, source, source_path, project_id.
 - `POST /api/artifacts` — create (or bump an existing file-backed artifact).
+- `GET /api/artifacts/folders` — the library folder tree (flat, parent_id-linked).
+- `POST /api/artifacts/folders` — create a folder (``{name, parent_id?, icon?}``).
+- `DELETE /api/artifacts/folders/{id}` — members fall back to unfiled; nothing is destroyed.
+- `PATCH /api/artifacts/folders/{id}` — rename / re-nest / reorder. No artifact is touched.
 - `GET /api/artifacts/pinned` — the dashboard pin list (WORK-CONTAINERS §6.5d).
 - `DELETE /api/artifacts/{slug}` — _(no summary)_
 - `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
@@ -68,6 +72,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).
 - `POST /api/artifacts/{slug}/events` — record a 'referenced' impression.
 - `GET /api/artifacts/{slug}/extract` — extracted text for a binary document artifact.
+- `PATCH /api/artifacts/{slug}/folder` — file an artifact (``{folder_id}``; "" = unfiled).
 - `POST /api/artifacts/{slug}/pin` — pin or unpin (``{"pinned": bool}``).
 - `GET /api/artifacts/{slug}/raw` — stream a binary artifact's bytes.
 - `POST /api/artifacts/{slug}/regenerate` — re-run image generation at this slug.
