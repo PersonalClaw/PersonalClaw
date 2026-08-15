@@ -7147,7 +7147,8 @@
         {
           "id": "PP-3",
           "title": "Cross-check `output_contract` against the bindings that read it",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1306",
           "scope": "`engine.check_output_contract` (`engine.py:2173`) is a good ~0.3ms gate that runs BEFORE any binding resolves — `must_be_json`, `required_keys`, length bounds, forbidden phrases. It is per-node, opt-in, and never compared against its readers: `{{nodes.a.output.foo.bar}}` is unvalidated at authoring time even when node `a` declares `required_keys: [foo]`. The peer runtimes type-validate message routing at build time; we validate the producer and the consumer independently and never the edge between them.",
           "done_when": "The validator resolves every `{{nodes.<id>.output.<path>}}` reference against the producer's declared `output_contract` when it has one, and errors when the path is unsatisfiable (a key absent from `required_keys` on a contract that also declares `must_be_json`); a producer read structurally but declaring no contract raises a WARNING naming the readers, not an error. No new contract vocabulary is invented — `required_keys` is the existing field. Censused first over the bundled templates so the warning volume is known before it ships. Proven able to fail by renaming a key on one side of a shipped binding.",
           "deps": [
@@ -7846,11 +7847,6 @@
       {
         "id": "PP-2",
         "title": "Derive `needs` from bindings; lift the sibling-only restriction",
-        "plan": "PP"
-      },
-      {
-        "id": "PP-3",
-        "title": "Cross-check `output_contract` against the bindings that read it",
         "plan": "PP"
       },
       {
@@ -10324,9 +10320,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 14,
+        "todo": 13,
         "blocked": 0
       }
     ],
