@@ -272,3 +272,26 @@ and the digest, which a naive "hash the file against its own field" check cannot
 does **not** stop the owner of the machine: anyone who can rewrite the installed package
 before the process starts owns the baseline. Anti-drift and anti-LLM-tamper, not
 anti-owner — as the amendment states.
+
+- **[2026-08-15][S4] SH-9 DELIVERABLE SHIPPED, ATOM BLOCKED (owner task 3).**
+  `docs/security/review-scope.md` is written and reviewable: the five high-risk paths are the
+  plan's own S4 list (webhook auth, app reverse-proxy token model, scanner bypasses, egress
+  guard layering, inbound surfaces), each grounded in a module verified to exist — e.g.
+  `dashboard/handlers/hooks.py::_verify_hook_token` (:182), `inbound/auth.py::peer_allowed`
+  (:150), `net/policy.py::egress_policy_for` (:188), `supply_chain.py::SkillScanner` (:227),
+  `token_auth.py::validate_token_with_app` (:482). Severity is graded by the boundary crossed
+  rather than a numeric score; unresolved disputes publish as disputes; unpatched
+  Critical/High is withheld entirely (no redacted teaser) until the fixing release.
+  **BLOCKED, not done:** two of the three `done_when` clauses — *"scope approved by owner
+  (owner task 3)"* and *"review executed or scheduled with a date"* — are owner decisions
+  (commission a funded audit vs publish a structured self-audit, then approve scope and set a
+  date; `SECURITY-HARDENING.md:111` files this as owner task 3). No agent can satisfy them,
+  and marking the atom done would assert an approval that has not happened. The document's
+  `## Approval and schedule` table carries all three boxes unchecked and the doc
+  self-describes as a proposal until they are filled in. Status is `blocked` so a later tick
+  does not re-derive the document.
+  **DISCOVERY (fixed here, one line):** `docs/security/threat-model.md` cited
+  `history.py: redact_credentials, redact_exfiltration_urls`; both actually live in
+  `security.py` (:444 and :351) and `history.py` contains neither. Invisible to
+  `test_docs_lint_baseline`, which only checks that the cited *file* exists — and
+  `history.py` does. Corrected to `security.py` rather than left contradicting the new doc.

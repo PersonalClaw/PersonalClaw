@@ -6504,7 +6504,7 @@
         {
           "id": "SH-9",
           "title": "External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Session 4 T4.3; Design S4 (external review); owner task 3 (decide external review)",
           "done_when": "docs/security/review-scope.md lists the five high-risk paths, the review format, and the publication plan; scope approved by owner (owner task 3); review executed or scheduled with a date",
           "deps": []
@@ -7915,11 +7915,6 @@
       {
         "id": "SH-8",
         "title": "SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export",
-        "plan": "SH"
-      },
-      {
-        "id": "SH-9",
-        "title": "External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan",
         "plan": "SH"
       },
       {
@@ -10226,8 +10221,8 @@
         "total_atoms": 10,
         "done": 2,
         "in_progress": 0,
-        "todo": 8,
-        "blocked": 0
+        "todo": 7,
+        "blocked": 1
       },
       {
         "code": "EI",
