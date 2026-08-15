@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import { useFocusReturn } from './useFocusReturn'
 import { useResizablePanel } from './useResizablePanel'
 import { createPortal } from 'react-dom'
@@ -58,6 +58,13 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   children: ReactNode
 }) {
   const reduce = useReducedMotion()
+  // The docked inspector is a named landmark region: `role="region"` + `aria-labelledby` pointing at
+  // its title. Measured before this (on `#/tasks`, panel open): the panel root had role/aria-label/
+  // aria-labelledby all null, its title was a bare <span> (0 headings, 0 landmarks) — so a screen
+  // reader entering the panel got a stream of controls with no region to navigate to and no name for
+  // what it was. `aria-labelledby` (not `aria-label`) because `title` may be a ReactNode; the name is
+  // computed from the rendered title. Zero visual change — this only adds attributes + an id.
+  const titleId = useId()
   // When URL-bound, closing the panel (X / Escape / parent) also clears its query
   // key so the URL + the open state can't diverge. One close path, both effects.
   const close = useCallback(() => {
@@ -110,7 +117,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
 
   const header = (
     <div className="shrink-0 bg-surface/95 px-l py-m flex items-center justify-between border-b border-outline-variant/40">
-      <div className="flex items-center gap-s min-w-0">{icon}<span data-type="title-l" className="text-on-surface truncate">{title}</span></div>
+      <div className="flex items-center gap-s min-w-0">{icon}<span id={titleId} data-type="title-l" className="text-on-surface truncate">{title}</span></div>
       <div className="flex items-center gap-1 shrink-0">
         <IconButton icon={expanded ? Minimize2 : Maximize2}
           label={expanded ? 'Collapse to panel' : (onExpand ? 'Open full page' : 'Expand to full width')}
@@ -134,7 +141,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // wipe. Wipe speed/overshoot scale with expressiveness; reduced-motion → no clip.
     const furled = `inset(0px 0px 0px calc(100dvw - ${dockW}px))`
     return createPortal(
-      <motion.div className="fixed inset-0 z-50 flex flex-col bg-surface"
+      <motion.div role="region" aria-labelledby={titleId} className="fixed inset-0 z-50 flex flex-col bg-surface"
         initial={reduce ? { opacity: 0 } : { clipPath: furled }}
         animate={reduce ? { opacity: 1 } : { clipPath: 'inset(0px 0px 0px 0px)' }}
         exit={reduce ? { opacity: 0 } : { clipPath: furled }}
@@ -163,7 +170,7 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     // INNER (left) corners — the edge facing the content — to read as a floating
     // panel rather than a full-bleed column. Radius via a token (--radius-xl); the
     // outer (right) edge stays flush to the browser edge (square).
-    <motion.div ref={focusReturnRef} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
+    <motion.div ref={focusReturnRef} role="region" aria-labelledby={titleId} className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
       style={{ marginTop: dockOffset, marginBottom: bottomGap, height: `calc(100% - ${dockOffset} - ${bottomGap})`, borderTopLeftRadius: 'var(--radius-xl)', borderBottomLeftRadius: 'var(--radius-xl)' }}
       initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
       {/* left-edge resize handle — the visible seam springs thicker + brighter on
