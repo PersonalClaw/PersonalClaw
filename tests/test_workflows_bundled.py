@@ -33,7 +33,12 @@ from personalclaw.workflows.bundled_defs import (
 )
 from personalclaw.workflows.macros import expand_spec, has_macros
 from personalclaw.workflows.models import Node, WorkflowDef, valid_name, walk
-from personalclaw.workflows.validator import DepEdge, dep_edges_for_root, validate_spec
+from personalclaw.workflows.validator import (
+    DepEdge,
+    contract_reads_for_root,
+    dep_edges_for_root,
+    validate_spec,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -326,6 +331,103 @@ class TestDependencyOrderingCensus:
             for name in sorted(EXPECTED)
         }
         assert not any(declared.values()), f"a template now declares `needs`: {declared}"
+
+
+class TestOutputContractCensus:
+    """`PP-3`'s population, measured before the rule shipped — and the reason its warning is
+    scoped the way it is.
+
+    The census over this library: **19 templates, 18 of them carrying 145 distinct
+    `{{nodes.*.output}}` reads (45 bare, 100 at a sub-path — 151 before deduplicating a ref
+    that appears twice in one node), and ZERO declaring an `output_contract`.** So the
+    ERROR half has an empty population here — nothing shipped is wrong, and nothing shipped
+    exercises it either, which is why the unit tests carry that weight and own the vacuity
+    floor.
+
+    The WARNING half is the interesting number. Unconditionally, "read at a path but declaring
+    no contract" fires **77** times across **18 of 19** templates (49 with sub-path scoping
+    alone) — every template warning on every validation, which is how an author learns to skim
+    validator output. It would also contradict `test_it_validates_STRICTLY`, whose stated
+    contract is that a bundled template ships no warning at all. So the warning is scoped to
+    specs that have ADOPTED contracts, and the assertions below keep every one of those
+    numbers honest rather than leaving them in a commit message.
+    """
+
+    @staticmethod
+    def _root(name: str) -> Node:
+        return Node.from_dict(_pipeline(_raw(name))["root"])
+
+    @staticmethod
+    def _contracts(name: str) -> dict[str, dict]:
+        return {
+            node.id: (node.config or {})["output_contract"]
+            for _p, node in walk(TestOutputContractCensus._root(name))
+            if node.id and isinstance((node.config or {}).get("output_contract"), dict)
+        }
+
+    def test_not_one_template_declares_an_output_contract(self) -> None:
+        """The fact the whole scoping decision rests on. Recorded, not required: a template
+        that legitimately gains a contract should red here so the volume is re-measured, not
+        so the contract is removed.
+        """
+        declared = {name: sorted(self._contracts(name)) for name in sorted(EXPECTED)}
+        assert not any(declared.values()), f"a template now declares an output_contract: {declared}"
+
+    def test_the_rule_sees_the_measured_read_population(self) -> None:
+        """The vacuity floor for the READS side. Deliberately below the measured 100/18 so
+        ordinary library edits do not red it, and far above zero so a rule that stops deriving
+        read paths does."""
+        per = {name: len(contract_reads_for_root(self._root(name))) for name in sorted(EXPECTED)}
+        total = sum(per.values())
+        assert max(per.values()) >= 8, f"no single template exercises the rule: {per}"
+        assert sum(1 for c in per.values() if c) >= 14, f"too few templates covered: {per}"
+        assert total >= 80, f"the rule examined only {total} sub-path reads across the library"
+
+    def test_no_shipped_read_is_resolved_against_a_contract(self) -> None:
+        """The error half's population, stated as the zero it is. `test_it_validates_STRICTLY`
+        would also catch a violation, but as an opaque empty-issue-list assertion; this names
+        WHY the library is quiet — every producer read here declares nothing to judge against.
+        """
+        judged = {
+            name: [
+                (r.reader_id or r.reader_path, r.producer_id, ".".join(r.path))
+                for r in contract_reads_for_root(self._root(name))
+                if r.guaranteed is not None
+            ]
+            for name in sorted(EXPECTED)
+        }
+        assert not any(judged.values()), f"a shipped read now resolves against a contract: {judged}"
+
+    def test_the_library_ships_neither_of_the_new_issues(self) -> None:
+        """Named by code, so a future contract addition is attributed to `PP-3` rather than
+        landing as an anonymous line in a strict-validation diff."""
+        for name in sorted(EXPECTED):
+            codes = {i.code for i in validate_spec(_pipeline(_raw(name)), strict=True).issues}
+            assert "WF_UNSATISFIABLE_OUTPUT_REF" not in codes, name
+            assert "WF_UNCONTRACTED_OUTPUT_REF" not in codes, name
+
+    def test_the_unscoped_warning_volume_is_what_the_scoping_avoids(self) -> None:
+        """The deviation's justification, kept checkable. Without the spec-level scoping this
+        library emits ~77 warnings (~49 if only sub-path readers count) across 18 templates;
+        with it, zero. Bounds rather than equalities so the library can grow, but wide enough
+        that a collapse toward zero — which would make the whole decision moot — reds.
+        """
+        unscoped = 0
+        subpath_scoped = 0
+        for name in sorted(EXPECTED):
+            root = self._root(name)
+            contracts = self._contracts(name)
+            read_any = {
+                e.producer_id
+                for e in dep_edges_for_root(root)
+                if e.output_reads and e.producer_id not in contracts
+            }
+            read_sub = {r.producer_id for r in contract_reads_for_root(root) if not r.declared}
+            unscoped += len(read_any)
+            subpath_scoped += len(read_sub)
+        assert 60 <= unscoped <= 110, unscoped
+        assert 35 <= subpath_scoped <= 80, subpath_scoped
+        assert subpath_scoped < unscoped, "sub-path scoping should reduce the volume"
 
 
 class TestProvider:

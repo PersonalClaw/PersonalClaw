@@ -14,7 +14,12 @@ advisory-only would leave that to template-author discipline.
 
 from __future__ import annotations
 
-from personalclaw.workflows.validator import validate_spec
+from personalclaw.workflows.models import Node
+from personalclaw.workflows.validator import (
+    contract_reads_for_root,
+    dep_edges_for_root,
+    validate_spec,
+)
 
 
 def _codes(spec: dict, *, strict: bool = False) -> set[str]:
@@ -750,3 +755,288 @@ class TestDependencyOrdering:
         )
         assert "WF_UNORDERED_DEP" in _codes(spec)
         assert "root.children[1]" in self._msg(spec)
+
+
+class TestOutputContractCrossCheck:
+    """`WF_UNSATISFIABLE_OUTPUT_REF` / `WF_UNCONTRACTED_OUTPUT_REF` (`PP-3`) — the producer's
+    contract, checked against the readers that take a path through it.
+
+    `engine.check_output_contract` only ever looks at the producer, and the reader was
+    checked independently, so the EDGE between them was unvalidated: `{{nodes.a.output.x}}`
+    against a contract guaranteeing `{"y"}` was a spec that saved clean and then died mid-run
+    in `bindings._walk_path` with *"unresolved reference at 'x'"*. A `| default(…)` does not
+    rescue it — `_walk_path` raises before any pipe runs — which is why this is an error and
+    not advice.
+    """
+
+    @staticmethod
+    def _issues(spec: dict, code: str) -> list[dict]:
+        return [i.to_dict() for i in validate_spec(spec).issues if i.code == code]
+
+    @staticmethod
+    def _seq(*children: dict, name: str = "wf") -> dict:
+        """Producers ORDERED before readers, so `WF_UNORDERED_DEP` (`PP-1`) stays out of the
+        way of what these tests are measuring."""
+        return _wrap({"kind": "sequence", "id": "s", "children": list(children)}, name)
+
+    @staticmethod
+    def _producer(node_id: str, contract: dict | None = None, prompt: str = "go") -> dict:
+        config: dict = {"prompt": prompt}
+        if contract is not None:
+            config["output_contract"] = contract
+        return {"kind": "infer", "id": node_id, "config": config}
+
+    @staticmethod
+    def _reader(node_id: str, expr: str) -> dict:
+        return {"kind": "infer", "id": node_id, "config": {"prompt": expr}}
+
+    #: The contract shape the rule can actually judge: both halves present, exactly as
+    #: `engine.check_output_contract` requires them.
+    JSON_FINDINGS = {"must_be_json": True, "required_keys": ["findings"]}
+
+    # ── the error half: a path the producer's contract cannot satisfy ──
+
+    def test_a_key_absent_from_required_keys_is_refused(self) -> None:
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" in _codes(spec)
+
+    def test_the_message_names_the_reader_the_producer_and_the_path(self) -> None:
+        """Three facts, so an author fixes the binding without reading the engine."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        (issue,) = self._issues(spec, "WF_UNSATISFIABLE_OUTPUT_REF")
+        assert "'b'" in issue["message"]
+        assert "nodes.a.output.summary" in issue["message"]
+        assert "findings" in issue["message"]
+        assert issue["path"] == "root.children[1]"
+        assert issue["severity"] == "error"
+
+    def test_a_declared_key_is_accepted(self) -> None:
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings}}"),
+        )
+        assert validate_spec(spec).issues == []
+
+    def test_only_the_FIRST_segment_is_judged(self) -> None:
+        """`required_keys` is a promise about the top level. Judging `findings.0.verdict`
+        would mean inventing nesting vocabulary the engine cannot enforce — the one thing
+        this atom must not do."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings.0.verdict}}"),
+        )
+        assert validate_spec(spec).issues == []
+
+    def test_a_bare_output_read_is_never_refused(self) -> None:
+        """`{{nodes.a.output}}` passes the whole value through; there is no path to judge."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output}}"),
+        )
+        assert validate_spec(spec).issues == []
+
+    def test_a_default_pipe_does_not_excuse_it(self) -> None:
+        """`_walk_path` raises before any pipe runs, so `| default(…)` on an unsatisfiable
+        path is a dead run wearing a safety belt."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.summary | default('none')}}"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" in _codes(spec)
+
+    def test_an_interpolated_ref_is_checked_too(self) -> None:
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "Review this: {{nodes.a.output.summary}} — carefully"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" in _codes(spec)
+
+    # ── the deliberate limits: an under-declared contract must not refuse ──
+
+    def test_required_keys_WITHOUT_must_be_json_never_errors(self) -> None:
+        """The pairing is the signal. `required_keys` alone is what
+        `batch_compile.schema_to_contract` emits for a schema that declared no `type` — an
+        under-declared contract, not a wrong binding. Refusing it would punish the author who
+        described their output least.
+        """
+        spec = self._seq(
+            self._producer("a", {"required_keys": ["findings"]}),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" not in _codes(spec)
+
+    def test_must_be_json_WITHOUT_required_keys_never_errors(self) -> None:
+        """A contract that says "an object" says nothing about which keys."""
+        spec = self._seq(
+            self._producer("a", {"must_be_json": True}),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" not in _codes(spec)
+
+    def test_an_empty_required_keys_list_never_errors(self) -> None:
+        spec = self._seq(
+            self._producer("a", {"must_be_json": True, "required_keys": []}),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" not in _codes(spec)
+
+    def test_a_length_only_contract_never_errors(self) -> None:
+        """`min_length`/`forbidden_phrases` describe TEXT. A key read against them is
+        unknowable, and unknowable must not resolve to refused."""
+        spec = self._seq(
+            self._producer("a", {"min_length": 10, "forbidden_phrases": ["as an AI"]}),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" not in _codes(spec)
+
+    def test_an_unknown_producer_id_raises_no_contract_issue(self) -> None:
+        """`WF_UNKNOWN_NODE_REF` owns a typo'd id; reporting both makes one typo two errors."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.ghost.output.summary}}"),
+        )
+        codes = _codes(spec)
+        assert "WF_UNKNOWN_NODE_REF" in codes
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" not in codes
+        assert "WF_UNCONTRACTED_OUTPUT_REF" not in codes
+
+    def test_an_artifact_read_is_not_an_output_read(self) -> None:
+        """`output_contract` describes the output. An artifact pointer is a different value,
+        so neither half of this rule has anything to say about it."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.artifact}}"),
+        )
+        assert validate_spec(spec).issues == []
+
+    def test_an_unordered_edge_and_an_unsatisfiable_path_are_both_reported(self) -> None:
+        """Two independent defects, two fixes — unlike the unknown-id case, where one typo
+        wears two hats."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    self._producer("a", self.JSON_FINDINGS),
+                    self._reader("b", "{{nodes.a.output.summary}}"),
+                ],
+            }
+        )
+        codes = _codes(spec)
+        assert "WF_UNORDERED_DEP" in codes
+        assert "WF_UNSATISFIABLE_OUTPUT_REF" in codes
+
+    # ── the warning half: a producer read at a path but declaring nothing ──
+
+    def test_a_contractless_producer_read_at_a_path_warns_naming_its_readers(self) -> None:
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings}}"),
+            self._reader("c", "{{nodes.b.output.text}}"),
+        )
+        (issue,) = self._issues(spec, "WF_UNCONTRACTED_OUTPUT_REF")
+        assert issue["severity"] == "warning"
+        assert "'b'" in issue["message"]  # the producer that declares nothing
+        assert "'c' reads output.text" in issue["message"]  # the reader, named
+        assert issue["path"] == "root.children[1]"  # reported AT the producer: that is the fix
+        assert validate_spec(spec).ok  # a warning, never an error
+
+    def test_several_readers_aggregate_into_ONE_warning(self) -> None:
+        """One warning per producer, not per read: three readers of one contract-less node is
+        one missing contract, and three copies of it is how an author learns to skim."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings}}"),
+            self._reader("c", "{{nodes.b.output.text}}"),
+            self._reader("d", "{{nodes.b.output.notes}} and {{nodes.b.output.text}}"),
+        )
+        (issue,) = self._issues(spec, "WF_UNCONTRACTED_OUTPUT_REF")
+        for expected in (
+            "'c' reads output.text",
+            "'d' reads output.notes",
+            "'d' reads output.text",
+        ):
+            assert expected in issue["message"]
+
+    def test_a_producer_read_only_BARELY_does_not_warn(self) -> None:
+        """A contract buys nothing for `{{nodes.b.output}}` — there is no path it could have
+        checked, so demanding one would be ceremony."""
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings}}"),
+            self._reader("c", "{{nodes.b.output}}"),
+        )
+        assert "WF_UNCONTRACTED_OUTPUT_REF" not in _codes(spec)
+
+    def test_a_spec_that_uses_NO_contracts_is_left_alone(self) -> None:
+        """The scoping deviation, asserted. Censused: 18 of the 19 bundled templates read a
+        sub-path and ZERO declare a contract, so an unconditional warning fires 77 times
+        across the shipped library — on every validation, of essentially every template. The
+        warning therefore addresses authors who have ADOPTED contracts and left a producer
+        out, which is a population that can act on it. `TestOutputContractCensus` in
+        `test_workflows_bundled.py` keeps both numbers honest.
+        """
+        spec = self._seq(
+            self._producer("a"),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert validate_spec(spec).issues == []
+
+    def test_one_contract_anywhere_turns_the_warning_on(self) -> None:
+        """The switch is spec-level and it is the ONLY difference from the test above."""
+        base = self._seq(
+            self._producer("a"),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+        )
+        assert "WF_UNCONTRACTED_OUTPUT_REF" not in _codes(base)
+        adopted = self._seq(
+            self._producer("a"),
+            self._reader("b", "{{nodes.a.output.summary}}"),
+            self._producer("z", self.JSON_FINDINGS),
+        )
+        assert "WF_UNCONTRACTED_OUTPUT_REF" in _codes(adopted)
+
+    # ── the vacuity floor ──
+
+    def test_the_rule_RESOLVES_a_read_against_a_real_contract(self) -> None:
+        """The floor. Every assertion above is satisfied by a rule that examined nothing and
+        stayed silent, because silence is also what a satisfied rule produces. This counts the
+        reads that were actually resolved against a declared key set, so an implementation
+        that stops resolving reds here instead of going quietly green.
+        """
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings}}"),
+            self._reader("c", "{{nodes.a.output.summary}}"),
+        )
+        reads = contract_reads_for_root(Node.from_dict(spec["root"]))
+        judged = [r for r in reads if r.guaranteed is not None]
+        assert len(judged) == 2, reads
+        assert {r.satisfiable for r in judged} == {True, False}
+        assert [r.path for r in judged] == [("findings",), ("summary",)]
+        assert all(r.producer_id == "a" and r.declared for r in judged)
+
+    def test_the_read_paths_ride_the_SAME_edge_list_as_the_ordering_rule(self) -> None:
+        """The anti-duplication assertion. `PP-1` and `PP-3` must not derive two reference
+        lists — that is the defect this pillar exists to remove — so the read paths hang off
+        `DepEdge` and every producer they name is a producer `node_deps` already found.
+        """
+        spec = self._seq(
+            self._producer("a", self.JSON_FINDINGS),
+            self._reader("b", "{{nodes.a.output.findings}} {{nodes.a.artifact}}"),
+            self._reader("c", "{{nodes.b.output}}"),
+        )
+        edges = {
+            (e.reader_id, e.producer_id): e
+            for e in dep_edges_for_root(spec["root"] and Node.from_dict(spec["root"]))
+        }
+        assert edges[("b", "a")].output_reads == (("findings",),)
+        assert edges[("c", "b")].output_reads == ((),)  # bare: a read with no path
+        for read in contract_reads_for_root(Node.from_dict(spec["root"])):
+            assert (read.reader_id, read.producer_id) in edges

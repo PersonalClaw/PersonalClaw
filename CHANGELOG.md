@@ -19,6 +19,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   bundled template was affected** — all 19 were checked first, and every one already ordered its
   steps correctly. Nothing about how workflows run has changed.
 
+- **A workflow step that declares what its output will contain is now checked against the steps that
+  read it.** A step can declare an output contract — "this must be JSON, and it must contain these
+  keys" — and the engine has always enforced it on the *producing* step. Nothing ever compared it to
+  the steps reading that output, so a template could bind `{{nodes.classify.output.summary}}` from a
+  step whose own contract promises `findings`, save perfectly clean, and then die partway through the
+  run on an unresolvable reference. That is now a typed error at save time
+  (`WF_UNSATISFIABLE_OUTPUT_REF`) naming the reader, the step it reads, the key it wanted and the
+  keys the producer actually guarantees. In a workflow that already uses contracts, a step read at a
+  sub-path but declaring none raises an advisory warning instead, listing the readers that would
+  benefit. **No bundled template was affected** — all 19 were censused first: none declares an output
+  contract today, so nothing shipped changes and nothing new appears in validation output. No new
+  contract vocabulary was added, and nothing about how workflows run has changed.
+
 
 - **A loop that keeps working but stops getting anywhere now stalls, even when it insists it is
   making progress.** The supervisor's stall detector used to read one number the worker itself

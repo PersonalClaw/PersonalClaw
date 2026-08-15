@@ -1,9 +1,10 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` ledger extraction and `PP-1`
-`WF_UNORDERED_DEP`, both 2026-08-14 — see `## Execution log`). Startable now: `PP-2`, `PP-3`
-(both unblocked by `PP-1`), `PP-6`, `PP-8`, `PP-9`, `PP-11`. `PP-5` and `PP-14` are unblocked by
-`WF2LOO-16`. `PP-7` still waits on `PP-6`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
+**Status:** IN PROGRESS — 3 of 16 atoms shipped (`PP-4` ledger extraction, `PP-1`
+`WF_UNORDERED_DEP` and `PP-3` the `output_contract` reader cross-check, all 2026-08-14 — see
+`## Execution log`). Startable now: `PP-2` (unblocked by `PP-1`), `PP-6`, `PP-8`, `PP-9`, `PP-11`.
+`PP-5` and `PP-14` are unblocked by `WF2LOO-16`. `PP-7` still waits on `PP-6`. 16 atoms in
+[`../atomic/PP.md`](../atomic/PP.md).
 
 ---
 
@@ -288,3 +289,72 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   auto-discovery
   (`packages.find`), and `personalclaw-backend.spec`'s `hiddenimports` exists only for
   importlib-loaded modules, which a statically-imported pure-Python package is not.
+
+- **2026-08-14 — CENSUS (`PP-3`): the warning's population is the whole shipped library, which is
+  why the warning is scoped.** Measured over the 19 bundled templates before writing the rule: **18
+  of 19 carry `{{nodes.*.output}}` reads — 145 distinct reads, 45 bare and 100 at a sub-path (151
+  before deduplicating a ref that appears twice in one node) — and ZERO declare an `output_contract`
+  at all.** Two consequences. (1) The ERROR half has an empty population here: nothing shipped is
+  wrong, and nothing shipped exercises it, so the unit tests carry the whole weight and
+  `test_the_rule_RESOLVES_a_read_against_a_real_contract` is the vacuity floor that keeps a rule
+  which resolved *nothing* from reading as a rule which resolved fifty satisfiable paths — both are
+  silent. (2) The WARNING half, unconditionally, fires **77** times across **18 of 19** templates
+  (**49** if only sub-path readers count). Every template warning on every validation is how an
+  author learns to skim validator output — and it would also contradict
+  `test_it_validates_STRICTLY`, whose stated contract is that a bundled template ships no warning at
+  all, so the alternatives were "weaken that gate" or "author ~49 contracts across 18 shipped
+  templates". The second is worse than it looks: `must_be_json` + `required_keys` is *enforced* at
+  run time by `engine.check_output_contract`, so a contract guessed onto a producer whose model
+  sometimes answers in prose converts a working template into a failing one.
+
+- **2026-08-14 — DEVIATION (`PP-3`): the warning is scoped to specs that already use contracts.**
+  The atom says "a producer read structurally but declaring no contract raises a WARNING naming the
+  readers". Severity, content and trigger are all as written; a precondition is added — the spec must
+  declare at least one `output_contract` somewhere. Rationale: an author who has adopted the
+  mechanism and left one producer out has an actionable inconsistency, while a spec with no
+  contracts anywhere has not adopted it and is being nagged, not validated. Two further narrowings
+  fall out of the same reasoning: only sub-path reads count (a contract buys nothing checkable for
+  `{{nodes.x.output}}` — there is no path it could have judged), and the warning is ONE per producer
+  naming all its readers rather than one per read. **Measured volume on the shipped library: zero.**
+  Honest limitation recorded rather than papered over: no generator in the tree currently produces
+  both a contract and a cross-node sub-path read — `batch_compile` emits `output_contract` for every
+  typed leaf, but compiled leaves do not read each other's output — so the warning's live population
+  today is hand-authored specs, and its mechanism is proven by unit tests
+  (`test_one_contract_anywhere_turns_the_warning_on` is the switch, asserted against its own
+  contract-free twin).
+
+- **2026-08-14 — DONE (`PP-3`): `output_contract` cross-checked against its readers.**
+  `WF_UNSATISFIABLE_OUTPUT_REF` (error) fires when a reader takes a path whose first segment is
+  absent from a producer's `required_keys` on a contract that also declares `must_be_json`;
+  `WF_UNCONTRACTED_OUTPUT_REF` (warning, scoped as above) names the producer that declares nothing
+  and the readers that take paths through it. No new vocabulary: `must_be_json` + `required_keys`
+  are read exactly as `engine.check_output_contract` reads them, and `engine.py` is untouched. Only
+  the FIRST path segment is judged — `required_keys` is a promise about an object's top level, and
+  judging `findings.0.verdict` would mean inventing nesting the engine cannot enforce. Both halves
+  of the pairing are required: `required_keys` alone is the shape
+  `batch_compile.schema_to_contract` emits for a schema with no `type`, and refusing it would refuse
+  the author who described their output least. **Built on `PP-1`'s edge list rather than beside it**
+  — `DepEdge` gained an `output_reads` field derived from the same `bindings.refs_in` scan
+  `node_deps` is built on, `validate_node_tree` computes the list ONCE and hands it to both rules,
+  and `test_the_read_paths_ride_the_SAME_edge_list_as_the_ordering_rule` asserts every producer the
+  paths name is one `node_deps` already found. A second reference parser would have been the exact
+  two-edge-list defect this pillar exists to remove. Gate: `make lint` exit 0, `pytest -n 0` 431
+  passed across `test_workflows_validator.py` (70, +33) / `test_workflows_bundled.py` (241, +5) /
+  the two batch modules, full suite green. Falsified three times: (1) the atom's named probe —
+  giving `knowledge-health`'s `scan` an agreeing contract (`required_keys: ["report"]`, library
+  still "Spec is valid.") then renaming it to `["summary"]` while `verdict` still reads
+  `output.report` — reds `test_it_validates_STRICTLY[knowledge-health]` plus three census tests with
+  a message naming reader, producer and path; (2) dropping the `must_be_json` requirement reds
+  `test_required_keys_WITHOUT_must_be_json_never_errors`, proving the rule does not over-refuse an
+  under-declared contract; (3) making the rule resolve nothing reds both vacuity floors
+  (`test_the_rule_RESOLVES_a_read_against_a_real_contract` and
+  `test_the_rule_sees_the_measured_read_population`) rather than going quietly green.
+
+- **2026-08-14 — DISCOVERY (`PP-3`): a bundled ACTION node cannot declare an `output_contract`
+  without also touching a test rail.** `test_workflows_bundled.py:597`'s flat-argument rail allows
+  only `("provider", "with", "context", "payload")` in an action node's config, so the falsification
+  probe above tripped it as a stray argument — even though `engine.py:409` reads `output_contract`
+  from exactly that config for action nodes. Left alone deliberately: no shipped template declares
+  one, and widening a rail for a population of zero is speculative. Whoever adds the first
+  action-node contract (or `PP-2`, which will move these edges) should widen that allowlist in the
+  same change rather than discovering it as an unrelated red.
