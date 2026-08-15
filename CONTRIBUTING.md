@@ -292,6 +292,27 @@ Two runtime facts that save debugging time:
   flags, update [docs/reference/](docs/reference/) in the same PR.
 - Match the existing style; `make lint` must pass.
 
+### What CI will and won't tell you on your first PR
+
+If you open a PR from a fork and your GitHub account is only a few days old,
+GitHub holds the `CI` workflow until a maintainer releases it. Until then the
+only check you see is `dco`, and **nothing has compiled or tested your code
+yet** — a green-looking PR with one check on it has not been verified. This has
+bitten real PRs here: two sat for a day with a TypeScript file that did not
+parse, and the only red mark on them was an unrelated sign-off failure.
+
+So run the gate locally before you push, rather than waiting to hear:
+
+```bash
+make lint                                   # black · isort · flake8 · mypy
+pytest -n 4 --dist worksteal                # the Python suite
+npm run typecheck:web && npm run test:web   # only if you touched web/
+```
+
+When `lint` does fail in CI, a bot posts the exact fix as a PR comment — that
+works on fork PRs too, via a relay workflow, because CI itself is given a
+read-only token on a fork and cannot comment.
+
 ## Architecture orientation
 
 - Core package: `src/personalclaw/` — gateway (`gateway.py`), dashboard API
