@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { useFocusTrap } from '../../ui/useFocusTrap'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -851,13 +852,18 @@ export function OutcomeFieldValue({ field }: { field: IntentOutcomeField }) {
  *  URL-serializable, so unlike the More-details panel it isn't a history step — the three
  *  explicit dismiss affordances cover it; a popstate trap fought the hash router.) */
 function FullscreenModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  // 🔑 Three dismiss affordances (Escape, backdrop, ✕) and nothing holding focus in: measured before
+  // this, Tab from the ✕ walked into the knowledge list underneath, which is covered by an opaque
+  // `bg-surface/95` — focus lands on controls the user cannot see. The ref goes on the overlay root
+  // because here the overlay IS the panel (header + scrolling body), not a scrim around a card.
+  const trapRef = useFocusTrap<HTMLDivElement>()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
+    <div ref={trapRef} className="fixed inset-0 z-50 flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
       <div className="flex items-center gap-s border-b border-outline-variant/40 px-l py-3">
         <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
         <button type="button" onClick={onClose} aria-label="Close fullscreen"

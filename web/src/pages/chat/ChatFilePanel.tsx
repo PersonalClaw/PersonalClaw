@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { X, Maximize2, Minimize2, Box } from 'lucide-react'
 import { IconButton } from '../../ui/IconButton'
+import { useFocusTrap } from '../../ui/useFocusTrap'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { TextInput } from '../../ui/forms'
@@ -22,6 +23,32 @@ const MIN_W = 360, MAX_W = 900, DEFAULT_W = 480
  *  download, live file-watch), minus the multi-tab strip. Opened by clicking an
  *  inline file reference in a chat response. Three modes: docked (drag the left
  *  edge to resize), expanded (full-viewport overlay), close. ⌘S saves. */
+/** The expanded panel's full-viewport surface, extracted ONLY so the focus trap works.
+ *
+ *  This panel is opaque (`bg-surface`) over a still-mounted chat, so without containment Tab walks
+ *  out of the expanded file view and onto composer and message controls the user cannot see — focus
+ *  on invisible content. Escape already collapses back (see the key handler above), so the trap has a
+ *  documented exit and does not strand anyone.
+ *
+ *  🪤 IT HAS TO BE A SEPARATE COMPONENT. `useFocusTrap`'s effect reads `ref.current` once on mount;
+ *  put it on `ChatFilePanel` itself and it would run when the PANEL opens — collapsed, with the ref
+ *  unattached — and never re-run when `expanded` flips. That is a silently inert trap, which is
+ *  exactly how `app/CommandPalette.tsx` shipped one. Mounting with the overlay is what makes it real.
+ *
+ *  🔑 This mode is a VIEW STATE that happens to cover live content, not a dialog: no scrim, no
+ *  backdrop click, and it deliberately does NOT claim a dialog role (`primitiveAdoption` holds
+ *  page-level ad-hoc dialogs at 0 — `ui/Modal` is canonical). Containment is owed by what it covers,
+ *  not by what it declares. */
+function ExpandedOverlay({ children }: { children: ReactNode }) {
+  const trapRef = useFocusTrap<HTMLDivElement>()
+  return (
+    <motion.div ref={trapRef} className="fixed inset-0 z-50 flex flex-col bg-surface"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
+      {children}
+    </motion.div>
+  )
+}
+
 export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; onClose: () => void; commentTarget?: CommentTarget }) {
   const [width, setWidth] = useState<number>(() => {
     const v = Number(localStorage.getItem('chat-file-w'))
@@ -101,12 +128,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   if (expanded) {
     // full-viewport overlay, portaled to <body> (an animated/transformed ancestor
     // would otherwise become the containing block for position:fixed).
-    return createPortal(
-      <motion.div className="fixed inset-0 z-50 flex flex-col bg-surface" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
-        {body}
-      </motion.div>,
-      document.body,
-    )
+    return createPortal(<ExpandedOverlay>{body}</ExpandedOverlay>, document.body)
   }
 
   return (

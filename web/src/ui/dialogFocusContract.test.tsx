@@ -111,3 +111,93 @@ describe('the rail: aria-modal implies a focus trap', () => {
     expect(read('ui/NavRail.tsx')).toMatch(/inert/)
   })
 })
+
+// ── The other half of the family: overlays that CANNOT declare aria-modal ─────────────────────
+//
+// The rail above keys off `aria-modal="true"`, so it can only ever see the three ui/ primitives.
+// Every overlay OUTSIDE ui/ is invisible to it — and it has to be, because `primitiveAdoption` holds
+// page-level ad-hoc dialogs at a baseline of **0** (`ui/Modal` is canonical), so a page overlay
+// legally cannot declare the attribute this rail measures. The result was a blind spot with real
+// defects in it: two hand-rolled modal dialogs over live content, both dismissible three ways, and
+// neither holding focus. Measured before the fix:
+//
+//   pages/chat/SessionSkillsReview   scrim ✓  Escape ✓  scrim-click ✓  trap ✗  → Tab reached the composer
+//   pages/knowledge/KnowledgeDetail  scrim ✓  Escape ✓  ✕ + backdrop ✓  trap ✗  → Tab reached the list
+//   pages/chat/ChatFilePanel         opaque   Escape ✓  ✕ + collapse ✓  trap ✗  → Tab reached the chat
+//
+// 🔑 SO THE CONTRACT IS OWED BY BEHAVIOUR, NOT BY DECLARATION. "It covers live content and dismisses
+// like a dialog" is what obliges containment; the attribute is just how a ui/ primitive says so.
+//
+// 🪤 AND THE POPULATION CANNOT BE READ OFF A CLASS STRING. `fixed inset-0` finds five files; three
+// were defects, one already had the trap, and one is not an overlay at all. The previous pass classified by that string alone and reported
+// `app/Onboarding.tsx` as the worst offender in the family — "no Escape, no trap, first screen a new
+// user sees". **That was wrong.** `app/App.tsx` returns `<Onboarding />` INSTEAD of the shell, so
+// nothing is mounted behind it: there is no page to trap focus away from, and Escape would dismiss a
+// setup flow whose deliberate exit is "Set up later". A full-screen route wearing an overlay's class
+// string. Each exemption below therefore asserts the STRUCTURAL fact that earns it, so the exemption
+// breaks the moment the structure does.
+
+describe('the rail: a hand-rolled modal over live content owes containment', () => {
+  const overlays = walk(SRC)
+    .map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readFileSync(abs, 'utf8')) }))
+    .filter((f) => !f.rel.startsWith('ui/') && /fixed inset-0/.test(f.src))
+
+  it('finds the population — the census is not vacuous', () => {
+    expect(overlays.map((f) => f.rel).sort()).toEqual([
+      'app/CommandPalette.tsx',
+      'app/Onboarding.tsx',
+      'pages/chat/ChatFilePanel.tsx',
+      'pages/chat/SessionSkillsReview.tsx',
+      'pages/knowledge/KnowledgeDetail.tsx',
+    ])
+  })
+
+  it('every overlay that covers live content wires useFocusTrap', () => {
+    // THE RATCHET. `EXEMPT` is not "known broken" — each entry is a shape that does not cover live
+    // content, and the test below proves the shape still holds.
+    const EXEMPT = ['app/Onboarding.tsx']
+    const offenders = overlays
+      .filter((f) => !EXEMPT.includes(f.rel))
+      .filter((f) => !/useFocusTrap/.test(f.src))
+      .map((f) => f.rel)
+    expect(
+      offenders,
+      `these cover a mounted page and dismiss like a dialog, so Tab must not leave them:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([])
+  })
+
+  it('Onboarding is exempt because it REPLACES the shell, and that is asserted', () => {
+    // The structural fact: App renders it instead of the app, not on top of it. If this line ever
+    // becomes a conditional overlay beside the shell, this test fails and the exemption is void.
+    expect(read('app/App.tsx'), 'Onboarding must still be rendered INSTEAD of the shell')
+      .toMatch(/return <Onboarding \/>/)
+    // And it must not have grown a dialog's dismissal semantics in the meantime, which would make it
+    // one of these after all.
+    expect(/aria-modal/.test(read('app/Onboarding.tsx'))).toBe(false)
+  })
+
+  it("ChatFilePanel's expanded mode is covered too, and it is NOT a dialog", () => {
+    // 🪤 I first exempted this as "a view state with no dismiss semantics — an owner call". The rail
+    // failed and was right: line 41 already binds Escape (collapse when expanded, else close), so the
+    // mode is keyboard-dismissible AND opaque over a mounted chat. Two of three dialog traits, and
+    // the user-facing defect is identical — Tab onto controls that are not visible. A scrim's absence
+    // does not change what focus can reach. So it is fixed, with containment owed by what it covers.
+    //
+    // It still must not CLAIM to be a dialog: page-level ad-hoc dialogs are held at 0.
+    const src = read('pages/chat/ChatFilePanel.tsx')
+    expect(src, 'still an expand/collapse view state').toMatch(/if \(expanded\)/)
+    expect(src, 'Escape must keep collapsing the expansion').toMatch(/if \(expanded\) setExpanded\(false\)/)
+    expect(/aria-modal|role="dialog"/.test(src), 'must not claim a dialog role').toBe(false)
+  })
+
+  it('the trap only engages where it is mounted WITH the overlay', () => {
+    // Both fixes live in a component that is conditionally rendered, which is what makes the hook
+    // work at all: its effect reads `ref.current`, so an always-mounted host toggling an internal
+    // `open` flag gets a silently inert trap. Asserted as the structure that guarantees it.
+    expect(read('pages/chat/SessionSkillsReview.tsx')).toMatch(/\{open && \(\s*<SessionSkillsModal/)
+    expect(read('pages/knowledge/KnowledgeDetail.tsx')).toMatch(/\{fullscreen && <FullscreenModal/)
+    // The third is the clearest case: the overlay had to be EXTRACTED from the panel to get a working
+    // trap, because the panel mounts collapsed and the hook's effect never re-runs on `expanded`.
+    expect(read('pages/chat/ChatFilePanel.tsx')).toMatch(/<ExpandedOverlay>\{body\}<\/ExpandedOverlay>/)
+  })
+})
