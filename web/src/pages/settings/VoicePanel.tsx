@@ -251,10 +251,17 @@ function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLa
   )
 }
 
+// `gap-y-3`, not `gap-y-1`: `TextLink` grows its hit box with `py-1 -my-1`, so it bleeds 4px past its
+// layout box on BOTH sides to keep a line's rhythm. When this row wraps — it does at 390px, where the two
+// links no longer fit side by side — a 4px `gap-y-1` minus that 8px of bleed left the two 26px targets
+// OVERLAPPING by 4px (measured: first bottom=530.5, second top=526.5), which is the SC 2.5.8 failure axe
+// reports as serious. They pass on SIZE alone (26px ≥ 24px) once they stop overlapping, so 12px of gap
+// (12 − 8 = 4px of real separation) is enough. Desktop is untouched: `gap-y` only applies between
+// wrapped lines, and at 1440px these sit on one.
 function ManageLink({ kind, go }: { kind: string; go?: (id: string) => void }) {
   if (!go) return null
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-3">
       <TextLink onClick={() => go('models')} icon={ArrowRight} iconPosition="trailing" size="xs">
         Bind the {kind} model in Models
       </TextLink>
