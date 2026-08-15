@@ -154,7 +154,7 @@ function ModelStep({ readiness, onResolved, onSkip, onOpenSettings }: { readines
     }
   }, [readiness])
 
-  if (!readiness) return <Centered><Loader2 size={18} className="animate-spin text-on-surface-low" /></Centered>
+  if (!readiness) return <SpinnerRow><Loader2 size={18} className="animate-spin text-on-surface-low" /></SpinnerRow>
 
   if (!readiness.needs_model) {
     return <p className="inline-flex items-center gap-1.5 text-[0.8125rem]" style={{ color: 'var(--color-success)' }}><Check size={15} /> A chat model is configured — you're ready.</p>
@@ -189,7 +189,7 @@ function ModelStep({ readiness, onResolved, onSkip, onOpenSettings }: { readines
   return (
     <div className="flex flex-col gap-m">
       <p className="text-on-surface-var text-[0.8125rem]">Pick the model the agent should chat with:</p>
-      {models === null ? <Centered><Loader2 size={16} className="animate-spin text-on-surface-low" /></Centered>
+      {models === null ? <SpinnerRow><Loader2 size={16} className="animate-spin text-on-surface-low" /></SpinnerRow>
         : models.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No chat-capable models found. <TextLink onClick={onSkip}>Set up later</TextLink></p>
         : (
           <motion.div className="flex flex-col gap-1.5"
@@ -240,6 +240,12 @@ function Recap({ ok, label }: { ok: boolean; label: string }) {
   )
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
+/** A short row for an in-step spinner (vertically centred, `py-2` for height). Deliberately NOT
+ *  `ui/Centered`, whose doc once lamented this as a "drifted copy": the two solve different jobs and
+ *  must not be merged. `ui/Centered` centres content over the FULL height of a pane
+ *  (`flex h-full items-center justify-center`); this sits in a SHORT expanding step body, where
+ *  `h-full` would be wrong. Renamed from a colliding `Centered` and named for what it holds, so the
+ *  distinction can't be misread as the collision it used to look like. Layout unchanged by the rename. */
+function SpinnerRow({ children }: { children: React.ReactNode }) {
   return <div className="flex items-center py-2">{children}</div>
 }
