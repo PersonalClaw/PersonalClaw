@@ -106,6 +106,11 @@ except Exception:  # pragma: no cover - defensive: never block module import
     _PROVIDER_RESOLUTION_ERRORS = ()
 
 _MAX_POOL = 10
+# Hard ceiling on total live descendant processes across all pool slots.
+# Each pooled ACP agent can spawn ~20 MCP servers; without a bound,
+# _MAX_POOL × 20 = 200 processes, enough to hang a laptop.  This cap
+# prevents replenishment when the live process count is already high.
+_MAX_POOL_PROCESSES = 150
 
 _SUBAGENT_PREFIX = "subagent:"
 _CHANNEL_PREFIX = "channel:"
@@ -410,11 +415,29 @@ class SessionManager:
         """
         Spawn providers up to ``_pool_size`` and enqueue them.
         Pool fill stops on first failure and does not retry until next claim.
+        Also respects _MAX_POOL_PROCESSES to prevent total descendant count
+        from growing unbounded.
         """
         if not self._pool_size or not self._provider_factory:
             return
         async with self._pool_fill_lock:
             while self._warm_pool.qsize() < self._pool_size:
+                # Bound total live processes: count descendants across all
+                # pooled slots and refuse to spawn if the ceiling is hit.
+                pool_pids = self._pool_pids()
+                if pool_pids:
+                    from personalclaw.acp.transport import _get_child_pids
+
+                    total_procs = len(pool_pids)
+                    for ppid in pool_pids:
+                        total_procs += len(_get_child_pids(ppid))
+                    if total_procs >= _MAX_POOL_PROCESSES:
+                        logger.warning(
+                            "Warm pool: %d live processes >= ceiling %d, skipping spawn",
+                            total_procs,
+                            _MAX_POOL_PROCESSES,
+                        )
+                        break
                 p = None
                 try:
                     p = self._provider_factory(
@@ -735,18 +758,22 @@ class SessionManager:
                 finally:
                     # Re-enqueue survivors first, then shut down dead providers.
                     # This avoids an empty-queue window where _drain_and_claim()
-                    # would fall back to cold start.  CancelledError during
-                    # shutdown may skip remaining providers in to_shutdown —
-                    # acceptable because they're already dead/expired and their
-                    # PIDs are tracked in session_pids.txt for startup
-                    # cleanup.  Sweep PIDs are cleared in a nested finally so
-                    # they can't go stale regardless of how we exit.
+                    # would fall back to cold start.  Sweep PIDs are cleared in
+                    # a nested finally so they can't go stale regardless of how
+                    # we exit.
+                    #
+                    # CancelledError during shutdown is handled by falling back
+                    # to _sync_kill_provider — a synchronous killpg that does
+                    # not require the event loop.  This prevents leaked orphans
+                    # under KeepAlive daemons that never restart.
                     try:
                         for entry in healthy:
                             self._warm_pool.put_nowait(entry)
                         for p in to_shutdown:
                             try:
                                 await p.shutdown()
+                            except asyncio.CancelledError:
+                                _sync_kill_provider(p)
                             except Exception:
                                 pass
                     finally:
@@ -1374,9 +1401,14 @@ class SessionManager:
                 timeout=5.0,
             )
         except asyncio.TimeoutError:
+            # Do NOT defer to "next startup" — under a KeepAlive daemon the
+            # gateway may run for days without restarting.  Synchronously kill
+            # any surviving provider process groups now.
             logger.warning(
-                "Timeout closing %d sessions — orphan cleanup at next startup", len(all_providers)
+                "Timeout closing %d sessions — force-killing survivors", len(all_providers)
             )
+            for p in all_providers:
+                _sync_kill_provider(p)
         logger.info("All sessions closed (active=%d)", len(sessions))
         # One `SessionEnd` per session, with `reason=shutdown`. Deliberately AFTER the gather rather
         # than inside `_close_one`: the shutdown path is already bounded by a 5s timeout, and firing

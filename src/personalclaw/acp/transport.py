@@ -194,8 +194,20 @@ def _is_our_child(pid: int, expected_start: int | None = None) -> bool:
         return False
 
 
-def _kill_escaped_children(child_pids: dict[int, int | None]) -> None:
-    """SIGKILL descendants that survived killpg (different PGID). Kills leaf-first."""
+def _kill_escaped_children(
+    child_pids: dict[int, int | None],
+    *,
+    pgid: int | None = None,
+    root_pid: int | None = None,
+) -> None:
+    """SIGKILL descendants that survived killpg (different PGID). Kills leaf-first.
+
+    After sweeping the tracked snapshot, performs a LIVE descendant scan of
+    *root_pid* and a process-group membership scan of *pgid* to catch MCP
+    servers that forked/setsid'd after the tracking snapshot was taken.
+    Preserves the deny-by-default ``_is_our_child`` recycle protection.
+    """
+    # Phase 1: kill tracked PIDs that are still alive (original behavior)
     for cpid in reversed(list(child_pids.keys())):
         try:
             os.kill(cpid, 0)  # still alive?
@@ -204,6 +216,40 @@ def _kill_escaped_children(child_pids: dict[int, int | None]) -> None:
                 continue
             os.kill(cpid, signal.SIGKILL)
             logger.debug("Killed escaped child PID %d", cpid)
+        except (ProcessLookupError, OSError):
+            pass
+
+    # Phase 2: live descendant scan — catches processes spawned after snapshot
+    live_extra: set[int] = set()
+    if root_pid:
+        for p in _get_child_pids(root_pid):
+            if p not in child_pids:
+                live_extra.add(p)
+
+    # Phase 3: process-group membership scan — catches processes that stayed in
+    # our pgid but are not in the ppid tree (e.g. orphaned grandchildren)
+    if pgid:
+        try:
+            out = subprocess_mod.check_output(
+                ["pgrep", "-g", str(pgid)], stderr=subprocess_mod.DEVNULL
+            )
+            for line in out.decode().split():
+                p = int(line.strip())
+                if p not in child_pids and p != root_pid:
+                    live_extra.add(p)
+        except Exception:
+            pass
+
+    # Kill live-scanned extras with _is_our_child guard (leaf-first by PID)
+    for cpid in sorted(live_extra, reverse=True):
+        try:
+            os.kill(cpid, 0)  # still alive?
+            start = _get_start_time(cpid)
+            if not _is_our_child(cpid, expected_start=start):
+                logger.debug("Skipping live-scanned PID %d — not an ACP/MCP process", cpid)
+                continue
+            os.kill(cpid, signal.SIGKILL)
+            logger.debug("Killed late-spawned descendant PID %d", cpid)
         except (ProcessLookupError, OSError):
             pass
 
@@ -248,6 +294,7 @@ class AcpProcess:
 
         self._process: asyncio.subprocess.Process | None = None
         self._pid: int | None = None
+        self._pgid: int | None = None  # process-group id recorded at spawn
         self._start_time: int | None = None  # start time for PID-recycle detection
         self._child_pids: dict[int, int | None] = {}  # pid → start_time snapshot
         self._sandbox_handle: object | None = None
@@ -373,6 +420,12 @@ class AcpProcess:
         self._process = await handle.exec(**kwargs)
         self._pid = self._process.pid
         self._start_time = _get_start_time(self._pid)
+        # Record process-group id at spawn for robust killpg (avoids ESRCH race
+        # if the process dies between our kill decision and os.getpgid).
+        try:
+            self._pgid = os.getpgid(self._pid)
+        except OSError:
+            self._pgid = self._pid  # session-leader fallback: pgid == pid
         # Log the binary basename without leaking the full argv (may carry creds).
         binary_name = Path(argv[0]).name if argv else "acp-agent"
         logger.info("Spawned %s (PID %d)", binary_name, self._pid)
@@ -434,6 +487,7 @@ class AcpProcess:
         if not self._process or self._process.returncode is not None:
             return
         pid = self._pid
+        pgid = self._pgid
         # Close pipes first to unblock any pending reads/writes.
         for pipe in (self._process.stdin, self._process.stdout, self._process.stderr):
             if pipe:
@@ -451,26 +505,34 @@ class AcpProcess:
             if p not in merged:
                 merged[p] = _get_start_time(p)
 
+        # Use the recorded pgid (robust against ESRCH if the process already
+        # exited between our decision and the signal).
         if not force:
             try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)  # type: ignore[arg-type]
+                if pgid:
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)  # type: ignore[arg-type]
             except (ProcessLookupError, OSError):
                 pass
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=3.0)
-                _kill_escaped_children(merged)
+                _kill_escaped_children(merged, pgid=pgid, root_pid=pid)
                 return
             except asyncio.TimeoutError:
                 pass
         # Force kill
         try:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)  # type: ignore[arg-type]
+            if pgid:
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)  # type: ignore[arg-type]
         except (ProcessLookupError, OSError):
             try:
                 self._process.kill()
             except (ProcessLookupError, OSError):
                 pass
-        _kill_escaped_children(merged)
+        _kill_escaped_children(merged, pgid=pgid, root_pid=pid)
         try:
             await asyncio.wait_for(self._process.wait(), timeout=1.0)
         except asyncio.TimeoutError:
