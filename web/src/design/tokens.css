@@ -196,7 +196,15 @@
   color-scheme: light;
 }
 
-:root {
+/* Dark is the default UA scheme, but this must NOT out-rank `.light`'s own
+   `color-scheme: light` above. `:root` and `.light` have the SAME specificity (0,1,0), so a
+   bare `:root` rule placed after the light block won on source order alone and the light
+   theme's declaration was dead: measured on a live gateway, `<html class="light">` with a
+   light canvas (rgb(240,244,248)) still computed `color-scheme: dark`, which is what tells the
+   browser to paint native chrome dark — scrollbars, `<select>` popups, `<input type="date">`
+   pickers and autofill — on a light page. `:not(.light)` makes it order-independent, so
+   reordering this file can never silently re-break the light theme. */
+:root:not(.light) {
   color-scheme: dark;
 }
 
