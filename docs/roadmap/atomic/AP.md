@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `AP-2` | ⬜ | Import core: inspect-without-write, leaves-first commit, rollback, ref-integrity lint, scan | `AP-1` | import runs inspect (dry-run, no writes) then quarantine→integrity recompute→packs/lint.py ref-integrity lint→leaves-first commit with per-write journal at packs/.installing/<id>.json; a DANGEROUS-pattern skill is refused regardless of consent and WARNING needs explicit consent; fault-injected mid-import unwinds every journaled write to byte-identical pre-import state; skills commit through PackMarketplace→install_guarded producing .pclaw-lock.json; fresh-id rewriting on parsed objects (never raw bytes); triggers land disabled and config_subset staged; every step SEL-audited. |
 | `AP-3` | ⬜ | Requirements resolution + connector catalog (configure/substitute/skip) + setup-skill + PacksConfig | `AP-2` | connector_catalog.json store seeded; each connectors.json declaration resolves via configure (credential collected, server written through providers/mcp_instances)/substitute (same-category rewrite)/skip; skipped deps degrade with machine-readable connector_missing:<name>; setup/SKILL.md installs through the guarded path and surfaces as a re-runnable Finish-setup chip; new PacksConfig (skill_catalogs, fingerprint_enabled, connector_catalog_url) wired through dataclass _meta, load(), to_dict(), _EDITABLE_CONFIG+FE with test_config_roundtrip green. |
 | `AP-4` | ⬜ | Pack kinds: agent/roster packs, prompt-card importer, bundled Domain OS packs, one-link serialization | `AP-2`, `AP-3` | Personal CFO + Health OS bundled first-party packs export→wipe→import on a fresh PERSONALCLAW_HOME with skills locked, template runnable, digest trigger DISABLED, connector configure-or-substitute prompt, and setup interview binding a folder; roster pack imports rendering persona markdown into config agents{} with every runbook/catalog slug lint-resolved (a broken slug blocks import naming the exact unresolved ref) and only the always tier one-click-deploys; prompt-card importer fences pasted input, maps to typed PromptTemplate/WorkflowDef/AgentDefinition through the proposal review flow; one-link JSON serialization imports through the same §3 pipeline. |
-| `AP-5` | ⬜ | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) | `AP-1` | packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation. |
+| `AP-5` | ✅ | Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests) | `AP-1` | packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation. |
 | `AP-6` | ⬜ | Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint) | `AP-3` | packs/catalog_marketplace.py CatalogMarketplace(SkillsMarketplace) registers each configured catalog (packs.skill_catalogs) on get_default_skills_registry at COMMUNITY tier; fetch() pulls files via net.fetch under the CONNECTOR egress profile returning SkillDetail so install_guarded does quarantine/scan/commit/lock; installing a catalog skill produces a standard .pclaw-lock.json and passes verify_skill_integrity (zero chokepoint bypass); Skills store gains a source filter + per-source counts; a large index browses client-side without entering the agent budget until install. |
 | `AP-7` | ⬜ | Project-fingerprint auto-surfacing + pack update flow + pack store FE + validation sweep | `AP-3`, `AP-4` | packs/fingerprint.py zero-LLM scanner over Project.workspace_dir matches declared fingerprints on project-create and on-demand only; a Terraform-shaped dir surfaces a propose-only pack card with confidence + the §3.1 inspect report; rejecting once is remembered per (project,pack) and never re-nags; packs.fingerprint_enabled=false stops scanning entirely; pack update overwrites only pack_owned components and skips computedHash-drifted user-edited copies with a visible drift note; pack store/detail FE ships and the export→wipe→import round-trip validation sweep on a second PERSONALCLAW_HOME passes. |
 
@@ -54,11 +54,30 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `AP-5` — Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests)
 
-**Status:** todo
+**Status:** done
 
 §5 Multi-Tool OUTBOUND Export (amendment c). Session 5 (first half). Success criterion 6. Reuses §2.2 content-layer redaction.
 
 **Done when:** packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation.
+
+**DONE.** `packs/external_formats.py` ships the `ExternalFormat(name, installKind, dest, render)`
+contract, the three v1 renderers (`claude-code-agents` per-agent, `cursor-rules` roster,
+`skill-md` plugin) and an all-or-nothing writer: render → containment-check every path → §2.2
+scan → clobber-check → write. Redaction imports `packs.build._scan_component` rather than
+forking it, so the content rules stay shared; a hit blocks the whole batch before any file
+exists. Containment is checked twice (slug validation in the renderer, resolved-path
+validation in the writer) and a file we did not write — recognised by a constant provenance
+trailer — is never overwritten. `tests/fixtures/external_formats_golden/` pins per-format
+bytes; `tests/test_packs_external_formats.py` renders twice per format and diffs the golden.
+
+Two deliberate calls. (1) The exported agent frontmatter carries `name`/`description`
+(+ `model` when pinned) but NOT `tools`: an `AgentDefinition` has no tool-allowlist field, so
+any value there would be invented data that silently narrows the exported agent — declared
+skills go in the body instead, where an unknown key cannot break the recipient's parse.
+(2) No HTTP route or CLI yet — the pack store/detail FE is `AP-7`'s scope; the registry's
+readers today are `get_format`/`export_entities` plus the `personalclaw.packs` package export.
+Format conformance is asserted by parsing the rendered frontmatter with a real YAML loader;
+**no external binary was executed**.
 
 ### `AP-6` — Inbound skill-catalog importer (CatalogMarketplace via install_guarded chokepoint)
 
