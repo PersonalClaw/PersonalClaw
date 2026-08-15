@@ -660,7 +660,13 @@ export function KnowledgeListPage({ onCreate, onOpenItem, query, setQuery }: { o
                               <span style={{ color: tm.tone }}>{typeLabel(it)}</span>
                               {it.provider && it.provider !== 'native' && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
                               {it.file_size != null && it.file_size > 0 && <span>· {fmtBytes(it.file_size)}</span>}
-                              {(it.summary || it.content) && <span className="truncate">· {it.summary || it.content}</span>}
+                              {/* No `· ` prefix: this span is `truncate` (white-space:nowrap) inside a
+                                  `flex-wrap` row, so its intrinsic width always exceeds the space left on
+                                  the label's line and it wraps to a line of its OWN before truncating.
+                                  A leading separator there separates nothing — measured 26 of 26 rows at
+                                  both 1440×900 and 390×844. The `file_size` dot above is short enough to
+                                  stay on the label's line, so it keeps its separator. */}
+                              {(it.summary || it.content) && <span className="truncate">{it.summary || it.content}</span>}
                             </div>
                           </div>
                           {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <button key={t} type="button" onClick={(e) => { e.stopPropagation(); setTagFilter(t) }} title={`Filter by "${t}"`} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem] transition-colors hover:bg-surface-container hover:text-primary">{t}</button>)}</div>}
