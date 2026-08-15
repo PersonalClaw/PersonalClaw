@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CircleCheck, CircleHelp, Clock, DollarSign, ScanSearch, ShieldQuestion, TriangleAlert } from 'lucide-react'
+import { CircleCheck, CircleHelp, Clock, DollarSign, ScanSearch, ShieldQuestion, Split, TriangleAlert } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
 import { Segmented } from '../../ui/Segmented'
 import { Skeleton } from '../../ui/ListScaffold'
@@ -160,6 +160,73 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                         </span>
                         {g.fake_check_warning ? (
                           <span className="text-on-surface-low">{g.fake_check_warning}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              {/* PP-8 — per-`branch` case and per-judge verdict distributions across the template,
+                  beside the said-no table because a routing decision and a gate decision are the
+                  same kind of edge. Each warning renders the backend's SAMPLE-GATED string verbatim:
+                  the rule that earns it ("dead across a real sample", "one verdict over many calls")
+                  lives there, and a second phrasing here would drift from it. */}
+              <section className="flex flex-col gap-xs">
+                <h3 className="flex items-center gap-2xs text-on-surface text-[0.8125rem] font-medium">
+                  <Split size={13} aria-hidden /> Edges
+                </h3>
+                {Object.keys(data.edges.branches).length === 0 &&
+                Object.keys(data.edges.judges).length === 0 ? (
+                  <p className="text-on-surface-low text-[0.75rem]">
+                    This template has no branch or judge edges, so there is no routing to distribute.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-2xs text-[0.75rem]">
+                    {Object.values(data.edges.branches).map((b) => (
+                      <li key={`b:${b.path}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                        <span className="flex flex-wrap items-center gap-xs">
+                          <span className="font-mono text-on-surface">{b.path}</span>
+                          <span className="text-on-surface-low tabular-nums">
+                            {Object.entries(b.cases)
+                              .map(([label, n]) => `${label}: ${n}`)
+                              .join(' · ') || 'no cases seen'}
+                            {` · ${b.routed_runs} routed`}
+                          </span>
+                          {b.degenerate_warning || b.never_taken.length > 0 ? (
+                            <span className="text-warning inline-flex items-center gap-2xs">
+                              <TriangleAlert size={12} aria-hidden />{' '}
+                              {b.degenerate_warning ? 'does no work' : 'dead case'}
+                            </span>
+                          ) : null}
+                        </span>
+                        {b.degenerate_warning ? (
+                          <span className="text-on-surface-low">{b.degenerate_warning}</span>
+                        ) : null}
+                        {b.never_taken.length > 0 ? (
+                          <span className="text-on-surface-low">
+                            Never taken: {b.never_taken.join(', ')}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                    {Object.values(data.edges.judges).map((j) => (
+                      <li key={`j:${j.node_id}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                        <span className="flex flex-wrap items-center gap-xs">
+                          <span className="font-mono text-on-surface">{j.node_id}</span>
+                          <span className="text-on-surface-low tabular-nums">
+                            {Object.entries(j.verdicts)
+                              .map(([v, n]) => `${v || '(none)'}: ${n}`)
+                              .join(' · ')}
+                          </span>
+                          {j.degenerate_warning ? (
+                            <span className="text-warning inline-flex items-center gap-2xs">
+                              <TriangleAlert size={12} aria-hidden /> one verdict
+                            </span>
+                          ) : null}
+                        </span>
+                        {j.degenerate_warning ? (
+                          <span className="text-on-surface-low">{j.degenerate_warning}</span>
                         ) : null}
                       </li>
                     ))}

@@ -885,6 +885,30 @@ export interface WorkflowGateStats {
   // are different claims and only the second is evidence. The badge renders this string verbatim.
   fake_check_warning: string
 }
+// PP-8: one `branch` selector's case distribution across a template's routed runs. `cases` lists
+// EVERY declared case — a never-taken one is a real 0, not an absent key, so the dead case is
+// nameable rather than invisible. The two warning strings are non-empty ONLY over a real sample
+// (routed_runs >= the said-no bar): a case unseen over three routings is unsampled, not dead.
+export interface WorkflowBranchStats {
+  path: string
+  cases: Record<string, number>
+  routed_runs: number
+  never_taken: string[]
+  degenerate_warning: string
+}
+// PP-8: one judge gate's verdict distribution. Complements the said-no table (approve/reject) by
+// showing the FULL verdict vocabulary — a judge can pass every gate while returning one verdict
+// every time, and only this shows the second. `degenerate_warning` is sample-gated like the rest.
+export interface WorkflowJudgeStats {
+  node_id: string
+  verdicts: Record<string, number>
+  total: number
+  degenerate_warning: string
+}
+export interface WorkflowEdgeStats {
+  branches: Record<string, WorkflowBranchStats>
+  judges: Record<string, WorkflowJudgeStats>
+}
 export interface WorkflowTemplateCard {
   template: string
   runs: number
@@ -930,6 +954,9 @@ export interface WorkflowIntrospection {
   workflow: string
   stats: WorkflowRunStats
   gates: Record<string, WorkflowGateStats>
+  // PP-8: per-`branch` case and per-judge verdict distributions across the template, beside the
+  // said-no table because a routing decision and a gate decision are the same kind of edge.
+  edges: WorkflowEdgeStats
   template_card: WorkflowTemplateCard
   proof: WorkflowProofSection
   timeline: WorkflowTimelineRow[]
@@ -943,7 +970,7 @@ export interface WorkflowIntrospection {
     approval: Array<{ resume_token: string; node_id: string; ask: unknown }>
     failed: unknown[]
     cost: WorkflowRunStats
-    risky: { degraded: unknown[]; gates: WorkflowGateStats[]; verification_debt: number }
+    risky: { degraded: unknown[]; gates: WorkflowGateStats[]; edges: WorkflowEdgeStats; verification_debt: number }
     next: WorkflowNextIfSilent
     proof: WorkflowProofSection
   }

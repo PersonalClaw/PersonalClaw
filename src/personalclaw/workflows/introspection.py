@@ -33,6 +33,7 @@ Pure functions over event lists. The caller reads the journal; these decide what
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -517,6 +518,249 @@ def trajectory_regression(
         current_runs=len(tail),
         prior_runs=len(prior),
     )
+
+
+#: Runs before an EDGE'S decision distribution counts as evidence — deliberately the SAME bar as
+#: the said-no badge. A `branch` case unseen across three routings is UNSAMPLED, not dead, and a
+#: dead-case flag that fires on the third run of a new template is the same noise `gate_stats`'s
+#: sample gate exists to prevent — the badge that fires before the metric has ever been right is
+#: the one that teaches a reader to ignore the surface. Reusing `FAKE_CHECK_MIN_RUNS` rather than
+#: minting a second threshold keeps ONE sample bar across the whole surface: a branch and a gate on
+#: the same template must not disagree about what "enough runs" means.
+EDGE_STATS_MIN_RUNS = FAKE_CHECK_MIN_RUNS
+
+#: A branch's cases live at the instance path `<branch>.cases[<label>]` (see `tick._visit_branch`).
+#: This is the only place the selected case survives in the EVENT STREAM: the branch node's own
+#: `{"case": label}` output is offloaded behind an `output_ref`, and its declined edges are held in
+#: memory and never journaled. But the taken case runs (a non-`step_skipped` event in its subtree)
+#: and every untaken case is SKIPPED with its whole subtree (`controller._skip`) — so the routing is
+#: recoverable from paths alone, which keeps this a pure projection over the event list like
+#: `gate_stats`, with no output-store read and no new ledger kind.
+_CASE_SEGMENT = re.compile(r"\.cases\[(?P<label>[^\]]+)\]")
+
+
+def _branch_routing(
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """One run's `branch` routing, as (cases_seen, cases_taken) keyed by branch instance path.
+
+    A case is SEEN if its subtree appears at all (taken or skipped); it is TAKEN if any event in its
+    subtree is not a `step_skipped`. Nested branches attribute each `.cases[...]` segment to its own
+    immediate prefix, so `outer.cases[a].inner.cases[b]` records `a` for `outer` and `b` for the
+    inner branch independently. Reading "taken" as "has a non-skip event" rather than "the case root
+    emitted a step" is what makes a CONTAINER case work: a structural container root emits nothing
+    of its own, but its children do — and an untaken container's whole subtree is skipped, so it has
+    no non-skip event to confuse the count.
+    """
+    seen: dict[str, set[str]] = {}
+    taken: dict[str, set[str]] = {}
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        path = str(event.get("instance_path") or "")
+        if ".cases[" not in path:
+            continue
+        is_skip = str(event.get("kind") or "") == "step_skipped"
+        for match in _CASE_SEGMENT.finditer(path):
+            branch_path = path[: match.start()]
+            label = match.group("label")
+            seen.setdefault(branch_path, set()).add(label)
+            if not is_skip:
+                taken.setdefault(branch_path, set()).add(label)
+    return seen, taken
+
+
+@dataclass
+class BranchStats:
+    """Case distribution for one `branch` selector, across a template's routed runs.
+
+    `cases` enumerates EVERY case the branch ever exposed — a never-taken case is a real `0`, not an
+    absent key, because a projection that only listed cases it had seen taken could never report the
+    dead one. `routed_runs` counts only the runs where the branch actually routed (an outer branch
+    can skip this one entirely), so the sample gate measures decisions the selector made, not runs
+    of the template.
+    """
+
+    path: str
+    cases: dict[str, int] = field(default_factory=dict)
+    routed_runs: int = 0
+
+    def never_taken(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> list[str]:
+        """Cases no routed run has ever selected — but only once there is a real sample.
+
+        Below `min_runs` this is empty on purpose: a case unseen over three routings is unsampled,
+        and "dead" and "not yet reached" are different facts. Reporting the first as the second is
+        exactly how a legible surface stops being read.
+        """
+        if self.routed_runs < min_runs:
+            return []
+        return sorted(label for label, count in self.cases.items() if count == 0)
+
+    def degenerate_warning(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> str:
+        """The warning when a real alternative exists but the selector always makes the same choice.
+
+        Requires a real sample AND more than one declared case: a branch with a single case is a
+        spec shape, not a selector doing no work. "" when there is no evidence, mirroring
+        `GateStats.fake_check_warning` so a reader learns one rule for the whole surface.
+        """
+        if self.routed_runs < min_runs or len(self.cases) < 2:
+            return ""
+        chosen = [(label, count) for label, count in self.cases.items() if count > 0]
+        if len(chosen) == 1 and chosen[0][1] == self.routed_runs:
+            others = len(self.cases) - 1
+            return (
+                f"`{self.path}` routed to `{chosen[0][0]}` in all {self.routed_runs} runs that "
+                f"reached it — its other {others} case(s) are declared but never chosen, so the "
+                "selector is doing no work"
+            )
+        return ""
+
+    def warnings(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> list[str]:
+        """This branch's findings for the template card — degenerate first, then dead cases."""
+        out: list[str] = []
+        degenerate = self.degenerate_warning(min_runs=min_runs)
+        if degenerate:
+            out.append(degenerate)
+        dead = self.never_taken(min_runs=min_runs)
+        if dead:
+            joined = ", ".join(f"`{label}`" for label in dead)
+            out.append(
+                f"`{self.path}` never took {joined} across {self.routed_runs} runs — a case the "
+                "selector has never reached is dead unless a future input routes to it"
+            )
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "cases": dict(self.cases),
+            "routed_runs": self.routed_runs,
+            "never_taken": self.never_taken(),
+            "degenerate_warning": self.degenerate_warning(),
+        }
+
+
+@dataclass
+class JudgeStats:
+    """Verdict distribution for one judge gate, across a template's runs.
+
+    Derived from `JUDGE_VERDICT` (the judge's own raw verdict), so it reports the FULL vocabulary a
+    judge used — where `gate_stats` collapses the same gate to approve/reject. The two are
+    complementary: a judge can pass every gate (no said-no) while returning the same verdict every
+    time, and only this surface shows the second.
+    """
+
+    node_id: str
+    verdicts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def total(self) -> int:
+        return sum(self.verdicts.values())
+
+    def degenerate_warning(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> str:
+        """The warning when a judge returns one verdict over a real sample — a do-nothing selector.
+
+        Same sample discipline as everything else on this surface: one outcome over three calls is a
+        young judge, not a broken one, and a badge that fires there is the noise the gate exists to
+        avoid.
+        """
+        if self.total < min_runs:
+            return ""
+        chosen = [(verdict, count) for verdict, count in self.verdicts.items() if count > 0]
+        if len(chosen) == 1:
+            return (
+                f"`{self.node_id}` returned `{chosen[0][0]}` on all {self.total} verdicts — a "
+                "judge with one outcome over this many calls is not discriminating"
+            )
+        return ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "node_id": self.node_id,
+            "verdicts": dict(self.verdicts),
+            "total": self.total,
+            "degenerate_warning": self.degenerate_warning(),
+        }
+
+
+@dataclass
+class EdgeStats:
+    """The edge-decision projection (PP-8): per-`branch` case and per-judge verdict distributions.
+
+    A pure projection over a template's runs, alongside `gate_stats` on the same surface and under
+    the same sample gate. It answers the graph-engineering question `branch`/`gate`/`judge` records
+    left unaskable: a selector that has taken one case every time, or a case no run has ever
+    reached, was journaled per-run and never aggregated.
+    """
+
+    branches: dict[str, BranchStats] = field(default_factory=dict)
+    judges: dict[str, JudgeStats] = field(default_factory=dict)
+
+    def warnings(self, *, min_runs: int = EDGE_STATS_MIN_RUNS) -> list[str]:
+        """Every edge finding, for folding into the template card beside the said-no warnings."""
+        out: list[str] = []
+        for path in sorted(self.branches):
+            out.extend(self.branches[path].warnings(min_runs=min_runs))
+        for node_id in sorted(self.judges):
+            warning = self.judges[node_id].degenerate_warning(min_runs=min_runs)
+            if warning:
+                out.append(warning)
+        return out
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "branches": {path: b.to_dict() for path, b in self.branches.items()},
+            "judges": {node_id: j.to_dict() for node_id, j in self.judges.items()},
+        }
+
+
+def edge_stats(runs: list[list[dict[str, Any]]]) -> EdgeStats:
+    """Aggregate `branch` case and judge verdict distributions across a template's runs.
+
+    Takes a LIST of runs' event lists rather than one run's, because a distribution over a single
+    run is not a distribution — "always case A" is only a finding once there is a history, and the
+    cross-run count is the whole point. Pure over the events: the caller reads the sibling ledgers
+    (it already does, for the template card) and this decides what the numbers mean.
+    """
+    seen_all: dict[str, set[str]] = {}
+    routed_runs: dict[str, int] = {}
+    case_counts: dict[str, dict[str, int]] = {}
+    for events in runs or []:
+        seen, taken = _branch_routing(events)
+        for branch_path, labels in seen.items():
+            seen_all.setdefault(branch_path, set()).update(labels)
+        for branch_path, labels in taken.items():
+            if not labels:
+                continue  # the branch itself was skipped this run — it did not route
+            routed_runs[branch_path] = routed_runs.get(branch_path, 0) + 1
+            counts = case_counts.setdefault(branch_path, {})
+            for label in labels:
+                counts[label] = counts.get(label, 0) + 1
+
+    branches: dict[str, BranchStats] = {}
+    for branch_path, labels in seen_all.items():
+        counts = case_counts.get(branch_path, {})
+        branches[branch_path] = BranchStats(
+            path=branch_path,
+            cases={label: counts.get(label, 0) for label in sorted(labels)},
+            routed_runs=routed_runs.get(branch_path, 0),
+        )
+
+    judges: dict[str, JudgeStats] = {}
+    for events in runs or []:
+        for event in events or []:
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("kind") or "") != "judge_verdict":
+                continue
+            node_id = str(event.get("node_id") or "")
+            if not node_id:
+                continue
+            verdict = str(event.get("verdict") or "")
+            stats = judges.setdefault(node_id, JudgeStats(node_id=node_id))
+            stats.verdicts[verdict] = stats.verdicts.get(verdict, 0) + 1
+
+    return EdgeStats(branches=branches, judges=judges)
 
 
 @dataclass
