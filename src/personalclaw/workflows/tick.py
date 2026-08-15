@@ -27,10 +27,16 @@ The wait-entry subtlety still matters: a `wait`/`gate` enters WAITING rather tha
 completing, and WAITING is not terminal, so a join behind it correctly keeps waiting
 instead of firing on the fast leg alone.
 
-**Typed lanes (WF2-R21).** Ready work is admitted per-lane, derived from node kind. A
-`foreach` over minute-long local-model actions saturates the `io` lane while `llm`
-stages keep flowing. Excess stays `ready` rather than being dropped — the next tick
-admits it.
+**Admission is a policy list, not a rule (PP-11).** Every "may this start?" question in this
+module goes through `admission.compose()` over one ordered list of `AdmissionPolicy` objects —
+today typed lane caps, a container's `max_concurrency`, and the run's WIP=1 invariant — composed
+tightest-wins. Three schedulers elsewhere in the repo answer the same question with their own
+rules; this seam is where they converge. The list is built once per `frontier()` call and threaded
+down the recursion, so a run-level invariant cannot become per-node-optional by accident.
+
+Lane admission itself is WF2-R21: ready work is admitted per-lane, derived from node kind, so a
+`foreach` over minute-long local-model actions saturates the `io` lane while `llm` stages keep
+flowing. Excess is `deferred` rather than dropped — the next tick admits it.
 
 The frontier reports `blocked` when nothing can run and nothing is running: that state
 is a deadlock, and naming it here rather than letting the run hang forever is the whole
@@ -42,12 +48,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# `Limits` is named in `frontier()`'s signature but LIVES with the policy that enforces it
+# (`admission.Lane`), not with the projection that consults it — the lane caps ARE an admission
+# rule, which is the fact this seam makes structural.
+from personalclaw.workflows.admission import (
+    AdmissionPolicy,
+    AdmissionRequest,
+    Hold,
+    Limits,
+    Scope,
+    compose,
+    default_policies,
+)
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve_expr
 from personalclaw.workflows.conditions import evaluate as evaluate_condition
 from personalclaw.workflows.models import (
-    LANE_COMPUTE,
-    LANE_IO,
-    LANE_LLM,
     SUCCESS_STATES,
     TERMINAL_STATES,
     InstanceState,
@@ -59,42 +74,6 @@ from personalclaw.workflows.models import (
     lane_for,
     walk,
 )
-
-#: Default per-lane admission caps. `compute` is effectively unmetered — a transform is
-#: microseconds of pure data reshaping, and capping it would only add latency.
-DEFAULT_LANE_CAPS = {LANE_LLM: 4, LANE_IO: 2, LANE_COMPUTE: 64}
-
-
-@dataclass(frozen=True)
-class Limits:
-    """Per-lane concurrency caps. A single total is accepted and split, so a config
-    carrying one number keeps working (WF2-R21 back-compat)."""
-
-    lanes: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_LANE_CAPS))
-
-    @classmethod
-    def from_config(cls, value: Any) -> Limits:
-        """Accept either `{llm: 4, io: 2}` or a bare total. A bare total gives the LLM
-        lane the lion's share: it is the lane a workflow actually spends time in."""
-        if isinstance(value, dict):
-            lanes = dict(DEFAULT_LANE_CAPS)
-            for key, raw in value.items():
-                name = str(key)
-                if name in lanes:
-                    try:
-                        lanes[name] = max(1, int(raw))
-                    except (TypeError, ValueError):
-                        continue
-            return cls(lanes=lanes)
-        try:
-            total = max(1, int(value))
-        except (TypeError, ValueError):
-            return cls()
-        io = max(1, total // 3)
-        return cls(lanes={LANE_LLM: max(1, total - io), LANE_IO: io, LANE_COMPUTE: 64})
-
-    def cap(self, lane: str) -> int:
-        return int(self.lanes.get(lane, DEFAULT_LANE_CAPS.get(lane, 1)))
 
 
 @dataclass
@@ -296,8 +275,13 @@ def frontier(
     every fan-out in the run to ONE in-flight item, whatever each `foreach` declares for
     itself — a run-level invariant that a per-node knob could quietly contradict is not an
     invariant. Held items land in `Frontier.wip_held` rather than being dropped silently.
+
+    Both admission questions this function asks — "is the lane full?" and "may another item of this
+    fan-out start?" — are answered by ONE ordered policy list (`admission.default_policies`),
+    composed tightest-wins. Built here and threaded down, never per-node.
     """
     lim = limits or Limits()
+    policies = default_policies(lim, single_active_feature=single_active_feature)
     edges = set(declined_edges or ())
     fr = Frontier()
     ctx_base = BindingContext(inputs=dict(inputs or {}), node_outputs=dict(outputs or {}))
@@ -311,7 +295,7 @@ def frontier(
         ctx=ctx_base,
         fr=fr,
         enabled=True,
-        wip=single_active_feature,
+        policies=policies,
     )
 
     # Lane admission. Sorting by path keeps admission deterministic when a lane is
@@ -322,11 +306,14 @@ def frontier(
     deferred: list[ReadyNode] = []
     used = dict(running_lanes or {})
     for item in fr.ready:
-        cap = lim.cap(item.lane)
-        if used.get(item.lane, 0) < cap:
+        verdict = compose(policies, AdmissionRequest(scope=Scope.LANE, key=item.lane))
+        if verdict.admits(used.get(item.lane, 0)):
             used[item.lane] = used.get(item.lane, 0) + 1
             admitted.append(item)
         else:
+            # Lane-scope refusal. `deferred` is what lane pressure is called, and the verdict's
+            # own `hold` agrees — asserted in the tests rather than trusted here, because a policy
+            # whose refusals silently vanished would look like a scheduler that forgot the node.
             deferred.append(item)
     fr.ready = admitted
     fr.deferred = deferred
@@ -356,7 +343,7 @@ def _visit(
     item: Any = None,
     has_item: bool = False,
     iter_index: int | None = None,
-    wip: bool = False,
+    policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Walk the tree collecting ready leaves. `enabled` is how a container gates its
     children without mutating their state — a sequence's later children are simply not
@@ -394,7 +381,7 @@ def _visit(
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
-                wip=wip,
+                policies=policies,
             )
             # A sequence admits exactly one unfinished child at a time. Stop at the
             # first child that has not reached a terminal state.
@@ -416,19 +403,33 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
-            wip=wip,
+            policies=policies,
         )
         return
 
     if kind == NodeKind.FOREACH:
         _visit_foreach(
-            node, path, states=states, edges=edges, iterations=iterations, ctx=ctx, fr=fr, wip=wip
+            node,
+            path,
+            states=states,
+            edges=edges,
+            iterations=iterations,
+            ctx=ctx,
+            fr=fr,
+            policies=policies,
         )
         return
 
     if kind == NodeKind.LOOP:
         _visit_loop(
-            node, path, states=states, edges=edges, iterations=iterations, ctx=ctx, fr=fr, wip=wip
+            node,
+            path,
+            states=states,
+            edges=edges,
+            iterations=iterations,
+            ctx=ctx,
+            fr=fr,
+            policies=policies,
         )
         return
 
@@ -444,7 +445,7 @@ def _visit(
             item=item,
             has_item=has_item,
             iter_index=iter_index,
-            wip=wip,
+            policies=policies,
         )
         return
 
@@ -473,7 +474,7 @@ def _visit_parallel(
     item: Any,
     has_item: bool,
     iter_index: int | None,
-    wip: bool = False,
+    policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Fan-out with intra-block `needs` edges, honouring declined edges (WF2-R18)."""
     by_id: dict[str, tuple[str, Node]] = {}
@@ -522,7 +523,7 @@ def _visit_parallel(
                 item=item,
                 has_item=has_item,
                 iter_index=iter_index,
-                wip=wip,
+                policies=policies,
             )
 
 
@@ -551,7 +552,7 @@ def _visit_foreach(
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
-    wip: bool = False,
+    policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """One body instance per item. Item paths are `<path>.body#<i>` — the `#i` suffix is
     what lets many instances of one body node coexist in a flat state map.
@@ -575,12 +576,14 @@ def _visit_foreach(
     the point of the cap is usually a scarce resource an item holds for its duration (a checkout, a
     lock, a rate-limited endpoint), and releasing it between stages would defeat that.
 
-    **`wip` is the run-level WIP=1 invariant** (`single_active_feature`, LOOPS-EVOLUTION R5b:
-    +37% feature completion). It forces the cap to 1 and OVERRIDES whatever this node declared:
-    a run-level invariant a per-node knob can contradict is not an invariant, and clamping
-    silently is what makes a control look enforced while a `max_concurrency: 3` quietly wins.
-    The contradiction is refused at authoring time by the validator (`WF_WIP_CONTRADICTION`);
-    this is the runtime half, and the items it refuses to start are named in `fr.wip_held`.
+    Both `max_concurrency` and the run-level **WIP=1 invariant** (`single_active_feature`,
+    LOOPS-EVOLUTION R5b: +37% feature completion) reach this container through the same policy list
+    (`admission.ContainerConcurrency` and `admission.Wip`), composed tightest-wins. WIP therefore
+    OVERRIDES whatever this node declared — and wins even the TIE at `max_concurrency: 1`, because a
+    run-level invariant a per-node knob can contradict is not an invariant, and clamping silently is
+    what makes a control look enforced while a `max_concurrency: 3` quietly wins. The contradiction
+    is refused at authoring time by the validator (`WF_WIP_CONTRADICTION`); this is the runtime
+    half, and the items it refuses to start are named in `fr.wip_held`.
     """
     if node.body is None:
         return
@@ -599,7 +602,7 @@ def _visit_foreach(
         if ist == InstanceState.FAILED and policy == ItemErrorPolicy.HALT:
             return
 
-    cap = 1 if wip else _max_concurrency(node)
+    verdict = compose(policies, AdmissionRequest(scope=Scope.CONTAINER, key=path, node=node))
 
     # Which items are ALREADY under way. Counted from the state map rather than tracked, so a
     # resumed run re-derives the same answer instead of restarting a fan-out it had half-finished.
@@ -613,8 +616,10 @@ def _visit_foreach(
         prefix = f"{ipath}."
         return any(p == ipath or p.startswith(prefix) for p in states)
 
+    # Counted only when some policy actually bound: an unbounded fan-out is the common case, and
+    # counting walks every item's subtree.
     in_flight = 0
-    if cap:
+    if verdict.bounded:
         for idx in range(len(items)):
             ipath = f"{path}.body#{idx}"
             if not _started(ipath):
@@ -627,19 +632,20 @@ def _visit_foreach(
         ipath = f"{path}.body#{idx}"
         if _is_terminal(_state_of(states, ipath)):
             continue
-        if cap and not _started(ipath):
+        if verdict.bounded and not _started(ipath):
             # An item already under way is visited regardless — it holds its slot either way, and
             # skipping it would stall its remaining stages forever. Only a NEW item needs a slot.
-            if in_flight >= cap:
-                # Slot exhausted. NOT recorded as deferred: `deferred` means "ready but the lane is
-                # full", and an unstarted item of a capped foreach is not ready — the cap is a
-                # property of the container, not of lane pressure.
+            if not verdict.admits(in_flight):
+                # Slot exhausted, and the BINDING policy names the refusal. `max_concurrency` alone
+                # records nothing: `deferred` means "ready but the lane is full", and an unstarted
+                # item of a capped foreach is not ready — the cap is a property of the container,
+                # not of lane pressure.
                 #
                 # A WIP=1 refusal IS recorded, under its own name: the run declared the invariant,
                 # so "the engine refused to start feature 2" is a decision worth being able to read
                 # back, and an unrecorded refusal is indistinguishable from a scheduler that simply
                 # forgot the item.
-                if wip:
+                if verdict.hold == Hold.WIP_HELD:
                     fr.wip_held.append(ipath)
                 continue
             in_flight += 1
@@ -655,7 +661,7 @@ def _visit_foreach(
             item=value,
             has_item=True,
             iter_index=idx,
-            wip=wip,
+            policies=policies,
         )
 
 
@@ -668,7 +674,7 @@ def _visit_loop(
     iterations: dict[str, int],
     ctx: BindingContext,
     fr: Frontier,
-    wip: bool = False,
+    policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Sequential iteration: exactly one body instance in flight at a time. Iteration
     paths are `<path>.body@<n>`, so a rewind can invalidate one iteration by prefix."""
@@ -689,7 +695,7 @@ def _visit_loop(
         fr=fr,
         enabled=True,
         iter_index=current,
-        wip=wip,
+        policies=policies,
     )
 
 
@@ -705,7 +711,7 @@ def _visit_branch(
     item: Any,
     has_item: bool,
     iter_index: int | None,
-    wip: bool = False,
+    policies: tuple[AdmissionPolicy, ...] = (),
 ) -> None:
     """Route: dispatch the branch itself, then visit only the taken case.
 
@@ -766,7 +772,7 @@ def _visit_branch(
         item=item,
         has_item=has_item,
         iter_index=iter_index,
-        wip=wip,
+        policies=policies,
     )
 
 
@@ -809,23 +815,6 @@ def _resolve_items(node: Node, ctx: BindingContext) -> list[Any] | None:
     if value is None:
         return None
     return [value]
-
-
-def _max_concurrency(node: Node) -> int:
-    """A `foreach`'s per-container item cap, or 0 for unbounded.
-
-    Separate from the lane caps because they answer different questions: a lane cap protects the
-    ENGINE (four concurrent model calls across all runs), and this protects the RUN's shape (this
-    fan-out takes two at a time because each item holds a lock). A fan-out over fifty files with
-    no cap occupies every compute slot and starves everything else in the run.
-    """
-    raw = (node.config or {}).get("max_concurrency")
-    # A true int only. `int(1.5)` truncates to 1 and `int(True)` is 1, so a coercing read would let
-    # a spec typo silently serialize a fan-out to one item at a time — the most expensive possible
-    # misreading, and invisible because the run still succeeds.
-    if not isinstance(raw, int) or isinstance(raw, bool):
-        return 0
-    return raw if raw > 0 else 0
 
 
 def item_error_policy(node: Node) -> ItemErrorPolicy:

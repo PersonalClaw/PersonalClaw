@@ -1,9 +1,9 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** IN PROGRESS — 1 of 16 atoms shipped (`PP-4`, the ledger extraction, 2026-08-14 — see
-`## Execution log`). Five startable now (`PP-1`, `PP-6`, `PP-8`, `PP-9`, `PP-11`): `PP-4` landing
-unblocked four of them. `PP-5` still waits on `WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in
-[`../atomic/PP.md`](../atomic/PP.md).
+**Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` the ledger extraction and `PP-11` the
+admission seam, both 2026-08-14 — see `## Execution log`). Five startable now (`PP-1`, `PP-6`,
+`PP-8`, `PP-9`, `PP-12`): `PP-4` unblocked four and `PP-11` unblocked `PP-12`. `PP-5` still waits on
+`WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
 **Pillar:** A (Execution Engine + Convergence) · **rev 17** (2026-08-14)
 
 **Soul guardrail.** Everything here stays personal-scale: one user, local files, local SQLite,
@@ -260,3 +260,103 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   auto-discovery
   (`packages.find`), and `personalclaw-backend.spec`'s `hiddenimports` exists only for
   importlib-loaded modules, which a statically-imported pure-Python package is not.
+
+- **2026-08-14 — `PP-11` DONE.** `workflows/admission.py` now owns the answer to "may this start?":
+  `AdmissionRequest(scope, key, node)` → `AdmissionPolicy.capacity()` → `compose()` → an `Admission`
+  verdict with `bounded` / `admits(in_flight)` / `hold` / `binding`. The three rules `frontier()`
+  already applied are the first three policies — `Lane` (WF2-R21 typed caps), `ContainerConcurrency`
+  (a `foreach`'s `max_concurrency`) and `Wip` (the run-level `single_active_feature` invariant) —
+  built once per `frontier()` call by `default_policies()` and threaded down the `_visit` recursion,
+  replacing the `wip: bool` that used to ride the same path. `tick.py` lost its private
+  `_max_concurrency()` and its inline `cap = 1 if wip else …`; both call sites now read a composed
+  verdict. `Limits` moved to `admission.py` (the lane caps ARE a policy) and `tick.Limits` keeps
+  resolving because the frontier's signature genuinely uses it — a move, not a re-export shim. No
+  other scheduler touched: `loop/tick.py`, `pool.py` and `triggers/` are byte-for-byte unchanged.
+
+- **2026-08-14 — DESIGN (`PP-11`): one bucket shape covers both of today's admission questions.**
+  Lane admission ("may one more `llm` node start?") and container admission ("may one more item of
+  this fan-out start?") looked like different mechanisms and are the same one — *a capacity over a
+  keyed bucket*. Hence one `Scope` enum rather than two policy lists, and `capacity()` returning
+  `None` to ABSTAIN rather than a sentinel meaning unbounded. The abstain/unbounded distinction is
+  load-bearing twice over: an inactive `Wip` composes exactly as if the policy did not exist, and an
+  unbounded verdict lets `_visit_foreach` skip counting in-flight items entirely — which it always
+  did (`if cap:`), and which matters because counting walks every item's subtree.
+
+- **2026-08-14 — DECISION (`PP-11`): tightest-wins, and a TIE goes to the named refusal.** Composing
+  by minimum is the only rule an added policy cannot loosen, which is the property that lets `PP-12`
+  append `Lease` without re-auditing these three. But two policies genuinely tie: `max_concurrency:
+  1` under WIP=1, both binding at 1. The number being equal does not make the refusals equal — one
+  is a declared invariant the run records by name in `wip_held`, the other is anonymous container
+  pressure recorded nowhere. So policies carry a `rank` (`RANK_INVARIANT` > `RANK_CAPACITY`) used
+  ONLY to break capacity ties, and the container site now records a hold when
+  `verdict.hold == Hold.WIP_HELD` rather than when a `wip` flag was passed. That is exactly what
+  `cap = 1 if wip else _max_concurrency(node)` meant, moved somewhere it can be tested — and it is,
+  in both directions (`test_wip_names_the_refusal_when_max_concurrency_binds_at_the_same_number`
+  and its anonymous twin). Had the tie been broken by list position instead, the seam would have
+  silently stopped recording that the run enforced its own invariant.
+
+- **2026-08-14 — DISCOVERY (`PP-11`): the bundled templates alone cannot prove the seam.** The
+  atom's stated bar is a golden file over the bundled library, and none of the 21 templates declares
+  `max_concurrency` — so a bundled-only capture leaves one of the three policies unexercised and the
+  cap tie unreachable. Worse, a naive capture leaves `to_skip` empty too: the three `branch`
+  selectors read `output.tier` / `output.ran`, and a fixed stub output resolves none of them, so
+  nothing ever routes. Fixed both structurally rather than by hand: `_routing_seeds()` derives the
+  branch-satisfying outputs FROM THE SPEC (each selector's source field seeded with that branch's
+  first declared case label), and a second fixture (`policies.jsonl`) carries a six-row synthetic
+  matrix for the container policies. A vacuity guard now asserts every admission outcome appears in
+  the fixtures — `ready`, `deferred`, `wip_held`, `to_skip`, `blocked`, `complete`, a tick capped at
+  2 of 5 items, a tick admitting all 5, and the tie — so a capture that silently stopped exercising
+  a policy reds instead of passing forever.
+
+- **2026-08-14 — DEVIATION (`PP-11`): a fidelity bug the golden caught mid-refactor.** The first
+  `ContainerConcurrency.capacity()` read `max_concurrency` with `int(raw)`. `_max_concurrency()` was
+  deliberately strict (`not isinstance(raw, int) or isinstance(raw, bool)` → unbounded), because
+  `int(1.5)` truncates to 1 and `int(True)` is 1, so a coercing read silently serializes a fan-out
+  to one item at a time — expensive and invisible, since the run still succeeds. Ported the exact
+  predicate and pinned all eight cases (`2`, `1`, `0`, `-3`, unset, `True`, `1.5`, `"2"`). This is
+  the class of change a golden file over bundled templates would NOT have caught, because no bundled
+  template declares the key at all — the parametrized policy test is what covers it.
+
+- **2026-08-14 — `PP-11` proof.** `tests/fixtures/frontier_golden/{bundled,policies}.jsonl` (460
+  decisions: 21 templates × 4 admission scenarios, plus the 6-row container matrix × 2 lane
+  pressures) were captured and committed with `tick.py` unmodified, hashes recorded
+  (`25effb24…`/`255d5111…`), then re-diffed after the refactor: byte-identical, `git status` clean on
+  the fixture dir. Purity re-proven two ways — an AST rail over `tick.py` + `admission.py` for clock
+  / I/O / randomness imports and `open`/`print`/`id` calls, and a runtime check that repeated calls
+  agree and neither `states` nor `inputs` is mutated. Falsified three times: raising the `llm` lane
+  cap from 4 to 5 reds `test_every_bundled_template_still_schedules_byte_identically` with the
+  specific line; making `compose()` prefer the LAST binding policy reds
+  `test_the_container_policy_matrix_still_schedules_byte_identically` plus
+  `test_a_tighter_capacity_still_beats_a_higher_rank`; and a `time.monotonic()` inside
+  `Wip.capacity` reds `test_the_frontier_module_reads_no_clock_and_does_no_io` naming
+  `admission.py:223 imports time` — and it caught a FUNCTION-LOCAL import, which is how this would
+  really creep back and which no import-time probe would see. Left deliberately: `Lease` / `Dwell` /
+  `MetricGate` are `PP-12`, and `pool.py`'s private projection is `PP-13` — this atom only makes the
+  seam exist.
+
+- **2026-08-14 — DISCOVERY (`PP-11`): the golden file cannot catch a composition-ORDER bug, and that
+  is why the seam has its own tests.** Two of the three falsifications above red only in
+  `test_workflows_admission.py`, never in the golden: making `compose()` let a later policy override
+  an earlier deferral, and putting a clock inside `Wip.capacity`. Both are invisible to the fixtures
+  because today's three policies happen to be order-equivalent (each abstains outside its own scope,
+  and the one pair that overlaps has WIP last) and because one clock reading gives one answer. So the
+  byte-identical bar proves the refactor changed no DECISION, and the composition + purity tests prove
+  the seam has the PROPERTY `PP-12` will rely on. Neither alone is sufficient, which is worth knowing
+  before `PP-12` appends `Lease` to the list.
+
+- **2026-08-14 — DISCOVERY (`PP-11`): a bare `python script.py` in a git worktree imports the
+  MAIN checkout, not the worktree.** The venv's editable install resolves `personalclaw` to
+  `~/PersonalProjects/PersonalClaw/PersonalClaw/src`, so the golden capture — run as
+  `python tests/test_workflows_frontier_golden.py` — measured the wrong tree. `pytest` is safe
+  (`pyproject.toml`'s `pythonpath = ["src", "."]` is rootdir-relative), which is why the verification
+  runs were valid. Re-derived the fixture from the worktree's own pre-refactor `tick.py` with
+  `PYTHONPATH` pinned: byte-identical hashes, so the capture stands — the two trees agreed on every
+  module the frontier touches. Regenerate these fixtures with
+  `PYTHONPATH=$PWD/src python tests/test_workflows_frontier_golden.py`, never bare.
+
+- **2026-08-14 — DECISION (`PP-11`): no CHANGELOG entry.** The atom's acceptance bar IS
+  "byte-identical for every existing spec", so there is nothing a user could observe, and the
+  CHANGELOG is user-facing (the in-app Updates panel reads it). The only relocation, `Limits` from
+  `workflows/tick` to `workflows/admission`, is internal: it appears nowhere under
+  `personalclaw/sdk/`, so no app can be depending on it. `PP-12` is the entry that will have
+  something to announce.
