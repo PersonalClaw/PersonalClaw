@@ -1129,6 +1129,34 @@ async def api_incident_resume(request: web.Request) -> web.Response:
     return web.json_response({"active": st.active})
 
 
+async def api_project_trust(request: web.Request) -> web.Response:
+    """GET /api/guardrails/project-trust — the whole store;
+    POST /api/guardrails/project-trust — record a Trust/Preview decision.
+
+    POST body: ``{dir: str, trusted: bool}``. ``trusted=true`` is the explicit **Trust**
+    (the folder may run/write project scripts); ``trusted=false`` keeps **Preview**
+    (read-only). Recording is SEL-audited and keyed by the RESOLVED directory.
+    """
+    from personalclaw.guardrails import project_trust as _pt
+
+    if request.method == "GET":
+        return web.json_response({"projects": _pt._read_store()})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    directory = str(body.get("dir", "") or "").strip()
+    if not directory:
+        return web.json_response({"error": "dir is required"}, status=400)
+    trusted = body.get("trusted")
+    if not isinstance(trusted, bool):
+        return web.json_response({"error": "trusted must be a boolean"}, status=400)
+    record = _pt.record_project_trust(directory, trusted=trusted)
+    return web.json_response({"dir": _pt.resolve_dir(directory), **record})
+
+
 # ── Provider health view (AUTONOMY-GUARDRAILS §2.5) ────────────────────
 
 
