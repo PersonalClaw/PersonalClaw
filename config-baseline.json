@@ -743,6 +743,12 @@
     "type": "int"
   },
   {
+    "default": "reasoning",
+    "path": "loops.judge_use_case",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 100,
     "path": "loops.max_cycles_hard_cap",
     "sensitive": false,

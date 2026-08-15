@@ -1598,3 +1598,68 @@ Verified load-bearing: removing the rule turns the flagging test red. Gate: `mak
   pre-existing `tests/test_harness_validate.py` failures that red in any worktree; generators
   re-run — `inert-surface-baseline.json` legitimately SHRANK by 2 and is committed,
   `personalclaw.manifest_reference` byte-identical, `regen_dag_derived.py --check` current.
+
+### WF2LOO-17 — the judge no longer grades on the worker's model binding
+
+**DONE.** `loop/judge.assess_cycle`'s docstring has claimed since it was written that the judge
+"resolves the 'reasoning' use-case (a stronger third-party check than the worker's model)". The code
+resolved `resolve_provider_for_use_case("loops")` — and `loops` is documented, in
+`providers/use_cases.py`'s own vocabulary comment, as the LOOP WORKER's axis. Same at
+`assess_cycle_skeptic` and at `gates.judge_verdict`. So the judge was independent in **session** and
+in **prompt** and **correlated in model**: the one dimension where correlation actually costs you a
+verdict, since a reviewer sharing the reviewee's blind spot shares its mistakes.
+
+**The claim was made true, not softened** — the atom's explicit instruction, and the interesting part
+of it. `loops.judge_use_case` (default `reasoning`) is wired through all four config points, and all
+three judge call sites resolve it through one `loop/judge.judge_use_case()` helper. Nothing new was
+built: one field, one helper, three call sites.
+
+**The normalizer is fail-SAFE, not fail-open.** An unknown axis, a blank value, or an unreadable
+`config.json` collapses to `reasoning` — never to `loops`. The failure being closed here is precisely
+"the judge silently grades on the worker's binding", so a typo in config.json must not re-create it.
+
+**Two documents had recorded the defect as the design**, and both were corrected in the same change:
+`gates.judge_verdict`'s docstring ("loop judgments ride the loops chain so long-horizon work gets its
+own model knob") and `providers/use_cases.py`'s canonical vocabulary comment (`loops — loop worker
+sessions + loop gates/judges`). That comment is the reason the defect read as intentional.
+
+**DISCOVERY — a source-text ratchet was PINNING the defect.**
+`tests/test_use_case_chains.py::test_loop_judges_resolve_loops_axis` asserted that both judge modules
+contained `resolve_provider_for_use_case("loops")` and that `"reasoning"` did **not** appear in
+`judge.py`. A correct fix therefore had to red an existing green test. It is **inverted, not deleted**
+(same class, renamed to `..._resolve_the_judge_axis_not_the_worker_axis`, asserting the worker's
+literal axis appears at no judge call site) — a test whose premise the product has disowned is a
+liability, not coverage. Net test count: +16 new, 0 removed, 1 inverted.
+
+**DISCOVERY — `test_config_roundtrip.py` verifies 3 of the 5 config points, and the PATCH allowlist
+is one of the two it misses.** Confirmed by falsification: deleting the `_EDITABLE_CONFIG` entry
+leaves that file **fully green**, because its `_EDITABLE_CONFIG` assertions are hardcoded to specific
+`evals.*` keys rather than derived from the dataclass. So point 4 got its own rail that drives a
+**real PATCH** through the handler, reads the value back off disk, reloads `AppConfig`, and then
+drives the three judge call sites to prove the patched value reaches them. Without it the field would
+have read as "wired" on a green roundtrip while being a live reader of a key no write path could set.
+
+**DEVIATION — no frontend control (config point 5), deliberately.** No `LoopsConfig` field has one:
+there is no Loops settings panel and no schema-driven config UI, so a lone control for the fourth
+field would mean building a new surface — outside an atom whose own scope says "cheap by
+construction: no new mechanism". The write path is the PATCH allowlist entry (railed end to end), and
+the knob is documented in `docs/reference/CONFIG-REFERENCE.md`'s `loops.*` table, which is exactly
+where that file says a knob with no dashboard control belongs.
+
+**The degraded path is proved unchanged, not assumed.** A judge whose provider cannot start still
+returns `None` (defer — never a false complete) and still logs WARNING; the gate variant still
+returns `""`, which `verdict_is_pass` and `verdict_rendered` both read as *no verdict*. The WARNING
+now names the resolved axis and `loops.judge_use_case`, so the binding to go check is in the log line
+instead of being inferred. Falsified by making a dead judge return `CycleVerdict(done=True)`: that
+reds both the new rail and the pre-existing
+`test_loop_gates.py::TestJudgeIndependence::test_judge_unavailable_is_observable_not_silent`.
+
+Falsification, all three restored from file backups: (1) reverting `gates.py`'s call site to
+`"loops"` reds `test_all_three_judge_call_sites_resolve_the_judge_entry` naming it
+(`['reasoning', 'reasoning', 'loops']`) plus the inverted source ratchet; (2) deleting the
+`_EDITABLE_CONFIG` entry reds `test_point_4_editable_config_allowlist_entry` and both PATCH-drive
+tests while `test_config_roundtrip.py` stays green; (3) breaking the defer reds the two tests above.
+
+Gate: `make lint` green (black/isort/flake8/mypy, 1597 files / 821 source files);
+`config-baseline.json` regenerated in the same commit (a new config field legitimately grows it).
+No `web/` change, so no web gate.
