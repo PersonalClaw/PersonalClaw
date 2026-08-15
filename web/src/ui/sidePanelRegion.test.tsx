@@ -19,6 +19,19 @@ describe('SidePanel is a named landmark region', () => {
     expect(region).toBeTruthy()
   })
 
+  it('the region contains a heading named by its title, so heading-nav reaches it', () => {
+    // Cycle 198 named the region; cycle 199 made the title a HEADING (an <h2>), so a screen reader can
+    // jump to the panel by heading navigation — measured before: the panel had 0 headings. Verified in
+    // the browser that h2 renders byte-identically to the old span (preflight resets h2 margins/weight;
+    // `data-type="title-l"` sets size/line-height/wght), so this is a pure semantic upgrade.
+    render(<SidePanel title="Ship the release" storeKey="test-panel3-w" onClose={() => {}}>body</SidePanel>)
+    const heading = screen.getByRole('heading', { name: 'Ship the release' })
+    expect(heading.tagName).toBe('H2')
+    // and it is the SAME element that labels the region (one element, both roles of "the title")
+    const region = screen.getByRole('region', { name: 'Ship the release' })
+    expect(region.getAttribute('aria-labelledby')).toBe(heading.id)
+  })
+
   it('the name comes from the title element, not a duplicated aria-label string', () => {
     // aria-labelledby → the <span> holding the title, so a ReactNode title still names the region and
     // the name can never drift from what is shown.
