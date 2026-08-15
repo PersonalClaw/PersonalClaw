@@ -272,8 +272,17 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <ProgressRing pct={pct} tone={st.tone} />
-                      <span className="text-on-surface-low text-[0.75rem] tabular-nums w-9">{c.findings?.length ?? 0} fnd</span>
+                      <ProgressRing pct={pct} tone={st.tone} label={`Cycle progress: ${shownCycle}${c.max_cycles ? ` of ${c.max_cycles}` : ''}`} />
+                      {/* 🪤 "fnd" IS AN ABBREVIATION NOTHING ELSE IN THE APP USES, and a screen reader
+                          reads it literally. The visible form cannot grow — the box is `w-9` (36px), and
+                          widening it reflows the row — so the abbreviation stays for the eye and the full
+                          word is added for assistive tech, through the `sr-only` idiom this app already
+                          uses in 19 places. `title` gives a sighted user the same expansion on hover. */}
+                      <span className="text-on-surface-low text-[0.75rem] tabular-nums w-9"
+                        title={`${c.findings?.length ?? 0} findings`}>
+                        <span aria-hidden="true">{c.findings?.length ?? 0} fnd</span>
+                        <span className="sr-only">{c.findings?.length ?? 0} findings</span>
+                      </span>
                     </div>
                   </motion.div>
                   </ContextMenu>
