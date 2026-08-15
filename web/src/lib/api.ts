@@ -3137,6 +3137,10 @@ export const api = {
     del(`/api/skills/ephemeral/${encodeURIComponent(session)}/${encodeURIComponent(slug)}`),
   skillMarketplaces: () => get<SkillMarketplace[]>('/api/skills/marketplaces'),
   // marketplace omitted → search across ALL marketplaces; pass one to scope.
+  // `counts` is the per-source matched count BEFORE the global cap, so the source filter
+  // can say how many of a large catalog matched even though only the top rows come back.
+  searchSkillsCounted: (q: string, marketplace?: string, limit = 30) =>
+    get<{ results: SkillSearchResult[]; counts?: Record<string, number> }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {} })),
   searchSkills: (q: string, marketplace?: string, limit = 30) =>
     get<{ results: SkillSearchResult[] }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => d.results),
   skillMarketplaceDetail: (id: string, marketplace = 'skills.sh') =>

@@ -10,6 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.** Add a
+  catalog under `packs.skill_catalogs` — a JSON index endpoint, or a repo laid out as
+  `skills/<slug>/SKILL.md` — and it shows up as one more source alongside the bundled skills, with
+  per-source match counts on the source filter so a large catalog tells you how much of it matched,
+  not just how many rows fit on screen. A catalog is treated as untrusted third-party content
+  whatever you think of its author: it installs through exactly the same guarded path as every other
+  marketplace (staged to quarantine, scanned at community trust, then committed with a lock file you
+  can re-verify later), so a malicious skill is refused before anything reaches your skills tree.
+  Catalog fetches go through the same network guard as every other outbound connector — a catalog URL
+  can't be talked into reaching a private address — and browsing a big index costs one fetch and no
+  model tokens; only the skill you choose to install is ever downloaded. One unreachable catalog is
+  skipped with a log line instead of emptying your store.
 - **Apps can now share data with each other, read-only, only when both sides agree.** An app that
   wants to expose its stored data declares `storageShared: true`; an app that wants to read another's
   data names it in `storageRead`. A read is granted only when BOTH are declared — neither app can
