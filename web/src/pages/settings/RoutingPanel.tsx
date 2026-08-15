@@ -8,14 +8,21 @@ import { Field, FieldError, Select } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
 import { PanelHeader, Section } from './settingsUI'
 
-/** Routing & Efficiency (MODEL-ROUTING-TELEMETRY, MRT-1e).
+/** Routing & Efficiency (MODEL-ROUTING-TELEMETRY, MRT-1e + MRT-4).
  *
- *  A read-only visualization of the per-model efficiency the router observes for
- *  each kind of request: success rate, feedback, latency (p50/p95) and cost per
- *  call, one row per model that has handled this (use_case, query_class) bucket.
- *  This surface ONLY visualizes — it never changes routing (that is a later
- *  capability); it shows which model is efficient for which work. A model is "on
- *  the frontier" when no other model beats it on all of quality, speed, and cost.
+ *  Two halves, and the distinction is the whole point of the page:
+ *
+ *  · The TELEMETRY table observes — per-model success rate, feedback, latency
+ *    (p50/p95) and cost per call, one row per model that has handled this
+ *    (use_case, query_class) bucket. A model is "on the frontier" when no other
+ *    model beats it on all of quality, speed, and cost.
+ *  · `RoutingPolicySection` below DECIDES — mode, pin and per-class order, each
+ *    written through `api.setRoutingPolicy`.
+ *
+ *  Until MRT-4 this surface only visualized, and both this comment and the panel's
+ *  own hint said so ("Observation only: this does not change routing — that's a
+ *  later capability"). MRT-4 shipped that capability directly below the sentence
+ *  denying it, so the page told a user its controls did nothing.
  *
  *  Data comes from GET /api/models/telemetry (api.modelsTelemetry); the bucket is
  *  chosen by two selectors whose state round-trips to the URL so a reload restores
@@ -96,7 +103,7 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Routing & Efficiency"
-        hint="Real per-model efficiency for each kind of request — success rate, feedback, latency, and cost per call, measured as models handle work. Observation only: this does not change routing (that's a later capability); it shows which model is efficient for which work. A model is on the frontier when no other model beats it on all of quality, speed, and cost." />
+        hint="Real per-model efficiency for each kind of request — success rate, feedback, latency, and cost per call, measured as models handle work. A model is on the frontier when no other model beats it on all of quality, speed, and cost. Routing policy, below, turns that observation into a decision: which of your bound models this use case tries first." />
 
       <div className="mb-l flex flex-wrap items-end gap-l">
         <Field label="Use case">
