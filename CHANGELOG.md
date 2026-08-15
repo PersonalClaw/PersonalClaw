@@ -56,6 +56,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   raised again.
 
 ### Changed
+- **A step that reads another step's output no longer needs a hand-written ordering — and steps in
+  different branches of a workflow can now feed each other.** The engine now derives "run after"
+  directly from "reads the output of": if a step binds `{{nodes.other.output}}`, the scheduler holds
+  it until `other` has finished, wherever the two sit in the workflow. Two things follow. A step that
+  reads a sibling running alongside it is simply held rather than refused, so you no longer hand-write
+  an ordering the engine could see for itself. And a shape that used to be impossible now works: a
+  workflow can fan out into parallel branches and have a later step pull results from *across* those
+  branches — a diamond spanning two containers — instead of being told the branches cannot reference
+  each other. A hand-written `needs` still has one job, expressing an ordering that is not about data
+  (a lock, "publish only after the announcement went out"); it is now checked against what the data
+  already implies — the engine warns when a `needs` merely restates a binding, and refuses one the
+  workflow's structure could never honour. No bundled template changed how it schedules.
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to
   run first.** The engine kept two separate pictures of how steps relate: what must run before what,
   and what reads whose output. Nothing checked they agreed, so a template could pull

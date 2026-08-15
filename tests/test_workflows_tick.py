@@ -656,3 +656,246 @@ class TestNodeKindCoverage:
 
         for kind in NodeKind:
             assert lane_for(kind) in ("llm", "io", "compute")
+
+
+class TestDerivedOrderingReachability:
+    """`PP-2` — ordering derived from bindings, and the `to_skip` reachability change.
+
+    This is the risk surface the atom names. The tests below hold the two WF2-R18 directions
+    apart on purpose: a declined path must skip EXACTLY the unreachable derived targets (never
+    a live one — that fires a join early on a plausible wrong answer), and must leave NO
+    reachable-only-in-theory target unskipped (that deadlocks the join).
+    """
+
+    def test_a_parallel_binding_waits_without_a_hand_written_needs(self) -> None:
+        """The core capability: `b` binds `a`'s output and is held until `a` is terminal, with
+        no `needs` declared. Under `PP-1` this spec was refused; the frontier now derives it."""
+        root = _node(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "transform", "id": "a", "config": {"expr": "1"}},
+                    {"kind": "transform", "id": "b", "config": {"expr": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        assert _paths(frontier(root, {})) == ["root.children[0]"]  # only a; b waits on a
+        after = frontier(root, {"root.children[0]": InstanceState.DONE})
+        assert "root.children[1]" in _paths(after)
+
+    def test_a_diamond_spanning_two_containers_completes(self) -> None:
+        """Drive the headline shape to completion with a deterministic pure-frontier loop.
+        `src` sits in one parallel leg, `viaA`/`viaB` in two others, and `join` rejoins them —
+        every edge crosses a container, which the tree shape made inexpressible before `PP-2`.
+        """
+        root = _node(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {
+                        "kind": "sequence",
+                        "id": "left",
+                        "children": [{"kind": "transform", "id": "src", "config": {"expr": "1"}}],
+                    },
+                    {
+                        "kind": "sequence",
+                        "id": "mid",
+                        "children": [
+                            {
+                                "kind": "transform",
+                                "id": "viaA",
+                                "config": {"expr": "{{nodes.src.output}}"},
+                            }
+                        ],
+                    },
+                    {
+                        "kind": "sequence",
+                        "id": "right",
+                        "children": [
+                            {
+                                "kind": "transform",
+                                "id": "viaB",
+                                "config": {"expr": "{{nodes.src.output}}"},
+                            }
+                        ],
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "join",
+                        "config": {"expr": "{{nodes.viaA.output}} {{nodes.viaB.output}}"},
+                    },
+                ],
+            }
+        )
+        states: dict[str, InstanceState] = {}
+        launched: list[str] = []
+        for _ in range(12):
+            fr = frontier(root, states)
+            if fr.complete:
+                break
+            assert not fr.blocked, fr.block_reason
+            assert fr.ready, "diamond stalled with no ready work"
+            for r in fr.ready:
+                states[r.path] = InstanceState.DONE
+                launched.append(r.node_id)
+        assert fr.complete and fr.outcome == InstanceState.DONE
+        # src before both legs; both legs before the join — the diamond, honoured.
+        assert launched.index("src") < launched.index("viaA") < launched.index("join")
+        assert launched.index("src") < launched.index("viaB") < launched.index("join")
+
+    def test_a_pending_producer_makes_its_reader_wait_never_skip(self) -> None:
+        """The dangerous direction, guarded. A reader whose dataflow producer is still LIVE
+        must WAIT — never be skipped, which would fire a downstream join early on a plausible
+        wrong answer. Skipping is reserved for a producer that is TERMINALLY skipped."""
+        root = _node(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "transform", "id": "a", "config": {"expr": "1"}},
+                    {"kind": "transform", "id": "b", "config": {"expr": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        fr = frontier(root, {"root.children[0]": InstanceState.RUNNING})
+        assert "root.children[1]" not in _paths(fr)  # b waits
+        assert "root.children[1]" not in fr.to_skip  # and is NOT skipped
+        assert not fr.blocked  # a is running — parked, not deadlocked
+
+    def test_a_declined_case_skips_a_cross_container_dataflow_reader(self) -> None:
+        """WF2-R18 direction #1 (deadlock avoidance) across containers. A later sibling binds a
+        node inside the branch's UNTAKEN case; its output will never exist, so the reader is
+        unreachable and must be skipped — leaving it pending would hang the run."""
+        root = _node(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {
+                        "kind": "branch",
+                        "id": "r",
+                        "config": {"on": "{{inputs.k}}"},
+                        "cases": {
+                            "x": {"kind": "transform", "id": "cx", "config": {"expr": "1"}},
+                            "y": {"kind": "transform", "id": "cy", "config": {"expr": "2"}},
+                        },
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "reader",
+                        "config": {"expr": "{{nodes.cy.output}}"},
+                    },
+                ],
+            }
+        )
+        states = {
+            "root.children[0]": InstanceState.DONE,
+            "root.children[0].cases[x]": InstanceState.DONE,
+            "root.children[0].cases[y]": InstanceState.SKIPPED,
+        }
+        fr = frontier(root, states, inputs={"k": "x"}, outputs={"r": {"case": "x"}})
+        assert "root.children[1]" in fr.to_skip
+        assert "root.children[1]" not in _paths(fr)
+        assert not fr.blocked  # to_skip counts as progress, not deadlock
+
+    def test_a_decline_skips_exactly_the_unreachable_target_not_a_live_one(self) -> None:
+        """WF2-R18 direction #2 (no early fire). Two readers sit beside a branch: one binds the
+        TAKEN case, one the untaken. Only the reader of the untaken case is skipped; the reader
+        of the live case must run, or the frontier fired a join early on a live leg."""
+        root = _node(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {
+                        "kind": "branch",
+                        "id": "r",
+                        "config": {"on": "{{inputs.k}}"},
+                        "cases": {
+                            "x": {"kind": "transform", "id": "cx", "config": {"expr": "1"}},
+                            "y": {"kind": "transform", "id": "cy", "config": {"expr": "2"}},
+                        },
+                    },
+                    {"kind": "transform", "id": "dead", "config": {"expr": "{{nodes.cy.output}}"}},
+                    {"kind": "transform", "id": "live", "config": {"expr": "{{nodes.cx.output}}"}},
+                ],
+            }
+        )
+        states = {
+            "root.children[0]": InstanceState.DONE,
+            "root.children[0].cases[x]": InstanceState.DONE,
+            "root.children[0].cases[y]": InstanceState.SKIPPED,
+        }
+        fr = frontier(root, states, inputs={"k": "x"}, outputs={"r": {"case": "x"}})
+        assert fr.to_skip == ["root.children[1]"]  # dead (reads the untaken case) only
+        assert "root.children[2]" in _paths(fr)  # live (reads the taken case) runs
+
+    def test_a_non_dataflow_needs_onto_a_skipped_node_is_satisfied(self) -> None:
+        """The asymmetry that keeps a join off an untaken leg. A plain `needs` (no dataflow)
+        onto a SKIPPED predecessor is SATISFIED — skipped is terminal — so the reader runs
+        rather than being cascade-skipped. Only a DATAFLOW edge makes a reader unreachable."""
+        root = _node(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {
+                        "kind": "branch",
+                        "id": "r",
+                        "config": {"on": "{{inputs.k}}"},
+                        "cases": {"x": {"kind": "transform", "id": "cx", "config": {"expr": "1"}}},
+                    },
+                    {"kind": "transform", "id": "after", "needs": ["cx"], "config": {"expr": "9"}},
+                ],
+            }
+        )
+        # cx was the (only) case and it is SKIPPED here — `after` merely orders after it.
+        states = {
+            "root.children[0]": InstanceState.DONE,
+            "root.children[0].cases[x]": InstanceState.SKIPPED,
+        }
+        fr = frontier(root, states, inputs={"k": "x"}, outputs={"r": {"case": "x"}})
+        assert "root.children[1]" in _paths(fr)  # honoured, not skipped
+        assert "root.children[1]" not in fr.to_skip
+
+    def test_a_skipped_producer_inside_a_foreach_body_skips_only_that_items_reader(self) -> None:
+        """Per-item instance resolution of the dataflow cascade — the `_producer_instance`
+        risk. Item 0's `src` went SKIPPED (a decline the controller resolved per-item), so item
+        0's `rd`, which binds `src`, is unreachable and skipped; item 1's `src` is DONE, so item
+        1's `rd` runs. Each `rd` must resolve `src` to ITS OWN item's instance — item 0's reader
+        must not read item 1's producer, or the fan-out would leak state across items.
+
+        A pure frontier cannot re-derive a per-item BRANCH decline (the branch's `{{item}}`
+        selector is not in the binding context during derivation — the controller owns per-item
+        routing), so the decline is represented by its RESULT: the producer's SKIPPED state.
+        """
+        root = _node(
+            {
+                "kind": "foreach",
+                "id": "f",
+                "config": {"items": "{{inputs.xs}}"},
+                "body": {
+                    "kind": "parallel",
+                    "id": "body",
+                    "children": [
+                        {"kind": "transform", "id": "src", "config": {"expr": "1"}},
+                        {
+                            "kind": "transform",
+                            "id": "rd",
+                            "config": {"expr": "{{nodes.src.output}}"},
+                        },
+                    ],
+                },
+            }
+        )
+        states = {
+            "root.body#0.children[0]": InstanceState.SKIPPED,  # item 0's src declined away
+            "root.body#1.children[0]": InstanceState.DONE,  # item 1's src produced
+        }
+        fr = frontier(root, states, inputs={"xs": ["x", "y"]})
+        assert "root.body#0.children[1]" in fr.to_skip  # item 0's rd: its src skipped
+        assert "root.body#0.children[1]" not in _paths(fr)
+        assert "root.body#1.children[1]" in _paths(fr)  # item 1's rd: its src done, runs
+        assert "root.body#1.children[1]" not in fr.to_skip
