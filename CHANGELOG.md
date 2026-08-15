@@ -10,6 +10,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
+  engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you
+  can bind a different one per surface — one voice in the web dashboard, another for a Slack
+  channel, another for a specific agent — with an explicit "speak as this one" request always
+  winning over any binding. When you hear a generation you like you can lock it: PersonalClaw
+  copies that clip and pins its seed, so the voice stops being a lottery until you unlock it
+  again. Reference and consent clips upload resumably, so a long clip that stalls picks up where
+  it left off instead of starting over, and a half-finished upload is never treated as a usable
+  clip. Two guarantees are structural rather than promised: consent for a cloned voice is
+  re-derived from the recording on disk every single time it is read — editing the saved flag by
+  hand proves nothing — and revoking consent immediately stops that voice's audio from being
+  served back out, with every consent record/verify/revoke written to the security audit log
+  (ids and verdicts only, never the recording or what you said). If you create no profiles,
+  nothing changes: speech resolves exactly as it did before.
+
 - **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.** Add a
   catalog under `packs.skill_catalogs` — a JSON index endpoint, or a repo laid out as
   `skills/<slug>/SKILL.md` — and it shows up as one more source alongside the bundled skills, with

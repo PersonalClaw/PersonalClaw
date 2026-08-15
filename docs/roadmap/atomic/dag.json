@@ -3419,7 +3419,7 @@
         {
           "id": "MI-1",
           "title": "voice_profiles entity store + resolver (CRUD, lock-from-history, consent-as-provenance, per-surface bindings + 4-level precedence)",
-          "status": "todo",
+          "status": "done",
           "scope": "§1 The voice_profiles Entity (§1.1 schema/per-entity JSON store + path containment + ref-audio upload target; §1.2 lock-from-history; §1.3 consent-as-provenance, SEL-audited); §3 Per-Surface Voice Bindings (voice_bindings.json + explicit>binding>default>built-in precedence in active_voice_params(surface=)); §6 zero-profile migration fallback",
           "done_when": "voice_profiles CRUD + typed WS events + resumable ref-audio upload (target: voice_profile) + symlink-contained ids work; lock/unlock pins seed + locked.wav from bounded history; consent record/verify/revoke SEL-audited with verified_own_voice recomputed from artifacts (hand-edited JSON flag alone does NOT flip it); active_voice_params(surface=) walks the 4-level chain returning the superset dict; deleting all profiles reproduces today's flat piper output (zero-profile regression test green)",
           "deps": []
@@ -7720,8 +7720,8 @@
         "plan": "MGAV"
       },
       {
-        "id": "MI-1",
-        "title": "voice_profiles entity store + resolver (CRUD, lock-from-history, consent-as-provenance, per-surface bindings + 4-level precedence)",
+        "id": "MI-2",
+        "title": "Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal",
         "plan": "MI"
       },
       {
@@ -9913,9 +9913,9 @@
         "code": "MI",
         "plan": "MULTIMODAL-IO",
         "total_atoms": 5,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
