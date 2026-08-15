@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { X, Maximize2, Minimize2, Box } from 'lucide-react'
 import { IconButton } from '../../ui/IconButton'
 import { useFocusTrap } from '../../ui/useFocusTrap'
+import { useResizablePanel } from '../../ui/useResizablePanel'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { TextInput } from '../../ui/forms'
@@ -50,16 +51,17 @@ function ExpandedOverlay({ children }: { children: ReactNode }) {
 }
 
 export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; onClose: () => void; commentTarget?: CommentTarget }) {
-  const [width, setWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem('chat-file-w'))
-    return v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
-  })
+  // Width + drag/keyboard handlers from the shared window-splitter primitive, same as
+  // ui/SidePanel. Key round-trips exactly: it persists at `${key}-w`, and this panel's
+  // key is already `chat-file-w`, so `'chat-file'` reconstructs it — no saved width reset.
+  // Collapse is opt-out (the panel is opened/closed by ChatPage and separately expanded to
+  // full-screen; it is never "collapsed"), so no `-collapsed` key is written.
+  const { width, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+    'chat-file', { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
   const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
   const viewerRef = useRef<FileViewerHandle>(null)
   const entry: FsEntry = { name: baseName(path), path, is_dir: false }
-
-  useEffect(() => { localStorage.setItem('chat-file-w', String(width)) }, [width])
 
   // ⌘S saves the open file; Esc collapses an expanded panel, else closes.
   useEffect(() => {
@@ -69,14 +71,6 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     }
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
   }, [expanded, onClose])
-
-  const onHandleDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault()
-    const startX = e.clientX, startW = width
-    const move = (ev: PointerEvent) => setWidth(Math.max(MIN_W, Math.min(MAX_W, startW + (startX - ev.clientX))))
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
-  }, [width])
 
   const saveAsArtifact = (e: FsEntry, content: string) => setArtModal({ entry: e, content, name: baseName(e.path) })
   const confirmArtifact = async () => {
@@ -134,9 +128,13 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   return (
     <motion.div className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
       initial={{ width: 0, opacity: 0 }} animate={{ width, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
-      {/* left-edge resize handle */}
-      <div onPointerDown={onHandleDown} className="absolute left-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize group">
-        <span className="absolute left-0 top-0 bottom-0 w-px bg-outline-variant/40 group-hover:bg-primary transition-colors" />
+      {/* left-edge resize handle — WAI-ARIA window-splitter: focusable, arrow-key operable,
+          reports its width. Right-docked, so dragging/ArrowLeft grows it (side: 'right'). */}
+      <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
+        tabIndex={0} aria-label="Resize file panel — arrow keys to resize"
+        aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
+        className="absolute left-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize outline-none group">
+        <span className="absolute left-0 top-0 bottom-0 w-px bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors" />
       </div>
       <div className="h-full" style={{ width }}>{body}</div>
     </motion.div>
