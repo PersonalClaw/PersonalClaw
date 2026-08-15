@@ -66,7 +66,12 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu" aria-expanded={open}
+        // 🪤 NO `aria-haspopup="menu"` — measured with the shade open: **0** `role="menu"` and **0**
+        // menuitems. What opens is a panel of notification ROWS (each with its own hit target and two
+        // actions, cycles 164/171), which is not a menu and should not claim to be; a screen-reader
+        // user told "menu" then finds a list of buttons with no menu navigation. `aria-expanded` alone
+        // honestly describes the disclosure.
+        aria-expanded={open}
         aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
         title={unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
         className="relative grid size-7 place-items-center rounded-pill transition-colors"
