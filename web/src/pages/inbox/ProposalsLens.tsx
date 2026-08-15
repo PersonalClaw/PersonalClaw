@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Check, Pencil, Lightbulb, AlertTriangle } from 'lucide-react'
 import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
-import { Checkbox, TextArea } from '../../ui/forms'
+import { Checkbox, FieldError, TextArea } from '../../ui/forms'
 import { EmptyState } from '../../ui/ListScaffold'
 import { api, type InboxItem, type InboxProposal } from '../../lib/api'
 import {
@@ -194,14 +194,23 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                       {p.preview}
                     </pre>
                   )}
-                  {outcome && (
-                    <div
-                      className={`mt-s text-[0.8125rem] ${outcome.ok ? 'text-ok' : 'text-error'}`}
-                      role="status"
-                    >
-                      {outcome.ok ? 'Applied.' : `Not applied — ${outcome.error}. Still pending.`}
-                    </div>
-                  )}
+                  {/* ONE element that is both the visible outcome and the announcement, ALWAYS
+                      MOUNTED and `sr-only` (so it costs no layout) until an outcome lands. It was
+                      previously `{outcome && <div role="status">}` — created at the same moment its
+                      text appeared, which `ResultAnnouncement` records as not reliably observed
+                      ("Always MOUNTED, rendered empty when idle").
+                      Deliberately NOT a hidden region plus a visible copy: duplicating the sentence
+                      would announce it twice and would make `getByText` ambiguous for the row's own
+                      tests. One node, one sentence, announced and seen. */}
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className={outcome
+                      ? `mt-s text-[0.8125rem] ${outcome.ok ? 'text-ok' : 'text-danger'}`
+                      : 'sr-only'}
+                  >
+                    {outcome ? (outcome.ok ? 'Applied.' : `Not applied — ${outcome.error}. Still pending.`) : ''}
+                  </div>
                   {editing === it.id && p && (
                     <div className="mt-s flex flex-col gap-s">
                       <TextArea
@@ -212,7 +221,11 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                         size="sm"
                         ariaLabel="Apply payload (JSON)"
                       />
-                      {draftError && <div className="text-error text-[0.8125rem]">{draftError}</div>}
+                      {/* `FieldError` (43 uses) carries role="alert": a rejected edit is unrequested
+                          bad news and must interrupt, which a plain div never does. It also uses the
+                          `text-danger` token the other 101 call sites use, rather than the
+                          `text-error` alias used in only 2 files. */}
+                      {draftError && <FieldError>{draftError}</FieldError>}
                       <div className="flex gap-s">
                         <Button size="sm" variant="primary" onClick={() => saveEdit(it, p)} loading={busy}>
                           <Check size={14} /> Approve edited
