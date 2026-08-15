@@ -89,11 +89,31 @@ Session 4 — SEL surface + external review / T4.1, T4.2, V4; Design S4; Contrac
 
 ### `SH-9` — External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan
 
-**Status:** todo
+**Status:** blocked (deliverable written; the remaining two done_when clauses are owner actions)
 
 Session 4 T4.3; Design S4 (external review); owner task 3 (decide external review)
 
 **Done when:** docs/security/review-scope.md lists the five high-risk paths, the review format, and the publication plan; scope approved by owner (owner task 3); review executed or scheduled with a date
+
+**DONE (2026-08-15):** `docs/security/review-scope.md` written as a sibling of
+`threat-model.md`/`limitations.md`. The five paths are the plan's own S4 list, each
+grounded in modules verified to exist: webhook auth
+(`dashboard/handlers/hooks.py::_verify_hook_token`), the app reverse-proxy token model
+(`dashboard/handlers/apps.py::api_app_proxy` + `dashboard/token_auth.py`), scanner
+bypasses (`apps/app_manager.py::install` + `supply_chain.py`), egress-guard layering
+(`net/client.py` + `net/guard.py` + `net/policy.py::egress_policy_for`), and the inbound
+MCP surface (`inbound/mcp_http.py`/`auth.py`/`caps.py`). Format section carries the
+commissioned-vs-self-audit choice, a per-finding field table, a boundary-graded severity
+scale, a two-required/one-preferred evidence bar, and a three-rule dispute resolution
+(scope → `SECURITY.md`; enforcement → an executing test; severity → toward the reviewer
+absent a named rail), with unresolved disputes published as disputes. Publication plan
+publishes report + fix status + negatives + coverage gaps, withholds only unpatched
+Critical/High until a fix ships (and exploit code permanently), lands at
+`docs/security/reviews/<date>-<format>.md`, and publishes a dated slip note if a fix
+passes the 30-day `SECURITY.md` window. **Owner-gated remainder:** the `done_when`'s
+"scope approved by owner" + "executed or scheduled with a date" is owner task 3 — the
+doc's "Approval and schedule" table carries the three unchecked decisions rather than
+faking an approval.
 
 ### `SH-10` — Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented
 
