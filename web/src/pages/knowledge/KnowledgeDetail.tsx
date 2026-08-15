@@ -310,7 +310,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           <div className="shrink-0 flex items-center gap-2">
             <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Language</span>
             <select value={draft.gist_language || ''} onChange={(e) => setDraft({ ...draft, gist_language: e.target.value })}
-              className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
+              className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
               <option value="">(none)</option>
               {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
             </select>

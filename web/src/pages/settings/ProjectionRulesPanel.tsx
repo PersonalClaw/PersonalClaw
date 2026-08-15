@@ -145,7 +145,7 @@ function StrategyPicker({ value, disabled, onChange, forRule }: {
   return (
     <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as ProjectionStrategy)}
       aria-label={forRule ? `Strategy for ${forRule}` : 'Strategy for the new rule'}
-      className="h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 [color-scheme:dark]">
+      className="h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
       {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.label} — {s.blurb}</option>)}
     </select>
   )
