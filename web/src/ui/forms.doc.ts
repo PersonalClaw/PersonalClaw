@@ -115,7 +115,7 @@ const docs: UiDoc[] = [
     name: 'DateInput',
     keywords: ['date', 'input', 'calendar', 'picker', 'form', 'field'],
     description:
-      'The standard native date field — a styled <input type="date"> matching the field-family chrome (rounded, container fill, focus ring, dark color-scheme). Controlled via value (a date string) + onChange; claims a wrapping Field\'s label for accessibility.',
+      'The standard native date field — a styled <input type="date"> matching the field-family chrome (rounded, container fill, focus ring). Controlled via value (a date string) + onChange; claims a wrapping Field\'s label for accessibility. The native picker follows the active theme: the scheme is inherited from the root rather than pinned on the element.',
     props: [
       { name: 'value', description: 'The date string value (controlled).' },
       { name: 'onChange', description: 'Fires with the new date string when the native picker changes.' },
@@ -124,7 +124,7 @@ const docs: UiDoc[] = [
       { guidance: true, description: 'Reach for DateInput for date entry rather than a raw <input type="date"> — it carries the blessed chrome and claims the Field label for accessibility.' },
       { guidance: false, description: 'Do not hardcode colors or px — surface, radius, and focus ring route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
-    anatomy: ['<input type="date"> (field chrome, color-scheme:dark)'],
+    anatomy: ['<input type="date"> (field chrome, theme-inherited color-scheme)'],
   },
   {
     name: 'Select',
