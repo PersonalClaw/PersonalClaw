@@ -2491,7 +2491,7 @@
         },
         {
           "id": "WF2LOO-17",
-          "status": "todo",
+          "status": "done",
           "deps": [],
           "title": "Give the loop judge a model binding independent of the worker it grades",
           "scope": "`loop/judge.assess_cycle`'s docstring states an independence property the code does not implement: \"in production it resolves the 'reasoning' use-case (a stronger third-party check than the worker's model)\". The code returns `resolve_provider_for_use_case(\"loops\")` (`judge.py:218`), and `providers/provider_bridge.py:343` documents `\"loops\"` as the LOOP WORKER's use case. Same for the skeptic (`judge.py:286`) and for `gates.judge_verdict` (`gates.py:134`). `LoopsConfig` has no judge model field, so there is nothing to bind even if a caller wanted independence. The judge is therefore independent in session and prompt but runs on the same model binding as the work it grades — the \"correlated reviewer mistakes\" failure mode named in the review-loop literature, and the opposite of the vendor guidance to reserve the strongest model for judgment.",
@@ -7149,7 +7149,7 @@
         {
           "id": "PP-3",
           "title": "Cross-check `output_contract` against the bindings that read it",
-          "status": "todo",
+          "status": "done",
           "scope": "`engine.check_output_contract` (`engine.py:2173`) is a good ~0.3ms gate that runs BEFORE any binding resolves — `must_be_json`, `required_keys`, length bounds, forbidden phrases. It is per-node, opt-in, and never compared against its readers: `{{nodes.a.output.foo.bar}}` is unvalidated at authoring time even when node `a` declares `required_keys: [foo]`. The peer runtimes type-validate message routing at build time; we validate the producer and the consumer independently and never the edge between them.",
           "done_when": "The validator resolves every `{{nodes.<id>.output.<path>}}` reference against the producer's declared `output_contract` when it has one, and errors when the path is unsatisfiable (a key absent from `required_keys` on a contract that also declares `must_be_json`); a producer read structurally but declaring no contract raises a WARNING naming the readers, not an error. No new contract vocabulary is invented — `required_keys` is the existing field. Censused first over the bundled templates so the warning volume is known before it ships. Proven able to fail by renaming a key on one side of a shipped binding.",
           "deps": [
@@ -7853,11 +7853,6 @@
         "plan": "PP"
       },
       {
-        "id": "PP-3",
-        "title": "Cross-check `output_contract` against the bindings that read it",
-        "plan": "PP"
-      },
-      {
         "id": "PP-5",
         "title": "Loops emit the ledger (closes the flywheel's loop blind spot)",
         "plan": "PP"
@@ -7991,11 +7986,6 @@
         "id": "WF2LEA-10",
         "title": "Amendment E1.1 skill resource tier + E1.2 SKILL.md conformance check",
         "plan": "WF2LEA"
-      },
-      {
-        "id": "WF2LOO-17",
-        "title": "Give the loop judge a model binding independent of the worker it grades",
-        "plan": "WF2LOO"
       },
       {
         "id": "WF2UNI-12",
@@ -9896,9 +9886,9 @@
         "code": "WF2LOO",
         "plan": "WORKFLOWS-V2-LOOPS-EVOLUTION",
         "total_atoms": 18,
-        "done": 16,
+        "done": 17,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 1
       },
       {
@@ -10328,9 +10318,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 2,
+        "done": 5,
         "in_progress": 0,
-        "todo": 14,
+        "todo": 11,
         "blocked": 0
       }
     ],
