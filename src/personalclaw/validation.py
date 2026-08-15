@@ -963,9 +963,22 @@ ADD_REACTION_SCHEMA = ToolSchema(
     ],
 )
 
+# ── best_of_n (HARNESS-CRAFT §2.1 — N-sample + judge, N capped in the core) ──
+BEST_OF_N_SCHEMA = ToolSchema(
+    tool_name="best_of_n",
+    fields=[
+        FieldSpec("prompt", str, required=True, max_len=MAX_MEDIUM_STRING),
+        # No numeric ceiling here on purpose: `sampling.MAX_N` clamps N in the CORE, so
+        # the cap holds for the workflow template and the skill too, not just this tool.
+        FieldSpec("n", int),
+        FieldSpec("criteria", str, max_len=MAX_MEDIUM_STRING),
+    ],
+)
+
 # ── Schema Registry ──
 
 MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
+    "best_of_n": BEST_OF_N_SCHEMA,
     "subagent_run": SPAWN_RUN_SCHEMA,
     "subagent_list": SPAWN_LIST_SCHEMA,
     "subagent_status": SPAWN_STATUS_SCHEMA,
