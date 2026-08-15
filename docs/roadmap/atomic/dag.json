@@ -983,7 +983,8 @@
         },
         {
           "id": "AG-13",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1333",
           "deps": [
             "AG-7",
             "PP-14"
@@ -9766,9 +9767,9 @@
         "code": "AG",
         "plan": "AUTONOMY-GUARDRAILS",
         "total_atoms": 13,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

@@ -39,11 +39,13 @@ contract is not invoking the policy, so it is not a caller.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, fields, replace
+from typing import TYPE_CHECKING, Any
 
+from personalclaw.guardrails.policy import HEADLESS, SafetyProfile
+from personalclaw.guardrails.registries import path_glob
 from personalclaw.loop.tick import StepConfig
-from personalclaw.workflows.autonomy import Attention
+from personalclaw.workflows.autonomy import Attention, Mode
 from personalclaw.workflows.judge_contract import (
     MARGINAL_MIN,
     SCORE_MAX,
@@ -57,6 +59,9 @@ from personalclaw.workflows.loop_middleware import (
     _resolve_ladder,
 )
 from personalclaw.workflows.scope import ScopeMode
+
+if TYPE_CHECKING:
+    from personalclaw.guardrails.ceiling import Ceiling
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +127,22 @@ class WriteScope:
 
 
 @dataclass(frozen=True)
+class BreakerLimits:
+    """Knob 8 — the per-run circuit-breaker limits (``workflows.resilience``).
+
+    Mirrors ``resilience.DEFAULT_ERROR_STREAK`` / ``DEFAULT_IDENTICAL_STREAK`` so the
+    consolidated declaration reproduces today's breaker posture byte-for-byte; ``0`` on
+    a cap field means "not enforced" (the resilience default: ``max_iterations`` /
+    ``max_tokens`` trip only when a node declares them ``> 0``).
+    """
+
+    error_streak: int = 3
+    identical_streak: int = 2
+    max_iterations: int = 0
+    max_tokens: int = 0
+
+
+@dataclass(frozen=True)
 class SupervisorPolicy:
     """The full convergence policy a loop node declares — parsed, not yet wired.
 
@@ -149,8 +170,33 @@ class SupervisorPolicy:
     write_scope: WriteScope = field(default_factory=WriteScope)
     #: Hard cycle budget; ``0`` = uncapped (``loop.tick.TickConfig.max_cycles`` semantics).
     budget_max_cycles: int = 0
-    #: Whether the loop needs a person present (``autonomy.Attention``).
+    #: Whether the loop needs a person present (``autonomy.Attention``). This one field is
+    #: where three of the fourteen knobs converge: per-node ``require_hitl`` (knob 3), the
+    #: per-stage ``confirmation`` posture (knob 5) and loop ``attended`` (knob 11) all reduce
+    #: to "is a human in this loop?".
     hitl_posture: Attention = Attention.AFK
+    # ── AG-13: the autonomy knobs the loop declaration did not yet hold ──
+    #
+    # These make ``SupervisorPolicy`` the ONE object that answers "how much freedom does this
+    # run have" — the same object PP-14 declares, now carrying the guardrails half too, so a
+    # run's supervisor policy and its autonomy ceiling are one declaration, not two.
+    #: Knob 14 — the run's ``SafetyProfile`` (approval, tool grants, egress, scan, token/dollar
+    #: budget, write-path allow/deny plane). Subsuming the profile is what unifies the two
+    #: declarations; the SAME type every dispatch seam already reads, so nothing about
+    #: ``SafetyProfile`` or its callers changes. Defaults to the safe unattended posture,
+    #: which is what a loop's ``attended=False`` default resolves to today.
+    autonomy: SafetyProfile = field(default_factory=lambda: HEADLESS)
+    #: Knob 2 — cap fan-out to one in-flight work item (``runtime_hints.execution``).
+    single_active_feature: bool = False
+    #: Knob 6 — the minimum autonomy ``Mode`` a plan may run at, the floor neither the planner
+    #: nor the user may quietly go below (``workflows.autonomy`` risk floor / earned trust).
+    autonomy_mode_floor: Mode = Mode.FRAME_ONLY
+    #: Knob 8 — the per-run circuit-breaker limits.
+    resilience: BreakerLimits = field(default_factory=BreakerLimits)
+    #: Knob 10 — how long an earned loop-trust grant survives (``config.loader.LoopsConfig``).
+    trust_ttl_secs: int = 86_400
+    #: Knob 13 — the idle-stall cutoff for a loop cycle (``loop.loop.Loop``).
+    idle_secs: int = 120
 
 
 def _parse_rubric(raw: Any) -> tuple[RubricCriterion, ...]:
@@ -272,3 +318,158 @@ def parse_supervisor_policy(raw: Any) -> SupervisorPolicy:
         budget_max_cycles=_parse_budget(raw.get("budget")),
         hitl_posture=hitl,
     )
+
+
+# ── AG-13: the fourteen-knob → policy-field map, and its composition ──
+#
+# "How much freedom does this run have?" used to be answered in fourteen places with no
+# composition rule. The table below is the WHOLE consolidation claim made checkable: each of
+# the fourteen knobs names the ONE :class:`SupervisorPolicy` field it now lives on. Several
+# knobs share a field — that IS the consolidation (three HITL knobs collapse onto
+# ``hitl_posture``; the profile and the gate posture onto ``autonomy``). ``tests/
+# test_ag13_autonomy_policy.py`` is the behaviour-preservation matrix: for a matrix of shipped
+# templates × bundled loop kinds it asserts the field each knob maps to carries that knob's
+# CURRENT value, so this is a consolidation and not a behaviour change. Changing a ``field``
+# below (or the builder that fills it) reds that matrix, naming the knob.
+
+
+@dataclass(frozen=True)
+class KnobMapping:
+    """One of the fourteen autonomy knobs and the policy field it consolidates onto."""
+
+    knob: str  #: the knob, verbatim from AG-13's list of fourteen
+    home: str  #: where it is declared today (``module:symbol``)
+    field_path: str  #: the dotted path into a :class:`SupervisorPolicy` it maps onto
+
+
+#: The load-bearing artifact: fourteen rows, one per knob. A row per knob even where two
+#: knobs share a field, because the point is that *reading any one of the fourteen* now means
+#: reading one policy field.
+POLICY_KNOB_MAP: tuple[KnobMapping, ...] = (
+    KnobMapping("RunBudget", "workflows.models:RunBudget", "autonomy.budget.max_tokens"),
+    KnobMapping(
+        "runtime_hints.execution.single_active_feature",
+        "workflows.execution_hints:ExecutionHints",
+        "single_active_feature",
+    ),
+    KnobMapping("require_hitl", "workflows.autonomy:compile_require_hitl", "hitl_posture"),
+    KnobMapping("gate_policy auto-approval", "workflows.gate_policy:decide", "autonomy.approval"),
+    KnobMapping(
+        "confirmation matrix + per-stage mute",
+        "workflows.autonomy:confirmation_policy / workflows.confirmation:MUTABLE_TYPES",
+        "hitl_posture",
+    ),
+    KnobMapping(
+        "autonomy risk registry / floors / earned trust",
+        "workflows.autonomy:offer_autonomy",
+        "autonomy_mode_floor",
+    ),
+    KnobMapping(
+        "allowed_write_paths", "workflows.scope:allowed_write_paths", "write_scope.allowed_paths"
+    ),
+    KnobMapping("resilience breaker config", "workflows.resilience:check_breaker", "resilience"),
+    KnobMapping(
+        "escalation_cfg.ladder", "workflows.loop_middleware:DEFAULT_LADDER", "escalation_ladder"
+    ),
+    KnobMapping(
+        "loop trust_ttl_secs", "config.loader:LoopsConfig.trust_ttl_secs", "trust_ttl_secs"
+    ),
+    KnobMapping("loop attended", "loop.loop:Loop.attended", "hitl_posture"),
+    KnobMapping("max_cycles", "loop.loop:Loop.max_cycles", "budget_max_cycles"),
+    KnobMapping("idle_secs", "loop.loop:Loop.idle_secs", "idle_secs"),
+    KnobMapping("SafetyProfile", "guardrails.policy:SafetyProfile", "autonomy"),
+)
+
+
+def resolve_field(policy: SupervisorPolicy, field_path: str) -> Any:
+    """Read a dotted ``field_path`` (e.g. ``autonomy.budget.max_tokens``) off a policy.
+
+    The matrix test reads every mapped field through here, so a ``field_path`` that names
+    nothing raises ``AttributeError`` at the test rather than silently mapping a knob to a
+    field that does not exist.
+    """
+    obj: Any = policy
+    for part in field_path.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _field_default(cls: type, name: str) -> Any:
+    """The declared default of a dataclass field, read without constructing the class
+    (``loop.loop.Loop`` and friends take required args, so ``Loop()`` is not an option)."""
+    for f in fields(cls):
+        if f.name == name:
+            return f.default
+    raise AttributeError(f"{cls.__name__} has no field {name!r}")
+
+
+def consolidate(
+    *,
+    profile: SafetyProfile | None = None,
+    max_cycles: int = 0,
+    idle_secs: int = 120,
+    trust_ttl_secs: int = 86_400,
+    attended: bool = False,
+    require_hitl: bool = False,
+    single_active_feature: bool = False,
+    mode_floor: Mode = Mode.FRAME_ONLY,
+    escalation_ladder: tuple[Rung, ...] = DEFAULT_LADDER,
+    write_scope: WriteScope | None = None,
+    resilience: BreakerLimits | None = None,
+) -> SupervisorPolicy:
+    """Route the fourteen knobs' current homes into ONE :class:`SupervisorPolicy` (AG-13).
+
+    Still deliberately inert: nothing in the engine calls this, and it constructs no policy
+    a runtime seam reads — PP-15 (loop convergence) and AG-11 (profile/trust enforcement)
+    are the wiring owners named in the module docstring. It exists so the consolidation is
+    a real, exercised mapping rather than a claim: the behaviour-preservation matrix drives
+    it for the shipped population and proves each field equals today's value knob-by-knob.
+
+    ``attended`` (loop) and ``require_hitl`` (node) both collapse into ``hitl_posture`` —
+    either one meaning "a human is in this loop" resolves ``HITL``.
+    """
+    return SupervisorPolicy(
+        autonomy=profile if profile is not None else HEADLESS,
+        budget_max_cycles=max_cycles,
+        idle_secs=idle_secs,
+        trust_ttl_secs=trust_ttl_secs,
+        hitl_posture=Attention.HITL if (attended or require_hitl) else Attention.AFK,
+        single_active_feature=single_active_feature,
+        autonomy_mode_floor=mode_floor,
+        escalation_ladder=escalation_ladder,
+        write_scope=write_scope if write_scope is not None else WriteScope(),
+        resilience=resilience if resilience is not None else BreakerLimits(),
+    )
+
+
+def compose(ceiling: "Ceiling", policy: SupervisorPolicy) -> SupervisorPolicy:
+    """Compose the consolidated policy against the operator CEILING, tightest-wins.
+
+    The guardrails half (approval, tool grants, egress, scan, token/dollar budget, write-path
+    plane) is narrowed by the SAME ``Ceiling ∩ Profile`` model every dispatch seam already
+    uses (:func:`guardrails.ceiling.resolve`) — no second composition model is invented here.
+    The loop-convergence knobs (cycles, idle, ladder, breaker, WIP, trust TTL) are
+    run-declaration bounds the operator ceiling does not govern, so they pass through
+    unchanged. A profile can only ever NARROW: there is no path in ``resolve`` by which a
+    profile hands a run more reach than the ceiling allows, which is the property that makes
+    widening — the dangerous direction — impossible.
+    """
+    from personalclaw.guardrails.ceiling import resolve
+
+    return replace(policy, autonomy=resolve(ceiling, policy.autonomy))
+
+
+def write_scope_allows(policy: SupervisorPolicy, path: str, *, workspace: str = "") -> bool:
+    """Whether ``path`` is inside the policy's declared write scope (knob 7).
+
+    Matched by the §5 path matcher (:func:`guardrails.registries.path_glob`) — the matcher
+    that NEVER runs a PATTERN through ``normpath``. This is the rule the atom lifted verbatim:
+    ``normpath`` collapses ``/a/**/../b`` to ``/a/b``, silently widening an allow to a path
+    the author never granted. An empty scope is unconfined (today's deny-only posture, where a
+    node writes anywhere the denylist does not refuse).
+    """
+    allowed = policy.write_scope.allowed_paths
+    if not allowed:
+        return True
+    patterns = (*allowed, workspace) if workspace else allowed
+    return any(path_glob(path, pattern) for pattern in patterns if pattern)
