@@ -300,7 +300,7 @@
         {
           "id": "MGAV-8",
           "title": "Memory slots: bounded always-injected registers + reflection append hook + self-model",
-          "status": "todo",
+          "status": "done",
           "scope": "§6 Memory Slots, §6.1 the self-model slot; Session 5 (backend + slot primitive)",
           "done_when": "slot.<name> prefix added to _BUILTIN_PREFIXES with per-slot size cap enforced at put (over-cap append fails loudly as a trim proposal); lazy built-ins (persona/preferences/pending_items/self_notes/glossary(workspace)/self_model); one bounded Slots block injected in build_session_context adjacent to persona/USER PROFILE; after_turn_review append-only hook (WAL, undo, human-tombstone respected); self-model promotes a line to a behavioral principle only after >=3 reinforcements",
           "deps": []
@@ -7722,11 +7722,6 @@
         "plan": "MGAV"
       },
       {
-        "id": "MGAV-8",
-        "title": "Memory slots: bounded always-injected registers + reflection append hook + self-model",
-        "plan": "MGAV"
-      },
-      {
         "id": "MI-1",
         "title": "voice_profiles entity store + resolver (CRUD, lock-from-history, consent-as-provenance, per-surface bindings + 4-level precedence)",
         "plan": "MI"
@@ -9668,9 +9663,9 @@
         "code": "MGAV",
         "plan": "MEMORY-GRAPH-AND-VAULT",
         "total_atoms": 9,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

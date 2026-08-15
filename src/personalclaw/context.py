@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from personalclaw.agent import _shipped_prompt
 from personalclaw.config.loader import AppConfig, memory_dir_for_cwd
@@ -857,6 +857,33 @@ class ContextBuilder:
                 continue
         return ""
 
+    def _slots_block(self, vector_store: object | None) -> str:
+        """The ONE bounded Slots block, or "" (MGAV-8).
+
+        Fails to "" rather than propagating: a slot row a user hand-edited into an unreadable
+        shape must not be able to stop a session from starting. The ceiling is enforced inside
+        `render_slots_block`, so this wrapper cannot widen it.
+        """
+        if vector_store is None:
+            return ""
+        try:
+            from personalclaw import memory_slots
+
+            store = cast("memory_slots._SlotStore", vector_store)
+            # A slot over its per-slot cap can only come from a row the caps never saw (a
+            # hand-edited memory.db) — every write path refuses over-cap. Logged HERE because
+            # this is the moment it costs something: the block truncates, and without this line
+            # a short Slots block has no explanation anywhere in the logs.
+            excess = memory_slots.over_cap(store)
+            if excess:
+                logger.warning(
+                    "memory slots over cap (hand-edited rows?); block will truncate: %s", excess
+                )
+            return memory_slots.render_slots_block(store)
+        except Exception:
+            logger.debug("slots block render failed", exc_info=True)
+            return ""
+
     def build_session_context(
         self,
         session_key: str | None = None,
@@ -1041,6 +1068,17 @@ class ContextBuilder:
             from personalclaw.agents.defaults import normalize_agent_name
 
             _persona = _svc.persona_block(agent=normalize_agent_name(agent))
+
+            # Memory slots (MEMORY-GRAPH-AND-VAULT §6 — MGAV-8): ONE bounded block of the
+            # always-injected registers, placed here so it sits adjacent to the persona and
+            # USER PROFILE blocks it is a sibling of — a slot is standing state about the
+            # user, not a retrieved fact. Appended directly rather than folded into the
+            # four-block ambient budget because slots are unconditional by definition: they
+            # carry their own hard ceiling (SLOTS_BLOCK_MAX_CHARS) instead of competing for a
+            # relevance-scored share, and an empty block costs nothing (lazy built-ins).
+            _slots = self._slots_block(getattr(_svc, "_vs", None))
+            if _slots:
+                parts.append(_slots + "\n")
 
             # User preference profile (C15): the always-on ambient half of the
             # preference split — Active, decaying, typed facets (style/identity/
