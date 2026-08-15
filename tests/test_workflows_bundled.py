@@ -33,7 +33,7 @@ from personalclaw.workflows.bundled_defs import (
 )
 from personalclaw.workflows.macros import expand_spec, has_macros
 from personalclaw.workflows.models import Node, WorkflowDef, valid_name, walk
-from personalclaw.workflows.validator import validate_spec
+from personalclaw.workflows.validator import DepEdge, dep_edges_for_root, validate_spec
 
 pytestmark = pytest.mark.anyio
 
@@ -276,6 +276,56 @@ class TestConventions:
         root = Node.from_dict(_pipeline(_raw("code-project"))["root"])
         gates = [n for _p, n in walk(root) if n.kind.value == "gate"]
         assert any(str((g.config or {}).get("kind")) == "verify_command" for g in gates)
+
+
+class TestDependencyOrderingCensus:
+    """`WF_UNORDERED_DEP`'s population (PP-1) — the census, kept as an assertion.
+
+    Measured before the rule became an error: 111 binding-derived dependencies across 18 of
+    the 19 templates, every one of them ordered by an enclosing `sequence`, and **not one
+    template declares `needs` at all**. That last fact is why the floor below exists rather
+    than being ceremony: with no `needs` anywhere, an implementation that quietly found no
+    dependencies to check would pass `test_it_validates_STRICTLY` exactly as an
+    implementation that examined all 111 and approved them. Green would mean nothing.
+    """
+
+    @staticmethod
+    def _edges(name: str) -> list[DepEdge]:
+        return dep_edges_for_root(Node.from_dict(_pipeline(_raw(name))["root"]))
+
+    def test_the_rule_sees_a_real_dependency_set(self) -> None:
+        """The vacuity floor. Deliberately below the measured 111/18 so ordinary library
+        edits do not red it, and far above zero so a rule that stops deriving dependencies
+        does."""
+        per = {name: len(self._edges(name)) for name in sorted(EXPECTED)}
+        total = sum(per.values())
+        assert max(per.values()) >= 5, f"no single template exercises the rule: {per}"
+        assert sum(1 for c in per.values() if c) >= 10, f"too few templates covered: {per}"
+        assert total >= 50, f"the rule examined only {total} dependencies across the library"
+
+    def test_every_shipped_dependency_is_ordered(self) -> None:
+        """The census verdict itself. `test_it_validates_STRICTLY` would also catch a
+        violator, but as an opaque issue list; this names the reader, the producer and the
+        missing edge, which is what a fix needs."""
+        for name in sorted(EXPECTED):
+            for edge in self._edges(name):
+                assert edge.ordered, (
+                    f"{name}: {edge.reader_id or edge.reader_path} reads "
+                    f"{edge.producer_id!r} — {edge.reason}"
+                )
+
+    def test_the_needs_satisfaction_path_is_unexercised_by_the_library(self) -> None:
+        """Recorded, not required. Every shipped dependency is ordered by a `sequence`; the
+        `needs` half of the rule is proven only by unit tests. If a template ever does
+        declare `needs`, this assertion is the prompt to check that the census still holds
+        rather than something to delete quietly — `PP-2` derives these edges and will make
+        the count move on purpose.
+        """
+        declared = {
+            name: sum(len(n.needs) for _p, n in walk(Node.from_dict(_pipeline(_raw(name))["root"])))
+            for name in sorted(EXPECTED)
+        }
+        assert not any(declared.values()), f"a template now declares `needs`: {declared}"
 
 
 class TestProvider:

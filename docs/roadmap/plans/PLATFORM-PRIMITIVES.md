@@ -1,15 +1,9 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** IN PROGRESS — 1 of 16 atoms shipped (`PP-4`, the ledger extraction, 2026-08-14 — see
-`## Execution log`). Five startable now (`PP-1`, `PP-6`, `PP-8`, `PP-9`, `PP-11`): `PP-4` landing
-unblocked four of them. `PP-5` still waits on `WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in
-[`../atomic/PP.md`](../atomic/PP.md).
-**Pillar:** A (Execution Engine + Convergence) · **rev 17** (2026-08-14)
-
-**Soul guardrail.** Everything here stays personal-scale: one user, local files, local SQLite,
-one gateway. This plan removes duplicated machinery; it adds no fleet, no service tier, and no
-distributed substrate. If an atom below starts to look like a platform for other people's
-workloads, it has drifted and should be re-scoped.
+**Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` ledger extraction and `PP-1`
+`WF_UNORDERED_DEP`, both 2026-08-14 — see `## Execution log`). Startable now: `PP-2`, `PP-3`
+(both unblocked by `PP-1`), `PP-6`, `PP-8`, `PP-9`, `PP-11`. `PP-5` and `PP-14` are unblocked by
+`WF2LOO-16`. `PP-7` still waits on `PP-6`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
 
 ---
 
@@ -200,6 +194,40 @@ rather than deferring them past it.
    does not, railed in both directions.
 
 ## Execution log
+
+- **2026-08-14 — `PP-1` DONE.** `WF_UNORDERED_DEP` (the 47th `WF_*` code) refuses a binding whose
+  producer is not ordered before its reader. **The two edge lists now have to agree:** admission reads
+  `needs` plus container order (`tick._visit_parallel`), while bindings are a separate graph feeding
+  the resume cache, the stale-inputs check and the mutation cascade — so a spec could bind
+  `{{nodes.x.output}}` from a node running *beside* `x` and die at ready-time with *"binding failed:
+  check the referenced node id and field exist"*, pointing the author at an id that was perfectly
+  correct. Locally plausible, globally wrong, discoverable only by running it.
+- **2026-08-14 — `PP-1` design notes.** (a) `dep_ordering_edges` derives every edge from
+  **`bindings.node_deps`** — the same function the cache, stale-inputs check and cascade use — so the
+  rule structurally cannot disagree with them about what a binding depends on. (b) An unknown id is
+  **skipped**, because `WF_UNKNOWN_NODE_REF` already owns that and reporting both would turn one typo
+  into two errors. (c) The rule stays **silent when `WF_CYCLE` fired**: on a cyclic graph the only
+  advice it can give ("order the producer first") is the advice that closes the loop, so the cycle is
+  both the truer fact and the one to fix first. (d) The message names all three facts — reader,
+  producer, and *why* the ordering is absent — so an author acts without reading the engine.
+- **2026-08-14 — `PP-1` CENSUS (the atom's precondition, run BEFORE the code became an error).**
+  **19** bundled `workflow.json` templates; **18 of the 19 contain `{{nodes.*}}` bindings; ZERO declare `needs` at all.** So virtually the WHOLE library depends on this rule, and it
+  rests entirely on the earlier-sibling-in-a-`sequence` path, and the `needs`-chain path ships
+  exercised by no shipped template. **Violators: 0** — every one of the 18 already orders its
+  producers, so the new refusal ships against a population that passes it. Giving a never-run rule
+  teeth against a population that fails it is an outage, not a gate; here there was nothing to fix.
+- **2026-08-14 — `PP-1` zero-runtime-change proof.** `src/personalclaw/workflows/tick.py` is
+  **byte-identical** (`git diff` empty). No scheduling behaviour changes; this is authoring-time
+  validation only. Because ZERO templates declare `needs`, the census made the atom's **vacuity floor
+  load-bearing rather than ceremonial**: a naive implementation passes by never finding a dep to
+  check, so the floor asserts the rule saw a non-empty `node_deps` set on at least one shipped
+  template.
+- **2026-08-14 — `PP-1` DISCOVERY (process, not code).** The implementing subagent died to a stream
+  watchdog mid-falsification with an uncommitted tree, having **left probe 2 applied** — an injected
+  `{{nodes.find_safety.output}}` in `bundled/audit-sweep/workflow.json` plus incidental `\u2014`
+  re-serialization damage from a `json.dump` round-trip. Inheriting such a tree, the probe must be
+  identified and reverted BEFORE the work is trusted, then the work committed immediately as a
+  recoverable checkpoint. A `wip:` commit costs nothing; reconstructing lost work costs a session.
 
 *(append `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKED` entries here, per the roadmap session
 discipline in [`AGENTS.md`](../../../AGENTS.md))*

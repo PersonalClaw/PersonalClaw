@@ -7128,7 +7128,8 @@
         {
           "id": "PP-1",
           "title": "Refuse a binding whose producer is not ordered before it (WF_UNORDERED_DEP)",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1297",
           "scope": "The engine keeps TWO edge lists and nothing checks they agree. Scheduling admission comes ONLY from container order plus sibling-only `needs` (`tick._visit_parallel` gates on `child.needs`; `validator.py:221-230` refuses a `needs` that is not a sibling in the same `parallel`, reason given: \"cross-container edges would make the tree a graph and break the frontier's locality\"). Data dependencies are a SEPARATE graph: `node_deps` feeds the resume cache's `inputs_hash` (`controller._resolved_inputs`), the stale-inputs check (`controller.py:1471`) and the mutation cascade (`mutations.py:262`) — never admission. `validator._kahn_levels` builds the combined graph and its own docstring says reading its levels as an execution order would be wrong. None of the 46 shipped `WF_*` codes covers the disagreement.",
           "done_when": "A new `WF_UNORDERED_DEP` error proves, for every node and every `node_deps` target, that the producer is terminal before the reader can be admitted — satisfied by being an earlier sibling within an enclosing `sequence`, or by a `needs` chain to it within the same `parallel`; anything else is an error naming the reader, the producer and the missing edge. Computed from the path→node map `validate_node_tree` already walks; ZERO runtime change and zero scheduling change (`tick.py` byte-identical). The bundled-template population is censused BEFORE the code becomes an error — giving a never-run rule teeth against a population that fails it is an outage, not a gate — and any violator is fixed in the same change. Proven able to fail by two probes (delete a `needs` that a binding relies on; add a cross-container binding with no ordering) each reverted by a targeted edit, plus a vacuity floor asserting the rule sees a non-empty dep set on at least one shipped template.",
           "deps": []
@@ -7843,8 +7844,13 @@
         "plan": "PHF"
       },
       {
-        "id": "PP-1",
-        "title": "Refuse a binding whose producer is not ordered before it (WF_UNORDERED_DEP)",
+        "id": "PP-2",
+        "title": "Derive `needs` from bindings; lift the sibling-only restriction",
+        "plan": "PP"
+      },
+      {
+        "id": "PP-3",
+        "title": "Cross-check `output_contract` against the bindings that read it",
         "plan": "PP"
       },
       {
@@ -10318,9 +10324,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 15,
+        "todo": 14,
         "blocked": 0
       }
     ],
