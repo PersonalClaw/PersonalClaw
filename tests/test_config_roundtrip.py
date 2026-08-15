@@ -107,6 +107,12 @@ _SPECIAL = {
     ("dashboard", "terminal"): {"enabled": False, "persist": True},
     ("dashboard", "dashboard_layout"): {"widgets": [], "v": 1},
     ("inbox", "poll_interval_seconds"): 90,
+    # loops.judge_use_case is constrained to the use-case vocabulary (WF2LOO-17) — a
+    # generated "reasoning-x" would (correctly) be refused by load() and collapse back to
+    # `reasoning`. `code_tools` is a real non-default axis that proves the field
+    # round-trips; `loops` deliberately is NOT used here, since a fixture should not model
+    # "the judge is back on the worker's binding" as the normal case.
+    ("loops", "judge_use_case"): "code_tools",
     # memory.push_min_confidence is a probability clamped to [0,1] by load() — the
     # generic rule's out-of-range value would (correctly) come back clamped.
     ("memory", "push_min_confidence"): 0.55,

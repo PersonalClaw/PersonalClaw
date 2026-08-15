@@ -10,6 +10,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A loop's judge no longer runs on the same model as the worker it grades.** Autonomous goal
+  loops never let the worker certify its own work — a separate judge, in its own session with its
+  own prompt and no write tools, decides whether a cycle is done. But that judge was resolving the
+  same model binding as the worker, so the two shared a blind spot on exactly the question the judge
+  exists to answer. The judge now resolves its own axis, `loops.judge_use_case`, which defaults to
+  **Reasoning** — so if you have pinned a stronger model to Reasoning in Settings → Models, that is
+  now the model that decides done-ness, and the loop's work still runs on the Loops binding. Set
+  `loops.judge_use_case` to `loops` in `config.json` to put both back on one binding.
+  A judge whose model is unavailable behaves exactly as before: the cycle is **deferred**, never
+  reported complete, and the warning in the log now names the binding to go check.
+
 - **The approval prompt now tells you what a tool call can touch, and how far your answer
   reaches.** When the agent asks permission to run a tool, the card is a four-part brief instead
   of a tool name and four buttons: **what** (the tool and its arguments), **why** (the one-line

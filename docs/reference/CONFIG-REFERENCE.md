@@ -27,6 +27,7 @@ Agents page.
 | `loops.max_cycles_hard_cap` | `100` | Absolute ceiling on any loop's cycle budget, regardless of the per-loop limit. Safety brake against runaway cost. |
 | `loops.default_idle_secs` | `120` | Seconds between worker cycles when a loop doesn't specify its own idle timer. |
 | `loops.trust_ttl_secs` | `86400` | How long a loop worker keeps auto-approved tool trust before the supervisor expires it and requires re-authorization. |
+| `loops.judge_use_case` | `reasoning` | Which model axis the loop JUDGE rides — deliberately not the `loops` axis its worker rides, so a reviewer mistake is not correlated with the mistake it reviews. Any chat-family axis (`reasoning`, `chat`, `code_tools`, `background`, `orchestration`, or `loops` to put judge and worker back on one binding); an unrecognized value falls back to `reasoning`, never to `loops`. Read per judge call, so a change applies to the next cycle with no restart. |
 
 Per-loop values (set in the loop creation form) override the defaults; the hard
 cap binds everything.
