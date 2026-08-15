@@ -7077,7 +7077,7 @@
         {
           "id": "PEP-6",
           "title": "Artifact folders",
-          "status": "todo",
+          "status": "done",
           "scope": "Add an ArtifactFolderStore (flat JSON, opaque 12-char-hex id, parent_id nesting, order, icon) mirroring the existing chat-folder store, plus an Artifact.folder_id field (tolerant-loaded, default '' = library root) and a set_folder metadata-only mutation that does not bump updated_at. Support list/query by folder with the present-vs-absent distinction (None=all, ''=unfiled, id=that folder) and routes (GET /api/artifacts?folder=<id>). Artifacts library UI: folder tree in the side rail, drag-to-file, create/rename/delete, and an unfiled bucket.",
           "done_when": "Folders CRUD; filing is metadata-only (no updated_at bump); renaming a folder leaves artifact records untouched; deleting a folder falls its members back to unfiled; membership persists across reload; nested folders validated.",
           "deps": []
@@ -7810,13 +7810,13 @@
         "plan": "PEP"
       },
       {
-        "id": "PEP-6",
-        "title": "Artifact folders",
+        "id": "PEP-7",
+        "title": "Artifacts as an indexed knowledge source",
         "plan": "PEP"
       },
       {
-        "id": "PEP-7",
-        "title": "Artifacts as an indexed knowledge source",
+        "id": "PEP-8",
+        "title": "Local static artifact deploy (webapp kind + serve route)",
         "plan": "PEP"
       },
       {
@@ -10266,9 +10266,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 11,
+        "todo": 10,
         "blocked": 0
       },
       {
