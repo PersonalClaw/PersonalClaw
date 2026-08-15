@@ -173,3 +173,84 @@ def test_anthropic_test_connection_no_key_is_not_ok():
     cat = BrandedCatalog(spec, endpoint="https://x", api_key="")
     res = _run(cat.test_connection())
     assert res.ok is False and "key" in (res.detail or "").lower()
+
+
+# ── The pricing map (MRT-2): optional, and it ROUND-TRIPS ────────────────────────────────
+
+
+def test_spec_pricing_defaults_empty_and_round_trips():
+    """A spec that declares no prices must serialize/deserialize to the same (empty) map — an
+    absent declaration stays absent rather than becoming a zero-priced (free) model."""
+    spec = _spec("groq")
+    assert spec.pricing == {}
+    assert BrandedProviderSpec.from_dict(spec.to_dict()) == spec
+
+
+def test_spec_pricing_round_trips_through_json():
+    """to_dict/from_dict parity over EVERY field, JSON-serialized in between — the round-trip
+    discipline that catches a field added to the dataclass but not to the serializer."""
+    import json
+
+    from personalclaw.llm.prompt_cache import PromptCache
+
+    spec = BrandedProviderSpec(
+        type="acme",
+        protocol="anthropic",
+        default_base_url="https://api.acme.test",
+        api_key_env="ACME_API_KEY",
+        default_model="acme-large",
+        max_tokens=8192,
+        capabilities=frozenset({Capability.CHAT, Capability.VISION}),
+        fallback_models=({"id": "acme-large", "name": "Acme Large"},),
+        notes="acme: openai-compatible endpoint.",
+        prompt_cache=PromptCache.AUTOMATIC,
+        pricing={
+            "acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0},
+            "acme-small-*": {"in_per_mtok": 0.25, "out_per_mtok": 1.25},
+        },
+    )
+
+    restored = BrandedProviderSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+
+    assert restored == spec
+    assert restored.pricing["acme-large"] == {"in_per_mtok": 3.0, "out_per_mtok": 15.0}
+    assert restored.to_dict() == spec.to_dict()
+
+
+def test_spec_with_pricing_is_still_hashable():
+    """The spec is frozen and used as a value; a dict field must not break ``hash()``."""
+    spec = BrandedProviderSpec(type="acme", pricing={"m": {"in_per_mtok": 1.0}})
+    assert hash(spec) == hash(BrandedProviderSpec(type="acme"))
+    assert {spec}  # usable in a set
+
+
+def test_registered_spec_and_spec_pricing_resolve_a_named_instance(monkeypatch):
+    """``spec_pricing`` answers for the provider TYPE and for a user-named instance of it, and
+    returns an empty map (never a rate) for an unknown provider."""
+    from personalclaw.sdk import provider_helpers
+
+    spec = BrandedProviderSpec(type="acme", pricing={"acme-large": {"in_per_mtok": 3.0}})
+    monkeypatch.setattr(provider_helpers, "_REGISTERED_SPECS", {"acme": spec})
+
+    assert provider_helpers.registered_spec("acme") is spec
+    assert provider_helpers.registered_spec("acme-work") is spec  # named instance of the type
+    assert provider_helpers.registered_spec("unknown") is None
+    assert provider_helpers.spec_pricing("acme") == {"acme-large": {"in_per_mtok": 3.0}}
+    assert provider_helpers.spec_pricing("unknown") == {}
+
+
+def test_register_branded_app_records_the_spec_for_core_lookup():
+    """The registration side effect is what makes app-declared pricing visible to
+    routing/rates.py — with no app→core push and no core→app import."""
+    from personalclaw.sdk import provider_helpers
+
+    spec = BrandedProviderSpec(
+        type="acme-pricing-probe", pricing={"acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 4.0}}
+    )
+    try:
+        register_branded_app(spec)
+        assert provider_helpers.spec_pricing("acme-pricing-probe") == {
+            "acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 4.0}
+        }
+    finally:
+        provider_helpers._REGISTERED_SPECS.pop("acme-pricing-probe", None)

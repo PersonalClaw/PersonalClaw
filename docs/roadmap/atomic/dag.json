@@ -3098,7 +3098,7 @@
         {
           "id": "MRT-2",
           "title": "Shared pricing rate table (rate_for + model_rates.json + BrandedProviderSpec.pricing)",
-          "status": "todo",
+          "status": "done",
           "scope": "§5.1 Where pricing lives (this plan owns the rate table)",
           "done_when": "routing/rates.py:rate_for(provider,model) resolves effective rate as overlay > app default > absent; BrandedProviderSpec (sdk/provider_helpers.py) gains optional pricing map that round-trips; ~/.personalclaw/model_rates.json (atomic_write) overrides app defaults and editing it changes rate_for output with no restart-order dependency; local providers price 0.0 (SC #7). Cross-plan: offered as the shared impl to AUTONOMY-GUARDRAILS SpendMeter dollars_est and WF2-R13 cost_usd (both already built) — adoption, not a blocker.",
           "deps": []
@@ -7754,11 +7754,6 @@
         "plan": "MRI"
       },
       {
-        "id": "MRT-2",
-        "title": "Shared pricing rate table (rate_for + model_rates.json + BrandedProviderSpec.pricing)",
-        "plan": "MRT"
-      },
-      {
         "id": "MRT-3",
         "title": "Usage/spend read model — fold, /api/usage, Usage UI, monthly recap",
         "plan": "MRT"
@@ -9920,9 +9915,9 @@
         "code": "MRT",
         "plan": "MODEL-ROUTING-TELEMETRY",
         "total_atoms": 5,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
