@@ -720,13 +720,19 @@ def read_lease(task_id: str) -> Lease | None:
 def claim_task(
     task_id: str, *, holder: str, now: float, ttl_seconds: int | None = None
 ) -> tuple[Lease | None, str]:
-    """Acquire or renew a lease, under a cross-process lock. Returns `(lease, error)`.
+    """Acquire or renew a lease, under an exclusive lock. Returns `(lease, error)`.
 
     The read-modify-write is wrapped in `single_flight` — the established flock primitive — because
     per-entity JSON files have no transactions, so "read the lease, decide, write the lease" is
     otherwise a race between the read and the write. A LOSER of the lock is told the task is held
     rather than proceeding: single-flight means don't double-run, and a caller that ignored the miss
     would be doing exactly the double-claim the lock exists to prevent.
+
+    That lock covers THREADS as well as processes (flock is per open file description and
+    `single_flight` opens a fresh one per call), which is the property `PP-12`'s `Lease` admission
+    policy rests on: the engine fans out in-process with `asyncio.create_task`, so a cross-process-
+    only claim would not cap the fan-out shape that actually occurs. Measured both ways — 16 threads
+    on one resource yield exactly one holder with this wrapper, and 3 to 15 holders without it.
 
     The decision itself is `acquire`, unchanged — this function is only the durability around it, so
     there is one rule and one place it is applied.

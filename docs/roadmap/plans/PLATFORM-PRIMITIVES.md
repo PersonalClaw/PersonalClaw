@@ -837,3 +837,58 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   open, so it is deliberately NOT done here. **Unblock:** the owner picks (1) or (2). Nothing else in the
   atom is in question — `Dwell` and `MetricGate` reuse `loop.tick.StepConfig`'s parsed thresholds and
   their tests pass (57 of 58 in the file pass; the one red is the lease race).
+- [PP-12] **DONE — ruled OPTION (1), and the diagnosis above was measured against a MUTATED tree.**
+  The owner picked (1): the lease must exclude in-process too, because the engine fans out with
+  `asyncio.create_task` (`controller.py:2234`) and a cross-process-only lease would fail to cap the
+  only fan-out shape that occurs — two items in one gateway both holding a rate-limited endpoint.
+  Option (2) was rejected as shipping a control that cannot do the job it exists for.
+  **Implementing (1) turned out to require deleting code, not adding it.** The branch's committed
+  `pool.py` carried a leftover falsification probe: `claim_task`'s `single_flight` wrapper had been
+  **stripped and replaced with `# FALSIFICATION-PROBE-PP12-CAS: check-then-act, no flock.`** — the
+  whole of the branch's 28-line `pool.py` diff was that mutation, never restored. So the read-modify-
+  write was running with **no lock at all**, and the root cause above ("`single_flight` is
+  cross-process only, so threads are outside its guarantee") was derived from a tree in which
+  `single_flight` was never called. Restoring the wrapper — `pool.py` is now byte-identical to `main`
+  apart from a docstring — made the suite green with no new mechanism, no second lease, and no extra
+  lock. There was never an in-process hole to close.
+  **The narrower reading is simply false, and now measured rather than reasoned.** `fcntl.flock` is
+  scoped to the *open file description*, and `single_flight` opens a fresh one per call, so two
+  THREADS in one process contend exactly as two processes do. Probed directly: 16 threads on one key,
+  each holding the critical section 20ms — **peak simultaneous holders inside it = 1**, and only 1 of
+  16 acquired at all. That property is now (a) documented at `concurrency.single_flight` and
+  `pool.claim_task`, whose "cross-process" wording is what caused the misdiagnosis, and (b) pinned by
+  a new test, `test_the_flock_under_the_claim_excludes_THREADS_not_only_PROCESSES`, which asserts the
+  PEAK rather than a serial count — a serial count cannot tell overlap from fast succession.
+  **Measured holder counts, `test_sixteen_concurrent_claims_..._exactly_one_holder`.** BEFORE (probe
+  in place, three runs): **3, 11, 15** holders won the one lease — plus the 6/7/7/13 recorded above,
+  so seven independent multi-winner measurements. AFTER (wrapper restored): **1 holder, every run** —
+  the full file green 7 times (4 × 49 tests, then 3 × 50 after the new rail), one of them at load
+  average 65.9 with four sibling agents building, so the pass is not a quiet-box artifact.
+  **Shared-caller census (`grep -rn "claim_task\|single_flight" src/`).** `claim_task` has exactly one
+  production caller, `controller.py:1798`. `single_flight` has ten: `durability/service.py` ×4
+  (export/snapshot/drill/sync), `durability/shards.py` (shard-export), `workflows/leases.py` ×2
+  (`claim:{target_id}`), `workflows/overlap.py` (workflow-overlap-drain), `history.py` ×2
+  (`consolidate:{key}`, mem-promote-episodic), and `pool.py` itself (claim + release). **Every one of
+  them is safe by construction, because the final diff of `pool.py` and `concurrency.py` against
+  `main` is COMMENTS ONLY** — no semantics were widened, nothing was layered under the RMW, and
+  `single_flight`'s non-blocking cross-process behaviour is untouched. The deadlock question that
+  option (1) raised is therefore moot: no lock is held across an `await` or a blocking syscall,
+  because no lock was added. The critical section is still `claim_task`'s RMW and nothing else.
+  **Falsified, three ways.** (i) Re-applying the probe reds the race test with `AssertionError: 3 /
+  11 / 15 holders won one lease` — so the flock, not a timing shift, is what closes it. (ii) `Dwell`
+  returning `None` unconditionally reds `test_dwell_holds_until_the_bake_floor_elapses_then_abstains`
+  and `test_dwell_reads_the_loops_own_parser` (`assert None == 0`). (iii) Dropping `MetricGate`'s
+  trailing neutral step reds `test_a_passing_metric_lets_the_step_through` (`assert 0 is None`) and
+  `test_the_metric_gate_does_not_enforce_the_bake_floor_as_well` with
+  `Decision(action=COMPLETE, step_index=1, reason='all steps complete')` — exactly the "plan finished"
+  / "rollback cap hit" conflation that step exists to prevent.
+  **Gate.** `make lint` clean (black, isort, flake8, mypy: 902 files, no issues). Targeted: 50 passed
+  ×3. Collateral on the shared primitive: `-k "workflow or pool or admission or concurrency"` →
+  **5085 passed, 4 skipped**. `PP-11`'s golden frontier file re-runs unchanged, with
+  `test_workflows_{admission,leases,lease_confirm,pool,controller,tick,containers}` +
+  `test_concurrency` → 353 passed. `test_roadmap_dag_derived` + `test_agent_reference` +
+  `test_inert_surface_baseline` → 34 passed. **The branch's `dag.json` derived block was already
+  flipped to PP-12-done while the atom itself still read `todo`** — the pair reds
+  `test_roadmap_dag_derived`; both now say `done` and `regen_dag_derived.py` reports "already
+  current", 0 non-ASCII bytes. CHANGELOG entry re-read and left as written: it is still accurate,
+  since nothing user-observable changed. Plan header's "N of 16 shipped" left alone, per `PP-8`.

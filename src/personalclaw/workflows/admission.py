@@ -7,13 +7,22 @@ state?* — and share zero lines: `workflows/tick.frontier()` (typed lanes, per-
 and `triggers/` `tick_once`. Each holds a capability the others structurally cannot express, so
 every new admission rule lands wherever its author happened to be standing.
 
-This module is the seam that makes them one mechanism. It introduces **nothing new**: the three
-policies below are exactly the three rules `frontier()` already applied, moved behind a named
-interface and composed explicitly. That restraint is the point — a refactor that also changed
-behaviour could not be verified, because there is no oracle for *"did the scheduler still decide
-the same thing"*. The oracle here is `tests/test_workflows_frontier_golden.py`, whose fixtures were
-captured before a line of this existed. New capability (`Lease`, `Dwell`, `MetricGate`) lands in
-`PP-12`, on a seam already proven inert.
+This module is the seam that makes them one mechanism. `PP-11` introduced **nothing new**: `Lane`,
+`ContainerConcurrency` and `Wip` are exactly the three rules `frontier()` already applied, moved
+behind a named interface and composed explicitly. That restraint was the point — a refactor that
+also changed behaviour could not be verified, because there is no oracle for *"did the scheduler
+still decide the same thing"*. The oracle is `tests/test_workflows_frontier_golden.py`, whose
+fixtures were captured before a line of this existed.
+
+`PP-12` is where capability lands, on the seam already proven inert: `Lease` (exclusive occupancy of
+a named external resource — the pool's capability), and `Dwell`/`MetricGate` (a bake floor and a
+metric gate that rolls a step back — the loop's). Both reuse the proven implementation rather than
+re-deriving it: `Lease` decides with `pool.acquire`, the same compare-and-swap decision the task
+pool's flocked claim path uses, and `Dwell`/`MetricGate` parse with the loop's own
+`step_config_from_phase` and judge with `loop.tick.evaluate`. Nothing here is a second
+implementation of anything. `default_policies(state=None)` returns `PP-11`'s three, so a spec
+declaring none of the new keys runs the same code it always did — additivity by construction,
+re-proven by the golden file.
 
 **One shape covers both of today's admission questions.** Lane admission asks "may one more `llm`
 node start, given how many are already in flight"; a capped `foreach` asks "may one more item of
@@ -37,14 +46,26 @@ frontier is re-derived from persisted state every tick rather than incrementally
 what makes `rewind` tractable and replay meaningful; a policy that consulted the wall clock would
 decide differently on replay and the journal's guarantees would be worthless. Enforced by an AST
 rail in `tests/test_workflows_frontier_golden.py`, not by convention.
+
+A lease TTL and a bake floor both imply a clock, which is exactly the rail `PP-12` had to satisfy
+rather than route around. It is satisfied by taking `now` as a PARAMETER (`AdmissionState`), the
+way `pool.acquire(..., now=)` and `loop.tick.evaluate(cfg, state, now)` already do: the impurity
+moves to the single caller that owns a clock and the run's persisted state, and every `capacity()`
+here stays a pure function of what it was handed. The rail still passes unweakened — the two
+modules it scans import no clock, and `AdmissionState` is what makes that possible rather than
+what hides it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
+from personalclaw.loop.tick import Action, Decision, StepConfig, TickConfig, TickState
+from personalclaw.loop.tick import evaluate as evaluate_step
+from personalclaw.loop.tick import step_config_from_phase
+from personalclaw.workflows import pool
 from personalclaw.workflows.models import LANE_COMPUTE, LANE_IO, LANE_LLM, Node
 
 #: Default per-lane admission caps. `compute` is effectively unmetered — a transform is
@@ -59,6 +80,16 @@ class Scope(str, Enum):
     LANE = "lane"
     #: One fan-out container's in-flight items, keyed by the container's instance path.
     CONTAINER = "container"
+    #: One named EXTERNAL resource an item holds for its whole body, keyed by the resource name
+    #: (PP-12). Not the container bucket: two different fan-outs — in two different runs — can
+    #: contend for one endpoint, and a per-container count cannot express that. This is the bucket
+    #: whose occupancy lives on disk rather than in the run's own state.
+    RESOURCE = "resource"
+    #: One step instance about to start, keyed by its instance path (PP-12). A step bucket holds at
+    #: most one thing, so its only interesting capacity is ZERO — "not yet". That is what a bake
+    #: floor and a metric gate say, which is why they are capacities like everything else rather
+    #: than a second kind of rule.
+    STEP = "step"
 
 
 class Hold(str, Enum):
@@ -76,14 +107,31 @@ class Hold(str, Enum):
     #: Refused, recorded nowhere. A capped container's unstarted item is not `deferred` (the lane
     #: was fine) and not `wip_held` (no invariant was declared) — it is simply not its turn.
     UNRECORDED = ""
+    #: Another holder owns the resource this item needs (PP-12). Distinct from `DEFERRED` because
+    #: the holder is usually not this run: "waiting for the `endpoint` lease held by run X" and
+    #: "the llm lane is full" send a reader to completely different places.
+    LEASED = "leased"
+    #: A declared bake floor has not elapsed (PP-12). The refusal expires by itself, at a time the
+    #: engine can name — which is why it is worth distinguishing from every other hold.
+    BAKING = "baking"
+    #: A metric regressed (PP-12). The only refusal that also CHANGES THE PLAN: it rolls a step
+    #: back. Reported as anything else, the re-run of an already-finished step looks like a bug.
+    REGRESSED = "regressed"
 
 
-#: Tie-break rank, used ONLY when two policies bind at the same capacity. Ordered by whether the
-#: refusal has a name a user can read back: a declared run-level invariant outranks an anonymous
-#: per-node capacity limit, because a run-level invariant a per-node knob can quietly contradict is
-#: not an invariant.
+#: Tie-break rank, used ONLY when two policies bind at the same capacity. Ordered by how badly a
+#: wrong name misleads the person reading the refusal back.
+#:
+#: An anonymous per-node capacity limit is the least informative, a declared invariant outranks it
+#: (a run-level invariant a per-node knob can quietly contradict is not an invariant), mutual
+#: exclusion over an EXTERNAL resource outranks that (its failure mode is not a slow run but two
+#: holders both believing they own the resource), and a metric regression is highest because it is
+#: the only refusal that also rolls a step back — a rollback attributed to a bake floor would leave
+#: the re-run of a finished step unexplained.
 RANK_CAPACITY = 0
 RANK_INVARIANT = 10
+RANK_EXCLUSION = 20
+RANK_REGRESSION = 30
 
 
 @dataclass(frozen=True)
@@ -226,6 +274,197 @@ class Wip(AdmissionPolicy):
 
 
 @dataclass(frozen=True)
+class AdmissionState:
+    """The clock-and-disk inputs the `PP-12` policies read, gathered ONCE by the caller.
+
+    **This is how `Lease(ttl)` gets a TTL without breaking `frontier()`'s purity.** A TTL implies a
+    clock and a lease implies persisted occupancy, and the frontier may consult neither. So `now`
+    and the lease records are PARAMETERS — the established pattern in this codebase, and the same
+    one `pool.acquire(..., now=)` and `loop.tick.evaluate(cfg, state, now)` already use. Every
+    `capacity()` below stays a pure function of `(declaration, this snapshot, request)`: hand it the
+    same snapshot twice and it decides twice the same, which is what makes replay meaningful.
+
+    The impurity does not vanish — it MOVES, to the one caller that already owns a clock and the
+    run's persisted state (`controller.RunController`). `frontier()` never builds one of these,
+    which is also the structural half of this atom's additivity claim: `default_policies()` with no
+    state returns exactly the three `PP-11` policies, so a spec declaring none of the new keys does
+    not merely behave as before — it runs the same code.
+    """
+
+    #: Wall clock for this decision, supplied by the caller. Never read here.
+    now: float = 0.0
+    #: Who is asking, for the lease. A session-scoped identity (run + item), because the whole point
+    #: of a named holder is that a stuck claim is diagnosable.
+    holder: str = ""
+    #: Resource name → the lease record persisted on disk, as the caller read it.
+    leases: Mapping[str, pool.Lease] = field(default_factory=dict)
+    #: TTL for a lease this pass would take. Bounded by `pool.MAX_LEASE_SECS` inside the record.
+    lease_ttl_secs: int = pool.DEFAULT_LEASE_SECS
+    #: Step path → when its bake window started (the prior step's completion), from persisted state.
+    since: Mapping[str, float] = field(default_factory=dict)
+    #: Step path → the metric observed for it, resolved from the run's outputs by the caller.
+    metrics: Mapping[str, float] = field(default_factory=dict)
+    #: Step path → the floor the prior step established. Below it, the metric has REGRESSED.
+    floors: Mapping[str, float] = field(default_factory=dict)
+    #: Step path → consecutive rollbacks already taken on it, so the cap can bite.
+    rollbacks: Mapping[str, int] = field(default_factory=dict)
+    #: Consecutive rollbacks on one step before giving up. `loop.tick.TickConfig`'s default.
+    rollback_cap: int = 3
+
+
+@dataclass(frozen=True)
+class Lease(AdmissionPolicy):
+    """Exclusive occupancy of a named external resource — a `lease:` declaration (PP-12).
+
+    The capability neither lane caps nor `max_concurrency` can express: a resource each ITEM HOLDS
+    for the length of its body, shared across containers, runs and processes. `max_concurrency: 1`
+    serializes one fan-out inside one run; it says nothing about the second run that starts while
+    the first is mid-flight, and nothing at all after a restart.
+
+    **The decision is `pool.acquire`, unchanged.** Not a second lease implementation: `S57`
+    measured an `unlink`-based single-use claim failing 36 of 40 races, and a lease that loses a
+    race is worse than no lease because both holders believe they own the work. So this policy
+    calls the same decision function the task pool's claim path calls, and the WRITE stays where
+    the compare-and-swap lives (`pool.claim_task`, a `single_flight` flocked read-modify-write).
+    This policy therefore ADVISES — it composes with the others, and names the refusal — while the
+    claim remains authoritative. A caller that admitted here and then lost the flock must still
+    hold the item, and that is not a redundancy: it is the difference between deciding and
+    committing.
+
+    An empty `holder` abstains rather than refusing, following `pool.read_lease`'s own precedent
+    (a malformed lease reads as NO lease): failing closed on a missing identity would strand every
+    leased item forever with nobody able to release it, and a strand does not resolve while
+    contention does. Safe precisely because the claim, not this verdict, grants the resource.
+    """
+
+    state: AdmissionState = field(default_factory=AdmissionState)
+
+    name = "lease"
+    hold = Hold.LEASED
+    rank = RANK_EXCLUSION
+
+    def capacity(self, request: AdmissionRequest) -> int | None:
+        if request.scope != Scope.RESOURCE or not request.key:
+            return None
+        if not self.state.holder.strip():
+            return None
+        decision, _error = pool.acquire(
+            self.state.leases.get(request.key),
+            task_id=request.key,
+            holder=self.state.holder,
+            now=self.state.now,
+            ttl_seconds=self.state.lease_ttl_secs,
+        )
+        # 1 rather than "unbounded": a lease is by definition an occupancy of ONE, and returning
+        # `None` when the resource happens to be free would let a wider policy admit two items into
+        # a bucket that can hold one.
+        return 1 if decision is not None else 0
+
+
+@dataclass(frozen=True)
+class Dwell(AdmissionPolicy):
+    """A bake floor before a step may start — `min_dwell_secs` (PP-12).
+
+    Dwell exists only in `loop/tick.evaluate` today, consumed by exactly one kind, so a workflow
+    cannot say "let the deploy settle for ten minutes before the smoke test". The threshold is
+    parsed by the loop's OWN parser (`step_config_from_phase`), not re-read here: two parsers for
+    `min_dwell_secs` is exactly the four-dialect problem this program exists to end, and that parser
+    already ignores garbage so a typo degrades to "no dwell" instead of a stalled run.
+
+    Abstains once the window has elapsed rather than returning 1 — an elapsed bake floor has no
+    opinion about how many things may run, and saying 1 would silently serialize the lane.
+    """
+
+    state: AdmissionState = field(default_factory=AdmissionState)
+
+    name = "min_dwell_secs"
+    hold = Hold.BAKING
+    rank = RANK_INVARIANT
+
+    def capacity(self, request: AdmissionRequest) -> int | None:
+        if request.scope != Scope.STEP or request.node is None:
+            return None
+        floor = step_config_from_phase(dict(request.node.config or {})).min_dwell_secs
+        if floor <= 0:
+            return None
+        started = self.state.since.get(request.key)
+        if started is None:
+            # No prior completion to measure from: the first step of a run has nothing to bake
+            # after. Refusing here would hold a run that has not started anything yet.
+            return None
+        return 0 if (self.state.now - started) < floor else None
+
+
+@dataclass(frozen=True)
+class MetricGate(AdmissionPolicy):
+    """A metric gate on a step — `metric_pass` / `metric_hold`, with a regression rolling back.
+
+    Reuses `loop.tick.evaluate` WHOLE, not just its thresholds: the config is built by the loop's
+    parser and fed to the loop's branch order, so the `metric < prior_step_floor → ROLLBACK` rule
+    has exactly one implementation in the tree. A second copy of that comparison is how the two
+    schedulers drifted in the first place, and the drift would be invisible — both sides would look
+    plausible and only disagree on the boundary.
+
+    `capacity()` collapses the loop's `Action` to the one bit admission carries (`0` = not yet), and
+    `decision()` exposes the full `Decision` for the caller that must ACT on a rollback. That split
+    is deliberate: composition needs a number, while "which step do I re-run, and have I given up
+    yet" is a plan change, and the policy is not the thing that changes plans.
+
+    An unobserved metric abstains. A gate cannot judge a step that has not produced a number yet;
+    refusing would deadlock the very run that was going to produce it.
+    """
+
+    state: AdmissionState = field(default_factory=AdmissionState)
+
+    name = "metric_gate"
+    hold = Hold.REGRESSED
+    rank = RANK_REGRESSION
+
+    def decision(self, request: AdmissionRequest) -> Decision | None:
+        """The loop's own verdict for one workflow step, or `None` when this policy abstains."""
+        if request.scope != Scope.STEP or request.node is None:
+            return None
+        cfg = step_config_from_phase(dict(request.node.config or {}))
+        if cfg.metric_pass is None:
+            return None
+        metric = self.state.metrics.get(request.key)
+        if metric is None:
+            return None
+        return evaluate_step(
+            # A TRAILING NEUTRAL STEP, deliberately: `evaluate` reports an advance off the end of
+            # the plan as `COMPLETE`, and this policy asks about ONE step — "the plan is finished"
+            # is not an answer it can carry. With the trailing step, `COMPLETE` can only mean the
+            # rollback cap was hit, which is the one COMPLETE the caller must act on.
+            TickConfig(steps=(cfg, StepConfig()), rollback_cap=self.state.rollback_cap),
+            TickState(
+                step_index=0,
+                # Neutralised so the dwell branch cannot fire inside the metric gate: dwell is
+                # `Dwell`'s job, and two policies enforcing one threshold is how a control gets
+                # enforced twice and reported once.
+                step_started_at=self.state.now - cfg.min_dwell_secs,
+                # The gate's I/O half already ran — the step's metric is IN HAND, which is the
+                # workflow equivalent of the adapter's verify/judge having answered.
+                gate_passed=True,
+                findings_in_step=cfg.min_findings,
+                metric=metric,
+                prior_step_floor=self.state.floors.get(request.key),
+                rollbacks_on_step=int(self.state.rollbacks.get(request.key, 0)),
+            ),
+            self.state.now,
+        )
+
+    def capacity(self, request: AdmissionRequest) -> int | None:
+        decision = self.decision(request)
+        if decision is None:
+            return None
+        # HOLD (marginal), ROLLBACK (regressed) and COMPLETE (rollback cap reached) all mean "not
+        # this step, not now". ADVANCE and EXECUTE mean the gate has no objection.
+        if decision.action in (Action.HOLD, Action.ROLLBACK, Action.COMPLETE):
+            return 0
+        return None
+
+
+@dataclass(frozen=True)
 class Admission:
     """The composed verdict for one bucket.
 
@@ -273,13 +512,33 @@ def compose(policies: tuple[AdmissionPolicy, ...], request: AdmissionRequest) ->
     return Admission(capacity=best_cap, binding=best)
 
 
-def default_policies(limits: Limits, *, single_active_feature: bool) -> tuple[AdmissionPolicy, ...]:
-    """Today's three rules, in order: lane caps, then the container's declaration, then the run's
-    invariant. The order is documentation — composition is by capacity, not by position — but it
-    reads outermost-first, which is the order a reader asks the questions in.
+def default_policies(
+    limits: Limits,
+    *,
+    single_active_feature: bool,
+    state: AdmissionState | None = None,
+) -> tuple[AdmissionPolicy, ...]:
+    """The admission rules, in order: lane caps, the container's declaration, the run's invariant,
+    then (given a `state`) the resource lease, the bake floor and the metric gate. The order is
+    documentation — composition is by capacity, not by position — but it reads outermost-first,
+    which is the order a reader asks the questions in.
 
     Built once per `frontier()` call and threaded down the recursion, so every container in a run is
     judged by the same list. Constructing them per-node is how a run-level invariant becomes
     per-node-optional by accident.
+
+    **`state=None` returns exactly `PP-11`'s three policies.** That is not a convenience default: it
+    is this atom's additivity guarantee made structural. `frontier()` is pure and cannot build an
+    `AdmissionState`, so the frontier's list is unchanged by construction and `PP-11`'s golden file
+    is a real proof rather than a coincidence. The `PP-12` policies answer scopes the frontier
+    never asks about (`RESOURCE`, `STEP`), so even the widened list leaves every lane and container
+    verdict identical — asserted, not assumed, in `test_workflows_admission_policies.py`.
     """
-    return (Lane(limits=limits), ContainerConcurrency(), Wip(active=single_active_feature))
+    base: tuple[AdmissionPolicy, ...] = (
+        Lane(limits=limits),
+        ContainerConcurrency(),
+        Wip(active=single_active_feature),
+    )
+    if state is None:
+        return base
+    return base + (Lease(state=state), Dwell(state=state), MetricGate(state=state))
