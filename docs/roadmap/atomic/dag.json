@@ -6481,6 +6481,7 @@
           "id": "SH-5",
           "title": "Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc",
           "status": "done",
+          "pr": 1396,
           "scope": "Session 3 — Adversarial gate testing / T3.1, T3.2, T3.3, V3; Design S3; Contracts C3; owner task 4 (approve publishing corpus)",
           "done_when": "each of the five attack classes has >=1 asserting test; a swap-after-scan race fixture proves scanned-bytes==installed-bytes holds; nightly job in full.yml runs the corpus; docs/security/scanner-testing.md lets an outsider reproduce; a deliberate scanner weakness on a branch turns the corpus red",
           "deps": []
@@ -7106,7 +7107,8 @@
         {
           "id": "PEP-8",
           "title": "Local static artifact deploy (webapp kind + serve route)",
-          "status": "todo",
+          "status": "done",
+          "pr": 1396,
           "scope": "Add a webapp artifact kind (a multi-file artifact whose entry is index.html) with multi-file storage and deploy metadata (entry point, optional build command, stable slug), reusing the filed-set grouping from artifact folders. Add a gateway static-serve route GET /artifacts/serve/{slug}/{path:.*} that serves the artifact's files behind session auth and a path-traversal guard, with a strict CSP that fences the served page like a widget (no ambient access to the gateway /api). Artifacts UI: a Deploy/Open action opening the artifact at its stable in-gateway URL (new tab or embedded pane), a deployed-app listing with URL, and teardown that removes the route. Local-only: public exposure is explicitly out of scope (deferred to authenticated-exposure work); no cloud provisioner is built.",
           "done_when": "An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened and interacted with in-app; a traversal attempt is refused; the served page cannot call /api (CSP fence validated explicitly); teardown removes the route.",
           "deps": [
@@ -7798,8 +7800,8 @@
         "plan": "PEP"
       },
       {
-        "id": "PEP-8",
-        "title": "Local static artifact deploy (webapp kind + serve route)",
+        "id": "PEP-9",
+        "title": "React artifact build path",
         "plan": "PEP"
       },
       {
@@ -10239,9 +10241,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {

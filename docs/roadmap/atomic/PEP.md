@@ -17,7 +17,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PEP-5` | ⬜ | Onboarding import step UI | `PEP-4`, `EXT:ONBOARDING-UX:step-stack-primitive` | Fresh home with a fixture source shows the step; import completes without any secret appearing; re-entry shows already-imported items as 'existing'; skip path works; validation recorded. |
 | `PEP-6` | ✅ | Artifact folders | — | Folders CRUD; filing is metadata-only (no updated_at bump); renaming a folder leaves artifact records untouched; deleting a folder falls its members back to unfiled; membership persists across reload; nested folders validated. |
 | `PEP-7` | ⬜ | Artifacts as an indexed knowledge source | — | Saving a markdown artifact makes it searchable in Knowledge without appearing in the Knowledge list; editing refreshes and deleting removes it from the index; enabling on a home with existing artifacts backfills exactly once and reboot doesn't re-run; a credential in an artifact is redacted before indexing; config round-trips. |
-| `PEP-8` | ⬜ | Local static artifact deploy (webapp kind + serve route) | `PEP-6` | An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened and interacted with in-app; a traversal attempt is refused; the served page cannot call /api (CSP fence validated explicitly); teardown removes the route. |
+| `PEP-8` | ✅ | Local static artifact deploy (webapp kind + serve route) | `PEP-6` | An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened and interacted with in-app; a traversal attempt is refused; the served page cannot call /api (CSP fence validated explicitly); teardown removes the route. |
 | `PEP-9` | ⬜ | React artifact build path | `PEP-8`, `EXT:EXECUTION-ISOLATION:resource-limited-build-spawn` | A small React artifact builds and serves as static files through the deploy route and is interactable in-app; a build failure is legible, not a hang. |
 | `PEP-10` | ⬜ | Always-on conventions viewer + first domain-craft skills | — | The viewer matches what a session actually receives (spot-checked against an assembled prompt) and editing a project instruction round-trips safely; the three new skills load and surface when relevant, validated in a real session. |
 | `PEP-11` | ⬜ | First-party product-app suite program | `EXT:ECOSYSTEM-TOOLING:exemplar-scaffold` | Each app ships as its own validated PR, is listed in the Store, and is recorded as a platform exemplar; the suite is delivered app-by-app in leverage order with reuse (docs ride document-handling, spec builder rides the workflow engine, meetings extends minutes) rather than rebuilt backends. |
@@ -99,11 +99,29 @@ Extend the existing knowledge source framework so content-bearing artifacts are 
 
 ### `PEP-8` — Local static artifact deploy (webapp kind + serve route)
 
-**Status:** todo
+**Status:** done
 
 Add a webapp artifact kind (a multi-file artifact whose entry is index.html) with multi-file storage and deploy metadata (entry point, optional build command, stable slug), reusing the filed-set grouping from artifact folders. Add a gateway static-serve route GET /artifacts/serve/{slug}/{path:.*} that serves the artifact's files behind session auth and a path-traversal guard, with a strict CSP that fences the served page like a widget (no ambient access to the gateway /api). Artifacts UI: a Deploy/Open action opening the artifact at its stable in-gateway URL (new tab or embedded pane), a deployed-app listing with URL, and teardown that removes the route. Local-only: public exposure is explicitly out of scope (deferred to authenticated-exposure work); no cloud provisioner is built.
 
 **Done when:** An html widget artifact renders at /artifacts/serve/<slug>/ and can be opened and interacted with in-app; a traversal attempt is refused; the served page cannot call /api (CSP fence validated explicitly); teardown removes the route.
+
+**DONE.** `artifacts/deploy.py` owns the deploy registry (`<home>/artifacts/deployments.json`),
+the containment spine and the CSP constant; `artifacts/handlers.py` serves
+`GET /artifacts/serve/{slug}/{path:.*}` (registered with the artifact routes, so no
+second registration site) plus `POST`/`DELETE /api/artifacts/{slug}/deploy` and
+`GET /api/artifacts/deployed`. Containment is **asserted on resolved paths**, never
+string-matched: marker rejection is only a first gate — with it neutered every traversal
+test still passes (measured), and only removing the resolve-and-contain assertion plus the
+symlink refusal lets a traversal through (8 reds). The fence is a response **header**
+(`connect-src 'none'` + `default-src`/`form-action`/`base-uri`/`object-src 'none'`,
+`frame-ancestors 'self'`), asserted by directive VALUE so weakening one reds the suite.
+Teardown is registry removal — aiohttp freezes its router, so "removes the route" means the
+handler serves nothing for an undeployed slug; deleting an artifact tears its deployment
+down too. UI: `ArtifactDeploy` (Deploy / Preview pane / Open / Tear down) in the viewer and
+`DeployedAppsMenu` (the deployed-app listing with URLs) in the library toolbar.
+**Deferred, deliberately:** the multi-file *webapp kind* itself (`ALLOWED_KINDS` is
+unchanged) and its build-command metadata — extra files are already served from
+`<slug>/webapp/`, and the kind + build path is what `PEP-9` adds on top of this route.
 
 ### `PEP-9` — React artifact build path
 

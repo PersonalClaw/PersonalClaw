@@ -38,6 +38,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   declare each proposal kind it may raise in its manifest (`permissions.proposals`), which you see at
   install time; an undeclared kind is refused, and one app can never propose an action that calls
   into another app. Every app-raised proposal is recorded in the security event log.
+- **An HTML artifact can now be opened as a real page, not just previewed in a card.** Deploy a
+  widget/HTML artifact from its detail view and it is served at a stable in-app URL
+  (`/artifacts/serve/<slug>/`) you can open in a pane beside the artifact or in a new tab, so a
+  generated dashboard or tool can actually be clicked through instead of only read. The library
+  toolbar lists everything currently serving with its URL, and "Tear down" un-publishes it while
+  keeping the artifact and its history. This is local-only on purpose: the page sits behind the same
+  session auth as the rest of the dashboard — there is no public link — and it is fenced by a strict
+  content-security policy that leaves it unable to call PersonalClaw's own API, so an artifact
+  written by a model cannot use your session to act on your instance. Deleting an artifact
+  automatically stops serving it, and a request that tries to climb out of the artifact's own folder
+  is refused rather than answered.
 - **You can point PersonalClaw at an outside skill catalog and browse it in the Skills store.** Add a
   catalog under `packs.skill_catalogs` — a JSON index endpoint, or a repo laid out as
   `skills/<slug>/SKILL.md` — and it shows up as one more source alongside the bundled skills, with
