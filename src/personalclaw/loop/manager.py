@@ -561,6 +561,15 @@ async def reap_orphaned_loops(state, svc) -> int:
             planning_orphans.append(loop)
 
     async def _reap_running(loop: Loop) -> None:
+        # The live worker was reaped by the crash/restart — record it as a `watcher_reaped`
+        # ledger event (PP-5) so the flywheel sees a watcher cut off before its cadence
+        # (fewer cycles than the budget implies), not a template that simply under-produced.
+        try:
+            store.record_watcher_reaped(
+                loop.id, cycles=loop.total_cycles, reason="worker process lost to restart"
+            )
+        except Exception:
+            logger.debug("loop: watcher_reaped emit failed for %s", loop.id, exc_info=True)
         # A workspace-needing loop (brownfield code) can have its bound dir moved/
         # deleted during downtime. start() would re-provision against the gone path;
         # re-validate via the kind's launch precondition (the same one the start

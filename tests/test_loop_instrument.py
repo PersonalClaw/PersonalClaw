@@ -196,12 +196,14 @@ async def test_reproduce_uses_kind_deliverable_when_cfg_empty(monkeypatch, tmp_p
             kind_config={"goal_type": "open_ended", "deliverables": []},
         )
     )
-    # A finding is a cycle_NNN.json file in the loop's findings/ dir (worker-written on disk).
-    fdir = store.safe_loop_dir(loop.id) / "findings"
-    fdir.mkdir(parents=True, exist_ok=True)
+    # A finding is a cycle_NNN.json file the worker writes; PP-5 ingests it into the ledger, which
+    # is what get_findings (and thus reproduce_confirm) now reads. The watchdog ingests each poll
+    # before _complete calls reproduce_confirm, so ingest here to mirror that flow.
+    fdir = store.loop_dir(loop.id) / "findings"
     (fdir / "cycle_001.json").write_text(
         _json.dumps({"cycle": 1, "summary": "wrote REPORT.md"}), encoding="utf-8"
     )
+    store.record_cycle_findings(loop.id)
     captured = {}
 
     async def spy(goal, sc, finding, prior, **kw):
