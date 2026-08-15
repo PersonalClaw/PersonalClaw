@@ -1,24 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-/** A persisted, collapsible, drag-resizable panel SIZE. Used by the Code cockpit's
- *  left (files) + right (tasks) sidebars (horizontal width) and the bottom terminal
- *  (vertical height). Size + collapsed state persist to localStorage under `key`.
- *  `side` says which edge the drag handle sits on so the delta is applied with the
- *  correct sign — and whether the axis is horizontal (left/right → width, clientX)
- *  or vertical (top/bottom → height, clientY). The returned `width` is the panel's
- *  size along its axis (px), named generically for both axes.
+/** A persisted, drag- AND keyboard-resizable panel SIZE — the app's one window-splitter
+ *  primitive (WAI-ARIA `separator`). Lives in `ui/` because it is shared across areas:
+ *  the Code cockpit's sidebars + terminal, and `ui/SidePanel`'s docked inspector. Size
+ *  persists to localStorage at `${key}-w`. `side` says which edge the drag handle sits on
+ *  so the delta is applied with the correct sign — and whether the axis is horizontal
+ *  (left/right → width, clientX) or vertical (top/bottom → height, clientY). The returned
+ *  `width` is the panel's size along its axis (px), named generically for both axes.
+ *
+ *  Collapse is OPT-IN (`collapsible: true`). It is a distinct concept from size — most
+ *  resizable panels (every `SidePanel` docking, the composer, the chat file panel) are
+ *  never "collapsed", they are opened and closed by a parent — and bundling it meant a
+ *  width-only consumer wrote a dead `${key}-collapsed` key it never read. Off by default,
+ *  the primitive serves a width-only panel cleanly; the Code cockpit opts in.
+ *
+ *  Attach `onHandleDown`/`onHandleKey` to a handle that carries `role="separator"`,
+ *  `aria-orientation`, `tabIndex={0}`, an arrow-key-hinting `aria-label`, and
+ *  `aria-valuenow`/`min`/`max` — the contract `ui/splitterContract.test.tsx` enforces.
  */
 export function useResizablePanel(
   key: string,
-  opts: { def: number; min: number; max: number; side: 'left' | 'right' | 'top' | 'bottom' },
+  opts: { def: number; min: number; max: number; side: 'left' | 'right' | 'top' | 'bottom'; collapsible?: boolean },
 ) {
-  const { def, min, max, side } = opts
+  const { def, min, max, side, collapsible = false } = opts
   const vertical = side === 'top' || side === 'bottom'
   const [width, setWidth] = useState<number>(() => {
     const v = Number(localStorage.getItem(`${key}-w`))
     return v >= min && v <= max ? v : def
   })
-  const [collapsed, setCollapsed] = useState<boolean>(() => localStorage.getItem(`${key}-collapsed`) === '1')
+  const [collapsed, setCollapsed] = useState<boolean>(() => collapsible && localStorage.getItem(`${key}-collapsed`) === '1')
 
   // Persist the width, but DEBOUNCED: a pointer drag fires setWidth on every
   // pointermove (60+/sec), and an un-debounced effect did a synchronous localStorage
@@ -34,7 +44,12 @@ export function useResizablePanel(
   // 200ms debounce window) doesn't lose the final size. Unmount-only (empty dep) so it
   // doesn't reintroduce the per-frame write; reads the live width via a ref.
   useEffect(() => () => { localStorage.setItem(`${key}-w`, String(widthRef.current)) }, [key])
-  useEffect(() => { localStorage.setItem(`${key}-collapsed`, collapsed ? '1' : '0') }, [key, collapsed])
+  // Only a collapsible panel persists (or writes) its collapsed flag; a width-only
+  // consumer must not litter localStorage with a `${key}-collapsed` key nothing reads.
+  useEffect(() => {
+    if (!collapsible) return
+    localStorage.setItem(`${key}-collapsed`, collapsed ? '1' : '0')
+  }, [key, collapsed, collapsible])
 
   // Pointer-drag the handle. For a LEFT panel the handle is on its right edge, so a
   // rightward drag grows it; for a RIGHT panel the handle is on its left edge, so a
