@@ -5186,7 +5186,8 @@
         {
           "id": "WS-3",
           "title": "web-source: five-detector stack, selector configs, escalating fetch, preview+create flow",
-          "status": "todo",
+          "status": "done",
+          "pr": 1402,
           "scope": "§2.1 five detectors; §2.2 declarative selector configs + schema-derived validate_spec; §2.3 outcome-driven escalating fetch (net.fetch tier1 + web/render.py tier2) under one budget; §2.4 preview-then-save; §11 step 2. Reconcile against shipped triggers/web_poll.py extraction/budget rather than re-derive",
           "done_when": "Pasting a real changelog/blog URL yields a correct zero-LLM item preview via auto-detection and a homepage yields the pick-a-listing-page guidance; a manual selector config rescues a JS-lite failure (SC#1); a JS-heavy source succeeds only after render-tier escalation within max_requests with the escalation recorded, and allow_render:false degrades to a 'needs render tier' health status (SC#2)",
           "deps": [
@@ -5197,6 +5198,7 @@
           "id": "WS-4",
           "title": "feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph",
           "status": "done",
+          "pr": 1402,
           "scope": "§3.1 feed kinds + presets-as-recipes; §3.2 ETag/Last-Modified conditional-GET cursors; §3.3 guid composition + cross-feed canonical-URL dedupe; §6.3 raw enrichment via FeedItemGraph (no LLM nodes) + full variant fencing; §11 step 3",
           "done_when": "Polling the same feed twice produces zero duplicate items and the same story arriving via HN Algolia AND RSS produces ONE item with both attributions (also_seen_in) (SC#3); a raw source's items reach FTS + vector search with zero LLM calls, asserted structurally that the raw graph contains no LLM nodes (SC#6)",
           "deps": [
@@ -7935,11 +7937,6 @@
         "plan": "WF2WOR"
       },
       {
-        "id": "WS-3",
-        "title": "web-source: five-detector stack, selector configs, escalating fetch, preview+create flow",
-        "plan": "WS"
-      },
-      {
         "id": "WS-6",
         "title": "Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)",
         "plan": "WS"
@@ -7947,6 +7944,16 @@
       {
         "id": "WS-7",
         "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
+        "plan": "WS"
+      },
+      {
+        "id": "WS-8",
+        "title": "Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory",
+        "plan": "WS"
+      },
+      {
+        "id": "WS-9",
+        "title": "Sources UI in the Knowledge section + as-a-user validation",
         "plan": "WS"
       }
     ],
@@ -10074,9 +10081,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {

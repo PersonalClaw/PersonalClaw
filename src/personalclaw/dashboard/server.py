@@ -1831,6 +1831,7 @@ async def start_dashboard(
         from personalclaw.knowledge_providers.dir_source import DirSourceProvider
         from personalclaw.knowledge_providers.feed_source import FeedSourceProvider
         from personalclaw.knowledge_providers.registry import register_provider
+        from personalclaw.knowledge_providers.web_source import WebSourceProvider
 
         # Watched local directories (WATCHED-SOURCES §4) are a CORE source kind, so the
         # observer is registered here rather than through an app: without this the engine
@@ -1840,6 +1841,9 @@ async def start_dashboard(
         # Watched feeds (§3) are core for the same reason — a `watched-feed` source with no
         # enrolled provider is an inert row, so the provider ships registered or not at all.
         register_provider(FeedSourceProvider(state.knowledge_store))
+        # Watched pages (§2) — the five-detector kind. Same reasoning: a `watched-page` row
+        # with no enrolled provider would be a source the user created and nothing polls.
+        register_provider(WebSourceProvider(state.knowledge_store))
         state._source_engine = SourceEngine(  # prevent GC
             state.knowledge_store,
             state.knowledge_ingest_queue(),

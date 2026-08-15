@@ -47,6 +47,7 @@ import json
 import logging
 from typing import Any
 
+from personalclaw.knowledge_providers import conditional_get
 from personalclaw.knowledge_providers.base import (
     KnowledgeItem,
     KnowledgeSource,
@@ -271,27 +272,9 @@ class FeedSourceProvider(KnowledgeSourceProvider):
         return True, ""
 
     # ── conditional GET (§3.2) ─────────────────────────────────────────────────────
-
-    @staticmethod
-    def _parse_cursor(cursor: str) -> dict[str, str]:
-        """The persisted validators. A corrupt cursor degrades to "no validators" — one
-        full fetch, never a lost feed."""
-        try:
-            data = json.loads(cursor) if cursor else {}
-        except (TypeError, ValueError):
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return {k: str(v) for k, v in data.items() if isinstance(v, str) and v}
-
-    @staticmethod
-    def _conditional_headers(state: dict[str, str]) -> dict[str, str]:
-        headers = {"Accept": "*/*"}
-        if state.get("etag"):
-            headers["If-None-Match"] = state["etag"]
-        if state.get("last_modified"):
-            headers["If-Modified-Since"] = state["last_modified"]
-        return headers
+    # The validator plumbing lives in `conditional_get` and is SHARED with web-source: both
+    # network kinds persist the same two keys in their cursor, and two copies would be one
+    # fix away from disagreeing about a cursor's shape — a persisted-state divergence.
 
     async def _fetch(self, url: str, *, policy: Any, headers: dict[str, str]) -> Any:
         """The one place bytes enter this provider. Defaults to the guarded
@@ -448,10 +431,12 @@ class FeedSourceProvider(KnowledgeSourceProvider):
         if not ok:
             return SourcePollResult(error=err)
         spec = resolve_spec(source.get("spec") or {})
-        state = self._parse_cursor(cursor)
+        state = conditional_get.parse_validators(cursor)
         try:
             resp = await self._fetch(
-                str(spec["url"]), policy=policy, headers=self._conditional_headers(state)
+                str(spec["url"]),
+                policy=policy,
+                headers=conditional_get.conditional_headers(state),
             )
         except Exception as exc:  # noqa: BLE001 — egress denial, timeout, DNS: all soft
             return SourcePollResult(cursor=cursor, error=f"fetch failed: {exc}"[:200])
@@ -465,18 +450,7 @@ class FeedSourceProvider(KnowledgeSourceProvider):
         if status >= 400 or status == 0:
             return SourcePollResult(cursor=cursor, error=f"feed returned HTTP {status}")
 
-        headers = getattr(resp, "headers", None) or {}
-        new_state = {
-            k: v
-            for k, v in (
-                ("etag", str(headers.get("ETag") or headers.get("etag") or "")),
-                (
-                    "last_modified",
-                    str(headers.get("Last-Modified") or headers.get("last-modified") or ""),
-                ),
-            )
-            if v
-        }
+        new_state = conditional_get.validators_from(getattr(resp, "headers", None))
         try:
             rows = self.parse(getattr(resp, "text", "") or "", spec)
         except Exception as exc:  # noqa: BLE001 — a malformed feed is a soft failure
@@ -494,7 +468,7 @@ class FeedSourceProvider(KnowledgeSourceProvider):
             items.append(sighting)
         if dropped:
             logger.debug("feed %s: %d row(s) had no derivable identity", source_id, dropped)
-        result = SourcePollResult(items=items, cursor=json.dumps(new_state, sort_keys=True))
+        result = SourcePollResult(items=items, cursor=conditional_get.encode(new_state))
         if not items and dropped:
             # Every row unkeyable is a real misconfiguration (wrong field map / wrong
             # items_path), not an empty feed — say so instead of reporting a healthy poll.

@@ -150,6 +150,12 @@ class SourceEngine:
         """Poll one source once; return how many items were (re-)indexed this pass — new
         items plus re-enqueued edits, excluding archives (:meth:`_persist`). Never raises —
         a provider fault becomes a degraded health status, not a dead loop (§1.1)."""
+        from personalclaw.knowledge_providers.base import (
+            HEALTH_DEGRADED,
+            HEALTH_ERROR,
+            HEALTH_OK,
+        )
+
         sid = source["id"]
         provider = self._provider_for(source["provider"])
         if provider is None or not self._is_poll_capable(provider):
@@ -157,7 +163,7 @@ class SourceEngine:
                 sid,
                 cursor=self._store.get_source_cursor(sid),
                 new_count=0,
-                health_status="error",
+                health_status=HEALTH_ERROR,
                 error_summary=f"provider {source['provider']!r} not enrolled (poll-capable)",
             )
             return 0
@@ -178,19 +184,24 @@ class SourceEngine:
                 sid,
                 cursor=cursor,
                 new_count=0,
-                health_status="error",
+                health_status=HEALTH_ERROR,
                 error_summary=str(exc)[:200],
             )
             return 0
+        escalations = list(getattr(result, "escalations", None) or [])
         if result.error:
             # A soft failure the provider chose to report: keep the cursor (retry from the
-            # same position), surface the reason, do not treat the source as dead.
+            # same position), surface the reason, do not treat the source as dead. A provider
+            # that KNOWS why it failed declares its own health status (a page needing the
+            # render tier, §2.3); flattening that into `degraded` would hide the one
+            # remediation the user could act on.
             self._store.record_poll(
                 sid,
                 cursor=result.cursor or cursor,
                 new_count=0,
-                health_status="degraded",
+                health_status=getattr(result, "health_status", "") or HEALTH_DEGRADED,
                 error_summary=result.error[:200],
+                escalations=escalations,
             )
             return 0
         max_items = int(cfg.max_items_per_poll)
@@ -211,8 +222,9 @@ class SourceEngine:
             sid,
             cursor=result.cursor or cursor,
             new_count=new_count,
-            health_status="ok",
+            health_status=HEALTH_OK,
             next_poll_at=next_at,
+            escalations=escalations,
         )
         return new_count
 

@@ -792,6 +792,14 @@ class KnowledgeStore:
             self.db.execute("ALTER TABLE items ADD COLUMN source_id TEXT")
         if "guid" not in item_cols:
             self.db.execute("ALTER TABLE items ADD COLUMN guid TEXT")
+        src_cols = {r[1] for r in self.db.execute("PRAGMA table_info(sources)").fetchall()}
+        if src_cols and "last_escalations" not in src_cols:
+            # Added after `sources` shipped, so it is a guarded ALTER rather than a DDL edit
+            # (knowledge.db has no schema-version counter — same idempotence discipline as the
+            # item columns above). The CREATE below carries it for a fresh database.
+            self.db.execute(
+                "ALTER TABLE sources ADD COLUMN last_escalations TEXT NOT NULL DEFAULT '[]'"
+            )
         self.db.executescript("""
             -- A WatchedSource: user-library configuration (§1.2), not harness state, so it
             -- lives here in knowledge.db beside the items it produces. `spec`/`budget` are
@@ -814,6 +822,10 @@ class KnowledgeStore:
                 last_new_count INTEGER DEFAULT 0,
                 health_status TEXT DEFAULT 'ok',
                 last_error_summary TEXT DEFAULT '',
+                -- The tiers the last poll had to climb, or was refused (WATCHED-SOURCES
+                -- §2.3): a render escalation is the expensive one, and an escalation nobody
+                -- can see is indistinguishable from a cheap poll. JSON array of strings.
+                last_escalations TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -910,6 +922,12 @@ class KnowledgeStore:
                 d[key] = json.loads(val) if val else {}
             except (TypeError, ValueError):
                 d[key] = {}
+        raw_esc = d.get("last_escalations")
+        try:
+            parsed = json.loads(raw_esc) if raw_esc else []
+        except (TypeError, ValueError):
+            parsed = []
+        d["last_escalations"] = [str(x) for x in parsed] if isinstance(parsed, list) else []
         d["enabled"] = bool(d.get("enabled"))
         return d
 
@@ -940,6 +958,7 @@ class KnowledgeStore:
         health_status: str = "ok",
         error_summary: str = "",
         next_poll_at: str = "",
+        escalations: list[str] | None = None,
     ) -> None:
         """Persist the poll's outcome: the new cursor + the source's runtime rollups.
 
@@ -948,7 +967,13 @@ class KnowledgeStore:
         so a crash the instant before this call re-yields the same items next poll and the
         UNIQUE gate drops them — exactly-once persist on top of at-least-once poll (§3.2).
         The cursor upsert + rollup update share one txn so the engine's view of a source
-        never shows a fresh cursor against stale rollups."""
+        never shows a fresh cursor against stale rollups.
+
+        ``escalations`` are the tiers this poll had to climb (§2.3), OVERWRITTEN per poll
+        rather than appended: they describe the last poll's cost, and an ever-growing list on
+        a row the UI reads would be a log in a rollup column. Recorded on the success path too
+        — an escalation that only surfaced on failure would make the expensive-but-working
+        case the invisible one."""
         now = datetime.now().isoformat()
         self.db.execute("BEGIN")
         try:
@@ -960,13 +985,15 @@ class KnowledgeStore:
             )
             self.db.execute(
                 "UPDATE sources SET last_poll_at = ?, next_poll_at = ?, last_new_count = ?, "
-                "health_status = ?, last_error_summary = ?, updated_at = ? WHERE id = ?",
+                "health_status = ?, last_error_summary = ?, last_escalations = ?, "
+                "updated_at = ? WHERE id = ?",
                 (
                     now,
                     next_poll_at or None,
                     int(new_count),
                     health_status,
                     error_summary,
+                    json.dumps([str(e) for e in (escalations or [])]),
                     now,
                     source_id,
                 ),

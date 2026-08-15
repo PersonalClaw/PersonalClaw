@@ -371,6 +371,127 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   (incl. #47 parity) + `test_knowledge_provider*` = 80 passed. Contract-only; no user-facing surface
   yet (WS-2's SourceEngine is the consumer) → no CHANGELOG entry.
 
+- [WS-3] DONE: **§2 web-source — five detectors, selector configs, escalating fetch, preview.**
+  `knowledge_providers/web_source.py` runs the five §2.1 detectors as pure functions over ONE
+  dependency-free HTML tree (`knowledge_providers/html_dom.py`: stdlib `html.parser` + a CSS SUBSET —
+  type/`*`/`#id`/`.class`/`[attr]`/`[attr=v]`/descendant/child/comma — that RAISES on anything outside
+  it). No new runtime dependency: BeautifulSoup/lxml on every install (desktop bundle included) to read
+  a handful of changelog pages is not the trade this project makes, and `html.parser` is lenient about
+  the malformed markup real pages ship. **Structural parsing runs on RAW markup**, for the reason
+  `browse/extraction.py` documents for its own stdlib parse: nh3's prose allowlist strips `<script>`
+  (where `json_ld` and `json_state` live) and drops `class`/`id` (the entire input to
+  `selector_frequency` and to a user's config). Sanitization is not skipped, it is MOVED to the
+  extracted item's html field, which is where the untrusted bytes actually go.
+  **Reconciled against `triggers/web_poll.py` rather than re-derived, and the reconciliation had a
+  measured answer.** Its `extract_items` is a NOVELTY-KEY extractor (a list of opaque strings) not an
+  item extractor — there is no title/url/content to lift — so what was reused is the *decision shape*
+  and the disciplines around it, verbatim in intent: escalate on extraction OUTCOME not HTTP status;
+  charge the expensive tier WIN-OR-LOSE so a failing render cannot retry forever; and make the
+  escalation VISIBLE on the record whether it fired, was refused, failed, or found the tier absent.
+  Its per-day `WatchState` budget was NOT lifted: WS-3's budget is per POLL (`budget.max_requests`), a
+  different axis, and the daily one is `SourcesConfig.daily_request_budget` — see the open item below.
+  **Two ordering decisions carry the whole detection quality, and both are falsifiable.** (a)
+  `selector_frequency` runs LAST rather than §2.1's fourth — DEVIATION, recorded: it is the only
+  detector that infers structure the page never declared, so ahead of `json_state` a heuristic would
+  outrank a declaration. §2.1's table is otherwise kept in order. (b) Hygiene runs INSIDE the stack
+  loop, per detector: a detector whose every candidate fails the §2.2 floors found NOTHING and the
+  stack falls through. Deciding a winner on RAW candidates is exactly how a page's sponsored rail
+  becomes "the source found nothing today" — measured on a fixture where `semantic_html` produces two
+  off-domain promo articles and `selector_frequency` three real cards. A spec's `detectors` list is a
+  FILTER over the order, never a re-ordering.
+  **DEVIATION (recorded): §2.2's schema is derived the other way round — schema FIRST.** The atom says
+  "JSON Schema derived from the runtime validators"; shipped is `SPEC_SCHEMA` as the single artifact
+  with `validate_spec` a generic walker over it. Reason: a schema *generated from* imperative
+  validators is a second artifact that can drift, while a schema *interpreted by* the validator has no
+  second artifact to drift from — the same single-source-of-truth property, held structurally instead
+  of by a generator nobody runs. The walker RAISES on a schema `type` it does not implement (so a
+  keyword nobody enforces cannot silently accept everything — asserted), and the `detectors` enum IS
+  `DETECTOR_ORDER`, so a sixth detector cannot exist without the schema admitting it. Fail-closed, and
+  re-validated at POLL time: the stakes here are the fetch TARGET, and a mutated row is refused before
+  the fetch seam is reached (asserted).
+  **The escalation split is a MEASURED discrimination, not a guess about the URL.** Zero items on a
+  page that rendered plenty of text is the WRONG URL → §2.1's listing-page guidance and NO render
+  attempt (a browser finds the same nothing, more expensively). Zero items on a page carrying script
+  with under 400 chars of visible text (`looks_like_js_shell`) is a JS shell → one render attempt when
+  `budget.allow_render` is true, else the distinct `needs render tier` status. Without that split both
+  failures surface as "found nothing" with OPPOSITE remediations, and the user gets sent the wrong way.
+  Tier 1, the WordPress sub-request and the render all draw on ONE `budget.max_requests` — proved by a
+  `max_requests: 1` WordPress page where the REST sub-request cannot happen and the stack falls through
+  to `semantic_html` on exactly one request.
+  **DEVIATION (recorded): `preview`/`validate_spec` are NOT added to the `KnowledgeSourceProvider`
+  ABC** as §1.1's sketch shows. The shipped ABC (WS-1) has neither, and `feed_source`/`dir_source`
+  already carry `validate_spec(spec) -> tuple[bool, str]` as a convention — not §1.1's
+  `list[str]`. A feed's or a directory's "preview" IS its poll; only the web kind has a
+  detect-then-tune loop worth previewing, so an abstract `preview` would be a stub on two shipped
+  providers — a dead surface on both. `preview` therefore lives on `WebSourceProvider` and takes a
+  SPEC (not a `source_id`), because the create flow runs before a source exists.
+  **Contract + store additions:** `SourcePollResult` gains `escalations` and `health_status` (a
+  provider that knows WHY it found nothing declares it; the engine no longer flattens `needs render
+  tier` into `degraded`), `SourcePreview` is the §2.4 dry run, `HEALTH_OK/DEGRADED/ERROR/NEEDS_RENDER`
+  becomes a closed vocabulary in `base.py` that the engine now uses instead of string literals, and
+  `sources.last_escalations` persists the last poll's tiers — overwritten per poll on BOTH the success
+  and failure paths, because a rollup column is not a log and an escalation visible only on failure
+  makes the expensive-but-working case the invisible one. Conditional-GET validator plumbing was
+  LIFTED into `knowledge_providers/conditional_get.py` and `feed_source` refactored onto it: two copies
+  of a persisted cursor's shape would be one fix away from disagreeing, which is a data divergence
+  rather than a code smell.
+  **Falsification: 18 mutations, and THREE reded nothing — each was fixed, not noted.** (1) Hygiene at
+  the end of the stack instead of per detector (`if items:` → `if rows:`) — all 44 green, so a new
+  fall-through fixture was added. (2) The identity guard (`if not guid: continue` → `guid = "x"`) — all
+  green, because the existing fixture's row was ALSO empty of title and description and was already
+  dropped by that earlier floor; the fixture was rebuilt with real body text and nothing else, plus a
+  with-a-date vacuity counterpart. (3) The `sanitize_html` default-ON — all green, because that test's
+  chain also ran `html_to_markdown`, which strips the script anyway; an isolating test now keeps the
+  value as HTML and asserts `sanitize_html: false` lets `alert(1)` through. A FOURTH, the implicit
+  `parse_uri` on an `href`, reded nothing for a different reason worth recording: `apply_hygiene`
+  already resolves the url field against the page for BOTH paths, so the branch was genuinely
+  redundant — it was DELETED rather than tested, and resolution now has ONE falsifiable point
+  (removing it reds 12 tests). Mutations that reded correctly: detector order (4), guidance suppressed
+  (2), `min_words_title` floor (1), off-domain drop (1), `allow_render` ignored (1), render escalation
+  off-budget (1), escalations not persisted (5), health status flattened (2), poll-time revalidation
+  removed (1), a 304 treated as a detection failure (1), manual config falling back to the stack (1),
+  the JS-shell floor always-true (1), preview budget unbounded (2).
+  **OPEN (not WS-3's, stated so it is not lost):** `SourcesConfig.daily_request_budget` is still
+  enforced by nothing — its own help text says "enforced by the fetching providers", and no provider
+  reads it (the provider is not handed `cfg`). WS-3's budget is the per-poll `max_requests` the atom
+  names; the rolling-day axis wants either engine plumbing or a cursor-carried day bucket, and belongs
+  with whichever atom takes the config surface.
+  **Gates:** `make lint` clean (black 1677 files, isort, flake8, mypy 867 source files);
+  `tests/test_web_source.py` = **46 passed**; `test_source_engine.py` + `test_feed_source.py` +
+  `test_dir_source.py` = **62 passed** (the `conditional_get` refactor is behaviour-identical);
+  repo-wide rails `test_inert_surface_baseline.py` + `test_portability.py` +
+  `test_durability_inventory.py` + `test_config_baseline.py` + `test_resilience_degraded_lint.py` +
+  `test_roadmap_dag_derived.py` = **116 passed**; full suite **20278 passed, 30 skipped, 12 xfailed, 0
+  failed**. No config field added, so `test_config_baseline` needed no regeneration; no new public
+  enum/config/trigger-kind/SDK export, so the inert-surface count is unchanged. No `web/` change, so
+  no FE gate.
+  **No CHANGELOG entry, deliberately, for the same reason WS-4 recorded:** `store.create_source` still
+  has zero non-test callers, so there is no HTTP route, CLI command or UI through which a user can
+  create a watched source of ANY kind. `WS-9` (Sources UI + as-a-user validation) owns that surface and
+  the user-facing entry lands with it; announcing a paste-URL flow now would promise something nobody
+  can reach.
+  **Independent verification (parent, not the implementer).** Re-ran the whole gate rather than
+  accepting the report: `make lint` clean (mypy 867) and the full suite **20278 passed / 0 failed**, both
+  reproduced. Four fresh mutations on live lines: `_allow_render` → `return True` reds
+  `test_allow_render_false_degrades_to_needs_render_tier_and_never_renders`; suppressing the guidance on
+  the no-escalation path reds one test; suppressing it on the wrong-URL path reds the homepage clause
+  with `assert 'LISTING pages' in ''` **plus** the manual-config test. **The fourth found a real gap:**
+  reversing `DETECTOR_ORDER`'s last two entries — this atom's own deviation from §2.1 — reded exactly
+  ONE test, the schema-enum parity assertion on the literal sequence, so nothing proved the *precedence
+  outcome* the deviation exists for. Added `test_a_declared_state_blob_outranks_a_frequent_selector`
+  (one page with BOTH a `__NEXT_DATA__` blob and a thrice-repeated card signature → `json_state` wins,
+  with the state's items), which reds on that reorder with "a heuristic must not outrank a declaration".
+  Also verified in code rather than on report: `regen_dag_derived.py` genuinely prints no `regressed:`
+  line (the string does not exist in the tool — `test_regenerating_the_committed_file_is_a_no_op` is the
+  real check, and the parent's brief was wrong to ask for it); the shipped `KnowledgeSourceProvider` ABC
+  really has no `preview`/`validate_spec` and `poll` really is `poll(source_id, cursor="")`, so the
+  implementer's correction of §1.1 and of the brief stands; `sanitize_html` reuses
+  `web.extract.sanitize_html` and the render tier reuses `web.render.render_url`, with **no dependency
+  file touched and no third-party HTML/CSS library added** — `html_dom.py` is a genuinely new capability
+  (a DOM tree + CSS-subset selector engine) that `web/extract.py` never had, not a duplicate of it; and
+  the `sources.last_escalations` migration is a guarded, idempotent `ALTER` with the `CREATE` carrying
+  the column for a fresh database.
+
 - [WS-4] DONE: **§3 feed kinds + §3.3 cross-source identity + §6.3 raw mode.**
   `knowledge_providers/feed_source.py` parses RSS 2.0/Atom (one XML parser, root-tag sniffed), JSON (one
   declarative field-map) and CSV, with `hn_algolia`/`github_trending`/`json_feed` as entries in `PRESETS`
