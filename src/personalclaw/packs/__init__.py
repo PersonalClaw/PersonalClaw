@@ -14,8 +14,10 @@ secret riding along, so redaction is TWO independent layers, defence-in-depth:
 AP-1 is the format + export core: the dependency-closure walker, the two redaction layers,
 and a look-before-write :func:`preview_pack`. AP-2 (this atom) is the import inverse:
 :func:`inspect_pack` (dry-run, no writes) and :func:`import_pack` (leaves-first commit with
-a journaled rollback, referential-integrity lint, and scan-by-origin trust). The connector
-catalog and the export/import UI routes are later AP atoms.
+a journaled rollback, referential-integrity lint, and scan-by-origin trust). AP-5
+(:mod:`packs.external_formats`) is the OUTBOUND direction — rendering an entity into another
+tool's own format, where the same content layer runs on the rendered bytes. The pack store
+UI is a later AP atom.
 """
 
 from personalclaw.packs.build import (
@@ -40,6 +42,20 @@ from personalclaw.packs.connectors import (
     resolve_requirements,
     seed_catalog,
 )
+from personalclaw.packs.external_formats import (
+    EXTERNAL_FORMATS,
+    ExportBlocked,
+    ExportRefused,
+    ExportResult,
+    ExportSkill,
+    ExternalFormat,
+    RenderedFile,
+    default_dest_dir,
+    export_entities,
+    export_preview,
+    format_names,
+    get_format,
+)
 from personalclaw.packs.import_ import (
     ImportPlan,
     PackImportRefused,
@@ -52,11 +68,17 @@ from personalclaw.packs.installed import InstalledPack, load_installed, record_i
 from personalclaw.packs.lint import LintFinding, LintReport, lint_pack
 
 __all__ = [
+    "EXTERNAL_FORMATS",
     "MISSING_PREFIX",
     "BlockedComponent",
     "CatalogEntry",
     "ConnectorResolution",
     "ConnectorResolutionError",
+    "ExportBlocked",
+    "ExportRefused",
+    "ExportResult",
+    "ExportSkill",
+    "ExternalFormat",
     "ImportPlan",
     "InstalledPack",
     "LintFinding",
@@ -66,10 +88,16 @@ __all__ = [
     "PackMarketplace",
     "PackPreview",
     "PlannedComponent",
+    "RenderedFile",
     "Requirement",
     "build_pack",
     "catalog_by_category",
     "catalog_lookup",
+    "default_dest_dir",
+    "export_entities",
+    "export_preview",
+    "format_names",
+    "get_format",
     "import_pack",
     "inspect_pack",
     "lint_pack",
