@@ -7190,7 +7190,8 @@
         {
           "id": "PP-7",
           "title": "Trajectory signature as a ledger projection + template regression detection",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1334",
           "scope": "Judging grades outputs per node; `eval_specs.py` does per-template structural checks; `introspection.py` reports p50/p95. Nothing describes the PATH a run took, so \"runs of this template that went a different way\" is unanswerable. Anthropic's multi-agent write-up states the problem directly — with identical starting points agents may take completely different valid paths — and the graph-engineering practice literature ranks trajectory evals above output evals as where the next failure hides. `FailureSignature` is the nearest thing and it is per-failure, not per-run.",
           "done_when": "A `trajectory_signature` is derived as a PURE projection over the existing ledger (ordered node/lane/verdict tuples) with no new store, exposed on the run projection and queryable per template. A regression signal fires when a template's runs shift to a signature class that historically failed more often. Verified: two runs of one template with the same inputs produce equal signatures; a rewind produces a distinguishable one; the projection is proven pure by computing it twice over a frozen ledger and comparing.",
           "deps": [
@@ -7856,11 +7857,6 @@
       {
         "id": "PP-5",
         "title": "Loops emit the ledger (closes the flywheel's loop blind spot)",
-        "plan": "PP"
-      },
-      {
-        "id": "PP-7",
-        "title": "Trajectory signature as a ledger projection + template regression detection",
         "plan": "PP"
       },
       {
@@ -10319,9 +10315,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       }
     ],

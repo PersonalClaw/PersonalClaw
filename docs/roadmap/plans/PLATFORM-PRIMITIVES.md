@@ -563,3 +563,37 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   `workflows/tick` to `workflows/admission`, is internal: it appears nowhere under
   `personalclaw/sdk/`, so no app can be depending on it. `PP-12` is the entry that will have
   something to announce.
+
+- **2026-08-15 — `PP-7` DONE.** `introspection.trajectory_signature(run_id, events)` projects a run's
+  ledger into the ordered `(node, lane, verdict)` tuples of the path it took, hashed with the shared
+  `hash_value` into a signature CLASS. Exposed on the run projection (`introspect(run_id)` now carries
+  a `trajectory` block: the run's signature + steps + the template's signature-class distribution +
+  the regression signal, and the regression also rides `answers.risky`) and queryable per template
+  without a run in hand via `service.template_trajectory(name)` / `GET /api/workflows/{name}/trajectory`.
+  `introspection.trajectory_regression(template, runs)` fires when a template's contiguous recent runs
+  have SHIFTED to a signature class whose failure rate is materially higher than the path it took
+  before — sample-gated like `gate_stats`/`edge_stats` (below `TRAJECTORY_REGRESSION_MIN_RUNS=10`
+  total, or either regime under `MIN_CLASS_RUNS=3`, it stays silent). No new store, no new ledger kind,
+  no new `StateEntry`. Verified: two REAL controller runs of one template with the same inputs produce
+  equal signatures; a rewind (re-execution events appended to the ledger) produces a distinguishable
+  one; and the projection is proven pure by computing it twice over a deep-frozen ledger and comparing.
+- **2026-08-15 — `PP-7` DEVIATION (built new over PP-6's tuples, did NOT reuse `TrajectoryStep`).**
+  The territory said "reuse PP-6's `TrajectoryStep` where it fits, or directly from ordered
+  node/lane/verdict tuples." `TrajectoryStep` carries `prompt_hash`, `output_ref` and `clock` — a
+  replay needs those to diff a re-drive, but a *signature* must be equal for two same-input runs, and
+  `output_ref` is a content hash of the model output that varies run-to-run. So the signature is
+  projected directly from the ledger's ordered node/lane/verdict tuples (the offered alternative), and
+  the only thing reused is the hashing: `hash_value`, the codebase's one 16-hex content hash, rather
+  than minting a parallel scheme. Two design points worth recording: (a) `lane` is read from the
+  `step_started` a node emitted — the one event carrying it — and a skipped branch leg with no
+  recorded lane contributes `""` rather than a guess, which keeps the projection pure; (b) the
+  projection is deliberately NOT deduped by path (unlike replay's last-write-wins fold), because a
+  rewind's only mark on the ledger is the re-execution events it appends, and those extra tuples are
+  exactly what makes a rewound run distinguishable from a clean one.
+- **2026-08-15 — `PP-7` DISCOVERY (expected additive conflict with `PP-8`).** `PP-8` (PR #1332, not
+  in this stacked branch) also adds a function (`edge_stats`) to `introspection.py`. This atom adds
+  `trajectory_steps`/`trajectory_signature`/`trajectory_regression` cleanly alongside
+  `gate_stats`/`run_stats`, exactly as `PP-8` did — so when both merge, `introspection.py` conflicts
+  additively (two independent projection functions) and resolves by keeping both. No shared symbol is
+  touched. `PP-4`'s ledger-boundary rail stays green: this work lives in `workflows/`, which may import
+  `ledger`; the reverse import the rail guards is untouched.
