@@ -10,6 +10,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Apps can now share data with each other, read-only, only when both sides agree.** An app that
+  wants to expose its stored data declares `storageShared: true`; an app that wants to read another's
+  data names it in `storageRead`. A read is granted only when BOTH are declared — neither app can
+  reach into the other one-sidedly — and the reader gets a strictly read-only view (writing to shared
+  data fails; to send another app data, apps still go through the app-messaging broker). Both
+  declarations are shown on the install-consent screen so you see, before installing, which apps an
+  app shares with or reads, and each active grant is recorded to the security event log.
 - **Attention notifications can now ask for a second opinion before interrupting you.** Turn on
   verification for a proposal or agent-request rule and, before its notification fires, a cheap
   background check judges whether the claim holds. Only a clear refutation withholds it — every

@@ -158,6 +158,17 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
   if (messaging.length) {
     rows.push(`App messaging: ${messaging.map(describeMessagingTarget).join(', ')}`)
   }
+  // APE-10. Consented cross-app READ-ONLY file sharing belongs in the enforced bullets:
+  // a read is mounted only where storage is granted (backend_runtime) and only when the
+  // consumer names the sharer AND the sharer opted in with `storageShared` (double-
+  // declaration). Same target grammar as `appMessaging`, so it is described the same way
+  // (a trailing `*` is a name prefix). `storageShared` (this app exposing its OWN data)
+  // is disclosed too — it is what lets other apps read this one.
+  if (perms.storageShared) rows.push('Shares its data with apps you grant read access')
+  const sharedReads = perms.storageRead ?? []
+  if (sharedReads.length) {
+    rows.push(`Reads other apps' data (read-only): ${sharedReads.map(describeMessagingTarget).join(', ')}`)
+  }
   // DC-2. Native desktop capabilities belong in the ENFORCED bullets: the gateway
   // mediates every app→shell call and refuses an undeclared capability 403 + SEL
   // (handlers/desktop.py). Unlike `appMessaging` there is no wildcard to explain —
