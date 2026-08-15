@@ -86,6 +86,21 @@ def app_dir(name: str) -> Path:
     return apps_dir() / _reject_path_escape(name)
 
 
+SHARED_DIR_ENV_PREFIX = "PERSONALCLAW_APP_SHARED_DIR_"
+
+
+def shared_dir_env_name(app_name: str) -> str:
+    """Env var name mounting ``app_name``'s data dir into a CONSUMER granted read-only
+    shared-storage on it (APE-10).
+
+    Kebab app names are upper-snaked so the result is a valid POSIX env identifier
+    (``note-keeper`` → ``PERSONALCLAW_APP_SHARED_DIR_NOTE_KEEPER``). Kebab names never
+    contain ``_``, so the mapping is injective — no two sharers collide. The SDK reader
+    (``sdk.util.shared_app_data_dir``) applies the SAME transform, so writer and reader
+    agree on the name."""
+    return SHARED_DIR_ENV_PREFIX + app_name.upper().replace("-", "_")
+
+
 def app_data_dir(name: str) -> Path:
     """Return the app-scoped data directory: ``~/.personalclaw/apps/{name}/data/``.
 

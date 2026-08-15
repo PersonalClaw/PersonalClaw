@@ -23,7 +23,8 @@ Environment: a backend does **not** inherit the gateway's environment. It receiv
 allowlist plus whatever the operator declared in ``sandbox.env_passthrough`` — layered
 with the four variables this module computes (``PORT``, ``PERSONALCLAW_APP_NAME``,
 ``PERSONALCLAW_APP_SECRET``, and ``PERSONALCLAW_APP_DATA_DIR`` when the app holds the
-``storage`` capability). See ``docs/architecture/app-platform.md``.
+``storage`` capability), plus (APE-10) a read-only ``PERSONALCLAW_APP_SHARED_DIR_<SHARER>``
+for every app it holds a ``storageRead`` grant on. See ``docs/architecture/app-platform.md``.
 """
 
 from __future__ import annotations
@@ -44,6 +45,66 @@ from personalclaw.apps.manifest import AppManifest
 logger = logging.getLogger(__name__)
 
 _TERM_TIMEOUT = 5  # seconds to wait for graceful termination before kill
+
+
+def _sel_capability_grant(*, consumer: str, sharer: str) -> None:
+    """Audit one active APE-10 shared-storage read grant on the HMAC-chained SEL.
+
+    Emitted at the moment the grant becomes REAL — when the sharer's data dir is
+    mounted into a running consumer backend — mirroring how ``messaging._sel_message``
+    audits at the point of enforcement. Never raises: an audit failure must not stop a
+    backend from launching."""
+    try:
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from personalclaw.sel import SecurityEvent, sel
+
+        sel().log(
+            SecurityEvent(
+                event_id=uuid4().hex[:16],
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                event_type="capability_grant",
+                caller_identity=f"app:{consumer}",
+                agent="personalclaw",
+                source="apps",
+                operation="storage_shared_read",
+                outcome="granted",
+                resources=f"sharer={sharer}",
+                error="",
+            )
+        )
+    except Exception:  # audit must never break the backend launch
+        logger.debug("capability_grant SEL emit failed for %s->%s", consumer, sharer, exc_info=True)
+
+
+def shared_storage_env(consumer: str) -> dict[str, str]:
+    """The read-only shared-storage env mounts a CONSUMER backend is granted (APE-10).
+
+    For every INSTALLED app the consumer holds a double-declared, deny-by-default
+    ``storageRead`` grant on (``permissions.can_read_shared_storage`` — consumer names
+    it AND the sharer declared ``storageShared``), map
+    ``PERSONALCLAW_APP_SHARED_DIR_<SHARER>`` → that app's ``app_data_dir``. An app with
+    no grant gets ``{}`` — NO mount. Read-only is the contract: the path points at the
+    sharer's live data dir but the SDK hands the consumer a read-only handle
+    (``sdk.util.shared_app_data_dir``) and writes stay broker-only (APE-9). Emits one
+    ``capability_grant`` SEL per active grant."""
+    from personalclaw.apps.manager import app_data_dir, list_apps, shared_dir_env_name
+    from personalclaw.apps.permissions import checker_for
+
+    checker = checker_for(consumer)
+    if checker is None or not checker.permissions.storageRead:
+        return {}
+    mounts: dict[str, str] = {}
+    for entry in list_apps():
+        sharer = entry.get("name", "")
+        if not sharer or sharer == consumer:
+            continue
+        if not checker.can_read_shared_storage(sharer):
+            continue
+        mounts[shared_dir_env_name(sharer)] = str(app_data_dir(sharer))
+        _sel_capability_grant(consumer=consumer, sharer=sharer)
+    return mounts
 
 
 @dataclass
@@ -149,7 +210,9 @@ class BackendSupervisor:
             # scanned at install, running for as long as the app is enabled — and
             # `dict(os.environ)` handed them every variable the gateway had grown to carry,
             # including the `.env` credentials `config/loader.py` seeds into `os.environ` so
-            # "trusted children" inherit them. The four variables below are the ones this
+            # "trusted children" inherit them. The variables below (PORT, APP_NAME, the
+            # proxy secret, the app's own DATA_DIR when held, plus any APE-10
+            # read-only PERSONALCLAW_APP_SHARED_DIR_<SHARER> mounts) are the ones this
             # site COMPUTES; everything else arrives only if it is in
             # `CHILD_ENV_BASE_NAMES` or the operator declared it by name in
             # `sandbox.env_passthrough`. Withheld names are logged under the `app-backend`
@@ -163,6 +226,12 @@ class BackendSupervisor:
             }
             if data_dir is not None:
                 extra["PERSONALCLAW_APP_DATA_DIR"] = str(data_dir)
+            # APE-10: mount each app this consumer holds a read-only storageRead grant
+            # on as PERSONALCLAW_APP_SHARED_DIR_<SHARER>. Double-declared + deny-by-default
+            # (apps/permissions.can_read_shared_storage); an undeclared pair yields no key.
+            # Read-only is the contract — the SDK hands the consumer a read-only handle
+            # (sdk.util.shared_app_data_dir) and writes stay broker-only (APE-9).
+            extra.update(shared_storage_env(name))
             env = build_child_env(site="app-backend", extra=extra)
             if data_dir is None:
                 # Storage not declared → don't hand the backend a data dir. The allowlist
