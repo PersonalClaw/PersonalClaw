@@ -2071,10 +2071,54 @@ def apply_publish(
             provider, str(payload.get("slug") or ""), media_copies, media_unresolved
         )
         _journal_publish(run_id, node.id or "", payload)
+        _open_publish_outcome(run_id, node.id or "", payload)
         return _with_publish(result, payload)
     except Exception as exc:
         logger.debug("publish failed for node %s", node.id, exc_info=True)
         return _with_publish(result, {"action": "error", "reason": f"{type(exc).__name__}: {exc}"})
+
+
+#: How long a published artifact gets to find a reader before the bet is graded (PP-9). A week,
+#: because a deliverable nobody opened in a week is the signal `PP-10`'s dormancy sweep exists to
+#: surface, and anything shorter would grade a Friday artifact on Monday morning.
+PUBLISH_CONSUMPTION_HORIZON_SECS = 7 * 24 * 3600.0
+
+
+def _open_publish_outcome(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
+    """Open the artifact's outcome question: we published a deliverable — did anyone consume it?
+
+    The `publish:` producer of the general outcome facility (PP-9). Publishing records what the run
+    DID; this records the bet about what it was FOR, so an artifact stream nobody reads becomes a
+    measurable fact instead of a busy outbox. `PP-10` owns the consumption counter this reads
+    (`artifact.<slug>.consumed`) and the sweep that turns a zero into a proposal; until it lands the
+    question resolves honestly as `inconclusive`, which decays fast — the correct answer for a
+    metric nothing writes yet, and the reason the horizon is generous.
+
+    Best-effort, like the publish journal beside it: the artifact already landed, and no ledger
+    write is worth failing a completed stage over.
+    """
+    slug = str(payload.get("slug") or "")
+    if not run_id or not slug:
+        return
+    from personalclaw.ledger import outcomes
+    from personalclaw.workflows.journal import Journal
+
+    try:
+        Journal(run_id).open_outcome(
+            producer=outcomes.PRODUCER_PUBLISH,
+            subject=f"published artifact `{slug}`",
+            metric=f"artifact.{slug}.consumed",
+            metric_source=outcomes.SOURCE_MEMORY,
+            horizon_secs=PUBLISH_CONSUMPTION_HORIZON_SECS,
+            # One consumption is the whole bet: a deliverable is for somebody.
+            baseline=1.0,
+            node_id=node_id,
+            slug=slug,
+            artifact=str(payload.get("artifact") or ""),
+            action=str(payload.get("action") or ""),
+        )
+    except Exception:
+        logger.debug("publish outcome open failed for run %s", run_id, exc_info=True)
 
 
 def _journal_publish(run_id: str, node_id: str, payload: dict[str, Any]) -> None:

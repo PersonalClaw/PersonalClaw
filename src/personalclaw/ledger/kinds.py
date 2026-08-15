@@ -85,14 +85,15 @@ SEEN_SET = "seen_set"
 BUFFER_SEAL = "buffer_seal"
 DELAY_CLAMPED = "delay_clamped"
 
-#: LEARNING-FLYWHEEL §3.3 (LEARN-R18): the pending→resolved outcome lifecycle. A
-#: decision-producing run journals `pending_outcome` {subject, metric, horizon, baseline}
-#: AT DECISION TIME — before the outcome is knowable — and the curator's resolver writes
-#: `outcome_resolved` once the horizon has elapsed and ground truth has been measured. Both
-#: are ledger kinds because a decision's later outcome is the richest refiner signal there
-#: is, and a `pending_outcome` with no matching `outcome_resolved` is the "open question"
-#: retention must never evict. Keyed to each other by `pending_event_id`, so the resolver is
-#: idempotent — a second curator tick finds the resolution and skips.
+#: LEARNING-FLYWHEEL §3.3 (LEARN-R18), generalized by PP-9: the pending→resolved outcome
+#: lifecycle, open to ANY producer. A producer journals `pending_outcome`
+#: {producer, subject, metric, metric_source, horizon, baseline} at BET time — before the
+#: outcome is knowable — and the resolver writes `outcome_resolved` once the horizon has elapsed
+#: and ground truth has been read. Both are ledger kinds because what LANDED is the richest
+#: refiner signal there is, and a `pending_outcome` with no matching `outcome_resolved` is the
+#: "open question" retention must never evict. Keyed to each other by `pending_event_id`, so the
+#: resolver is idempotent — a second tick finds the resolution and skips. The facility and its
+#: producer/resolution/source vocabulary live in :mod:`personalclaw.ledger.outcomes`.
 PENDING_OUTCOME = "pending_outcome"
 OUTCOME_RESOLVED = "outcome_resolved"
 
