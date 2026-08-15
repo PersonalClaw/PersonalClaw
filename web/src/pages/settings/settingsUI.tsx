@@ -136,15 +136,38 @@ export function SegPills<T extends string>({ value, onChange, options }: {
   )
 }
 
+/** The shared "your change was saved" confirmation for a settings control.
+ *
+ *  It is the ONLY confirmation these controls give: a config PATCH has no other success surface, so
+ *  a user who cannot see this span has no way to know the setting persisted (WCAG 4.1.3 Status
+ *  Messages). The visual "Saved ✓" springs in — a small earned confirmation rather than a flat fade
+ *  — and a polite live region carries the same fact to assistive tech.
+ *
+ *  Two details that are load-bearing, not stylistic:
+ *
+ *  · The region is ALWAYS MOUNTED and empty at rest. A live region created at the same moment its
+ *    content appears is not reliably observed — the same reasoning `ResultAnnouncement` records, and
+ *    the reason this is not simply an `aria-live` attribute on the animated span below (which
+ *    `AnimatePresence` mounts and unmounts).
+ *  · The visual span is `aria-hidden`. The live region already carries the message, so leaving it in
+ *    the accessibility tree would announce the confirmation twice and read the "✓" as "check mark".
+ *
+ *  This is deliberately NOT `ResultAnnouncement`: that component is list-specific
+ *  (`count`/`noun`/`active`) and renders "N tasks" / "No matching tasks". Its doc's warning is
+ *  against a second copy of the LIST-RESULT region on a page, which is why `AudioRecorder` and
+ *  `Onboarding` also carry their own regions for their own messages.
+ */
 export function SavedToast({ show }: { show: boolean }) {
-  // "Saved ✓" springs in (a small earned confirmation) rather than a flat fade.
   return (
-    <AnimatePresence>
-      {show && (
-        <motion.span initial={{ opacity: 0, scale: 0.8, y: 2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
-          transition={physics.playful} className="text-[0.75rem]" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
-      )}
-    </AnimatePresence>
+    <>
+      <span role="status" aria-live="polite" className="sr-only">{show ? 'Saved' : ''}</span>
+      <AnimatePresence>
+        {show && (
+          <motion.span aria-hidden="true" initial={{ opacity: 0, scale: 0.8, y: 2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
+            transition={physics.playful} className="text-[0.75rem]" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
+        )}
+      </AnimatePresence>
+    </>
   )
 }
 
