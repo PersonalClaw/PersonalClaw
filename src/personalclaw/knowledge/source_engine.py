@@ -147,8 +147,9 @@ class SourceEngine:
     # ── one poll ───────────────────────────────────────────────────────────────────
 
     async def poll_source(self, source: dict, cfg: Any) -> int:
-        """Poll one source once; return the count of NEW items written. Never raises — a
-        provider fault becomes a degraded health status, not a dead loop (§1.1)."""
+        """Poll one source once; return how many items were (re-)indexed this pass — new
+        items plus re-enqueued edits, excluding archives (:meth:`_persist`). Never raises —
+        a provider fault becomes a degraded health status, not a dead loop (§1.1)."""
         sid = source["id"]
         provider = self._provider_for(source["provider"])
         if provider is None or not self._is_poll_capable(provider):
@@ -193,29 +194,12 @@ class SourceEngine:
             )
             return 0
         max_items = int(cfg.max_items_per_poll)
-        item_type = source.get("item_type") or "bookmark"
         new_count = 0
         for item in result.items[:max_items]:
-            # create_typed_item writes the seen-row + item atomically and returns None when
-            # the guid was already seen — the novelty gate. Only a genuinely-new item (an
-            # id) is enqueued, so a page that changes every render cannot storm the queue.
-            item_id = self._store.create_typed_item(
-                item_type=item_type,
-                title=item.title or item.url or item.guid,
-                content=item.content,
-                url=item.url,
-                provider=source["provider"],
-                source_id=sid,
-                guid=item.guid,
-                extra={"processing_status": "queued"},
-            )
-            if item_id is None:
-                continue
-            new_count += 1
             try:
-                self._queue.enqueue(item_id)
-            except Exception:  # noqa: BLE001 — a queue hiccup must not lose the written item
-                logger.debug("source item enqueue failed for %s", item_id, exc_info=True)
+                new_count += self._persist(source, item)
+            except Exception:  # noqa: BLE001 — one bad item must not abandon the rest
+                logger.warning("source %s item %r persist failed", sid, item.guid, exc_info=True)
         # Cursor advanced LAST, in its own txn: every item above is already durable, so a
         # crash here re-yields them next poll and the UNIQUE gate drops them (SC#4).
         from datetime import datetime
@@ -231,6 +215,117 @@ class SourceEngine:
             next_poll_at=next_at,
         )
         return new_count
+
+    # ── persisting one sighting (WS-5: created / modified / deleted) ────────────────
+
+    def _persist(self, source: dict, item: Any) -> int:
+        """Persist ONE sighting; return 1 if it was (re-)indexed, else 0.
+
+        The engine — not the provider — owns what a change KIND means, because the
+        dangerous direction lives here: a provider that could decide "deleted" means
+        "remove the row" would destroy the user's only remaining copy of a file it no
+        longer sees. The three outcomes are deliberately asymmetric:
+
+        * ``created`` → a NEW item through the novelty gate (dedup returns None).
+        * ``modified`` → the SAME item updated + re-enqueued (never a second row).
+        * ``deleted`` → the item ARCHIVED with ``source_deleted_at``, never deleted, and
+          never enqueued (a vanished file has nothing to re-index).
+
+        The kind is matched EXPLICITLY against the closed vocabulary; an unknown value is
+        refused rather than falling through to a create, so a future kind cannot be
+        silently mis-persisted as an ingestion.
+        """
+        from personalclaw.knowledge_providers.base import (
+            CHANGE_CREATED,
+            CHANGE_DELETED,
+            CHANGE_MODIFIED,
+        )
+
+        change = getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED
+        if change == CHANGE_DELETED:
+            return self._archive_deleted(source, item)
+        if change == CHANGE_MODIFIED:
+            return self._reindex_modified(source, item)
+        if change != CHANGE_CREATED:
+            logger.warning(
+                "source %s item %r has unknown change kind %r; skipped",
+                source["id"],
+                item.guid,
+                change,
+            )
+            return 0
+        return self._create_new(source, item)
+
+    def _create_new(self, source: dict, item: Any) -> int:
+        """First sighting → a new item. ``create_typed_item`` writes the seen-row + item
+        atomically and returns None when the guid was already seen — the novelty gate.
+        Only a genuinely-new item (an id) is enqueued, so a page that changes every render
+        cannot storm the queue."""
+        item_id = self._store.create_typed_item(
+            item_type=source.get("item_type") or "bookmark",
+            title=item.title or item.url or item.guid,
+            content=item.content,
+            url=item.url,
+            provider=source["provider"],
+            source_id=source["id"],
+            guid=item.guid,
+            extra={"processing_status": "queued"},
+        )
+        if item_id is None:
+            return 0
+        self._enqueue(item_id)
+        return 1
+
+    def _reindex_modified(self, source: dict, item: Any) -> int:
+        """An edited item → update the EXISTING row and re-enqueue it.
+
+        No second row: a mutable corpus (a watched directory) re-emits the same guid
+        every time the file changes, so keying off the existing item is what makes an
+        edit a re-index instead of a duplicate. A guid with no item yet (the source's
+        first pass only SEEDED it, so it was never ingested) legitimately becomes a
+        create — the alternative would drop the edit entirely."""
+        existing = self._store.find_source_item(source["id"], item.guid)
+        if existing is None:
+            return self._create_new(source, item)
+        item_id = existing["id"]
+        fields: dict[str, Any] = {
+            "title": item.title or existing.get("title") or item.guid,
+            "content": item.content,
+            "processing_status": "queued",
+        }
+        if existing.get("is_archived"):
+            # The guid came BACK (a deleted file restored, a volume remounted): revive the
+            # original item and drop the delete stamp, rather than leaving the user with an
+            # archived row plus no live one for a file that is plainly there again.
+            meta = existing.get("file_metadata")
+            meta = dict(meta) if isinstance(meta, dict) else {}
+            meta.pop("source_deleted_at", None)
+            fields["is_archived"] = 0
+            fields["file_metadata"] = meta
+        self._store.update_item(item_id, **fields)
+        self._enqueue(item_id)
+        return 1
+
+    def _archive_deleted(self, source: dict, item: Any) -> int:
+        """The upstream copy is gone → ARCHIVE the item with ``source_deleted_at`` (SC#5).
+
+        Never a hard delete, and the engine has no code path that could become one: the
+        store exposes only :meth:`~personalclaw.knowledge.store.KnowledgeStore.archive_source_item`
+        for this, which is an UPDATE. Returns 0 — archiving is not a re-index, so a delete
+        never enqueues ingestion work for content that no longer exists."""
+        existing = self._store.find_source_item(source["id"], item.guid)
+        if existing is None:
+            return 0
+        self._store.archive_source_item(
+            existing["id"], deleted_at=item.metadata.get("source_deleted_at", "")
+        )
+        return 0
+
+    def _enqueue(self, item_id: str) -> None:
+        try:
+            self._queue.enqueue(item_id)
+        except Exception:  # noqa: BLE001 — a queue hiccup must not lose the written item
+            logger.debug("source item enqueue failed for %s", item_id, exc_info=True)
 
     async def tick(self) -> float:
         """One loop iteration: poll every due source, return seconds to sleep until the

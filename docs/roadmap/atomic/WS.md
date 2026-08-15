@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WS-2` | ⬜ | WatchedSource store + SourceEngine poll loop + SourcesConfig + SOURCE egress policy | `WS-1` | knowledge.db migration adds sources/source_cursors/source_seen tables + source_id/guid item columns with UNIQUE(source_id,guid); SourceEngine single re-armed asyncio loop enrolls poll-capable providers and polls a fixture source on schedule, writing items via store.create_typed_item(provider,source_id,guid)+ingest_queue.enqueue; SOURCE EgressPolicy profile added via egress_policy_for; SourcesConfig knobs round-trip (SC#12); kill-mid-poll+restart yields no dup/no loss via cursor+seen-set atomicity + recover_pending (SC#4) |
 | `WS-3` | ⬜ | web-source: five-detector stack, selector configs, escalating fetch, preview+create flow | `WS-2` | Pasting a real changelog/blog URL yields a correct zero-LLM item preview via auto-detection and a homepage yields the pick-a-listing-page guidance; a manual selector config rescues a JS-lite failure (SC#1); a JS-heavy source succeeds only after render-tier escalation within max_requests with the escalation recorded, and allow_render:false degrades to a 'needs render tier' health status (SC#2) |
 | `WS-4` | ⬜ | feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph | `WS-2` | Polling the same feed twice produces zero duplicate items and the same story arriving via HN Algolia AND RSS produces ONE item with both attributions (also_seen_in) (SC#3); a raw source's items reach FTS + vector search with zero LLM calls, asserted structurally that the raw graph contains no LLM nodes (SC#6) |
-| `WS-5` | ⬜ | dir-source: signature-diff observer, debounce, archive-on-delete | `WS-2` | Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm) |
+| `WS-5` | ✅ | dir-source: signature-diff observer, debounce, archive-on-delete | `WS-2` | Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm) |
 | `WS-6` | ⬜ | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) | `WS-2` | An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9) |
 | `WS-7` | ⬜ | Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff | `WS-2`, `EXT:AUTOMATION-SUBSTRATE:event bus for SourceItemIngested/SourcePollCompleted + morning-digest template + web_watch source_id consumption (interim JSONL spool until bus lands)` | Engine emits SourceItemIngested per new item + SourcePollCompleted per poll onto the substrate bus (interim spool until it lands); a saved source query matches new items with zero tokens and emits SourceQueryMatched, a subscribed Trigger fires, and the morning-digest template produces ONE knowledge item + one notification through notification_allowed() (SC#10); an injection payload in a scraped page cannot steer a digest run, fenced at the LLM boundary (SC#8) |
 | `WS-8` | ⬜ | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory | `WS-1`, `WS-2`, `WS-3` | A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path) |
@@ -56,11 +56,26 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `WS-5` — dir-source: signature-diff observer, debounce, archive-on-delete
 
-**Status:** todo
+**Status:** done
 
 §4 Watched Local Directories (am.5): dir-source spec + save-time validate_file_path/sensitive-path/path-cap; dependency-free mtime+size signature-diff poll (not watchdog); debounced incremental re-index; §11 step 3. Reconcile against shipped triggers/file_poll.py; fs_watch.py stays untouched
 
 **Done when:** Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm)
+
+**DONE.** `knowledge_providers/dir_source.py` — a `(mtime, size)` signature diff per poll against the
+baseline in the source cursor; no `watchdog` dependency, and `fs_watch.py` / `triggers/file_watch.py`
+are untouched. The debounce window is timed off the file's OWN mtime, so a further save inside the
+window restarts it by construction and a settling file's baseline stays uncommitted (no timer state
+to lose across a restart): three files edited in one window re-index exactly three times, three saves
+of one file exactly once. `SourceItem.change` (`created`/`modified`/`deleted` — a closed vocabulary in
+`knowledge_providers/base.py`) is the new contract field the ENGINE dispatches: created → a new item,
+modified → the existing row updated and re-enqueued, deleted → `store.archive_source_item` stamping
+`file_metadata.source_deleted_at`. There is no delete path to reach — engine and provider are both
+structurally asserted to contain no `DELETE FROM items` — and a reported deletion is tombstoned in the
+cursor so a restored file revives its archived item instead of being dropped by the seen-set. First
+pass seeds only; `validate_spec` (sensitive-path + path-cap, fail-closed) runs on every poll rather
+than at save time only; a per-file read error skips that file and advances its baseline instead of
+aborting the cycle. Tests: `tests/test_dir_source.py`.
 
 ### `WS-6` — Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)
 

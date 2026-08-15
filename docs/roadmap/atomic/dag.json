@@ -5197,7 +5197,8 @@
         {
           "id": "WS-5",
           "title": "dir-source: signature-diff observer, debounce, archive-on-delete",
-          "status": "todo",
+          "status": "done",
+          "pr": 1369,
           "scope": "§4 Watched Local Directories (am.5): dir-source spec + save-time validate_file_path/sensitive-path/path-cap; dependency-free mtime+size signature-diff poll (not watchdog); debounced incremental re-index; §11 step 3. Reconcile against shipped triggers/file_poll.py; fs_watch.py stays untouched",
           "done_when": "Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm)",
           "deps": [
@@ -6507,6 +6508,7 @@
           "id": "SH-9",
           "title": "External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan",
           "status": "blocked",
+          "pr": 1369,
           "scope": "Session 4 T4.3; Design S4 (external review); owner task 3 (decide external review)",
           "done_when": "docs/security/review-scope.md lists the five high-risk paths, the review format, and the publication plan; scope approved by owner (owner task 3); review executed or scheduled with a date",
           "deps": []
@@ -7078,6 +7080,7 @@
           "id": "PEP-6",
           "title": "Artifact folders",
           "status": "done",
+          "pr": 1369,
           "scope": "Add an ArtifactFolderStore (flat JSON, opaque 12-char-hex id, parent_id nesting, order, icon) mirroring the existing chat-folder store, plus an Artifact.folder_id field (tolerant-loaded, default '' = library root) and a set_folder metadata-only mutation that does not bump updated_at. Support list/query by folder with the present-vs-absent distinction (None=all, ''=unfiled, id=that folder) and routes (GET /api/artifacts?folder=<id>). Artifacts library UI: folder tree in the side rail, drag-to-file, create/rename/delete, and an unfiled bucket.",
           "done_when": "Folders CRUD; filing is metadata-only (no updated_at bump); renaming a folder leaves artifact records untouched; deleting a folder falls its members back to unfiled; membership persists across reload; nested folders validated.",
           "deps": []
@@ -7957,11 +7960,6 @@
       {
         "id": "WS-4",
         "title": "feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph",
-        "plan": "WS"
-      },
-      {
-        "id": "WS-5",
-        "title": "dir-source: signature-diff observer, debounce, archive-on-delete",
         "plan": "WS"
       },
       {
@@ -10099,9 +10097,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
