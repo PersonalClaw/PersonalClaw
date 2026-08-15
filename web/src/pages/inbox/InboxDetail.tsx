@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star, ExternalLink } from 'lucide-react'
+import { Sparkles, Send, Check, XCircle, BellOff, Loader2, Star, ExternalLink, RotateCcw, Filter } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
@@ -43,6 +43,13 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
     setBusy('fav'); setErr('')
     try { await api.favoriteInboxItem(item.id, !item.favorited); onChanged() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Favorite failed') } finally { setBusy(null) }
+  }
+  // INU-6: undo a verification filter. The server fires the withheld notification exactly
+  // once on the FILTERED→PENDING edge, so a double-click can't double-notify.
+  async function restore() {
+    setBusy('restore'); setErr('')
+    try { await api.restoreInboxItem(item.id); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Restore failed') } finally { setBusy(null) }
   }
 
   const dirtyDraft = draft !== (item.draft ?? '')
@@ -186,6 +193,18 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       )}
 
       {err && <FieldError>{err}</FieldError>}
+
+      {/* INU-6: a withheld item explains itself and offers the one recovery — Restore
+          re-fires the suppressed notification, so a false positive is never a silent drop. */}
+      {item.status === 'filtered' && (
+        <div className="flex flex-wrap items-center gap-s rounded-m border border-outline-variant/40 px-m py-s text-[0.8125rem]">
+          <Filter size={14} style={{ color: 'var(--color-warn)' }} />
+          <span className="text-on-surface-low">A second-opinion check flagged this claim, so its notification was withheld. Restore to deliver it.</span>
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} disabled={!!busy}>
+            {busy === 'restore' ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Restore
+          </Button>
+        </div>
+      )}
 
       {/* triage actions */}
       <div className="flex flex-wrap items-center gap-s border-t border-outline-variant/40 pt-l">

@@ -56,7 +56,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (!items) return null
     const n = q.trim().toLowerCase()
     return items
-      .filter((it) => filter === 'all' ? true : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : it.classification === filter && isOpen(it.status))
+      .filter((it) => filter === 'all' ? true : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
       .filter((it) => !kind || (it.item_kind || 'message') === kind)
       .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
   }, [items, filter, kind, q])
@@ -131,6 +131,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (key === 'all') return scoped.length
     if (key === 'open') return scoped.filter((it) => isOpen(it.status)).length
     if (key === 'handled') return scoped.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
+    if (key === 'filtered') return scoped.filter((it) => it.status === 'filtered').length
     return scoped.filter((it) => it.classification === key && isOpen(it.status)).length
   }
   // Kind chips are driven by what's PRESENT (kinds with zero items are dead controls), and
@@ -146,7 +147,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   }, [items])
   const filterSections: FilterSectionDef[] = [{
     title: 'Show', value: filter, defaultKey: 'open', onChange: setFilter,
-    options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: filterCount(f.key) })),
+    // The Filtered view is only offered when something is actually withheld — an always-on
+    // chip that reads 0 for most users would be a dead control (INU-6).
+    options: [
+      ...FILTERS.map((f) => ({ key: f.key, label: f.label, count: filterCount(f.key) })),
+      ...((filterCount('filtered') ?? 0) > 0 ? [{ key: 'filtered', label: 'Filtered', count: filterCount('filtered') }] : []),
+    ],
   }]
   return (
     <WorkbenchLayout

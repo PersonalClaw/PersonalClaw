@@ -51,6 +51,11 @@ _CALL_SITE_SURFACES = {
     # The Doctor per-provider selftest (§1.4) fires a tiny one-token completion to
     # ground-truth the chat capability — user-click only, covered by the chat contract.
     "dashboard/handlers/doctor.py": "chat",
+    # INU-6 second-opinion verification (verify_attention_item). Background reasoning
+    # one-shot whose no-model floor is BUILT IN: no model / timeout / budget / parse-fail →
+    # verdict "skipped", so the attention notification is DELIVERED unverified rather than
+    # blocked (fail-open). Same shape as the built-in-floor reasoning call sites above.
+    "notification_verify.py": "assistant_reasoning",
 }
 
 _CALL_RE = re.compile(r"\bone_shot_completion\s*\(")

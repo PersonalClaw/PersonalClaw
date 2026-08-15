@@ -10,6 +10,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Attention notifications can now ask for a second opinion before interrupting you.** Turn on
+  verification for a proposal or agent-request rule and, before its notification fires, a cheap
+  background check judges whether the claim holds. Only a clear refutation withholds it — every
+  uncertain, unchecked, or model-unavailable case still delivers, so a real request is never
+  silently dropped. Withheld items appear under a new **Filtered** view with a one-click **Restore**
+  that delivers the notification you held back. (Off by default; opt in per rule.)
 - **You can now replay a finished workflow run and see exactly where an edit would change it.**
   `personalclaw workflow replay <run_id>` re-drives the run's decision path against its OWN recorded
   responses — it calls no model and spends nothing — and compares the result to the path the run

@@ -102,6 +102,11 @@ class Rule:
     mode: str = "immediate"
     targets: tuple[str, ...] = DEFAULT_TARGETS
     conditions: Conditions = field(default_factory=Conditions)
+    #: Opt into the INU-6 second-opinion verification pass for this kind. Only meaningful
+    #: for a kind whose registration is ``verifiable=True`` — the rules PUT rejects
+    #: ``verify:true`` on a non-verifiable kind, so a persisted ``verify`` on an ineligible
+    #: kind cannot arise through the API. Defaults off: no rule verifies until asked.
+    verify: bool = False
 
     @property
     def key(self) -> str:
@@ -116,7 +121,7 @@ class Rule:
         """
         if self.mode == "immediate":
             return self
-        return Rule(self.source, self.kind, "immediate", self.targets, self.conditions)
+        return Rule(self.source, self.kind, "immediate", self.targets, self.conditions, self.verify)
 
 
 def _rules_path() -> Path:
@@ -181,6 +186,7 @@ def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
         mode=mode,
         targets=_coerce_targets(raw.get("targets")),
         conditions=_coerce_conditions(raw.get("conditions")),
+        verify=bool(raw.get("verify")),
     )
 
 
@@ -319,6 +325,10 @@ def rules_document() -> dict[str, Any]:
                     "keywords": list(rule.conditions.keywords),
                     "name_mention": rule.conditions.name_mention,
                 },
+                # INU-6: whether this kind may be verified (registry) and whether the user
+                # opted in (rule). The matrix renders the toggle only for a verifiable kind.
+                "verifiable": registered.verifiable,
+                "verify": rule.verify,
             }
         )
     return {"rules": rows, "digest": digest_settings(), "targets": list(TARGETS)}

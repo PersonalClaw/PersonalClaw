@@ -337,9 +337,9 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
     if incoming is not None:
         if not isinstance(incoming, dict):
             return web.json_response({"error": "'rules' must be an object"}, status=400)
-        known_keys = {k.key for k in nk.all_kinds()}
+        kinds_by_key = {k.key: k for k in nk.all_kinds()}
         for key, raw in incoming.items():
-            if key not in known_keys:
+            if key not in kinds_by_key:
                 return web.json_response(
                     {"error": f"unknown notification kind '{key}'"}, status=400
                 )
@@ -376,6 +376,19 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
                 if nm is not None and not isinstance(nm, bool):
                     return web.json_response(
                         {"error": f"rule '{key}': name_mention must be a boolean"}, status=400
+                    )
+            verify = raw.get("verify")
+            if verify is not None:
+                if not isinstance(verify, bool):
+                    return web.json_response(
+                        {"error": f"rule '{key}': verify must be a boolean"}, status=400
+                    )
+                # A verify opt-in on a kind that carries no checkable claim is a
+                # configuration error, not a silent no-op: reject it so the user learns the
+                # toggle does not apply rather than seeing it "saved" and never firing.
+                if verify and not kinds_by_key[key].verifiable:
+                    return web.json_response(
+                        {"error": f"notification kind '{key}' is not verifiable"}, status=400
                     )
             stored[key] = raw
         doc["rules"] = stored

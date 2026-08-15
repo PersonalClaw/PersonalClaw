@@ -333,6 +333,50 @@ async def test_rules_put_rejects_unknown_target(_isolate_rules):
 
 
 @pytest.mark.asyncio
+async def test_rules_put_rejects_verify_true_on_non_verifiable_kind(_isolate_rules):
+    """INU-6: verify:true on a kind that carries no checkable claim is a 400, not a silent
+    no-op the user would see 'saved' and never fire."""
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"heartbeat/status": {"verify": True}}})
+    )
+    assert resp.status == 400
+    assert "not verifiable" in (await _json(resp))["error"]
+    # And it must not have persisted.
+    assert nr.resolve_rule("heartbeat", "status").verify is False
+
+
+@pytest.mark.asyncio
+async def test_rules_put_accepts_verify_on_a_verifiable_kind(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"skills/proposal": {"verify": True}}})
+    )
+    assert resp.status == 200
+    assert nr.resolve_rule("skills", "proposal").verify is True
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_non_bool_verify(_isolate_rules):
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"skills/proposal": {"verify": "yes"}}})
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_rules_put_allows_verify_false_on_any_kind(_isolate_rules):
+    """verify:false is always a no-op opt-out — never rejected, even for a non-verifiable
+    kind (the FE may send the whole row back)."""
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"heartbeat/status": {"verify": False}}})
+    )
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad",
     [
