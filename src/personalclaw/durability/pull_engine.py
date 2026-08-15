@@ -36,6 +36,7 @@ from typing import Callable, Optional
 from personalclaw.atomic_write import atomic_write_bytes
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import reconcile
+from personalclaw.durability.conflicts import ConflictQueue
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT, Cursor
 from personalclaw.durability.registry import Registry, shard_prefix
 from personalclaw.durability.shards import import_shards
@@ -60,6 +61,7 @@ class SeqOutcome:
     updated: int = 0
     removed: int = 0
     deferred_db: list[str] = field(default_factory=list)  # entry ids held for the DB seam
+    conflicts: int = 0  # both-sides-edited divergences queued for review (DAS-7)
     detail: str = ""
 
 
@@ -84,6 +86,10 @@ class PullReport:
     @property
     def removed(self) -> int:
         return sum(o.removed for o in self.outcomes)
+
+    @property
+    def conflicts(self) -> int:
+        return sum(o.conflicts for o in self.outcomes)
 
 
 def _materialize(objs, prefix: str, dest: Path) -> int:
@@ -111,6 +117,9 @@ def _pull_one_seq(
     peer_id: str,
     seq: int,
     db_merger: Optional[DbMerger],
+    registry: Optional[Registry] = None,
+    queue: Optional[ConflictQueue] = None,
+    now: str = "",
 ) -> SeqOutcome:
     prefix = shard_prefix(peer_id, seq)
     out = SeqOutcome(peer_id=peer_id, seq=seq)
@@ -147,10 +156,22 @@ def _pull_one_seq(
                 continue
             out.entries += 1
             if reconcile.handles_kind(entry.kind):
-                res = reconcile.reconcile_entry(home, entry, rows)
+                res = reconcile.reconcile_entry(
+                    home,
+                    entry,
+                    rows,
+                    ancestors=registry.ancestors_for(entry.id) if registry else {},
+                    queue=queue,
+                    now=now,
+                )
                 out.added += res.added
                 out.updated += res.updated
                 out.removed += res.removed
+                out.conflicts += res.conflicts
+                if registry is not None:
+                    # The state we merged TO becomes the next divergence's common ancestor —
+                    # published by the same CAS bump that announces our seq (§4.2).
+                    registry.record_ancestors(entry.id, res.new_ancestors)
                 if res.verdict == PAYLOAD_BAD:
                     poison = True
             elif db_merger is not None:
@@ -179,6 +200,8 @@ def pull_from_peers(
     *,
     self_id: str,
     db_merger: Optional[DbMerger] = None,
+    queue: Optional[ConflictQueue] = None,
+    now: str = "",
 ) -> PullReport:
     """Pull and merge every peer shard set the cursor hasn't consumed, oldest seq first.
 
@@ -191,7 +214,16 @@ def pull_from_peers(
     for peer in registry.peers(self_id):
         already = int(seen.get(peer.machine_id, 0) or 0)
         for seq in range(already + 1, peer.seq + 1):
-            outcome = _pull_one_seq(transport, home, peer.machine_id, seq, db_merger)
+            outcome = _pull_one_seq(
+                transport,
+                home,
+                peer.machine_id,
+                seq,
+                db_merger,
+                registry=registry,
+                queue=queue,
+                now=now,
+            )
             outcome.advanced = cursor.record(peer.machine_id, seq, outcome.verdict)
             report.outcomes.append(outcome)
             if not outcome.advanced:

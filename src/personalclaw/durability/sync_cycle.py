@@ -24,6 +24,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw.durability.conflicts import ConflictQueue
 from personalclaw.durability.cursor import Cursor
 from personalclaw.durability.db_merge import make_db_merger
 from personalclaw.durability.outbox import Outbox
@@ -49,6 +50,7 @@ class SyncCycleReport:
     rows_added: int = 0
     rows_removed: int = 0
     seq_published: int = 0
+    conflicts: int = 0  # both-sides-edited divergences queued for review (DAS-7, §4.2)
 
     @property
     def detail(self) -> str:
@@ -56,7 +58,8 @@ class SyncCycleReport:
             return f"skipped: {self.skipped}"
         if not self.ok:
             return f"error: {self.error}"
-        return f"+{self.rows_added} -{self.rows_removed} rows; published seq {self.seq_published}"
+        base = f"+{self.rows_added} -{self.rows_removed} rows; published seq {self.seq_published}"
+        return base + (f"; {self.conflicts} conflict(s) queued" if self.conflicts else "")
 
 
 def read_registry(transport: SyncTransportProvider) -> Registry:
@@ -96,15 +99,24 @@ def run_sync_cycle(
     sync_root = Path(home) / "sync"
     cursor = Cursor(sync_root)
     outbox = Outbox(sync_root)
+    conflict_queue = ConflictQueue(home)
 
     # ── PULL + MERGE ────────────────────────────────────────────────────────
     try:
         registry = read_registry(transport)
         report.pulled = pull_from_peers(
-            transport, home, registry, cursor, self_id=self_id, db_merger=make_db_merger(home)
+            transport,
+            home,
+            registry,
+            cursor,
+            self_id=self_id,
+            db_merger=make_db_merger(home),
+            queue=conflict_queue,
+            now=now,
         )
         report.rows_added = report.pulled.added
         report.rows_removed = report.pulled.removed
+        report.conflicts = report.pulled.conflicts
     except Exception as exc:  # noqa: BLE001 — a bad cycle must not kill the service loop
         logger.warning("sync cycle: pull failed (%s)", exc, exc_info=True)
         report.ok = False
