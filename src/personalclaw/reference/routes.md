@@ -632,6 +632,21 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/uploads/{id}/part` — stream one part to disk (idempotent).
 - `GET /api/usage/rollup` — aggregated ledger rows.
 - `GET /api/usage/totals` — the grand total over the window.
+- `DELETE /api/voice/bindings` — unbind one surface.
+- `GET /api/voice/bindings` — the surface → profile map.
+- `PUT /api/voice/bindings` — {surface, profile_id} — bind one surface.
+- `GET /api/voice/profiles` — every profile plus the binding map.
+- `POST /api/voice/profiles` — {name, kind, provider, model, …}.
+- `DELETE /api/voice/profiles/{id}` — record, artifacts, and any bindings.
+- `GET /api/voice/profiles/{id}` — _(no summary)_
+- `PUT /api/voice/profiles/{id}` — patch the mutable fields.
+- `GET /api/voice/profiles/{id}/audio` — _(no summary)_
+- `DELETE /api/voice/profiles/{id}/consent` — delete the recording, clear the fields.
+- `POST /api/voice/profiles/{id}/consent` — {consent_text}.
+- `POST /api/voice/profiles/{id}/consent/verify` — recompute from the artifacts.
+- `POST /api/voice/profiles/{id}/lock` — {history_index} — pin seed + locked.wav.
+- `POST /api/voice/profiles/{id}/unlock` — variation returns.
+- `GET /api/voice/resolve` — which level wins, and why.
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
 - `GET /api/workflows` — _(no summary)_
 - `POST /api/workflows` — _(no summary)_

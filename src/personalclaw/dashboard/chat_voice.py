@@ -18,9 +18,35 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tts.registry import active_voice_params
 from personalclaw.voice.duplex import clean_for_speech
+from personalclaw.voice.profiles import VoiceProfileError, append_history
 from personalclaw.voice_reply import stitch_wavs, streaming_voice_reply
 
 logger = logging.getLogger(__name__)
+
+
+def _record_generation(params: dict, wav_path: str, text: str) -> None:
+    """Append this generation to the resolved profile's bounded history (§1.2).
+
+    Only profile-routed syntheses are recorded — the flat built-in path has no entity
+    to remember them against. The stored text is a HASH, not the transcript: history
+    exists to let the user re-lock a voice they liked, not to accumulate a second copy
+    of everything the assistant said.
+    """
+    profile_id = str(params.get("profile_id") or "")
+    if not profile_id:
+        return
+    import hashlib
+    from pathlib import Path
+
+    try:
+        append_history(
+            profile_id,
+            Path(wav_path),
+            seed=int(params.get("seed") or 0),
+            text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+        )
+    except Exception:
+        logger.debug("voice history append failed for %s", profile_id, exc_info=True)
 
 
 async def api_voice_synthesize(request: web.Request) -> web.Response:
@@ -67,7 +93,14 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
     # recognized as our own speaker bleed (see api_stt_transcribe).
     state.record_spoken(session_name, text)
 
-    params = active_voice_params()
+    # MULTIMODAL-IO §3.2 — this endpoint is the dashboard's synthesis path, so its
+    # surface is ``channel:webui`` unless the caller names another one; an explicit
+    # ``profile_id`` ("speak as X") outranks any binding.
+    surface = str(body.get("surface") or "channel:webui")
+    try:
+        params = active_voice_params(surface=surface, profile_id=str(body.get("profile_id") or ""))
+    except VoiceProfileError as exc:
+        return web.json_response({"error": exc.message, "reason": exc.reason}, status=exc.status)
     if params is None:
         return web.json_response(
             {"error": "No TTS voice selected — choose one in Settings → Models"},
@@ -107,6 +140,7 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
         if chunk_paths:
             final_path = await stitch_wavs(chunk_paths)
             if final_path:
+                _record_generation(params, final_path, text)
                 with open(final_path, "rb") as f:
                     final_bytes = f.read()
                 state.broadcast_ws(

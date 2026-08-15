@@ -926,6 +926,29 @@ async def start_dashboard(
     app.router.add_patch("/api/chat/tag-columns/{id}", chat.api_chat_tag_column_update)
     app.router.add_delete("/api/chat/tag-columns/{id}", chat.api_chat_tag_column_delete)
     app.router.add_post("/api/voice/synthesize", chat.api_voice_synthesize)
+
+    # Voice profiles + per-surface bindings (MULTIMODAL-IO §1, §3).
+    from personalclaw.dashboard.handlers import voice_profiles as _vprof
+
+    app.router.add_get("/api/voice/profiles", _vprof.api_voice_profiles_list)
+    app.router.add_post("/api/voice/profiles", _vprof.api_voice_profile_create)
+    app.router.add_get("/api/voice/bindings", _vprof.api_voice_bindings_get)
+    app.router.add_put("/api/voice/bindings", _vprof.api_voice_bindings_put)
+    app.router.add_delete("/api/voice/bindings", _vprof.api_voice_bindings_delete)
+    app.router.add_get("/api/voice/resolve", _vprof.api_voice_resolve)
+    app.router.add_get("/api/voice/profiles/{id}", _vprof.api_voice_profile_get)
+    app.router.add_put("/api/voice/profiles/{id}", _vprof.api_voice_profile_update)
+    app.router.add_delete("/api/voice/profiles/{id}", _vprof.api_voice_profile_delete)
+    app.router.add_get("/api/voice/profiles/{id}/audio", _vprof.api_voice_profile_audio)
+    app.router.add_post("/api/voice/profiles/{id}/lock", _vprof.api_voice_profile_lock)
+    app.router.add_post("/api/voice/profiles/{id}/unlock", _vprof.api_voice_profile_unlock)
+    app.router.add_post("/api/voice/profiles/{id}/consent", _vprof.api_voice_profile_consent_record)
+    app.router.add_post(
+        "/api/voice/profiles/{id}/consent/verify", _vprof.api_voice_profile_consent_verify
+    )
+    app.router.add_delete(
+        "/api/voice/profiles/{id}/consent", _vprof.api_voice_profile_consent_revoke
+    )
     app.router.add_post("/api/chat/sessions/{session}/handoff", chat.api_chat_session_handoff)
     app.router.add_post(
         "/api/chat/sessions/{session}/channel-link", chat.api_chat_session_channel_link

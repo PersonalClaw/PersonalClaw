@@ -667,6 +667,28 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="search provider bindings",
     ),
     StateEntry(
+        id="voice_profiles",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="voice_profiles",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_UNION_BY_ID,
+        tombstones=True,
+        help="voice profiles: records, reference audio, locked clips, consent recordings",
+        # A generation-history clip is disposable render output (bounded LRU, re-derived
+        # by simply speaking again) — a backup should not carry it. The reference clip,
+        # the locked clip and the consent recording ARE authoritative user content and
+        # stay covered: losing them loses the voice and its provenance.
+        derived_within=("*/history",),
+    ),
+    StateEntry(
+        id="voice_bindings",
+        kind=KIND_JSON_FILE,
+        path="voice_bindings.json",
+        domain=DOMAIN_CONFIG,
+        merge=MERGE_REPLACE_ONLY,
+        help="per-surface voice profile bindings (channel/agent/client + default)",
+    ),
+    StateEntry(
         id="active_prompts",
         kind=KIND_JSON_FILE,
         path="active_prompts.json",

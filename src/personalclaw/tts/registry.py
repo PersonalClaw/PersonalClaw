@@ -128,7 +128,16 @@ def get_active_provider() -> TtsProvider | None:
     return resolved[0] if resolved else None
 
 
-def active_voice_params() -> dict | None:
+def _provider_by_app_name(name: str) -> TtsProvider | None:
+    """A TTS provider by the app/registry name a voice profile records."""
+    if not name:
+        return None
+    _ensure_registered()
+    key = "piper" if name in _PIPER_NAMES else name
+    return _providers.get(key)
+
+
+def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | None:
     """Resolve provider-neutral synthesis params from the unified store + settings.
 
     Returns ``{"provider": TtsProvider, "voice": str, "speed": float,
@@ -138,19 +147,52 @@ def active_voice_params() -> dict | None:
     used by remote providers (alloy / nova / …), ignored by Piper. Each provider
     turns ``voice`` into whatever it needs (Piper a local ``.onnx``, OpenAI a
     hosted model id), so callers stay provider-agnostic.
+
+    Profile-aware (MULTIMODAL-IO §3.2): ``surface`` (``channel:webui``,
+    ``agent:<slug>``, …) and an ``profile_id`` override walk the four-level chain
+    (explicit > binding > default > built-in). When a profile wins, its provider /
+    model / speed shadow the flat selection and the dict grows a SUPERSET of keys —
+    ``profile_id``, ``profile_level``, ``ref_audio`` (absolute, the locked clip when
+    the profile is locked), ``ref_text``, ``seed``, ``instruct``, ``design_params``,
+    ``locked``. When nothing resolves (the common case, and every case before a user
+    creates a profile) the returned dict is EXACTLY the pre-profile six keys, so an
+    empty store reproduces today's flat output rather than merely approximating it.
+
+    The conditioning keys are carried, not consumed: threading ``ref_audio``/``seed``
+    into ``TtsProvider.synthesize`` needs the capability flags MI-2 adds, and handing
+    a reference clip to a non-cloning engine would be the silent wrong-voice
+    synthesis the plan forbids.
     """
     from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.voice.bindings import resolve_profile_id
+    from personalclaw.voice.profiles import artifact_path, get_profile
+
+    pid, level = resolve_profile_id(surface=surface, explicit=profile_id)
+    profile = get_profile(pid) if pid else None
 
     resolved = active_tts()
     if resolved is None:
-        return None
-    provider, voice_id = resolved
+        # No flat selection: a profile can still stand alone, but only if the engine
+        # it names is actually registered (otherwise there is nothing to render with).
+        prov = _provider_by_app_name(profile.provider) if profile is not None else None
+        if profile is None or prov is None:
+            return None
+        provider, voice_id = prov, profile.model
+    else:
+        provider, voice_id = resolved
+        if profile is not None:
+            prov = _provider_by_app_name(profile.provider)
+            if prov is not None:
+                provider = prov
+            if profile.model:
+                voice_id = profile.model
+
     settings = load_use_case_settings("tts")
     try:
         speed = float(settings.get("speed", 1.0))
     except (TypeError, ValueError):
         speed = 1.0
-    return {
+    params = {
         "provider": provider,
         "voice": voice_id,
         "speed": speed,
@@ -158,3 +200,28 @@ def active_voice_params() -> dict | None:
         "enabled": bool(settings.get("enabled", False)),
         "auto_speak": bool(settings.get("auto_speak", False)),
     }
+    if profile is None:
+        return params
+
+    ref = ""
+    rel = "locked.wav" if profile.locked else profile.ref_audio
+    if rel:
+        try:
+            candidate = artifact_path(profile.id, rel)
+            ref = str(candidate) if candidate.is_file() else ""
+        except Exception:
+            ref = ""
+    params["speed"] = profile.speed or speed
+    params.update(
+        {
+            "profile_id": profile.id,
+            "profile_level": level,
+            "ref_audio": ref,
+            "ref_text": profile.ref_text,
+            "seed": profile.seed,
+            "instruct": profile.instruct,
+            "design_params": dict(profile.design_params),
+            "locked": profile.locked,
+        }
+    )
+    return params
