@@ -11,26 +11,32 @@ import { join } from 'node:path'
 // the drag-only gesture) while announcing itself as a control that does none of that. Same shape as
 // `aria-modal` without a trap and `aria-haspopup` with no popup: a declaration nothing stands behind.
 //
-// 🔑 THE CANONICAL FORM WAS ALREADY IN THE TREE, TWICE. `pages/code/CodeCockpitPage.tsx` ships it for
-// its panel splitter and its terminal drawer — role + orientation + `tabIndex={0}` + an arrow-key hint
-// in the accessible name + valuenow/min/max + a `focus-visible` seam. NavRail converged onto that
-// rather than inventing a variant.
+// 🔑 THE CANONICAL FORM WAS ALREADY IN THE TREE — as a HOOK, `ui/useResizablePanel`. It carries the
+// whole splitter: pointer-drag with pointer CAPTURE (so a drag crossing an iframe/editor can't stick),
+// arrow/Home/End keyboard resize, and persisted size. `pages/code/CodeCockpitPage.tsx` uses it for its
+// panel splitter and terminal drawer; `ui/NavRail` and `ui/SidePanel` converged onto it rather than
+// each re-deriving the keyboard math. The hook was moved out of `pages/code/` into `ui/` for exactly
+// this reason — a page-private hook cannot be a shared primitive.
 //
 // ── The rest of the family, recorded rather than silently left ─────────────────────────────────
 //
 // Six drag-to-resize handles exist. This rail governs the ones that CLAIM to be splitters; the others
 // are pointer-only and do not lie about it, which is a smaller defect but still one:
 //
-//   pages/code/CodeCockpitPage  ×2   full pattern            ← canonical
-//   ui/NavRail                       full pattern            ← this change
+//   pages/code/CodeCockpitPage  ×2   full pattern (via the hook)   ← canonical
+//   ui/NavRail                       full pattern                  ← cycle 189 (inline, its own state)
+//   ui/SidePanel                     full pattern (via the hook)   ← this change
 //   pages/terminal/TerminalDrawer    tabIndex + keydown, no role/valuenow
-//   ui/SidePanel · ui/Composer · pages/chat/ChatFilePanel   pointer-only
+//   ui/Composer · pages/chat/ChatFilePanel   pointer-only
 //
-// 🪤 THIS RAIL DELIBERATELY DOES NOT FAIL THE POINTER-ONLY THREE. Failing them today would either
-// force a rushed 3-file change or invite the cheap fix of DELETING a role to go green — and the honest
-// convergence is one shared handler adopted by all six, which is real work with its own cycle. What
-// the rail does guarantee is that nobody can ship the NavRail defect again: claiming the role now
-// obliges the contract.
+// 🪤 THIS RAIL DELIBERATELY DOES NOT FAIL THE POINTER-ONLY TWO. Failing them today would either force a
+// rushed change or invite the cheap fix of DELETING a role to go green — and each has a real wrinkle
+// the hook does not yet cover: `ui/Composer`'s height interplays with textarea autosize, and
+// `pages/chat/ChatFilePanel` cannot be driven in a dev home without a file reference in a message (so a
+// keyboard change there is unverifiable here). Both are their own cycles. `TerminalDrawer` also uses
+// the hook for its drag but hand-rolls its handle markup without the role/valuenow — a smaller gap. What
+// the rail guarantees is that nobody can ship the NavRail defect again: claiming the role obliges the
+// contract.
 
 const SRC = join(process.cwd(), 'src')
 const walk = (d: string): string[] =>
@@ -46,7 +52,11 @@ describe('a declared splitter implements the splitter contract', () => {
   const claimants = () => files().filter((f) => /role="separator"/.test(f.src))
 
   it('finds the claimants — not vacuous', () => {
-    expect(claimants().map((f) => f.rel).sort()).toEqual(['pages/code/CodeCockpitPage.tsx', 'ui/NavRail.tsx'])
+    expect(claimants().map((f) => f.rel).sort()).toEqual([
+      'pages/code/CodeCockpitPage.tsx',
+      'ui/NavRail.tsx',
+      'ui/SidePanel.tsx',
+    ])
   })
 
   it('each one is focusable, keyboard-operable and reports its value', () => {
