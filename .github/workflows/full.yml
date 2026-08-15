@@ -85,6 +85,33 @@ jobs:
       - name: npm audit (root workspace)
         run: npm ci && npm audit || true
 
+  security-corpus:
+    # SH-5 — the adversarial scanner corpus (five attack classes + the
+    # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
+    # Its own job, not a line in the matrix, so a corpus regression is legible on its
+    # own; `-n 0` keeps the integrity-race output readable. Published methodology:
+    # docs/security/scanner-testing.md.
+    runs-on: ubuntu-latest
+    # No PERSONALCLAW_HOME — see the matrix job. The corpus writes only to tmp_path.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: pytest (adversarial scanner corpus)
+        run: >
+          uv run pytest -n 0 --no-cov
+          tests/security
+          tests/test_supply_chain_scanner.py
+          tests/test_supply_chain_gates.py
+
   coverage:
     runs-on: ubuntu-latest
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.

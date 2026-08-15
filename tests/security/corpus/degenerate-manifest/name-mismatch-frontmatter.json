@@ -1,0 +1,12 @@
+{
+  "id": "degenerate-manifest/name-mismatch-frontmatter",
+  "class": "degenerate-manifest",
+  "summary": "A frontmatter `name` outside the allowed charset (path characters and uppercase), the shape a name-driven write path would follow onto disk.",
+  "expect": "manifest_rejected",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "contents": "---\nname: ../Evil Name\ndescription: x\n---\nbody\n"
+    }
+  ]
+}
