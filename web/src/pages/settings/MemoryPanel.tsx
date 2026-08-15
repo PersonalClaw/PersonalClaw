@@ -505,7 +505,7 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}
           disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>{saving ? 'Saving…' : 'Save lesson'}</Button>
-        {err && <span className="text-danger text-[0.75rem]">{err}</span>}
+        {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
       </div>
       <p className="text-on-surface-low text-[0.75rem]">Injected into future prompts. Prune anything wrong from the list.</p>
     </div>
