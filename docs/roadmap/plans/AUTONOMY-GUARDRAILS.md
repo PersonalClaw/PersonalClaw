@@ -971,6 +971,73 @@ pre-existing `tests/test_harness_validate.py` failures that red in any worktree 
 resolves `.venv/bin/python` relative to cwd). 15 new tests. All four generated baselines
 byte-identical after regeneration. No `web/` change.
 
+### 2026-08-15 — Atom AG-13 (consolidate the fourteen autonomy knobs into one declarative policy) — DONE
+
+"How much freedom does this run have?" was answered in fourteen places with no composition
+rule. This lands the ONE declaration — the SAME object PP-14 declared, `SupervisorPolicy`,
+now carrying the guardrails half too, so a run's supervisor policy and its autonomy ceiling
+are one declaration, not two. **Stacked on `feature-pp14-supervisor-policy`; PP-14's commit
+was not rebased or altered.** Class-B declaration change, still **deliberately inert** — the
+PP-14 honesty rail stays green (the consolidation lives inside `supervisor_policy.py`, which
+the caller census skips, and nothing in the engine constructs it; PP-15 wires convergence,
+AG-11 wires profile/trust). Clean break under the pre-1.0 banner.
+
+**§5's `Ceiling ∩ Profile` model was ALREADY in code** (`guardrails/ceiling.py` + `policy.py`
+— four archetypes, `resolve()` tightest-wins) — no second composition model was invented; the
+consolidation composes onto it. This atom did not have to build §5.
+
+Shipped in `src/personalclaw/workflows/supervisor_policy.py`:
+- `SupervisorPolicy` extended to subsume the run's `SafetyProfile` (`autonomy` field) plus the
+  knobs the loop declaration lacked: `single_active_feature`, `autonomy_mode_floor` (a `Mode`),
+  `resilience` (new `BreakerLimits`), `trust_ttl_secs`, `idle_secs`. `SafetyProfile` itself is
+  UNCHANGED, so its five AG-5 live readers keep working (asserted).
+- `POLICY_KNOB_MAP` — the load-bearing artifact: fourteen rows, one per knob, each naming the
+  ONE policy field it maps onto. The consolidation is visible in the collisions — three HITL
+  knobs (`require_hitl`, the confirmation matrix + per-stage mute, loop `attended`) collapse
+  onto `hitl_posture`; `RunBudget`, the gate auto-approval and `SafetyProfile` onto `autonomy`.
+- `consolidate(...)` builder + `compose(ceiling, policy)` (narrows the guardrails half via the
+  SAME `guardrails.ceiling.resolve`; loop-convergence knobs are run-declaration bounds the
+  operator ceiling does not govern, so they pass through — a profile may only NARROW) +
+  `write_scope_allows(...)` matched by the §5 `path_glob` (never `normpath` a PATTERN).
+
+The fourteen → field map: RunBudget→`autonomy.budget.max_tokens`; single_active_feature→
+`single_active_feature`; require_hitl/confirmation/attended→`hitl_posture`; gate auto-approval→
+`autonomy.approval`; risk floors/earned-trust→`autonomy_mode_floor`; allowed_write_paths→
+`write_scope.allowed_paths`; resilience→`resilience`; escalation ladder→`escalation_ladder`;
+trust_ttl_secs→`trust_ttl_secs`; max_cycles→`budget_max_cycles`; idle_secs→`idle_secs`;
+SafetyProfile→`autonomy`.
+
+The matrix (`tests/test_ag13_autonomy_policy.py::test_the_behaviour_preservation_matrix`) proves
+this is a consolidation and NOT a behaviour change: for 8 runs (HEADLESS + INTERACTIVE workflow
+runs, all five bundled loop kinds, the code-project template that sets `single_active_feature`)
+it composes under the shipped default (no operator ceiling) and asserts the field each of the
+fourteen knobs maps to equals that knob's value read from its OWN home (`Loop`/`RunBudget`/
+`ExecutionHints`/`LoopsConfig`/`SafetyProfile`/`DEFAULT_LADDER`), knob-by-knob.
+
+**DISCOVERY (not fixed here — a behaviour change AG-13 must not make):** `workflows/scope.py:149`
+(`in_scope`, the runtime write-scope matcher) `normpath`s the PATTERN and matches with `fnmatch`
+— the exact §5 landmine (`/a/**/../b` collapses to `/a/b`, silently widening an allow; `fnmatch`
+lowers `**` to `*`). AG-13's consolidated read surface (`write_scope_allows`) uses the
+§5-correct `registries.path_glob` instead. Repointing `scope.py`'s live enforcement at the
+consolidated matcher belongs to the wiring owners (PP-15/AG-11); doing it here would change what
+a run permits, which this atom is forbidden to do. Logged for those atoms.
+
+**DEVIATION:** the atom lists `AG-11`'s deferred profile/trust behaviours as "re-pointed at the
+consolidated object rather than executed twice" — AG-11 is still `todo`, so there was nothing to
+re-point yet; the consolidated object it will point AT now exists, which is the enabling half.
+
+Falsifications (each mutated, verified to red naming the right thing, restored from `cp` backup,
+tree byte-clean after): (1) remap `max_cycles`→`idle_secs` → matrix reds `knob 'max_cycles':
+120 != 0`; (2) compose skips narrowing → `test_tightest_wins…` reds (`auto` survived where `ask`
+must win); (3) `normpath` the write-scope pattern → `test_a_dotdot_pattern_does_not_widen…` reds
+(`/a/b` matched `/a/**/../b`).
+
+Gate: `make lint` clean; targeted suites green; full suite `python -m pytest --no-cov -q`
+(PERSONALCLAW_HOME unset) — see the final commit's numbers. Collection diff vs the stacked base
+`feature-pp14-supervisor-policy`: **+7, zero removed** (19399 → 19406 — the seven AG-13 tests).
+Two pre-existing `tests/test_guardrails_ladder.py` failures are inherited from the PP-14 base
+(reproduced identically at commit `6de2130e` with no AG-13 change) and are NOT attributable here.
+
 ---
 
 ## Status: all four sessions COMPLETE (2026-07-25)
