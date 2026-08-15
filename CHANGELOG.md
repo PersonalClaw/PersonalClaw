@@ -9,6 +9,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Changed
+- **A workflow that reads another step's output now refuses to save unless that step is guaranteed to
+  run first.** The engine kept two separate pictures of how steps relate: what must run before what,
+  and what reads whose output. Nothing checked they agreed, so a template could pull
+  `{{nodes.some_step.output}}` from a step running *alongside* it — and instead of a clear complaint,
+  the run failed partway through with "binding failed: check the referenced node id and field exist",
+  pointing at a step id that was perfectly correct. That is now a typed error at save time
+  (`WF_UNORDERED_DEP`) naming the reader, the step it reads, and why the ordering is missing. **No
+  bundled template was affected** — all 19 were checked first, and every one already ordered its
+  steps correctly. Nothing about how workflows run has changed.
+
 
 - **A loop that keeps working but stops getting anywhere now stalls, even when it insists it is
   making progress.** The supervisor's stall detector used to read one number the worker itself

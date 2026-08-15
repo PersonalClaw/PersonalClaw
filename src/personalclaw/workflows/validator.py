@@ -144,6 +144,7 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
 
     _validate_binding_targets(res, nodes, ids_seen)
     levels = _kahn_levels(res, nodes, ids_seen)
+    _validate_dep_ordering(res, nodes, ids_seen)
     if res.ok:
         res.levels = levels
     return res
@@ -526,6 +527,259 @@ def _validate_binding_targets(
                     f"binding references unknown node id {dep!r}",
                     path,
                 )
+
+
+@dataclass(frozen=True)
+class DepEdge:
+    """One `{{nodes.<producer>…}}` binding, and whether anything orders the producer first.
+
+    Materialized as a value rather than turned straight into an issue, because a rule that
+    examined no edges is indistinguishable from a rule that examined many and liked them
+    all — both report nothing. Only a caller that can count the edges considered can tell
+    the two apart, which is what the vacuity floor in the tests does.
+    """
+
+    reader_path: str
+    #: The reader's author-facing id, or `""` — `id` is optional on every node.
+    reader_id: str
+    producer_path: str
+    producer_id: str
+    ordered: bool
+    #: The satisfying edge when `ordered`, the missing one when not.
+    reason: str
+
+
+def _parent_slots(nodes: list[tuple[str, Node]]) -> dict[str, tuple[str, str, int, str]]:
+    """child path → (parent path, slot, child index, case label).
+
+    Derived from the walk output rather than by splitting the path strings back apart: a
+    `cases[<label>]` label is author-supplied and may itself contain a dot or a bracket, so
+    parsing a path is not safe. Child paths are re-derived exactly as `walk` derives them,
+    which keeps the two constructions from drifting.
+    """
+    out: dict[str, tuple[str, str, int, str]] = {}
+    for path, node in nodes:
+        for i, child in enumerate(node.children):
+            out[f"{path}.children[{i}]"] = (path, "children", i, "")
+        if node.body is not None:
+            out[f"{path}.body"] = (path, "body", -1, "")
+        for label, _case in node.cases.items():
+            out[f"{path}.cases[{label}]"] = (path, "cases", -1, label)
+        if node.default_case is not None:
+            out[f"{path}.default"] = (path, "default", -1, "default")
+    return out
+
+
+def _chain(path: str, parents: dict[str, tuple[str, str, int, str]]) -> list[str]:
+    """`[path, parent, …, root]`. Bounded by `_MAX_DEPTH`-ish tree height in practice, and
+    by the visited set against a malformed map."""
+    out = [path]
+    seen = {path}
+    cur = path
+    while cur in parents:
+        cur = parents[cur][0]
+        if cur in seen:  # pragma: no cover — defensive; `walk` cannot produce a cycle
+            break
+        seen.add(cur)
+        out.append(cur)
+    return out
+
+
+def _slot_label(slot: tuple[str, str, int, str]) -> str:
+    """How an author would point at this slot in the spec."""
+    _parent, kind, index, label = slot
+    if kind == "children":
+        return f"child {index}"
+    if kind == "cases":
+        return f"case {label!r}"
+    if kind == "default":
+        return "the default case"
+    return "the body"
+
+
+def _needs_reaches(parent: Node, from_idx: int, to_idx: int) -> bool:
+    """Does child `from_idx` transitively `needs` child `to_idx` of this parallel?
+
+    Only the parallel's DIRECT children are consulted, because that is exactly what
+    admission consults (`tick._visit_parallel` gates on `child.needs`). A `needs` declared
+    anywhere else is inert, and treating it as an ordering edge here would make the
+    validator promise something the scheduler does not deliver.
+    """
+    by_id = {c.id: i for i, c in enumerate(parent.children) if c.id}
+    if not parent.children[to_idx].id:
+        return False  # nothing can `needs` an anonymous child
+    seen = {from_idx}
+    stack = [from_idx]
+    while stack:
+        for need in parent.children[stack.pop()].needs:
+            nxt = by_id.get(need)
+            if nxt is None or nxt in seen:
+                continue
+            if nxt == to_idx:
+                return True
+            seen.add(nxt)
+            stack.append(nxt)
+    return False
+
+
+def _ordering_verdict(
+    reader_path: str,
+    producer_path: str,
+    tree: dict[str, Node],
+    parents: dict[str, tuple[str, str, int, str]],
+) -> tuple[bool, str]:
+    """Is `producer_path` guaranteed terminal before `reader_path` can be admitted?
+
+    The comparison happens at the DIVERGENCE POINT — the lowest common ancestor — and
+    between the two branches of it that contain the reader and the producer, not between
+    the two nodes themselves. That is what makes "an earlier sibling within an enclosing
+    `sequence`" mean what an author expects: a producer buried inside an earlier sibling
+    (in a `parallel`, a `foreach` body, a `branch` case) is still terminal when that
+    sibling is, because a container completes only after its children do.
+
+    Deliberately NOT checked here: whether the producer actually RAN. A producer inside a
+    `branch` case is ordered before a later reader, but the case may not be taken. That is
+    a liveness question over a reachability graph this atom does not build — `PP-2` owns
+    it, and answering half of it here would put a second, weaker reachability rule in the
+    tree for `PP-2` to delete.
+    """
+    if reader_path == producer_path:
+        return False, "the binding reads the reader's own output"
+
+    r_chain = _chain(reader_path, parents)
+    p_chain = _chain(producer_path, parents)
+    if producer_path in r_chain:
+        return False, (
+            f"it ENCLOSES the reader ({producer_path}), and a container's output is not "
+            "available until after the children that produce it"
+        )
+    if reader_path in p_chain:
+        return False, f"it runs INSIDE the reader ({producer_path}), so it cannot precede it"
+
+    r_index = {p: i for i, p in enumerate(r_chain)}
+    lca = ""
+    p_branch = producer_path
+    for cur in p_chain[1:]:
+        if cur in r_index:
+            lca = cur
+            break
+        p_branch = cur
+    if not lca:  # pragma: no cover — both chains end at `root`, so an LCA always exists
+        return False, "the reader and the producer are in unrelated trees"
+    r_branch = r_chain[r_index[lca] - 1]
+
+    parent = tree.get(lca)
+    p_slot, r_slot = parents[p_branch], parents[r_branch]
+    kind = parent.kind if parent is not None else None
+    both_children = p_slot[1] == "children" and r_slot[1] == "children"
+
+    if kind is NodeKind.SEQUENCE and both_children:
+        if p_slot[2] < r_slot[2]:
+            return True, f"the sequence at {lca} runs child {p_slot[2]} before child {r_slot[2]}"
+        return False, (
+            f"the sequence at {lca} runs it AFTER the reader (child {p_slot[2]} vs child "
+            f"{r_slot[2]}) — move it before the reader"
+        )
+
+    if kind is NodeKind.PARALLEL and both_children:
+        assert parent is not None
+        if _needs_reaches(parent, r_slot[2], p_slot[2]):
+            return True, f"a `needs` chain inside the parallel at {lca}"
+        want = parent.children[p_slot[2]].id
+        edge = (
+            f'add `needs: ["{want}"]`'
+            if want
+            else f"give child {p_slot[2]} an id so it can be named in `needs`"
+        )
+        reader_branch = parent.children[r_slot[2]].id or _slot_label(r_slot)
+        return False, (
+            f"they run CONCURRENTLY in the parallel at {lca} — {edge} to {reader_branch}"
+        )
+
+    if kind is NodeKind.BRANCH:
+        return False, (
+            f"the branch at {lca} runs {_slot_label(p_slot)} and {_slot_label(r_slot)} "
+            "exclusively — only one of the two ever runs"
+        )
+
+    return False, (
+        f"nothing orders {_slot_label(p_slot)} before {_slot_label(r_slot)} in the "
+        f"{kind.value if kind else 'node'} at {lca}"
+    )
+
+
+def dep_ordering_edges(nodes: list[tuple[str, Node]], ids: dict[str, str]) -> list[DepEdge]:
+    """Every binding-derived dependency, classified as ordered or not.
+
+    Uses `bindings.node_deps` — the same derivation the resume cache, the stale-inputs
+    check and the mutation cascade use — so this rule cannot disagree with them about what
+    a binding depends on. A reference to an unknown id is skipped: `WF_UNKNOWN_NODE_REF`
+    already owns that, and reporting both would make one typo two errors.
+    """
+    parents = _parent_slots(nodes)
+    tree = dict(nodes)
+    out: list[DepEdge] = []
+    for path, node in nodes:
+        for dep in sorted(node_deps(node.config or {})):
+            producer_path = ids.get(dep)
+            if producer_path is None:
+                continue
+            ordered, reason = _ordering_verdict(path, producer_path, tree, parents)
+            out.append(DepEdge(path, node.id, producer_path, dep, ordered, reason))
+    return out
+
+
+def dep_edges_for_root(root: Node) -> list[DepEdge]:
+    """`dep_ordering_edges` for a whole tree — the shape a caller outside the validator has.
+
+    Mirrors `validate_node_tree`'s first-wins id map, so an inspection and a validation
+    cannot disagree about which node a duplicated id names (the duplicate itself is
+    `WF_DUPLICATE_NODE_ID`'s business).
+    """
+    nodes = walk(root)
+    ids: dict[str, str] = {}
+    for path, node in nodes:
+        if node.id and node.id not in ids:
+            ids[node.id] = path
+    return dep_ordering_edges(nodes, ids)
+
+
+def _validate_dep_ordering(
+    res: ValidationResult, nodes: list[tuple[str, Node]], ids: dict[str, str]
+) -> None:
+    """Refuse a binding whose producer is not ordered before its reader (`PP-1`).
+
+    The engine keeps two edge lists and nothing checked they agree. Admission reads
+    `needs` and container order only (`tick._visit_parallel`); bindings are a separate
+    graph feeding the resume cache, the stale-inputs check and the mutation cascade. So a
+    spec could bind `{{nodes.x.output}}` from a node that runs beside — or before — `x`,
+    and the run died at ready-time with *"binding failed: check the referenced node id and
+    field exist"* pointing the author at an id that was perfectly correct. Locally
+    plausible, globally wrong, and only discoverable by running it.
+
+    This adds no runtime behaviour: nothing about scheduling changes, `tick.py` is
+    untouched, and the check exists purely so the disagreement is a typed authoring-time
+    refusal instead of a mid-run failure.
+
+    Runs AFTER `_kahn_levels` and stays quiet when a cycle was found: on a cyclic graph the
+    only advice this rule can give ("order the producer first") is the advice that closes
+    the loop, so `WF_CYCLE` is both the truer fact and the one an author must fix first.
+    """
+    if any(i.code == "WF_CYCLE" for i in res.issues):
+        return
+    for edge in dep_ordering_edges(nodes, ids):
+        if edge.ordered:
+            continue
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        _add(
+            res,
+            "WF_UNORDERED_DEP",
+            (
+                f"{reader} binds {{{{nodes.{edge.producer_id}…}}}}, but nothing guarantees "
+                f"{edge.producer_id!r} has finished when {reader} is admitted: {edge.reason}"
+            ),
+            edge.reader_path,
+        )
 
 
 def _kahn_levels(

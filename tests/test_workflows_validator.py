@@ -354,3 +354,399 @@ class TestMalformedInput:
                     },
                 }
             )
+
+
+class TestDependencyOrdering:
+    """`WF_UNORDERED_DEP` (PP-1) — the engine's two edge lists, reconciled.
+
+    Admission comes from container order plus sibling-only `needs`; bindings are a separate
+    graph that never admitted anything. A spec could therefore read
+    `{{nodes.x.output}}` from a node running beside `x`, and the only symptom was a mid-run
+    `USER` failure telling the author to check an id that was correct.
+
+    Authoring-time only: no scheduling changes here, and `tick.py` is untouched.
+    """
+
+    @staticmethod
+    def _msg(spec: dict) -> str:
+        return "\n".join(
+            i.message for i in validate_spec(spec).issues if i.code == "WF_UNORDERED_DEP"
+        )
+
+    # ── the `parallel` half: only a `needs` chain orders two branches ──
+
+    def test_a_parallel_sibling_binding_without_needs_is_refused(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+
+    def test_the_message_names_the_reader_the_producer_and_the_missing_edge(self) -> None:
+        """Three facts, so an author can act without reading the engine."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        msg = self._msg(spec)
+        assert "'b'" in msg  # the reader
+        assert "'a'" in msg  # the producer
+        assert 'needs: ["a"]' in msg  # the missing edge, spelled as JSON
+
+    def test_a_needs_edge_satisfies_it(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {
+                        "kind": "infer",
+                        "id": "b",
+                        "config": {"prompt": "{{nodes.a.output}}"},
+                        "needs": ["a"],
+                    },
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
+
+    def test_a_transitive_needs_chain_satisfies_it(self) -> None:
+        """A `needs` CHAIN to the producer counts, not only a direct edge."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "y"}, "needs": ["a"]},
+                    {
+                        "kind": "infer",
+                        "id": "c",
+                        "config": {"prompt": "{{nodes.a.output}}"},
+                        "needs": ["b"],
+                    },
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
+
+    def test_a_needs_edge_that_does_not_reach_the_producer_does_not_satisfy_it(self) -> None:
+        """Having *some* `needs` is not ordering. Nor is reversing the edge a fix: `needs`
+        and bindings feed one Kahn graph, so a backwards `needs` is already a `WF_CYCLE`."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {
+                        "kind": "infer",
+                        "id": "b",
+                        "config": {"prompt": "{{nodes.a.output}}"},
+                        "needs": ["c"],
+                    },
+                    {"kind": "infer", "id": "c", "config": {"prompt": "y"}},
+                ],
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+
+    def test_the_needs_edge_is_wanted_between_the_two_parallel_BRANCHES(self) -> None:
+        """The comparison happens at the divergence point, so the edge an author must add
+        joins the two branches of the parallel — which may be ancestors of the reader and
+        the producer, not the nodes themselves."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {
+                        "kind": "sequence",
+                        "id": "left",
+                        "children": [{"kind": "infer", "id": "prod", "config": {"prompt": "x"}}],
+                    },
+                    {
+                        "kind": "sequence",
+                        "id": "right",
+                        "children": [
+                            {
+                                "kind": "infer",
+                                "id": "reader",
+                                "config": {"prompt": "{{nodes.prod.output}}"},
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        msg = self._msg(spec)
+        assert 'needs: ["left"]' in msg and "right" in msg
+        # …and declaring exactly that edge clears it.
+        spec["root"]["children"][1]["needs"] = ["left"]
+        assert validate_spec(spec).ok
+
+    def test_an_anonymous_parallel_branch_says_to_give_it_an_id(self) -> None:
+        """`needs` addresses siblings by id, so an anonymous branch cannot be named. The
+        message has to say that rather than suggest an empty edge."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {
+                        "kind": "sequence",
+                        "children": [{"kind": "infer", "id": "prod", "config": {"prompt": "x"}}],
+                    },
+                    {
+                        "kind": "infer",
+                        "id": "reader",
+                        "config": {"prompt": "{{nodes.prod.output}}"},
+                    },
+                ],
+            }
+        )
+        assert "give child 0 an id" in self._msg(spec)
+
+    # ── the `sequence` half: earlier sibling, at whatever depth ──
+
+    def test_an_earlier_sequence_sibling_can_be_read(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
+
+    def test_a_later_sequence_sibling_cannot_be_read(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "{{nodes.b.output}}"}},
+                    {"kind": "infer", "id": "b", "config": {"prompt": "x"}},
+                ],
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert "AFTER the reader" in self._msg(spec)
+
+    def test_a_producer_nested_inside_an_earlier_sibling_is_ordered(self) -> None:
+        """The shape 36 of the shipped library's 111 dependencies use: the producer lives
+        inside a `parallel` that is an earlier child of the enclosing `sequence`. A
+        container completes only after its children, so the producer is terminal."""
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {
+                        "kind": "parallel",
+                        "id": "fan",
+                        "children": [
+                            {"kind": "infer", "id": "l1", "config": {"prompt": "x"}},
+                            {"kind": "infer", "id": "l2", "config": {"prompt": "y"}},
+                        ],
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "merge",
+                        "config": {"expr": "{{nodes.l1.output}} {{nodes.l2.output}}"},
+                    },
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
+
+    def test_a_producer_inside_an_earlier_foreach_body_is_ordered(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {
+                        "kind": "foreach",
+                        "id": "each",
+                        "config": {"items": "{{inputs.xs}}"},
+                        "body": {"kind": "infer", "id": "gen", "config": {"prompt": "{{item}}"}},
+                    },
+                    {
+                        "kind": "transform",
+                        "id": "sum",
+                        "config": {"expr": "{{nodes.gen.output}}"},
+                    },
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
+
+    def test_a_later_sibling_inside_a_loop_body_cannot_be_read(self) -> None:
+        """A loop body is a `sequence` like any other: reading a step that runs later in the
+        body fails on the first iteration, when there is no previous output to read."""
+        spec = _wrap(
+            {
+                "kind": "loop",
+                "id": "l",
+                "config": {"mode": "counted", "n": 3},
+                "body": {
+                    "kind": "sequence",
+                    "id": "body",
+                    "children": [
+                        {
+                            "kind": "infer",
+                            "id": "use",
+                            "config": {"prompt": "{{nodes.refine.output}}"},
+                        },
+                        {"kind": "infer", "id": "refine", "config": {"prompt": "x"}},
+                    ],
+                },
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+
+    # ── containment and exclusivity ──
+
+    def test_a_container_cannot_be_read_by_its_own_descendant(self) -> None:
+        """A container's output is not available until after the children that produce it."""
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "outer",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "{{nodes.outer.output}}"}}
+                ],
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert "ENCLOSES the reader" in self._msg(spec)
+
+    def test_a_foreach_cannot_bind_items_from_inside_its_own_body(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "foreach",
+                "id": "each",
+                "config": {"items": "{{nodes.gen.output}}"},
+                "body": {"kind": "infer", "id": "gen", "config": {"prompt": "x"}},
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert "runs INSIDE the reader" in self._msg(spec)
+
+    def test_two_branch_cases_cannot_read_each_other(self) -> None:
+        """Only one case ever runs, so no ordering between them exists to declare."""
+        spec = _wrap(
+            {
+                "kind": "branch",
+                "id": "b",
+                "config": {"on": "{{inputs.k}}"},
+                "cases": {
+                    "yes": {"kind": "infer", "id": "y", "config": {"prompt": "x"}},
+                    "no": {"kind": "infer", "id": "n", "config": {"prompt": "{{nodes.y.output}}"}},
+                },
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert "only one of the two ever runs" in self._msg(spec)
+
+    def test_a_branch_case_producer_stays_readable_after_the_branch(self) -> None:
+        """Deliberate scope line: the branch IS ordered before a later sibling, so this is
+        not an ordering defect even though the case may not be taken. Whether the producer
+        actually ran is a reachability question `PP-2` owns; answering half of it here
+        would leave a weaker second reachability rule for `PP-2` to delete."""
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {
+                        "kind": "branch",
+                        "id": "b",
+                        "config": {"on": "{{inputs.k}}"},
+                        "cases": {"yes": {"kind": "infer", "id": "y", "config": {"prompt": "x"}}},
+                    },
+                    {"kind": "transform", "id": "t", "config": {"expr": "{{nodes.y.output}}"}},
+                ],
+            }
+        )
+        assert validate_spec(spec).ok
+
+    # ── it does not double-report what another code already owns ──
+
+    def test_a_cycle_suppresses_the_ordering_advice(self) -> None:
+        """On a cyclic graph the only advice this rule can give is the advice that closes
+        the loop."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "transform", "id": "a", "config": {"expr": "{{nodes.b.output}}"}},
+                    {"kind": "transform", "id": "b", "config": {"expr": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        codes = _codes(spec)
+        assert "WF_CYCLE" in codes
+        assert "WF_UNORDERED_DEP" not in codes
+
+    def test_a_self_reference_is_reported_as_a_cycle_only(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "transform", "id": "a", "config": {"expr": "{{nodes.a.output}}"}}
+                ],
+            }
+        )
+        codes = _codes(spec)
+        assert "WF_CYCLE" in codes
+        assert "WF_UNORDERED_DEP" not in codes
+
+    def test_an_unknown_producer_is_one_error_not_two(self) -> None:
+        spec = _wrap(
+            {
+                "kind": "sequence",
+                "id": "s",
+                "children": [
+                    {"kind": "transform", "id": "a", "config": {"expr": "{{nodes.ghost.output}}"}}
+                ],
+            }
+        )
+        codes = _codes(spec)
+        assert "WF_UNKNOWN_NODE_REF" in codes
+        assert "WF_UNORDERED_DEP" not in codes
+
+    def test_an_anonymous_reader_is_still_checked(self) -> None:
+        """`_kahn_levels` only tracks nodes that have an id, so an anonymous reader's
+        bindings were invisible to every existing dependency check."""
+        spec = _wrap(
+            {
+                "kind": "parallel",
+                "id": "p",
+                "children": [
+                    {"kind": "infer", "id": "a", "config": {"prompt": "x"}},
+                    {"kind": "infer", "config": {"prompt": "{{nodes.a.output}}"}},
+                ],
+            }
+        )
+        assert "WF_UNORDERED_DEP" in _codes(spec)
+        assert "root.children[1]" in self._msg(spec)
