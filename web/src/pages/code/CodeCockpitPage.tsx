@@ -35,7 +35,7 @@ import { runInTerminalWhenReady } from '../terminal/terminalBridge'
 import type { TermTab } from '../terminal/TerminalPage'
 import { TypingReveal } from './TypingReveal'
 import { DiffReveal } from './DiffReveal'
-import { useResizablePanel } from './useResizablePanel'
+import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -959,7 +959,7 @@ function CollapsiblePanel({ side, panelKey, def, min, max, icon: Icon, label, ch
   side: 'left' | 'right'; panelKey: string; def: number; min: number; max: number
   icon: typeof ListChecks; label: string; children: React.ReactNode
 }) {
-  const { width, collapsed, setCollapsed, onHandleDown, onHandleKey } = useResizablePanel(panelKey, { def, min, max, side })
+  const { width, collapsed, setCollapsed, onHandleDown, onHandleKey } = useResizablePanel(panelKey, { def, min, max, side, collapsible: true })
   // Allow a programmatic expand (e.g. ⌘P quick-open targeting a collapsed Files panel,
   // or a click on the editor-bar re-open tab), keyed by panelKey so each panel only
   // responds to its own request.
@@ -2951,7 +2951,7 @@ function BottomTerminal({ ws, hidden, onClose, runCmd }: { ws: string; hidden?: 
   // Reuses the same pointer-capture hook as the side panels so a drag crossing the
   // Monaco editor above doesn't stick.
   const { width: height, onHandleDown, onHandleKey, min, max } = useResizablePanel(
-    'code-term-h', { def: 260, min: 120, max: 640, side: 'bottom' })
+    'code-term-h', { def: 260, min: 120, max: 640, side: 'bottom', collapsible: true })
   // The LIVE server-side PTY id this panel owns. Tracked in a ref (not the effect's
   // local) because a Restart inside TerminalView mints a NEW session — without following
   // it here, cleanup would delete the stale (dead) id and LEAK the restarted PTY, the
