@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from personalclaw.channel_delivery import ChannelDelivery
     from personalclaw.dashboard.state import _ChatSession
     from personalclaw.inbox_service import InboxService
+    from personalclaw.llm_helpers import ToolApprovalPolicy
     from personalclaw.loop.watchdog import LoopWatchdog
     from personalclaw.workflows.watchdog import WorkflowWatchdog
 
@@ -236,6 +237,28 @@ def _is_read_only_tool(event_title: str) -> bool:
     if any(token in _WRITE_INDICATORS for token in tokens):
         return False
     return True
+
+
+def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
+    """Tool-approval policy for a subagent RESULT-INJECTION turn (AUTONOMY-GUARDRAILS §3, AG-11).
+
+    The injection turn runs IN the parent session (announcing a child's result). For an UNATTENDED
+    parent — a cron/channel/inbox/side/loop announce, or the ``_bg`` background key: no human is
+    watching — the approval resolves through the session's SafetyProfile via
+    ``approval_policy_for_session`` (which reads ``profile_for_session``): the one profile path,
+    replacing the blanket AUTO_APPROVE default a cron parent used to get. An INTERACTIVE parent (a
+    dashboard chat) keeps AUTO_APPROVE — a human is present and chose to auto-approve.
+
+    Behaviour-preserving where it matters: an announce that calls no tool is unaffected, and under
+    HOOK_BASED the security hooks still auto-approve hook-neutral tools; only the dangerous tools
+    those hooks already deny elsewhere are now gated on an unattended announce turn.
+    """
+    from personalclaw.guardrails.policy import approval_policy_for_session, is_unattended_session
+    from personalclaw.llm_helpers import ToolApprovalPolicy
+
+    if is_unattended_session(parent_key):
+        return approval_policy_for_session(parent_key)
+    return ToolApprovalPolicy.AUTO_APPROVE
 
 
 class GatewayOrchestrator:
@@ -2786,9 +2809,20 @@ class GatewayOrchestrator:
                         model=_m if isinstance(_m, str) and _m != "auto" else "",
                     )
 
+                # Cron-approval rewire (AUTONOMY-GUARDRAILS §3, AG-11): the result-injection turn's
+                # tool approval resolves through the SafetyProfile for an unattended parent, and
+                # stays AUTO_APPROVE for an interactive one. See ``injection_approval_policy``.
+                _inject_policy = injection_approval_policy(parent_key)
+                _inject_hooks = self.ctx_builder.hooks if self.ctx_builder else None
                 for attempt in range(3):
                     try:
-                        return await stream_and_collect(client, msg, on_complete=_inject_usage)
+                        return await stream_and_collect(
+                            client,
+                            msg,
+                            on_complete=_inject_usage,
+                            approval_policy=_inject_policy,
+                            hooks=_inject_hooks,
+                        )
                     except PromptBusyExhaustedError:
                         # Provider is dead after exhausting prompt-busy retries.
                         # Reset session + notify, same as TimeoutError path.

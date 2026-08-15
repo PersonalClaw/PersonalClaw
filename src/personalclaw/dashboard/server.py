@@ -707,6 +707,8 @@ async def start_dashboard(
     app.router.add_get("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
+    app.router.add_get("/api/guardrails/project-trust", handlers.api_project_trust)
+    app.router.add_post("/api/guardrails/project-trust", handlers.api_project_trust)
     app.router.add_get("/api/models/health", handlers.api_models_health)
     # The earned-autonomy ladder (§6.1). One read + three writes, and only ONE of the three
     # increases autonomy — see handlers/autonomy.py for why that asymmetry is the design.

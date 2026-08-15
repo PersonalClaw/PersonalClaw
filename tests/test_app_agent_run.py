@@ -67,6 +67,7 @@ class _FakeSubagents:
         agent="",
         max_turns=0,
         approval_mode=None,
+        capability_class=None,
         silent=False,
         cwd="",
     ):
@@ -74,6 +75,7 @@ class _FakeSubagents:
             f"run-{len(self._runs) + 1}", parent_session_key=parent_session_key, task=task
         )
         info.approval_mode = approval_mode
+        info.capability_class = capability_class
         info.silent = silent
         return info
 

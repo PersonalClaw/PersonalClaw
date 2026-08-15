@@ -805,13 +805,17 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
         max_turns = 0
 
     # App-run agents are headless: auto-approve tools + silent (no chat surfacing),
-    # tagged by the app so the run is attributable.
+    # tagged by the app so the run is attributable. `capability_class="mutating"` is EXPLICIT
+    # behaviour-preservation (§4.1): an app-run agent is an established write surface whose
+    # permissions the app already declares, so it keeps a full grant rather than inheriting the
+    # auto-fired read-only default that cron run-prompt / invoke-agent take.
     info = state.subagents.spawn(
         task,
         parent_session_key=f"app:{name}",
         agent=agent,
         max_turns=max_turns,
         approval_mode="auto",
+        capability_class="mutating",
         silent=True,
     )
     if not info:

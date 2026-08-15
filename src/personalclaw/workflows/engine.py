@@ -708,6 +708,16 @@ async def dispatch_stage(
         cwd=cwd,
         silent=True,
         approval_mode=str(cfg.get("approval_mode", "") or "") or None,
+        # ONE capability decision (§4.1): the node's `capability` drives BOTH the leaf-env
+        # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP
+        # tools) AND the subagent capability class (the `_run_inner` approval loop, the worker's
+        # NATIVE tools). A research node passed as research here has its native Write/Bash denied
+        # too — the gap the MCP-only seam left open. `mutating` iff declared, as in leaf_env.
+        capability_class=(
+            "mutating"
+            if str(cfg.get("capability", "") or "research").strip().lower() == "mutating"
+            else "research"
+        ),
         # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
         # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter and
         # the read-only flag would never be set, and the handler seam would be a gate on a value
