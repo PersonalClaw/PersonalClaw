@@ -27,11 +27,14 @@ import { PageTitle } from '../../ui/PageTitle'
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
 // chip AND was absent from every count.
 // The plural wording is deliberate and differs from `TRIGGER_KINDS`' singular labels: these name
-// a CATEGORY OF ROWS you are filtering to, not the kind of the one thing you are creating.
+// a CATEGORY OF ROWS you are filtering to, not the kind of the one thing you are creating. Every
+// filter is the PLURAL of its kind — Schedules, Lifecycle events, Data events, Automations — so
+// `lifecycle` reads "Lifecycle events" (the plural of the canonical "Lifecycle event" kind, parallel
+// to "Data events"), not the singular "Lifecycle" that broke the row's own convention.
 const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'schedule', label: 'Schedules' },
-  { key: 'lifecycle', label: 'Lifecycle' },
+  { key: 'lifecycle', label: 'Lifecycle events' },
   { key: 'event', label: 'Data events' },
   { key: 'store', label: 'Automations' },
 ]
