@@ -201,7 +201,8 @@
         {
           "id": "INU-7",
           "title": "Proposals contract + app emission path (S7)",
-          "status": "todo",
+          "status": "done",
+          "pr": 1392,
           "scope": "Amendment (2026-07-26 — round 2, Proposals contract): Session 7 (T7.1-T7.3) + T4.1 re-expression; C6",
           "done_when": "C6 Proposal dataclass + apply dispatcher routes the four apply cases (action/workflow/skill_promotion/app_callback) through EXISTING dispatchers, a failed apply keeps the item PENDING with the error, and T4.1's skill path is re-expressed as skill_promotion; app emission adds permissions.proposals manifest field + kind registration at enable-time + POST /api/inbox/proposals (scoped-token identity, 403 on undeclared kind or foreign app_callback, SEL per emission, app proposals verifiable=True by default); inbox Proposals lens with same-(provenance,kind)-only batch-approve (mixed sweeps impossible in UI) + edit-then-approve for editable payloads",
           "deps": [
@@ -5012,6 +5013,7 @@
           "id": "HC-3",
           "title": "Best-of-N sampling core (sampling.py) + bundled best-of-n skill",
           "status": "blocked",
+          "pr": 1392,
           "scope": "§2.1 The core: sampling.py helper; §2.2 The skill: skills/bundled/best-of-n/SKILL.md",
           "done_when": "best_of_n(prompt,n,judge_criteria,use_case) fires N temperature-varied parallel one_shot_completion calls through the ModelCallGuard chokepoint, LLMJudge scores each and returns winner+candidates+judgments, and appends a bounded record (ts,n,criteria_digest,winner_idx,score_spread,tokens_total) to ~/.personalclaw/sampling_outcomes.jsonl (snapshot-excluded); skills/bundled/best-of-n/SKILL.md confirms N (cap 5)+criteria naming the N-call cost multiplier (grill ambiguous-trigger precedent), presents winner with collapsible runners-up and a working 'use #2' choice; chat 'give me 3 versions and pick the best' validated end-to-end with all N calls visible in model_calls.jsonl (SC 3, 4).",
           "deps": []
@@ -7661,11 +7663,6 @@
         "plan": "HC"
       },
       {
-        "id": "INU-7",
-        "title": "Proposals contract + app emission path (S7)",
-        "plan": "INU"
-      },
-      {
         "id": "KL-6",
         "title": "S3 dedup/merge frontend: near-duplicate surfacing UI with merge action",
         "plan": "KL"
@@ -9648,9 +9645,9 @@
         "code": "INU",
         "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
         "total_atoms": 8,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
