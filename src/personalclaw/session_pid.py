@@ -276,6 +276,10 @@ def _periodic_pid_sweep(my_gw_pid: int, active_pids: set[int]) -> tuple[set[str]
     PIDs that appear orphaned and should be killed — but the final kill
     decision is made back on the event loop where ``self._sessions`` is
     authoritative.
+
+    Also reaps entries from dead gateways so that orphans are cleaned up
+    regardless of gateway restart (the LaunchAgent daemon may run for days
+    without a restart, so startup cleanup never fires).
     """
     path = _session_pid_file_path()
     if not path.exists():
@@ -301,10 +305,23 @@ def _periodic_pid_sweep(my_gw_pid: int, active_pids: set[int]) -> tuple[set[str]
     if not lines:
         return set(), []
 
+    def _should_skip_tagged(gw_pid: int, pid: int) -> bool:
+        if gw_pid == my_gw_pid:
+            return False  # our entry — always process
+        # Entry belongs to another gateway: skip only if that gateway is alive.
+        # If it's dead, this PID is orphaned and we should reap it.
+        try:
+            os.kill(gw_pid, 0)
+            return True  # other gateway alive — it owns this PID
+        except ProcessLookupError:
+            return False  # other gateway dead — orphan candidate
+        except (PermissionError, OSError):
+            return True  # can't determine — preserve (fail-closed)
+
     _, killed_or_dead, candidates = _sweep_pid_entries(
         lines,
-        should_skip_tagged=lambda gw, _p: gw != my_gw_pid,
-        should_skip_bare=lambda _p: True,
+        should_skip_tagged=_should_skip_tagged,
+        should_skip_bare=lambda _p: False,
         is_managed=lambda p: p in active_pids,
         dry_run=True,
     )
@@ -334,15 +351,18 @@ def _kill_confirmed_and_writeback(
 
 
 def _sync_kill_provider(provider: ModelProvider) -> None:
-    """Synchronously kill a provider's process.
+    """Synchronously kill a provider's process group.
 
     Used during CancelledError handling where async shutdown is unreliable
     (asyncio.shield + await raises CancelledError immediately, leaving
-    shutdown fire-and-forget).  Falls back to SIGKILL if SIGTERM fails.
+    shutdown fire-and-forget).  Sends SIGTERM then SIGKILL to the entire
+    process group so MCP server children are reaped alongside the root.
+    Falls back to individual PID kill if killpg fails.
     """
-    # ACP provider: long-lived process via client._pid
+    # ACP provider: long-lived process via client._pid / _pgid
     client = getattr(provider, "_client", None)
     pid = getattr(client, "_pid", None) if client else None
+    pgid = getattr(client, "_pgid", None) if client else None
     # CC provider: long-lived process via _proc.pid or ephemeral via _active_proc.pid
     if pid is None:
         proc = getattr(provider, "_proc", None)
@@ -354,6 +374,33 @@ def _sync_kill_provider(provider: ModelProvider) -> None:
             pid = proc.pid
     if pid is None:
         return
+
+    # Attempt killpg first to reap the entire process group (MCP servers etc.)
+    kill_pgid = pgid
+    if kill_pgid is None:
+        try:
+            kill_pgid = os.getpgid(pid)
+        except OSError:
+            kill_pgid = None
+
+    if kill_pgid:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(kill_pgid, sig)
+            except (ProcessLookupError, PermissionError, OSError):
+                break
+            if sig == signal.SIGTERM:
+                import time as _time
+
+                _time.sleep(0.1)  # brief grace period before escalating
+        logger.warning(
+            "_sync_kill_provider: killed pgid %d (root PID %d) for leaked provider",
+            kill_pgid,
+            pid,
+        )
+        return
+
+    # Fallback: individual PID kill (no pgid available)
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.kill(pid, sig)
