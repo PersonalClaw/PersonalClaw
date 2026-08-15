@@ -22,6 +22,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   can't be talked into reaching a private address — and browsing a big index costs one fetch and no
   model tokens; only the skill you choose to install is ever downloaded. One unreachable catalog is
   skipped with a log line instead of emptying your store.
+- **When two machines edit the same thing while offline, nothing is overwritten — you get asked.**
+  Multi-machine sync now tells a real conflict apart from an ordinary catch-up: if both machines
+  changed the same record since they last agreed on it, the change is not applied. Your local copy
+  stays exactly as it is, both versions are kept, and the divergence lands in a conflict review queue
+  as a needs-review item — memory conflicts on the memory review surface, knowledge conflicts on the
+  knowledge one. A background model pass drafts a suggested merge with a short rationale for you to
+  look at, and that draft is only ever a suggestion: PersonalClaw never applies it for you. With no
+  model configured (or when the model is unavailable) the conflict still appears — just without a
+  suggestion. A one-sided change, where only one machine moved, keeps merging automatically as before.
+
 - **Apps can now share data with each other, read-only, only when both sides agree.** An app that
   wants to expose its stored data declares `storageShared: true`; an app that wants to read another's
   data names it in `storageRead`. A read is granted only when BOTH are declared — neither app can

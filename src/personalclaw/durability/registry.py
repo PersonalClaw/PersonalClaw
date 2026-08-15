@@ -91,9 +91,18 @@ class MachineEntry:
 
 @dataclass
 class Registry:
-    """The parsed ``registry.json`` — every machine's high-water mark, keyed by id."""
+    """The parsed ``registry.json`` — every machine's high-water mark, keyed by id, plus the
+    per-entity-family ancestor shas conflict detection compares against (§4.2, DAS-7).
+
+    ``ancestors`` maps ``entry id → {entity id → the content sha both sides last agreed on}``.
+    It lives in the SHARED registry on purpose: a common ancestor is by definition common
+    knowledge, so "did both sides edit since we agreed?" is only answerable from an object
+    both machines read. It is written by the same CAS bump that announces a seq, so a machine
+    publishes "here is the state I merged to" and its peer's next pull compares against it.
+    """
 
     machines: dict[str, MachineEntry] = field(default_factory=dict)
+    ancestors: dict[str, dict[str, str]] = field(default_factory=dict)
 
     # ── parse / serialize ────────────────────────────────────────────────────
     @classmethod
@@ -118,13 +127,22 @@ class Registry:
             for mid, d in machines_raw.items()
             if isinstance(d, dict)
         }
-        return cls(machines=machines)
+        anc_raw = obj.get("ancestors", {}) if isinstance(obj, dict) else {}
+        ancestors: dict[str, dict[str, str]] = {}
+        for entry_id, rows in (anc_raw if isinstance(anc_raw, dict) else {}).items():
+            if not isinstance(rows, dict):
+                continue  # a corrupt family degrades to "no ancestry", never crashes a sync
+            ancestors[str(entry_id)] = {str(k): str(v) for k, v in rows.items() if v}
+        return cls(machines=machines, ancestors=ancestors)
 
     def to_bytes(self) -> bytes:
         """Serialize canonically (sorted keys, compact) so two machines writing the
         same logical registry produce byte-identical output — the property a CAS sha
         comparison depends on."""
-        obj = {"machines": {mid: e.to_dict() for mid, e in self.machines.items()}}
+        obj = {
+            "machines": {mid: e.to_dict() for mid, e in self.machines.items()},
+            "ancestors": {eid: dict(rows) for eid, rows in self.ancestors.items()},
+        }
         return canonical_json(obj).encode("utf-8")
 
     def sha(self) -> str:
@@ -155,6 +173,28 @@ class Registry:
             manifest_sha=manifest_sha,
         )
         return new_seq
+
+    # ── ancestor shas (§4.2 conflict detection) ──────────────────────────────
+    def ancestors_for(self, entry_id: str) -> dict[str, str]:
+        """The ``entity id → agreed content sha`` map for one entry family. A copy, and
+        empty for a family nobody has agreed on yet (which detection reads as "no common
+        ancestor" — a deterministic merge, never a conflict)."""
+        return dict(self.ancestors.get(entry_id, {}))
+
+    def record_ancestors(self, entry_id: str, shas: dict[str, str]) -> None:
+        """Record the shas of an entry family's rows as the new common ancestors.
+
+        Called after a clean reconcile with the rows this machine merged TO — the state it
+        is about to publish, i.e. what the next divergence is measured from. Ids under an
+        unresolved conflict are deliberately excluded by the caller, so their older ancestor
+        survives and the conflict keeps re-detecting instead of self-resolving.
+        """
+        if not shas:
+            return
+        cur = self.ancestors.setdefault(entry_id, {})
+        for rid, sha in shas.items():
+            if rid and sha:
+                cur[str(rid)] = str(sha)
 
     # ── peer discovery ───────────────────────────────────────────────────────
     def peers(self, self_id: str) -> list[MachineEntry]:

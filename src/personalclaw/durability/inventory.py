@@ -779,6 +779,14 @@ INVENTORY: tuple[StateEntry, ...] = (
 IGNORED: tuple[str, ...] = (
     "snapshots",  # backup output — never backed up recursively
     "outbox",  # sync staging (S3)
+    # The sync root: the pull cursor's per-peer high-water marks, the outbox's delivery
+    # obligations, and the conflict review queue (S3/DAS-7) — all MACHINE-LOCAL. Carrying them
+    # into a snapshot would make a restored copy claim another machine's cursor position, and a
+    # conflict is *this* machine's unresolved decision (both versions durably persist in the
+    # shared store per §4.2, so the queue is bookkeeping, not the only copy of anything).
+    # Declaring it instead would export the queue into the very shards a pull rewrites
+    # mid-cycle — a self-referential synced store.
+    "sync",
     "shards",  # shard export output (S2)
     "locks",  # runtime lock files
     "__pycache__",

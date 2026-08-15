@@ -1257,7 +1257,7 @@
         {
           "id": "DAS-7",
           "title": "Conflict handling — records + review queue + propose-only LLM merge (Session 3)",
-          "status": "todo",
+          "status": "done",
           "scope": "§4.2 Conflict handling; §7 (no auto-applied LLM merges); Implementation Order Session 3",
           "done_when": "sha-divergence on the same entity id with both sides edited since the common ancestor (ancestor sha in registry) produces a conflict record in a review queue; a background one_shot_completion(use_case=\"background\") pass drafts a proposed merge + rationale surfaced as needs-review, never auto-applied; local version stays authoritative and both versions persist in the shared store until resolved; memory-domain conflicts route to the memory review surface and knowledge-domain to the knowledge UI; criterion 5 met (offline same-task edit yields a conflict-review item, applies nothing until accepted)",
           "deps": [
@@ -7465,11 +7465,6 @@
         "plan": "CRE"
       },
       {
-        "id": "DAS-7",
-        "title": "Conflict handling — records + review queue + propose-only LLM merge (Session 3)",
-        "plan": "DAS"
-      },
-      {
         "id": "DAS-8",
         "title": "rsync-sync + s3-sync transports + end-to-end encryption (Session 4)",
         "plan": "DAS"
@@ -7477,6 +7472,11 @@
       {
         "id": "DAS-9",
         "title": "Workspace time-travel — adaptive-debounce git + rollback/revert/preview + panel (Session 5, §5)",
+        "plan": "DAS"
+      },
+      {
+        "id": "DAS-10",
+        "title": "§6 DSAR portability endpoints + remaining Durability FE (Session 5, §6)",
         "plan": "DAS"
       },
       {
@@ -9743,9 +9743,9 @@
         "code": "DAS",
         "plan": "DURABILITY-AND-SYNC",
         "total_atoms": 10,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
