@@ -7316,7 +7316,7 @@
         {
           "id": "PP-12",
           "title": "Add `Lease` and `Dwell`/`MetricGate` admission policies",
-          "status": "todo",
+          "status": "done",
           "scope": "With the `PP-11` seam in place, the two capabilities that live in the other schedulers become expressible in the frontier. Leases exist only in `pool.py`, so \"cap this fan-out because each item holds a rate-limited endpoint\" is inexpressible today \u2014 lane caps protect the engine and `max_concurrency` protects the run's shape, but neither models a resource an item HOLDS. Dwell/metric gating exists only in `loop/tick.evaluate` and is consumed by exactly one kind (`kinds/sdlc.py:_tick_decide`), so a workflow loop cannot bake a step or roll back on a regressed metric.",
           "done_when": "`Lease(ttl)` reuses `pool.py`'s proven compare-and-swap decision functions rather than a second lease implementation (S57 measured `unlink`-based single-use failing 36 of 40 races, and a lease that loses a race is worse than no lease), and `Dwell`/`MetricGate` reuse `loop/tick.StepConfig`'s parsed thresholds. Both are additive: a spec declaring neither behaves exactly as before, proven by re-running `PP-11`'s golden frontier file. Verified by a fan-out that genuinely serializes on a leased resource across a gateway restart, and by a metric regression rolling a step back inside a workflow run.",
           "deps": [
@@ -7778,8 +7778,13 @@
         "plan": "PHF"
       },
       {
-        "id": "PP-12",
-        "title": "Add `Lease` and `Dwell`/`MetricGate` admission policies",
+        "id": "PP-13",
+        "title": "Retire `pool.py`'s private frontier onto the unified core",
+        "plan": "PP"
+      },
+      {
+        "id": "PP-15",
+        "title": "Widen the convergence core and wire `SupervisorPolicy` into it",
         "plan": "PP"
       },
       {
@@ -10178,9 +10183,9 @@
         "code": "PP",
         "plan": "PLATFORM-PRIMITIVES",
         "total_atoms": 16,
-        "done": 12,
+        "done": 13,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       }
     ],

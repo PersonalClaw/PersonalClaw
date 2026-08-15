@@ -771,6 +771,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   loop that finished *before* this update keeps its files, but its old findings/verdicts won't appear
   in the cockpit or feed learning; loops going forward are unaffected. As with any 0.x state-shape
   change, run `personalclaw snapshot` before updating if you want a restore point.
+- **A fan-out step that shares a limited resource now waits its turn instead of racing.** A workflow
+  that spreads work across parallel branches can mark a step as needing a lease on a named resource;
+  the engine admits only one holder at a time and the rest wait, and the lease survives a gateway
+  restart so a crash mid-fan-out does not double-claim. Steps can also declare a bake-in delay before
+  a result is trusted, or roll back a step whose measured quality regressed. Workflows that declare
+  none of these behave exactly as before.
 
 - **A workflow that reads another step's output now refuses to save unless that step is guaranteed to
   run first.** The engine kept two separate pictures of how steps relate: what must run before what,

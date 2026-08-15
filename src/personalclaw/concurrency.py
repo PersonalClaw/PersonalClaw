@@ -6,9 +6,10 @@ two failure modes that in-process guards alone can't cover:
 
 - **Double-fire across processes.** PClaw runs several processes against one
   ``config_dir()`` — the gateway, the ``personalclaw consolidate`` CLI, the eval
-  runner. An in-memory running-set guards one process; :func:`single_flight`
-  adds an OS-level advisory lock so a given job-key runs in at most one process
-  at a time.
+  runner. An in-memory running-set guards one call site; :func:`single_flight`
+  adds an OS-level advisory lock so a given job-key runs in at most one place at
+  a time — across processes, and (because flock is per open file description)
+  across threads within one process too.
 - **Crash-zombie state.** A process that dies mid-job leaves persisted
   ``running`` rows that nothing will ever finish. :func:`reap_orphans` is the
   startup-sweep seam that lets each subsystem resolve its own stale rows before
@@ -57,13 +58,23 @@ def lock_path(job_key: str) -> Path:
 
 @contextmanager
 def single_flight(job_key: str) -> Iterator[bool]:
-    """Cross-process single-flight guard for ``job_key``.
+    """Single-flight guard for ``job_key`` — at most one holder does the work.
 
-    Yields ``True`` if this process acquired the lock (the caller should do the
-    work), or ``False`` if another live process already holds it (the caller
-    should skip — single-flight means *don't double-run*, never *wait in line*).
-    Acquisition is non-blocking. The lock is released on context exit and, if the
-    process dies inside the block, by the OS — so it cannot zombie.
+    Yields ``True`` if this caller acquired the lock (it should do the work), or
+    ``False`` if the lock is already held (it should skip — single-flight means
+    *don't double-run*, never *wait in line*). Acquisition is non-blocking. The
+    lock is released on context exit and, if the process dies inside the block,
+    by the OS — so it cannot zombie.
+
+    **The exclusion is not cross-process only.** ``flock`` is scoped to the *open
+    file description*, and this function opens a fresh one on every call, so two
+    THREADS in one process contend exactly as two processes do — the loser gets
+    ``False``. Measured (PP-12): 16 threads on one key, peak simultaneous holders
+    inside the critical section = 1. That is what makes ``pool.claim_task``'s
+    read-modify-write safe against the engine's in-process ``asyncio.create_task``
+    fan-out. Worth stating explicitly because the narrower reading has already cost
+    a session: a reader who took the guarantee to be cross-process only diagnosed a
+    lease race as an unfixable in-process hole, and this docstring was their source.
 
     Usage::
 
