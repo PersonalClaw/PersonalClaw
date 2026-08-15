@@ -117,7 +117,12 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
 
   const header = (
     <div className="shrink-0 bg-surface/95 px-l py-m flex items-center justify-between border-b border-outline-variant/40">
-      <div className="flex items-center gap-s min-w-0">{icon}<span id={titleId} data-type="title-l" className="text-on-surface truncate">{title}</span></div>
+      {/* The title is an <h2>, not a span: inside the panel's `role="region"` (named by this element
+          via aria-labelledby) it gives the region a heading, so a screen reader can jump to it with
+          heading navigation — measured before this, the panel had 0 headings. Preflight resets h2 to
+          margin:0 / font-weight:inherit, and `data-type="title-l"` sets size/line-height/wght, so the
+          rendering is byte-for-byte the span's (verified: 20px/24px, wght 470, margins 0, unchanged). */}
+      <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate">{title}</h2></div>
       <div className="flex items-center gap-1 shrink-0">
         <IconButton icon={expanded ? Minimize2 : Maximize2}
           label={expanded ? 'Collapse to panel' : (onExpand ? 'Open full page' : 'Expand to full width')}
