@@ -93,7 +93,17 @@ export function LocalModelManager({
                 ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
                 : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{sizeMb ? ` · ${sizeMb} MB` : ''}</>}
             </div>
-            {downloading && <div className="mt-1"><WavyProgress width={200} value={frac} /></div>}
+            {/* Determinate when the byte total is known, and then it must say WHAT is downloading —
+                the bar sits in a list of models, so "progressbar 42%" alone does not identify which.
+                Indeterminate (total unknown) stays unnamed and `aria-hidden`: the line above already
+                reads "downloading · 120 / 400 MB". */}
+            {downloading && (
+              <div className="mt-1">
+                {frac == null
+                  ? <WavyProgress width={200} />
+                  : <WavyProgress width={200} value={frac} label={`Downloading ${m.name}`} />}
+              </div>
+            )}
           </div>
           {downloading ? (
             <SquareIconButton icon={X} iconSize={13} label={`Cancel ${m.name}`} title="Cancel"
