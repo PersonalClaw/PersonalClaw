@@ -5194,7 +5194,7 @@
         {
           "id": "WS-4",
           "title": "feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.1 feed kinds + presets-as-recipes; §3.2 ETag/Last-Modified conditional-GET cursors; §3.3 guid composition + cross-feed canonical-URL dedupe; §6.3 raw enrichment via FeedItemGraph (no LLM nodes) + full variant fencing; §11 step 3",
           "done_when": "Polling the same feed twice produces zero duplicate items and the same story arriving via HN Algolia AND RSS produces ONE item with both attributions (also_seen_in) (SC#3); a raw source's items reach FTS + vector search with zero LLM calls, asserted structurally that the raw graph contains no LLM nodes (SC#6)",
           "deps": [
@@ -7946,11 +7946,6 @@
         "plan": "WS"
       },
       {
-        "id": "WS-4",
-        "title": "feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph",
-        "plan": "WS"
-      },
-      {
         "id": "WS-6",
         "title": "Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)",
         "plan": "WS"
@@ -10085,9 +10080,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
