@@ -117,6 +117,7 @@ _SECTIONS = [
     "evals",
     "packs",
     "companion",
+    "proactive",
 ]
 
 # Values for fields the generic flip/append rules can't produce: enum members,

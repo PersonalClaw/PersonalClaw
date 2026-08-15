@@ -57,6 +57,11 @@ class MemoryKind(str, Enum):
     PROCEDURAL = "procedural"  # how-to-work prior (tool/source outcomes)
     COMMITMENT = "commitment"  # inferred future check-in obligation
     SELF_PERSONA = "self_persona"  # the agent's positive self-model
+    #: A user-taught approve/deny/suppress rule the triage digest consults
+    #: (PROACTIVE-ASSISTANT §1.4). Policy, not a fact about the user — hence its
+    #: `user.approval.` prefix is excluded from `_NON_FACT_KEY_CLAUSE`, and lookup
+    #: is an exact prefix query, never vector search.
+    APPROVAL = "approval"
 
 
 #: MemoryKind → the decay kernel's profile name (LEARN-R6f).
@@ -77,6 +82,7 @@ _DECAY_PROFILES: dict["MemoryKind", str] = {
     MemoryKind.PROCEDURAL: "procedural",
     MemoryKind.COMMITMENT: "commitment",
     MemoryKind.SELF_PERSONA: "self_persona",
+    MemoryKind.APPROVAL: "approval",
 }
 
 
@@ -125,6 +131,8 @@ _DEFAULT_TIER: dict[str, MemoryTier] = {
     MemoryKind.PROCEDURAL: MemoryTier.SEMANTIC,
     MemoryKind.COMMITMENT: MemoryTier.EPISODIC,
     MemoryKind.SELF_PERSONA: MemoryTier.SEMANTIC,
+    # An approval rule is a durable policy row: it lives until revoked or expired.
+    MemoryKind.APPROVAL: MemoryTier.SEMANTIC,
 }
 
 
@@ -389,6 +397,8 @@ def _kind_from_key(key: str) -> MemoryKind:
         return MemoryKind.SELF_PERSONA
     if key.startswith("user.commitment."):
         return MemoryKind.COMMITMENT
+    if key.startswith("user.approval."):
+        return MemoryKind.APPROVAL
     return MemoryKind.SEMANTIC
 
 

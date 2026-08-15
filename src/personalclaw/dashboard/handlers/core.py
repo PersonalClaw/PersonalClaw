@@ -596,6 +596,17 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "evals.judge_agreement_floor": {"type": "float", "min": 0.0, "max": 1.0},
     "evals.ablation_cadence_days": {"type": "int", "min": 1, "max": 365},
     "evals.default_budget_usd": {"type": "float", "min": 0.0, "max": 1000.0},
+    # PROACTIVE-ASSISTANT §"Config Map" (PA-1) — the runtime-editable triage subset.
+    # `auto_execute_enabled` IS here on purpose: it is the plan's one-click revoke, so
+    # a user who dislikes what the digest did must be able to switch acting off from
+    # the surface that showed them. Its blast radius is bounded elsewhere (the frozen
+    # capability set, the per-run cap, the guardrails budget floor), not by hiding it.
+    "proactive.triage_enabled": {"type": "bool"},
+    "proactive.digest_schedule": {"type": "str", "max_len": 64},
+    "proactive.auto_execute_enabled": {"type": "bool"},
+    "proactive.max_auto_actions_per_run": {"type": "int", "min": 0, "max": 50},
+    "proactive.classifier_gate_enabled": {"type": "bool"},
+    "proactive.decision_default_horizon_days": {"type": "int", "min": 1, "max": 3650},
     "tools.projection_rules": {"type": "projection_rules"},
     # Context Economy §4 — background compression feature flags (runtime-editable).
     "tools.bg_compress_enabled": {"type": "bool"},
