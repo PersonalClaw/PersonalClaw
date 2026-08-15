@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useFocusReturn } from './useFocusReturn'
+import { useResizablePanel } from './useResizablePanel'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { X, Maximize2, Minimize2 } from 'lucide-react'
@@ -63,12 +64,17 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
     if (urlKey) urlKey.setQuery({ [urlKey.key]: null })
     onClose()
   }, [urlKey, onClose])
-  const [width, setWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem(storeKey))
-    return v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
-  })
+  // Width + the drag/keyboard handlers come from the shared window-splitter primitive
+  // (`ui/useResizablePanel`) so this dock resizes the same way the Code cockpit's panels
+  // do — and, unlike the hand-rolled version this replaced, it is keyboard-operable and
+  // uses pointer capture. The stored key is preserved EXACTLY: every `storeKey` in the app
+  // ends in `-w`, and the hook persists at `${key}-w`, so stripping that suffix round-trips
+  // to the same localStorage entry — no saved width is reset. Collapse is opt-out here (a
+  // dock is opened/closed by its parent and separately EXPANDED to full-screen; it is never
+  // "collapsed"), so the primitive writes no `-collapsed` key for it.
+  const { width, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+    storeKey.replace(/-w$/, ''), { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
-  useEffect(() => { localStorage.setItem(storeKey, String(width)) }, [width, storeKey])
   // Track the viewport so the clamp follows a resize / rotation instead of only
   // applying at mount — a phone rotated to portrait must re-clamp, and a desktop
   // window dragged narrow must too.
@@ -101,14 +107,6 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   // without the trap, because a dock is a non-modal SIBLING of the list and Tab must flow through it.
   // Measured before: focusing Close and pressing Escape left `document.activeElement === body`.
   const focusReturnRef = useFocusReturn<HTMLDivElement>()
-
-  const onHandleDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault()
-    const startX = e.clientX, startW = width
-    const move = (ev: PointerEvent) => setWidth(Math.max(MIN_W, Math.min(MAX_W, startW + (startX - ev.clientX))))
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
-  }, [width])
 
   const header = (
     <div className="shrink-0 bg-surface/95 px-l py-m flex items-center justify-between border-b border-outline-variant/40">
@@ -170,10 +168,15 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
       initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
       {/* left-edge resize handle — the visible seam springs thicker + brighter on
           hover (scaled by expr) so it telegraphs "drag to resize" with a little
-          life instead of a bare 1px color swap. */}
-      <div onPointerDown={onHandleDown} className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 group">
+          life instead of a bare 1px color swap. It is the WAI-ARIA window-splitter:
+          focusable, arrow-key operable, and it reports its width — the handle sits on
+          the dock's inner (left) edge, so dragging/ArrowLeft grows it (side: 'right'). */}
+      <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
+        tabIndex={0} aria-label="Resize panel — arrow keys to resize"
+        aria-valuenow={Math.round(width)} aria-valuemin={min} aria-valuemax={max}
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-20 outline-none group">
         <motion.span
-          className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary transition-colors"
+          className="absolute left-0 top-0 bottom-0 bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors"
           initial={false}
           animate={{ width: 1 }}
           whileHover={{ width: 1 + expr(2.5, 0.3) }}
