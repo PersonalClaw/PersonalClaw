@@ -256,11 +256,68 @@ class SourceEngine:
             return 0
         return self._create_new(source, item)
 
+    @staticmethod
+    def _declared_attributions(item: Any) -> list[str]:
+        """A provider's own ``also_seen_in`` claims, normalized (§3.3). A provider that
+        already knows a story ran in two places (an aggregator echoing its upstream) says
+        so and the engine records it verbatim rather than re-deriving it."""
+        raw = getattr(item, "also_seen_in", None) or []
+        if isinstance(raw, str):  # a provider that meant one label, not a char sequence
+            raw = [raw]
+        return [str(x).strip() for x in raw if str(x).strip()]
+
+    def _merge_cross_source(self, source: dict, item: Any) -> bool:
+        """Fold this sighting into an item ANOTHER source already wrote, if it is the same
+        story; return True when it was merged (so no second row is written) — §3.3, SC#3.
+
+        The identity rule is canonicalized-URL equality and nothing else
+        (:func:`~personalclaw.knowledge.source_identity.merge_key`, which returns no key
+        for a link-less item or a bare origin). Deliberately narrow: a duplicate item is
+        visible and one delete away, while a WRONG merge destroys one of two distinct
+        stories and stamps the survivor with an attribution that is false. So an ambiguous
+        identity yields two items, and this method simply declines.
+
+        A merge does two writes, and BOTH are required:
+
+        * the second source's seen-set gets the guid (so the merge happens once, not every
+          poll — this path bypasses ``create_typed_item``'s folded-in gate, so nothing else
+          would record the sighting), and
+        * the surviving item gains the second source's attribution, APPENDED. Dropping the
+          existing list here would make a merge look exactly like a lost sighting.
+        """
+        from personalclaw.knowledge.source_identity import merge_key
+
+        key = merge_key(getattr(item, "url", "") or "")
+        if not key:
+            return False
+        existing = self._store.find_item_by_merge_key(key, exclude_source_id=source["id"])
+        if existing is None:
+            return False
+        self._store.mark_source_seen(source["id"], item.guid)
+        self._store.record_also_seen_in(
+            existing["id"], source["id"], *self._declared_attributions(item)
+        )
+        logger.debug(
+            "source %s guid %r merged into existing item %s (%s)",
+            source["id"],
+            item.guid,
+            existing["id"],
+            key,
+        )
+        return True
+
     def _create_new(self, source: dict, item: Any) -> int:
-        """First sighting → a new item. ``create_typed_item`` writes the seen-row + item
-        atomically and returns None when the guid was already seen — the novelty gate.
-        Only a genuinely-new item (an id) is enqueued, so a page that changes every render
-        cannot storm the queue."""
+        """First sighting → a new item, unless another source already has this story.
+
+        Cross-source dedupe runs FIRST (§3.3): a story the library already holds from a
+        different feed becomes an attribution on that item, not a second row. Otherwise
+        ``create_typed_item`` writes the seen-row + item atomically and returns None when
+        this source's guid was already seen — the per-source novelty gate. Only a
+        genuinely-new item (an id) is enqueued, so a page that changes every render cannot
+        storm the queue.
+        """
+        if self._merge_cross_source(source, item):
+            return 0
         item_id = self._store.create_typed_item(
             item_type=source.get("item_type") or "bookmark",
             title=item.title or item.url or item.guid,
@@ -273,6 +330,9 @@ class SourceEngine:
         )
         if item_id is None:
             return 0
+        declared = self._declared_attributions(item)
+        if declared:
+            self._store.record_also_seen_in(item_id, *declared)
         self._enqueue(item_id)
         return 1
 

@@ -1829,6 +1829,7 @@ async def start_dashboard(
     try:
         from personalclaw.knowledge.source_engine import SourceEngine
         from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+        from personalclaw.knowledge_providers.feed_source import FeedSourceProvider
         from personalclaw.knowledge_providers.registry import register_provider
 
         # Watched local directories (WATCHED-SOURCES §4) are a CORE source kind, so the
@@ -1836,6 +1837,9 @@ async def start_dashboard(
         # would enrol no provider for a `watched-dir` source and every dir source the user
         # created would sit permanently unpolled.
         register_provider(DirSourceProvider(state.knowledge_store))
+        # Watched feeds (§3) are core for the same reason — a `watched-feed` source with no
+        # enrolled provider is an inert row, so the provider ships registered or not at all.
+        register_provider(FeedSourceProvider(state.knowledge_store))
         state._source_engine = SourceEngine(  # prevent GC
             state.knowledge_store,
             state.knowledge_ingest_queue(),
