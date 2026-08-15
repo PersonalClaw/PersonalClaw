@@ -189,6 +189,18 @@
     "type": "bool"
   },
   {
+    "default": false,
+    "path": "companion.discovery_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": "",
+    "path": "companion.instance_name",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": true,
     "path": "dashboard.auto_open_browser",
     "sensitive": false,
