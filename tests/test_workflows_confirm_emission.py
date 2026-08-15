@@ -24,6 +24,7 @@ import asyncio
 
 import pytest
 
+from personalclaw.ledger import outcomes
 from personalclaw.workflows.confirmation import ConfirmationType, request_id
 from personalclaw.workflows.journal import CONFIRMATION_PENDING, CONFIRMATION_RESOLVED, ledger
 
@@ -236,6 +237,76 @@ def test_an_unanswered_gate_has_pending_but_NO_resolution():
     asyncio.run(go())
     assert _rows(CONFIRMATION_PENDING)
     assert _rows(CONFIRMATION_RESOLVED) == []
+
+
+# ── the escalation's OUTCOME: was interrupting the user worth it? (PP-9) ──
+
+
+def test_a_parked_gate_OPENS_an_escalation_OUTCOME():
+    """`confirmation_pending` records that we ASKED. This records the BET — that asking was worth
+    it — on the general outcome facility, keyed to the same `confirmation_id` so the answer grades
+    it. Without it the platform records what it did to the user and never whether it landed.
+
+    Emitted at the pending half's site, so it inherits that site's `(path, epoch)` dedup.
+    """
+
+    async def go():
+        await _park_on_gate(APPROVAL)
+
+    asyncio.run(go())
+    (question,) = outcomes.open_questions(ledger("r-1"))
+    assert question.producer == outcomes.PRODUCER_ESCALATION
+    # ledger-sourced: the ground truth is an event this run writes itself, so it grades on a box
+    # with no vector store at all
+    assert question.metric_source == outcomes.SOURCE_LEDGER
+    assert question.metric == CONFIRMATION_RESOLVED
+    assert question.match == {"confirmation_id": _rows(CONFIRMATION_PENDING)[0]["confirmation_id"]}
+    assert question.horizon_secs > 0.0
+
+
+def test_a_RE_POLL_does_not_open_a_SECOND_escalation_outcome():
+    """One question per gate, not one per watchdog poll — the reason it is emitted beside the
+    pending half rather than at a site of its own."""
+
+    async def go():
+        controller, conts = await _park_on_gate(APPROVAL)
+        controller._ensure_continuation(conts[0].instance_path)
+        return ledger("r-1")
+
+    assert len(outcomes.open_questions(asyncio.run(go()))) == 1
+
+
+def test_ANSWERING_the_gate_MEASURES_the_escalation_outcome():
+    """The pair closing end to end: the user approves, the controller writes the
+    `confirmation_resolved` the question named, and that event's `approved` boolean IS the
+    measurement (1.0 against a baseline of 1.0 — the interruption landed)."""
+
+    async def go():
+        controller, conts = await _park_on_gate(APPROVAL)
+        controller.resume(conts[0].token, True, responder="dashboard:chat-1")
+        return ledger("r-1")
+
+    events = asyncio.run(go())
+    (question,) = outcomes.open_questions(events)
+    assert outcomes.measure_from_events(question, events) == 1.0
+
+
+def test_a_DENIED_gate_measures_as_a_LOST_bet_not_an_unreadable_one():
+    """A rejection is a MEASUREMENT (0.0 against a baseline of 1.0 → score −1), not an
+    inconclusive. Collapsing the two would make "we interrupted the user and they said no"
+    indistinguishable from "nobody ever looked", which are opposite facts about the same gate."""
+
+    async def go():
+        controller, conts = await _park_on_gate(APPROVAL)
+        controller.resume(conts[0].token, False, responder="prober")
+        return ledger("r-1")
+
+    events = asyncio.run(go())
+    (question,) = outcomes.open_questions(events)
+    measured = outcomes.measure_from_events(question, events)
+    assert measured == 0.0
+    assert outcomes.resolution_for(measured) == outcomes.MEASURED
+    assert outcomes.score(measured, question.baseline) == pytest.approx(-1.0)
 
 
 # ── the id contract ──

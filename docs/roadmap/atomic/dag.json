@@ -7210,7 +7210,8 @@
         {
           "id": "PP-9",
           "title": "Generalize the outcome record beyond decisions (`pending_outcome`/`outcome_resolved`)",
-          "status": "todo",
+          "status": "done",
+          "pr": "#1303",
           "scope": "The platform records what it DID and not what LANDED. That single shape produces loop output nobody reads, unmeasured routing edges, and the whole declared-but-inert class this repo keeps rediscovering by AST audit rather than at runtime. The right mechanism already exists and is scoped to one feature: LEARN-R18's `pending_outcome` journals a bet at decision time with `{subject, metric, horizon_secs, baseline}` and `outcome_resolved` closes it, keeping `resolution: measured | inconclusive` distinct so an unmeasurable outcome decays faster than a measured one, linked by `pending_event_id` so a second curator tick is idempotent.",
           "done_when": "The outcome pair becomes a general ledger facility any producer may open: a published artifact, an escalation, a proposal, a declared control. The horizon resolver stays idempotent via `pending_event_id` and still distinguishes measured from inconclusive. At least two non-decision producers are wired in the same change so the generalization is exercised rather than merely available (a `publish:` artifact and a gate escalation). Coordinated with PROACTIVE-ASSISTANT's `PA-4` decision journal so there is ONE outcome facility, not a decision-shaped one plus a general one.",
           "deps": [
@@ -7871,8 +7872,8 @@
         "plan": "PP"
       },
       {
-        "id": "PP-9",
-        "title": "Generalize the outcome record beyond decisions (`pending_outcome`/`outcome_resolved`)",
+        "id": "PP-10",
+        "title": "Consumer-liveness detection: surface a work unit whose output nobody reads",
         "plan": "PP"
       },
       {

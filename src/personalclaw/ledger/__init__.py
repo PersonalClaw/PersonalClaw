@@ -19,6 +19,8 @@ This package is the mechanism with the workflow flavour taken out:
   inline in it.
 * :mod:`~personalclaw.ledger.hashing` — canonical serialization and content hashing.
 * :mod:`~personalclaw.ledger.reader` — reading it back.
+* :mod:`~personalclaw.ledger.outcomes` — the outcome record: any producer's bet on what would
+  LAND, and the idempotent, `measured`-vs-`inconclusive` resolution that closes it (PP-9).
 
 Nothing here imports from `personalclaw.workflows`, and nothing here may: the direction of that
 dependency is the whole point. A producer supplies its own :class:`~personalclaw.ledger.writer
@@ -76,6 +78,21 @@ from personalclaw.ledger.kinds import (
     WORKSPACE_PROVISIONED,
     WORKSPACE_TEARDOWN,
 )
+from personalclaw.ledger.outcomes import (
+    INCONCLUSIVE,
+    MEASURED,
+    PRODUCER_CONTROL,
+    PRODUCER_DECISION,
+    PRODUCER_ESCALATION,
+    PRODUCER_PROPOSAL,
+    PRODUCER_PUBLISH,
+    PRODUCERS,
+    SOURCE_LEDGER,
+    SOURCE_MEMORY,
+    OutcomeLedger,
+    OutcomeQuestion,
+    open_questions,
+)
 from personalclaw.ledger.reader import read_events, run_totals
 from personalclaw.ledger.redaction import is_binary_payload, redact
 from personalclaw.ledger.writer import (
@@ -101,6 +118,20 @@ __all__ = [
     "stable_json",
     "read_events",
     "run_totals",
+    # outcomes (PP-9)
+    "OutcomeLedger",
+    "OutcomeQuestion",
+    "open_questions",
+    "MEASURED",
+    "INCONCLUSIVE",
+    "PRODUCERS",
+    "PRODUCER_CONTROL",
+    "PRODUCER_DECISION",
+    "PRODUCER_ESCALATION",
+    "PRODUCER_PROPOSAL",
+    "PRODUCER_PUBLISH",
+    "SOURCE_LEDGER",
+    "SOURCE_MEMORY",
     # vocabulary
     "LEDGER_KINDS",
     "BREAKER_TRIP",

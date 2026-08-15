@@ -106,6 +106,7 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     LedgerWriter,
     hash_value,
     is_binary_payload,
+    outcomes,
     reader,
     redact,
 )
@@ -412,17 +413,20 @@ class Journal(LedgerWriter):
         elapsed and comparing to `baseline`. Returns the written record so the caller can
         note its `event_id` — the key the resolver's `outcome_resolved` cites back, making a
         second curator tick idempotent.
+
+        The WORKFLOW-SHAPED adapter over the general facility (PP-9): it contributes
+        `instance_path`/`node_id`/`epoch` and the `decision` producer, and nothing else. A
+        non-decision producer calls `open_outcome` directly rather than pretending to be a node.
         """
-        return self.write(
-            PENDING_OUTCOME,
+        return self.open_outcome(
+            producer=outcomes.PRODUCER_DECISION,
+            subject=subject,
+            metric=metric,
+            horizon_secs=horizon_secs,
+            baseline=baseline,
             instance_path=path,
             node_id=node_id,
             epoch=epoch,
-            subject=subject,
-            metric=metric,
-            horizon_secs=round(float(horizon_secs), 3),
-            baseline=round(float(baseline), 6),
-            resolved_at="",
         )
 
     def outcome_resolved(
@@ -437,6 +441,7 @@ class Journal(LedgerWriter):
         measured: float | None,
         score: float,
         resolution: str,
+        producer: str = outcomes.PRODUCER_DECISION,
     ) -> dict[str, Any]:
         """Journal the ground-truth resolution of a `pending_outcome` (LEARN-R18).
 
@@ -444,18 +449,21 @@ class Journal(LedgerWriter):
         "inconclusive" when it was not — the latter decays faster, because an outcome we
         could not measure is weaker evidence than one we could. `pending_event_id` links
         back to the open question so the resolver never re-resolves the same one.
+
+        The workflow-shaped adapter over `resolve_outcome` (PP-9): the resolver hands back the
+        `producer` it read off the question, so a resolution never re-labels the bet it closes.
         """
-        return self.write(
-            OUTCOME_RESOLVED,
-            instance_path=path,
-            node_id=node_id,
+        return self.resolve_outcome(
             pending_event_id=pending_event_id,
+            producer=producer,
             subject=subject,
             metric=metric,
-            baseline=round(float(baseline), 6),
-            measured=(None if measured is None else round(float(measured), 6)),
-            score=round(float(score), 6),
+            baseline=baseline,
+            measured=measured,
+            score=score,
             resolution=resolution,
+            instance_path=path,
+            node_id=node_id,
         )
 
     def child_run_attach(self, parent_run_id: str, child_run_id: str, node_id: str) -> None:
