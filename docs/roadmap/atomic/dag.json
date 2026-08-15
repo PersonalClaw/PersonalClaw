@@ -3052,6 +3052,7 @@
           "id": "AP-5",
           "title": "Outbound multi-tool export (ExternalFormat + 3 renderers + byte-identical golden tests)",
           "status": "done",
+          "pr": 1372,
           "scope": "§5 Multi-Tool OUTBOUND Export (amendment c). Session 5 (first half). Success criterion 6. Reuses §2.2 content-layer redaction.",
           "done_when": "packs/external_formats.py ExternalFormat(name,installKind,dest,render) contract + Claude Code agents / Cursor rules / SKILL.md renderers export a PersonalClaw agent into a ~/.claude/agents/<slug>.md that Claude Code actually loads; a per-format golden-file test proves byte-identical rendering across runs; §2.2 content redaction runs on rendered output; export lands in a user-chosen directory only after explicit dest confirmation.",
           "deps": [
@@ -7061,6 +7062,7 @@
           "id": "PEP-4",
           "title": "Onboarding import engine (scanners + writers)",
           "status": "done",
+          "pr": 1372,
           "scope": "New onboarding/import package. Define ScanResult/ImportItem/WriteOutcome types and a source registry, then implement pure, fixture-testable scanners for the two highest-value sources: Claude Code (~/.claude: instruction docs, .mcp.json, settings.json, skills/) and Codex (~/.codex: AGENTS.md, config), with env-var-then-default root resolution (additional sources are additive later, not a v1 bar). Implement per-category writers to PersonalClaw destinations (instructions -> instruction docs, memories -> memory store, mcp_servers -> MCP config, skills -> skills/imported/<source>/ via the install-scan, schedules -> triggers, settings -> a review-gated merge that never clobbers) with a four-value outcome vocabulary (imported/existing/conflict/rejected). Enforce security floors on every imported file: is_sensitive_path refusal + credential/exfiltration-URL redaction, secrets counted-and-skipped and never imported; fingerprint-idempotent (SHA over source\\0category\\0key) so re-import never duplicates.",
           "done_when": "A fixture ~/.claude yields instruction+mcp+skills items with secrets counted-and-skipped and re-scan idempotent; importing the fixture creates the memories, MCP entries, and skills/imported/claude_code/*, and a conflicting item reports 'conflict' rather than silently overwriting.",
           "deps": []
@@ -10254,9 +10256,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 10,
+        "todo": 9,
         "blocked": 0
       },
       {
