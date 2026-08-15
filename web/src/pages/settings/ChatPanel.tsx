@@ -266,6 +266,14 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         </Row>
         <Row label="Follow-up suggestions" hint="After each reply, show 2-3 suggested next messages (one small background call; never blocks the turn). Skipped for temporary/incognito chats; silent with no model bound.">
           <Toggle on={cfg.followup_chips} onChange={(v) => save({ followup_chips: v })} label="Follow-up suggestions" />
+        </Row>
+        {/* Its own Row: a `Row` renders ONE label + hint on the left and its children together on
+            the right, so a second switch here shared the "Follow-up suggestions" caption and that
+            row's hint — which describes suggested next messages, not verification. Both switches
+            then rendered with no visible text of their own, so only a screen reader could tell them
+            apart. 1 of 39 switch-bearing settings rows held two controls; this restores the form the
+            other 38 use. */}
+        <Row label="Offer “Check this work”" hint="After a turn that did real multi-step work, offer a chip that re-derives and re-runs the checks against what the turn claimed. Only ever an offer — the verification cost is spent on your click, never automatically.">
           <Toggle on={cfg.offer_check_work} onChange={(v) => save({ offer_check_work: v })} label="Offer 'Check this work'" />
         </Row>
         <Row label="Streaming text reveal" hint="Smooth: steady word-by-word reveal decoupled from network chunks (never lags). Immediate: render each chunk the instant it arrives.">
