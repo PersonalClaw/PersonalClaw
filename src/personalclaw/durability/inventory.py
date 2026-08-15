@@ -487,6 +487,20 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="one line per model-call attempt",
     ),
     StateEntry(
+        # HARNESS-CRAFT §2.1 (HC-3): one bounded line per best-of-N call
+        # ({ts,n,criteria_digest,winner_idx,score_spread,tokens_total} — no prompt or
+        # candidate text). DERIVED, which is what "snapshot-excluded" means here: it is
+        # telemetry-of-self for the learning/eval feed, reconstructible in spirit and
+        # worthless to restore, so it is claimed (audit_home sees it) but never backed up.
+        id="sampling_outcomes",
+        kind=KIND_JSONL_APPEND,
+        path="sampling_outcomes.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_APPEND_DEDUP,
+        derived=True,
+        help="one bounded line per best-of-N sampling call (did sampling help?)",
+    ),
+    StateEntry(
         # COST-AND-TOKEN-OBSERVABILITY §2.4: the per-turn cost/token ledger. Derived =
         # reconstructible telemetry-of-self (rebuildable from the SEL/event stream), not
         # irreplaceable user content, so export/retention treats it as disposable.

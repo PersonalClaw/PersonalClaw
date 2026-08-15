@@ -1325,6 +1325,29 @@ Load a saved Prompt and render it with variable values filled in, returning the 
 
 ## personalclaw-subagents
 
+### `best_of_n`
+
+Sample N candidate answers to the SAME prompt in parallel (each at a different temperature), have a judge score them against your criteria, and return the winner plus the full slate. COSTS N MODEL CALLS — confirm N and the criteria with the user first (the best-of-n skill owns that gate). N is capped at 5. Use for 'give me N versions and pick the best', 'try a few options', 'sample and choose'.
+
+**Response type:** `sampling.best_of_n`
+
+**Safety:** requires approval
+
+**Parameters:**
+- `criteria` (string, optional) — What 'best' means here — the judge scores each candidate against this. Confirm it with the user.
+- `n` (integer, optional) — How many candidates to sample (1-5, default 3).
+- `prompt` (string, required) — The prompt every candidate answers (identical for all N).
+
+**Example — Draft three subject lines and pick the best:**
+
+```json
+{
+  "criteria": "specific, under 60 characters, no hype",
+  "n": 3,
+  "prompt": "Write a subject line for the launch email."
+}
+```
+
 ### `subagent_list`
 
 List all running and completed subagents (read-only, no commands executed)
