@@ -272,6 +272,178 @@ async def api_def_delete(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+# ── versions + refiner (WF2LEA-6) ──────────────────────────────────────────────
+
+
+def _template_run_stats(name: str) -> dict[str, Any]:
+    """Cheap, bounded ledger signals that feed a template's maturity badge.
+
+    ``clean_runs`` = completed runs; ``evaluator_rejected`` = whether any recent run's ledger
+    carries a ``gate_rejected`` event ("the evaluator has rejected at least one real bad run",
+    the R11 signal that separates a proven gate from one that has never fired). Bounded to the
+    most recent runs so this stays a display read, not a scan of all history.
+    """
+    from personalclaw.workflows import journal
+    from personalclaw.workflows.journal import GATE_REJECTED
+    from personalclaw.workflows.models import RunStatus
+
+    runs, _ = store.list_runs(workflow_name=name, limit=25)
+    clean = sum(1 for r in runs if r.status == RunStatus.COMPLETE)
+    rejected = False
+    for run in runs[:10]:
+        try:
+            if journal.ledger(run.id, kinds={GATE_REJECTED}):
+                rejected = True
+                break
+        except Exception:
+            continue
+    return {"clean_runs": clean, "evaluator_rejected": rejected}
+
+
+async def api_def_versions(request: web.Request) -> web.Response:
+    """GET /api/workflows/{name}/versions — the monotonic version history + pin + maturity.
+
+    When the store has no recorded versions yet (a bundled template nobody has refined), the
+    current def stands in as the single version so the tab is never empty."""
+    from personalclaw.workflows import versions
+
+    name = request.match_info.get("name", "")
+    detail = await service.get_def(name)
+    if not detail.get("ok"):
+        return _reply(detail)
+    spec = detail.get("definition") or {}
+
+    records = versions.list_versions(name)
+    if not records:
+        current = int(spec.get("version", 1) or 1)
+        rows = [
+            {
+                "version": current,
+                "source": versions.SOURCE_USER,
+                "created_at": str(spec.get("updated_at") or spec.get("created_at") or ""),
+                "note": "",
+                "run_ids": [],
+                "ops_count": 0,
+            }
+        ]
+        pinned = current
+    else:
+        rows = [
+            {
+                "version": r.version,
+                "source": r.source,
+                "created_at": r.created_at,
+                "note": r.note,
+                "run_ids": r.run_ids,
+                "ops_count": len(r.ops),
+            }
+            for r in records
+        ]
+        pinned = versions.pinned_version(name) or records[-1].version
+
+    stats = _template_run_stats(name)
+    maturity = versions.template_maturity(spec, **stats)
+    return web.json_response({"versions": rows, "pinned": pinned, "maturity": maturity})
+
+
+async def api_def_version_diff(request: web.Request) -> web.Response:
+    """GET /api/workflows/{name}/versions/diff?a=&b= — the typed-op diff between two versions."""
+    from personalclaw.workflows import versions
+
+    name = request.match_info.get("name", "")
+    try:
+        a = int(request.query.get("a", "0"))
+        b = int(request.query.get("b", "0"))
+    except ValueError:
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "a/b must be integers"}}, status=400
+        )
+    return web.json_response({"a": a, "b": b, "ops": versions.diff(name, a, b)})
+
+
+async def api_def_repin(request: web.Request) -> web.Response:
+    """POST /api/workflows/{name}/versions/repin {version} — rollback / re-pin the active version.
+
+    Moves only the pinned pointer; history is never rewritten. A version that was never recorded
+    is a 404 rather than a silent no-op — you cannot pin what does not exist."""
+    denied = _guard(request, "workflow_version_repin")
+    if denied is not None:
+        return denied
+    from personalclaw.workflows import versions
+
+    name = request.match_info.get("name", "")
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    try:
+        version = int(str(body.get("version", "")).strip())
+    except ValueError:
+        return web.json_response(
+            {"error": {"code": "invalid_request", "message": "'version' must be an integer"}},
+            status=400,
+        )
+    if not versions.repin(name, version):
+        _audit(request, "workflow_version_repin", "failure", f"{name}:v{version}")
+        return web.json_response(
+            {"error": {"code": "not_found", "message": f"no version {version} for {name!r}"}},
+            status=404,
+        )
+    _audit(request, "workflow_version_repin", "success", f"{name}:v{version}")
+    return web.json_response({"ok": True, "name": name, "pinned": version})
+
+
+async def api_def_ledger(request: web.Request) -> web.Response:
+    """GET /api/workflows/{name}/ledger — recent runs of this template with their ledger totals.
+
+    The Run Ledger tab: what this template actually did, run by run, with tokens/cost/step counts
+    so a reviewer can see whether it is healthy before refining it."""
+    from personalclaw.workflows import journal
+
+    name = request.match_info.get("name", "")
+    try:
+        limit = max(1, min(int(request.query.get("limit", "20")), 100))
+    except ValueError:
+        limit = 20
+    runs, total = store.list_runs(workflow_name=name, limit=limit)
+    rows = []
+    for run in runs:
+        try:
+            totals = journal.run_totals(run.id)
+        except Exception:
+            totals = {}
+        rows.append(
+            {
+                "run_id": run.id,
+                "status": str(run.status.value if hasattr(run.status, "value") else run.status),
+                "spec_version": int(getattr(run, "spec_version", 1) or 1),
+                "created_at": getattr(run, "created_at", ""),
+                "totals": totals,
+            }
+        )
+    return web.json_response({"name": name, "runs": rows, "total": total})
+
+
+async def api_def_refine(request: web.Request) -> web.Response:
+    """POST /api/workflows/{name}/refine — fire the refiner over this template on demand.
+
+    The "Refine now" button: launches the bundled propose-only `refine-template` workflow with
+    this template as its input. It proposes a diff for review; it never edits the template."""
+    denied = _guard(request, "workflow_refine")
+    if denied is not None:
+        return denied
+    name = request.match_info.get("name", "")
+    result = await service.start_run(
+        name="refine-template",
+        inputs={"workflow_name": name},
+        mode="background",
+        supervisor=_supervisor(request),
+        origin_kind=_api_origin(),
+        session_key=request.headers.get("X-Session-Key", "") or "",
+    )
+    _audit(request, "workflow_refine", "success" if result.get("ok") else "failure", name)
+    return _reply(result, status=202 if result.get("ok") else 200)
+
+
 # ── runs ─────────────────────────────────────────────────────────────────────
 
 
@@ -897,6 +1069,13 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/surfacing", api_defs_surfacing)
     app.router.add_get("/api/workflows", api_defs_list)
     app.router.add_post("/api/workflows", api_def_save)
+    # Versions + refiner (WF2LEA-6). These carry a segment AFTER `{name}`, so they do not collide
+    # with the one-segment def-detail/delete routes below; registered here beside their siblings.
+    app.router.add_get("/api/workflows/{name}/versions", api_def_versions)
+    app.router.add_get("/api/workflows/{name}/versions/diff", api_def_version_diff)
+    app.router.add_post("/api/workflows/{name}/versions/repin", api_def_repin)
+    app.router.add_get("/api/workflows/{name}/ledger", api_def_ledger)
+    app.router.add_post("/api/workflows/{name}/refine", api_def_refine)
     app.router.add_get("/api/workflows/{name}", api_def_detail)
     app.router.add_get("/api/workflows/{name}/trajectory", api_template_trajectory)
     app.router.add_delete("/api/workflows/{name}", api_def_delete)

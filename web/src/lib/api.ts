@@ -753,6 +753,39 @@ export interface WorkflowHandoff {
   context_fields?: string[]
   requires_user_request?: boolean
 }
+/** One recorded template version (WF2LEA-6). Immutable once written; a run pins the number it
+ *  executed, and re-pin/rollback moves only the active pointer. */
+export interface WorkflowVersionRow {
+  version: number
+  source: string // 'user' | 'refiner'
+  created_at: string
+  note: string
+  run_ids: string[]
+  ops_count: number
+}
+/** One typed op in a version-to-version diff (the engine's own vocabulary). */
+export interface WorkflowVersionOp {
+  op: string // insert | delete | update_node | move | set_input
+  node_id?: string
+  kind?: string
+  fields?: string[]
+}
+/** A template's maturity (R11): L0 draft → L3 mature, from static signals + ledger activity. */
+export interface WorkflowMaturity {
+  level: number
+  label: string // draft | shaping | proven | mature
+  signals: Record<string, boolean>
+  clean_runs: number
+  evaluator_rejected: boolean
+}
+/** One row of the Run Ledger tab: a past run of this template with its totals. */
+export interface WorkflowLedgerRow {
+  run_id: string
+  status: string
+  spec_version: number
+  created_at?: string
+  totals: { tokens?: number; cost_usd?: number; steps_completed?: number; steps_failed?: number }
+}
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
 // A node INSTANCE. `instance_path` is the engine's addressing key (a foreach body
@@ -3611,6 +3644,32 @@ export const api = {
   saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
     post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
+
+  // ── template versions + refiner (WF2LEA-6) ──
+  /** The monotonic version history, the pinned (active) version, and the maturity badge. */
+  workflowVersions: (name: string) =>
+    get<{ versions: WorkflowVersionRow[]; pinned: number; maturity: WorkflowMaturity }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions`,
+    ),
+  /** The typed-op diff between two versions (add/remove/reorder/update-node ops). */
+  workflowVersionDiff: (name: string, a: number, b: number) =>
+    get<{ a: number; b: number; ops: WorkflowVersionOp[] }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions/diff?a=${a}&b=${b}`,
+    ),
+  /** Rollback / re-pin the active version. Moves only the pointer; history is never rewritten. */
+  repinWorkflowVersion: (name: string, version: number) =>
+    post<{ ok: boolean; name: string; pinned: number }>(
+      `/api/workflows/${encodeURIComponent(name)}/versions/repin`,
+      { version },
+    ),
+  /** Recent runs of this template with their ledger totals — the Run Ledger tab. */
+  workflowLedger: (name: string) =>
+    get<{ name: string; runs: WorkflowLedgerRow[]; total: number }>(
+      `/api/workflows/${encodeURIComponent(name)}/ledger`,
+    ),
+  /** Fire the propose-only refiner over this template on demand ("Refine now"). */
+  refineWorkflow: (name: string) =>
+    post<{ run_id?: string; status?: string }>(`/api/workflows/${encodeURIComponent(name)}/refine`, {}),
 
   workflowRuns: (f?: { workflow?: string; status?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams(

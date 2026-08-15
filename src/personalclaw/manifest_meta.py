@@ -270,6 +270,33 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "refiner_evidence": {
+        "response_type": "refiner.evidence",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Read a template's clustered, screened failure evidence",
+                "args": {"workflow_name": "code-project"},
+            },
+        ],
+    },
+    "propose_template_diff": {
+        "response_type": "refiner.proposal.result",
+        # Refusals (empty diff, illegal/frozen ops) are readable text with a bracketed code,
+        # not `errors.ERROR_CODES` entries — same convention as the planning tools above.
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Propose a typed diff to a template, citing the runs that motivate it",
+                "args": {
+                    "workflow_name": "code-project",
+                    "ops": [{"op": "update_node", "node_id": "build", "fields": {"retries": 2}}],
+                    "rationale": "The build step fails transiently; a retry clears it.",
+                    "run_ids": ["r1", "r2", "r3"],
+                },
+            },
+        ],
+    },
     # ── personalclaw-artifacts ───────────────────────────────────────────────
     "artifact_save": {
         "response_type": "artifact.detail",

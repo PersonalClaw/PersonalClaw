@@ -487,6 +487,7 @@ async def start_dashboard(
         api_ephemeral_skill_promote,
         api_ephemeral_skills_list,
         api_skill_files,
+        api_skill_overlay_revert,
         api_skill_proposal_accept,
         api_skill_proposal_detail,
         api_skill_proposal_reject,
@@ -515,6 +516,9 @@ async def start_dashboard(
     app.router.add_get("/api/skills/proposals/{id}", api_skill_proposal_detail)
     app.router.add_post("/api/skills/proposals/{id}/accept", api_skill_proposal_accept)
     app.router.add_delete("/api/skills/proposals/{id}", api_skill_proposal_reject)
+    # Accepted-refinement sidecar overlays (WF2LEA-6) — revert = delete one file. Literal
+    # 'overlay' segment, registered before the catch-all /{name} routes below.
+    app.router.add_post("/api/skills/overlay/revert", api_skill_overlay_revert)
     # Provider-backed file browser — must precede the catch-all skill-detail GET.
     app.router.add_get("/api/skills/{name}/files", api_skill_files)
     app.router.add_post("/api/skills/{name}/verify", api_skill_verify)

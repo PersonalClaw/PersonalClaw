@@ -532,6 +532,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/skills/install` — install a skill from a marketplace.
 - `GET /api/skills/marketplace/detail` — _(no summary)_
 - `GET /api/skills/marketplaces` — list registered skill marketplaces.
+- `POST /api/skills/overlay/revert` — drop a skill's accepted-refinement overlay.
 - `GET /api/skills/proposals` — the pending autonomous-synthesis proposals
 - `DELETE /api/skills/proposals/{id}` — drop a proposal (never installed).
 - `GET /api/skills/proposals/{id}` — full proposal incl. procedure + fenced source.
@@ -649,7 +650,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
+- `GET /api/workflows/{name}/ledger` — recent runs of this template with their ledger totals.
+- `POST /api/workflows/{name}/refine` — fire the refiner over this template on demand.
 - `GET /api/workflows/{name}/trajectory` — The trajectory-signature distribution and regression signal for one template (PP-7).
+- `GET /api/workflows/{name}/versions` — the monotonic version history + pin + maturity.
+- `GET /api/workflows/{name}/versions/diff` — the typed-op diff between two versions.
+- `POST /api/workflows/{name}/versions/repin` — {version} — rollback / re-pin the active version.
 
 ## Websocket / internal routes
 

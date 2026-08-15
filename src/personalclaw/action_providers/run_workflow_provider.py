@@ -199,6 +199,11 @@ class RunWorkflowActionProvider(ActionProvider):
                 id="",
                 workflow_name=name,
                 status=RunStatus.DRAFT,
+                # WF2LEA-6: a run pins the def VERSION it executed (reproducibility). Every
+                # other creation site does this (service.py:516); the trigger-fired path did
+                # not, so a hook-launched run always recorded spec_version=1 regardless of the
+                # def's real version — a refiner run could not be traced to the spec it read.
+                spec_version=int(spec.get("version", 1) or 1),
                 inputs=dict((action_config or {}).get("inputs") or {}),
                 mode=str((action_config or {}).get("mode", "background") or "background"),
                 project_id=str((action_config or {}).get("project_id", "") or ""),

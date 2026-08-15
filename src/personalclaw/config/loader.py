@@ -3914,11 +3914,13 @@ class AppConfig:
                 LITE_AGENT_NAME,
                 LOOP_PLANNER_AGENT_NAME,
                 LOOP_WORKER_AGENT_NAME,
+                TEMPLATE_REFINER_AGENT_NAME,
                 make_code_planner_profile,
                 make_coder_profile,
                 make_lite_agent_profile,
                 make_loop_planner_profile,
                 make_loop_worker_profile,
+                make_template_refiner_profile,
             )
 
             if LOOP_WORKER_AGENT_NAME not in cfg.agents:
@@ -3952,6 +3954,15 @@ class AppConfig:
             # of falling through to an unnamed default.
             if LITE_AGENT_NAME not in cfg.agents:
                 cfg.agents[LITE_AGENT_NAME] = make_lite_agent_profile(AgentProfile)
+                needs_migration = True
+
+            # Seed the built-in propose-only template refiner (WF2LEA-6) if absent. Same
+            # idempotent add-if-missing contract — ships with the package, inert until the
+            # `refine-template` workflow runs it over a template's run ledger.
+            if TEMPLATE_REFINER_AGENT_NAME not in cfg.agents:
+                cfg.agents[TEMPLATE_REFINER_AGENT_NAME] = make_template_refiner_profile(
+                    AgentProfile
+                )
                 needs_migration = True
 
             # Prune retired system agents left behind in an existing config.json.

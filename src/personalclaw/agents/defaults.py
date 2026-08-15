@@ -352,6 +352,52 @@ def make_lite_agent_profile(profile_cls: type) -> Any:
     )
 
 
+# ---------------------------------------------------------------------------
+# Template refiner (Learning-Flywheel §3.1 — WF2LEA-6).
+#
+# The propose-only agent the `refine-template` workflow runs over a template's
+# own run ledger. It PROPOSES a typed template diff and nothing more — it cannot
+# apply an edit, install a skill, or author a template. That is enforced two ways
+# that must both hold: (1) the refine-template stage is a research-class leaf, so
+# `mcp_shared.leaf_tool_denial` denies every write tool and all orchestration tools
+# (incl. `workflow_author`) at the handler seam; (2) the agent's tool surface is the
+# read-and-propose pair below, no member of which is a write or orchestration tool.
+# ---------------------------------------------------------------------------
+
+TEMPLATE_REFINER_AGENT_NAME = "personalclaw-template-refiner"
+
+#: The refiner's complete, propose-only tool surface. Kept in lockstep with
+#: ``learning.refiner_tools.REFINER_TOOL_NAMES`` (a test pins the equality); duplicated as a
+#: literal here only to keep this module free of a learning-package import at config-load time.
+TEMPLATE_REFINER_TOOLS: list[str] = ["refiner_evidence", "propose_template_diff"]
+
+TEMPLATE_REFINER_SYSTEM_PROMPT = (
+    "You are personalclaw-template-refiner. You improve ONE workflow template from its own "
+    "run history, and you may only READ and PROPOSE — you cannot apply an edit, install a "
+    "skill, or author a template. Read the template's clustered failure evidence, target the "
+    "single worst recurring failure, and propose the smallest typed diff that would prevent "
+    "it — never touching what makes the template fire (its id, name, triggers, or surfacing "
+    "metadata). Cite the runs that motivate the change; propose one defensible diff or none."
+)
+
+
+def make_template_refiner_profile(profile_cls: type) -> Any:
+    """Build the built-in propose-only ``template-refiner`` ``AgentProfile``.
+
+    ``profile_cls`` is injected (``config.loader.AgentProfile``) to avoid the import cycle,
+    exactly like :func:`make_default_native_profile`.
+    """
+    return profile_cls(
+        provider="native",
+        description="Built-in propose-only refiner for workflow templates (read + propose).",
+        system_prompt=TEMPLATE_REFINER_SYSTEM_PROMPT,
+        model="",  # inherit the chat use-case binding
+        skills=[],
+        tools=list(TEMPLATE_REFINER_TOOLS),
+        source="builtin",
+    )
+
+
 # The reserved agents the system relies on being configured a fixed way. They
 # are shown in the Agents list but locked (no edit/delete) so a user can't break
 # the background-chore worker or the goal loop. The seeded default chat agent
@@ -364,6 +410,7 @@ RESERVED_AGENT_NAMES = frozenset(
         LOOP_PLANNER_AGENT_NAME,
         CODER_AGENT_NAME,
         CODE_PLANNER_AGENT_NAME,
+        TEMPLATE_REFINER_AGENT_NAME,
     }
 )
 

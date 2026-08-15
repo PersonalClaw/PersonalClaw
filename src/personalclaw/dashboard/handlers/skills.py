@@ -565,6 +565,28 @@ async def api_skill_verify(request: web.Request) -> web.Response:
     )
 
 
+async def api_skill_overlay_revert(request: web.Request) -> web.Response:
+    """POST /api/skills/overlay/revert — drop a skill's accepted-refinement overlay.
+
+    Body: ``{name: "<skill name>"}`` (the name may carry a namespace slash, e.g.
+    ``auto/release-flow``, which is why it rides the body rather than a URL segment). Revert is
+    the deletion of exactly ONE sidecar file: the base ``SKILL.md`` and its ``.pclaw-lock.json``
+    are untouched, so a marketplace skill stays verifiable across the round trip."""
+    try:
+        body: dict[str, Any] = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    name = str(body.get("name", "")).strip()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+
+    from personalclaw.skills import overlays
+
+    removed = overlays.revert_overlay(name)
+    _sel_log("skills.overlay_revert", "ok" if removed else "noop", name, request)
+    return web.json_response({"ok": True, "name": name, "reverted": removed})
+
+
 # ── Ephemeral session skills (skill-ephemeral-promotion) ─────────────────────
 
 
