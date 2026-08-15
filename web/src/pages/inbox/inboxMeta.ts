@@ -1,4 +1,4 @@
-import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2 } from 'lucide-react'
+import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2 } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
@@ -35,6 +35,10 @@ export const STATUSES: StatusMeta[] = [
   { key: 'sent', label: 'Replied', tone: 'var(--color-ok)', icon: Send },
   { key: 'handled', label: 'Handled', tone: 'var(--color-ok)', icon: CheckCircle2 },
   { key: 'dismissed', label: 'Dismissed', tone: 'var(--color-on-surface-low)', icon: XCircle },
+  // Filtered = withheld by the INU-6 second-opinion pass: persisted but its notification
+  // suppressed because a verification check refuted the claim. Warn-toned because it may be
+  // a false positive the user will want to Restore — it is held for review, not resolved.
+  { key: 'filtered', label: 'Filtered', tone: 'var(--color-warn)', icon: Filter },
 ]
 export function statusMeta(s?: string): StatusMeta {
   return STATUSES.find((x) => x.key === s) ?? STATUSES[0]

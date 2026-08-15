@@ -601,3 +601,18 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   lets a user SELECT a source (no `InboxConfig.source` field). Adding one pulls in the full config
   round-trip plus a frontend control, which this atom's done_when does not list and whose consumer is
   CE-8/EIAT-2 — a follow-up row for whoever lands CE-8 part 1.
+
+- **INU-6 DONE (2026-08-15) — second-opinion verification gate.** `NotificationKind.verifiable`
+  (set on `skills/proposal` + `system/agent_request`) + a `Rule.verify` opt-in whose rules-PUT rejects
+  `verify:true` on a non-verifiable kind (400). New `notification_verify.py`: `verify_attention_item()`
+  is REFUTED-only via `one_shot_completion(use_case="background")` (metered through `ModelCallGuard`) and
+  **fail-OPEN** on every failure path (no model / timeout / breaker / budget / unparseable → `skipped`,
+  delivered). `ItemStatus.FILTERED` is filed inside `emit_attention_item()` between construction and
+  `notify()`; a refuted item persists with `refs.verify` + a `verify_withheld` replay payload and its
+  notification is withheld. FE: a present-only **Filtered** filter chip + a **Restore** control that
+  flips FILTERED→PENDING and re-fires the withheld notification exactly once (server enforces the
+  fire-once on the FILTERED→PENDING edge; a repeat call is a 409 no-op).
+  **DEVIATION (execution, not scope):** implemented across two agents after transient subagent stream
+  deaths — the backend landed as a wip checkpoint, then tests + FE + tracking were completed inline; the
+  PR squashes both into one commit. Falsified three ways (PUT-400 removed, REFUTED-only inverted,
+  fail-open path made blocking) — each reds the naming test.

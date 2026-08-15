@@ -374,6 +374,66 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     return web.json_response(_redact_item(updated.to_dict()))
 
 
+async def api_inbox_restore(request: web.Request) -> web.Response:
+    """POST /api/inbox/{id}/restore — undo a verification filter (INU-6).
+
+    Flips a FILTERED item back to PENDING and fires the ONE notification that verification
+    withheld, so a second-opinion false positive is fully recoverable. Fires exactly once:
+    the notification only fires on the FILTERED→PENDING transition, so a repeat call on an
+    already-restored (PENDING) item is a 409 no-op — it cannot double-notify.
+    """
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    item_id = request.match_info["id"]
+    item = inbox.items.get(item_id)
+    if item is None:
+        return web.json_response({"error": "not found"}, status=404)
+    if item.status != ItemStatus.FILTERED.value:
+        return web.json_response({"error": "item is not filtered"}, status=409)
+
+    withheld = item.refs.get("verify_withheld") if isinstance(item.refs, dict) else None
+    item.status = ItemStatus.PENDING.value
+    item.refs["verify"] = "restored"
+    # Drop the replay payload the instant it is consumed — the FILTERED guard above already
+    # prevents a second fire, and leaving it invites a future re-fire path.
+    item.refs.pop("verify_withheld", None)
+    inbox.save()
+
+    if state is not None and isinstance(withheld, dict):
+        try:
+            passthrough = {
+                k: v
+                for k, v in item.refs.items()
+                if k not in ("verify", "verify_withheld", "dedup_key")
+            }
+            state.notify(
+                str(withheld.get("kind") or ""),
+                str(withheld.get("title") or ""),
+                str(withheld.get("body") or ""),
+                meta={
+                    "inbox_item": item.id,
+                    "item_kind": withheld.get("item_kind") or item.item_kind,
+                    **passthrough,
+                },
+            )
+        except Exception:
+            logger.warning("inbox restore: notify failed", exc_info=True)
+
+    try:
+        sel().log_tool_invocation(
+            session_key="dashboard:inbox",
+            tool_name="inbox_restore",
+            outcome="success",
+            request_id=item_id,
+            source="dashboard",
+        )
+    except Exception:
+        logger.warning("SEL audit failed for inbox restore", exc_info=True)
+
+    state.broadcast_ws("inbox_item_updated", _redact_item(item.to_dict()))
+    return web.json_response(_redact_item(item.to_dict()))
+
+
 async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
     """POST /api/inbox/dismiss-all — dismiss all pending items."""
     state: "DashboardState" = request.app["state"]

@@ -243,6 +243,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
 - `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate
+- `POST /api/inbox/{id}/restore` — undo a verification filter (INU-6).
 - `GET /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
