@@ -11,8 +11,10 @@ The clauses WF2LEA-4's `done_when` names, each driven against the REAL `MemorySe
 `VectorMemoryStore`, the REAL Run Ledger (`Journal` over `store`), and the REAL proposal store
 (monkeypatched to a tmp home):
 
-* INERT unless a memory service with a live vector store is injected — with no store there is
-  nothing to measure;
+* a MEMORY-sourced question stays OPEN without a live vector store — nothing can read it yet, and
+  "nobody could look" is a different fact from "the metric is unreadable" (PP-9);
+* a LEDGER-sourced question resolves with no vector store at all, because its ground truth is an
+  event the producer wrote itself (PP-9);
 * a question still INSIDE its horizon is left pending (not resolved early);
 * past the horizon with a readable metric → resolved + a graded proposal citing the measured
   figure vs baseline, tagged `measured`;
@@ -34,6 +36,7 @@ import pytest
 
 from personalclaw.learning import outcome_resolver
 from personalclaw.learning import proposals as P
+from personalclaw.ledger import outcomes
 from personalclaw.memory_service import MemoryService
 from personalclaw.vector_memory import VectorMemoryStore
 from personalclaw.workflows import journal as journal_mod
@@ -95,21 +98,90 @@ def _set_metric(svc, value: float, *, key: str = _METRIC) -> None:
     assert rej is None, f"metric write rejected: {rej}"
 
 
-# ── inert without a live vector store ──
+# ── a memory-sourced question needs a live vector store; a ledger-sourced one does not ──
 
 
-def test_no_vector_store_is_a_noop(home):
-    """Ground truth is read from semantic memory; with no store there is nothing to measure, so
-    resolve returns an empty report and writes nothing."""
+def test_a_memory_sourced_question_stays_open_without_a_vector_store(home):
+    """A decision's ground truth is read from semantic memory; with no store nothing can read it,
+    so the question is counted PENDING and left open rather than spent as inconclusive (PP-9). It
+    writes no resolution and files no proposal."""
     run = _run()
-    _open_question(run, horizon=0.0)  # would be past-horizon, but no store to measure with
+    _open_question(run, horizon=0.0)  # past-horizon, but no store to measure with
     assert outcome_resolver.resolve(MemoryService.over_vector_store(None)) == {
         "resolved": 0,
         "inconclusive": 0,
-        "pending": 0,
+        "pending": 1,
         "proposed": 0,
     }
+    assert journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED}) == []
     assert P.list_pending(kind=P.Kind.LESSON_BATCH.value) == []
+
+
+def _open_escalation(run: WorkflowRun, *, horizon: float, confirmation_id: str = "conf-1"):
+    """Open the ESCALATION producer's question: graded from the run's own ledger, not memory."""
+    return journal_mod.Journal(run.id).open_outcome(
+        producer=outcomes.PRODUCER_ESCALATION,
+        subject="escalated gate `approve` to the user",
+        metric=journal_mod.CONFIRMATION_RESOLVED,
+        metric_source=outcomes.SOURCE_LEDGER,
+        match={"confirmation_id": confirmation_id},
+        value_field="approved",
+        horizon_secs=horizon,
+        baseline=1.0,
+        instance_path="root.approve",
+        node_id="approve",
+        confirmation_id=confirmation_id,
+    )
+
+
+def test_a_ledger_sourced_question_resolves_without_a_vector_store(home):
+    """PP-9: an escalation's ground truth is an event the producer wrote itself, so it grades on a
+    box with no vector store. An approved gate measures 1.0 against its baseline of 1.0 — the bet
+    landed — and files no lesson, because an escalation is not a lesson about how to decide."""
+    run = _run()
+    q = _open_escalation(run, horizon=100.0)
+    journal_mod.Journal(run.id).confirmation_resolved(
+        "root.approve", "approve", confirmation_id="conf-1", verb="approve", approved=True
+    )
+    opened = outcome_resolver._epoch(q["ts"])
+    report = outcome_resolver.resolve(MemoryService.over_vector_store(None), now=opened + 1_000.0)
+    assert report == {"resolved": 1, "inconclusive": 0, "pending": 0, "proposed": 0}
+    (resolved,) = journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED})
+    assert resolved["producer"] == outcomes.PRODUCER_ESCALATION
+    assert resolved["pending_event_id"] == q["event_id"]
+    assert resolved["measured"] == 1.0
+    assert resolved["resolution"] == outcomes.MEASURED
+    assert P.list_pending(kind=P.Kind.LESSON_BATCH.value) == []
+
+
+def test_an_unanswered_escalation_is_inconclusive(home):
+    """Nobody answered before the horizon: the interruption went nowhere. That CLOSES (so it never
+    re-resolves) as inconclusive, carrying the fast-decaying profile."""
+    run = _run()
+    q = _open_escalation(run, horizon=100.0)
+    opened = outcome_resolver._epoch(q["ts"])
+    report = outcome_resolver.resolve(MemoryService.over_vector_store(None), now=opened + 1_000.0)
+    assert report == {"resolved": 0, "inconclusive": 1, "pending": 0, "proposed": 0}
+    (resolved,) = journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED})
+    assert resolved["resolution"] == outcomes.INCONCLUSIVE
+    assert resolved["measured"] is None
+    assert resolved["decay_profile"] == outcomes.DECAY_PROFILE[outcomes.INCONCLUSIVE]
+
+
+def test_a_rejected_escalation_scores_against_its_baseline(home):
+    """The `approved` boolean IS the measurement: rejected reads 0.0 against a baseline of 1.0, so
+    an interruption the user said no to scores −1 rather than reading as unmeasurable."""
+    run = _run()
+    q = _open_escalation(run, horizon=100.0, confirmation_id="conf-9")
+    journal_mod.Journal(run.id).confirmation_resolved(
+        "root.approve", "approve", confirmation_id="conf-9", verb="reject", approved=False
+    )
+    opened = outcome_resolver._epoch(q["ts"])
+    outcome_resolver.resolve(MemoryService.over_vector_store(None), now=opened + 1_000.0)
+    (resolved,) = journal_mod.ledger(run.id, kinds={journal_mod.OUTCOME_RESOLVED})
+    assert resolved["resolution"] == outcomes.MEASURED
+    assert resolved["measured"] == 0.0
+    assert resolved["score"] == pytest.approx(-1.0)
 
 
 def test_none_service_is_a_noop(home):
@@ -164,8 +236,8 @@ def test_past_horizon_with_a_readable_metric_resolves_and_proposes(svc, home):
 
 
 def test_the_score_reflects_beating_the_baseline(svc, home):
-    """`_score` is benchmark-relative in [-1, 1]: measured 0.8 vs baseline 0.5 → +0.23, and the
-    proposal's confidence is |score|, so a decision that clearly beat its baseline is more
+    """`outcomes.score` is benchmark-relative in [-1, 1]: measured 0.8 vs baseline 0.5 → +0.23, and
+    the proposal's confidence is |score|, so a decision that clearly beat its baseline is more
     confident than a marginal one."""
     run = _run()
     q = _open_question(run, horizon=100.0, baseline=0.5)
@@ -173,7 +245,7 @@ def test_the_score_reflects_beating_the_baseline(svc, home):
     opened = outcome_resolver._epoch(q["ts"])
     outcome_resolver.resolve(svc, now=opened + 1_000.0)
     (prop,) = P.list_pending(kind=P.Kind.LESSON_BATCH.value)
-    assert prop.confidence == pytest.approx(abs(outcome_resolver._score(0.8, 0.5)), abs=1e-6)
+    assert prop.confidence == pytest.approx(abs(outcomes.score(0.8, 0.5)), abs=1e-6)
 
 
 def test_the_outcome_resolved_record_cites_the_pending_event(svc, home):

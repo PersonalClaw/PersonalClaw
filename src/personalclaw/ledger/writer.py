@@ -17,6 +17,7 @@ from typing import Any, ClassVar, Protocol
 
 from personalclaw.ledger.hashing import stable_json
 from personalclaw.ledger.kinds import LEDGER_KINDS, STEP_CACHED, STEP_COMPLETED
+from personalclaw.ledger.outcomes import OutcomeLedger
 from personalclaw.ledger.redaction import is_binary_payload, redact
 
 JOURNAL_FILE = "journal.jsonl"
@@ -54,9 +55,14 @@ class LedgerStore(Protocol):
 
 
 @dataclass
-class LedgerWriter:
+class LedgerWriter(OutcomeLedger):
     """Append-only per-run log. Not a class for state — a thin writer over the run
-    directory, so two writers in one process cannot hold divergent views."""
+    directory, so two writers in one process cannot hold divergent views.
+
+    Carries the outcome pair (`open_outcome`/`resolve_outcome`) from
+    :class:`personalclaw.ledger.outcomes.OutcomeLedger`, so every producer that can carry a ledger
+    can open a question about what LANDED — not only the one feature that first needed it (PP-9).
+    """
 
     run_id: str
     #: Monotonic sequence for deterministic event ids (`<run>-evt-<seq>`), which makes a

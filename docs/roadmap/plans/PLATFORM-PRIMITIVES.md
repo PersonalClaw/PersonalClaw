@@ -1,9 +1,9 @@
 # Plan: Platform Primitives — Edges, Verdicts and Policies as First-Class Nouns
 
-**Status:** IN PROGRESS — 1 of 16 atoms shipped (`PP-4`, the ledger extraction, 2026-08-14 — see
-`## Execution log`). Five startable now (`PP-1`, `PP-6`, `PP-8`, `PP-9`, `PP-11`): `PP-4` landing
-unblocked four of them. `PP-5` still waits on `WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in
-[`../atomic/PP.md`](../atomic/PP.md).
+**Status:** IN PROGRESS — 2 of 16 atoms shipped (`PP-4` the ledger extraction and `PP-9` the general
+outcome record, both 2026-08-14 — see `## Execution log`). Five startable now (`PP-1`, `PP-6`,
+`PP-8`, `PP-10`, `PP-11`): `PP-4` unblocked four, and `PP-9` landing unblocked `PP-10`. `PP-5` still
+waits on `WF2LOO-16` and `PP-7` on `PP-6`. 16 atoms in [`../atomic/PP.md`](../atomic/PP.md).
 **Pillar:** A (Execution Engine + Convergence) · **rev 17** (2026-08-14)
 
 **Soul guardrail.** Everything here stays personal-scale: one user, local files, local SQLite,
@@ -260,3 +260,65 @@ discipline in [`AGENTS.md`](../../../AGENTS.md))*
   auto-discovery
   (`packages.find`), and `personalclaw-backend.spec`'s `hiddenimports` exists only for
   importlib-loaded modules, which a statically-imported pure-Python package is not.
+
+- **2026-08-14 — `PP-9` DONE.** The outcome pair is now a general facility: `ledger/outcomes.py`
+  owns the producer vocabulary (`decision`/`publish`/`escalation`/`proposal`/`control`, a CLOSED set
+  so a typo is a loud `ValueError` at the open rather than a producer nobody can query for), the two
+  resolutions, the two metric SOURCES, the idempotency subtraction (`open_questions`), the
+  benchmark-relative `score`, and the `OutcomeLedger` mixin carrying `open_outcome`/`resolve_outcome`
+  — mixed into `LedgerWriter`, so every producer that can carry a ledger can open a question, not
+  just the one feature that first needed it. `journal.pending_outcome`/`outcome_resolved` survive as
+  thin WORKFLOW-SHAPED adapters that contribute `instance_path`/`node_id`/`epoch` and nothing else,
+  which is where the `ledger/` boundary rail forces them to live. `PA-4`'s decision journal lands on
+  this facility as `PRODUCER_DECISION` with its own `context` fields — one facility, stated in the
+  module docstring so the next session does not build a second one. Two non-decision producers wired
+  in the same change: `engine.apply_publish` opens `artifact.<slug>.consumed` (memory-sourced, a
+  7-day horizon, baseline 1.0 — one consumption is the whole bet) and `controller._ask_for_input`
+  opens the escalation's bet beside `confirmation_pending`, ledger-sourced on the
+  `confirmation_resolved` its own `confirmation_id` will carry. Gate: `make lint` clean (black /
+  isort / flake8 / mypy over 822 source files), 916 learning+ledger tests and 4593 workflows tests
+  green, full suite 19 194 passed / 30 skipped / 12 xfailed / 0 failed. Collection 19 207 → 19 234;
+  a function-name diff against `origin/main` shows 28 added and one removed, and that one is the
+  rename of `test_no_vector_store_is_a_noop` (its clause changed, see the DEVIATION below) — no test
+  was deleted. The ledger golden fixtures were regenerated in the same commit: `pending_outcome`
+  gains `producer`/`metric_source` and loses `resolved_at`, `outcome_resolved` gains
+  `producer`/`decay_profile`, and nothing else in 50 emitter lines moved.
+
+- **2026-08-14 — DEVIATION (`PP-9`): the resolver is no longer inert without a vector store, and
+  `resolved_at` is deleted.** LEARN-R18 returned an empty report unless a live vector store was
+  injected, which was right when every metric was a semantic-memory key. It is wrong for a general
+  facility: an escalation's ground truth is an event the run wrote itself. So availability is now
+  per-SOURCE — a memory-sourced question with no vector store is counted `pending` and left OPEN
+  (spending it as `inconclusive` would charge a missing dependency to the bet), while a
+  ledger-sourced one grades on any box. `service is None` still short-circuits. Separately,
+  `pending_outcome` carried a `resolved_at: ""` field that its only writer wrote empty and no reader
+  ever read — the resolution is a separate event — so it is gone rather than carried forward.
+
+- **2026-08-14 — DISCOVERY (`PP-9`): "after the bet" must be FILE POSITION, not `seq`.** The
+  ledger-sourced measurement first ordered candidate events by `seq`, and the escalation test read
+  its own answer as unmeasurable. Cause: `Journal(run_id)` is a fresh dataclass with `seq = 0`, and
+  `_load_cache` only recovers the sequence when something asks for a cache lookup — so a SECOND
+  writer built for a run that already has 40 events starts at 1 and re-mints `event_id`s the file
+  already holds (the resolver itself builds one). Append order is the only ordering the log actually
+  guarantees, so `measure_from_events` scans forward from the question's own position. The colliding
+  `event_id` is a pre-existing hazard for anything keyed by it and is left named here rather than
+  fixed inside this atom.
+
+- **2026-08-14 — DECISION (`PP-9`): only a DECISION's outcome files a lesson proposal.** Generalizing
+  the producers would otherwise generalize the queue noise: every publish would file "this
+  artifact's outcome is inconclusive", which the user cannot act on and which `PP-10` is the atom
+  that knows how to interpret. `_PROPOSING_PRODUCERS` is one frozenset in the resolver, and the
+  publish/escalation producers write their outcome to the ledger and stop there.
+
+- **2026-08-14 — `PP-9` proof.** Falsified three times, each with the target line read first and
+  restored from a file copy (never `git checkout --`): emptying `open_questions`' answered set reds
+  `test_a_second_tick_is_idempotent` and `test_an_answered_question_is_not_open`; collapsing
+  `DECAY_PROFILE` so both resolutions name `speculative` reds
+  `test_the_two_resolutions_map_onto_different_decay_profiles` and
+  `test_an_inconclusive_outcome_decays_out_while_a_measured_one_survives` (that one asserts the
+  OUTCOME — at 60 active days the kernel prunes the inconclusive evidence and keeps the measured, not
+  merely that a field differs); removing the `_open_publish_outcome` call from `apply_publish` reds
+  `test_publishing_an_artifact_opens_an_outcome`, which drives the real `publish:` seam against a
+  fake artifact provider rather than calling the emitter directly. The escalation producer is driven
+  end-to-end against a really-parked gate in `test_workflows_confirm_emission.py`, including the
+  answer that measures it and the re-poll that must not open a second question.

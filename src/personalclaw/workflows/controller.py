@@ -43,6 +43,7 @@ from typing import Any
 
 from personalclaw import project_context
 from personalclaw.knowledge import session_brief
+from personalclaw.ledger import outcomes
 from personalclaw.workflows import attention, conditions
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import execution_hints, gate_policy
@@ -124,6 +125,12 @@ _LOOP_MARKER_RE = re.compile(r"@(\d+)")
 #: How long a tick waits for in-flight work before re-deriving the frontier. Bounded so a
 #: WAITING deadline or an externally-answered gate is noticed promptly.
 TICK_WAKE_SECS = 5.0
+
+#: How long an escalated gate gets to be answered before its outcome is graded (PP-9). A day,
+#: because a gate raised overnight is answered in the morning and grading it sooner would call a
+#: sleeping user an unlanded interruption. Nothing expires at this point — the gate keeps waiting;
+#: only the BET about whether interrupting was worth it closes.
+ESCALATION_ANSWER_HORIZON_SECS = 24 * 3600.0
 
 #: Terminal-state map from a derived root outcome to the run's status.
 _ROOT_TO_RUN = {
@@ -897,12 +904,14 @@ class RunController:
         # `confirmation_id` is derived from `(run, gate, epoch)` by `confirmation.request_id`, NOT
         # from the resume token. The token is single-use and rotates on rewind; the ID has to stay
         # stable so `confirmation_pending` and `confirmation_resolved` pair up in the ledger.
+        confirmation_id = _confirmation_id(self.run.id, cont.node_id or path, inst.epoch)
         self.publish_confirmation_pending(
             path,
             cont.node_id,
-            confirmation_id=_confirmation_id(self.run.id, cont.node_id or path, inst.epoch),
+            confirmation_id=confirmation_id,
             kind=_confirmation_kind(node.config if node else {}),
         )
+        self._open_escalation_outcome(path, cont.node_id, confirmation_id)
         # …and DURABLY, to the inbox (WF2-R7). The SSE frame above only reaches a view that
         # happens to be open; a scheduled run parking at 3am would otherwise wait in silence
         # forever. Minted alongside the continuation so the two share the (path, epoch)
@@ -3860,6 +3869,43 @@ class RunController:
                 "confirmation_kind": kind,
             },
         )
+
+    def _open_escalation_outcome(self, path: str, node_id: str, confirmation_id: str) -> None:
+        """Open the escalation's outcome question: we interrupted the user — did it land?
+
+        The `escalation` producer of the general outcome facility (PP-9). `confirmation_pending`
+        records that we ASKED; this records the bet that asking was worth it, graded from the run's
+        own ledger: a `confirmation_resolved` carrying this `confirmation_id` is the measurement,
+        and its `approved` boolean IS the number (approved ⇒ 1.0, rejected ⇒ 0.0 against a baseline
+        of 1.0, so a rejected interruption scores −1). A gate nobody ever answers closes as
+        `inconclusive` once the horizon passes — the honest reading of an interruption that went
+        nowhere, and the one that decays fastest.
+
+        Ledger-sourced on purpose: this resolves on a box with no vector store, because the ground
+        truth is an event we wrote ourselves.
+
+        Emitted at the same site as `confirmation_pending` so it inherits that site's
+        `(path, epoch)` idempotency — one question per gate, not one per watchdog poll.
+        """
+        try:
+            self.journal.open_outcome(
+                producer=outcomes.PRODUCER_ESCALATION,
+                subject=f"escalated gate `{node_id or path}` to the user",
+                metric=journal_mod.CONFIRMATION_RESOLVED,
+                metric_source=outcomes.SOURCE_LEDGER,
+                match={"confirmation_id": confirmation_id},
+                value_field="approved",
+                horizon_secs=ESCALATION_ANSWER_HORIZON_SECS,
+                # The bet is an approval: we only stop to ask when we expect a yes.
+                baseline=1.0,
+                instance_path=path,
+                node_id=node_id,
+                confirmation_id=confirmation_id,
+            )
+        except Exception:
+            # A gate that is already waiting must not fail because its outcome record did not
+            # land — the user still has a question to answer.
+            logger.debug("escalation outcome open failed for run %s", self.run.id, exc_info=True)
 
     def publish_confirmation_resolved(
         self,
