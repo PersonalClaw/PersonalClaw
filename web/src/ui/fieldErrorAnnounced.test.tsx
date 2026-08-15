@@ -66,8 +66,16 @@ describe('no site hand-rolls the silent line any more', () => {
   const files = walk(SRC)
   /** The exact idiom that was copy-pasted 30 times, plus the `<div>`/`<span>` variants of it.
    *  Deliberately NOT a loose `text-danger` search: plenty of danger-toned text is a static
-   *  label or a stored status, and neither should announce. */
-  const RAW = /<(p|div|span)[^>]*className="(?:[a-z0-9:.\-[\]/]+ )*text-danger text-\[0\.8125rem\]"[^>]*>\{\s*\w[\w.]*\s*\}<\/\1>/g
+   *  label or a stored status, and neither should announce.
+   *
+   *  Covers BOTH the primary `0.8125rem` size AND the compact `0.75rem` one — the census was
+   *  originally scoped to 0.8125rem only, which let four silent failures slip through at the
+   *  smaller size (a failed create in TaskForm, a save failure in MemoryPanel, an Ollama pull
+   *  error, a workflow error in a chat card). They announce now; the widened pattern keeps a new
+   *  0.75rem silent line from reappearing. (These four carry `role="alert"` on the raw element
+   *  rather than `FieldError`, which is size-locked to 0.8125rem — the rail's contract is "a
+   *  dynamic failure announces", not "it is this component".) */
+  const RAW = /<(p|div|span)[^>]*className="(?:[a-z0-9:.\-[\]/]+ )*text-danger text-\[0\.(?:8125|75)rem\]"[^>]*>\{\s*\w[\w.]*\s*\}<\/\1>/g
 
   const offenders = files.flatMap((f) => {
     const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
