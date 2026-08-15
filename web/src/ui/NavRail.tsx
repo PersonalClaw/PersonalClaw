@@ -229,9 +229,36 @@ export function NavRail({
       {railBody}
       {/* drag-resize handle on the right border (expanded only) */}
       {!collapsed && (
-        <div role="separator" aria-orientation="vertical"
+        // 🔴 IT ALREADY CLAIMED `role="separator"` AND IMPLEMENTED NO KEYBOARD. A separator that
+        // resizes is the APG window-splitter, and the role is a promise: arrow keys move it, and it
+        // reports where it sits. Measured before this — `tabindex` null, no key handler, no
+        // `aria-valuenow`, and no accessible name — so the rail could only be resized by dragging a
+        // 1px strip with a mouse (WCAG 2.1.1, and 2.5.7 for the drag-only gesture), while announcing
+        // itself to a screen reader as a control that does none of that.
+        //
+        // 🔑 CONVERGED ONTO WHAT THE TREE ALREADY SHIPS rather than inventing a form:
+        // `pages/code/CodeCockpitPage.tsx` carries this exact shape twice (panel splitter + terminal
+        // drawer) — role + orientation + `tabIndex={0}` + an arrow-key hint in the name +
+        // valuenow/min/max + a `focus-visible` seam. This is that, with `width`'s own MIN_W/MAX_W.
+        <div role="separator" aria-orientation="vertical" tabIndex={0}
+          aria-label="Resize navigation — arrow keys to resize"
+          aria-valuenow={Math.round(w)} aria-valuemin={MIN_W} aria-valuemax={MAX_W}
           onMouseDown={() => { dragging.current = true; document.body.style.cursor = 'col-resize' }}
-          className="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize transition-colors hover:bg-primary/30" />
+          onKeyDown={(e) => {
+            // Home/End jump to the bounds the drag clamps to, so a keyboard user can reach the
+            // extremes without counting keystrokes. STEP is coarse enough to cross the 208px range
+            // in a dozen presses and fine enough to settle on a width you meant.
+            const STEP = 16
+            const next = e.key === 'ArrowLeft' ? w - STEP
+              : e.key === 'ArrowRight' ? w + STEP
+              : e.key === 'Home' ? MIN_W
+              : e.key === 'End' ? MAX_W
+              : null
+            if (next == null) return
+            e.preventDefault()
+            setWidth(Math.max(MIN_W, Math.min(MAX_W, next)))
+          }}
+          className="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize outline-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/60" />
       )}
     </div>
   )
