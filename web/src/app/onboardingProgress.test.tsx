@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // ── OU-2: the flow shell's resume-point writes ────────────────────────────────
@@ -22,11 +22,18 @@ vi.mock('../lib/api', () => ({
   api: {
     saveOnboardingState: (...a: unknown[]) => saveOnboardingState(...a),
     onboarding: () => onboarding(),
+    // The done screen renders the real Settings → Design Bounciness dial, so the flow now
+    // needs the appearance store around it; the provider loads saved themes on mount. Kept
+    // PENDING deliberately — "themes have not loaded" is a real state and a promise settling
+    // after render would land a setState outside act().
+    themes: () => new Promise(() => {}),
+    theme: () => new Promise(() => {}),
   },
 }))
 vi.mock('./identity', () => ({
   useIdentity: () => ({ setName }),
   firstNameOf: (n: string) => n.split(' ')[0],
+  DEFAULT_USER_NAME: 'Operator',
 }))
 // The 3D backdrop needs a real canvas; the flow's logic does not.
 vi.mock('../ui/DotGlow', () => ({ DotGlow: () => null }))
@@ -50,16 +57,39 @@ vi.mock('./onboarding/TryOneStep', () => ({
 }))
 
 import { Onboarding } from './Onboarding'
+import { AppearanceProvider } from './appearance'
 import { readNavDisclosure } from './navDisclosure'
+
+const ORIGINAL_MATCH_MEDIA = window.matchMedia
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // jsdom has no matchMedia and the appearance provider's useIsMobile calls it unguarded.
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true, writable: true,
+    value: (query: string) => ({
+      matches: false, media: query, onchange: null,
+      addListener: () => {}, removeListener: () => {},
+      addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+    }),
+  })
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
   onboarding.mockResolvedValue({ needs_model: true, has_model_provider: false, has_chat_binding: false })
 })
 
+afterEach(() => {
+  Object.defineProperty(window, 'matchMedia', { configurable: true, writable: true, value: ORIGINAL_MATCH_MEDIA })
+})
+
+function renderFlow() {
+  return render(<AppearanceProvider><Onboarding /></AppearanceProvider>)
+}
+
 async function enterName() {
-  render(<Onboarding />)
+  renderFlow()
+  // The flow reads its resume point on mount; a test that races that fetch would assert
+  // against whichever half of the state landed first.
+  await waitFor(() => expect(onboarding).toHaveBeenCalled())
   fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Ada Lovelace' } })
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 }
@@ -154,6 +184,114 @@ describe('finishing marks the install as onboarded under THIS version (OU-5 / C4
     localStorage.setItem('nav-disclosure', JSON.stringify({ mode: 'expert', pinned: ['tools'] }))
     await finishFlow()
     await waitFor(() => expect(readNavDisclosure()).toEqual({ mode: 'starter', pinned: ['tools'] }))
+  })
+})
+
+// ── OU-4: the READER of everything above ─────────────────────────────────────
+//
+// OU-1 shipped the `step` field, OU-2/OU-3 wrote it, and until now nothing read it back: a
+// mid-flow reload restarted at the essentials step and silently redid work the home had
+// already recorded. These tests pin the resume, and the tell they watch is which step's BODY
+// is on the page — a step stack renders every row, so asserting on a heading would pass for a
+// flow that resumed nowhere.
+
+describe('re-entering the flow resumes at the persisted step', () => {
+  it('lands on the try-one step when the home stopped at first_success', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
+      first_success: { knowledge: false, trigger: false, loop: false },
+    })
+    await enterName()
+    // The try step's body, not the essentials step's — the run already finished that one.
+    expect(await screen.findByRole('button', { name: 'stub-tried' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'stub-continue' })).toBeNull()
+  })
+
+  it('does not walk the stored resume point backwards', async () => {
+    // Recording `essentials` on the way INTO first_success would cost the user that step
+    // again on their next reload — the resume would decay one step per reload.
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: true, step: 'first_success',
+    })
+    await enterName()
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalled())
+    expect(saveOnboardingState.mock.calls.map(([p]) => p.step)).toEqual(['first_success'])
+  })
+
+  it('restates what the earlier visit set up, checked against live readiness', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: false, has_model_provider: true, has_chat_binding: true,
+      step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
+      first_success: { knowledge: true, trigger: false, loop: false },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    // The collapsed essentials row AND the recap both state the app the earlier visit
+    // installed — the row as its done summary, the recap as the chat-model line.
+    expect(await screen.findByText('anthropic-models')).toBeTruthy()
+    expect(screen.getByText('Chat model: anthropic-models')).toBeTruthy()
+    // …and the card completed BEFORE the reload still counts as a first success, even though
+    // this visit's cards started idle (only the flags survive a reload, not the outcomes).
+    expect(screen.getByText(/1 of 3 tried/)).toBeTruthy()
+  })
+
+  it('does not promise a model the home no longer resolves', async () => {
+    onboarding.mockResolvedValue({
+      needs_model: true, has_model_provider: false, has_chat_binding: false,
+      step: 'first_success', essentials: { model: 'anthropic-models', search: false, speech: false, channel: null },
+    })
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByText(/Chat model — set up later in Settings/)).toBeTruthy()
+    expect(screen.queryByText(/Chat model: anthropic-models/)).toBeNull()
+  })
+
+  it('starts a completed home over instead of dropping it on the recap', async () => {
+    // `done` is the "Restart onboarding" case (Settings → Account clears the name). Resuming
+    // at the recap would skip the steps the user just asked to run again.
+    onboarding.mockResolvedValue({
+      needs_model: true, has_model_provider: false, has_chat_binding: false, step: 'done',
+    })
+    await enterName()
+    expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
+  })
+})
+
+describe('skip at any step lands in a working dashboard', () => {
+  it('skips from the FIRST step, committing the shared default name', async () => {
+    localStorage.clear()
+    renderFlow()
+    await waitFor(() => expect(onboarding).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /^Skip setup/ }))
+    // Identity is what releases the route guard, so a skip that did not commit it would
+    // leave the user pinned to the onboarding screen forever.
+    await waitFor(() => expect(setName).toHaveBeenCalledWith('Operator'))
+    expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
+    // …and the rail marker is written, so the skipper gets the starter rail like anyone else.
+    expect(readNavDisclosure().mode).toBe('starter')
+  })
+
+  it('names the default it will use, rather than renaming you silently', async () => {
+    renderFlow()
+    await waitFor(() => expect(onboarding).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: /Skip setup — start as Operator/ })).toBeTruthy()
+  })
+
+  it('skips from a MIDDLE step, keeping the name that was typed', async () => {
+    await enterName()
+    expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Skip setup and go to the dashboard' }))
+    await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace'))
+    expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'done' })
+  })
+
+  it('offers no skip on the last step — "Start using" is the door', async () => {
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
+    expect(await screen.findByRole('button', { name: /Start using/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Skip setup/ })).toBeNull()
   })
 })
 
