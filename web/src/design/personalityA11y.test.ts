@@ -22,6 +22,7 @@ import {
   getPersonality,
   resolvePersonality,
 } from './personalities'
+import { getShellElement } from './personalities'
 import { getErrorTreatment } from './errorTreatments'
 
 const SCHEME_IDS = new Set(SCHEMES.map((s) => s.id))
@@ -35,6 +36,7 @@ const ALLOWED_BEHAVIOR_KEYS = new Set([
   'personaSnippet',
   'uiDensity',
   'documentTitle',
+  'shellElement',
   'errorTreatment',
 ])
 
@@ -88,6 +90,18 @@ describe('personality registry invariants', () => {
     for (const p of PERSONALITIES) {
       const snippet = p.behavior.personaSnippet
       if (snippet) expect(snippet).toBe(`persona-${p.id}`)
+    }
+  })
+
+  it('every shellElement id resolves in its closed map', () => {
+    // Same failure shape as a dangling treatment id, one layer worse: a shell
+    // element that does not resolve mounts NOTHING, which is also what a correct
+    // standard scheme does — so the personality would look merely plain rather
+    // than broken. The registry's own contract (laziness, the decorative
+    // invariants) is asserted by rendering in `shellElements.test.tsx`.
+    for (const p of PERSONALITIES) {
+      const id = p.behavior.shellElement
+      if (id) expect(getShellElement(id), `${p.id} → ${id}`).not.toBeNull()
     }
   })
 

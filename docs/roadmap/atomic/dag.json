@@ -4944,7 +4944,7 @@
         {
           "id": "PT-3",
           "title": "S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell",
-          "status": "todo",
+          "status": "done",
           "scope": "Design 'S2 ...' (shellElement); Task breakdown Session 2 T2.2; Contract C1 (SHELL_ELEMENTS closed map)",
           "done_when": "SHELL_ELEMENTS closed {id -> lazy component} map added to personalities.ts; web/src/ui/personality/TerminalStrip.tsx renders at the App-shell slot only under its personality (aria-hidden, pointer-events-none, static under reduced-motion following DotGlow discipline); axe a11y pass unchanged; reduced-motion renders a static frame",
           "deps": [
@@ -7860,8 +7860,8 @@
         "plan": "PR2"
       },
       {
-        "id": "PT-3",
-        "title": "S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell",
+        "id": "PT-5",
+        "title": "S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps",
         "plan": "PT"
       },
       {
@@ -10042,9 +10042,9 @@
         "code": "PT",
         "plan": "PERSONALITY-THEMES",
         "total_atoms": 6,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {

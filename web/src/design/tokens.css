@@ -431,6 +431,39 @@
   .blueprint-scan { display: none; }
 }
 
+/* ── CRT raster (PERSONALITY-THEMES §S2 — the `terminal-scanlines` shell element) ──
+   Two layers for ui/personality/TerminalStrip.tsx, split along the motion line:
+   `.crt-raster` is the STATIC frame (a fixed lattice of hairlines, the whole thing a
+   reduced-motion user ever sees) and `.crt-beam` is the one moving part. There is
+   deliberately no `prefers-reduced-motion` override for `.crt-beam` here: the
+   component does not RENDER the beam at all when the query matches, so a rule
+   suppressing it would be a second, unreachable mechanism. Ink comes from
+   --color-on-surface / --color-primary, so the raster re-tints with the scheme
+   instead of hardcoding a phosphor green. */
+.crt-raster {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--color-on-surface) 6%, transparent) 0,
+    color-mix(in srgb, var(--color-on-surface) 6%, transparent) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+/* one soft band travelling the full viewport height, top → past the bottom edge */
+@keyframes crt-beam {
+  from { transform: translate3d(0, -22vh, 0); }
+  to   { transform: translate3d(0, 100vh, 0); }
+}
+.crt-beam {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--color-primary) 10%, transparent),
+    transparent
+  );
+  animation: crt-beam 7s linear infinite;
+}
+
 /* ── elevation model (brand rebrand §3.1) ── */
 /* Glass SKY — frosted translucent overlay for transient/floating UI. The ONLY
    place backdrop-filter lives (outermost overlay), so nested-blur can't recur.
