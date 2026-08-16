@@ -12,6 +12,7 @@ interface VoiceLoopConfig {
 const DEFAULT_CONFIRMATION_PHRASES = ['do it', 'go ahead', 'send it', 'execute']
 const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
+import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
@@ -507,7 +508,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
   const markStreaming = (v: boolean) => {
-    if (streamingRef.current && !v) setSessionSkillsEpoch((n) => n + 1)
+    if (streamingRef.current && !v) {
+      setSessionSkillsEpoch((n) => n + 1)
+      // The turn-settled cue point (PERSONALITY-THEMES §S2). This branch is the ONE
+      // place a turn transitions from streaming to settled, which is what makes it
+      // the right home: a cue hung off `streaming` itself would also fire on the
+      // false→false renders. Silent unless the user opted in — every gate lives
+      // inside playCue, so this call site carries no policy of its own.
+      playCue('turn_complete')
+    }
     streamingRef.current = v
     setStreaming(v)
   }

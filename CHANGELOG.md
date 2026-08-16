@@ -10,6 +10,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Optional sound cues, off until you turn them on.** Settings → Design → Personality has a new
+  switch that gives you a brief tone when a turn finishes, when a tool approval needs you, and when
+  something fails — nothing else. It ships **off**, and even switched on it stays quiet while the tab
+  is in the background or while your system asks for reduced motion. The tones are generated in the
+  browser, so no audio file is downloaded and none ships in the app.
 - **An empty Triggers page now offers four working starters instead of a blank form.** Morning
   briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
   own locale's clock, and picking one opens the ordinary create form already filled in — review it,

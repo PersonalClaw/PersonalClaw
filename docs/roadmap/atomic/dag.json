@@ -4932,7 +4932,7 @@
         {
           "id": "PT-2",
           "title": "S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points",
-          "status": "todo",
+          "status": "done",
           "scope": "Design 'S2 \u2014 Sound cues ...' (soundCues.ts); Task breakdown Session 2 T2.1; Contract C2 (CueRecipe/playCue)",
           "done_when": "web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and plays the closed cue set (turn_complete, approval_needed, error); a master toggle (default OFF) added to the Personality picker; cues wired at turn-settled (ChatPage), approval-requested (useApprovalToasts), and error toast (Toaster); no sound ever plays with toggle off, under prefers-reduced-motion, or when document.hidden (tests mock the media query); CI grep confirms zero audio files shipped in the bundle",
           "deps": [
@@ -7856,11 +7856,6 @@
         "plan": "PR2"
       },
       {
-        "id": "PT-2",
-        "title": "S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points",
-        "plan": "PT"
-      },
-      {
         "id": "PT-3",
         "title": "S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell",
         "plan": "PT"
@@ -10048,9 +10043,9 @@
         "code": "PT",
         "plan": "PERSONALITY-THEMES",
         "total_atoms": 6,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

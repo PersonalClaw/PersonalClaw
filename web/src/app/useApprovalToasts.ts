@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { useChatSocket } from '../lib/useChatSocket'
+import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
 import type { ApprovalRisk } from '../pages/chat/approvalMeta'
 
@@ -50,5 +51,10 @@ export function useApprovalToasts(activeSession: string) {
         }),
       },
     }))
+    // The approval-requested cue point (PERSONALITY-THEMES §S2). It sits AFTER the
+    // dedupe/active-session guards, so a re-broadcast on reconnect and an approval
+    // already visible inline are both silent — one nudge per approval, matching the
+    // toast. Silent unless the user opted in; every gate lives inside playCue.
+    playCue('approval_needed')
   })
 }
