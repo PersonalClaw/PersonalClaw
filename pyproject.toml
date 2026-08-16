@@ -102,6 +102,16 @@ dependencies = [
     # one small wheel would be the wrong trade on a credential path. Prebuilt wheels, no
     # compiler, no torch weight — the same bar reportlab/tree-sitter already cleared.
     "argon2-cffi>=23,<26",
+    # Ed25519 signature verification for signed app bundles (signing.py, SH-3). CORE and
+    # DECLARED, for two reasons. First, asymmetric signing is genuinely required: the
+    # verifying side is every user's machine, so an HMAC over hashlib would have to ship
+    # the signing key to everyone who verifies — i.e. no signature at all. Second, this
+    # wheel was already present transitively (pdfplumber → pdfminer.six → cryptography),
+    # so declaring it adds ZERO install weight; leaving a signature-verification path
+    # resting on someone else's transitive dep is how a security control silently
+    # disappears in a future dependency bump. Verification fails CLOSED if it is ever
+    # missing (a signature that cannot be checked is refused, not accepted).
+    "cryptography>=42",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
@@ -207,6 +217,10 @@ personalclaw = [
     # The baseline bash denylist (SH-6). security.py raises at import if this is missing,
     # so a wheel without this line does not "degrade to no denylist" — it fails to start.
     "baseline_denylist.json",
+    # The in-tree signing trust store (SH-3). A wheel without this line ships a verifier
+    # with no trusted keys, so every signed bundle would be refused as "unknown key" —
+    # the safe direction, but it would silently retire first-party signing.
+    "trusted_keys/*.pub",
     "config/defaults.json",
     "config/prompts/*.md",
     "config/prompt_snippets/*.md",

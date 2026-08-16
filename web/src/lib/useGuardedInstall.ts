@@ -27,6 +27,36 @@ export interface GuardedResult {
   fixPrompt?: string
 }
 
+/** TERMINAL refusals — a gate outcome no amount of consent overrides. Two causes today:
+ *  a `dangerous` scan verdict (malicious CONTENT) and an `invalid` signature (broken
+ *  PROVENANCE — the bundle is not the bytes its signature covers). Returns the sentence
+ *  to show the user, or `''` when the result is consentable.
+ *
+ *  One function rather than a `dangerous` boolean per modal: the three install surfaces
+ *  each had their own copy of the verdict check, so a second terminal cause would
+ *  otherwise have to be remembered in three places — and the one that forgot would offer
+ *  "Install anyway" on a tampered artifact. */
+export function terminalRefusalReason(r: GuardedResult | null | undefined): string {
+  if (!r) return ''
+  if (r.scan?.signature?.state === 'invalid') {
+    return r.scan.signature.reason
+      ? `This bundle's signature is invalid — ${r.scan.signature.reason}. It cannot be installed.`
+      : "This bundle's signature is invalid. It cannot be installed."
+  }
+  if (r.scan?.verdict === 'dangerous') {
+    return 'The security scanner flagged dangerous content. This app cannot be installed.'
+  }
+  return ''
+}
+
+/** Should this failure open the consent/findings panel rather than dead-end as a bare
+ *  error string? A consentable warning, a terminal refusal, or a P21 client-install
+ *  directive — each has something specific to show. */
+export function isBlockingResult(r: GuardedResult | null | undefined): boolean {
+  if (!r) return false
+  return !!(r.needsConsent || terminalRefusalReason(r) || r.clientInstall)
+}
+
 /** App install/update (`/api/apps`): `needs_consent` + `scan` ride the 409 body;
  *  a P21 platform-gated app rides `needs_client_install` + `client_install`. */
 export function guardedFromApp(r: AppInstallResult): GuardedResult {
@@ -99,10 +129,10 @@ export function useGuardedInstall(run: (confirm: boolean) => Promise<GuardedResu
         }
         return r
       }
-      // A warning (consentable), a dangerous verdict, OR a P21 client-install
-      // directive → surface it in the panel (findings / the copy-paste one-liner)
-      // rather than dead-ending on a bare error string.
-      if (r.needsConsent || r.scan?.verdict === 'dangerous' || r.clientInstall) { setBlocked(r); return r }
+      // A warning (consentable), a terminal refusal (dangerous content or an invalid
+      // signature), OR a P21 client-install directive → surface it in the panel
+      // (findings / the copy-paste one-liner) rather than dead-ending on a bare error.
+      if (isBlockingResult(r)) { setBlocked(r); return r }
       setError(r.error || 'install failed')
       // APE-8: a build/hook failure carries a fenced log → offer "Fix with AI".
       if (r.fixPrompt) setFixPrompt(r.fixPrompt)

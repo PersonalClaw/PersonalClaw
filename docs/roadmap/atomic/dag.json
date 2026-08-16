@@ -6465,7 +6465,7 @@
         {
           "id": "SH-3",
           "title": "Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 \u2014 Signed manifests + registry trust / T2.1, T2.2, V2; Design S2; Contracts C2; owner task 2 (generate signing key)",
           "done_when": "signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state",
           "deps": []
@@ -7892,8 +7892,8 @@
         "plan": "SH"
       },
       {
-        "id": "SH-3",
-        "title": "Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable",
+        "id": "SH-4",
+        "title": "Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing",
         "plan": "SH"
       },
       {
@@ -10198,9 +10198,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 1
       },
       {

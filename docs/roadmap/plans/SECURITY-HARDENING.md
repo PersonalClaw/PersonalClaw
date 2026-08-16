@@ -221,6 +221,114 @@ No `config.json` field ⇒ no `test_config_baseline` regeneration needed and non
 change: the Doctor panel renders capabilities generically from `probe.title`, and the `security`
 card already exists, so the new row appears with no frontend edit. The real-home rail reported
 `/Users/golani/.personalclaw unchanged` on every run.
+### 2026-08-15 — SH-3 (S2 T2.1/T2.2/V2) signed app bundles verified before install — DONE
+
+**The scheme decision.** Detached **Ed25519 signatures in minisign's on-wire format, over a
+whole-tree digest manifest**. Rationale and every rejected alternative are recorded in
+`docs/security/signing.md`:
+
+- **Sigstore keyless — rejected.** It is the stronger supply-chain story (no long-lived key), but it
+  moves the trust root from one in-tree public key to a certificate chain plus a transparency log, so
+  verifying an app install would want network access — on a path that must be offline and
+  deterministic, the same constraint that keeps the scanner LLM-free. Its recovery story is also
+  worse for a solo maintainer ("generate a new keypair, ship the new `.pub`" is executable by one
+  person), and it would bind the trust model to a CI identity provider, which is a key-distribution
+  *policy* commitment this atom has no mandate to make. Still a reasonable later migration.
+- **Signing `app.json` only — rejected, and worse than not signing.** It verifies, it renders "signed
+  by PersonalClaw", and `scripts/setup.sh` — the file that executes as `setup.onInstall` — stays
+  attacker-controlled. Signing half an artifact advertises trust the signature does not cover.
+- **stdlib HMAC over `hashlib`/`hmac` — rejected by construction.** Symmetric MACs make the verifying
+  key the signing key, so every user's machine would hold everything needed to forge a
+  "signed by PersonalClaw" bundle. Asymmetric is a requirement here, not a preference.
+- **PyNaCl — rejected** (a new wheel when `cryptography` was already transitively present).
+  **Hand-rolled pure-Python Ed25519 — rejected outright** on a signature path.
+- **minisign's scrypt-encrypted SECRET-key format — rejected.** The public-key and signature formats
+  ARE minisign's (so `minisign -Vm` verifies what we write and `minisign -G` produces keys we read);
+  parsing its encrypted secret key would mean shipping key derivation and passphrase handling for no
+  security gain, when the real protection is "the seed lives in a password manager and a CI secret".
+  `scripts/sign_app.py` reads a mode-0600 base64 `key_id || ed25519_seed`.
+
+**What the signature covers.** `src/personalclaw/signing.py`. A signed bundle carries
+`.pclaw-signature.sha256` (`pclaw-sig-v1` header, then a sorted `sha256  relpath` line for **every**
+file) and `.pclaw-signature.sha256.minisig` over that file's exact bytes. Verification re-derives the
+manifest from the tree on disk and requires **byte equality** — so modified, **added**, removed and
+renamed files are all one comparison. The added-file case is the one a plain digest list misses,
+because every listed digest still matches. Nothing is excluded but the two signature files: an
+exclusion list would be an unsigned region inside a signed bundle, the same hole one level down.
+Symlinks are **refused** rather than skipped, for that reason.
+
+**Where it runs — the ordering is the control.** `apps/app_manager.py::_signature_gate`, at step 3 of
+`install()` **and** `update()`, on the quarantined staged copy: before the content scan, before the
+commit, before `setup.onInstall`. `update()` is wired deliberately — an update is a fresh fetch of
+mutable content, so skipping it there would make "update" the way around signing. Ordering is
+*measured*, not asserted: the test instruments the gate to record step order and whether the live app
+dir existed at verify time, and a tampered bundle's `onInstall` marker file proves the payload never
+executed.
+
+**Refuse vs warn — decided deliberately (plan soul guardrail: no weakened default).** `invalid` is
+**terminal and non-consentable**; `confirm=True` does not override it. Consent covers *risk*, and a
+broken signature is not a risk a user is positioned to weigh — the artifact is not the bytes its
+signature covers. `unsigned` stays installable at **community tier** (C2's graduated trust, never a
+hard wall). `signed` raises a `community` origin to `official` — proven provenance buys exactly what
+the curated registry already has — and never lowers a tier (`builtin` stays `builtin`, pinned by a
+test). Every failure returns a reason: missing half, malformed base64, short block, unknown
+algorithm, absent trusted comment, unknown key, non-verifying signature, tampered trusted comment,
+manifest drift, and **a missing Ed25519 backend** — a signature that cannot be checked is refused,
+not accepted.
+
+**Surfaces.** `ScanReport` gained `signature: SignatureInfo` → `{state, signer, reason}`, defaulting
+to `unsigned` so a report from a path that never verified cannot render "signed by".
+`installConsent.tsx::SignatureRow` renders all three states on the same surface as the scan verdict
+(provenance and content are different questions; showing one invites "it scanned clean" to be read as
+"it's from who it says"). The signer identity is the **trust-store filename stem**, never a comment
+inside the signature — an author cannot choose their own attribution.
+
+**COHERENCE FIX (found while wiring the refusal).** The "should this open the consent panel" rule
+existed as three copied `needsConsent || scan?.verdict === 'dangerous' || clientInstall` expressions
+(`useGuardedInstall.ts`, and twice in `AppsSection.tsx`), plus two more copies of
+`dangerous = scan?.verdict === 'dangerous'` driving modal copy and `disabledReason`. A second terminal
+cause would have had to be remembered in five places, and the one that forgot would have offered
+"Install anyway" on a tampered artifact. Replaced with `terminalRefusalReason()` +
+`isBlockingResult()` — one predicate, five call sites.
+
+**Tests.** `tests/security/test_app_signature.py`, 34 tests. The load-bearing class is
+`TestSwapTheUnsignedHalf` (swap the payload / add an unlisted file / remove a signed file after
+signing → refused), including a meta-assertion that builds the weak manifest-only check in-process
+and proves it WOULD pass the swap, so nobody can later "simplify" verification down to `app.json` and
+stay green. Tests import `scripts/sign_app.py` itself rather than a parallel test signer — a broken
+verifier must not be agreeable to a sympathetic fixture.
+
+**Falsified with 7 mutations, each reding at least one test** (shipped code restored after each):
+unconditional `signed` → 24 red; manifest-only coverage → 9 red incl. *"the shipped verifier accepted
+the swap the weak one accepts"*; verify-after-scan → 2 red incl. *"the scan ran after a terminal
+signature refusal"*; always-true Ed25519 → 2 red; half-signature demoted to `unsigned` → 2 red; tier
+elevation removed → 1 red; signer read from the bundle's own comment → 4 red.
+
+**DEVIATION (dependency).** `cryptography>=42` promoted from the `oauth2` extra to a **declared core
+dependency**. It was already present transitively (`pdfplumber` → `pdfminer.six` → `cryptography`),
+so this adds **zero** install weight, and CI — which installs core deps but not optional extras —
+already had it. Declaring it is the point: a signature-verification path resting on someone else's
+transitive dep is how a security control silently disappears in a future bump. Same reasoning the
+`argon2-cffi` comment already records for the password path.
+
+**OWNER TASK 2 OUTSTANDING — not a blocker on this atom.** The production keypair is deliberately not
+generated here: an agent must not mint the private key it would then hand over, and a checked-in
+"example" private key is exactly the anti-pattern this atom exists to avoid. The trust store
+(`src/personalclaw/trusted_keys/`, packaged via `pyproject.toml`, public halves only, asserted by
+`test_no_private_key_material_is_committed`) therefore ships **EMPTY**. That is the safe direction:
+unknown key → refused, unsigned unaffected, so shipped behaviour is unchanged until the owner runs
+`scripts/sign_app.py gen-key --signer PersonalClaw --out-dir <dir>` and copies the `.pub` in. The
+consequence: `done_when`'s *"signed first-party bundle shows 'signed by PersonalClaw'"* is proven
+under an ephemeral key in tests, not against the real key, and the recovery note the plan's owner task
+2 calls for is written in `docs/security/signing.md` §"Maintainer workflow". `SH-4` wires the release
+pipeline and is the atom that makes real signed bundles exist.
+
+**DISCOVERY (what the Ed25519 check uniquely buys).** Mutation 4 (always-true Ed25519) reded only 2
+tests, not the whole tamper matrix — because content tampering is independently caught by the
+digest-manifest byte comparison. The signature check's *unique* coverage is the wrong-key and
+tampered-trusted-comment cases; the manifest comparison is what catches swapped bytes. Both layers
+are needed and neither is redundant, but a future reader measuring "how much does the crypto catch"
+should expect that split rather than read it as weak coverage.
 
 ### 2026-08-14 — SH-10 (Amendment T4.4) the Security panel renders the verified baseline — DONE
 
