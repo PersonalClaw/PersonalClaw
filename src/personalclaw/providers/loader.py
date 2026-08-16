@@ -161,6 +161,12 @@ def load_availability(ext: "RegisteredProvider") -> "Callable[[], tuple[bool, st
     fail — without the core knowing anything vendor-specific. Resolved from the
     same ``module.path`` as the ``implementation`` entry-point; ``None`` when the
     module defines no such hook (the common case).
+
+    A branded model app that rides an agent CLI's subscription login has exactly
+    one way to be unusable — that CLI is not signed in — so it does not have to
+    hand-write the hook: when the module exports none, a probe is DERIVED from the
+    ``credential_source`` its registered spec declares. An explicit hook still wins,
+    since an app that wrote one knows something extra about its own machine.
     """
     impl_path = ext.provider_config.implementation
     module_path, _, _ = impl_path.rpartition(":")
@@ -169,9 +175,37 @@ def load_availability(ext: "RegisteredProvider") -> "Callable[[], tuple[bool, st
     try:
         module = _load_ext_module(ext, module_path)
         fn = getattr(module, "availability", None)
-        return fn if callable(fn) else None
+        if callable(fn):
+            return fn
+    except Exception:
+        logger.debug("availability hook lookup failed for %s", ext.name, exc_info=True)
+    return _subscription_availability(ext)
+
+
+def _subscription_availability(
+    ext: "RegisteredProvider",
+) -> "Callable[[], tuple[bool, str]] | None":
+    """A ``(bool, reason)`` probe derived from the ext's declared subscription source.
+
+    ``None`` for every provider that declares none — which is all of them but a
+    subscription model app. Importing the app's module (done by the caller, just above) is
+    what populated the spec registry, so this reads a live declaration rather than
+    guessing. The reason text is the APP's own ``login_hint``: core never names a vendor's
+    login verb.
+    """
+    provider_type = str(getattr(ext.provider_config, "providerType", "") or "").strip()
+    if not provider_type:
+        return None
+    try:
+        from personalclaw.llm.subscription_credentials import subscription_source_status
+        from personalclaw.sdk.provider_helpers import spec_credential_source
+
+        source = spec_credential_source(provider_type)
     except Exception:
         return None
+    if not source:
+        return None
+    return lambda: subscription_source_status(source)
 
 
 def _resolve_ext_dir(ext: "RegisteredProvider") -> Path | None:

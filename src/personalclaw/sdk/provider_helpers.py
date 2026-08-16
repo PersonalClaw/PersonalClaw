@@ -25,6 +25,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from personalclaw.llm.subscription_credentials import (
+    SubscriptionSource,
+    register_subscription_source,
+    resolve_subscription_credential,
+)
 from personalclaw.sdk.model import (
     AnthropicProvider,
     Capability,
@@ -72,6 +77,15 @@ class BrandedProviderSpec:
     # ``hash=False`` keeps the frozen dataclass hashable despite the dict (equality still counts
     # it); treat the map as read-only, like every other field on a frozen spec.
     pricing: dict[str, dict[str, float]] = field(default_factory=dict, hash=False)
+    # OPTIONAL id of a registered :class:`SubscriptionSource` (see
+    # ``llm/subscription_credentials.py``). Set it when this provider's vendor bills by
+    # SUBSCRIPTION and the user has no API key to paste — they signed the vendor's own agent
+    # CLI in, and the token lives in a store that CLI owns. The resolver reads that store
+    # READ-ONLY and sits at ONE fixed place in the credential order (below the explicit
+    # entry.credential and options.api_key, above spec.api_key_env) — it is NOT a second way
+    # to set an API key and can never override a key the user chose. Empty (the norm) means
+    # this app rides no subscription.
+    credential_source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """A JSON-round-trippable view of the spec (enums → their values, tuples → lists).
@@ -95,6 +109,7 @@ class BrandedProviderSpec:
                 str(pattern): {str(k): float(v) for k, v in dict(row).items()}
                 for pattern, row in self.pricing.items()
             },
+            "credential_source": self.credential_source,
         }
 
     @classmethod
@@ -117,6 +132,7 @@ class BrandedProviderSpec:
                 str(pattern): {str(k): float(v) for k, v in dict(row).items()}
                 for pattern, row in (data.get("pricing", {}) or {}).items()
             },
+            credential_source=str(data.get("credential_source", "") or ""),
         )
 
 
@@ -323,6 +339,18 @@ def spec_pricing(provider: str) -> dict[str, dict[str, float]]:
     return dict(spec.pricing) if spec is not None and spec.pricing else {}
 
 
+def spec_credential_source(provider: str) -> str:
+    """The app-declared subscription ``credential_source`` for ``provider``, or ``""``.
+
+    The core-facing reader that lets ``providers/loader.py`` derive an ``availability()``
+    probe for a subscription provider app without importing the app or knowing its vendor.
+    Same shape and precedent as :func:`spec_pricing`: one narrow question answered from the
+    registered spec, keeping :func:`registered_spec` module-internal.
+    """
+    spec = registered_spec(provider)
+    return str(spec.credential_source) if spec is not None and spec.credential_source else ""
+
+
 def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable, Callable]:
     """Wire a branded/generic protocol provider app into the default registry and
     return its ``(_factory, create_provider, create_catalog)`` trio.
@@ -351,11 +379,27 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         #      persists — MUST win over the env so a ZAI/Alibaba instance uses ITS
         #      key, not a global ANTHROPIC_API_KEY/OPENAI_API_KEY meant for another
         #      provider — the "wrong key → 401" bug), else
-        #   3. the spec's api_key_env, else 4. anon placeholder.
-        _opt_key = str(options.pop("api_key", "") or options.pop("apiKey", "") or "")
+        #   3. the spec's subscription credential_source (an already-signed-in agent
+        #      CLI's own store, read-only) — BELOW both explicit choices above so it can
+        #      never silently outrank a credential the user set, and above the env so a
+        #      subscription app works with nothing configured at all, else
+        #   4. the spec's api_key_env, else 5. anon placeholder.
+        # Independent `if`s, not an elif chain: a source that is merely not signed in must
+        # fall THROUGH to api_key_env and then the placeholder, never short-circuit them.
+        # Pop BOTH key spellings unconditionally — a short-circuit `or` would leave the
+        # second in options and leak it into extra_options → the SDK call kwargs.
+        _snake_key = str(options.pop("api_key", "") or "")
+        _camel_key = str(options.pop("apiKey", "") or "")
+        _opt_key = _snake_key or _camel_key
         if cred is None and _opt_key:
             cred = Credential(name=spec.type, kind="api_key", secret=_opt_key, source="file")
-        elif cred is None and spec.api_key_env:
+        if cred is None and spec.credential_source:
+            _auth = resolve_subscription_credential(spec.credential_source)
+            if _auth.logged_in and _auth.secret:
+                # ``source="file"`` is factually where it came from (the CLI's own on-disk
+                # store); the credential-store Literal is deliberately not widened for this.
+                cred = Credential(name=spec.type, kind="oauth2", secret=_auth.secret, source="file")
+        if cred is None and spec.api_key_env:
             _env_key = os.environ.get(spec.api_key_env, "")
             if _env_key:
                 cred = Credential(name=spec.type, kind="api_key", secret=_env_key, source="env")
@@ -453,10 +497,17 @@ def _anon_credential(spec: BrandedProviderSpec) -> Credential:
 __all__ = [
     "BrandedProviderSpec",
     "BrandedCatalog",
+    # A subscription provider app declares its CLI's credential store with these two and
+    # names it in ``BrandedProviderSpec.credential_source``; the resolver itself is core's
+    # business, so it is not part of the app-facing surface.
+    "SubscriptionSource",
+    "register_subscription_source",
     "register_branded_app",
-    # ``registered_spec`` is deliberately NOT exported: ``spec_pricing`` is the only
-    # core-facing reader of the registry, and a public SDK export with no consumer is a
-    # declared-but-inert surface (the inert-surface ratchet catches exactly that). It
-    # stays module-internal until a real caller needs the whole spec.
+    # ``registered_spec`` is deliberately NOT exported: ``spec_pricing`` and
+    # ``spec_credential_source`` are the only core-facing readers of the registry, and a
+    # public SDK export with no consumer is a declared-but-inert surface (the inert-surface
+    # ratchet catches exactly that). It stays module-internal until a real caller needs the
+    # whole spec.
     "spec_pricing",
+    "spec_credential_source",
 ]
