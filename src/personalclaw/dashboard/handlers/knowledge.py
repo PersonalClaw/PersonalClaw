@@ -536,6 +536,24 @@ async def list_providers(request: web.Request) -> web.Response:
     return web.json_response({"providers": list_provider_info()})
 
 
+async def list_source_recipes(request: web.Request) -> web.Response:
+    """GET /api/knowledge/source-recipes -- the bundled source-recipe directory.
+
+    With ``?url=`` it answers the create flow's first question — "is this site already
+    covered?" — returning each matching recipe with its spec ALREADY resolved from the URL's
+    capture groups, so the caller saves what it was shown rather than re-deriving it. Without
+    a URL it returns the whole directory for browsing (WATCHED-SOURCES §7.2).
+    """
+    from personalclaw.knowledge.source_recipes import list_recipes, recipes_for_url
+
+    url = (request.query.get("url") or "").strip()
+    payload: dict[str, object] = {"recipes": [r.to_dict() for r in list_recipes()]}
+    if url:
+        payload["url"] = url
+        payload["matches"] = [m.to_dict() for m in recipes_for_url(url)]
+    return web.json_response(payload)
+
+
 async def get_item(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id} -- single item with its entities + relations."""
     store = _store(request)
@@ -2643,6 +2661,9 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_post("/api/knowledge/items", create_item)
     app.router.add_get("/api/knowledge/tags", list_tags)
     app.router.add_get("/api/knowledge/providers", list_providers)
+    # WATCHED-SOURCES §7.2: the recipe directory the create flow consults before anyone tunes
+    # a selector. Read-only shipped data, so no auth beyond the gateway's own.
+    app.router.add_get("/api/knowledge/source-recipes", list_source_recipes)
     app.router.add_get("/api/knowledge/stats", get_stats)
     app.router.add_get("/api/knowledge/entities", list_entities)
     app.router.add_get("/api/knowledge/graph", get_full_graph)

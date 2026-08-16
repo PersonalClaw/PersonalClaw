@@ -117,6 +117,17 @@ _CEILING_WRAPPED: dict[str, str] = {
     "dashboard/handlers/terminal.py::api_terminal_ws::create_subprocess_limited": (
         "interactive terminal → none profile (user's own shell; helper is a no-op)"
     ),
+    # WS-8: a connector pack's PARSE-ONLY script. The most agent-influenced spawn in the tree
+    # by provenance — the code came from a third-party app in a Store — so it takes the same
+    # `tool` ceiling a bash tool call gets, delivered the same way `schedule_script.py` does it
+    # (sync site → spawn_shim_argv argv-prepend, OUTSIDE the wrap_argv sandbox so the shim's own
+    # import does not have to survive the profile). The ceiling is one of four bounds here and
+    # the only one this audit owns: the wall-clock timeout, the stdin cap and the stdout cap live
+    # in `run_parse_script`, and the no-network fence lives in the in-spawn harness.
+    "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run": (
+        "connector-pack parse script → tool ceiling via spawn_shim_argv, prepended outside "
+        "the OS-sandbox wrap (sync site; rlimits inherit through exec)"
+    ),
 }
 
 # ── OPERATOR-EXEMPT: operator-initiated spawns that must NOT carry an agent ceiling ──
@@ -411,6 +422,9 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         # the OS sandbox and the PHF-4 clean env but no ceiling. Ratcheted in here so the
         # exemption cannot come back.
         "schedule_script.py::run_script_sandboxed::subprocess.run",
+        # WS-8: third-party parser code from a Store app. Ratcheted in for the same reason —
+        # this is the site where an exemption would be least defensible.
+        "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run",
     }
     missing = sorted(required - set(_CEILING_WRAPPED))
     assert not missing, f"agent seams not ceiling-wrapped: {missing}"

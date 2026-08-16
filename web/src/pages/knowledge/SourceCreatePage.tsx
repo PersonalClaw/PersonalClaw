@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, Eye, Info, MonitorPlay, ShieldOff, Sparkles } from 'lucide-react'
+import { ArrowLeft, Check, Eye, Info, MonitorPlay, Search, ShieldOff, Sparkles } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { PageTitle } from '../../ui/PageTitle'
@@ -9,7 +9,13 @@ import { Segmented } from '../../ui/Segmented'
 import { TileButton } from '../../ui/TileButton'
 import { Checkbox, Field, FieldError, Select, TextArea, TextInput } from '../../ui/forms'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { api, type SourceKind, type SourcePreviewResult } from '../../lib/api'
+import {
+  api,
+  type SourceKind,
+  type SourcePreviewResult,
+  type SourceRecipe,
+  type SourceRecipesResponse,
+} from '../../lib/api'
 import { useCachedData, invalidateCache } from '../../lib/useCachedData'
 import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
@@ -25,11 +31,28 @@ import { HEALTH_NEEDS_RENDER, INTERVAL_CHOICES, fmtInterval, formIcon } from './
 export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; onCreated: () => void }) {
   const { data, loading, error, refresh } = useCachedData('knowledge:sources', () => api.knowledgeSources())
   const [chosen, setChosen] = useState<string>('')
+  const [seed, setSeed] = useState<RecipeSeed | null>(null)
   const kinds = data?.kinds
   const kind = kinds?.find((k) => k.provider === chosen)
 
   if (kind) {
-    return <SourceForm kind={kind} onBack={() => setChosen('')} onClose={onBack} onCreated={onCreated} />
+    return (
+      <SourceForm key={seed?.recipeId ?? chosen} kind={kind} seed={seed}
+        onBack={() => { setChosen(''); setSeed(null) }} onClose={onBack} onCreated={onCreated} />
+    )
+  }
+
+  function useRecipe(recipe: SourceRecipe) {
+    // The recipe's spec arrives ALREADY resolved from the URL's capture groups, so the form is
+    // seeded from what the user was shown. Re-deriving it here would be a second answer to a
+    // question the backend already answered.
+    setSeed({
+      recipeId: recipe.id, name: recipe.displayName,
+      url: typeof recipe.spec.url === 'string' ? recipe.spec.url : '',
+      preset: typeof recipe.spec.preset === 'string' ? recipe.spec.preset : '',
+      enrichment: recipe.enrichment,
+    })
+    setChosen(recipe.provider)
   }
 
   return (
@@ -48,7 +71,8 @@ export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; on
               hint="No poll-capable knowledge provider is registered, so a source created now would never be polled." />
           ) : (
             <>
-              <p className="mb-l text-center text-on-surface-low text-[0.9375rem]">What should PersonalClaw keep an eye on?</p>
+              <RecipeLookup kinds={kinds} onUse={useRecipe} />
+              <p className="mb-l text-center text-on-surface-low text-[0.9375rem]">…or pick what PersonalClaw should keep an eye on.</p>
               <div className="grid grid-cols-1 gap-m sm:grid-cols-3">
                 {kinds.map((k) => {
                   const Icon = formIcon(k.form)
@@ -72,6 +96,98 @@ export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; on
         </div>
       </div>
     </div>
+  )
+}
+
+/** What a matched recipe hands the form. Deliberately the FORM's fields and not a raw spec:
+ *  the form is what the user then edits, and a hidden raw spec riding alongside the visible
+ *  fields would let the two disagree about what gets saved. */
+interface RecipeSeed {
+  recipeId: string
+  name: string
+  url: string
+  preset: string
+  enrichment: string
+}
+
+/** §7.2's first question, asked before anything else: is this site already worked out?
+ *
+ *  The html2rss feed-directory workflow. A pasted URL is matched against the bundled recipes
+ *  server-side and each match comes back with its spec resolved from the URL's own capture
+ *  groups — so pasting a GitHub repo link offers its releases feed without the user knowing
+ *  GitHub publishes one. NO match is a real answer too, and it says so rather than going quiet:
+ *  the kind tiles below are then the whole flow, exactly as they were. */
+function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: SourceRecipe) => void }) {
+  const [url, setUrl] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [result, setResult] = useState<SourceRecipesResponse | null>(null)
+  const [err, setErr] = useState('')
+  const known = new Set(kinds.map((k) => k.provider))
+
+  async function check() {
+    const value = url.trim()
+    if (!value || checking) return
+    setChecking(true); setErr(''); setResult(null)
+    try {
+      setResult(await api.knowledgeSourceRecipes(value))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'The recipe lookup failed')
+    } finally { setChecking(false) }
+  }
+
+  // A recipe naming a provider this install has NOT registered would offer a source nothing
+  // could ever poll, so it is filtered out here rather than offered and refused on save.
+  const matches = (result?.matches ?? []).filter((m) => known.has(m.provider))
+
+  return (
+    <section aria-labelledby="recipe-lookup-heading" className="mb-2xl">
+      <h2 id="recipe-lookup-heading" className="mb-1 text-on-surface text-[0.9375rem]" style={fvs(500)}>
+        Already have a link?
+      </h2>
+      <p className="mb-m text-on-surface-low text-[0.8125rem]">
+        Paste it and PersonalClaw will check whether this site is one it already knows how to watch.
+      </p>
+      <div className="flex flex-col gap-s sm:flex-row sm:items-start">
+        <div className="min-w-0 flex-1">
+          <TextInput value={url} ariaLabel="A URL to look up in the recipe directory"
+            onChange={(v) => { setUrl(v); setResult(null); setErr('') }}
+            placeholder="https://github.com/astral-sh/uv"
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void check() } }} />
+        </div>
+        <Button variant="secondary" onClick={check} disabled={!url.trim() || checking}
+          disabledReason={checking ? undefined : 'Paste a URL to look up first'}
+          className="inline-flex items-center gap-s">
+          <Search size={15} aria-hidden /> {checking ? 'Checking…' : 'Check'}
+        </Button>
+      </div>
+      {err && <FieldError>{err}</FieldError>}
+      {result && matches.length === 0 && (
+        <p className="mt-m text-on-surface-low text-[0.8125rem]">
+          No recipe covers that URL yet — pick a kind below and describe it yourself. A web page works
+          best when the URL LISTS entries (a changelog or blog index), not a single post.
+        </p>
+      )}
+      {matches.length > 0 && (
+        <ul className="mt-m flex flex-col gap-s">
+          {matches.map((m) => (
+            <li key={m.id}>
+              <TileButton ariaLabel={`Use the ${m.displayName} recipe`} onClick={() => onUse(m)} className="w-full p-m text-left">
+                <span className="inline-flex items-center gap-s text-on-surface text-[0.9375rem]" style={fvs(500)}>
+                  <Sparkles size={16} aria-hidden /> {m.displayName}
+                </span>
+                <span className="mt-1 text-on-surface-low text-[0.8125rem]">{m.description}</span>
+                {typeof m.spec.url === 'string' && m.spec.url !== url.trim() && (
+                  // The recipe usually watches a DIFFERENT URL than the one pasted (a repo page
+                  // becomes its releases feed), and hiding that would make the saved source look
+                  // like it points where the user pointed it.
+                  <span className="mt-1 break-all font-mono text-on-surface-low text-[0.75rem]">{m.spec.url}</span>
+                )}
+              </TileButton>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -133,21 +249,26 @@ function buildSpec(kind: SourceKind, s: SpecState): { spec: Record<string, unkno
   }
 }
 
-function SourceForm({ kind, onBack, onClose, onCreated }: {
+function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
   kind: SourceKind
+  /** A §7.2 recipe the user picked, pre-filling the fields they are about to review. Null on
+   *  the plain path. Seeded into the SAME state the form edits — never held alongside it — so
+   *  what gets saved is always what is on screen. */
+  seed?: RecipeSeed | null
   onBack: () => void
   onClose: () => void
   onCreated: () => void
 }) {
-  const [name, setName] = useState('')
-  const [enrichment, setEnrichment] = useState('full')
+  const [name, setName] = useState(seed?.name ?? '')
+  const [enrichment, setEnrichment] = useState(seed?.enrichment || 'full')
   const [pollSecs, setPollSecs] = useState(String(kind.poll_interval_secs))
   const [spec, setSpec] = useState<SpecState>({
-    url: '', detectors: kind.detectors ?? [], allowRender: false,
+    url: seed?.url ?? '', detectors: kind.detectors ?? [], allowRender: false,
     // `formats` is a sorted VOCABULARY, not a preference order, so `[0]` picked `csv` —
     // measured in the real form, a user pasting an RSS URL got the CSV parser preselected.
     // Which one is most likely is a presentation judgement, so it is made here.
-    preset: '', format: kind.formats?.includes('rss') ? 'rss' : (kind.formats?.[0] ?? ''), path: '',
+    preset: seed?.preset ?? '',
+    format: kind.formats?.includes('rss') ? 'rss' : (kind.formats?.[0] ?? ''), path: '',
     include: (kind.default_include ?? []).join(', '), rawSpec: '{}',
   })
   const [preview, setPreview] = useState<SourcePreviewResult | null>(null)

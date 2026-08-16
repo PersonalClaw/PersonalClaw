@@ -232,6 +232,11 @@ personalclaw = [
     # a hard error, so every review template would fail to load rather than degrade.
     "workflows/bundled/shared/*.md",
     "apps/native/*/app.json",
+    # The bundled source-recipe directory (WATCHED-SOURCES §7.2). These are the create flow's
+    # "is this site already covered?" answers, so a wheel without this line ships an empty
+    # directory and every paste-a-URL looks uncovered — a silent product regression, not a
+    # crash. `test_connector_pack.py` asserts the shipped count is non-zero.
+    "knowledge/sources/recipes/*.json",
     "reference/*.md",
 ]
 
