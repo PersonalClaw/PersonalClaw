@@ -1441,6 +1441,20 @@ class NativeAgentRuntime(AgentProvider):
     def is_alive(self) -> bool:
         return True
 
+    def stage_image_part(self, data_url: str) -> bool:
+        """Forward an image content part to the INNER model provider (MI-4).
+
+        The runtime owns the ReAct loop, not the wire format, so the image has to be
+        placed by whoever knows the provider's shape. Delegating means the honest
+        False propagates too: a runtime whose inner provider can't carry an image
+        reports that upward, and the screen-context channel degrades to a text
+        description instead of silently dropping pixels into a request.
+        """
+        stage = getattr(self._model, "stage_image_part", None)
+        if not callable(stage):
+            return False
+        return bool(stage(data_url))
+
     def drain_tool_outcomes(self) -> list[tuple[str, str]]:
         """Return this run's accumulated ``(tool, outcome)`` pairs and clear them.
 
