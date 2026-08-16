@@ -25,6 +25,11 @@ import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedI
  *  catalog already returned, or over a scan verdict the install endpoint returned; the
  *  caller owns the request. */
 
+/** Close a server-composed clause so a following sentence reads as a separate one. Backend error
+ *  strings are composed without terminal punctuation (they are API fields, not prose), so any surface
+ *  that appends its own sentence to one has to supply the boundary itself. */
+const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`)
+
 /** SH-3: the artifact-signature row. Shown on the SAME surface as the scan verdict,
  *  because provenance and content are two different questions a user consents over and
  *  a UI that shows only one invites "it scanned clean" to be read as "it's from who it
@@ -96,8 +101,15 @@ export function ConsentModal({ label, result, busy, onConfirm, onClose }: {
     return (
       <Modal title={`Install ${label}`} icon={<Terminal size={18} />} onClose={onClose}>
         <div className="flex flex-col gap-m p-l" style={{ minWidth: 460 }}>
+          {/* Two sentences, so they have to READ as two. The server's reason arrives WITHOUT terminal
+              punctuation (`app_manager` composes "'<name>' installs on your local machine, not this
+              server"), and this line appends an instruction to it — which rendered as
+              "…not this server Run this in your terminal:". Only the hard-coded fallback ends in a
+              period, so the seam is invisible in code review and shows up only on the real path.
+              Normalizing here rather than adding a period server-side: the same string is an API
+              error field with other consumers, and a sentence boundary is this surface's concern. */}
           <p data-type="body-s" className="text-on-surface-low">
-            {result.error || 'This app installs on your local machine, not this server.'} Run this in your terminal:
+            {sentence(result.error || 'This app installs on your local machine, not this server.')} Run this in your terminal:
           </p>
           {result.clientInstall.shell && <ClientInstallCommand label="Install command" cmd={result.clientInstall.shell} />}
           {result.clientInstall.postInstall && <ClientInstallCommand label="Then" cmd={result.clientInstall.postInstall} />}
@@ -123,7 +135,17 @@ export function ConsentModal({ label, result, busy, onConfirm, onClose }: {
         </p>
         {result.scan && <ScanReport scan={result.scan} />}
         <div className="flex justify-end gap-2 pt-s">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          {/* A terminal refusal leaves NOTHING to cancel — the install was already refused server-side,
+              so this button only dismisses. "Cancel" claims the user is abandoning a pending action and
+              invites the reading that the app might otherwise still install. `Done` is the verb this
+              file already uses for its one dismiss-only footer (the client-install branch above), and
+              the two other dismiss-only modals in the app (`chat/SessionSkillsReview`,
+              `ChatPage`) — so this converges, it does not invent. When the verdict IS consentable the
+              footer keeps "Cancel", because there a real pending action ("Install anyway") is being
+              abandoned. `AppsSection`'s install/update modals keep "Cancel" for the same reason: they
+              always render a commit button (disabled, with the refusal as its `disabledReason`), so
+              they are never dismiss-only. */}
+          <Button variant="ghost" onClick={onClose}>{refusal ? 'Done' : 'Cancel'}</Button>
           {!refusal && (
             <Button variant="primary" disabled={busy} onClick={onConfirm}>
               {busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
