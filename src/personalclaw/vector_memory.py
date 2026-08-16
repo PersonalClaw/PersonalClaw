@@ -108,6 +108,23 @@ _SECURITY_REJECT_CODES = {
     SemanticRejectCode.INJECTION,
     SemanticRejectCode.RESERVED_PREFIX,
 }
+
+#: Write sources whose value came from a PERSON deciding it, and which therefore win
+#: conflict resolution outright (`_write_semantic` step 7).
+#:
+#: ``vault_edit`` joined ``user_explicit`` with MEMORY-GRAPH-AND-VAULT §5.2's two-way
+#: vault: editing a fact in the vault is the same act as editing it in the dashboard,
+#: so if it were merely "an automated source" the write would be refused for exactly
+#: the facts a user is most likely to correct — the ones they typed themselves — and
+#: the vault would silently discard their edit.
+#:
+#: This is about AUTHORITY, not trust in the bytes. ``vault_edit`` is NOT in
+#: ``MemoryService._TRUSTED_WRITE_SOURCES``, so its text still passes the S5 injection
+#: scan, and it is NOT accepted for the reserved ``system.`` prefix (still
+#: ``user_explicit`` only): a markdown file is trivially writable by anything on the
+#: machine, so it may speak for the user about the user's own facts and nothing more.
+_HUMAN_AUTHORED_SOURCES = frozenset({"user_explicit", "vault_edit"})
+
 _MAX_EVENTS = 10_000
 _DEFAULT_CONFIDENCE_THRESHOLD = 0.8
 _DEFAULT_DEDUP_THRESHOLD = 0.88
@@ -1358,10 +1375,10 @@ class VectorMemoryStore(MemoryProvider):
 
         if existing and not existing["is_deleted"]:
             old_conf = existing["confidence"]
-            if source == "user_explicit":
-                pass  # user_explicit always wins
-            elif existing["source"] == "user_explicit":
-                # Existing is user_explicit — only another user_explicit can overwrite
+            if source in _HUMAN_AUTHORED_SOURCES:
+                pass  # the human always wins
+            elif existing["source"] in _HUMAN_AUTHORED_SOURCES:
+                # Existing came from the human — only the human can overwrite it
                 self._log_event(
                     "conflict_skip", "semantic", key, existing["value_json"], value_json, source
                 )

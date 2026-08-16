@@ -63,12 +63,18 @@ def _keywords(text: str) -> set[str]:
     return {w for w in re.split(r"\W+", text.lower()) if len(w) > 2 and w not in stop}
 
 
-def lint_memory(vs, *, now: datetime | None = None, judge=None) -> LintReport:
+def lint_memory(vs, *, now: datetime | None = None, judge=None, vault=None) -> LintReport:
     """Run the health checks over a vector store. Returns a :class:`LintReport`.
 
     ``now`` is injectable for testing. ``judge`` (optional, defaults to the
     store's ``contradiction_judge``) drives the contradiction scan; when absent
     that check is skipped (no LLM → no contradiction flags, fail-safe).
+
+    ``vault`` (a :class:`~personalclaw.memory_vault.MemoryVault`) adds the readable-
+    vault checks (§5.3). Passed in rather than resolved from config here on purpose:
+    this function must never decide by itself to go reading a directory under the
+    user's real home, and a caller that has no vault gets no vault flags rather than
+    a config read with a surprising side effect.
     """
     now = now or datetime.now(tz=timezone.utc)
     judge = judge if judge is not None else getattr(vs, "contradiction_judge", None)
@@ -163,8 +169,29 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None) -> LintReport:
     # gap, so "fixing" it by deleting the record would destroy the evidence.
     _lint_graph(vs, report)
 
+    # ── Flag: readable-vault health (MEMORY-GRAPH-AND-VAULT §5.3) ──
+    # Flag-only, like the graph checks. Every one of these describes a page the human
+    # owns (an edit that could not be applied, a page they created, a link they broke),
+    # and "fixing" any of them means overwriting their file — which is precisely what
+    # the two-way design refuses to do.
+    _lint_vault(vault, report)
+
     logger.info("memory lint: auto-fixed %s, %d flags", report.auto_fixed, len(report.flags))
     return report
+
+
+def _lint_vault(vault, report: LintReport) -> None:
+    """Add the vault checks. Silent no-op with no vault (mode ``off``, or a caller
+    that never had one)."""
+    if vault is None:
+        return
+    try:
+        flags = vault.lint_flags()
+    except Exception:  # noqa: BLE001 — lint must never fail on an optional check
+        logger.debug("lint: vault checks unavailable", exc_info=True)
+        return
+    for check, key, detail in flags:
+        report.add_flag(check, key, detail)
 
 
 def _lint_conflicts(vs, report: LintReport) -> None:

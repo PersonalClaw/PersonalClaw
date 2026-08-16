@@ -805,3 +805,101 @@ a knowledge-repo-adjacent change with its own ingestion seam and is cleanly sepa
   rails `test_config_baseline` / `test_config_roundtrip` / `test_inert_surface_baseline` /
   `test_portability` / `test_durability_inventory` / `test_resilience_degraded_lint` /
   `test_agent_reference` / `test_roadmap_dag_derived` **132 passed**.
+
+### 2026-08-16 — Session 4 (§5.1–5.3, §5.5): the two-way readable vault — DONE (`MGAV-6`)
+
+- **DONE `MGAV-6`.** `memory_vault.py` became mode-driven. `memory.vault_mode`
+  (`off|mirror|two_way`) **replaces** `vault_enabled` as a clean-break rename on the
+  `conductor_skill`→`orchestrator_skill` precedent, with a **one-way** back-read in `load()`:
+  a legacy `true` loads as `mirror`, never `two_way` — reading a user's files back into memory
+  is a new capability and must be chosen, not inherited on upgrade. An unrecognized mode falls
+  back to the legacy read rather than to `off` (a typo must not stop a mirror someone is
+  browsing); through `PUT /api/memory/settings` the same typo is a **400**, because coercing it
+  would look like the setting saved while quietly turning the vault off.
+
+  **`source_hash` covers the BODY ONLY, and that single decision carries the atom.** The sync
+  rewrites frontmatter on every pass (heat counters, `updated_at`, the hash itself), so a hash
+  spanning the frontmatter would make every page read as hand-edited forever — the mutation
+  proving it reds three tests. Body-only buys the conflict flag for free: stamping
+  `sync_conflict` into a page we refuse to touch leaves the body hash untouched, so the page
+  keeps reporting itself unresolved instead of becoming "clean" because we wrote to it.
+
+  **The refusal is the feature.** `absorb_edits()` runs BEFORE re-projection (otherwise the
+  projection overwrites the edit before anything reads it). Applying one requires frontmatter
+  `id`, a `kind` in `{semantic, preference, note, slot}`, an H1, and non-empty text between the
+  H1 and the `personalclaw:generated` marker. Everything else — no heading, empty value, an
+  episodic page (evidence is immutable, §5.1), a lesson's rule/counter-example structure — is
+  left **byte-for-byte** as the human wrote it, flagged, and reported by the lint. Its manifest
+  entry is carried over so the prune pass cannot delete the file the sync just declined to
+  rewrite.
+
+  **The write path.** `MemoryService.apply_vault_edit` → `set_semantic(source="vault_edit")`.
+  `vault_edit` joined `user_explicit` in a new `vector_memory._HUMAN_AUTHORED_SOURCES` so
+  conflict resolution lets it win; without that, editing a fact you originally typed is refused
+  as "an automated source cannot overwrite a user fact" and the vault silently discards the
+  change (that mutation reds five tests). It stays OUT of `_TRUSTED_WRITE_SOURCES` and out of
+  the reserved `system.` prefix — authority over your own facts is not trust in the bytes.
+  **Measured layer split:** `validate_semantic` already refuses instruction-override *prose*
+  (`injection_blocked`), while ONLY the S5 `supply_chain` scan catches a **bidi override**
+  (`validate_semantic` returns `None` for it). My first S5 test used prose and was vacuous; the
+  real one uses `‮` and first asserts the deeper validator passes it, so the S5 call is
+  proven load-bearing rather than redundant with a deeper default.
+
+  **Three real defects found on the way.** (1) 🔴 `mirror` mode **never restored a hand-edited
+  page**: the write-skip compared the freshly rendered digest to the *manifest*, which answers
+  "has the projection changed", not "does the file still hold it". It now compares the bytes on
+  disk. (2) 🔴 Every episodic page has emitted `**Session:** [[session-<id>]]` since the mirror
+  shipped and **no such page was ever written** — Obsidian tolerates an unresolved link, so it
+  hid until §5.3's broken-link check measured the vault against itself; `render_session_hub`
+  makes them resolve. (3) 🔴 The seeded `raw/README.md` was **ingested into Knowledge by the
+  sweep it documented**; `raw/` is now a pure drop box documented once in the top-level README,
+  so the sweep needs no exception that would also swallow a README the user really dropped.
+
+  **Durability (§5.5's snapshot clause).** `memory-vault` is a declared `StateEntry` (tree,
+  domain `memory`, `replace_only`) — `audit_home()` reported it **unclaimed** the moment anyone
+  turned the vault on, and the audit's synthetic fixture never contained one. Deliberately
+  **not `derived=True`**: in `two_way` a page can hold an edit that exists nowhere else, so
+  dropping it as "rebuildable" would lose the one thing in there that is not. Restoring is safe
+  *because of* `source_hash` — a restored page still matching its own hash is recognized as an
+  untouched projection and re-rendered from whatever the store now says, so only a genuine
+  unsynced edit is read back, and that write rides the WAL. Only the DEFAULT path is declared; a
+  relocated vault is the user putting state beyond the manifest's reach.
+
+- **DEVIATION (§5.2 supersession chain).** "the store version preserved in the supersession
+  chain" is served by the `memory_events` row instead: `undo_event` restores the exact prior
+  value, whereas minting a synthetic superseded key would pollute the semantic keyspace with
+  rows nothing reads. Edit-wins still wins; the concurrent store write is logged and surfaced.
+- **DEVIATION (§5.1 `last_updated`).** Not emitted. `_FM_ORDER` already carries the record's
+  `updated_at`, which IS the store version the pass compares against; two frontmatter keys for
+  one fact would drift.
+- **DEVIATION (§5.5 starter seeding source).** Seeds are the vault's own README rather than an
+  agent-profile `memory_seed/` dir — `agents/` is a flat file, not per-agent directories. The
+  missing-or-pristine primitive (`MemoryVault.seed`) is public, so an app's `setup` can call it
+  with its own dict; adding a `memory_seed/` home directory would have needed its own inventory
+  entry for one shipped file.
+- **DEVIATION (§5.3 page types).** Only `concept|slot|synthesis|entity|session|tag|index|guide`
+  are declared. `connection` and `qa` are in §5.3's vocabulary but nothing generates them, and a
+  declared type nobody writes reads as a decision while behaving as an omission.
+- **DISCOVERY (out of scope, left open).** §5.5's `--html` static export ("lowest priority",
+  shares §7.2's renderer) and the reveal/copy-symlink affordance are not built. `index.md` stays
+  `MEMORY.md` and is not injected into the L1-manifest region; the done_when names neither, and
+  MGAV-9 owns the settings surface.
+- **DISCOVERY (test hygiene).** Two of eleven mutations redded NOTHING, both my tests' fault:
+  blanking the timeline merge passed because `mem_links` rows **survive a soft delete**
+  (measured), so a rebuild-from-evidence produced byte-identical lines; and removing the S5 scan
+  passed for the layer-redundancy reason above. A third gap: dropping `vault=vault` from
+  `MemoryService.lint()` — the only thing `GET /api/memory/lint` calls — redded nothing, so the
+  vault checks could have been complete and never reached the Health tab. All three now have
+  tests that can fail.
+
+  **Config:** `vault_mode` four-point wired (dataclass `_meta`, explicit `load()` mapping with
+  the back-read, `to_dict` via asdict, the dedicated `PUT /api/memory/settings` write path) and
+  surfaced in the settings payload + a `MemoryPanel` mode selector; `config-baseline.json` and
+  `src/personalclaw/reference/routes.md` regenerated.
+
+  **Gates:** `make lint` clean · new `tests/test_memory_vault_two_way.py` **63 passed** · vault
+  and memory suites green · rails `test_config_baseline` / `test_config_roundtrip` /
+  `test_inert_surface_baseline` / `test_portability` / `test_durability_inventory` /
+  `test_resilience_degraded_lint` / `test_agent_reference` / `test_api_manifest_drift` /
+  `test_roadmap_dag_derived` / `test_docs_lint_baseline` / `test_version_consistency` green ·
+  full `pytest tests/` green.

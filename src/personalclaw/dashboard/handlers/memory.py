@@ -1,6 +1,7 @@
 """Memory API handlers — preferences, projects, history, settings, semantic, episodic, embeddings, graph."""  # noqa: E501
 
 import asyncio
+import functools
 import json
 import logging
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.config.loader import MEMORY_VAULT_MODES
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.vector_memory import SemanticRejectCode
@@ -133,12 +135,25 @@ async def api_memory_settings(request: web.Request) -> web.Response:
                 "l1_manifest",
                 "active_recall",
                 "proactive_commitments",
-                "vault_enabled",
                 "graph_enabled",
                 "push_context",
             ):
                 if flag in body:
                     mem[flag] = bool(body[flag])
+            # Vault mode (§5.1) — a closed three-value enum, validated here rather than
+            # coerced. An unrecognized value is a 400, not a silent fall back to "off":
+            # a caller that mistyped `two-way` must be told, or it would look like the
+            # setting saved and quietly stop mirroring. Writing the new key also drops
+            # the retired `vault_enabled` bool so config.json cannot keep two answers.
+            if "vault_mode" in body:
+                mode = str(body["vault_mode"] or "").strip().lower()
+                if mode not in MEMORY_VAULT_MODES:
+                    return web.json_response(
+                        {"error": f"vault_mode must be one of {list(MEMORY_VAULT_MODES)}"},
+                        status=400,
+                    )
+                mem["vault_mode"] = mode
+                mem.pop("vault_enabled", None)
             # The push reflex's confidence gate (§3). Clamped to [0,1] here as well as
             # in load(): a value outside the range would either volunteer everything or
             # nothing, and the caller should not be able to reach either by typing.
@@ -171,7 +186,7 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             "l1_manifest": cfg.memory.l1_manifest,
             "active_recall": cfg.memory.active_recall,
             "proactive_commitments": cfg.memory.proactive_commitments,
-            "vault_enabled": cfg.memory.vault_enabled,
+            "vault_mode": cfg.memory.vault_mode,
             "vault_path": cfg.memory.vault_path,
             "graph_enabled": cfg.memory.graph_enabled,
             "push_context": cfg.memory.push_context,
@@ -1015,32 +1030,38 @@ async def api_memory_daily_digests(request: web.Request) -> web.Response:
 
 
 async def api_memory_vault_status(request: web.Request) -> web.Response:
-    """GET /api/memory/vault — the markdown-vault mirror status (mem-fs-mirror)."""
-    from personalclaw.config.loader import AppConfig  # noqa: F811
-    from personalclaw.memory_vault import vault_dir_from_config
+    """GET /api/memory/vault — the readable-vault status (mode, path, file count)."""
+    from personalclaw.memory_vault import (
+        MemoryVault,
+        vault_mode_from_config,
+        vault_path_from_config,
+    )
 
-    cfg = AppConfig.load().memory
-    vdir = vault_dir_from_config()
+    mode = vault_mode_from_config()
+    vault = MemoryVault(_get_service(request.app["state"]), vault_path_from_config(), mode=mode)
     out: dict[str, Any] = {
-        "enabled": bool(getattr(cfg, "vault_enabled", False)),
-        "path": str(vdir) if vdir is not None else "",
-        "files": 0,
-        "exists": False,
+        # `enabled` stays in the payload as the "is a vault being kept in sync"
+        # question, now derived from the mode rather than a second stored flag.
+        "enabled": mode != "off",
+        "mode": mode,
+        **vault.status(),
     }
-    if vdir is not None:
-        from personalclaw.memory_vault import MemoryVault
-
-        vault = MemoryVault(_get_service(request.app["state"]), vdir)
-        out.update(vault.status())
+    out["mode"] = mode
     return web.json_response(out)
 
 
 async def api_memory_vault_sync(request: web.Request) -> web.Response:
-    """POST /api/memory/vault/sync — reconcile the vault to the current records.
+    """POST /api/memory/vault/sync — reconcile the vault against the store.
 
-    Works even while the vault flag is off (an explicit one-shot export to the
-    configured path), so a user can generate the vault on demand before turning on
-    the always-mirror. Returns the change summary."""
+    The on-demand half of §5.2 (the on-cadence half is the post-consolidation mirror).
+    Works even while ``vault_mode`` is ``off`` — an explicit one-shot export to the
+    configured path, so a user can look at a vault before committing to keeping one.
+    An ``off`` export never reads pages back: two-way is a mode you choose, not
+    something a "sync now" button turns on for you.
+
+    Passes the gateway's knowledge store + ingest queue through for the ``raw/`` sweep,
+    so a file dropped in the vault is ingested immediately rather than waiting for a
+    restart's pending-item recovery. Returns the change summary."""
     if _is_restricted_session(request.app["state"], request):
         sk = request.headers.get("X-Session-Key", "")
         _sel().log_api_access(
@@ -1053,18 +1074,25 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Memory writes are not allowed in this session mode."}, status=403
         )
-    from personalclaw.config.loader import AppConfig, config_dir  # noqa: F811
-    from personalclaw.memory_vault import MemoryVault, vault_dir_from_config
+    from personalclaw.memory_vault import (
+        MemoryVault,
+        vault_mode_from_config,
+        vault_path_from_config,
+    )
 
-    vdir = vault_dir_from_config()
-    if vdir is None:
-        # Vault disabled → export to the configured (or default) path anyway.
-        cfg = AppConfig.load().memory
-        rel = (getattr(cfg, "vault_path", "") or "memory-vault").strip()
-        p = Path(rel).expanduser()
-        vdir = p if p.is_absolute() else (config_dir() / rel)
-    vault = MemoryVault(_get_service(request.app["state"]), vdir)
-    summary = await asyncio.to_thread(vault.sync)
+    state: DashboardState = request.app["state"]
+    mode = vault_mode_from_config()
+    vdir = vault_path_from_config()
+    vault = MemoryVault(_get_service(state), vdir, mode="mirror" if mode == "off" else mode)
+    knowledge = enqueue = None
+    try:
+        knowledge = state.knowledge_store
+        enqueue = state.knowledge_ingest_queue().enqueue
+    except Exception:
+        logger.debug("vault sync: knowledge ingest unavailable", exc_info=True)
+    summary = await asyncio.to_thread(
+        functools.partial(vault.sync, knowledge=knowledge, enqueue=enqueue)
+    )
     summary["path"] = str(vdir)
     return web.json_response(summary)
 

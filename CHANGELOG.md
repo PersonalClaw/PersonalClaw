@@ -56,6 +56,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   keeps every surface you had already opened. **If you are upgrading, nothing changes:** an
   existing install keeps its full sidebar, because the short rail only ever starts for a setup
   that ran the first-run flow. The preference is per browser, like your theme and sidebar width.
+- **You can now open your memory in Obsidian and edit it there.** Settings → Memory → **Memory
+  vault** replaces the old on/off toggle with three choices. **Mirror** writes memory out as a
+  browsable markdown vault — a page per fact, per episode and per person/project/tool it knows
+  about, wired together with `[[wikilinks]]` so Obsidian's graph view works — and regenerates it
+  from the store, so hand edits are overwritten. **Two-way** reads your edits back: change a fact
+  page above its `personalclaw:generated` marker, hit **Sync now** (or just finish a session), and
+  your version replaces what was stored — your edit wins even over a fact you originally typed in
+  the dashboard, and it shows up in the memory event log so you can undo it.
+  Nothing is merged on a guess. Each page carries a hash of its own body, so the sync knows exactly
+  which pages you touched; if it cannot read your edit with confidence — the heading is gone, the
+  page is empty, or it is an episode, which stays read-only because evidence should not be
+  rewritten — it **leaves your text exactly as you wrote it**, marks the page `sync_conflict`, and
+  lists it under Settings → Memory → **Health** alongside broken links, pages it does not recognise
+  and edits still waiting to be read back. Person/project pages keep a compiled summary on top and
+  an append-only timeline below that no sync ever reorders.
+  Drop a document in the vault's `raw/` folder and the next sync files it under **Knowledge**, never
+  into memory. `personalclaw snapshot` now includes the vault, so an edit you have not synced yet is
+  backed up with everything else.
+
 - **An empty Triggers page now offers four working starters instead of a blank form.** Morning
   briefing, weekly digest, nightly check and a standup reminder each show their cadence in your
   own locale's clock, and picking one opens the ordinary create form already filled in — review it,

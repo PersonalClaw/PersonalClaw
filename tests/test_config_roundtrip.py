@@ -186,6 +186,11 @@ _SPECIAL = {
     # memory.push_min_confidence is a probability clamped to [0,1] by load() — the
     # generic rule's out-of-range value would (correctly) come back clamped.
     ("memory", "push_min_confidence"): 0.55,
+    # memory.vault_mode is enum-constrained (off|mirror|two_way) — a generated "off-x"
+    # would (correctly) be refused by load() and fall back through the legacy
+    # `vault_enabled` read to `off`, exactly as `stream_reveal` above. `two_way` is the
+    # real non-default that proves the field round-trips.
+    ("memory", "vault_mode"): "two_way",
     ("skills", "auto_similarity_threshold"): 0.5,
     # surface_mode_default is enum-constrained (off|passive|suggest) — a generated "off-x" would
     # (correctly) be refused by load() and fall back to `off`, exactly as `stream_reveal` above.

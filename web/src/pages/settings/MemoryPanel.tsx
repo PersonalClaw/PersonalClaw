@@ -6,7 +6,8 @@ import {
 import { MemoryGraph } from './MemoryGraph'
 import {
   api, type MemorySettings, type SemanticEntry,
-  type EpisodicEntry, type MemoryEvent, type MemoryVaultStatus, type DailyDigest,
+  type EpisodicEntry, type MemoryEvent, type MemoryVaultStatus, type MemoryVaultMode,
+  type DailyDigest,
   type MemoryLint, type MemoryObservability, type Lesson, type MemoryStats,
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
   type MemoryGraphSummary, type MemoryLink,
@@ -1152,7 +1153,7 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
         </div>
       </Section>
 
-      <VaultSection settings={s} onToggle={(v) => patch({ vault_enabled: v })} saved={saved} />
+      <VaultSection settings={s} onMode={(v) => patch({ vault_mode: v })} saved={saved} />
 
       <DailyDigestSection />
 
@@ -1209,37 +1210,53 @@ function DigestRow({ digest }: { digest: DailyDigest }) {
   )
 }
 
-/** Memory vault mirror — enable the Obsidian-compatible markdown export + a
- *  sync-now / open-folder affordance. The vault is a read-only projection of
- *  memory; it re-syncs automatically after each session seal, but "Sync now"
- *  lets a user generate/refresh it on demand (works even while the toggle is off,
- *  as a one-shot export). */
-function VaultSection({ settings, onToggle, saved }: {
-  settings: MemorySettings; onToggle: (v: boolean) => void; saved: boolean
+const VAULT_MODE_OPTIONS: { value: MemoryVaultMode; label: string }[] = [
+  { value: 'off', label: 'Off — no vault' },
+  { value: 'mirror', label: 'Mirror — write memory out, read-only' },
+  { value: 'two_way', label: 'Two-way — read my edits back in' },
+]
+
+const VAULT_MODE_HINT: Record<MemoryVaultMode, string> = {
+  off: 'No vault is written. "Sync now" still produces a one-shot export you can look at.',
+  mirror: 'Pages are regenerated from the store after each session seal. Your edits WILL be overwritten.',
+  two_way: 'Your edits win. Change a fact page above its generated marker and the next sync writes it into memory. Anything the sync cannot read safely is left untouched and listed under Health.',
+}
+
+/** Memory vault (§5.1) — the Obsidian-compatible markdown projection, and how far
+ *  it goes: off / mirror / two-way. "Sync now" refreshes it on demand and, in
+ *  two-way, is also what reads hand edits back; it works even while the mode is off,
+ *  as a one-shot export. */
+function VaultSection({ settings, onMode, saved }: {
+  settings: MemorySettings; onMode: (v: MemoryVaultMode) => void; saved: boolean
 }) {
-  const enabled = Boolean(settings.vault_enabled)
+  const mode: MemoryVaultMode = settings.vault_mode ?? 'off'
   const [status, setStatus] = useState<MemoryVaultStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState('')
   const loadStatus = () => { api.memoryVaultStatus().then(setStatus).catch(() => setStatus(null)) }
-  useEffect(loadStatus, [enabled])
+  useEffect(loadStatus, [mode])
 
   const sync = async () => {
     setSyncing(true); setMsg('')
     try {
       const r = await api.syncMemoryVault()
-      setMsg(`Synced ${r.records} record${r.records === 1 ? '' : 's'} → ${r.files} file${r.files === 1 ? '' : 's'}` +
-        (r.written ? ` (${r.written} updated${r.pruned ? `, ${r.pruned} pruned` : ''})` : ' (no changes)'))
+      const parts = [`Synced ${r.records} record${r.records === 1 ? '' : 's'} → ${r.files} file${r.files === 1 ? '' : 's'}`]
+      if (r.written) parts.push(`${r.written} updated`)
+      if (r.pruned) parts.push(`${r.pruned} pruned`)
+      if (r.absorbed) parts.push(`${r.absorbed} edit${r.absorbed === 1 ? '' : 's'} read back`)
+      if (r.conflicts) parts.push(`${r.conflicts} conflict${r.conflicts === 1 ? '' : 's'} — see Health`)
+      if (r.raw_ingested) parts.push(`${r.raw_ingested} raw file${r.raw_ingested === 1 ? '' : 's'} → Knowledge`)
+      setMsg(parts.length === 1 ? `${parts[0]} (no changes)` : `${parts[0]} (${parts.slice(1).join(', ')})`)
       loadStatus()
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Sync failed') }
     setSyncing(false)
   }
 
   return (
-    <Section title="Memory vault (Obsidian mirror)" hint="Mirror memory to a browsable markdown vault — YAML frontmatter + [[wikilinks]] + graph view. Read-only; regenerated from the store, never hand-edited.">
-      <Row label="Enable vault mirror" hint="When on, the vault re-syncs automatically after each session is sealed.">
-        <Toggle on={enabled} onChange={onToggle} label="Enable vault mirror" />
-      </Row>
+    <Section title="Memory vault (Obsidian)" hint="Project memory into a browsable markdown vault — YAML frontmatter + [[wikilinks]] + graph view — and optionally edit it back.">
+      <Field label="Vault mode" hint={VAULT_MODE_HINT[mode]}>
+        <Select value={mode} onChange={(v) => onMode(v as MemoryVaultMode)} options={VAULT_MODE_OPTIONS} />
+      </Field>
       {status?.path && (
         <p className="mt-1 mb-2 font-mono text-on-surface-low text-[0.75rem] break-all">
           {status.path}{status.exists ? ` · ${status.files} file${status.files === 1 ? '' : 's'}` : ' · not yet generated'}

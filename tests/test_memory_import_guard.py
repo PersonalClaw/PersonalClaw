@@ -288,18 +288,23 @@ async def test_vault_sync_normal_session_is_not_blocked(monkeypatch, tmp_path):
     """The vault write stays in tmp_path — a fake MemoryVault whose sync() is a
     no-op — so this proves the guard does not over-block without touching a home."""
 
-    class _FakeVault:
-        def __init__(self, service, vdir):
-            self.vdir = vdir
+    seen: dict = {}
 
-        def sync(self) -> dict:
+    class _FakeVault:
+        def __init__(self, service, vdir, *, mode="mirror"):
+            self.vdir = vdir
+            seen["mode"] = mode
+
+        def sync(self, *, knowledge=None, enqueue=None) -> dict:
+            seen["synced"] = True
             return {"created": 0, "updated": 0, "deleted": 0}
 
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.memory._get_service", lambda _state: MagicMock()
     )
     monkeypatch.setattr("personalclaw.memory_vault.MemoryVault", _FakeVault)
-    monkeypatch.setattr("personalclaw.memory_vault.vault_dir_from_config", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.memory_vault.vault_mode_from_config", lambda: "off")
+    monkeypatch.setattr("personalclaw.memory_vault.vault_path_from_config", lambda: tmp_path)
 
     app = web.Application()
     app["state"] = MagicMock()
@@ -309,3 +314,7 @@ async def test_vault_sync_normal_session_is_not_blocked(monkeypatch, tmp_path):
 
     assert resp.status != 403
     assert json.loads(resp.body)["path"] == str(tmp_path)
+    assert seen["synced"] is True
+    # An `off` vault exports one-shot but must NOT be silently upgraded to two_way:
+    # a "sync now" button is not how a user chooses to have their files read back.
+    assert seen["mode"] == "mirror"
