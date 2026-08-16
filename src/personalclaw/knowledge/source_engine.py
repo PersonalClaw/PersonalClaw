@@ -97,7 +97,8 @@ class SourceEngine:
 
         return isinstance(provider, KnowledgeSourceProvider)
 
-    def egress_policy(self) -> Any:
+    @staticmethod
+    def egress_policy() -> Any:
         """The egress posture a source poll's fetches must use (WATCHED-SOURCES §11).
 
         The ``SOURCE`` profile with the operator's ``security.egress`` config layered via
@@ -106,7 +107,12 @@ class SourceEngine:
         own — a provider re-implementing the fetch (and its guard) is the exact bypass the
         boundary exists to prevent. Handed to a provider's :meth:`poll` when its signature
         accepts a ``policy`` (the web/feed fetching providers land in WS-3+); a plain corpus
-        poll ignores it."""
+        poll ignores it.
+
+        A ``staticmethod`` because the create flow's PREVIEW (WS-9) is a real fetch on the
+        same targets and must run under the same posture, and it happens in an HTTP handler
+        with no engine instance in reach. Two callers resolving the profile independently
+        would be two egress postures for one act."""
         from personalclaw.net.policy import SOURCE, egress_policy_for
 
         return egress_policy_for(SOURCE)
@@ -129,6 +135,16 @@ class SourceEngine:
         web_poll enforces — a too-frequent poll is abusive to someone else's server."""
         want = int(source.get("poll_interval_secs") or 0) or int(cfg.poll_interval_default_secs)
         return float(max(want, int(cfg.network_floor_secs)))
+
+    def _next_poll_at(self, source: dict, cfg: Any) -> str:
+        """When this source is due again, as an ISO timestamp — a DISPLAY rollup only.
+
+        Scheduling reads ``last_poll_at`` (see :meth:`_due_delay`), so this never decides
+        anything; it exists so a reader of the row can say "retrying in 9 minutes" instead of
+        leaving a failing source looking abandoned."""
+        from datetime import datetime
+
+        return datetime.fromtimestamp(self._now_fn() + self._interval_for(source, cfg)).isoformat()
 
     def _due_delay(self, source: dict, cfg: Any, now: float) -> float:
         """Seconds until this source is next due (<=0 means due now). Never-polled sources
@@ -157,6 +173,13 @@ class SourceEngine:
         )
 
         sid = source["id"]
+        # Recorded on EVERY exit below, not just the successful one. Scheduling does not depend
+        # on it (`_due_delay` measures from `last_poll_at`), so this is purely the rollup that
+        # tells a reader when the source will be tried again — and a failing source is exactly
+        # the one whose reader needs to know that a retry is coming. Withholding it on failure
+        # is the same shape WS-3 fixed for `last_escalations`: a rollup visible only on success
+        # makes the interesting case the invisible one.
+        next_at = self._next_poll_at(source, cfg)
         provider = self._provider_for(source["provider"])
         if provider is None or not self._is_poll_capable(provider):
             self._store.record_poll(
@@ -165,6 +188,7 @@ class SourceEngine:
                 new_count=0,
                 health_status=HEALTH_ERROR,
                 error_summary=f"provider {source['provider']!r} not enrolled (poll-capable)",
+                next_poll_at=next_at,
             )
             return 0
         cursor = self._store.get_source_cursor(sid)
@@ -186,6 +210,7 @@ class SourceEngine:
                 new_count=0,
                 health_status=HEALTH_ERROR,
                 error_summary=str(exc)[:200],
+                next_poll_at=next_at,
             )
             return 0
         escalations = list(getattr(result, "escalations", None) or [])
@@ -202,6 +227,7 @@ class SourceEngine:
                 health_status=getattr(result, "health_status", "") or HEALTH_DEGRADED,
                 error_summary=result.error[:200],
                 escalations=escalations,
+                next_poll_at=next_at,
             )
             return 0
         max_items = int(cfg.max_items_per_poll)
@@ -213,11 +239,6 @@ class SourceEngine:
                 logger.warning("source %s item %r persist failed", sid, item.guid, exc_info=True)
         # Cursor advanced LAST, in its own txn: every item above is already durable, so a
         # crash here re-yields them next poll and the UNIQUE gate drops them (SC#4).
-        from datetime import datetime
-
-        next_at = datetime.fromtimestamp(
-            self._now_fn() + self._interval_for(source, cfg)
-        ).isoformat()
         self._store.record_poll(
             sid,
             cursor=result.cursor or cursor,

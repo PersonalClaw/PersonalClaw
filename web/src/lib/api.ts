@@ -1446,6 +1446,83 @@ export interface KnowledgeIntent {
   enabled_for?: string[]; propose_skill?: boolean
   outcome_count?: number  // recorded outcomes (list badge)
 }
+// ── Watched sources (WATCHED-SOURCES §2.4/§6.3/§12) ──
+/** What the user can DO about a source's last poll. The backend resolves this from the
+ *  provider's own guidance constants, so the UI never carries a copy of a remediation
+ *  message — and the two kinds are deliberately distinct: a listing-page failure is fixed
+ *  by a different URL, a render-tier failure by a budget knob. */
+export interface SourceRemediation {
+  /** '' when the source needs nothing; otherwise 'listing_page' | 'render_tier'. */
+  kind: string
+  /** The provider's own remediation text, full-length (the stored poll summary is clipped). */
+  guidance: string
+  /** The poll's reason, when it says something the guidance does not (a render tier that
+   *  raised, or one allowed but not installed). Empty when it would just echo the guidance. */
+  detail: string
+  /** '' = advice only. 'allow_render' = one knob fixes it. 'edit_url' = point it elsewhere. */
+  action: string
+}
+/** One watched source: its spec, its schedule, and the rollups the poll engine writes. */
+export interface WatchedSource {
+  id: string; name: string; provider: string; kind: string
+  spec: Record<string, unknown>; budget: Record<string, unknown>
+  /** 'full' | 'raw' — 'raw' is §6.3's structural no-AI promise, and what the chip reads. */
+  enrichment: string
+  poll_interval_secs: number; item_type: string; enabled: boolean
+  created_at?: string; updated_at?: string
+  last_poll_at?: string | null; next_poll_at?: string | null
+  last_new_count?: number
+  /** One of the backend's SOURCE_HEALTH vocabulary (shipped in the list response). */
+  health_status?: string
+  last_error_summary?: string
+  /** The tiers the last poll had to climb, or was refused. */
+  last_escalations?: string[]
+  /** Is a poll-capable provider registered for this row? False = nothing will poll it. */
+  enrolled: boolean
+  remediation: SourceRemediation
+}
+/** One creatable source kind, derived from the registered providers. `previewable` is
+ *  MEASURED per provider — only the web kind has a detect-then-tune loop, so the create
+ *  flow must not pretend feeds and directories have a dry run. */
+export interface SourceKind {
+  provider: string; display_name: string; kind: string
+  /** Which create form to render: 'web_page' | 'feed' | 'dir' | 'spec'. */
+  form: string
+  previewable: boolean
+  poll_interval_secs: number
+  default_item_type: string
+  detectors?: string[]
+  max_requests?: number
+  formats?: string[]
+  presets?: string[]
+  default_include?: string[]
+  max_files?: number
+  guidance?: Record<string, string>
+}
+export interface SourcesResponse {
+  sources: WatchedSource[]
+  kinds: SourceKind[]
+  /** The closed health vocabulary, shipped rather than retyped in TypeScript. */
+  health_statuses: string[]
+  raw_enrichment: string
+}
+/** One extracted item from a §2.4 dry run. `snippet` is untrusted scraped text, clipped
+ *  by the backend and rendered as TEXT only. */
+export interface SourcePreviewItem {
+  guid: string; title: string; url: string; published_at: string; snippet: string
+}
+export interface SourcePreviewResult {
+  items: SourcePreviewItem[]
+  /** Which detector won, so the user tunes something named. */
+  detector: string
+  escalations: string[]
+  requests_used: number
+  /** The remediation to show when `items` is empty (a tuning problem, not a failure). */
+  guidance: string
+  health_status: string
+  /** A HARD failure (egress denial, invalid spec) — distinct from an empty extraction. */
+  error: string
+}
 /** One typed field of an intent outcome, rendered type-aware in the UI. */
 export interface IntentOutcomeField { name: string; type: string; value: unknown }
 /** An intent's match against one item, stored BY VALUE (survives item deletion —
@@ -3391,6 +3468,25 @@ export const api = {
   updateKnowledgeItem: (id: string, body: Record<string, unknown>) => patch<{ ok: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}`, body),
   deleteKnowledgeItem: (id: string) => del(`/api/knowledge/items/${encodeURIComponent(id)}`),
   knowledgeProviders: () => get<{ providers: Array<{ name: string; display_name: string; always_on: boolean; kind: string }> }>('/api/knowledge/providers').then((d) => d.providers),
+  // ── Watched sources (WATCHED-SOURCES §2.4/§6.3/§12) ──
+  // One GET for the rows AND the create flow's kind catalog: the list page and the create
+  // page are one surface, and a second round trip to learn which kinds exist would just
+  // make the create form flash.
+  knowledgeSources: () => get<SourcesResponse>('/api/knowledge/sources'),
+  createKnowledgeSource: (body: {
+    name: string; provider: string; spec: Record<string, unknown>
+    enrichment?: string; poll_interval_secs?: number; budget?: Record<string, unknown>
+  }) => post<{ source: WatchedSource }>('/api/knowledge/sources', body),
+  // The remediation + lifecycle path: `budget.allow_render` for a JS shell, `spec.url` for a
+  // wrong URL, `enabled` to stop a source polling. Partial — an absent key is untouched.
+  updateKnowledgeSource: (id: string, body: {
+    name?: string; enabled?: boolean; enrichment?: string; poll_interval_secs?: number
+    spec?: Record<string, unknown>; budget?: Record<string, unknown>
+  }) => patch<{ source: WatchedSource }>(`/api/knowledge/sources/${encodeURIComponent(id)}`, body),
+  // §2.4's dry run. Persists nothing but DOES spend the request budget — it is a real fetch
+  // at somebody else's server. Only the web kind has one (`SourceKind.previewable`).
+  previewKnowledgeSource: (body: { provider: string; spec: Record<string, unknown>; budget?: Record<string, unknown> }) =>
+    post<SourcePreviewResult>('/api/knowledge/sources/preview', body),
   // Distinct tags (frequency-ordered) for tag-input autocomplete.
   knowledgeTags: () => get<{ tags: string[] }>('/api/knowledge/tags').then((d) => d.tags),
   // ── Knowledge collections (KNOWLEDGE-LIBRARY S1) ──

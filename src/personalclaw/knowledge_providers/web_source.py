@@ -61,6 +61,7 @@ import logging
 import re
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from html import unescape
 from typing import Any, Callable
 from urllib.parse import urljoin, urlsplit
 
@@ -1091,7 +1092,7 @@ class WebSourceProvider(KnowledgeSourceProvider):
                 continue
             rows.append(
                 _row(
-                    title=_rendered(post.get("title")),
+                    title=_rendered_title(post.get("title")),
                     url=str(post.get("link") or ""),
                     content=_rendered(post.get("excerpt")) or _rendered(post.get("content")),
                     published_at=str(post.get("date_gmt") or post.get("date") or ""),
@@ -1352,6 +1353,23 @@ def _rendered(value: Any) -> str:
     if isinstance(value, dict):
         return str(value.get("rendered") or "").strip()
     return str(value or "").strip()
+
+
+def _rendered_title(value: Any) -> str:
+    """A WordPress REST ``title.rendered``, which is HTML-ESCAPED text.
+
+    Found by driving the create flow against a real WordPress listing page (WS-9): every
+    apostrophe arrived as ``&#8217;`` — ``Don&#8217;t stop early`` — because WP escapes these
+    fields and nothing decoded them. A title is plain text by definition and is rendered as
+    text on every surface, so leaving the entities in means they show up literally in the
+    preview, in the item row and in the library.
+
+    Scoped to the TITLE deliberately. ``content`` is markup, where the same escaping is
+    meaningful (an escaped ``&lt;script&gt;`` in a post's body is *shown code*), and both of
+    its readers already convert through the html→text seam. Unescaping it here would decode
+    that back into live markup before ``sanitize_html`` ever sees it.
+    """
+    return unescape(_rendered(value))
 
 
 def _max_requests(budget: dict | None) -> int:

@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WS-6` | ⬜ | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) | `WS-2` | An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9) |
 | `WS-7` | ⬜ | Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff | `WS-2`, `EXT:AUTOMATION-SUBSTRATE:event bus for SourceItemIngested/SourcePollCompleted + morning-digest template + web_watch source_id consumption (interim JSONL spool until bus lands)` | Engine emits SourceItemIngested per new item + SourcePollCompleted per poll onto the substrate bus (interim spool until it lands); a saved source query matches new items with zero tokens and emits SourceQueryMatched, a subscribed Trigger fires, and the morning-digest template produces ONE knowledge item + one notification through notification_allowed() (SC#10); an injection payload in a scraped page cannot steer a digest run, fenced at the LLM boundary (SC#8) |
 | `WS-8` | ⬜ | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory | `WS-1`, `WS-2`, `WS-3` | A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path) |
-| `WS-9` | ⬜ | Sources UI in the Knowledge section + as-a-user validation | `WS-2`, `WS-3`, `WS-4`, `WS-5` | Sources UI in the Knowledge section lists all source kinds with health status, drives the paste-URL preview/tune/save create flow, shows the 'no AI' chip on raw sources, and offers listing-page/render-tier remediation affordances; validated as a user driving web/feed/dir sources end-to-end from the frontend |
+| `WS-9` | ✅ | Sources UI in the Knowledge section + as-a-user validation | `WS-2`, `WS-3`, `WS-4`, `WS-5` | Sources UI in the Knowledge section lists all source kinds with health status, drives the paste-URL preview/tune/save create flow, shows the 'no AI' chip on raw sources, and offers listing-page/render-tier remediation affordances; validated as a user driving web/feed/dir sources end-to-end from the frontend |
 
 ## Atom scopes
 
@@ -208,9 +208,70 @@ aborting the cycle. Tests: `tests/test_dir_source.py`.
 
 ### `WS-9` — Sources UI in the Knowledge section + as-a-user validation
 
-**Status:** todo
+**Status:** done
 
 §2.4 create flow UI; §6.3 'no AI' chip; health rollups (§12 risk row); §11 step 5 (UI + as-a-user validation). Implementation-owns-product tenet: users can find/create/tune/inspect sources
 
 **Done when:** Sources UI in the Knowledge section lists all source kinds with health status, drives the paste-URL preview/tune/save create flow, shows the 'no AI' chip on raw sources, and offers listing-page/render-tier remediation affordances; validated as a user driving web/feed/dir sources end-to-end from the frontend
+
+**DONE.** This is the atom that turned four finished atoms into a feature. Before it,
+`store.create_source` had **zero non-test callers**: WS-2's store, WS-3's five-detector web
+kind, WS-4's feeds and WS-5's directory observer all worked and were **entirely unreachable** —
+no route, no CLI, no UI through which a user could create a watched source of any kind. So the
+scope was the whole loop: four HTTP routes
+(`GET`/`POST /api/knowledge/sources`, `POST …/sources/preview`, `PATCH …/sources/{id}`), a
+`#/knowledge/sources` destination inside the Knowledge section, and its create flow.
+
+**Every closed vocabulary and every remediation string is read from the provider, not retyped
+in TypeScript.** The health statuses come from `base.SOURCE_HEALTH`, the detector list from
+`web_source.DETECTOR_ORDER`, the feed recipes from `feed_source.PRESETS`, the folder defaults
+from `dir_source.DEFAULT_INCLUDE`, and the two remediations from `LISTING_PAGE_GUIDANCE` /
+`RENDER_TIER_GUIDANCE`. A Python rail holds the UI's status map and its kind-form switch to
+those vocabularies, so a fifth status added in `base.py` reds CI instead of falling through a
+hardcoded default branch — which would happen to the one status that most needed its own
+message. Specs are validated by the PROVIDER's own `validate_spec` at both save and edit, so
+there is no second copy of its rules in the handler to drift.
+
+**The preview asymmetry is reported honestly rather than faked.** WS-3 deliberately kept
+`preview` off the `KnowledgeSourceProvider` ABC — a feed's or a folder's preview IS its poll —
+so `SourceKind.previewable` is MEASURED per provider (`callable(getattr(prov, "preview"))`)
+and the create page offers a paste-URL dry run for the web kind and says plainly, for the other
+two, that their first poll is their preview. A provider without one is refused with that reason
+rather than answered with an empty item list that reads like a failure. The preview runs under
+`SourceEngine.egress_policy()` — made a `staticmethod` for this — because a preview fetches the
+same targets a poll does and two postures for one act is the hole in the `SOURCE` profile.
+
+**The two remediations stay OPPOSITE, which is the whole point of WS-3's discrimination.**
+`needs render tier` yields the render-tier guidance plus a real "Allow the render tier" button
+(one `budget.allow_render` PATCH); a wrong-URL failure yields the listing-page guidance plus a
+URL field. Neither offers the other's control. The render knob is offered only while it is OFF
+— allowed-but-failing (a render that raised, or the `js-render` extra missing) is advice, and a
+button that re-sets a flag already set would lie about what pressing it does. The match is a
+PREFIX test, not equality, because `record_poll` clips the summary to 200 chars and
+`LISTING_PAGE_GUIDANCE` is longer than that: equality would have silently never fired for
+exactly the longer of the two messages.
+
+**Store surface:** `update_source` with a CLOSED `_EDITABLE_SOURCE_FIELDS` map. `provider` and
+`kind` are excluded on purpose (they decide which validator a spec is read against, so changing
+them in place would silently reinterpret it), and so are the engine's rollups — a generic setter
+would let a client overwrite a poll's verdict. No `delete_source`: the `done_when` needs
+remediation, not removal, and `enabled: false` already stops a source polling without orphaning
+its `source_seen` rows.
+
+**Four defects found by driving the real thing, each fixed at source.** (1) A WordPress
+`title.rendered` is HTML-ESCAPED, so all 20 previewed rows on `github.blog/changelog` read
+`Don&#8217;t stop early`; decoded in `_rendered_title`, scoped to the title because `content` is
+markup whose escaping is meaningful. (2) An item's `content` IS markup, and the client renders
+the snippet as text, so every row showed `<p>…</p>`; converted through the app's one html→text
+seam. (3) `sources.health_status` DEFAULTS to `ok`, so a source saved seconds ago read "Healthy
+· never polled" in one breath. (4) `record_poll`'s `next_poll_at` was written on the SUCCESS
+path only, so the two rows carrying a remediation were exactly the two that could not say a
+retry was coming — the same shape WS-3 fixed for `last_escalations`. Plus a header-overflow fix:
+at 390px a bare create pill painted over both the back button and the title (squeezed to 8px).
+
+**Validated as a user** on an isolated dev home: created a web page (github.blog/changelog → 20
+items via `wordpress_api` in 2 requests), a RAW HN-Algolia feed (20 items, `no AI` chip) and a
+watched folder, all three from the frontend; drove both remediations live on real JS-shell and
+homepage URLs; pressed both fix buttons; paused a source. Full detail in the plan's
+`## Execution log`.
 

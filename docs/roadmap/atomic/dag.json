@@ -5252,7 +5252,7 @@
         {
           "id": "WS-9",
           "title": "Sources UI in the Knowledge section + as-a-user validation",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.4 create flow UI; §6.3 'no AI' chip; health rollups (§12 risk row); §11 step 5 (UI + as-a-user validation). Implementation-owns-product tenet: users can find/create/tune/inspect sources",
           "done_when": "Sources UI in the Knowledge section lists all source kinds with health status, drives the paste-URL preview/tune/save create flow, shows the 'no AI' chip on raw sources, and offers listing-page/render-tier remediation affordances; validated as a user driving web/feed/dir sources end-to-end from the frontend",
           "deps": [
@@ -7952,11 +7952,6 @@
         "id": "WS-8",
         "title": "Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory",
         "plan": "WS"
-      },
-      {
-        "id": "WS-9",
-        "title": "Sources UI in the Knowledge section + as-a-user validation",
-        "plan": "WS"
       }
     ],
     "topo_order": [
@@ -10083,9 +10078,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

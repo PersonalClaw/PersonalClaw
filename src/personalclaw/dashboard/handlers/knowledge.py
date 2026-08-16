@@ -2171,6 +2171,434 @@ async def bulk_items(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "op": op, **result})
 
 
+# ── Watched sources: the create/tune/inspect surface (WATCHED-SOURCES §2.4/§6.3/§12) ──
+#
+# WS-2..WS-5 shipped the store, the poll engine and three providers, and `create_source`
+# had ZERO non-test callers — there was no route, no CLI and no UI through which a user
+# could create a watched source of any kind. This is that surface.
+#
+# Two disciplines run through the whole block:
+#
+#   * Every closed vocabulary and every remediation string is read from the PROVIDER, not
+#     retyped here or in TypeScript. The health statuses come from `base.SOURCE_HEALTH`,
+#     the detector list from `web_source.DETECTOR_ORDER`, the feed presets from
+#     `feed_source.PRESETS`, and the two opposite remediations from
+#     `LISTING_PAGE_GUIDANCE` / `RENDER_TIER_GUIDANCE`. A copy of any of those in the UI
+#     would be a second artifact that drifts from the thing that actually enforces it.
+#   * A spec is never trusted from the client. Each provider's own `validate_spec` decides,
+#     so save-time validation is byte-identical to the poll-time re-validation WS-3/WS-5
+#     already do — one validator, not a client-side approximation of it.
+
+
+#: The remediation a source needs, when it needs one. Two kinds, deliberately NOT collapsed
+#: into a single "found nothing" message: WS-3 measures the discrimination (a page that
+#: rendered plenty of text and yielded no items is the WRONG URL; a page carrying script
+#: with almost no visible text is a JS SHELL) precisely because the two fixes are opposite —
+#: point at a listing page vs. turn on the render tier. One message would send half the
+#: users the wrong way, which is the entire reason `HEALTH_NEEDS_RENDER` exists as a status
+#: distinct from `degraded`.
+_REMEDIATION_LISTING_PAGE = "listing_page"
+_REMEDIATION_RENDER_TIER = "render_tier"
+
+
+def _source_providers() -> list:
+    """Every registered POLL-CAPABLE knowledge provider — the ones a source row can name.
+
+    Read through the SAME registry seam the engine enrolls from
+    (:meth:`SourceEngine.enrolled_provider_names`), so a provider this endpoint offers is
+    exactly a provider that will actually poll. Offering a kind nothing polls would let a
+    user create a source that sits inert forever.
+    """
+    from personalclaw.knowledge_providers.base import KnowledgeSourceProvider
+    from personalclaw.knowledge_providers.registry import list_providers
+
+    return [p for p in list_providers() if isinstance(p, KnowledgeSourceProvider)]
+
+
+def _kind_descriptor(provider) -> dict:
+    """The UI-facing shape of ONE source kind, keyed on the provider's CLASS.
+
+    Class rather than name string on purpose: `"watched-page"` written here would be a
+    third copy of a name the provider already owns and the store already persists. An
+    app-contributed source provider (WS-8's connector packs) matches none of the three and
+    gets the generic descriptor — a spec editor and no bespoke form — rather than being
+    dropped from the catalog, because a kind the create flow refuses to show is a kind
+    nobody can use.
+    """
+    from personalclaw.knowledge_providers import dir_source, feed_source, web_source
+
+    if isinstance(provider, web_source.WebSourceProvider):
+        return {
+            "kind": "web_page",
+            "form": "web_page",
+            "default_item_type": "bookmark",
+            "detectors": list(web_source.DETECTOR_ORDER),
+            "max_requests": web_source.DEFAULT_MAX_REQUESTS,
+            "guidance": {
+                _REMEDIATION_LISTING_PAGE: web_source.LISTING_PAGE_GUIDANCE,
+                _REMEDIATION_RENDER_TIER: web_source.RENDER_TIER_GUIDANCE,
+            },
+        }
+    if isinstance(provider, feed_source.FeedSourceProvider):
+        return {
+            "kind": "feed",
+            "form": "feed",
+            "default_item_type": "bookmark",
+            "formats": sorted(feed_source.FEED_KINDS),
+            "presets": sorted(feed_source.PRESETS),
+        }
+    if isinstance(provider, dir_source.DirSourceProvider):
+        return {
+            "kind": "dir",
+            "form": "dir",
+            "default_item_type": "note",
+            "default_include": list(dir_source.DEFAULT_INCLUDE),
+            "max_files": dir_source.MAX_FILES_PER_SOURCE,
+        }
+    return {"kind": "external", "form": "spec", "default_item_type": "bookmark"}
+
+
+def _source_kinds() -> list[dict]:
+    """The create flow's catalog: one entry per registered poll-capable provider.
+
+    ``previewable`` is measured, not declared. WS-3 deliberately kept ``preview`` OFF the
+    :class:`KnowledgeSourceProvider` ABC — a feed's or a directory's preview IS its poll, so
+    an abstract ``preview`` would have been a stub on two of three providers. The asymmetry
+    is therefore real, and the honest thing is to report it so the UI can offer a paste-URL
+    preview where one exists and say plainly where one does not, rather than fake a uniform
+    dry run by half-polling a feed.
+    """
+    out: list[dict] = []
+    for prov in _source_providers():
+        out.append(
+            {
+                "provider": prov.name,
+                "display_name": getattr(prov, "display_name", prov.name),
+                "poll_interval_secs": int(getattr(prov, "poll_interval_seconds", 3600) or 3600),
+                "previewable": callable(getattr(prov, "preview", None)),
+                **_kind_descriptor(prov),
+            }
+        )
+    return sorted(out, key=lambda k: k["display_name"])
+
+
+def _remediation(source: dict) -> dict:
+    """What the user can DO about this source's last poll, or an empty verdict.
+
+    Derived from what the engine already persisted (WS-3 writes ``health_status`` and
+    ``last_error_summary`` on every poll, success and failure alike) — never recomputed by
+    re-polling, which would make opening a page a fetch at someone else's server.
+
+    ``last_error_summary`` is the provider's guidance CLIPPED to 200 chars by
+    ``record_poll``, and ``LISTING_PAGE_GUIDANCE`` is longer than that, so the match is
+    "the stored summary is a prefix of this guidance" rather than equality — equality would
+    silently never fire for exactly the longer of the two messages.
+
+    ``detail`` carries the stored summary only when it says something the guidance does not
+    (a render tier that raised, or is allowed but not installed). Echoing a prefix of the
+    guidance back above the guidance would be the same sentence twice.
+    """
+    from personalclaw.knowledge_providers.base import HEALTH_NEEDS_RENDER
+    from personalclaw.knowledge_providers.web_source import (
+        LISTING_PAGE_GUIDANCE,
+        RENDER_TIER_GUIDANCE,
+    )
+
+    health = str(source.get("health_status") or "")
+    summary = str(source.get("last_error_summary") or "")
+    allow_render = bool((source.get("budget") or {}).get("allow_render"))
+
+    def _detail(guidance: str) -> str:
+        return "" if summary and guidance.startswith(summary) else summary
+
+    if health == HEALTH_NEEDS_RENDER:
+        return {
+            "kind": _REMEDIATION_RENDER_TIER,
+            "guidance": RENDER_TIER_GUIDANCE,
+            "detail": _detail(RENDER_TIER_GUIDANCE),
+            # The knob is the fix only while it is OFF. Allowed-but-failing (a render that
+            # raised, or the `js-render` extra not installed) is advice, not a button — and
+            # a button that re-sets a flag already set is a lie about what would happen.
+            "action": "" if allow_render else "allow_render",
+        }
+    if summary and LISTING_PAGE_GUIDANCE.startswith(summary):
+        return {
+            "kind": _REMEDIATION_LISTING_PAGE,
+            "guidance": LISTING_PAGE_GUIDANCE,
+            "detail": "",
+            "action": "edit_url",
+        }
+    if summary and RENDER_TIER_GUIDANCE.startswith(summary):
+        # The render tier was allowed and the budget ran out before it could be used, so the
+        # health is a plain `degraded` — but the page still needs JavaScript, and raising
+        # `budget.max_requests` is the fix rather than a different URL.
+        return {
+            "kind": _REMEDIATION_RENDER_TIER,
+            "guidance": RENDER_TIER_GUIDANCE,
+            "detail": "",
+            "action": "" if allow_render else "allow_render",
+        }
+    return {"kind": "", "guidance": "", "detail": summary, "action": ""}
+
+
+def _serialize_source(source: dict, enrolled: set[str]) -> dict:
+    """A source row for the client: the stored row plus the two things it cannot derive.
+
+    ``enrolled`` answers "will anything actually poll this?" BEFORE the first poll — the
+    engine records the not-enrolled case as a health error, but only once it has run, and a
+    row that has never been polled would otherwise read as healthy.
+    """
+    return {
+        **source,
+        "enrolled": source.get("provider") in enrolled,
+        "remediation": _remediation(source),
+    }
+
+
+async def list_watched_sources(request: web.Request) -> web.Response:
+    """GET /api/knowledge/sources — the watched sources, with health, plus the kind catalog.
+
+    One route because the list page and the create page are one surface, and a second round
+    trip to learn which kinds exist would just make the create form flash.
+    """
+    from personalclaw.knowledge_providers.base import ENRICHMENT_RAW, SOURCE_HEALTH
+
+    kinds = _source_kinds()
+    enrolled = {k["provider"] for k in kinds}
+    return web.json_response(
+        {
+            "sources": [_serialize_source(s, enrolled) for s in _store(request).list_sources()],
+            "kinds": kinds,
+            # The closed vocabularies, shipped rather than retyped in TypeScript. The UI
+            # needs a per-status label and tone, and a hardcoded list there would silently
+            # fall through its default branch the day a sixth status is added.
+            "health_statuses": sorted(SOURCE_HEALTH),
+            "raw_enrichment": ENRICHMENT_RAW,
+        }
+    )
+
+
+def _validated_spec(provider, spec: dict) -> str:
+    """The provider's own verdict on a spec, or '' when it has none to give."""
+    validate = getattr(provider, "validate_spec", None)
+    if not callable(validate):
+        return ""
+    ok, err = validate(spec)
+    return "" if ok else (err or "invalid spec")
+
+
+async def create_watched_source(request: web.Request) -> web.Response:
+    """POST /api/knowledge/sources — save a source, after its provider validates the spec.
+
+    The provider must be registered and poll-capable: creating a row nothing polls is the
+    inert-source failure this endpoint exists to end.
+    """
+    from personalclaw.knowledge_providers.base import ENRICHMENTS
+
+    body = await request.json()
+    name = str(body.get("name") or "").strip()
+    provider_name = str(body.get("provider") or "").strip()
+    if not name:
+        return web.json_response({"error": "name is required"}, status=400)
+    provider = next((p for p in _source_providers() if p.name == provider_name), None)
+    if provider is None:
+        known = ", ".join(sorted(p.name for p in _source_providers())) or "none registered"
+        return web.json_response(
+            {"error": f"unknown source provider {provider_name!r} (known: {known})"}, status=400
+        )
+    enrichment = str(body.get("enrichment") or "full")
+    if enrichment not in ENRICHMENTS:
+        return web.json_response(
+            {"error": f"enrichment must be one of {sorted(ENRICHMENTS)}"}, status=400
+        )
+    spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
+    err = _validated_spec(provider, spec)
+    if err:
+        return web.json_response({"error": err}, status=400)
+
+    descriptor = _kind_descriptor(provider)
+    store = _store(request)
+    sid = store.create_source(
+        name=name,
+        provider=provider.name,
+        kind=str(body.get("kind") or descriptor["kind"]),
+        spec=spec,
+        enrichment=enrichment,
+        poll_interval_secs=int(
+            body.get("poll_interval_secs") or getattr(provider, "poll_interval_seconds", 3600)
+        ),
+        budget=body.get("budget") if isinstance(body.get("budget"), dict) else {},
+        item_type=str(body.get("item_type") or descriptor["default_item_type"]),
+    )
+    _sel_log("sources.create", source_id=sid, provider=provider.name, enrichment=enrichment)
+    created = store.get_source(sid)
+    return web.json_response(
+        {"source": _serialize_source(created or {}, {p.name for p in _source_providers()})},
+        status=201,
+    )
+
+
+async def update_watched_source(request: web.Request) -> web.Response:
+    """PATCH /api/knowledge/sources/{id} — apply a remediation, rename, or pause a source.
+
+    This is what makes the guidance on a failing source ACTIONABLE rather than advisory:
+    `needs render tier` is fixed by `budget.allow_render`, and the listing-page failure by
+    a different `spec.url`. A spec edit is re-validated by the provider, exactly as a create
+    is — an edit that could bypass the save-time guard would leave the poll-time
+    re-validation as the only thing standing between a hand-edited row and an arbitrary
+    fetch target on a timer.
+    """
+    from personalclaw.knowledge_providers.base import ENRICHMENTS
+
+    store = _store(request)
+    source_id = request.match_info["id"]
+    current = store.get_source(source_id)
+    if current is None:
+        return web.json_response({"error": "not found"}, status=404)
+    body = await request.json()
+
+    fields: dict = {}
+    if "name" in body:
+        name = str(body.get("name") or "").strip()
+        if not name:
+            return web.json_response({"error": "name cannot be empty"}, status=400)
+        fields["name"] = name
+    if "enabled" in body:
+        fields["enabled"] = bool(body["enabled"])
+    if "enrichment" in body:
+        enrichment = str(body.get("enrichment") or "")
+        if enrichment not in ENRICHMENTS:
+            return web.json_response(
+                {"error": f"enrichment must be one of {sorted(ENRICHMENTS)}"}, status=400
+            )
+        fields["enrichment"] = enrichment
+    if "poll_interval_secs" in body:
+        try:
+            interval = int(body["poll_interval_secs"])
+        except (TypeError, ValueError):
+            return web.json_response({"error": "poll_interval_secs must be an integer"}, status=400)
+        if interval < 1:
+            return web.json_response({"error": "poll_interval_secs must be positive"}, status=400)
+        fields["poll_interval_secs"] = interval
+    if "budget" in body:
+        if not isinstance(body["budget"], dict):
+            return web.json_response({"error": "budget must be an object"}, status=400)
+        fields["budget"] = body["budget"]
+    if "spec" in body:
+        if not isinstance(body["spec"], dict):
+            return web.json_response({"error": "spec must be an object"}, status=400)
+        provider = next((p for p in _source_providers() if p.name == current["provider"]), None)
+        if provider is None:
+            return web.json_response(
+                {"error": f"provider {current['provider']!r} is not registered"}, status=400
+            )
+        err = _validated_spec(provider, body["spec"])
+        if err:
+            return web.json_response({"error": err}, status=400)
+        fields["spec"] = body["spec"]
+    if not fields:
+        return web.json_response({"error": "no editable fields in request"}, status=400)
+
+    updated = store.update_source(source_id, **fields)
+    if updated is None:
+        return web.json_response({"error": "not found"}, status=404)
+    _sel_log("sources.update", source_id=source_id, fields=sorted(fields))
+    return web.json_response(
+        {"source": _serialize_source(updated, {p.name for p in _source_providers()})}
+    )
+
+
+#: Preview item snippets are UNTRUSTED scraped bytes. They are clipped hard and rendered as
+#: TEXT by the client (never as markup) — the preview's job is "would this spec find the
+#: right things", which a headline and a link answer, and shipping a page's full body into a
+#: create form would be carrying an injection payload for no product reason.
+_PREVIEW_SNIPPET_CHARS = 240
+
+
+def _snippet(content: str) -> str:
+    """One preview item's body as plain, single-line text.
+
+    An item's ``content`` is sanitized MARKUP (WS-3 moves ``sanitize_html`` onto exactly this
+    field), and the client renders the snippet as text — correctly, since rendering scraped
+    bytes as markup is the injection surface this whole path avoids. So the conversion has to
+    happen HERE or every preview row reads ``<p>See how four…</p>`` with ``&#8217;`` for its
+    apostrophes. Measured on ``github.blog/changelog`` before this: all 20 rows did.
+
+    Converted through the app's ONE html→text seam (``connectors.base.html_to_text``, which is
+    also what web-source's own ``html_to_markdown`` post-process calls), so a preview snippet
+    and an ingested item read the same way rather than diverging on a second stripper.
+    """
+    from personalclaw.knowledge.connectors.base import html_to_text
+
+    text = html_to_text(content) if "<" in (content or "") else (content or "")
+    return " ".join(text.split())[:_PREVIEW_SNIPPET_CHARS]
+
+
+async def preview_watched_source(request: web.Request) -> web.Response:
+    """POST /api/knowledge/sources/preview — §2.4's dry run for the paste-URL create flow.
+
+    Persists nothing (no item, no cursor, no seen-set row) and spends the spec's request
+    budget, because it is a real fetch at somebody else's server. Only the web kind has a
+    preview at all — see :func:`_source_kinds` — so a provider without one is refused with
+    the reason rather than answered with an empty item list that reads like a failure.
+
+    The egress posture is the ENGINE's (`SourceEngine.egress_policy`), not one resolved
+    here: the preview fetches the same targets a poll does, and two postures for one act is
+    how the tuning loop becomes the hole in the `SOURCE` profile.
+    """
+    from personalclaw.knowledge.source_engine import SourceEngine
+
+    body = await request.json()
+    provider_name = str(body.get("provider") or "").strip()
+    provider = next((p for p in _source_providers() if p.name == provider_name), None)
+    if provider is None:
+        return web.json_response(
+            {"error": f"unknown source provider {provider_name!r}"}, status=400
+        )
+    preview = getattr(provider, "preview", None)
+    if not callable(preview):
+        return web.json_response(
+            {
+                "error": (
+                    f"{provider.display_name} has no preview — its first poll is its preview. "
+                    "Save the source and check its health."
+                )
+            },
+            status=400,
+        )
+    spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
+    budget = body.get("budget") if isinstance(body.get("budget"), dict) else {}
+    result = await preview(spec, budget=budget, policy=SourceEngine.egress_policy())
+    _sel_log(
+        "sources.preview",
+        provider=provider.name,
+        items=len(result.items),
+        detector=result.detector,
+        requests=result.requests_used,
+        outcome="completed" if not result.error else "failed",
+    )
+    return web.json_response(
+        {
+            "items": [
+                {
+                    "guid": i.guid,
+                    "title": i.title,
+                    "url": i.url,
+                    "published_at": i.published_at,
+                    "snippet": _snippet(i.content),
+                }
+                for i in result.items
+            ],
+            "detector": result.detector,
+            "escalations": result.escalations,
+            "requests_used": result.requests_used,
+            "guidance": result.guidance,
+            "health_status": result.health_status,
+            "error": result.error,
+        }
+    )
+
+
 def setup_knowledge_routes(app: web.Application) -> None:
     # One ingestion path: the node-graph queue. Every item (typed-create, file
     # upload, bookmark) is created via the native provider and enqueued here;
@@ -2246,6 +2674,13 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/embedding/status", get_embedding_status)
     app.router.add_post("/api/knowledge/embedding/generate", batch_embed_items)
     app.router.add_get("/api/knowledge/search-for-context", search_for_context)
+    # WATCHED-SOURCES §2.4/§6.3/§12 (WS-9): the create/tune/inspect surface. `/preview` is
+    # registered before `/{id}` for legibility only — they differ by method, so aiohttp
+    # could not confuse them either way.
+    app.router.add_get("/api/knowledge/sources", list_watched_sources)
+    app.router.add_post("/api/knowledge/sources", create_watched_source)
+    app.router.add_post("/api/knowledge/sources/preview", preview_watched_source)
+    app.router.add_patch("/api/knowledge/sources/{id}", update_watched_source)
 
     # Pool lifecycle: lazy start on first request, shutdown on app exit
     async def _shutdown_pool(app: web.Application) -> None:
