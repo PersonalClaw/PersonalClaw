@@ -334,6 +334,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Credentials can now live in your OS keychain, and Doctor tells you where they actually are.**
+  Set `PERSONALCLAW_CREDENTIAL_BACKEND=keychain` and new secrets go to the macOS Keychain, Linux
+  Secret Service or Windows Credential Locker (`pip install 'personalclaw[keychain]'`) instead of
+  `~/.personalclaw/.env`. Reading is unchanged everywhere — nothing you use has to know which store
+  answered. On a headless box with no secret service the request **falls back to `.env` at mode
+  0600**, never to a plaintext file somewhere else and never to looser permissions, and Doctor says
+  so rather than claiming a keychain you don't have. Doctor reports the store that is actually
+  holding your secrets, not the one you asked for.
 - **Unattended automations now run read-only by default, and you're asked before one runs scripts
   in a project folder.** Three changes narrow what work runs while no one is watching. A background
   *research* spawn — the kind a cron or an agent fires with no human present — now starts in a

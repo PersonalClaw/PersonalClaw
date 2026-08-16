@@ -972,6 +972,70 @@ async def _probe_baseline_denylist(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
+    """security — which credential store is actually holding the secrets? (SH-1)
+
+    Reports the RESOLVED backend, not the requested one. The distinction is the whole
+    point: an install that sets ``PERSONALCLAW_CREDENTIAL_BACKEND=keychain`` on a headless
+    box with no secret service keeps its credentials in ``.env`` at 0600, and a doctor line
+    echoing the *request* would tell that user their secrets are in a keychain that does
+    not exist. ``ok=False`` for exactly that mismatch — nothing was lost and nothing landed
+    in a weaker location, but the operator asked for something they did not get.
+
+    Also reports the ``.env`` mode when dotenv is the active backend, because 0600 is the
+    floor the fallback promises. Read-only: the probe never repairs the mode (the next
+    ``load_credentials()`` does) and never reads a secret VALUE — only names, modes, states.
+    """
+    from personalclaw.config.loader import (
+        credential_backend,
+        credential_backend_warning,
+        env_path,
+        keychain_available,
+        requested_credential_backend,
+    )
+
+    def _facts() -> dict[str, Any]:
+        ep = env_path()
+        mode = ""
+        with contextlib.suppress(OSError):
+            if ep.exists():
+                mode = format(ep.stat().st_mode & 0o777, "04o")
+        return {
+            "backend": credential_backend(),
+            "requested": requested_credential_backend(),
+            "keychain_available": keychain_available(),
+            "warning": credential_backend_warning(),
+            "env_mode": mode,
+        }
+
+    facts = await asyncio.to_thread(_facts)
+    evidence = {k: v for k, v in facts.items() if k != "warning"}
+
+    if facts["warning"]:
+        return ProbeResult(ok=False, detail=facts["warning"], evidence=evidence)
+
+    if facts["backend"] == "keychain":
+        return ProbeResult(
+            ok=True, detail="credentials stored in the OS keychain (keyring)", evidence=evidence
+        )
+
+    mode = facts["env_mode"]
+    if mode and int(mode, 8) & 0o077:
+        return ProbeResult(
+            ok=False,
+            detail=(
+                f"credential file .env is mode {mode} — group/world readable; "
+                "it is repaired to 0600 on the next credential read"
+            ),
+            evidence=evidence,
+        )
+    return ProbeResult(
+        ok=True,
+        detail=f"credentials stored in .env at mode {mode or '0600'}",
+        evidence=evidence,
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -1098,6 +1162,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_baseline_denylist,
             "Baseline command denylist integrity",
+        )
+    )
+    register_probe(
+        Probe(
+            "security.credential_backend",
+            "security",
+            Tier.CAPABILITY,
+            _probe_credential_backend,
+            "Active credential backend (keychain / .env 0600)",
         )
     )
 

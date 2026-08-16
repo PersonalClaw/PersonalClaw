@@ -6444,7 +6444,7 @@
         {
           "id": "SH-1",
           "title": "Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 — OS keychain credential storage / T1.1; Design S1; Contracts C1 (credential backend selector)",
           "done_when": "reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml",
           "deps": []
@@ -7882,8 +7882,8 @@
         "plan": "PUBL"
       },
       {
-        "id": "SH-1",
-        "title": "Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend",
+        "id": "SH-2",
+        "title": "credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action",
         "plan": "SH"
       },
       {
@@ -10198,9 +10198,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 1
       },
       {

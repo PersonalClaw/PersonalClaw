@@ -140,6 +140,13 @@ embeddings = ["sentence-transformers>=3.0", "faiss-cpu>=1.7"]  # substrate for a
 mcp   = ["mcp>=1.2"]               # external MCP servers in the native agent loop (stdio + SSE/HTTP)
 js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
 
+# OS keychain credential backend (SECURITY-HARDENING S1). Deliberately OPTIONAL and
+# deliberately NOT in [dev]/[test]: `.env` at 0600 is the supported default, the keychain
+# is an upgrade for installs that have an OS secret service, and a headless box without one
+# must keep working — config/loader.py falls back to `.env` 0600 and doctor says so. Tests
+# stub keyring rather than depend on it, so the suite is identical with or without this extra.
+keychain = ["keyring>=24"]
+
 # Every local-model feature, for installs that run models in-process (dev
 # server + container). Desktop deliberately omits these (torch is too large to
 # bundle — see personalclaw-backend.spec excludes); its bundles probe as
