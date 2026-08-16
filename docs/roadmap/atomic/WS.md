@@ -17,7 +17,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WS-5` | ✅ | dir-source: signature-diff observer, debounce, archive-on-delete | `WS-2` | Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm) |
 | `WS-6` | ✅ | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) | `WS-2` | An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9) |
 | `WS-7` | ⬜ | Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff | `WS-2`, `EXT:AUTOMATION-SUBSTRATE:event bus for SourceItemIngested/SourcePollCompleted + morning-digest template + web_watch source_id consumption (interim JSONL spool until bus lands)` | Engine emits SourceItemIngested per new item + SourcePollCompleted per poll onto the substrate bus (interim spool until it lands); a saved source query matches new items with zero tokens and emits SourceQueryMatched, a subscribed Trigger fires, and the morning-digest template produces ONE knowledge item + one notification through notification_allowed() (SC#10); an injection payload in a scraped page cannot steer a digest run, fenced at the LLM boundary (SC#8) |
-| `WS-8` | ⬜ | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory | `WS-1`, `WS-2`, `WS-3` | A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path) |
+| `WS-8` | ✅ | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory | `WS-1`, `WS-2`, `WS-3` | A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path) |
 | `WS-9` | ✅ | Sources UI in the Knowledge section + as-a-user validation | `WS-2`, `WS-3`, `WS-4`, `WS-5` | Sources UI in the Knowledge section lists all source kinds with health status, drives the paste-URL preview/tune/save create flow, shows the 'no AI' chip on raw sources, and offers listing-page/render-tier remediation affordances; validated as a user driving web/feed/dir sources end-to-end from the frontend |
 
 ## Atom scopes
@@ -283,11 +283,61 @@ called once" would pass a cache that fetched and discarded.
 
 ### `WS-8` — Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory
 
-**Status:** todo
+**Status:** done
 
 §7.1 connector packs as knowledge-capability apps with parse-only scripts (fetch_spec + engine net.fetch + stdin body + JSON-lines stdout, sandbox.wrap_argv); §7.2 recipes as data under knowledge/sources/recipes/ + bundled set surfaced in create flow; §Plug-in Map ALLOWED_HOOK_PROVIDERS note; §11 step 5 (ecosystem half)
 
 **Done when:** A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path)
+
+**DONE.** A connector pack is an ordinary app with a `sources[]` manifest block and a
+THREE-LINE `provider.py` that calls `sdk.knowledge.connector_pack_provider(__file__, config)`.
+The class that polls is therefore CORE's (`knowledge_providers/connector_pack.py`): a pack
+cannot substitute its own fetch even by accident, because it never writes one. The poll
+resolves `spec.pack_source` → a declared `PackSourceEntry`, validates the user's `args`,
+renders the manifest's `fetchSpec` (`{{args.x}}` percent-encoded into the URL, `{{secret:KEY}}`
+resolved from the credential store into HEADERS ONLY), performs one `net.fetch` under the
+engine-supplied `SOURCE` policy, and hands the body to the script on stdin.
+
+**The atom's premise about `sandbox.wrap_argv` is measurably wrong, and that finding is the
+whole security design.** `wrap_argv` is a *filesystem* control: its Seatbelt profile is
+`(allow default)` plus deny-READ rules, its Linux launcher unshares only
+`CLONE_NEWUSER`/`CLONE_NEWNS`, and on this project's own dev machine `detect_backend()`
+answers `none` (macOS 26 refuses `sandbox_apply` for third-party callers) so it is not applied
+at all. Nothing in it denies egress. So the live rail is `pack_parse.py`'s in-process fence,
+installed before the script runs. It is THREE mechanisms plus a verification, and which one
+covers what is MEASURED: under `python -I` exactly three denied names are pre-imported (`os`,
+`os.path`, `posix`). A `sys.meta_path[0]` finder refuses everything absent — `socket`, `ssl`,
+`ctypes`, `subprocess`, `urllib.request`, `importlib` — down every route. Eviction of the three
+pre-imported names is what stops `import os`, which the finder can never see because the cache
+answers first. Neutering the process-spawning callables on those live module objects is what
+stops `object.__subclasses__()` → `os._wrap_close.__init__.__globals__` → `os.system`, which
+needs no import at all; the child is thrown away after one parse, so wrecking its stdlib is
+free. Then the harness verifies the first two survived and reports `fence: tampered`, which
+discards the batch. A FOURTH mechanism (wrapping `builtins.__import__`) was built and DELETED:
+removing it reded nothing, because with the three names evicted every denied import already
+reaches the finder. `DENIED_MODULES` is a **denylist deliberately**:
+an allowlist of importable modules was tried first and rejected because the stdlib's own lazy
+imports (`csv`→`_csv`, `re`→`re._compiler`) break legitimate parsers unpredictably, and a fence
+that fails on correct code gets removed. It is closed *for this property*: every in-process
+network path in CPython bottoms out at `_socket`, `_ctypes` or a spawned child.
+
+**Fail closed on output is structural, not a check.** The harness emits a nonce-tagged
+terminator only after the script returns; the nonce arrives in a config file the harness
+unlinks on read, so a script cannot forge it, and the parent REQUIRES that line. Garbage, a
+torn final line, a kill, an over-cap batch and a wrong-shaped row all yield ZERO items plus a
+typed `ParseFailure.code` — and the cursor does NOT advance, so a refused batch is re-offered
+rather than skipped past. Bounds reuse core's own ceilings (`spawn_shim_argv(PROFILE_TOOL)`,
+`build_child_env`, timeout, input cap, output cap) rather than a bare `subprocess.run`.
+
+§7.2 recipes are data: seven bundled JSON files under `knowledge/sources/recipes/` whose
+`matchPatterns` carry NAMED capture groups that fill `{{group}}` in the spec, so
+`https://github.com/astral-sh/uv` resolves to a concrete releases-Atom spec. Every bundled
+recipe is put through its OWNING provider's `validate_spec` in the tests — a recipe the create
+flow would refuse on save cannot ship. Surfaced at `GET /api/knowledge/source-recipes` and, in
+the UI WS-9 shipped mid-session, as the FIRST thing the create screen asks: paste the link you
+already have. A match seeds the form's own fields from the resolved spec (never a hidden spec
+riding alongside them), and a recipe naming a provider this install has not registered is
+filtered out rather than offered and refused on save.
 
 ### `WS-9` — Sources UI in the Knowledge section + as-a-user validation
 

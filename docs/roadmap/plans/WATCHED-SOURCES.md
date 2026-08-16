@@ -809,3 +809,202 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   `test_feed_source`, `test_dir_source`, `test_web_source`, `test_source_engine`) = 430 passed. Full
   suite **20473 passed, 30 skipped, 12 xfailed, 0 failed**. No config field added, so no
   `test_config_baseline` regeneration. No `web/` change → no FE gate.
+
+- [WS-8] DONE: **§7.1 connector-pack app kind + §7.2 source-recipe directory.**
+  A connector pack is an ordinary app with a `sources[]` manifest block (`apps/manifest.py`:
+  `PackSourceEntry` + `AppManifest.sources`) and a **three-line** `provider.py` that calls
+  `sdk.knowledge.connector_pack_provider(__file__, config)`. So the class that polls is CORE's
+  (`knowledge_providers/connector_pack.py`) and a pack cannot substitute its own fetch even by
+  accident — it never writes one. The poll resolves `spec.pack_source` → a declared entry, validates
+  the user's `args`, renders the manifest's `fetchSpec` (`{{args.x}}` percent-encoded into the URL —
+  a repo name with a slash must not become an extra path segment; `{{secret:KEY}}` from the
+  credential store into **headers only**), performs ONE `net.fetch` under the engine-supplied
+  `SOURCE` policy, then hands the body to the script on stdin and reads `SourceItem` JSON lines back.
+  Conditional GET rides the shared `conditional_get` cursor, so the pack kind is the third consumer
+  of that one implementation rather than a fourth copy of a cursor shape.
+  **The briefing's central premise was measurably WRONG, and correcting it is this atom's substance.**
+  §7.1 says the script is "sandboxed via `sandbox.wrap_argv` like `schedule_script.py`". Measured:
+  `wrap_argv` is a **filesystem** control and no egress control at all — its Seatbelt profile is
+  literally `(allow default)` plus deny-**read** rules, its Linux launcher unshares only
+  `CLONE_NEWUSER`/`CLONE_NEWNS` (never `CLONE_NEWNET`), and on this machine `detect_backend()` returns
+  `none` (macOS 26 refuses `sandbox_apply` for third-party callers), so it is not applied at all and
+  logs "No OS-level sandbox available". Building the no-socket property on it would have left the
+  atom's whole point resting on nothing. `wrap_argv` is still used (for the credential-path half it
+  really does cover), but the **live rail is `knowledge_providers/pack_parse.py`'s in-process fence**,
+  installed before the pack script runs. It is THREE mechanisms plus a verification, and the division
+  of labour between them is MEASURED rather than assumed: under `python -I` exactly three denied names
+  are already in `sys.modules` (`os`, `os.path`, `posix`) and no others. (a) A `sys.meta_path[0]`
+  finder refuses `DENIED_MODULES` — sufficient on its own for every name that is NOT pre-imported, so
+  it is what stops `socket`, `ssl`, `ctypes`, `subprocess`, `urllib.request` and `importlib` down every
+  route including `importlib.import_module`. (b) The three pre-imported names are EVICTED from
+  `sys.modules`, without which `import os` is served from the startup cache and never reaches a finder
+  at all — the finder alone would leave the spawn-a-child route wide open. (c) The process-spawning
+  callables on those same live module objects are NEUTERED, because eviction removes the *name* and
+  not the *object*: `object.__subclasses__()` finds `os._wrap_close`, whose `__init__.__globals__` IS
+  the os module dict, so `os.system` stays reachable with no import whatsoever. The child parses one
+  body and is discarded, so wrecking its copy of the stdlib is free. `os`/`posix` are neutered
+  SELECTIVELY (the exec/spawn family only, not `os.stat`), because blanket-neutering broke `linecache`
+  and made an ordinary parser bug die inside our own error handler and surface as "no terminator" —
+  measured, then fixed. (d) After the script returns the harness re-verifies (a) and (b) and reports
+  `fence: tampered` otherwise, which discards the batch. A FOURTH mechanism was built and then
+  deleted — see the falsification record below; it reded nothing and the measurement above is why.
+  **`DENIED_MODULES` is a denylist DELIBERATELY, and an allowlist was built first and rejected on
+  evidence.** An allowlist of importable modules breaks legitimate parsers for reasons an author
+  cannot predict (the stdlib's own lazy imports: `csv`→`_csv`, `random`→`os`, `re`→`re._compiler`),
+  and a fence that fails on correct code gets removed by the next person. The denylist is closed *for
+  this property* rather than being a general jail: every in-process network path in CPython bottoms
+  out at `_socket` (which `socket`/`ssl`/`http`/`urllib`/`asyncio`/every third-party client is built
+  on), `_ctypes` (raw libc), or a spawned child (`os`/`subprocess`/`_posixsubprocess`/
+  `multiprocessing`). It is interpolated into the harness source, so the frozenset is the ONE live
+  definition — there is no hand-copied second list inside the harness string to drift from.
+  **Fail-closed output is structural, not a check.** The harness emits a **nonce-tagged terminator**
+  only after the script returns; the nonce arrives in a config file the harness unlinks on read (the
+  `schedule_script.py` idiom), so a script cannot forge it, and the parent REQUIRES that line. That
+  one mechanism makes truncation, a timeout kill, an `os._exit` and a crash all indistinguishable
+  from each other and all fail closed. Garbage, a torn line, an over-cap batch and a wrong-shaped row
+  yield ZERO items plus a typed `ParseFailure.code` — deliberately never a subset, because a
+  half-ingested feed is indistinguishable from a feed that shrank — and the **cursor does not
+  advance**, so a refused batch is re-offered rather than skipped past. Bounds reuse core's own
+  ceilings (`spawn_shim_argv(PROFILE_TOOL)`, `build_child_env`, wall clock, input cap, output cap)
+  rather than a bare `subprocess.run`; the child also runs `python -I` so no inherited `PYTHONPATH` or
+  `sitecustomize.py` can pre-import anything before the fence exists.
+  **Manifest schema decisions, each with a reason a reviewer can check.** `fetchSpec.method` is
+  `GET`/`HEAD` only — a pack that could declare a POST would be an unattended write to somebody
+  else's service on a timer, authorized once at install; a pack needing a write graduates to a full
+  `KnowledgeSourceProvider` where the code is reviewable. `argsSchema` is flat and scalar because an
+  arg's only job is substitution into a URL and there is no substitution of a nested object into a
+  URL — so this is the CORRECT grammar here, not a smaller one, and it is why WS-3's
+  `_validate_against` was deliberately NOT lifted out of `web_source.py` (refactoring a tuned module
+  to share a walker this schema does not need would have been churn). A secret in `fetchSpec.url` is
+  refused (a URL reaches the egress audit row, the remote access log and any redirect's `Referer`),
+  and an `Authorization`/`Cookie`/`X-Api-Key` header carrying a literal is refused because a manifest
+  ships to a Store — the same rule `packs/connectors.py` states as "schema-banned from carrying a
+  value-bearing field", and the header list has ONE definition asserted equal across the two modules.
+  Two CROSS-FIELD rules make the kind coherent rather than merely well-formed: `sources[]` without a
+  `knowledge`/`source` provider is refused (declared scripts nothing can drive — the inert-surface
+  shape), and `sources[]` without `permissions.network` is refused. Precisely stated, because the
+  shipped consent surface is precise about it: `network` is DISCLOSURE and not containment
+  (`installConsent.tsx` says so in as many words, and app-platform.md §permissions documents
+  why there is no per-app egress chokepoint), but without the declaration that card reads
+  "Network access: not declared" for an app whose entire purpose is scheduled outbound
+  fetching — disclosure that reads the wrong way is worse than none.
+  **DEVIATION (recorded): no new `PROVIDER_TYPES` entry, and the #47 rule is not in play.** A
+  connector pack is not a new provider type — it rides `knowledge` (already present since WS-1) with
+  `capabilities: ["source"]`. `sources[]` is a manifest BLOCK, not a type, so
+  `test_manifest_types_match_handlers` is untouched and stays green. The §Plug-in Map's
+  `ALLOWED_HOOK_PROVIDERS` note needed nothing either: it applies IF a pack ever ships an `action`
+  provider, and this atom ships none.
+  **DEVIATION (recorded): `fetchSpec`/`argsSchema` are camelCase**, not §7.1's `fetch_spec`/
+  `args_schema`. The manifest's own convention is camelCase for multiword keys
+  (`settingsSchema`, `displayName`, `minPersonalClawVersion`); matching the plan's snake_case would
+  have made this the one block spelled differently from every other.
+  **RECON, INCLUDING ONE THING THAT CHANGED UNDER ME MID-SESSION.** (1) At the commit this work was
+  cut from, `WS-9` was `todo`, `SourceCreatePage.tsx` did not exist, and `store.create_source` had
+  zero non-test callers exactly as `WS-3` and `WS-4` recorded — so "bundled recipes surface in the
+  create flow" was first built as the seam a create flow reads (`GET /api/knowledge/source-recipes`,
+  `?url=` for the "already covered?" answer). **Then `WS-9` landed on `origin/main` (`ff6f78f6`)
+  while this atom was in flight**, which is exactly the stale-checkout trap: computing readiness from
+  a worktree instead of `origin/main` had me about to ship a route with a note saying its UI was
+  still to come, when the UI was already on `main`. Caught by a `git diff origin/main` that showed
+  `SourceCreatePage.tsx` as a DELETION. Rebased `--onto origin/main` and integrated for real: the
+  create screen now opens with a paste-a-URL lookup that offers matching recipes and seeds the
+  form's own fields from the resolved spec, so what saves is what the user reviewed. (2)
+  `packs/connectors.py` is NOT a half-present connector concept — it is AGENT-PACKS §3.3's
+  MCP-connector catalog (credentials, `mcp.json` servers, substitution) and shares nothing with a
+  knowledge connector pack but the word; it was read before designing and correctly left alone. (3)
+  `knowledge/connectors/` (`BaseConnector`, `WebUrlConnector`) is the bookmark-scrape fetch leg the
+  §9 disposition table marks ABSORBED by web-source; also unrelated.
+  **Falsification: 17 mutations on live lines. Fourteen reded; THREE reded nothing, and all three
+  were FIXED rather than noted — one of them by deleting a mechanism.**
+  *(a) Removing the `builtins.__import__` wrapper reded nothing.* Investigated instead of accepted,
+  and the reason was measurable: under `python -I` exactly THREE denied names are pre-imported
+  (`os`, `os.path`, `posix`) and no others, so once those are evicted every denied import already
+  reaches the meta-path finder — the wrapper was a second path to the same refusal. It was
+  **DELETED** (a dual path this project does not keep, and an untested layer is decoration rather
+  than defence), and `test_each_fence_mechanism_is_named_in_the_harness_and_none_is_redundant` now
+  pins the pre-imported set, so a future Python that pre-imported `socket` reds instead of silently
+  moving `import socket` out of the finder's jurisdiction. The three surviving mechanisms are each
+  individually falsifiable: removing the finder reds 7 tests; removing the eviction loop reds 2;
+  removing the neutering reds the gadget test with `DID NOT RAISE ParseFailure`.
+  *(b) Making the terminator optional AND (c) removing the `sys.modules["__main__"]` swap both reded
+  nothing* — and they turned out to be the same gap: NO test reached the `INCOMPLETE` branch at all
+  (the timeout path raises before the terminator is ever parsed, and the "partial line" fixture's
+  `SystemExit` is caught by the harness, which then emits a terminator normally), and nothing reached
+  the harness's own globals. Finding the actual hole took a probe: `rfind` alone does not defeat
+  forgery, because a script that **closes stdout after writing a forged terminator** leaves its own as
+  the last one — so the nonce is what defeats it, and `sys.modules["__main__"]` is exactly how a script
+  would read the nonce. `test_a_script_cannot_forge_the_terminator_and_claim_an_intact_fence` now does
+  precisely that (read nonce → pop the fence → print a row → forge `{"fence": "intact"}` → close
+  stdout) and reds on BOTH mutations, the swap one with the outcome message `a forged terminator got a
+  batch accepted`. One test, three mechanisms given teeth.
+  **A fourth mutation reded on the WRONG line and the test was rewritten.** Dropping poll-time
+  `entry.validate()` reded `test_a_manifest_that_became_invalid_after_install_stops_polling`, but with
+  `assert 'fetchSpec.method' in "source 'releases' declares method 'POST'"` — i.e. `render_fetch`'s
+  OWN method check had caught it and the poll-time schema pass was never the thing under test. The
+  fixture now mutates the installed manifest to an inline-literal `Authorization` header, which is
+  the case only the schema catches; the mutation then reds with
+  `assert [SourceItem(...)] == []` — a poll that fetched and ingested with a committed credential.
+  **The other thirteen reded correctly, with the exact message:** `DENIED_MODULES = frozenset()` →
+  `assert '_socket' in frozenset()` plus two `DID NOT RAISE ParseFailure` (this one is kept IN-TREE as
+  `test_the_socket_proof_is_not_vacuous`, which asserts the real loopback listener DOES accept a
+  connection once the fence is empty, so the proof cannot rot silently); `_rows_from` tolerating a bad
+  line → `DID NOT RAISE`; advancing the cursor on a parse failure →
+  `assert '{"etag": "e"}' == '{"etag": "old"}'`; the renderer's URL-secret guard → `DID NOT RAISE
+  PackConfigError`; `_default_secret` returning `""` → `DID NOT RAISE`; `normalize_row`'s
+  http(s)-scheme check → `assert 2 == 0` (two items ingested, one of them a `javascript:` link); the
+  manifest's inline-credential-header rule → an empty error list; `resolve_spec` filling a missing
+  capture group with a blank → `DID NOT RAISE KeyError`; a recipe pattern matching everything → 8
+  tests including `test_an_uncovered_url_matches_nothing_rather_than_guessing`; and `validate_recipe`
+  dropping the capture-group rail → `assert False`.
+  **Two gaps the mutations exposed and closed, worth stating separately** because both were shipped
+  code nothing measured: `_default_secret` (the resolver that actually runs in production — every
+  other credential test injected a fake) and `normalize_row`'s url-scheme clause. Both now have their
+  own case.
+  **A FOURTH mutation reded nothing, and it caught a rail that only LOOKS like one.** The full suite
+  reded once on `test_spawn_ceiling_audit.py::test_every_spawn_site_is_classified` — a genuine repo
+  rail catching the new `subprocess.run`, classified in `_CEILING_WRAPPED` with the ceiling it
+  carries. Then, deleting `spawn_shim_argv(wrapped, PROFILE_TOOL)` from `run_parse_script` left that
+  audit **and every other test green**: its map asserts a site is *described* as ceiling-wrapped, not
+  that it *is*. That is the declared-but-inert shape one layer above the code, and it is
+  pre-existing for all fifteen mapped sites rather than something this atom introduced — so rather
+  than rewrite a shared audit, this atom's own claim was made falsifiable:
+  `test_the_spawn_really_carries_the_bounds_its_audit_entry_claims` reads the AST of
+  `run_parse_script` and asserts the four bounds are actually applied there. Removing the ceiling now
+  reds with `the tool resource ceiling is not applied`; swapping `build_child_env` for
+  `dict(os.environ)` reds with `the child inherits an unfiltered environment`.
+  **Gates:** `make lint` clean (black 1690 files, isort, flake8, mypy **874** source files);
+  `tests/test_connector_pack.py` = **80 passed** (79 + the spawn-bounds AST case); the rails `test_app_manifest.py` +
+  `test_provider_registry.py` + `test_entity_seam_handlers.py` + `test_apps_import_boundary.py` +
+  `test_action_provider_chokepoints.py` + `test_inert_surface_baseline.py` + `test_portability.py` +
+  `test_durability_inventory.py` + `test_api_manifest_drift.py` + `test_agent_reference.py` +
+  `test_roadmap_dag_derived.py` = **219 passed, 1 skipped**; full backend suite **20608 passed, 30
+  skipped, 12 xfailed, 0 failed** on the rebased tree. An earlier run had exactly one red —
+  `test_spawn_ceiling_audit.py::test_every_spawn_site_is_classified` on the new `subprocess.run` —
+  which was a real rail doing its job, not a flake. `reference/routes.md` + `index.md` regenerated in the same commit
+  (687 → 688 agent-callable routes, on top of WS-9's four) — the byte-compare rail.
+  **Frontend gate (this atom touches `web/`, so it is the FULL repo-wide run, never a path-scoped
+  subset):** `npm run typecheck --workspace web` clean, `npm test --workspace web` = **2692 passed
+  across 271 files**, `npm run build --workspace web` clean. That full run is what caught the
+  integration's one real defect: three repo-wide design ratchets
+  (`disabledReason.test.tsx` ×2, `disabledReasonTriage.test.ts`) reded on the new `Check` button
+  being disabled with no `disabledReason`, i.e. a keyboard user tabbing past an action that could
+  not say what was missing. A path-scoped vitest run would have shipped it. `docs/design/
+  consistency-audit.json` is regenerated because the reporter writes it as a side effect of that
+  run; `driftHits` (7) and `filesWithDrift` (6) are unchanged, so the integration added no drift.
+  **`test_inert_surface_baseline` reded once and was FIXED, not regenerated.** The new SDK export
+  `connector_pack_provider` counted as inert (`src/personalclaw/sdk/knowledge.py: 3 -> 4`) because the
+  census scans for `from personalclaw.sdk… import <name>` and the test suite was importing the factory
+  from the core module. The fix is the reader the census was asking for AND the more correct import:
+  the tests now reach the factory through the SDK facade, which is the exact line a pack's own
+  `provider.py` writes. The committed baseline is untouched.
+  **`pyproject.toml` gains `knowledge/sources/recipes/*.json` in `package-data`:** without that line
+  the wheel ships an empty recipe directory and every pasted URL silently looks uncovered — a product
+  regression with no error anywhere, which is why the shipped-count assertion is load-bearing rather
+  than cosmetic. No `web/` change, so no FE gate. No new config field, enum, trigger kind or
+  `_EDITABLE_CONFIG` entry.
+  **CHANGELOG: yes** — and this is the first WS atom that earns one. `WS-2`/`WS-3`/`WS-4`/`WS-5` all
+  declined because `store.create_source` had no non-test caller, and that is still true for creating a
+  source. But this atom ships two things a user reaches today: a connector pack installs and enables
+  through the ordinary app path and polls on the engine's schedule with no Sources UI in existence,
+  and `GET /api/knowledge/source-recipes` answers. The entry says exactly that and does not promise
+  the paste-URL create-flow UI, which is `WS-9`'s.

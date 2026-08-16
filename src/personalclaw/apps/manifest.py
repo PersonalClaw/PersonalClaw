@@ -698,6 +698,186 @@ class PlatformConfig:
 
 
 # ---------------------------------------------------------------------------
+# Connector-pack source scripts (WATCHED-SOURCES §7.1)
+# ---------------------------------------------------------------------------
+
+#: The HTTP methods a connector pack's ``fetchSpec`` may name. READ-ONLY on purpose: a
+#: connector pack exists to *watch* something, and a pack that could declare a POST would be
+#: an unattended write to somebody else's service on a timer, authorized once at install.
+#: A pack that genuinely needs a write graduates to a full ``KnowledgeSourceProvider``, where
+#: the code is reviewable instead of being a URL template in a manifest.
+PACK_FETCH_METHODS = frozenset({"GET", "HEAD"})
+
+#: The arg types a pack's ``argsSchema`` may declare. Flat and scalar BY DESIGN, not as a
+#: shortcut: an arg's only job is to be substituted into a URL template, and there is no
+#: substitution of a nested object into a URL. A flatter grammar than
+#: ``web_source.SPEC_SCHEMA``'s is therefore the correct grammar here, not a smaller one.
+PACK_ARG_TYPES = frozenset({"string", "integer", "boolean"})
+
+#: Header names whose value IS a credential. These must reference a ``{{secret:KEY}}``;
+#: a literal there is a secret committed into a manifest that ships to a Store, which is the
+#: same rule ``packs/connectors.py`` states as "schema-banned from carrying a value-bearing
+#: field". Kept in sync with ``knowledge_providers.pack_parse.SECRET_HEADERS``, which renders
+#: them (``test_connector_pack.py`` asserts the two sets are equal).
+PACK_SECRET_HEADERS = frozenset(
+    {"authorization", "proxy-authorization", "cookie", "x-api-key", "api-key"}
+)
+
+#: Any ``{{...}}`` in a fetch spec. Matched so an UNKNOWN placeholder is an error rather
+#: than a literal brace pair silently fetched as part of a URL.
+PACK_PLACEHOLDER_RE = re.compile(r"\{\{([^{}]*)\}\}")
+_PACK_ARG_REF_RE = re.compile(r"^args\.([a-z][a-z0-9_]*)$")
+_PACK_SECRET_REF_RE = re.compile(r"^secret:([A-Za-z_][A-Za-z0-9_]*)$")
+
+
+@dataclass
+class PackSourceEntry:
+    """One parse-only source a connector pack contributes (WATCHED-SOURCES §7.1).
+
+    ``script`` parses; it does not fetch. ``fetchSpec`` is a URL template plus method and
+    headers that the ENGINE renders and requests through ``net.fetch``, piping the body to
+    ``script`` on stdin. ``argsSchema`` declares the per-source variables a user supplies
+    (a repo name, a subreddit) that the template interpolates.
+
+    The split is the whole security story: the pack's contribution is a parser, and a parser
+    holds no network capability. See ``knowledge_providers/pack_parse.py`` for what enforces
+    that at runtime.
+    """
+
+    name: str = ""  # kebab-case; a WatchedSource's spec.pack_source references it
+    script: str = ""  # path relative to the app dir, .py
+    displayName: str = ""  # noqa: N815
+    description: str = ""
+    fetchSpec: dict[str, Any] = field(default_factory=dict)  # noqa: N815
+    argsSchema: dict[str, Any] = field(default_factory=dict)  # noqa: N815
+
+    def declared_args(self) -> list[str]:
+        """The arg names ``argsSchema`` declares (the only names a template may reference)."""
+        return [str(k) for k in self.argsSchema] if isinstance(self.argsSchema, dict) else []
+
+    def _validate_placeholders(self, raw: str, where: str) -> list[str]:
+        """Every ``{{...}}`` in ``raw`` must be a declared arg or a secret reference."""
+        errors: list[str] = []
+        declared = set(self.declared_args())
+        for token in PACK_PLACEHOLDER_RE.findall(raw):
+            token = token.strip()
+            arg = _PACK_ARG_REF_RE.match(token)
+            if arg:
+                if arg.group(1) not in declared:
+                    errors.append(
+                        f"source {self.name!r} {where} references undeclared arg "
+                        f"{arg.group(1)!r} (declare it in argsSchema)"
+                    )
+                continue
+            if _PACK_SECRET_REF_RE.match(token):
+                if where == "fetchSpec.url":
+                    # A secret in a URL lands in the egress audit row, the server's access
+                    # log and any redirect's Referer. Headers are the only place for one.
+                    errors.append(
+                        f"source {self.name!r} must not put a secret in fetchSpec.url "
+                        f"({{{{{token}}}}}); use a header"
+                    )
+                continue
+            errors.append(
+                f"source {self.name!r} {where} has unknown placeholder {{{{{token}}}}} "
+                f"(only {{{{args.<name>}}}} and {{{{secret:<KEY>}}}} exist)"
+            )
+        return errors
+
+    def validate(self) -> list[str]:
+        """Errors in this entry (empty means valid). Static — no app code is executed."""
+        errors: list[str] = []
+        if not self.name:
+            errors.append("source entry missing required field: name")
+        elif not KEBAB_RE.match(self.name):
+            errors.append(f"source name must be kebab-case, got: {self.name!r}")
+        if not self.script:
+            errors.append(f"source {self.name!r} missing required field: script")
+        else:
+            if ".." in self.script:
+                errors.append(f"source script contains path traversal: {self.script!r}")
+            if self.script.startswith("/"):
+                errors.append(f"source script must be relative to the app dir: {self.script!r}")
+            if not self.script.endswith(".py"):
+                errors.append(f"source script must be a .py file: {self.script!r}")
+        if not isinstance(self.argsSchema, dict):
+            errors.append(f"source {self.name!r} argsSchema must be an object")
+        else:
+            for arg_name, decl in self.argsSchema.items():
+                if not isinstance(decl, dict):
+                    errors.append(f"source {self.name!r} argsSchema.{arg_name} must be an object")
+                    continue
+                kind = str(decl.get("type", "string") or "string")
+                if kind not in PACK_ARG_TYPES:
+                    errors.append(
+                        f"source {self.name!r} argsSchema.{arg_name}.type must be one of "
+                        f"{sorted(PACK_ARG_TYPES)}, got: {kind!r}"
+                    )
+        if not isinstance(self.fetchSpec, dict):
+            errors.append(f"source {self.name!r} fetchSpec must be an object")
+            return errors
+        url = str(self.fetchSpec.get("url", "") or "")
+        if not url:
+            errors.append(f"source {self.name!r} missing required field: fetchSpec.url")
+        elif not url.lower().startswith(("http://", "https://")):
+            errors.append(f"source {self.name!r} fetchSpec.url must be http(s): {url[:80]!r}")
+        else:
+            errors.extend(self._validate_placeholders(url, "fetchSpec.url"))
+        method = str(self.fetchSpec.get("method", "GET") or "GET").upper()
+        if method not in PACK_FETCH_METHODS:
+            errors.append(
+                f"source {self.name!r} fetchSpec.method must be one of "
+                f"{sorted(PACK_FETCH_METHODS)}, got: {method!r}"
+            )
+        headers = self.fetchSpec.get("headers", {})
+        if not isinstance(headers, dict):
+            errors.append(f"source {self.name!r} fetchSpec.headers must be an object")
+        else:
+            for header, value in headers.items():
+                text = str(value)
+                errors.extend(self._validate_placeholders(text, f"fetchSpec.headers.{header}"))
+                if str(header).lower() in PACK_SECRET_HEADERS and "{{secret:" not in text:
+                    errors.append(
+                        f"source {self.name!r} fetchSpec.headers.{header} must reference a "
+                        f"{{{{secret:KEY}}}} rather than an inline value — a manifest ships "
+                        f"to a Store, so a literal there is a published credential"
+                    )
+        unknown = sorted(
+            set(self.fetchSpec) - {"url", "method", "headers", "accept", "description"}
+        )
+        if unknown:
+            errors.append(f"source {self.name!r} fetchSpec has unknown key(s) {unknown}")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"name": self.name, "script": self.script}
+        if self.displayName:
+            d["displayName"] = self.displayName
+        if self.description:
+            d["description"] = self.description
+        if self.fetchSpec:
+            d["fetchSpec"] = self.fetchSpec
+        if self.argsSchema:
+            d["argsSchema"] = self.argsSchema
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PackSourceEntry":
+        return cls(
+            name=str(data.get("name", "")),
+            script=str(data.get("script", "")),
+            displayName=str(data.get("displayName", "")),  # noqa: N815
+            description=str(data.get("description", "")),
+            fetchSpec=(  # noqa: N815
+                dict(data["fetchSpec"]) if isinstance(data.get("fetchSpec"), dict) else {}
+            ),
+            argsSchema=(  # noqa: N815
+                dict(data["argsSchema"]) if isinstance(data.get("argsSchema"), dict) else {}
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Provider declaration (extension system)
 # ---------------------------------------------------------------------------
 
@@ -922,6 +1102,8 @@ _KNOWN_FIELDS = frozenset(
         "dependencies",
         "provider",
         "providers",
+        # Connector-pack parse-only source scripts (WATCHED-SOURCES §7.1).
+        "sources",
         "native",
         "cli",
         "loggerRoots",
@@ -1025,6 +1207,16 @@ class AppManifest:
     # the per-app registry keying are unchanged.
     provider: ProviderConfig | None = None
     providers: list[ProviderConfig] = field(default_factory=list)
+
+    # --- Connector-pack sources (WATCHED-SOURCES §7.1) ---
+    # Parse-only source scripts this app contributes. Each declares a fetch spec the ENGINE
+    # performs (through ``net.fetch`` under the ``SOURCE`` egress policy) and a script that
+    # reads the body on stdin and emits ``SourceItem`` JSON lines on stdout. Static data: the
+    # scripts are never imported by core, only spawned under the parse fence. Present only on
+    # a connector pack; ``validate`` requires the matching ``knowledge``/``source`` provider
+    # declaration and the ``network`` permission, so the Store's consent surface tells the
+    # truth about what installing one licenses.
+    sources: list[PackSourceEntry] = field(default_factory=list)
 
     # --- Native — the ONE app-category flag ---
     # A ``native`` app ships INSIDE core (personalclaw/apps/native/) and is the
@@ -1144,7 +1336,57 @@ class AppManifest:
         for prov in self.all_providers():
             errors.extend(prov.validate())
 
+        errors.extend(self._validate_sources())
+
         return errors
+
+    def _validate_sources(self) -> list[str]:
+        """Errors in the connector-pack ``sources`` block (WATCHED-SOURCES §7.1).
+
+        Two cross-field rules make the kind COHERENT rather than merely well-formed, and both
+        are install-time refusals because both failures are otherwise silent:
+
+        * a ``sources`` block with no ``knowledge``/``source`` provider is a set of scripts
+          nothing can ever drive — the declared-but-inert shape this codebase keeps finding;
+        * a ``sources`` block without ``permissions.network`` makes the install-consent card
+          read "Network access: not declared" for an app whose entire purpose is scheduled
+          outbound fetching. ``network`` is disclosure and not containment — the card says so
+          in as many words (``installConsent.tsx``, and app-platform.md §permissions) — but
+          disclosure that reads the wrong way is worse than none, and the fetch happens
+          BECAUSE the pack asked for it even though core is what performs it.
+        """
+        errors: list[str] = []
+        if not self.sources:
+            return errors
+        seen: set[str] = set()
+        for entry in self.sources:
+            errors.extend(entry.validate())
+            if entry.name:
+                if entry.name in seen:
+                    errors.append(f"duplicate source name: {entry.name!r}")
+                seen.add(entry.name)
+        has_source_provider = any(
+            p.type == "knowledge" and "source" in p.capabilities for p in self.all_providers()
+        )
+        if not has_source_provider:
+            errors.append(
+                "sources[] requires a provider with type 'knowledge' and the 'source' "
+                "capability — without one the scripts are declared and unreachable"
+            )
+        if not self.permissions.network:
+            errors.append(
+                "sources[] requires permissions.network: core performs the fetch, but it "
+                "happens because this pack asked, and without the declaration the install "
+                "card reads 'Network access: not declared'"
+            )
+        return errors
+
+    def pack_source(self, name: str) -> "PackSourceEntry | None":
+        """The declared source named ``name``, or None — what a WatchedSource spec resolves."""
+        for entry in self.sources:
+            if entry.name == name:
+                return entry
+        return None
 
     def all_providers(self) -> list[ProviderConfig]:
         """Every provider this app registers — the single ``provider`` (if any)
@@ -1219,6 +1461,8 @@ class AppManifest:
             providers_d = [p for p in providers_d if p]
             if providers_d:
                 d["providers"] = providers_d
+        if self.sources:
+            d["sources"] = [s.to_dict() for s in self.sources]
         if self.native:
             d["native"] = True
         if self.tags:
@@ -1311,6 +1555,11 @@ class AppManifest:
             platform=platform_cfg,
             provider=provider_cfg,
             providers=providers_cfg,
+            sources=[
+                PackSourceEntry.from_dict(s)
+                for s in data.get("sources", [])
+                if isinstance(s, dict) and s.get("name")
+            ],
             native=bool(data.get("native", False)),
             tags=[str(t) for t in data.get("tags", []) if t],
             extra=extra,

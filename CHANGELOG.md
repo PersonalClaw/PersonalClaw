@@ -92,6 +92,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   any point. Saving an arXiv or PDF link used to run the HTML page-scraper over PDF bytes and store
   the resulting noise; it now fetches the document itself. Originals are cached by content hash, so
   re-saving the same paper, or regenerating an item, costs no network at all.
+- **An app can now teach PersonalClaw to watch a source it has never heard of — by shipping a
+  parser, not a client.** A connector pack is an ordinary app that declares which URL to fetch
+  (a template, plus which of your saved credentials to send as a header) and a small script that
+  turns the response into knowledge items. PersonalClaw does the fetching itself, through the same
+  guarded network path everything else uses, and hands the downloaded body to the pack's script on
+  standard input. **The script never gets a network connection of its own** — it cannot open a
+  socket, start a process, or call into system libraries, and if it tries, the whole batch is
+  thrown away rather than partly imported. The same is true of a script that misbehaves by
+  accident: garbage output, a run that stops halfway, or an item missing the fields needed to
+  recognise it again produces zero items and a specific reason, never a half-imported feed that
+  looks like a source that went quiet. Packs are bounded by a time limit and size caps, and a
+  pack must ask for network permission in its manifest, so what you are agreeing to is visible
+  at install.
+- **Watching a site you have a link to now starts with "we already know this one".** The
+  Sources create screen opens with a box for the URL you already have: paste it and PersonalClaw
+  checks a bundled directory of site recipes before you touch a single setting. It covers GitHub
+  releases and trending, Hacker News, PyPI project releases, a subreddit, a Substack newsletter,
+  and generic changelog/release-notes pages. Pick a match and the form arrives filled in from the
+  URL you pasted — a GitHub repository link becomes its releases feed, and the screen shows you
+  that it will be watching the feed rather than the page you typed. If nothing covers your URL it
+  says so plainly and you carry on choosing a kind yourself, exactly as before.
 
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you
