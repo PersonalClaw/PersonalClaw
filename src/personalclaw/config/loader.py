@@ -1342,6 +1342,29 @@ class MemoryConfig:
             "(more offered, more of it irrelevant).",
         ),
     )
+    graph_topology_in_context: bool = field(
+        default=False,
+        metadata=_meta(
+            "Topology Orientation Block",
+            "At the start of a new session, add a tiny map of the neighbourhoods in "
+            "your memory graph ('people around project X', 'the tools cluster') so the "
+            "assistant knows which areas exist before it searches. Off by default: it "
+            "spends a little context on every new session, and it says nothing useful "
+            "until the graph has enough links to form distinct groups.",
+        ),
+    )
+    holder_attribution: bool = field(
+        default=False,
+        metadata=_meta(
+            "Attribute Claims to Who Said Them",
+            "Record WHOSE claim a memory is (you, the assistant, a named person, or an "
+            "outside source) instead of storing everything as plain fact, and render it "
+            "that way in context ('Alex believes…'). Second-hand claims are capped "
+            "lower, and a lower-authority claim can never retire something you said. "
+            "Off by default — with it off, every memory is stored unattributed exactly "
+            "as before.",
+        ),
+    )
 
 
 @dataclass
@@ -4092,6 +4115,12 @@ class AppConfig:
                 push_min_confidence=max(
                     0.0, min(1.0, float(memory_data.get("push_min_confidence", 0.7) or 0.7))
                 ),
+                # MEMORY-GRAPH-AND-VAULT §2.4 / §4.2 (MGAV-5). Both opt-in and both read
+                # plainly, NOT through `_guard_flag`: a flag that fails ON would turn on
+                # context spend (topology) and change how every fact renders (attribution)
+                # for existing users on upgrade, which is the opposite of a safe default.
+                graph_topology_in_context=bool(memory_data.get("graph_topology_in_context", False)),
+                holder_attribution=bool(memory_data.get("holder_attribution", False)),
             ),
             dashboard=DashboardConfig(
                 url=dashboard_data.get("url", ""),

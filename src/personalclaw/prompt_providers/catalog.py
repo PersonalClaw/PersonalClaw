@@ -1428,6 +1428,16 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
     # Each describes one JSON key the consolidation agent may return. The runtime
     # selects which apply (by vector/migration/skill flags) and numbers them into
     # the ``task-memory-consolidation`` envelope.
+    # The Decide phase's instructions (MEMORY-GRAPH-AND-VAULT §4.1 — MGAV-5). A SNIPPET,
+    # not a use-case-bound prompt: it is one fragment of the consolidation flow rather
+    # than a second consolidation the user would bind a separate model to, and rendering
+    # "" when it can't resolve is exactly the fail-safe the Decide phase wants (no
+    # instructions → skip Decide → write as before).
+    BundledSnippet(
+        name="memory-decide",
+        filename="memory-decide.md",
+        description="Memory formation Decide phase: ADD/UPDATE/SUPERSEDE/NOOP verdicts over extracted candidates and their existing overlaps.",  # noqa: E501
+    ),
     BundledSnippet(
         name="consolidation-key-history",
         filename="consolidation-history.md",
@@ -1442,6 +1452,13 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
         name="consolidation-key-episodic",
         filename="consolidation-episodic.md",
         description="Consolidation key: episodic (conversation fragments array).",
+    ),
+    # Composed only when `memory.holder_attribution` is on (MGAV-5), so the default
+    # extraction prompt is byte-identical to before the axis existed.
+    BundledSnippet(
+        name="consolidation-key-claims",
+        filename="consolidation-claims.md",
+        description="Consolidation key modifier: claim.* keys with holder/weight attribution (opt-in).",  # noqa: E501
     ),
     BundledSnippet(
         name="consolidation-key-preferences",

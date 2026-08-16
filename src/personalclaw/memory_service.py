@@ -331,6 +331,15 @@ class MemoryService:
                 manifest = vs.get_l1_manifest()
                 if manifest:
                     parts.append(manifest)
+                # Community topology (MEMORY-GRAPH-AND-VAULT §2.4 — MGAV-5): orientation,
+                # not recall. Placed in the L1-manifest region because that is what it
+                # is: a manifest of AREAS rather than of facts. New sessions only comes
+                # for free — `get_context` is called from `build_session_context`, which
+                # only runs on a new session — so no is_new_session parameter has to
+                # thread through here to earn that guarantee.
+                topology = self.topology_block()
+                if topology:
+                    parts.append(topology)
             else:
                 semantic_ctx = vs.get_semantic_context(query_text=query, cap=semantic_cap)
                 if semantic_ctx:
@@ -354,6 +363,46 @@ class MemoryService:
         """The always-on L1 manifest (top-N most-recalled facts), or ""."""
         vs = self._vs
         return vs.get_l1_manifest(cap=cap, limit=limit) if vs else ""
+
+    def topology_block(self) -> str:
+        """The community-topology orientation block, or "" (MEMORY-GRAPH-AND-VAULT §2.4).
+
+        Three independent reasons to return "": the ``memory.graph_topology_in_context``
+        toggle is off (the default), the entity graph is off, or the graph has fewer than
+        two communities. Config is read live, so the toggle takes effect on the next
+        session rather than at the next restart.
+        """
+        vs = self._vs
+        if vs is None or not getattr(vs, "graph_enabled", False):
+            return ""
+        try:
+            from personalclaw.config.loader import AppConfig
+
+            if not AppConfig.load().memory.graph_topology_in_context:
+                return ""
+        except Exception:  # noqa: BLE001 — an unreadable config means "leave it off"
+            return ""
+        try:
+            from personalclaw import memory_topology
+
+            return memory_topology.topology_block(vs.db)
+        except Exception:  # noqa: BLE001 — orientation must never cost a session
+            logger.debug("topology block unavailable", exc_info=True)
+            return ""
+
+    def refresh_topology(self) -> int:
+        """Recompute + persist entity communities. Returns the number written.
+
+        Called on the consolidation maintenance cadence (§2.4), never on a turn: Louvain
+        over the whole graph is cheap but not free, and orientation that shifts mid-session
+        would make the block a moving target.
+        """
+        vs = self._vs
+        if vs is None or not getattr(vs, "graph_enabled", False):
+            return 0
+        from personalclaw import memory_topology
+
+        return memory_topology.write_communities(vs)
 
     def active_recall(self, query_text: str, *, cap: int = 2000) -> str:
         """Query-relevant episodic context for THIS turn (active recall), or "".
@@ -1475,12 +1524,19 @@ class MemoryService:
         return vs.get_semantic(key) if vs else None
 
     def set_semantic(
-        self, key: str, value: object, confidence: float, source: str
+        self,
+        key: str,
+        value: object,
+        confidence: float,
+        source: str,
+        *,
+        holder: str | None = None,
+        weight: float | None = None,
     ) -> "tuple[SemanticRejectCode, str] | None":
         vs = self._vs
         if vs is None:
             return None
-        return vs.set_semantic(key, value, confidence, source)
+        return vs.set_semantic(key, value, confidence, source, holder=holder, weight=weight)
 
     def delete_semantic(self, key: str, source: str = "user_explicit") -> bool:
         vs = self._vs
