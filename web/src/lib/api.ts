@@ -399,7 +399,15 @@ export interface AppCatalogEntry {
   crons?: AppCronSummary[]
 }
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
-export interface AppScanReport { verdict: string; findings: AppScanFinding[]; tier?: string }
+/** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
+ *  in-tree key's identity (only meaningful when signed); `reason` is the refusal text an
+ *  `invalid` state must show. An `invalid` state means the install was REFUSED — it is
+ *  never consentable, unlike a warning verdict. `unsigned` is normal for community apps. */
+export interface AppSignature { state: string; signer: string; reason: string }
+export interface AppScanReport {
+  verdict: string; findings: AppScanFinding[]; tier?: string
+  signature?: AppSignature | null
+}
 export interface AppInstallResult {
   ok: boolean; name: string; error: string; needs_consent: boolean
   scan: AppScanReport | null

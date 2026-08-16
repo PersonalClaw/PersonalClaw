@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import {
-  ShieldAlert, ShieldCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, Copy, Check, Loader2,
+  ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock,
+  Bot, Globe, Copy, Check, Loader2,
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import type { AppSummary, AppInstallResult, AppCronSummary } from '../../lib/api'
-import type { GuardedResult } from '../../lib/useGuardedInstall'
+import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport } from '../../lib/api'
+import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedInstall'
 
 /** The APP INSTALL-CONSENT surface — everything a user is shown BEFORE an app is
  *  installed, and the override they must click if the supply-chain scanner objects.
@@ -24,6 +25,38 @@ import type { GuardedResult } from '../../lib/useGuardedInstall'
  *  catalog already returned, or over a scan verdict the install endpoint returned; the
  *  caller owns the request. */
 
+/** SH-3: the artifact-signature row. Shown on the SAME surface as the scan verdict,
+ *  because provenance and content are two different questions a user consents over and
+ *  a UI that shows only one invites "it scanned clean" to be read as "it's from who it
+ *  says". `invalid` is a refusal the user cannot override, so it renders as danger, not
+ *  as a warning to click through. `unsigned` is stated plainly rather than hidden —
+ *  community apps are unsigned by design and that is the honest, non-alarming default. */
+function SignatureRow({ signature }: { signature: NonNullable<AppScanReport['signature']> }) {
+  const s = signature.state
+  const tone = s === 'invalid' ? 'text-danger' : s === 'signed' ? 'text-ok' : 'text-on-surface-low'
+  const Icon = s === 'invalid' ? ShieldAlert : s === 'signed' ? BadgeCheck : ShieldQuestion
+  const label =
+    s === 'signed' ? `Signed by ${signature.signer || 'a trusted key'}`
+      : s === 'invalid' ? 'Invalid signature — install refused'
+        : 'Unsigned — community tier'
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      <div className={`flex items-center gap-2 ${tone}`} data-type="body-m">
+        <Icon size={16} /> {label}
+      </div>
+      {s === 'invalid' && signature.reason && (
+        <div data-type="body-s" className="text-danger">{signature.reason}</div>
+      )}
+      {s === 'unsigned' && (
+        <div data-type="body-s" className="text-on-surface-low">
+          No maintainer signature, so PersonalClaw can't confirm who published this. It still
+          installs — the security scan above is what gates it.
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan']> }) {
   const v = scan.verdict
   const tone = v === 'dangerous' ? 'text-danger' : v === 'warning' ? 'text-warn' : 'text-ok'
@@ -31,6 +64,7 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
   return (
     <div className="rounded-m border border-outline-variant bg-surface-high p-m">
       <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}</div>
+      {scan.signature && <SignatureRow signature={scan.signature} />}
       {scan.findings.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1">
           {scan.findings.slice(0, 8).map((f, i) => (
@@ -77,19 +111,20 @@ export function ConsentModal({ label, result, busy, onConfirm, onClose }: {
       </Modal>
     )
   }
-  const dangerous = result.scan?.verdict === 'dangerous'
+  // A terminal refusal (dangerous content OR an invalid signature) explains itself and
+  // offers no override; anything else here is a consentable warning.
+  const refusal = terminalRefusalReason(result)
   return (
     <Modal title={`Install ${label}`} icon={<ShieldAlert size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 420 }}>
         <p data-type="body-s" className="text-on-surface-low">
-          {dangerous
-            ? 'The security scanner flagged dangerous content. This app cannot be installed.'
-            : 'The security scanner raised warnings. Review the findings — you can install anyway if you trust the source.'}
+          {refusal
+            || 'The security scanner raised warnings. Review the findings — you can install anyway if you trust the source.'}
         </p>
         {result.scan && <ScanReport scan={result.scan} />}
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          {!dangerous && (
+          {!refusal && (
             <Button variant="primary" disabled={busy} onClick={onConfirm}>
               {busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
             </Button>

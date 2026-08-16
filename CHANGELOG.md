@@ -10,6 +10,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **App installs now check who published the bundle, not just what's in it.** A publisher can sign
+  an app bundle, and the Store verifies that signature on the staged copy **before** the security
+  scan and before anything reaches your app tree — so a bundle whose contents don't match its
+  signature never gets as far as running its install hook. The install-consent surface now says
+  which it is: "Signed by PersonalClaw", "Unsigned — community tier", or a refusal that names the
+  file that doesn't match. The signature covers **every file** in the bundle, not just its manifest,
+  so swapping a script after signing is caught. Unsigned apps install exactly as they always have,
+  at community tier — signing earns extra trust, it is not a new wall. An *invalid* signature is
+  refused outright and cannot be clicked through, because a tampered artifact isn't a risk you're in
+  a position to accept. Maintainers sign with `scripts/sign_app.py`; the scheme, the rejected
+  alternatives and the workflow are in `docs/security/signing.md`.
+
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you
   can bind a different one per surface — one voice in the web dashboard, another for a Slack
