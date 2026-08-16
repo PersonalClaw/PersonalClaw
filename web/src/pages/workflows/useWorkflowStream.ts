@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type WorkflowRunDetailData } from '../../lib/api'
 
 // The COMPLETE set of events the per-run workflow SSE can emit after the initial
@@ -92,8 +92,13 @@ export function useWorkflowStream(
 ) {
   const ref = useRef(handlers)
   ref.current = handlers
+  // Is the FEED alive? EventSource retries forever, so `onerror` is not a failure — it is the
+  // transport telling us it is between attempts. Without surfacing that, a dead stream and a quiet
+  // one look identical: the run just stops updating and nothing says why.
+  const [connected, setConnected] = useState(false)
 
   useEffect(() => {
+    setConnected(false)
     if (!enabled || !runId) return
     let es: EventSource | null = null
     try { es = new EventSource(api.workflowRunStreamUrl(runId)) } catch { return }
@@ -115,7 +120,12 @@ export function useWorkflowStream(
       try { data = JSON.parse((e as MessageEvent).data) } catch { return }
       for (const m of unwrapBatch(data)) ref.current.onLifecycle(m.event, m.data)
     })
-    es.onerror = () => { /* transient — EventSource retries automatically */ }
-    return () => { es?.close() }
+    es.onopen = () => setConnected(true)
+    // Still transient — the browser reconnects on its own. We only record that the feed is
+    // currently down so the view can say so; we never close or resubscribe here.
+    es.onerror = () => setConnected(false)
+    return () => { es?.close(); setConnected(false) }
   }, [runId, enabled])
+
+  return { connected }
 }
