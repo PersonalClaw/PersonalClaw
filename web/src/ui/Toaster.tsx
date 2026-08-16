@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, type Transition } from 'framer-motion'
 import { Info, CheckCircle2, AlertCircle, X } from 'lucide-react'
 import { dragElastic, spring, swipeDismiss } from '../design/motion'
+import { playCue } from '../design/soundCues'
 
 interface Toast { id: number; message: string; level: 'info' | 'success' | 'error' }
 
@@ -37,6 +38,11 @@ export function Toaster() {
       const message = String(d.message ?? '').trim()
       if (!message) return
       const level: Toast['level'] = ['info', 'success', 'error'].includes(d.level) ? d.level : 'info'
+      // The error cue point (PERSONALITY-THEMES §S2). ERRORS ONLY — the assertive
+      // live region below draws the same line, and a chime on every "Saved" would
+      // make the feature unusable within a minute. Silent unless the user opted in;
+      // every gate lives inside playCue, so this call site carries no policy.
+      if (level === 'error') playCue('error')
       const id = ++seq
       setToasts((prev) => [...prev, { id, message, level }])
       window.setTimeout(() => dismiss(id), 5000)

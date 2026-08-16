@@ -11,7 +11,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
 | `PT-1` | ✅ | S1: personality registry + identity behaviors + persona-snippet backend generalization | — | personalities.ts registry + closed behavior block typechecks with personalclaw/retro-terminal/claw-arcade entries; new phosphor scheme passes schemeContrast.test.ts (AA both modes) without weakening it; PersonalityProvider swaps document.title/favicon/data-personality/wordmark and restores byte-identical defaults on deactivate (survives reload); rename picker is propose-don't-write (unchecked leaves agent.bot_name untouched, checked patches it); backend _PERSONA_THEMES closed set replaces the hardcoded lumon branch with lumon as entry #1 and rejects unknown theme values; personalityA11y.test.ts structural tests green; make lint + make test + web typecheck/vitest/build green (per 2026-07-28 execution log) |
-| `PT-2` | ⬜ | S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points | `PT-1` | web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and plays the closed cue set (turn_complete, approval_needed, error); a master toggle (default OFF) added to the Personality picker; cues wired at turn-settled (ChatPage), approval-requested (useApprovalToasts), and error toast (Toaster); no sound ever plays with toggle off, under prefers-reduced-motion, or when document.hidden (tests mock the media query); CI grep confirms zero audio files shipped in the bundle |
+| `PT-2` | ✅ | S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points | `PT-1` | web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and plays the closed cue set (turn_complete, approval_needed, error); a master toggle (default OFF) added to the Personality picker; cues wired at turn-settled (ChatPage), approval-requested (useApprovalToasts), and error toast (Toaster); no sound ever plays with toggle off, under prefers-reduced-motion, or when document.hidden (tests mock the media query); CI grep confirms zero audio files shipped in the bundle |
 | `PT-3` | ⬜ | S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell | `PT-1` | SHELL_ELEMENTS closed {id -> lazy component} map added to personalities.ts; web/src/ui/personality/TerminalStrip.tsx renders at the App-shell slot only under its personality (aria-hidden, pointer-events-none, static under reduced-motion following DotGlow discipline); axe a11y pass unchanged; reduced-motion renders a static frame |
 | `PT-4` | ✅ | S2: error-treatment variants on ErrorBoundary + IncidentBanner (skin-only) | `PT-1` | ErrorBoundary fallback and IncidentBanner accept an optional visual variant id from the personality context (visual skin only: same copy, same role=alert, same actions, AA-checked); forced error under each personality renders its treatment; under a standard scheme both are pixel-identical to today |
 | `PT-5` | ⬜ | S2: finish claw-arcade proof + extend personalityA11y.test.ts for the new closed maps | `PT-2`, `PT-3`, `PT-4` | claw-arcade proof fleshed out (expressiveness preset via runtime dials, sparkle dot shape, coin-blip cue); personalityA11y.test.ts extended to go red on unknown base scheme, dangling shellElement/errorTreatment id, and any cue declared without the master-toggle gate; both proof personalities fully switchable |
@@ -29,11 +29,45 @@ Design 'S1 — The personality registry + identity behaviors' and 'S1 — Person
 
 ### `PT-2` — S2: soundCues synth + master toggle (default OFF) + cue wiring at the three cue points
 
-**Status:** todo
+**Status:** done
 
 Design 'S2 — Sound cues ...' (soundCues.ts); Task breakdown Session 2 T2.1; Contract C2 (CueRecipe/playCue)
 
 **Done when:** web/src/design/soundCues.ts lazily creates one gesture-gated AudioContext and plays the closed cue set (turn_complete, approval_needed, error); a master toggle (default OFF) added to the Personality picker; cues wired at turn-settled (ChatPage), approval-requested (useApprovalToasts), and error toast (Toaster); no sound ever plays with toggle off, under prefers-reduced-motion, or when document.hidden (tests mock the media query); CI grep confirms zero audio files shipped in the bundle
+
+**DONE.** `web/src/design/soundCues.ts` synthesises three earcons — `turn_complete`,
+`approval_needed`, `error` — from oscillator + gain envelopes; the closed set is a union type,
+so `playCue('ka-ching')` does not compile and `CUES` is a total `Record`, so a fourth member
+cannot be added without a recipe. **All three suppressors live inside `playCue`, not at the
+three call sites**: a gate a caller can forget to apply is not a gate, and locating them once
+means the wiring is three unconditional one-liners with no policy of their own. Sound requires
+the localStorage key `soundCues` to hold the literal `'on'` — default-OFF is a property of the
+comparison, not a `?? false`, so no truthy leftover (`'1'`, `'true'`) can enable audio by
+accident. **One AudioContext, and `playCue` never builds it**: construction sits in one private
+function with two gesture-scoped callers (the toggle's own click, and the one-shot
+pointerdown/keydown primer `armCueAudio()` that `App` arms at mount), because a context built
+without user activation comes back permanently suspended and a second one leaks an audio
+thread. A recipe's gain is clamped to `MAX_GAIN` (0.1) so no future cue can startle a
+headphone user. **Zero audio files** is a rail, not a claim: `noAudioAssets.test.ts` sweeps
+`web/public` + `web/src` + `web/dist` (517 built files at measurement) and separately proves
+the cue module reaches for no audio FILE by any route — comments stripped first, because the
+module's own header names `HTMLAudioElement` and `new Audio(` to explain why it avoids them.
+Cue points: `ChatPage`'s streaming→settled branch in `markStreaming` (the one transition, so a
+cue can't fire on a no-op re-render), `useApprovalToasts` **after** its dedupe + active-session
+guards (one nudge per approval, silent on a reconnect re-broadcast), and `Toaster` for
+`level: 'error'` **only** — the same line the assertive live region draws.
+
+**Falsified 15 ways**, every one red: defaulting the toggle on (4 red); deleting each
+suppressor alone (toggle 4, reduced-motion 2, `document.hidden` 1 — the independence is real,
+because each suppressor test asserts the *other two* are still clear); eager construction at
+import (4) and `playCue` constructing its own context (1); removing / mislocating / commenting
+out each of the three cue sites; cueing on every toast level; removing the gain clamp and its
+negative floor; planting an audio asset in `web/public` and in the built `web/dist`; and
+neutering each vacuity floor (matcher, tree-walk, comment-stripper). Two mutations initially
+reded nothing and were covered rather than deleted (the negative-gain floor, the
+resume-a-suspended-context-on-enable path). One measured DEFECT, fixed: `armCueAudio()` armed
+before asking whether the platform has Web Audio at all, holding a pointerdown+keydown listener
+for the life of the page on a browser that could never satisfy it.
 
 ### `PT-3` — S2: shell-element closed registry + TerminalStrip scanline component mounted at App shell
 

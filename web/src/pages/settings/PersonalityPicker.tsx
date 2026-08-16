@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { Check, Sparkles } from 'lucide-react'
+import { Check, Sparkles, Volume2 } from 'lucide-react'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY, type Personality } from '../../design/personalities'
+import { prefersReducedMotion } from '../../design/motion'
+import { setSoundCuesEnabled, soundCuesEnabled } from '../../design/soundCues'
 import { Modal } from '../../ui/Modal'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
@@ -20,6 +22,52 @@ import { api } from '../../lib/api'
  *  activating a personality **offers** the rename with a toggle rather than
  *  performing it. Propose-don't-write: nothing about your saved configuration
  *  changes unless you turn that toggle on. Switching back offers the reverse. */
+/** The MASTER sound-cue toggle (PERSONALITY-THEMES §S2, T2.1).
+ *
+ *  Default OFF, and this is the only surface that can turn it on. It lives beside
+ *  the personality tiles because a cue is part of an identity, not a notification
+ *  setting — and because that keeps the whole "how the app presents itself" story
+ *  in one place.
+ *
+ *  Flipping it ON is where the AudioContext gets built: this handler runs inside the
+ *  switch's own click, which is the user activation a browser demands before it will
+ *  let a page make sound. Priming it anywhere else would mean the first cue of the
+ *  session is silently swallowed.
+ *
+ *  The prose is deliberately specific about the two things a user would otherwise
+ *  have to discover by being annoyed: nothing is downloaded, and a background tab
+ *  stays quiet. */
+function SoundCuesToggle() {
+  const [on, setOn] = useState(soundCuesEnabled)
+  const flip = (v: boolean) => {
+    setSoundCuesEnabled(v)
+    setOn(v)
+  }
+  return (
+    <div className="mt-l flex items-start gap-m rounded-lg bg-surface-container px-m py-3">
+      <div className="mt-0.5 shrink-0">
+        <Toggle on={on} onChange={flip} size="sm" label="Sound cues" />
+      </div>
+      <div className="min-w-0">
+        <p data-type="body-s" className="flex items-center gap-1.5 text-on-surface">
+          <Volume2 size={13} aria-hidden className="shrink-0 text-on-surface-low" />
+          Sound cues
+        </p>
+        <p data-type="body-s" className="mt-0.5 text-on-surface-low">
+          A brief tone when a turn finishes, when an approval needs you, and when something
+          fails. Off by default. The tones are generated in the browser, so nothing is
+          downloaded — and a cue never plays while this tab is in the background.
+        </p>
+        {on && prefersReducedMotion() && (
+          <p data-type="body-s" className="mt-1 text-on-surface-low">
+            Silent right now: your system asks for reduced motion, which turns cues off too.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function PersonalityPicker() {
   const { personality, all, activate } = usePersonality()
   const [pending, setPending] = useState<Personality | null>(null)
@@ -100,6 +148,7 @@ export function PersonalityPicker() {
         })}
       </div>
 
+      <SoundCuesToggle />
       {pending && (
         <Modal title={`Switch to ${pending.label}?`} onClose={() => setPending(null)}>
           <div className="flex flex-col gap-m">
