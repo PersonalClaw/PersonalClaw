@@ -1349,8 +1349,20 @@ async def list_item_intents(request: web.Request) -> web.Response:
 
 
 def _consolidated_text(store, item: dict) -> str:
-    """Best available text for matching: pooled extracted contents, else item content."""
-    parts = [ec.get("text") or "" for ec in store.get_extracted_contents(item["id"])]
+    """Best available text for matching: pooled extracted contents, else item content.
+
+    Slice rows (WATCHED-SOURCES §5) are EXCLUDED. A slice is a role-sized view of text
+    already in the pool, so concatenating them alongside the extraction they were cut from
+    sends the same document two or three times — a silently multiplied token bill on a
+    model call, and duplicated evidence for the intent matching it feeds.
+    """
+    from personalclaw.knowledge.slicing import is_slice_row
+
+    parts = [
+        ec.get("text") or ""
+        for ec in store.get_extracted_contents(item["id"])
+        if not is_slice_row(ec.get("node_type") or "")
+    ]
     pooled = "\n\n".join(p for p in parts if p.strip())
     return pooled if pooled.strip() else (item.get("content") or "")
 

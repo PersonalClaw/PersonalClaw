@@ -41,6 +41,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   classification, private-address denial, per-redirect re-checks, byte caps and a per-poll request
   budget), a watched folder is refused if it points at a sensitive location, and scraped content is
   sanitised at extraction and fenced at every model boundary.
+- **Papers now ingest as papers.** Drop a PDF into the Knowledge Library, or save an arXiv link, a
+  DOI or any `.pdf` URL, and PersonalClaw reads its shape rather than just its words: it detects the
+  sections (abstract, introduction, method, results, discussion, conclusion, references) and stores
+  three purpose-cut views beside the full text — a *brief* for "what is this claiming", a *body* for
+  "how did they do it and what happened", with the bibliography stripped out of both, and a *meta*
+  cut of the front matter. The bibliography itself is parsed into references keyed by arXiv id, DOI,
+  title or author-and-year, so a paper arrives with its citations already listed. All of it is plain
+  deterministic parsing: the same file always yields the same sections, and no model is involved at
+  any point. Saving an arXiv or PDF link used to run the HTML page-scraper over PDF bytes and store
+  the resulting noise; it now fetches the document itself. Originals are cached by content hash, so
+  re-saving the same paper, or regenerating an item, costs no network at all.
 
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you

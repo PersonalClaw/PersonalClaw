@@ -2,6 +2,7 @@
 
 import os
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.security import is_sensitive_path
@@ -362,3 +363,142 @@ class FileReader:
         text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip()
         return text, {"format": "html"}
+
+
+# ── Structural PDF read (WATCHED-SOURCES §5) ──────────────────────────────────
+#
+# `_read_pdf` above answers "what does this document SAY"; a section detector needs
+# "how is it LAID OUT" — per-page text, per-line font size, and the PDF's own outline.
+# Both answers come from the SAME `pdfplumber` import at the top of this module, on
+# purpose: a second PDF library (or a second guarded import) would be a second place
+# for the PDF path to be present-or-absent, and callers would then have to know which
+# one degraded. `knowledge/slicing.py` consumes these types and never imports
+# pdfplumber itself, which is also what keeps the slicing cascade a pure function of
+# a plain dataclass — testable with no PDF at all.
+
+
+@dataclass(frozen=True)
+class PdfLine:
+    """One visual line of a PDF page: its text and the LARGEST glyph size on it.
+
+    Max rather than mean because a heading followed by a superscript footnote marker
+    must still read as heading-sized; averaging would drag it toward body size.
+    """
+
+    page: int  # 0-based page index
+    text: str
+    size: float
+    char_count: int
+
+
+@dataclass(frozen=True)
+class PdfStructure:
+    """A PDF's layout, as much as a text extractor can see.
+
+    ``outline`` holds the document's own bookmark TITLES in document order and NOT
+    their destinations: resolving a PDF destination to a page index goes through
+    named-destination indirection that many real papers get wrong, whereas a title
+    can simply be LOCATED in the extracted text — which is the offset the caller
+    needs anyway. ``outline`` is empty for the common case of a paper with no
+    bookmarks at all (measured: reportlab-generated PDFs carry none).
+    """
+
+    pages: tuple[str, ...] = ()
+    lines: tuple[PdfLine, ...] = ()
+    outline: tuple[str, ...] = field(default=())
+
+
+def read_pdf_structure(path: str) -> PdfStructure | None:
+    """Extract *path*'s layout, or None when it cannot be read as a PDF.
+
+    None (rather than an empty structure) is deliberate: "this is not a PDF we can
+    lay out" and "this is a PDF with one blank page" are different facts, and a caller
+    that must fall back to text-only detection needs to tell them apart.
+    """
+    if pdfplumber is None:
+        return None
+    if is_sensitive_path(path):
+        raise PermissionError(f"Refusing to read sensitive path: {path}")
+    try:
+        with pdfplumber.open(path) as pdf:
+            pages = tuple((p.extract_text() or "") for p in pdf.pages)
+            lines: list[PdfLine] = []
+            for index, page in enumerate(pdf.pages):
+                lines.extend(_lines_for_page(page, index))
+            return PdfStructure(pages=pages, lines=tuple(lines), outline=_outline_titles(pdf))
+    except Exception:
+        # Mirrors `_read_pdf`'s tolerance: a mislabeled or damaged file must not raise
+        # into an ingest. The caller degrades to text-only section detection.
+        return None
+
+
+#: Two glyph baselines within this many points are treated as the same visual line.
+#: PDF writers jitter the `top` of glyphs on one line by fractions of a point (and
+#: rounding to whole points would merge two lines of a tightly-leaded paper), so the
+#: grouping needs a tolerance rather than an equality test.
+#:
+#: Deliberately NOT in `slicing.py`'s single threshold block: this is a fact about PDF
+#: glyph layout — what counts as one visual LINE — and belongs to whoever reads the PDF.
+#: `slicing.py` imports from here, so hosting it there would invert the dependency; and
+#: §5's one-block rule exists for the DETECTION thresholds (heading ratio, kept pages,
+#: slice fractions) that drifted from their documentation, none of which live here.
+_LINE_TOLERANCE_PT = 1.5
+
+
+def _lines_for_page(page, index: int) -> list[PdfLine]:
+    """Group one page's glyphs into visual lines, top-to-bottom then left-to-right.
+
+    Sorted explicitly rather than trusting the content-stream order: a PDF may emit
+    glyphs in any order it likes, and a detector fed lines in stream order would
+    produce different sections for two files that render identically.
+    """
+    chars = [c for c in (page.chars or []) if (c.get("text") or "") != ""]
+    if not chars:
+        return []
+    chars.sort(key=lambda c: (round(float(c.get("top") or 0.0), 2), float(c.get("x0") or 0.0)))
+    out: list[PdfLine] = []
+    group: list[dict] = []
+    group_top = float(chars[0].get("top") or 0.0)
+    for char in chars:
+        top = float(char.get("top") or 0.0)
+        if group and abs(top - group_top) > _LINE_TOLERANCE_PT:
+            line = _line_from(group, index)
+            if line is not None:
+                out.append(line)
+            group = []
+            group_top = top
+        group.append(char)
+    line = _line_from(group, index)
+    if line is not None:
+        out.append(line)
+    return out
+
+
+def _line_from(chars: list[dict], index: int) -> PdfLine | None:
+    if not chars:
+        return None
+    text = "".join(str(c.get("text") or "") for c in chars).strip()
+    if not text:
+        return None
+    size = max(float(c.get("size") or 0.0) for c in chars)
+    return PdfLine(page=index, text=text, size=round(size, 2), char_count=len(chars))
+
+
+def _outline_titles(pdf) -> tuple[str, ...]:
+    """The PDF's bookmark titles in document order; empty when it has none."""
+    try:
+        entries = pdf.doc.get_outlines()
+    except Exception:
+        return ()  # pdfminer raises PDFNoOutlines for the (common) no-bookmarks case
+    titles: list[str] = []
+    for entry in entries:
+        try:
+            title = entry[1]
+        except (IndexError, TypeError):
+            continue
+        if isinstance(title, bytes):
+            title = title.decode("utf-8", "replace")
+        title = " ".join(str(title or "").split())
+        if title:
+            titles.append(title)
+    return tuple(titles)

@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WS-3` | ✅ | web-source: five-detector stack, selector configs, escalating fetch, preview+create flow | `WS-2` | Pasting a real changelog/blog URL yields a correct zero-LLM item preview via auto-detection and a homepage yields the pick-a-listing-page guidance; a manual selector config rescues a JS-lite failure (SC#1); a JS-heavy source succeeds only after render-tier escalation within max_requests with the escalation recorded, and allow_render:false degrades to a 'needs render tier' health status (SC#2) |
 | `WS-4` | ✅ | feed-source (RSS/Atom/JSON/CSV + HN/GitHub presets) + cross-feed dedupe + raw-mode FeedItemGraph | `WS-2` | Polling the same feed twice produces zero duplicate items and the same story arriving via HN Algolia AND RSS produces ONE item with both attributions (also_seen_in) (SC#3); a raw source's items reach FTS + vector search with zero LLM calls, asserted structurally that the raw graph contains no LLM nodes (SC#6) |
 | `WS-5` | ✅ | dir-source: signature-diff observer, debounce, archive-on-delete | `WS-2` | Editing three files in a watched dir within the debounce window re-indexes each exactly once (create->new item, modify->re-enqueue existing item); deleting one archives its item with metadata source_deleted_at and never hard-deletes (SC#5); first pass seeds only (no startup ingestion storm) |
-| `WS-6` | ⬜ | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) | `WS-2` | An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9) |
+| `WS-6` | ✅ | Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references) | `WS-2` | An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9) |
 | `WS-7` | ⬜ | Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff | `WS-2`, `EXT:AUTOMATION-SUBSTRATE:event bus for SourceItemIngested/SourcePollCompleted + morning-digest template + web_watch source_id consumption (interim JSONL spool until bus lands)` | Engine emits SourceItemIngested per new item + SourcePollCompleted per poll onto the substrate bus (interim spool until it lands); a saved source query matches new items with zero tokens and emits SourceQueryMatched, a subscribed Trigger fires, and the morning-digest template produces ONE knowledge item + one notification through notification_allowed() (SC#10); an injection payload in a scraped page cannot steer a digest run, fenced at the LLM boundary (SC#8) |
 | `WS-8` | ⬜ | Connector-pack app kind (parse-only, engine-mediated fetch) + source-recipe directory | `WS-1`, `WS-2`, `WS-3` | A connector-pack app installs and registers via KnowledgeTypeHandler; its parse-only script receives an engine-fetched body over stdin (never owns a socket) and emits SourceItem JSON lines that land as items; bundled recipes surface in the create flow; no socket opens outside net.fetch/web/render.py (SC#11 for the pack path) |
 | `WS-9` | ✅ | Sources UI in the Knowledge section + as-a-user validation | `WS-2`, `WS-3`, `WS-4`, `WS-5` | Sources UI in the Knowledge section lists all source kinds with health status, drives the paste-URL preview/tune/save create flow, shows the 'no AI' chip on raw sources, and offers listing-page/render-tier remediation affordances; validated as a user driving web/feed/dir sources end-to-end from the frontend |
@@ -184,11 +184,94 @@ aborting the cycle. Tests: `tests/test_dir_source.py`.
 
 ### `WS-6` — Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)
 
-**Status:** todo
+**Status:** done
 
 §5 Fetch-and-Slice (am.1): knowledge/slicing.py source-sniffing, cascaded section detection (thresholds in one constants block), purpose-cut slices as extracted_contents rows, sha256 source cache under knowledge_files_dir(), deterministic reference extraction; consumed by Document graph + chat file-drop + deep-research template; §11 step 4
 
 **Done when:** An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9)
+
+**DONE.** `knowledge/slicing.py` — sniff, cache, detect, cut, extract, in one module with **zero
+model calls**. Thresholds live in ONE `# ══ THRESHOLDS ══` block per §5's paperloom drift lesson, and
+each one is falsified by monkeypatching it and re-measuring the OUTCOME, so a constant the code does
+not actually read cannot pass.
+
+**Layout reading stays in `readers.py`, so the cascade stays pure.** `_read_pdf` answers "what does
+this say"; the new `read_pdf_structure` answers "how is it laid out" (per-page text, per-line max
+glyph size, bookmark titles) from the SAME guarded `pdfplumber` import — a second PDF library would
+be a second place for the PDF path to be present-or-absent. `slicing.py` therefore never imports
+pdfplumber and `slice_structure` is a pure function of a plain dataclass, which is why the cascade is
+tested with no PDF at all as well as end-to-end on a real generated one. Outline entries carry TITLES
+and not destinations: resolving a PDF destination goes through named-destination indirection real
+papers get wrong, whereas a title can simply be LOCATED in the extracted text — which is the offset
+the caller needs anyway.
+
+**Two ordering decisions carry the detection, and both are now falsifiable.** Tiers 1+2 are unioned
+and resolved by `(offset, strategy rank, title)`, so a heading found by the outline AND the font tier
+is ONE section attributed to the outline — the document declaring its own structure beats a
+typographic inference. Tier 3 (header regex) fires only when the union is EMPTY and proposes only
+headings it can NAME: a fallback that guessed at structure would be worse than one section spanning
+the document, because a wrong span silently truncates what an enrichment node reads. Body size is the
+CHAR-WEIGHTED mode with ties broken to the smaller size; line-counted, a paper with many short
+headings and few long body lines elects a heading size as "body" and then finds no headings at all.
+
+**Determinism is asserted across PROCESSES, not just twice in one.** Two in-process runs share a
+string-hash seed, so a detector that iterated a set would produce the same order twice and pass. The
+suite runs detection in three children under `PYTHONHASHSEED` 0/1/524287 and compares a digest —
+the only assertion that observes hash-order dependence. Removing the candidate `.sort()` reds it.
+
+**Slices are ranges, not concatenations, and require detected structure.** Each slice is built from
+MERGED char ranges so a body section overlapping a kept page cannot be emitted twice (a duplicated
+method section is a doubled token bill for whoever reads the slice). `brief` is clamped into
+[`BRIEF_MIN_FRACTION`, `BRIEF_MAX_FRACTION`] — the floor rounds UP, because a truncating floor lands
+below the fraction it claims to guarantee. The §5 kept-pages floor is **pre-bibliography** by
+construction: the last pages of a paper ARE its references, so a naive last-2 floor would re-import
+exactly what `body` strips. A document with no section the cascade could NAME gets no slices at all —
+without that gate `meta` ("the first pages") fired on every plain `.txt`, where it is byte-identical
+to the content. `full` is the fourth §5 role and is retrievable via `slice_for`, but never a row: it
+equals the item's own `content`, so a row would double every paper's storage to repeat a column.
+
+**The reference cascade is ordered by TRUST, and the order is load-bearing.** arXiv id → DOI →
+fuzzy title (sliding window ≥ `TITLE_MATCH_RATIO` against titles already keyed from THIS bibliography,
+which is the deterministic replacement for asking a model "same paper?") → author+year proximity. A
+bibliography entry carrying BOTH an arXiv id and a DOI is in the fixture precisely so the order can
+fail: it must key as arXiv, the identifier this codebase can re-fetch. An entry satisfying none of the
+four tiers is COUNTED as unkeyed, never given an invented key — a fabricated key is worse than an
+admitted gap because KNOWLEDGE-SYNTHESIS's later linking pass would treat it as real. §5 stops at
+extraction: a stored record carries `{key, tier, title, year}` and no resolved target.
+
+**The cache is two levels, and that is not redundancy.** Originals are content-addressed
+(`sha256-<hex>.pdf`, so two refs to identical bytes share one file) plus a `ref-<hash>.json` pointer
+recording which digest a normalized reference resolved to. Content-addressing ALONE cannot serve a
+re-ingest — computing the hash needs the bytes we are trying not to fetch — so the pointer is what
+makes SC#9's zero-network clause achievable. Both live in a `sources/` subdirectory of the existing
+`knowledge_files_dir()`; §5's "no new cache root" holds and the durability inventory's
+`workspace/knowledge/files` tree entry already claims it. The cached original's extension comes from
+the **content** sniff (`%PDF-`), not the URL or the server's content-type, so a DOI resolving to a
+publisher HTML page is not stored as `.pdf` and handed to the PDF reader.
+
+**Wiring: `document_slice` is a graph LEAF in both DocumentGraph and BookmarkGraph.** Feeding
+`consolidate` would header-concat three derived views onto the document itself, tripling the text the
+insights/embed stages read — asserted. `NodeOutput.pool_rows` is the engine's new multi-row
+mechanism: one node is one STEP, but a step whose product is a SET of role-sized views needs rows with
+names of its own (`slice:brief`, not `document_slice`), and three graph nodes would each re-run the
+same detection — giving one deterministic cascade three chances to disagree with itself.
+
+**Two defects found by the falsification pass, not by review.** (1) `pre_bib_pages[-0:]` is the WHOLE
+list, so setting `KEEP_LAST_PAGES = 0` turned the floor maximally ON instead of off — a zero
+keep-count now has to be spelled out. (2) `_consolidated_text` (the retroactive-intent LLM path)
+concatenates an item's ENTIRE pool, so slice rows would have sent every paper through a model two or
+three times; it now skips them via `is_slice_row`, which is why that constant is public.
+
+**A user reaches this today** through the two surfaces that exist: uploading a PDF to the Knowledge
+Library, and saving an arXiv/DOI/`.pdf` URL as a bookmark — which previously ran the HTML scraper over
+PDF bytes and stored binary noise. WS-9's Sources UI has NOT shipped (`WS-9` is still `todo`), so the
+watched-source create flow is not a route to this yet.
+
+Tests: `tests/test_knowledge_slicing.py` (56). No test opens a socket — `fetch_fn` is the primitive's
+only byte seam, and the default seam is pinned to `net.fetch` under the `SOURCE` egress policy by
+asserting the policy it is handed. The zero-network claim is asserted by giving the SECOND fetch a
+seam that RAISES, both at the primitive and through the real `ingest_item` pipeline: "the fetcher was
+called once" would pass a cache that fetched and discarded.
 
 ### `WS-7` — Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff
 
