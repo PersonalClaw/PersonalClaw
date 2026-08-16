@@ -87,6 +87,18 @@ describe('the treatment map is closed, complete, and non-vacuous', () => {
     expect(treatmentPaint(null)).toBeNull()
   })
 
+  it('an INHERITED key is not a treatment either, and does not throw downstream', () => {
+    // Found while closing the same hole in `getShellElement` (PT-3). `map[id] ?? null`
+    // reads the prototype chain, so these ids resolved to real objects — `Object`
+    // itself — and `treatmentPaint` then threw `Cannot read properties of undefined
+    // (reading 'bg')` while the ErrorBoundary was mid-render. Exactly the failure the
+    // test above exists to prevent, reached by a key nobody thought to try.
+    for (const inherited of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+      expect(getErrorTreatment(inherited), inherited).toBeNull()
+      expect(() => treatmentPaint(getErrorTreatment(inherited)), inherited).not.toThrow()
+    }
+  })
+
   it('a treatment carries presentation ONLY — no copy, action or role slot', () => {
     // The skin-only guarantee as a structural check: a treatment that could carry
     // text or a handler could reword or disarm a failure.

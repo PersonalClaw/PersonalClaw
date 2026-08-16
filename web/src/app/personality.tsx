@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, Suspense, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAppearance } from './appearance'
 import {
   DEFAULT_PERSONALITY,
   PERSONALITIES,
+  getShellElement,
   resolvePersonality,
   type Personality,
 } from '../design/personalities'
@@ -112,6 +113,32 @@ export function PersonalityProvider({ children }: { children: ReactNode }) {
   )
 
   return <PersonalityCtx.Provider value={value}>{children}</PersonalityCtx.Provider>
+}
+
+/** The App-shell slot for the active personality's decorative shell element
+ *  (PERSONALITY-THEMES §S2). Mounted once in `App.tsx`'s main shell.
+ *
+ *  The default identity — and every standard scheme, which has no `Personality`
+ *  entry at all — declares no `shellElement`, so this returns `null` and NOTHING
+ *  mounts. That is the additive guarantee stated as code: not a hidden element, not
+ *  an empty wrapper, no node in the tree. `personalityShellElement.test.tsx` asserts
+ *  absence under every personality that declares none and presence under the one
+ *  that does, so neither half can pass by always doing the same thing.
+ *
+ *  `Suspense fallback={null}` because the entry is lazy (see `SHELL_ELEMENTS`): the
+ *  chunk arrives a frame or two after the shell, and the honest placeholder for a
+ *  decoration is nothing at all. Deliberately NOT rendered in embed mode or on the
+ *  `#/companion` route — both return early with page content only, and a host
+ *  iframe inheriting the shell's atmosphere is exactly the nesting embed mode
+ *  exists to avoid. */
+export function PersonalityShellElement() {
+  const Element = getShellElement(usePersonality().personality.behavior.shellElement)
+  if (!Element) return null
+  return (
+    <Suspense fallback={null}>
+      <Element />
+    </Suspense>
+  )
 }
 
 /** The active personality's error-surface treatment, or `null` for an identity

@@ -21,6 +21,7 @@ import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
+import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
 import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
 import { LoadingStatus } from '../ui/ListScaffold'
@@ -487,6 +488,11 @@ function AppInner() {
         </ErrorBoundary>
       </main>
       <CommandPalette commands={commands} />
+      {/* The active personality's decorative shell element (PERSONALITY-THEMES §S2).
+          Renders NOTHING for the default identity and for every standard scheme;
+          under a personality that declares one it mounts an aria-hidden,
+          pointer-events-none overlay from the closed SHELL_ELEMENTS registry. */}
+      <PersonalityShellElement />
       <Toaster />
       <DialogHost />
       {/* Self-update step progression (WS `update_progress`) — shell-level so the

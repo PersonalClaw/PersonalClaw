@@ -31,7 +31,52 @@
  * without touching any of the machinery.
  */
 
+import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
+
 import type { ErrorTreatmentId } from './errorTreatments'
+
+/** The closed set of shell-element ids. A personality may mount ONE registered
+ *  decorative component at the App shell — never arbitrary code, never markup it
+ *  supplies itself. Adding a member is the deliberate act: `SHELL_ELEMENTS` below
+ *  is a total `Record`, so a new id without an entry is a compile error, and an id
+ *  that is not a member cannot be written into `behavior.shellElement` at all. */
+export type ShellElementId = 'terminal-scanlines'
+
+/** The closed shell-element registry: id → LAZY component.
+ *
+ *  Lazy is load-bearing, not a nicety. The shell mounts this from `App.tsx`, which
+ *  is in the entry chunk — a static import would put every personality's chrome in
+ *  the initial bundle of every user, including the (overwhelming) majority running
+ *  a standard scheme with no shell element at all. `lazy()` puts each one in its own
+ *  chunk that is fetched only when its personality is active. `shellElements.test.tsx`
+ *  asserts both halves: every value is a React lazy type, and nothing outside this
+ *  file statically imports `ui/personality/`.
+ *
+ *  Every registered component must satisfy the decorative contract — `aria-hidden`,
+ *  `pointer-events-none`, and a `data-shell-element` marker naming its own id — which
+ *  the same test enforces by RENDERING each entry rather than by reading its source. */
+export const SHELL_ELEMENTS: Record<ShellElementId, LazyExoticComponent<ComponentType>> = {
+  'terminal-scanlines': lazy(() =>
+    import('../ui/personality/TerminalStrip').then((m) => ({ default: m.TerminalStrip })),
+  ),
+}
+
+/** The registered component for an id, or `null` for `undefined` and for an id that
+ *  is not a member — the runtime half of "closed". Total and non-throwing to match
+ *  `getErrorTreatment`: this resolves during a shell render, where a throw would
+ *  blank the app over a piece of decoration.
+ *
+ *  `Object.hasOwn` rather than `map[id] ?? null`, because a plain index reads the
+ *  PROTOTYPE CHAIN: `'constructor'` and `'toString'` are not members, but they are
+ *  found, so `??` never fires and the caller is handed `Object` to render as a
+ *  component. That is not theoretical — the sibling `getErrorTreatment` had the same
+ *  shape and `treatmentPaint` threw on the object it returned (fixed alongside this;
+ *  see PT-3's execution log). An own-key test is what makes "closed" hold for every
+ *  string, not just the plausible ones. */
+export function getShellElement(id: string | undefined): LazyExoticComponent<ComponentType> | null {
+  if (!id || !Object.hasOwn(SHELL_ELEMENTS, id)) return null
+  return SHELL_ELEMENTS[id as ShellElementId]
+}
 
 /** Assistant-name + prompt-persona + chrome behaviors a personality may carry.
  *  Every field is optional: a personality that only recolors is valid. */
@@ -49,6 +94,13 @@ export interface PersonalityBehavior {
   uiDensity?: 'comfortable' | 'dense' | 'cli'
   /** Browser tab title. */
   documentTitle?: string
+  /** One decorative component mounted at the App shell — an id from the closed
+   *  `SHELL_ELEMENTS` map, never a component reference and never markup. The map's
+   *  contract (aria-hidden, pointer-events-none, static under reduced motion) is
+   *  what keeps this a purely visual layer: a shell element cannot be reached by a
+   *  pointer or by assistive tech, so it can add atmosphere but not content, not a
+   *  control, and not a second reading order. Omitted = nothing mounts. */
+  shellElement?: ShellElementId
   /** Skin for the two error surfaces (ErrorBoundary fallback, IncidentBanner) —
    *  an id from the closed `ERROR_TREATMENTS` map. Presentation only: the shape
    *  of a treatment has no room for copy, actions or roles, so a personality
@@ -95,6 +147,7 @@ export const PERSONALITIES: Personality[] = [
       faviconHref: '/favicon.svg',
       personaSnippet: 'persona-retro-terminal',
       uiDensity: 'cli',
+      shellElement: 'terminal-scanlines',
       errorTreatment: 'terminal-frame',
     },
   },

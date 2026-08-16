@@ -812,6 +812,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   (worst measured pairing 4.98:1). If you use a standard colour scheme — which is everyone who has
   not deliberately picked a personality — **nothing changes**: both surfaces render exactly the markup
   they did before, asserted against the previous release's output rather than promised.
+- **The Retro Terminal personality now lays a CRT raster over the whole shell.** Picking it in
+  Settings → Design recoloured the app and renamed the wordmark, but the shell itself still looked
+  like an ordinary web app — the one thing a terminal identity is supposed to feel like was missing.
+  It now draws a fine lattice of scanlines across the app with a single soft band travelling slowly
+  down it. The raster takes its ink from the active colour scheme rather than a fixed green, so it
+  belongs to whatever palette the personality names. **If you have Reduce Motion turned on, the band
+  is not drawn at all** and you get the still raster — and turning the system setting on or off takes
+  effect immediately, without reloading. The overlay cannot be clicked and is invisible to screen
+  readers, and it deliberately sits *under* dialogs, toasts and the update overlay, so anything asking
+  you to make a decision stays crisp. On any standard colour scheme — everyone who has not
+  deliberately picked a personality — **nothing renders and nothing downloads**: the overlay ships as
+  its own small chunk that is only fetched when a personality that uses it is active.
 
 - **A goal loop's judge verdict now shows you what the supervisor checked for itself.** When a loop
   declares something checkable — a verify command, or a named deliverable file — PersonalClaw does
