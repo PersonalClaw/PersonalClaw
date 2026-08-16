@@ -512,3 +512,48 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   folders/deploy/knowledge-ingest have no owner (ARTIFACTS-EVOLUTION owns iterate/diff/references, not
   these). All routed here as new sections. Channels (CHANNEL-EXPANSION) and distribution (DISTRIBUTION,
   DONE) DO have owners → re-homed as amendments, not duplicated. No code changed by this plan.
+- [2026-08-15][PEP-1] DONE: SP1.1 + SP1.2. `web/src/ui/PresetEmptyState.tsx` — `PresetCard` (icon,
+  title, cadence/summary, description, `onPick(prefill)`) over **`TileButton`**, so the card inherits
+  the kit's chrome + `focus-visible` ring instead of hand-rolling one, and `PresetEmptyState`
+  (headline, hint, 1/2-column grid, `footer` slot for the blank path); `prefill` is a type parameter
+  the primitive never reads. `pages/triggers/triggerPresets.ts` — four presets built by ONE `preset()`
+  factory so the id, the title and the cadence are declared once and used twice (id = catalog key AND
+  `?preset=`; title = card heading AND trigger name; cadence = summary line AND saved cron), and the
+  cadence label goes through the LOCALE seam: measured `en-US` "Every day · 8:00 AM" vs `de-DE`
+  "Every day · 8:00", Monday/Montag/月曜日. The seed rides the URL
+  (`#/triggers/new?kind=schedule&preset=<id>`) like `kind`/`pattern`, so a seeded flow is deep-linkable
+  and reload-safe; name+cadence seed as lazy `useState` initializers, the ACTION in an effect (its
+  config defaults come from the provider's fetched `settingsSchema`), `seedActionConfig` then the
+  preset's values so `notify`'s `kind: 'info'` default survives. **Gate:** `make lint` clean (black
+  1683 files, isort, flake8, mypy 869 files) · `tsc --noEmit` clean · full `npm test --workspace web`
+  **267 files / 2648 tests green** (token-lint caught an inline `maxWidth: '640px'` — fixed at source
+  to a `max-w-[640px]` class, not allowlisted) · `npm run build` clean, 89 ui-docs components.
+  **42 new tests across 5 files** (2612 → 2654; 267 → 268 files). **Driven on a fresh dev home at :10021:** cards are tab stops 28-31,
+  focus ring measured as a 5-layer box-shadow (inset 2px, `:focus-visible` matching), Enter activates;
+  the seeded form arrived with `Morning briefing` / `0 8 * * *` / the task prompt filled; Create saved
+  `schedule:clock:morning-briefing` with `next_run` set and `POST /api/triggers/<id>/run` returned
+  `{"ok": true, "result": "ran"}`, likewise `Standup reminder` (`45 9 * * 1-5`, `notify`);
+  `#/triggers/new` bare still opens empty with Create `aria-disabled="true"`; 1 column at 420px, 2 at
+  1440px; zero console errors, zero failed requests. **Falsified** by mutation: `onPick` handing back
+  `undefined` reds 4 (`expected "spy" to be called with arguments: [ { cron: '0 8 * * *', … } ]`);
+  dropping the preset values from the action seed reds 4 (`expected '' to contain 'morning briefing'`);
+  the list dropping the preset id reds 1 (`"triggers/new" ≠ "triggers/new?kind=schedule&preset=…"`);
+  removing `TileButton`'s ring classes reds 1; making the card a `<div>` reds 8 (`Unable to find an
+  accessible element with the role "button"`); `findTriggerPreset` falling back to the first preset
+  reds 5 blank-path assertions; a nested `<button>` inside the card reds 3.
+- [2026-08-15][PEP-1] DEVIATION: the lifecycle-combobox half ships as live-first ORDERING + a group
+  heading, not a collapsible "advanced" group — `Combobox` has no collapsible group and adding one
+  would be a new mechanism on a shared primitive. It also ships CONDITIONALLY, and that is the bigger
+  deviation: §1.1's "~15 events, 7 of which warn 'never fires'" is **stale**. Measured on a current
+  build, `GET /api/triggers/variables` returns **15 lifecycle events, 0 dormant**. An unconditional
+  heading would label all fifteen "Live events" and separate nothing, so `lifecycleEventOptions`
+  (`triggerMeta.ts`) emits no group while nothing is dormant and both groups the moment one is. Both
+  branches asserted, so the rail is not vacuous even though its dormant half matches nothing live.
+- [2026-08-15][PEP-1] DISCOVERY: a fresh dev home is **not** trigger-empty, so §1.3's V1 premise needs
+  care in `PEP-2`. `action_providers/digest_provider.reconcile_digest_cron` registers
+  `system:notification-digest` at every boot, and the Triggers list shows it — measured
+  `GET /api/triggers` on a first-boot home returns exactly that one row. A newcomer's first visit is
+  therefore one machine-named system row with NO on-ramp (the empty state is gated on
+  `counts.all === 0`), which is worse than the empty case this atom fixes. Not changed here on purpose:
+  gating on "no USER triggers" would render a row and an empty state at once. Wants an owner call on
+  whether system-created triggers belong in the user-facing list.

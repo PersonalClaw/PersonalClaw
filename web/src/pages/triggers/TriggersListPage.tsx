@@ -5,6 +5,9 @@ import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { EmptyState, ListRow, ListSkeleton } from '../../ui/ListScaffold'
+import { PresetEmptyState } from '../../ui/PresetEmptyState'
+import { Button } from '../../ui/Button'
+import { TRIGGER_PRESETS } from './triggerPresets'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { Segmented } from '../../ui/Segmented'
@@ -51,7 +54,10 @@ const FILTERS: Array<{ key: string; label: string }> = [
  *  type filter. Detail opens the right inspector per kind (ScheduleDetail reused
  *  verbatim; LifecycleDetail for lifecycle triggers). Backed by the unified
  *  /api/triggers facade (api.schedules()/api.hooks() project it per kind). */
-export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function TriggersListPage({ onCreate, query, setQuery }: {
+  /** Opens the create flow. With a preset id, the flow opens SEEDED from that preset. */
+  onCreate: (presetId?: string) => void
+} & Pick<RouteProps, 'query' | 'setQuery'>) {
   const [filter, setFilter] = useQueryParam(query, setQuery, 'filter', 'all', { replace: true })
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
@@ -169,21 +175,43 @@ export function TriggersListPage({ onCreate, query, setQuery }: { onCreate: () =
       ) : (
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
+              !q && filter === 'all' ? (
+                // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
+                // A blank create form here opens on the full ontology (four trigger kinds, ~15
+                // lifecycle events, every action provider), so the empty state offers finished
+                // presets that SEED that same form instead. The expert blank path is untouched:
+                // it is still the top bar's "New trigger", and it is repeated under the grid.
+                <PresetEmptyState
+                  title="No triggers"
+                  // No em dash in this hint on purpose: at the centered 520px measure it wrapped
+                  // onto the second line, so the line began with punctuation and read as a new
+                  // sentence. `text-balance` was tried and measurably changed nothing (the break
+                  // was already near-balanced) — the copy was the defect, not the wrapping.
+                  hint="A trigger runs an action when something happens. Each of these opens the create form already filled in, ready for you to review and save."
+                  presets={TRIGGER_PRESETS}
+                  onPick={(prefill) => onCreate(prefill.id)}
+                  footer={
+                    <Button variant="ghost" size="sm" onClick={() => onCreate()}>
+                      <Plus size={15} /> Start from scratch
+                    </Button>
+                  }
+                />
+              ) : (
               // The hint names the control the user actually touched. One line for "try a
               // different filter" was wrong whenever the search box was the thing narrowing
               // the list, which is the common case: it pointed at a filter they never set.
+              // No presets in this branch: the list is merely FILTERED, so offering a starter
+              // answers a question this user did not ask (the `emptyStateNoMatch` contract).
               <EmptyState
                 icon={Zap}
-                title={q || filter !== 'all' ? 'No matching triggers' : 'No triggers'}
+                title="No matching triggers"
                 hint={
                   q && filter !== 'all' ? 'Try a different search or filter.' :
                   q ? 'Try a different search term.' :
-                  filter !== 'all' ? 'Try a different filter.' :
-                  'A trigger runs an action when something happens — a schedule tick or an agent-loop lifecycle event. Create one to automate work.'
+                  'Try a different filter.'
                 }
-                action={!q && filter === 'all' ? { label: 'New trigger', onClick: onCreate, icon: Plus } : undefined}
               />
-
+              )
             ) : (
               <div className="flex flex-col gap-s">
                 {triggers.map((t, i) => {

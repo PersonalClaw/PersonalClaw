@@ -7045,7 +7045,7 @@
         {
           "id": "PEP-1",
           "title": "PresetEmptyState primitive + Triggers/Schedule preset on-ramp",
-          "status": "todo",
+          "status": "done",
           "scope": "Build a reusable PresetEmptyState + PresetCard primitive (icon, title, cadence/summary line, description, onPick(prefill)) in the shared UI with keyboard and focus-visible a11y. Apply it to the Triggers/Schedule surface: a data-driven preset catalog (cadence derived from the locale-format seam, not frozen en-US copy), empty-state cards that deep-link into the existing TriggerCreatePage/ScheduleForm with a prefill payload, and grouping of the lifecycle-event combobox (live events first, dormant ones collapsed under 'advanced'). Presets only seed the existing form; the blank expert create path is left unchanged.",
           "done_when": "On a fresh dev home the Triggers empty state shows preset cards; clicking e.g. 'Morning briefing' opens the create flow pre-filled to a working schedule trigger; the expert blank-create path still works unchanged; keyboard/focus a11y verified.",
           "deps": []
@@ -7783,8 +7783,8 @@
         "plan": "PCS"
       },
       {
-        "id": "PEP-1",
-        "title": "PresetEmptyState primitive + Triggers/Schedule preset on-ramp",
+        "id": "PEP-2",
+        "title": "Cross-surface preset empty-state sweep",
         "plan": "PEP"
       },
       {
@@ -10244,9 +10244,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {

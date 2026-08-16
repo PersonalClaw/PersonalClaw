@@ -72,6 +72,39 @@ export function appEventOptions(catalog: TriggerVariables | null): { value: stri
   )
 }
 
+/** The lifecycle-event picker's options: live events FIRST, dormant ones under an
+ *  "advanced" heading that says why they are there (PEP-1).
+ *
+ *  A dormant event — one no code fires yet — reads like an equal choice in a flat list of
+ *  fifteen, so the only feedback a newcomer gets is a trigger that saves and never runs.
+ *  Ordering fixes half of that (`Combobox` groups by `group` in first-seen order, so the sort
+ *  IS the grouping) and the heading fixes the rest. Dormant events stay PICKABLE rather than
+ *  hidden: pre-wiring a trigger for an event that is about to exist is legitimate, and the
+ *  form already warns at the point of choice.
+ *
+ *  🔑 THE HEADINGS ARE CONDITIONAL, and that is measured rather than defensive. The plan
+ *  describes "~15 events, 7 of which warn 'never fires'"; `GET /api/triggers/variables` on a
+ *  current build returns **15 events, 0 dormant** — the dormancy was closed after the plan was
+ *  written. Labelling all fifteen "Live events" under one heading would be a distinction that
+ *  distinguishes nothing, so `group` is left undefined while nothing is dormant and the two
+ *  groups appear the moment something is. */
+export function lifecycleEventOptions(
+  catalog: TriggerVariables | null,
+): { value: string; label: string; description: string; group?: string }[] {
+  const all = catalog?.lifecycle ?? []
+  const anyDormant = all.some((e) => e.dormant)
+  return [...all]
+    .sort((a, b) => Number(!!a.dormant) - Number(!!b.dormant))
+    .map((e) => ({
+      value: e.event,
+      // The label marks a dormant event inline too, so the warning is not the FIRST thing a
+      // user learns after committing — they see it while choosing.
+      label: e.dormant ? `${e.label} · never fires` : e.label,
+      description: e.desc,
+      group: anyDormant ? (e.dormant ? 'Advanced — nothing fires these yet' : 'Live events') : undefined,
+    }))
+}
+
 // ── Store-kind presentation: the "when" label/icon per store_kind. These automations are
 //    created through the automation_* chat tools (e.g. "when a file in ~/notes changes"), so the
 //    UI describes what each watches rather than offering a create form (the chat is the create

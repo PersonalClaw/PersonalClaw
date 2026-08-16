@@ -6,18 +6,19 @@ import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { api, type ActionProvider, type EventPattern } from '../../lib/api'
 import { useCachedData } from '../../lib/useCachedData'
-import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { qget, useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Field, TextInput, Segmented } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { PageTitle } from '../../ui/PageTitle'
 import { ScheduleForm, emptyDraft as emptySchedule, type ScheduleDraft } from '../schedule/ScheduleForm'
 import { intervalToSecs } from '../schedule/scheduleMeta'
 import { ActionConfig, seedActionConfig } from './ActionConfig'
+import { findTriggerPreset, prefillDraft } from './triggerPresets'
 import { schemaProps } from '../tools/schema'
 import {
   TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
   eventDormancyReason, eventIsDormant, EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon,
-  eventSourceLabel, appEventOptions, actionIsSendCapable,
+  eventSourceLabel, appEventOptions, lifecycleEventOptions, actionIsSendCapable,
 } from './triggerMeta'
 
 /** Create flow for a Trigger, with a CLEAN split between the Trigger mechanism
@@ -49,13 +50,20 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const errRef = useRef<HTMLParagraphElement>(null)
   useEffect(() => { if (err) errRef.current?.scrollIntoView({ block: 'nearest' }) }, [err])
 
+  // The preset this flow was SEEDED from (`?preset=<id>` — set by the Triggers empty
+  // state's on-ramp), or null for the blank expert path. A module-constant lookup, so
+  // the reference is stable across renders and safe as an effect dependency; an absent
+  // or unknown id resolves to null and every field below keeps its original default,
+  // which is what makes `#/triggers/new` byte-for-byte the flow it always was.
+  const seed = findTriggerPreset(qget(query, 'preset'))?.prefill ?? null
+
   // shared across both trigger types
-  const [name, setName] = useState('')
+  const [name, setName] = useState(() => seed?.name ?? '')
   const [provider, setProvider] = useState('')
   const [config, setConfig] = useState<Record<string, unknown>>({})
 
   // schedule trigger mechanism (WHEN + delivery only — action lives in the shared section)
-  const [sched, setSched] = useState<ScheduleDraft>(emptySchedule)
+  const [sched, setSched] = useState<ScheduleDraft>(() => (seed ? prefillDraft(seed) : emptySchedule()))
   // lifecycle trigger mechanism
   const [event, setEvent] = useState('UserPromptSubmit')
   const [matcher, setMatcher] = useState('')
@@ -70,13 +78,10 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
 
   const em = lifecycleEventMeta(catalog, event)
   const dormancyReason = eventIsDormant(catalog, event) ? (eventDormancyReason(catalog, event) || 'no code fires it yet') : ''
-  // The option list marks dormant events inline too, so the warning is not the FIRST time a user
-  // learns which events are dead — they can see it while choosing rather than after committing.
-  const eventOptions = useMemo(() => (catalog?.lifecycle ?? []).map((e) => ({
-    value: e.event,
-    label: e.dormant ? `${e.label} · never fires` : e.label,
-    description: e.desc,
-  })), [catalog])
+  // Live events first, dormant ones under an "advanced" heading (PEP-1). The ordering + grouping
+  // rule — and the measurement behind its conditional heading — lives with the rest of the
+  // lifecycle metadata in `triggerMeta`, so `lifecycleEventOptions.test.ts` can hold it directly.
+  const eventOptions = useMemo(() => lifecycleEventOptions(catalog), [catalog])
   const patternOptions = useMemo(() => EVENT_PATTERN_META.map((p) => ({
     value: p.pattern, label: p.label, description: p.desc,
   })), [])
@@ -96,6 +101,24 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
     setProvider(p)
     setConfig(seedActionConfig(providers.find((x) => x.name === p)))
   }
+
+  // Seed the ACTION half from the preset. It cannot be a `useState` initializer like
+  // the name and the cadence: the config defaults come from the chosen provider's own
+  // settingsSchema, and the provider list is FETCHED — so on first render there is
+  // nothing to seed from. This runs on the render the list lands, exactly once
+  // (`seededRef`), so the background revalidation `useCachedData` does five seconds
+  // later cannot stomp what the user has since typed. `seedActionConfig` first, then
+  // the preset's own values, so the optional fields keep their declared defaults
+  // (`notify`'s `kind: 'info'`) instead of being blanked.
+  const seededRef = useRef(false)
+  useEffect(() => {
+    if (!seed || seededRef.current) return
+    const p = providers.find((x) => x.name === seed.provider)
+    if (!p) return
+    seededRef.current = true
+    setProvider(seed.provider)
+    setConfig({ ...seedActionConfig(p), ...seed.config })
+  }, [providers, seed])
 
   // Gate submit on the selected action's REQUIRED schema fields too — not just
   // name+provider. Without this, picking e.g. Bash Command (whose schema requires
@@ -155,6 +178,14 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New trigger</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl flex flex-col gap-xl" style={{ maxWidth: 'var(--content-width)' }}>
+          {/* A seeded form looks exactly like a form someone else already filled in, which is
+              disorienting if you do not know why. One quiet line names the preset and says the
+              obvious thing out loud: nothing here is locked. */}
+          {seed && (
+            <p className="text-on-surface-low text-[0.8125rem]">
+              Filled in from the <span style={fvs(600)}>{seed.name}</span> preset — change anything before saving.
+            </p>
+          )}
           <Field label="Name" hint="A short label for this trigger."><TextInput required value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
 
           {/* ── SECTION 1 · TRIGGER ── */}
