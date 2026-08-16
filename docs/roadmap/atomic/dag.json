@@ -6819,7 +6819,7 @@
         {
           "id": "DCU-1",
           "title": "Keystone out-of-band enable-state",
-          "status": "todo",
+          "status": "done",
           "scope": "New computer_use package with enable_state.py (§3.1): an out-of-band enable file that the agent process can neither read nor write (not a config field the agent can PATCH), plus enable_state.is_enabled() as the first check in the dispatch chain. No prompt, tool, or chat instruction can flip it — it is the single hardest gate and the whole capability is OFF until the operator turns it on out-of-band.",
           "done_when": "With the enable file absent, every computer-use tool refuses with a WHAT/WHY/FIX message pointing to the out-of-band enable step; no tool or config path can flip the state.",
           "deps": []
@@ -7507,13 +7507,13 @@
         "plan": "DC"
       },
       {
-        "id": "DCU-1",
-        "title": "Keystone out-of-band enable-state",
+        "id": "DCU-2",
+        "title": "Target policy, input-target screen, SEL-audit gate",
         "plan": "DCU"
       },
       {
-        "id": "DCU-2",
-        "title": "Target policy, input-target screen, SEL-audit gate",
+        "id": "DCU-3",
+        "title": "macOS accessibility driver (indexed AX tree)",
         "plan": "DCU"
       },
       {
@@ -10225,9 +10225,9 @@
         "code": "DCU",
         "plan": "DESKTOP-COMPUTER-USE",
         "total_atoms": 7,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 6,
         "blocked": 0
       },
       {
