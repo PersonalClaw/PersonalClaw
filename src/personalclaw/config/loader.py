@@ -15,6 +15,7 @@ import re as _re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from personalclaw.voice.duplex import DEFAULT_CONFIRMATION_PHRASES, DEFAULT_EXIT_PHRASES
 
@@ -272,13 +273,197 @@ def env_path() -> Path:
     return config_dir() / ".env"
 
 
-def save_credential(key: str, value: str) -> None:
-    """Persist a single ``KEY=VALUE`` credential into ``~/.personalclaw/.env``.
+# ── Credential backend selector (SECURITY-HARDENING C1) ────────────────────
+#
+# Two backends sit behind ``save_credential`` / ``get_credential`` /
+# ``AppConfig.load_credentials``. Callers never name one:
+#
+#   ``keychain``  the OS secret service via the OPTIONAL ``keyring`` extra
+#                 (macOS Keychain, Linux Secret Service, Windows Credential
+#                 Locker). Opt-in with ``PERSONALCLAW_CREDENTIAL_BACKEND=keychain``.
+#   ``dotenv``    ``~/.personalclaw/.env`` at mode 0600 — the default, and the
+#                 FAIL-CLOSED destination whenever the keychain is unavailable
+#                 or errors. There is no third location: a headless box that
+#                 asked for a keychain and has none keeps its secrets in that
+#                 same 0600 file and is TOLD SO by ``doctor`` — never a new
+#                 plaintext file somewhere else, never looser permissions.
+#
+# The write/read asymmetry is deliberate:
+#   * WRITES go to the ACTIVE backend only (``credential_backend()``), falling
+#     back to ``.env`` 0600 if the keychain write fails.
+#   * READS are the UNION of both stores, keychain preferred, regardless of
+#     which backend is active. That is what makes reads backend-transparent:
+#     flipping the env var back to ``dotenv`` must not make an already-stored
+#     secret vanish, and SECURITY-HARDENING's later ``credentials_to_keychain``
+#     migration needs both halves readable while it moves keys across.
+CredentialBackend = Literal["keychain", "dotenv"]
 
-    Upserts the key (replacing any existing line), preserves other lines and
-    comments, writes with restrictive 0600 perms, and mirrors the value into the
-    process environment so the running gateway sees it immediately. Used for
-    runtime-discovered credentials such as a channel app's auto-claimed owner id.
+#: Opt-in request. Only ``keychain`` turns the keychain on; anything else (unset,
+#: empty, ``dotenv``, or a typo) resolves to ``dotenv``, which is the fail-closed
+#: direction — an unreadable request must never be read as "use the fancier store".
+CREDENTIAL_BACKEND_ENV = "PERSONALCLAW_CREDENTIAL_BACKEND"
+
+#: Keyring service name every PersonalClaw credential is filed under.
+_KEYCHAIN_SERVICE = "personalclaw"
+
+#: Keyring holds one entry per credential plus this index entry, whose value is a
+#: JSON list of the credential KEY NAMES stored there. The index exists because
+#: ``keyring`` has no portable enumeration API, and ``load_credentials()`` must be
+#: able to list what the keychain holds. It lives INSIDE the keychain rather than
+#: in a sidecar file on purpose: key names travel with the secrets they describe,
+#: and no new file appears under the config dir for a snapshot/export set to sweep.
+#: The name is not a legal credential key (credential keys are env-var names), so
+#: it can never collide with a real one.
+_KEYCHAIN_INDEX_KEY = "__personalclaw_key_index__"
+
+#: keyring installs these when there is no usable OS secret service. ``fail``
+#: raises on every call; ``null`` SILENTLY DISCARDS what it is handed — treating
+#: either as usable would be exactly the fail-open this contract forbids.
+_UNUSABLE_KEYRING_BACKENDS = ("keyring.backends.fail.", "keyring.backends.null.")
+
+
+def _usable_keyring() -> object | None:
+    """Return the ``keyring`` module iff it is importable AND backed by a real store.
+
+    ``keyring`` is an OPTIONAL extra: absent module → ``None``, and every caller
+    degrades to ``.env``. Deliberately NOT cached — a cache would have to be reset
+    by every test that blocks the import, and this runs at startup/doctor time, not
+    in a hot loop.
+    """
+    try:
+        import keyring  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    try:
+        backend = keyring.get_keyring()
+    except Exception:
+        logger.debug("keyring is installed but no backend could be resolved", exc_info=True)
+        return None
+    qualified = f"{type(backend).__module__}.{type(backend).__name__}"
+    if any(qualified.startswith(bad) for bad in _UNUSABLE_KEYRING_BACKENDS):
+        return None
+    return keyring
+
+
+def keychain_available() -> bool:
+    """True iff an OS secret service is present and usable through ``keyring``."""
+    return _usable_keyring() is not None
+
+
+def requested_credential_backend() -> CredentialBackend:
+    """The backend the operator ASKED for — intent, not outcome.
+
+    Public so the doctor probe can show request *and* outcome side by side without
+    re-parsing the env var (and drifting on how a typo is read).
+    """
+    raw = (os.environ.get(CREDENTIAL_BACKEND_ENV) or "").strip().lower()
+    if raw == "keychain":
+        return "keychain"
+    if raw and raw != "dotenv":
+        logger.warning(
+            "%s=%r is not a credential backend (keychain|dotenv); using .env",
+            CREDENTIAL_BACKEND_ENV,
+            raw,
+        )
+    return "dotenv"
+
+
+def credential_backend() -> CredentialBackend:
+    """The ACTIVE credential backend — the resolved outcome, never the request.
+
+    ``keychain`` only when it was asked for AND an OS secret service answers;
+    otherwise ``dotenv``. Everything that reports the backend to a human must call
+    THIS, so a box that asked for a keychain it does not have never claims to have one.
+    """
+    if requested_credential_backend() != "keychain":
+        return "dotenv"
+    return "keychain" if keychain_available() else "dotenv"
+
+
+def credential_backend_warning() -> str:
+    """The one-line doctor warning for a keychain request that fell back, else ``""``.
+
+    Single source of truth for both doctor surfaces (``cli_doctor`` and the
+    ``security.credential_backend`` probe) so they can never disagree about whether
+    the fallback happened.
+    """
+    if requested_credential_backend() == "keychain" and credential_backend() == "dotenv":
+        return (
+            "keychain requested but no usable OS keyring backend is available — "
+            "credentials stay in .env at mode 0600 (never plaintext elsewhere)"
+        )
+    return ""
+
+
+def _keychain_index() -> list[str]:
+    """Credential key names the keychain holds (empty when it holds nothing)."""
+    kr = _usable_keyring()
+    if kr is None:
+        return []
+    try:
+        raw = kr.get_password(_KEYCHAIN_SERVICE, _KEYCHAIN_INDEX_KEY)  # type: ignore[attr-defined]
+    except Exception:
+        logger.debug("keychain index unreadable", exc_info=True)
+        return []
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logger.warning("keychain key index is not valid JSON; treating the keychain as empty")
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(k) for k in parsed if str(k) and str(k) != _KEYCHAIN_INDEX_KEY]
+
+
+def _keychain_get(key: str) -> str:
+    """One credential out of the keychain, or ``""`` when absent/unavailable."""
+    kr = _usable_keyring()
+    if kr is None:
+        return ""
+    try:
+        return kr.get_password(_KEYCHAIN_SERVICE, key) or ""  # type: ignore[attr-defined]
+    except Exception:
+        logger.debug("keychain read failed for %s", key, exc_info=True)
+        return ""
+
+
+def _keychain_credentials() -> dict[str, str]:
+    """Every credential the keychain holds, keyed by name."""
+    out: dict[str, str] = {}
+    for key in _keychain_index():
+        value = _keychain_get(key)
+        if value:
+            out[key] = value
+    return out
+
+
+def _keychain_save(key: str, value: str) -> bool:
+    """Write one credential + index it. False on any failure, so the caller falls back."""
+    kr = _usable_keyring()
+    if kr is None:
+        return False
+    try:
+        kr.set_password(_KEYCHAIN_SERVICE, key, value)  # type: ignore[attr-defined]
+        index = _keychain_index()
+        if key not in index:
+            kr.set_password(  # type: ignore[attr-defined]
+                _KEYCHAIN_SERVICE,
+                _KEYCHAIN_INDEX_KEY,
+                json.dumps(sorted([*index, key])),
+            )
+        return True
+    except Exception:
+        logger.warning("keychain write failed for %s; falling back to .env (0600)", key)
+        return False
+
+
+def _dotenv_save_credential(key: str, value: str) -> None:
+    """Upsert ``KEY=VALUE`` into ``~/.personalclaw/.env`` at mode 0600.
+
+    Preserves other lines and comments. 0600 is the floor this backend exists to
+    hold — do not relax it.
     """
     ep = env_path()
     ep.parent.mkdir(parents=True, exist_ok=True)
@@ -301,7 +486,57 @@ def save_credential(key: str, value: str) -> None:
         ep.chmod(0o600)
     except OSError:
         logger.warning("Cannot enforce permissions on %s", ep)
+
+
+def _dotenv_credentials() -> dict[str, str]:
+    """Parse ``~/.personalclaw/.env`` into a dict, repairing loose permissions."""
+    creds: dict[str, str] = {}
+    ep = env_path()
+    if not ep.exists():
+        return creds
+    try:
+        if ep.stat().st_mode & 0o077:
+            ep.chmod(0o600)
+    except OSError:
+        logger.warning("Cannot enforce permissions on %s", ep)
+    for line in ep.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, v = line.split("=", 1)
+            creds[k.strip()] = v.strip()
+    return creds
+
+
+def save_credential(key: str, value: str) -> None:
+    """Persist one credential through the ACTIVE credential backend (C1).
+
+    Callers do not choose or learn the backend. With the keychain active the secret
+    goes to the OS secret service; otherwise — and whenever a keychain write fails —
+    it is upserted into ``~/.personalclaw/.env`` at mode 0600. Either way the value
+    is mirrored into the process environment so the running gateway and the trusted
+    children that inherit ``os.environ`` see it immediately (sandboxed children are
+    filtered by name in ``sandbox.py``, independent of the backend).
+    """
+    if credential_backend() == "keychain" and _keychain_save(key, value):
+        os.environ[key] = value
+        return
+    _dotenv_save_credential(key, value)
     os.environ[key] = value
+
+
+def get_credential(key: str) -> str:
+    """Read one credential, backend-transparently. ``""`` when it is not stored.
+
+    Keychain first (it is where a migrated or keychain-written secret lives), then
+    ``.env``. Both halves are consulted whichever backend is active — see the
+    selector note above for why reads are a union while writes are not.
+    """
+    value = _keychain_get(key)
+    if value:
+        return value
+    return _dotenv_credentials().get(key, "")
 
 
 def resolve_agent_config_path() -> Path:
@@ -4509,27 +4744,15 @@ class AppConfig:
         atomic_write(p, json.dumps(d, indent=2) + "\n")
 
     def load_credentials(self) -> dict[str, str]:
-        """Load credentials from ~/.personalclaw/.env and environment variables.
+        """Load every stored credential, backend-transparently, plus env overrides.
 
-        .env format: KEY=VALUE (one per line, # comments, no quotes required).
-        Environment variables override .env values.
+        Union of both credential backends (C1): ``.env`` (KEY=VALUE per line, ``#``
+        comments, no quotes required, permissions repaired to 0600 on read) merged
+        under the keychain, which wins on the key a partly-migrated install holds in
+        both. Environment variables still override, as they always did.
         """
-        creds: dict[str, str] = {}
-        ep = env_path()
-        if ep.exists():
-            # Enforce restrictive permissions on credential file
-            try:
-                if ep.stat().st_mode & 0o077:
-                    ep.chmod(0o600)
-            except OSError:
-                logger.warning("Cannot enforce permissions on %s", ep)
-            for line in ep.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    creds[k.strip()] = v.strip()
+        creds: dict[str, str] = dict(_dotenv_credentials())
+        creds.update(_keychain_credentials())
 
         for key in _CREDENTIAL_KEYS:
             val = os.environ.get(key)

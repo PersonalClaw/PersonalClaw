@@ -10,7 +10,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
-| `SH-1` | ⬜ | Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend | — | reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml |
+| `SH-1` | ✅ | Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend | — | reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml |
 | `SH-2` | ⬜ | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action | `SH-1` | migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded |
 | `SH-3` | ⬜ | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable | — | signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state |
 | `SH-4` | ⬜ | Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing | `SH-3`, `EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts (present/done)`, `EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity` | released bundles carry valid signatures verified in CI; registry validation script records signer per listing |
@@ -25,11 +25,57 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ### `SH-1` — Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend
 
-**Status:** todo
+**Status:** done
 
 Session 1 — OS keychain credential storage / T1.1; Design S1; Contracts C1 (credential backend selector)
 
 **Done when:** reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml
+
+**DONE.** `config/loader.py` owns the C1 selector: `CredentialBackend = Literal["keychain",
+"dotenv"]`, `requested_credential_backend()` (intent), `credential_backend()` (**outcome**),
+`keychain_available()` and `credential_backend_warning()`. `save_credential` and the new
+`get_credential` are the chokepoints — no caller names a backend, and `get_credential(key)`
+takes one parameter so none can.
+
+**The write/read asymmetry is deliberate and is what makes reads transparent.** Writes go to
+the ACTIVE backend only and fall back to `.env` 0600 when a keychain write fails; **reads are
+the UNION of both stores** (keychain preferred) regardless of which backend is active. Without
+that, an install that opted into the keychain before SH-2's migration ran would read `""` for
+every secret still sitting in `.env` — a lost credential presenting as an empty one.
+
+**Fail-closed in three places.** (1) No `keyring` module → `.env` 0600 + a doctor warning.
+(2) `keyring.backends.fail` (raises) **and `keyring.backends.null` (SILENTLY DISCARDS)** are
+both refused as unusable rather than adopted — the `null` case is the one that would have
+destroyed secrets while returning success. (3) A keychain `set_password` that raises falls
+back to `.env` 0600. There is no third location and no relaxed mode anywhere: the fallback
+test asserts the mode is exactly `0600` **and that `.env` is the only file the write created**.
+
+**Doctor reports the resolved backend, twice.** `cli_doctor._doctor_credentials()` prints the
+CLI line (called from `_doctor()`, asserted by an AST call-site test), and
+`security.credential_backend` (CAPABILITY tier, existing `security` capability) is the
+dashboard/API half. Both read `credential_backend()`; both share one
+`credential_backend_warning()` so they cannot disagree. The probe carries `backend`,
+`requested`, `keychain_available` and the `.env` mode as evidence — never a value — and is
+`ok=False` for exactly the requested-but-unavailable mismatch.
+
+**Deliberate scope boundary:** the opt-in is the `PERSONALCLAW_CREDENTIAL_BACKEND` env var
+(`keychain` | `dotenv`, default `dotenv`), **not** a config field. SH-2 owns the class-B
+`credential_keychain` gate, the consent-triggered migration and the Settings action; adding a
+config gate here would have built the same seam twice. Availability alone never moves where
+secrets are written — a machine that merely *has* a keychain keeps writing `.env` until asked,
+so no install silently ends up with half its secrets in each store.
+
+**`keyring` is an optional extra** (`[keychain]` in `pyproject.toml`) and deliberately NOT in
+`[dev]`/`[test]`: CI never installs it. `tests/test_credential_backend.py` (26 tests) proves the
+no-keyring path with a `sys.meta_path` import blocker and the keychain path with a stub module
+in `sys.modules`, so the suite behaves identically with or without the extra and never touches
+a real OS keychain. **The keychain's key index lives inside the keychain** (one JSON entry of key
+NAMES) rather than in a sidecar file, because `keyring` has no portable enumeration API and a
+new file under the config dir would have needed a durability-inventory claim to be snapshot-safe.
+
+Also folded in: `app_cli` had a **second, private `.env` parser** feeding every app's setup
+`get_credential` — invisible to keychain-stored secrets. Deleted, routed through the loader
+chokepoint (clean break, no shim).
 
 ### `SH-2` — credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action
 
