@@ -48,6 +48,21 @@ updates:
           - "@vitest/*"
           - "jsdom"
           - "@testing-library/*"
+    # TypeScript 7 is the native port, and its package main entry is
+    # `lib/version.cjs` — `import ts from 'typescript'` exports `version` and
+    # `versionMajorMinor` and nothing else, with the classic compiler API moved
+    # behind explicitly-`unstable/*` paths. `web/scripts/extractUiProps.mjs` runs on
+    # `ts.createProgram`/`ts.ScriptTarget`/`ts.SymbolFlags`/`ts.JsxEmit`, so under 7.x
+    # all of them read `undefined` and `uiDocs.drift.test.ts` dies with
+    # `TypeError: Cannot read properties of undefined (reading 'ReactJSX')`. That
+    # extractor is the compiler-derived half of the UI-docs drift guard AND the
+    # build-time source of every documented prop type, so it cannot move onto an
+    # unstable API for a version bump. 6.0.3 is the highest release keeping the
+    # classic API. Minor/patch on 6.x still arrive; drop this ignore once the
+    # extractor has a stable 7.x API to target. Closed twice already: #976.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # The GitHub Actions the workflows pin (setup-uv, setup-node, publish, buildx, …).
   - package-ecosystem: github-actions
