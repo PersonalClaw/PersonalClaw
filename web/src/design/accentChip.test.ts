@@ -142,3 +142,25 @@ describe('the sweep actually adopted the shared definition', () => {
     expect(bad.map((b) => b.slice(SRC.length + 1)), 'uses accentChip without importing it').toEqual([])
   })
 })
+
+// ── A THIRD SPELLING, swept in its own file ────────────────────────────────────────────────────────
+//
+// Both sweeps above match a colour written ON THE LINE — a literal `var(--color-primary)` in a style
+// object, or a `bg-primary/N text-primary` class pair. Neither can see a tint whose colour is
+// INTERPOLATED from a meta registry (`color-mix(in srgb, ${meta.tone} 14%, transparent)` with
+// `color: meta.tone`), because no accent token appears in the source at all. `ui/RungChip` was one:
+// `lib/rungs.ts` maps `autonomous → var(--color-primary)`, so "runs on its own" measured **3.97:1** in
+// light — the 14% row of the table above — on 7 live chips on `#/triggers`.
+//
+// That population is **43 sites**, and a regex cannot decide them: whether `${x.tone}` reaches coral
+// depends on the registry behind `x`, and most resolve to semantic tones that pass. So it is swept
+// per-registry, behaviourally, in **`accentChipTone.test.tsx`** — which renders every rung and asserts
+// the coral one uses this file's `accentChip` while the three passing tones keep their tint. Its header
+// carries the remaining worklist and the reasons for what is deliberately left alone.
+
+describe('the third spelling has a home', () => {
+  it('is swept behaviourally next door, not silently ignored here', () => {
+    expect(readFileSync(join(SRC, 'design/accentChipTone.test.tsx'), 'utf8'))
+      .toMatch(/a rung chip inks coral through the container pair/)
+  })
+})

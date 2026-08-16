@@ -259,6 +259,10 @@ export interface SpawnedAgent { id: string; task: string; done: boolean; parent?
 // where in the source the match sits; all optional (null for a structureless type).
 export interface KnowledgeContextCard {
   id: string; title: string; provider?: string; match_type?: string; tokens: number; summary?: string
+  /** The matched PASSAGE. `search_for_context` has always sent it (it is the text the
+   *  composer injects) but it was missing from this interface, so the one thing a
+   *  retrieval card exists to show was untypeable. The knowledge try-one reads it. */
+  content?: string
   source_type?: string | null; section?: string | null; line_range?: [number, number] | null; deep_link?: string | null
 }
 export interface KnowledgeContextResult { query: string; results: KnowledgeContextCard[]; total_tokens: number; max_tokens: number }
@@ -399,7 +403,15 @@ export interface AppCatalogEntry {
   crons?: AppCronSummary[]
 }
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
-export interface AppScanReport { verdict: string; findings: AppScanFinding[]; tier?: string }
+/** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
+ *  in-tree key's identity (only meaningful when signed); `reason` is the refusal text an
+ *  `invalid` state must show. An `invalid` state means the install was REFUSED — it is
+ *  never consentable, unlike a warning verdict. `unsigned` is normal for community apps. */
+export interface AppSignature { state: string; signer: string; reason: string }
+export interface AppScanReport {
+  verdict: string; findings: AppScanFinding[]; tier?: string
+  signature?: AppSignature | null
+}
 export interface AppInstallResult {
   ok: boolean; name: string; error: string; needs_consent: boolean
   scan: AppScanReport | null
@@ -524,6 +536,13 @@ export interface KnowledgeBulkResult {
 export interface KnowledgeCollection {
   id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
   position?: number; item_count?: number | null; created_at?: string; updated_at?: string
+}
+// One reading highlight on a knowledge item. Anchored by TEXT,
+// not by offset: the reader renders markdown, so a character index into the item's source
+// does not survive the transform. `occurrence` says WHICH instance of `quote` this is, so
+// two highlights of a repeated sentence stay distinct. See pages/knowledge/readingAnchors.ts.
+export interface KnowledgeAnnotation {
+  id: string; item_id: string; quote: string; occurrence: number; note: string; created_at: string
 }
 export interface ChatFolder { id: string; name: string; order?: number; collapsed?: boolean; parent_id?: string }
 export interface ChatTag { id: string; name: string; color?: string; order?: number; status?: boolean }
@@ -1445,6 +1464,104 @@ export interface KnowledgeIntent {
   id: string; goal?: string; enabled?: boolean
   enabled_for?: string[]; propose_skill?: boolean
   outcome_count?: number  // recorded outcomes (list badge)
+}
+// ── Watched sources ──
+/** What the user can DO about a source's last poll. The backend resolves this from the
+ *  provider's own guidance constants, so the UI never carries a copy of a remediation
+ *  message — and the two kinds are deliberately distinct: a listing-page failure is fixed
+ *  by a different URL, a render-tier failure by a budget knob. */
+export interface SourceRemediation {
+  /** '' when the source needs nothing; otherwise 'listing_page' | 'render_tier'. */
+  kind: string
+  /** The provider's own remediation text, full-length (the stored poll summary is clipped). */
+  guidance: string
+  /** The poll's reason, when it says something the guidance does not (a render tier that
+   *  raised, or one allowed but not installed). Empty when it would just echo the guidance. */
+  detail: string
+  /** '' = advice only. 'allow_render' = one knob fixes it. 'edit_url' = point it elsewhere. */
+  action: string
+}
+/** One watched source: its spec, its schedule, and the rollups the poll engine writes. */
+export interface WatchedSource {
+  id: string; name: string; provider: string; kind: string
+  spec: Record<string, unknown>; budget: Record<string, unknown>
+  /** 'full' | 'raw' — 'raw' is the structural no-AI promise, and what the chip reads. */
+  enrichment: string
+  poll_interval_secs: number; item_type: string; enabled: boolean
+  created_at?: string; updated_at?: string
+  last_poll_at?: string | null; next_poll_at?: string | null
+  last_new_count?: number
+  /** One of the backend's SOURCE_HEALTH vocabulary (shipped in the list response). */
+  health_status?: string
+  last_error_summary?: string
+  /** The tiers the last poll had to climb, or was refused. */
+  last_escalations?: string[]
+  /** Is a poll-capable provider registered for this row? False = nothing will poll it. */
+  enrolled: boolean
+  remediation: SourceRemediation
+}
+/** One creatable source kind, derived from the registered providers. `previewable` is
+ *  MEASURED per provider — only the web kind has a detect-then-tune loop, so the create
+ *  flow must not pretend feeds and directories have a dry run. */
+export interface SourceKind {
+  provider: string; display_name: string; kind: string
+  /** Which create form to render: 'web_page' | 'feed' | 'dir' | 'spec'. */
+  form: string
+  previewable: boolean
+  poll_interval_secs: number
+  default_item_type: string
+  detectors?: string[]
+  max_requests?: number
+  formats?: string[]
+  presets?: string[]
+  default_include?: string[]
+  max_files?: number
+  guidance?: Record<string, string>
+}
+export interface SourcesResponse {
+  sources: WatchedSource[]
+  kinds: SourceKind[]
+  /** The closed health vocabulary, shipped rather than retyped in TypeScript. */
+  health_statuses: string[]
+  raw_enrichment: string
+}
+/** One bundled source recipe — a site shape somebody already worked out.
+ *  `spec` on a MATCH arrives already resolved from the pasted URL's capture groups, so the
+ *  create flow saves what it was shown rather than re-deriving it. */
+export interface SourceRecipe {
+  id: string; displayName: string; description: string
+  /** Which registered provider polls it, and the WatchedSource `kind` that implies. */
+  provider: string; kind: string
+  itemType: string; enrichment: string
+  matchPatterns?: string[]
+  urlGuidance?: string
+  spec: Record<string, unknown>
+  tags?: string[]
+  /** Present only on a match: the capture groups the URL supplied. */
+  groups?: Record<string, string>
+}
+export interface SourceRecipesResponse {
+  recipes: SourceRecipe[]
+  /** Present only when a URL was supplied. Empty means "nobody has covered this site". */
+  matches?: SourceRecipe[]
+  url?: string
+}
+/** One extracted item from a dry run. `snippet` is untrusted scraped text, clipped
+ *  by the backend and rendered as TEXT only. */
+export interface SourcePreviewItem {
+  guid: string; title: string; url: string; published_at: string; snippet: string
+}
+export interface SourcePreviewResult {
+  items: SourcePreviewItem[]
+  /** Which detector won, so the user tunes something named. */
+  detector: string
+  escalations: string[]
+  requests_used: number
+  /** The remediation to show when `items` is empty (a tuning problem, not a failure). */
+  guidance: string
+  health_status: string
+  /** A HARD failure (egress denial, invalid spec) — distinct from an empty extraction. */
+  error: string
 }
 /** One typed field of an intent outcome, rendered type-aware in the UI. */
 export interface IntentOutcomeField { name: string; type: string; value: unknown }
@@ -3391,6 +3508,32 @@ export const api = {
   updateKnowledgeItem: (id: string, body: Record<string, unknown>) => patch<{ ok: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}`, body),
   deleteKnowledgeItem: (id: string) => del(`/api/knowledge/items/${encodeURIComponent(id)}`),
   knowledgeProviders: () => get<{ providers: Array<{ name: string; display_name: string; always_on: boolean; kind: string }> }>('/api/knowledge/providers').then((d) => d.providers),
+  // ── Watched sources ──
+  // One GET for the rows AND the create flow's kind catalog: the list page and the create
+  // page are one surface, and a second round trip to learn which kinds exist would just
+  // make the create form flash.
+  knowledgeSources: () => get<SourcesResponse>('/api/knowledge/sources'),
+  createKnowledgeSource: (body: {
+    name: string; provider: string; spec: Record<string, unknown>
+    enrichment?: string; poll_interval_secs?: number; budget?: Record<string, unknown>
+  }) => post<{ source: WatchedSource }>('/api/knowledge/sources', body),
+  // The remediation + lifecycle path: `budget.allow_render` for a JS shell, `spec.url` for a
+  // wrong URL, `enabled` to stop a source polling. Partial — an absent key is untouched.
+  updateKnowledgeSource: (id: string, body: {
+    name?: string; enabled?: boolean; enrichment?: string; poll_interval_secs?: number
+    spec?: Record<string, unknown>; budget?: Record<string, unknown>
+  }) => patch<{ source: WatchedSource }>(`/api/knowledge/sources/${encodeURIComponent(id)}`, body),
+  // The dry run. Persists nothing but DOES spend the request budget — it is a real fetch
+  // at somebody else's server. Only the web kind has one (`SourceKind.previewable`).
+  previewKnowledgeSource: (body: { provider: string; spec: Record<string, unknown>; budget?: Record<string, unknown> }) =>
+    post<SourcePreviewResult>('/api/knowledge/sources/preview', body),
+  // The recipe directory. With a `url` it answers the create flow's FIRST question — is this
+  // site already worked out? — and each match carries a spec already resolved from the URL, so
+  // the form is filled from what the user was shown rather than re-derived here.
+  knowledgeSourceRecipes: (url?: string) =>
+    get<SourceRecipesResponse>(
+      url ? `/api/knowledge/source-recipes?url=${encodeURIComponent(url)}` : '/api/knowledge/source-recipes',
+    ),
   // Distinct tags (frequency-ordered) for tag-input autocomplete.
   knowledgeTags: () => get<{ tags: string[] }>('/api/knowledge/tags').then((d) => d.tags),
   // ── Knowledge collections ──
@@ -3412,6 +3555,17 @@ export const api = {
     post<{ ok: boolean; read_state: string }>(`/api/knowledge/items/${encodeURIComponent(id)}/read-state`, { state }),
   setKnowledgeFavorited: (id: string, value: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}/favorite`, { value }),
+  // Reading highlights. Like read-state and favorites these are NON-TOUCHING writes with
+  // their own endpoints, not `updateKnowledgeItem` fields: marking a passage is reading,
+  // not editing, so it must not bump `updated_at` and reshuffle a recency-sorted library.
+  knowledgeAnnotations: (id: string) =>
+    get<{ annotations: KnowledgeAnnotation[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/annotations`).then((d) => d.annotations),
+  createKnowledgeAnnotation: (id: string, body: { quote: string; occurrence: number; note?: string }) =>
+    post<{ ok: boolean; annotation: KnowledgeAnnotation }>(`/api/knowledge/items/${encodeURIComponent(id)}/annotations`, body),
+  // Keyed by the highlight's OWN id, not nested under the item — repeating the item id
+  // would let a caller delete row A while naming item B.
+  deleteKnowledgeAnnotation: (annotationId: string) =>
+    del(`/api/knowledge/annotations/${encodeURIComponent(annotationId)}`),
   // One curation op over many items. Per-item results, because a selection can go
   // stale between the click and the request — the UI reports "38 shelved, 2 not found"
   // rather than treating a partial success as a failure.

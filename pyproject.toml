@@ -102,6 +102,16 @@ dependencies = [
     # one small wheel would be the wrong trade on a credential path. Prebuilt wheels, no
     # compiler, no torch weight — the same bar reportlab/tree-sitter already cleared.
     "argon2-cffi>=23,<26",
+    # Ed25519 signature verification for signed app bundles (signing.py). CORE and
+    # DECLARED, for two reasons. First, asymmetric signing is genuinely required: the
+    # verifying side is every user's machine, so an HMAC over hashlib would have to ship
+    # the signing key to everyone who verifies — i.e. no signature at all. Second, this
+    # wheel was already present transitively (pdfplumber → pdfminer.six → cryptography),
+    # so declaring it adds ZERO install weight; leaving a signature-verification path
+    # resting on someone else's transitive dep is how a security control silently
+    # disappears in a future dependency bump. Verification fails CLOSED if it is ever
+    # missing (a signature that cannot be checked is refused, not accepted).
+    "cryptography>=42",
 ]
 
 # Project URLs — surfaced by `pip show personalclaw` and the PyPI project page.
@@ -139,6 +149,13 @@ eval  = ["jinja2>=3.0"]
 embeddings = ["sentence-transformers>=3.0", "faiss-cpu>=1.7"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
 mcp   = ["mcp>=1.2"]               # external MCP servers in the native agent loop (stdio + SSE/HTTP)
 js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
+
+# OS keychain credential backend. Deliberately OPTIONAL and
+# deliberately NOT in [dev]/[test]: `.env` at 0600 is the supported default, the keychain
+# is an upgrade for installs that have an OS secret service, and a headless box without one
+# must keep working — config/loader.py falls back to `.env` 0600 and doctor says so. Tests
+# stub keyring rather than depend on it, so the suite is identical with or without this extra.
+keychain = ["keyring>=24"]
 
 # Every local-model feature, for installs that run models in-process (dev
 # server + container). Desktop deliberately omits these (torch is too large to
@@ -200,6 +217,10 @@ personalclaw = [
     # The baseline bash denylist. security.py raises at import if this is missing,
     # so a wheel without this line does not "degrade to no denylist" — it fails to start.
     "baseline_denylist.json",
+    # The in-tree signing trust store. A wheel without this line ships a verifier
+    # with no trusted keys, so every signed bundle would be refused as "unknown key" —
+    # the safe direction, but it would silently retire first-party signing.
+    "trusted_keys/*.pub",
     "config/defaults.json",
     "config/prompts/*.md",
     "config/prompt_snippets/*.md",
@@ -225,6 +246,11 @@ personalclaw = [
     # a hard error, so every review template would fail to load rather than degrade.
     "workflows/bundled/shared/*.md",
     "apps/native/*/app.json",
+    # The bundled source-recipe directory. These are the create flow's
+    # "is this site already covered?" answers, so a wheel without this line ships an empty
+    # directory and every paste-a-URL looks uncovered — a silent product regression, not a
+    # crash. `test_connector_pack.py` asserts the shipped count is non-zero.
+    "knowledge/sources/recipes/*.json",
     "reference/*.md",
 ]
 

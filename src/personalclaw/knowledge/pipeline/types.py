@@ -19,6 +19,24 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 
+@dataclass(frozen=True)
+class PoolRow:
+    """One EXTRA extracted-content row a node contributes beyond its own output.
+
+    A node is one STEP, and one step is normally one row. But a step whose product is a
+    SET of role-sized views of the same document — the fetch-and-slice ``brief``/``body``/
+    ``meta`` cut (WATCHED-SOURCES §5) — needs several rows with names of its own choosing
+    (``slice:brief``, not ``document_slice``). Modelling that as three graph NODES was the
+    alternative and it is worse: each would have to re-run the same section detection,
+    which gives one deterministic cascade three chances to disagree with itself.
+    """
+
+    node_type: str
+    text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    backend: str = ""
+
+
 @dataclass
 class NodeOutput:
     """One node's result, appended to the item's extracted-content pool.
@@ -44,6 +62,10 @@ class NodeOutput:
     # text bundle insights + chunk/embed read). Pure-structural nodes (a/v split,
     # frame-extract) set False — they only feed downstream nodes.
     pooled: bool = True
+    # Extra pool rows this node contributes, each named by the node (see PoolRow).
+    # Independent of ``pooled``: a node may contribute rows while pooling nothing of
+    # its own, which is what a slicer does — its own text would duplicate the reader's.
+    pool_rows: list[PoolRow] = field(default_factory=list)
 
 
 @dataclass

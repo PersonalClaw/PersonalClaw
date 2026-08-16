@@ -306,6 +306,37 @@ async def test_retired_pwa_paths_require_auth(path: str) -> None:
     assert resp.status in (302, 403)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/manifest.webmanifest",
+        "/sw.js",
+        "/icons/icon.svg",
+        "/icons/icon-192.png",
+        "/icons/icon-512.png",
+    ],
+)
+async def test_live_pwa_paths_require_auth(path: str) -> None:
+    """The PWA shipped by MOBILE-COMPANION T3.1 stays BEHIND the session.
+
+    These paths are live (not retired like the ones above), and none of them is in
+    ``_BYPASS_PREFIXES``/``_BYPASS_EXACT`` — deliberately. The companion is
+    installable only by the authenticated owner. The cost of that choice is that a
+    manifest, which browsers fetch with credentials omitted by default, would 403;
+    ``web/index.html`` pays it by declaring the link with
+    ``crossorigin="use-credentials"``, which is asserted in
+    ``web/src/app/manifest.test.ts``.
+
+    Anyone tempted to add these to a bypass set to "fix installability" should note
+    what would then be readable without a session.
+    """
+    mw = token_auth_middleware()
+    req = _make_request(path=path)  # No token at all
+    resp = await mw(req, _ok_handler)
+    assert resp.status in (302, 403)
+
+
 # -- Loopback connections still require a token (port-forward safety) --
 
 

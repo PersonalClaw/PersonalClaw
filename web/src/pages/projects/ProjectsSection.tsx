@@ -605,7 +605,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       {project.name_locked && <Lock size={12} className="shrink-0 text-on-surface-low" aria-label="Name locked" />}
       {!project.is_builtin && (
         <button type="button" onClick={() => { setNameDraft(project.name); setRenaming(true) }} aria-label="Rename"
-          className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><Pencil size={13} /></button>
+          className="shrink-0 grid size-6 -m-0.5 place-items-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface"><Pencil size={13} /></button>
       )}
     </div>
   )
@@ -859,7 +859,7 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
       )}
       {path && onBrowse && (
         <button type="button" onClick={onBrowse} aria-label={`Open ${label} in Files`} title="Open in Files"
-          className="shrink-0 rounded p-0.5 text-on-surface-low hover:bg-surface-high hover:text-primary"><FolderOpen size={12} /></button>
+          className="shrink-0 grid size-6 -m-0.5 place-items-center rounded text-on-surface-low hover:bg-surface-high hover:text-primary"><FolderOpen size={12} /></button>
       )}
       {onAction && actionLabel && (
         <button type="button" onClick={onAction} className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low hover:bg-surface-high hover:text-on-surface">{actionLabel}</button>

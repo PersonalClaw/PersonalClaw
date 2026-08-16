@@ -54,6 +54,15 @@ MANIFEST_EXCLUDE: dict[str, str] = {
     "/sprites": "static mount for sprite assets — UI transport",
     "/fonts": "static mount for web fonts — UI transport",
     "/vendor": "static mount for the import-map vendor shims — UI transport",
+    "/icons": "static mount for the PWA app icons the manifest declares — UI transport",
+    "/manifest.webmanifest": (
+        "the PWA manifest (MOBILE-COMPANION T3.1) — a browser-consumed install "
+        "descriptor, UI transport, with nothing for an agent to call"
+    ),
+    "/sw.js": (
+        "the service-worker script — browser-consumed client code that must sit at "
+        "the origin root to register at scope '/'; UI transport, not an API"
+    ),
     "/apps/{name}/ui/{tail}": "per-app UI asset serving — UI transport, not an API",
     "/apps/{name}/api/{tail}": (
         "per-app backend reverse-proxy — reached via the app-route tools (§4), "

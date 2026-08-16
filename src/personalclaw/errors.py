@@ -49,6 +49,10 @@ ERROR_CODES: dict[str, str] = {
         "the allowed set."
     ),
     "ERR_ACTION_PROVIDER_FAILED": ("An action provider raised while executing a trigger's action."),
+    "ERR_COMPUTER_USE_DISABLED": (
+        "Desktop computer use is not armed on this machine — the out-of-band keystone "
+        "enable file is absent, unreadable, or does not say enabled."
+    ),
 }
 
 

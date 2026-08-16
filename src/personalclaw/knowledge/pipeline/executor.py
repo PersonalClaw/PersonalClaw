@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 from personalclaw.knowledge.pipeline.graph import PipelineGraph
 from personalclaw.knowledge.pipeline.registry import can_resolve_use_case, get_node
-from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput
+from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput, PoolRow
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,13 @@ class ExecutionResult:
 
     def pooled_outputs(self) -> list[NodeOutput]:
         return [o for o in self.outputs.values() if o.success and o.pooled and o.text]
+
+    def pool_rows(self) -> list[PoolRow]:
+        """Extra self-named pool rows contributed by successful nodes (see
+        :class:`~personalclaw.knowledge.pipeline.types.PoolRow`). Emitted in node
+        completion order, then in each node's declared row order — the same ordering
+        discipline ``pooled_outputs`` already relies on."""
+        return [row for out in self.outputs.values() if out.success for row in out.pool_rows]
 
 
 class PipelineExecutor:

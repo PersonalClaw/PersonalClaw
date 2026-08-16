@@ -17,8 +17,37 @@ import logging
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
 from personalclaw.knowledge.pipeline.types import NodeContext
+from personalclaw.knowledge_providers.base import ENRICHMENT_FULL, ENRICHMENT_RAW
 
 logger = logging.getLogger(__name__)
+
+
+def _enrichment_for(store, item: dict) -> str:
+    """The enrichment mode governing this item's ingestion (WATCHED-SOURCES §6.3).
+
+    ``full`` for everything the user created locally (no ``source_id``) — the native path
+    is unchanged. For an item a WatchedSource wrote, its source's setting decides.
+
+    The unresolvable case is deliberately asymmetric: a source item whose ``sources`` row
+    is gone or unreadable degrades to ``raw``, not ``full``. The no-AI setting is a promise
+    made to the user about specific content, and content whose promise we can no longer
+    READ must not be handed to a model on the assumption it was fine; the cost of guessing
+    raw is a missing summary, the cost of guessing full is a broken guarantee.
+    """
+    source_id = (item or {}).get("source_id")
+    if not source_id:
+        return ENRICHMENT_FULL
+    try:
+        source = store.get_source(source_id)
+    except Exception:  # noqa: BLE001 — an unreadable source row must not fail the ingest
+        logger.debug("enrichment lookup failed for source %s", source_id, exc_info=True)
+        return ENRICHMENT_RAW
+    if not source:
+        return ENRICHMENT_RAW
+    # Matched explicitly against the closed vocabulary: an unknown value is treated as raw
+    # rather than defaulted to full, so a typo in the column can never turn a no-AI source
+    # into an enriched one (the default-branch-swallows-an-unmapped-value failure).
+    return ENRICHMENT_FULL if source.get("enrichment") == ENRICHMENT_FULL else ENRICHMENT_RAW
 
 
 # SSE feed key for an item's ingestion progress (per-resource; transport doctrine).
@@ -48,6 +77,12 @@ async def ingest_item(
         return "failed"
 
     item_type = item.get("type") or item.get("item_type") or "note"
+    # The owning WatchedSource's no-AI setting. Resolved ONCE here
+    # and threaded through both halves of the guarantee — the graph shape and the terminal
+    # stages — because a raw item that skipped the LLM nodes but still ran the model-backed
+    # terminal stages would keep the promise structurally and break it in practice.
+    enrichment = _enrichment_for(store, item)
+    raw_mode = enrichment == ENRICHMENT_RAW
 
     def _emit(event: str, **data) -> None:
         if publish:
@@ -61,7 +96,7 @@ async def ingest_item(
     _emit("ingest_started", item_type=item_type)
 
     try:
-        graph = graph_for(item_type)
+        graph = graph_for(item_type, enrichment=enrichment)
     except Exception as exc:
         logger.exception("graph build failed for %s", item_type)
         store.update_item(
@@ -109,6 +144,17 @@ async def ingest_item(
                 text=out.text,
                 metadata=out.metadata,
             )
+        # …then the extra self-named rows (a node whose product is a SET of outputs —
+        # the fetch-and-slice brief/body/meta cut). Same item, no child rows anywhere:
+        # slices are role-sized VIEWS of one document, not chunks.
+        for row in result.pool_rows():
+            store.add_extracted_content(
+                item_id,
+                row.node_type,
+                backend=row.backend,
+                text=row.text,
+                metadata=row.metadata,
+            )
 
         # Persist structural metadata from non-pooled media nodes onto the item:
         # exif → file_metadata (width/height/format/…); thumbnail → thumbnail_path.
@@ -154,23 +200,35 @@ async def ingest_item(
         # stage's open transaction abort another's — silently dropping its writes. Keep
         # them sequential for correctness. (The LLM calls dominate latency; if that ever
         # needs cutting, give each concurrent stage its own DB connection first.)
-        _emit("node", node="insights", phase="running")
-        insights_ok = await _run_insights(store, item_id, consolidated, insights_pool)
-        _emit("node", node="insights", phase="done" if insights_ok else "failed")
+        if raw_mode:
+            # The three model-backed terminal stages are NOT CALLED for a raw source.
+            # Not "called with a disabled pool" — not reached at all, which is the only form
+            # of the promise that survives someone binding a model later. They report
+            # "skipped" (never "done"), so the detail UI distinguishes a no-AI source from
+            # an item whose enrichment silently produced nothing.
+            insights_phase = entities_phase = intents_phase = "skipped"
+            insights_ok = True  # nothing failed; a raw item is not under-enriched
+            for stage in ("insights", "entities", "intents"):
+                _emit("node", node=stage, phase="skipped")
+        else:
+            _emit("node", node="insights", phase="running")
+            insights_ok = await _run_insights(store, item_id, consolidated, insights_pool)
+            insights_phase = "done" if insights_ok else "failed"
+            _emit("node", node="insights", phase=insights_phase)
 
-        # Entity/relation extraction over the consolidated text → the entity graph
-        # (one logical doc = one extraction; no per-chunk fan-out).
-        _emit("node", node="entities", phase="running")
-        entities_phase = await _run_entities_stage(store, item_id, consolidated, insights_pool)
-        _emit("node", node="entities", phase=entities_phase)
+            # Entity/relation extraction over the consolidated text → the entity graph
+            # (one logical doc = one extraction; no per-chunk fan-out).
+            _emit("node", node="entities", phase="running")
+            entities_phase = await _run_entities_stage(store, item_id, consolidated, insights_pool)
+            _emit("node", node="entities", phase=entities_phase)
 
-        # Tier-3 intent matching — natural-language user intents run against the
-        # consolidated text; relevant matches are recorded as intent_outcomes by value.
-        _emit("node", node="intents", phase="running")
-        intents_phase = await _run_intents_stage(
-            store, item_id, item_type, consolidated, insights_pool
-        )
-        _emit("node", node="intents", phase=intents_phase)
+            # Tier-3 intent matching — natural-language user intents run against the
+            # consolidated text; relevant matches are recorded as intent_outcomes by value.
+            _emit("node", node="intents", phase="running")
+            intents_phase = await _run_intents_stage(
+                store, item_id, item_type, consolidated, insights_pool
+            )
+            _emit("node", node="intents", phase=intents_phase)
 
         # Terminal: embed (title + summary), reusing the existing embedder path.
         _emit("node", node="embed", phase="running")
@@ -266,7 +324,7 @@ async def ingest_item(
     # "done" unconditionally, which reported a step that never ran as healthy: with no
     # embedding model bound, `embed` claimed "done" while writing zero vectors. A stage
     # that legitimately had nothing to do says "skipped", not "done".
-    node_phases["insights"] = "done" if insights_ok else "failed"
+    node_phases["insights"] = insights_phase
     node_phases["entities"] = entities_phase
     node_phases["intents"] = intents_phase
     node_phases["embed"] = embed_phase
@@ -357,7 +415,10 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
     # that the detail metadata strip + the agent's knowledge_get ("N pages") read off
     # file_metadata. Persist it (keeping only the shape keys; the text already pooled),
     # else every document shows no page count despite the reader having extracted it.
-    doc = result.outputs.get("document_read")
+    # `bookmark_scrape` is read here too: a paper fetched from an arXiv/DOI/PDF URL has no
+    # `document_read` node (it is a bookmark), so without this a FETCHED paper would report
+    # no page count while an uploaded one does — the same document, two answers.
+    doc = result.outputs.get("document_read") or result.outputs.get("bookmark_scrape")
     if doc is not None and getattr(doc, "success", False) and getattr(doc, "metadata", None):
         shape = {
             k: v
@@ -377,6 +438,25 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
             _fm = fields.get("file_metadata") or (item or {}).get("file_metadata") or {}
             merged = dict(_fm) if isinstance(_fm, dict) else {}
             merged.update(shape)
+            fields["file_metadata"] = merged
+
+    # Fetch-and-slice → the document's detected sections and its
+    # extracted references onto the item. The SLICES are pool rows; these are the
+    # structural findings ABOUT the document, which belong on the item the same way
+    # page_count does. Reference LINKING is deliberately not here — §5 extracts and
+    # stores, and the relate-on-persist step resolves.
+    sliced = result.outputs.get("document_slice")
+    if (
+        sliced is not None
+        and getattr(sliced, "success", False)
+        and (getattr(sliced, "metadata", None) or {}).get("sliced")
+    ):
+        keep = ("sections", "section_strategies", "references", "references_unkeyed")
+        found = {k: v for k, v in sliced.metadata.items() if k in keep}
+        if found:
+            _fm = fields.get("file_metadata") or (item or {}).get("file_metadata") or {}
+            merged = dict(_fm) if isinstance(_fm, dict) else {}
+            merged.update(found)
             fields["file_metadata"] = merged
 
     # Bookmark scrape → derived link-card title/description onto the item.

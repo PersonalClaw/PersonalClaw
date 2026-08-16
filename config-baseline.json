@@ -845,6 +845,12 @@
     "type": "bool"
   },
   {
+    "default": false,
+    "path": "memory.graph_topology_in_context",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": 3.0,
     "path": "memory.history_idle_hours",
     "sensitive": false,
@@ -855,6 +861,12 @@
     "path": "memory.history_max_days",
     "sensitive": false,
     "type": "int"
+  },
+  {
+    "default": false,
+    "path": "memory.holder_attribution",
+    "sensitive": false,
+    "type": "bool"
   },
   {
     "default": true,

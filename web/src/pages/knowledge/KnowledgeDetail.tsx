@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
+import { Pencil, Trash2, Check, X, ExternalLink, Sparkles, Layers, Loader2, Pin, Star, BookOpen, BookOpenText, Archive, Download, Target, Maximize2, Wand2, ChevronDown, WifiOff, RefreshCw, MessageCircleQuestion } from 'lucide-react'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { useFocusTrap } from '../../ui/useFocusTrap'
 import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput, FieldError } from '../../ui/forms'
-import type { KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
+import type { KnowledgeAnnotation, KnowledgeItem, IntentOutcome, IntentOutcomeField } from '../../lib/api'
+import { ReadingView } from './ReadingView'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
 import { GistEditor } from './GistEditor'
@@ -27,7 +28,7 @@ function gistFence(code: string, lang?: string): string {
  *  image·audio·video / code gist / doc), extracted content, AI insights,
  *  entities/relations/related, and per-type edit + delete. Works against both
  *  backend items and the local stub (knowledgeStore merges them). */
-export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void }) {
+export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShowDetails, detailsOpen, detailsCount, onHeader, reading = false, onToggleReading, annotations = [], onAnnotationsChanged }: { item: KnowledgeItem; onChanged: () => void; onDeleted: () => void; onTagClick?: (tag: string) => void; onShowDetails?: () => void; detailsOpen?: boolean; detailsCount?: number; onHeader?: (parts: { wand: React.ReactNode; actions: React.ReactNode; editing: boolean } | null) => void; reading?: boolean; onToggleReading?: () => void; annotations?: KnowledgeAnnotation[]; onAnnotationsChanged?: () => void }) {
   const [full, setFull] = useState<KnowledgeItem>(item)
   const [editing, setEditing] = useState(false)
   // Tag autocomplete, fetched lazily when the user first enters edit mode.
@@ -109,6 +110,13 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   const [genning, setGenning] = useState(false)
   // Generated insights only make sense for items carrying authored/extracted text.
   const canGenerate = !!(full.content || '').trim()
+  // Same test drives reading mode: a reader needs a body. A bookmark, a bare image or an
+  // item still being ingested has nothing to read, so the toggle goes soft-off with a
+  // reason rather than opening an empty reader.
+  const readable = canGenerate
+  // The URL may say `read=1` on an item that turns out to have no body (a stale link, or
+  // the body was cleared). Gate on BOTH, so the reader never opens empty.
+  const readingMode = reading && readable
 
   async function generateInsights() {
     setGenning(true); setErr('')
@@ -228,14 +236,35 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           here would sit outside the overflow logic). */}
       <HeaderControl icon={MessageCircleQuestion} label="Investigate in chat" priority="low"
         onClick={() => { void investigate('knowledge_item', full.id, { backLink: `#/knowledge/item/${full.id}` }) }} />
+      {/* Reading mode. A two-state toggle, so the label stays
+          CONSTANT and names the destination — `active` already becomes `aria-pressed`,
+          which is what carries the state. (The read-state control below is the sanctioned
+          exception because it cycles three.) Soft-off with a reason on an item that has no
+          body to read — a bookmark or a bare image has nothing for a reader to do. */}
+      {onToggleReading && (
+        <HeaderControl icon={BookOpenText} label="Reading mode" active={reading}
+          disabled={!readable} hint={readable ? undefined : 'This item has no text body to read'}
+          onClick={onToggleReading} />
+      )}
       <HeaderControl icon={BookOpen}
         label={(full.read_state || 'unread') === 'reading' ? 'Reading — mark read'
           : full.read_state === 'read' ? 'Read — mark unread' : 'Mark as reading'}
         active={(full.read_state || 'unread') !== 'unread'} onClick={cycleReadState} />
-      <HeaderControl icon={Star} label={full.favorited ? 'Favorited' : 'Favorite'}
-        active={!!full.favorited} onClick={toggleFavorite} />
-      <HeaderControl icon={Pin} label={full.is_pinned ? 'Pinned' : 'Pin'} active={full.is_pinned} onClick={() => toggleFlag('is_pinned')} />
-      <HeaderControl icon={Archive} label={full.is_archived ? 'Archived' : 'Archive'} active={full.is_archived} onClick={() => toggleFlag('is_archived')} />
+      {/* These three name the ACTION and never restate the state, because `active` already
+          becomes `aria-pressed` (HeaderActions.tsx) and the pressed styling already shows it.
+          They used to flip to the past participle — "Favorited" / "Pinned" / "Archived" — which
+          the ARIA toggle-button pattern warns against combining with `aria-pressed`: the state
+          then arrives twice ("Favorited, pressed") while the one thing the user needs, what
+          this click will DO, is never said. It also made the button the only control here whose
+          name changed under the user, so a spoken label could not be relied on to find it.
+          The five other `active` header controls in the tree ("Activity", "Chat history",
+          "Inbox settings", "Details", "More details") already keep their labels constant — this
+          converges onto that, rather than inventing a form.
+          The read-state control ABOVE deliberately does NOT follow this: it cycles through
+          three states, so a constant label could not say what the next press does. */}
+      <HeaderControl icon={Star} label="Favorite" active={!!full.favorited} onClick={toggleFavorite} />
+      <HeaderControl icon={Pin} label="Pin" active={full.is_pinned} onClick={() => toggleFlag('is_pinned')} />
+      <HeaderControl icon={Archive} label="Archive" active={full.is_archived} onClick={() => toggleFlag('is_archived')} />
       {onShowDetails && (
         <HeaderControl icon={Layers} label={`More details${detailsCount ? ` · ${detailsCount}` : ''}`} active={detailsOpen} priority="low" onClick={onShowDetails} />
       )}
@@ -262,7 +291,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     // discards the edit. (Deps are still hand-picked — actionCluster/wandBtn are fresh
     // objects every render; listing them would republish unconditionally and loop.)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [full, draft, reingest, aiTitleAvailable, detailsCount, detailsOpen, editing, saving])
+    // `reading` joins them for the same reason: the published Reading-mode control reads it
+    // for `active`, so without it the header would keep showing the pre-toggle state.
+  }, [full, draft, reingest, aiTitleAvailable, detailsCount, detailsOpen, editing, saving, reading])
 
   // Fleeting notes are content-only (auto-titled) and journals are date-driven — neither
   // exposes an editable title (matches the create flow + journal immutability).
@@ -363,8 +394,17 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       {err && <FieldError>{err}</FieldError>}
 
       {/* Metadata row: provider/size/shape/words/age on the left, the live ingestion
-          status DAG floated to the right of the same row. */}
-      <div className="flex shrink-0 items-start gap-x-m gap-y-1">
+          status DAG floated to the right of the same row — dropping onto its OWN line
+          once the two no longer fit side by side.
+          `flex-wrap` is what makes that drop possible, and it is also what makes the
+          `gap-y-1` here mean anything: a row that cannot wrap has no second line to
+          space, so before this the vertical gap was inert. Without it the strip (which
+          must keep its intrinsic width to stay legible) had nowhere to go and pushed the
+          row past the viewport — measured 422px of content in a 390px phone viewport,
+          and because the document itself does not scroll horizontally, those 32px were
+          CLIPPED rather than reachable: the last ingestion stage was invisible on a
+          phone. */}
+      <div className="flex flex-wrap shrink-0 items-start gap-x-m gap-y-1">
         <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low text-[0.8125rem] min-w-0">
           {full.provider && full.provider !== 'native' && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{full.provider}</span>}
           {full.mime_type && <span className="font-mono text-[0.75rem]">{full.mime_type}</span>}
@@ -377,7 +417,12 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           {full.word_count != null && full.word_count > 0 && <span>{full.word_count} words</span>}
           {full.updated_at && <span title="Last updated">{relTime(full.updated_at)}</span>}
         </div>
-        <div className="ml-auto shrink-0">
+        {/* `min-w-0`, not `shrink-0`: the strip is itself a `flex-wrap` row of stages, so
+            given a narrower box it wraps its own stages instead of overflowing. `shrink-0`
+            pinned it to max-content (measured 394px), which is 4px wider than a 390px phone
+            viewport — so even alone on a wrapped line it still could not fit, and its own
+            wrapping never got a chance to engage. `ml-auto` still right-aligns it. */}
+        <div className="ml-auto min-w-0">
           <ProcessingStrip status={procStatus} nodePhases={nodePhases} error={full.processing_error} graph={ingestGraph} onRetry={generateInsights} retrying={genning} />
         </div>
       </div>
@@ -397,13 +442,25 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           collide with the content's own controls (e.g. a gist's copy button). The
           per-node pool / entities / relations / related live in the page's "More
           details" side panel (KnowledgeExtras), not inline. */}
-      <Preview item={full} tm={tm} prominent />
-      <InsightsDock
-        open={insightsOpen} onToggle={() => setInsightsOpen((v) => !v)}
-        summary={full.summary} insights={insights} intents={itemIntents}
-        canGenerate={canGenerate} genning={genning} onGenerate={generateInsights}
-        processing={procStatus === 'queued' || procStatus === 'processing'}
-      />
+      {/* Reading mode replaces the preview + insights dock rather than sitting beside
+          them: the whole point is to give the article the column, and a reader competing
+          with a metadata strip and a dock is the data view it exists to escape. The
+          metadata and tag rows above stay — they are one line each and they are how a
+          reader confirms WHAT they are reading. */}
+      {readingMode ? (
+        <ReadingView item={full} annotations={annotations}
+          onAnnotationsChanged={onAnnotationsChanged ?? (() => {})} />
+      ) : (
+        <>
+          <Preview item={full} tm={tm} prominent />
+          <InsightsDock
+            open={insightsOpen} onToggle={() => setInsightsOpen((v) => !v)}
+            summary={full.summary} insights={insights} intents={itemIntents}
+            canGenerate={canGenerate} genning={genning} onGenerate={generateInsights}
+            processing={procStatus === 'queued' || procStatus === 'processing'}
+          />
+        </>
+      )}
     </div>
     </>
   )

@@ -10,6 +10,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Optional sound cues, off until you turn them on.**
+- **First run now ends with three things you can actually do, not a tour.**
+- **A knowledge item now has a reading mode, and a passage you highlight in it stays highlighted.**
+- **An empty Triggers page now offers four working starters instead of a blank form.**
+- **PersonalClaw can now watch things for you, and new entries land in your library on their own.**
+- **App installs now check who published the bundle, not just what's in it.**
+- **You can install the phone companion to your home screen.**
+- **Memory now decides what to do with a new fact instead of just piling it on.**
+- **Memory can record whose claim something is (opt-in).**
+- **An optional topology block orients a new session in your memory graph.**
+- **Papers now ingest as papers.**
+- **An app can now teach PersonalClaw to watch a source it has never heard of — by shipping a parser, not a client.**
+- **Watching a site you have a link to now starts with "we already know this one".**
+
 - **A voice is now a thing you own, not a dropdown value.**
 
 - **Proposals are now one thing you approve in one place — and an app can raise one.**
@@ -54,6 +68,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Credentials can now live in your OS keychain, and Doctor tells you where they actually are.**
 - **Unattended automations now run read-only by default, and you're asked before one runs scripts in a project folder.**
 - **The built-in command denylist now repairs itself.**
 - **Settings → Security now shows which denylist is actually protecting you.**
@@ -89,6 +104,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The library you already have becomes searchable by content, without you doing anything.**
 - **Anthropic models now reuse the stable head of a conversation instead of re-reading it every turn.**
 - **The Retro Terminal and Claw Arcade personalities now skin the error surfaces too.**
+- **The Retro Terminal personality now lays a CRT raster over the whole shell.**
 
 - **A goal loop's judge verdict now shows you what the supervisor checked for itself.**
 - **"Reduce motion" now actually stops the springs — and the Bounciness slider reaches everything it claimed to.**

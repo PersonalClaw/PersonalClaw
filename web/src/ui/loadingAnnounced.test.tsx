@@ -154,3 +154,62 @@ describe('the census is closed: no busy region without an announcement', () => {
     expect(read('pages/settings/AppsPanel.tsx')).toMatch(/LoadingStatus what="app settings"/)
   })
 })
+
+// ── A THIRD mechanism: the full-region spinner, which neither census above can see ────────────────
+//
+// This file's own lesson — "a census that keys on one mechanism cannot see a second one" — had a
+// third instance. Both ratchets above key on a MARKER: `aria-busy="true"` for the skeletons, the
+// `<Loading` element for the text state. The app's route-level Suspense fallback is neither: a bare
+// centred `<Loader2 className="animate-spin">` with no role, no name and no text.
+//
+// It is the fallback for EVERY code-split route, so it is what a user meets on every navigation
+// whose chunk is not cached. Measured on a cold load of `#/terminal` before the fix: parent
+// `flex h-full items-center justify-center` with `role=(none)`, the icon with `aria-label=(none)`,
+// and the ONLY live region on the page the toast host's EMPTY `sr-only` status — so nothing was
+// announced, on any route. Driven after the fix, `spoken=["Loading…"]` on #/tasks, #/knowledge,
+// #/projects, #/artifacts/<slug>, #/code and #/app/<name>; all six were silent before.
+//
+// 🪤 PINNED PER SITE, NOT SWEPT — deliberately. A static census of "full-region spinner" is not
+// trustworthy: bounding the enclosing container differently returned 9 sites one way and 3 the
+// other, and a line-based variant flagged `ui/Button.tsx`, whose spinner is inside a button and
+// needs no announcement. An inline spinner beside visible text must NOT gain a live region, so a
+// sweep that cannot tell the two apart would either miss real cases or demand noise. These two are
+// the verified full-region states; a later cycle that finds another adds it here.
+describe('the route-level and app-host loading states announce', () => {
+  const SRC = join(process.cwd(), 'src')
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+  /** Comments stripped: this block names the very markup it asserts on. */
+  const code = (rel: string) => read(rel)
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+
+  it("the Suspense fallback for every route is a live region that says something", () => {
+    const src = code('app/App.tsx')
+    const fallback = src.match(/function PageFallback\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(fallback, 'PageFallback not found — this rail is measuring nothing').toContain('Loader2')
+    expect(fallback, 'the region must be a live region').toMatch(/role="status"/)
+    expect(fallback, 'aria-busy marks it as in-flight').toMatch(/aria-busy="true"/)
+    expect(fallback, 'a live region announces its CONTENT, so it needs LoadingStatus text')
+      .toMatch(/<LoadingStatus\b/)
+  })
+
+  it('the app-host page names what it is loading', () => {
+    const src = code('pages/apps/AppHostPage.tsx')
+    expect(src).toMatch(/role="status"/)
+    expect(src, '"Loading…" on a page that hosts someone else\'s UI does not say whose')
+      .toMatch(/<LoadingStatus what="the app"/)
+  })
+
+  it('an aria-label is NOT accepted in place of announced text', () => {
+    // The trap LoadingStatus' own doc records: role="status" is not named from content, so an
+    // aria-label is a NAME and never reaches the announcement.
+    const fallback = code('app/App.tsx').match(/function PageFallback\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(fallback).not.toMatch(/aria-label="Loading/)
+  })
+
+  // Vacuity floor: prove the stripped source is real and that stripping ran.
+  it('the scanned source is real (guard against a vacuous pass)', () => {
+    expect(code('app/App.tsx')).toContain('function PageFallback')
+    expect(code('app/App.tsx')).not.toContain(['a', 'bare', 'spinning', 'icon'].join(' '))
+  })
+})

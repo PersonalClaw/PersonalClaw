@@ -108,6 +108,14 @@ describe('the inbox provenance excerpt is a named region', () => {
 
 describe('the canonical form has one shape across the family', () => {
   const SITES: [string, RegExp][] = [
+    // `#/learning` joined after a whole-inventory sweep: this rail's two examples were CAPPED boxes
+    // (`max-h-72`, `max-h-40`) embedded in a page, so a census of those shapes could not see a page's
+    // PRIMARY body scroller. Learning's is the one that qualifies, because its panels are read-only —
+    // measured by Tab traversal (not `el.focus()`, which lies): tab stop 28, 222px of hidden content,
+    // and **1066 characters** announced as the region's name, starting "Capture, last 7 days 7
+    // silentSun—silentMon—…". Labelled for what it HOLDS rather than echoing the page's own h1.
+    // Sweeping all 49 surfaces afterwards: 0 unnamed scrollable tab stops remain.
+    ['pages/learning/LearningPage.tsx', /tabIndex=\{0\} role="group" aria-label="Capture and proposals"/],
     ['ui/content/ContentSurface.tsx', /tabIndex=\{0\} role="group" aria-label=/],
     ['pages/settings/DiagnosticsPanel.tsx', /tabIndex=\{0\} role="group" aria-label="Log output"/],
     ['pages/settings/SecurityPanel.tsx', /tabIndex=\{0\} role="group" aria-label=/],

@@ -227,3 +227,87 @@ describe('a dashboard row action uses the emphasis shade', () => {
     expect(rail, 'both modes').toMatch(/contrast\(emphasis\.dark, LOW_DARK\)/)
   })
 })
+
+// ── Cycle 172: THE FIRST GROUND AGAIN, reached through a TONE REGISTRY instead of a class list ──
+//
+// The canvas ground was settled in cycle 147, and this rail pinned the two sites it had measured —
+// both of which write their ink **literally** (`text-primary-emphasis`, or an inline
+// `color: 'var(--color-primary-emphasis)'`). A third site was invisible to that shape: the Knowledge
+// breadcrumb's type segment picks its ink from `knowledgeMeta`'s `tone` field, so no literal accent
+// token appears at the call site at all. Re-running the ground's measurement over the CURRENT surface
+// inventory found it — 51 surfaces in light, the inventory having grown from the 20 cycle 147 swept.
+//
+// 🔑 THE WHOLE-INVENTORY CENSUS, so the population is stated rather than implied. Nine contrast
+// failures in light across 51 surfaces, in exactly THREE families, and only one is this ground:
+//
+//   knowledge-detail   "Note" breadcrumb segment   **4.37**  primary on CANVAS          ← this cycle
+//   triggers           "runs on its own" chip ×8   3.97      primary on its OWN 14% tint
+//   inbox-proposals    "Proposals 35" tab          3.3       on an absolute sibling pill
+//
+// The other two are DELIBERATELY NOT FIXED HERE. The triggers chip paints `primary/14` behind its own
+// text — that is the accent-CHIP family (cycle 146), the same call cycle 155 made when it left
+// `CodeCockpitPage`'s `bg-primary/15` alone; 3.97 is precisely `primary` over its own 14% tint, so it
+// is one measurement, not a coincidence. The inbox tab's ground is a positioned sibling, a fourth
+// shape again. One family per change.
+//
+// 🔑 ONLY `primary` IS BROKEN ON THIS GROUND — recomputed independently here, and it agrees with the
+// three earlier grounds: on `--color-canvas` in light, info 5.74, ok 5.77, warn 5.71, danger 5.83 all
+// pass; `primary` alone lands at 4.37. So the remap is one tone wide, not a sweep of the registry.
+//
+// 🪤 AND THE REGISTRY IS THE WRONG PLACE TO FIX IT — the trap this cycle had to avoid. `knowledgeMeta`'s
+// `tone` is consumed by EIGHT other call sites (`ArtifactCard` ×4, `ArtifactViewer`, `KnowledgeDetail`
+// ×2, `NotificationBell`), and every one of them inks an ICON, which carries a 3:1 non-text floor and
+// already passes at 4.37. Cycle 155 examined that very icon and left it. Editing the shared registry to
+// fix one text label would have moved coral on five surfaces for no AA reason — so the fix is a
+// ground-named helper at the call site, which is what cycle 158 did with `RowAction`'s tone map.
+//
+// Measured after, on the live surface: **6.0:1** light, 9.33 dark, and knowledge-detail reports 0
+// blocking contrast findings at both themes. The validation home holds 26 knowledge items of which
+// **4 are primary-toned** (3 note + 1 fleeting), so the fix is visible on 4 of 26 detail routes and the
+// other 22 (bookmark/gist, info tone) are unchanged — which is why the pixel diff is small by design.
+
+describe('a tone-registry ink painted on the canvas uses the emphasis shade', () => {
+  it('the breadcrumb type segment inks through the canvas helper, not the raw tone', () => {
+    const code = read('pages/knowledge/KnowledgeDetailPage.tsx')
+    expect(code).toMatch(/style=\{\{ color: canvasInk\(tm\.tone\) \}\}/)
+    expect(code, 'the failing ink must be gone from the segment')
+      .not.toMatch(/whitespace-nowrap" style=\{\{ color: tm\.tone \}\}/)
+  })
+
+  it('the helper remaps the one failing tone and is the identity for the rest', () => {
+    // Behavioural, not textual: the point is that `info`/`ok`/`warn`/`danger` keep their own ink.
+    const code = read('pages/knowledge/KnowledgeDetailPage.tsx')
+    const m = code.match(/const canvasInk = \(tone: string\) => \((.+)\)\n/)
+    expect(m, 'canvasInk must exist as a single-expression helper').toBeTruthy()
+    const canvasInk = new Function('tone', `return (${m![1]})`) as (t: string) => string
+    expect(canvasInk('var(--color-primary)')).toBe('var(--color-primary-emphasis)')
+    for (const t of ['var(--color-info)', 'var(--color-ok)', 'var(--color-warn)', 'var(--color-danger)'])
+      expect(canvasInk(t), `${t} passes on the canvas and must be left alone`).toBe(t)
+  })
+
+  it('the mapping is not vacuous — the registry still declares the tone it remaps', () => {
+    // THE VACUITY FLOOR. If `knowledgeMeta` ever stops using `--color-primary`, `canvasInk` becomes
+    // dead code that still reads as an enforced rule. Then this rail is the thing that must change,
+    // deliberately, rather than quietly matching nothing.
+    const meta = read('pages/knowledge/knowledgeMeta.ts')
+    const primaryKinds = [...meta.matchAll(/key: '(\w+)'[^}]*tone: 'var\(--color-primary\)'/g)].map((x) => x[1])
+    expect(primaryKinds, 'kinds whose tone this helper remaps').toEqual(['note', 'fleeting', 'journal'])
+  })
+
+  it('the shared registry is untouched, so the icons keep the base accent', () => {
+    // The other eight consumers ink icons at a 3:1 floor. A future cycle that "finishes the job" by
+    // moving the registry would move coral on five surfaces for no accessibility reason.
+    expect(read('pages/knowledge/knowledgeMeta.ts'))
+      .toMatch(/key: 'note', label: 'Note', icon: StickyNote, tone: 'var\(--color-primary\)'/)
+  })
+
+  it('the call site carries the measurement, not just the token', () => {
+    expect(read('pages/knowledge/KnowledgeDetailPage.tsx')).toMatch(/4\.37:1/)
+  })
+
+  it('this ground is already scheme-covered, which is what makes the remap safe in all 12', () => {
+    // No new scheme assertion is needed: the canvas is the ground cycle 147 added to the scheme rail,
+    // and `primary-emphasis` passes there in every scheme (worst 4.82, coral 6.0).
+    expect(read('design/schemeContrast.test.ts')).toMatch(/primary-emphasis as accent text on the CANVAS/)
+  })
+})

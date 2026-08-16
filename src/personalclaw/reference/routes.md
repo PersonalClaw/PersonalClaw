@@ -258,6 +258,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/incident` — current state; POST /api/incident — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
 - `POST /api/investigate` — _(no summary)_
+- `DELETE /api/knowledge/annotations/{id}` — drop one highlight.
 - `POST /api/knowledge/bulk` — apply one curation op to many items.
 - `GET /api/knowledge/collections` — every shelf in rail order.
 - `POST /api/knowledge/collections` — create a manual or smart shelf.
@@ -286,6 +287,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/knowledge/items/{id}` — _(no summary)_
 - `GET /api/knowledge/items/{id}` — - single item with its entities + relations.
 - `PATCH /api/knowledge/items/{id}` — - update fields.
+- `GET /api/knowledge/items/{id}/annotations` — the item's reading highlights.
+- `POST /api/knowledge/items/{id}/annotations` — keep a highlighted passage.
 - `GET /api/knowledge/items/{id}/content` — - plain text for clipboard.
 - `GET /api/knowledge/items/{id}/duplicates` — near-duplicates, best match first.
 - `GET /api/knowledge/items/{id}/extracted` — - the per-item extracted-content
@@ -303,6 +306,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/search-for-context` — _(no summary)_
+- `GET /api/knowledge/source-recipes` — - the bundled source-recipe directory.
+- `GET /api/knowledge/sources` — the watched sources, with health, plus the kind catalog.
+- `POST /api/knowledge/sources` — save a source, after its provider validates the spec.
+- `POST /api/knowledge/sources/preview` — §2.4's dry run for the paste-URL create flow.
+- `PATCH /api/knowledge/sources/{id}` — apply a remediation, rename, or pause a source.
 - `GET /api/knowledge/stats` — _(no summary)_
 - `GET /api/knowledge/tag-tree` — every tag with its parent and live usage count.
 - `GET /api/knowledge/tags` — - distinct tags (frequency-ordered) for autocomplete.

@@ -16,6 +16,7 @@ they run once over the whole extracted-content pool after the graph completes (s
 from __future__ import annotations
 
 from personalclaw.knowledge.pipeline.graph import NodeSpec, PipelineGraph
+from personalclaw.knowledge_providers.base import ENRICHMENT_FULL, ENRICHMENT_RAW
 
 # The 12 native types and the graph class each routes to. Text-backed types share the
 # single-passthrough graph; file/document types share the document-read graph. Media
@@ -34,20 +35,35 @@ class PassthroughGraph(PipelineGraph):
 
 
 class BookmarkGraph(PipelineGraph):
-    """bookmark → scrape the URL → its text (one logical doc). User-pasted content
-    passes through unchanged (no fetch)."""
+    """bookmark → scrape the URL (or fetch-and-cache a paper) → slice. User-pasted
+    content passes through unchanged (no fetch).
+
+    The slicer is a leaf here for the same reason as in :class:`DocumentGraph`: a bookmark
+    to an arXiv paper is a document, and the whole point of §5 is that the same
+    deterministic cut applies however the bytes arrived.
+    """
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="bookmark_scrape", backend="web"))
+        self.add(NodeSpec(node_type="document_slice", backend="native"))
+        self.edge("bookmark_scrape", "document_slice")
 
 
 class DocumentGraph(PipelineGraph):
-    """pdf/document/sheet/slides → read file text (pure-python) → consolidate."""
+    """pdf/document/sheet/slides → read file text (pure-python) → consolidate, ‖ slice.
+
+    ``document_slice`` (WATCHED-SOURCES §5) hangs off the reader as a LEAF and deliberately
+    does NOT feed ``consolidate``: consolidate header-concats every upstream it has, so
+    routing the slices through it would append three derived views of the document to the
+    document itself — tripling the consolidated text the insights/embed stages read.
+    """
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="document_read", backend="native"))
         self.add(NodeSpec(node_type="consolidate", backend="concat"))
+        self.add(NodeSpec(node_type="document_slice", backend="native"))
         self.edge("document_read", "consolidate")
+        self.edge("document_read", "document_slice")
 
 
 class ImageGraph(PipelineGraph):
@@ -149,6 +165,26 @@ class VideoGraph(PipelineGraph):
         self.edge("vision", "video_consolidate")
 
 
+class FeedItemGraph(PipelineGraph):
+    """A ``raw``-enrichment source item → the fetched feed content IS the extracted text.
+
+    The structural half of WATCHED-SOURCES §6.3's no-AI contract. Every LLM-backed node is
+    ABSENT from this graph rather than present-and-disabled, so no config edit, node-param
+    override, or future backend registration can re-enable a model for a raw source. The
+    single node is pure-python, which leaves the deterministic terminal work intact: the FTS
+    row (written at item create), the local embedding, and dedup all still run, so a raw
+    item is fully searchable by keyword AND vector. "Raw" means no model — not no index.
+
+    Deliberately NOT a reuse of :class:`PassthroughGraph`, whose topology is identical
+    today. Passthrough is note/gist/journal/fleeting's shape and is free to gain a
+    model-backed node the day the text types want one; this graph may never have one.
+    Sharing the class would make a hard guarantee an accident of another type's topology.
+    """
+
+    def build(self) -> None:
+        self.add(NodeSpec(node_type="passthrough", backend="native"))
+
+
 _GRAPH_BY_TYPE: dict[str, type[PipelineGraph]] = {
     **{t: PassthroughGraph for t in _TEXT_TYPES},
     **{t: DocumentGraph for t in _DOC_TYPES},
@@ -159,14 +195,24 @@ _GRAPH_BY_TYPE: dict[str, type[PipelineGraph]] = {
 }
 
 
-def graph_for(item_type: str) -> PipelineGraph:
-    """Return the validated PipelineGraph for *item_type*.
+def graph_for(item_type: str, *, enrichment: str = ENRICHMENT_FULL) -> PipelineGraph:
+    """Return the validated PipelineGraph for *item_type* under *enrichment*.
 
     Text → passthrough; pdf/doc/sheet/slides → document-read; image/audio/video →
     their media graphs (#47). Unknown types fall back to the document graph (which
     degrades to the item's raw content when there's no readable file).
+
+    ``enrichment`` is the owning WatchedSource's no-AI setting (WATCHED-SOURCES §6.3).
+    :data:`~personalclaw.knowledge_providers.base.ENRICHMENT_RAW` overrides the type map
+    entirely and returns :class:`FeedItemGraph` — the type's own graph may contain LLM
+    nodes (a raw source of images would otherwise route through OCR + vision), and the
+    guarantee is that a raw item reaches no model at all, whatever it is.
     """
-    cls = _GRAPH_BY_TYPE.get(item_type, DocumentGraph)
+    cls: type[PipelineGraph]
+    if enrichment == ENRICHMENT_RAW:
+        cls = FeedItemGraph
+    else:
+        cls = _GRAPH_BY_TYPE.get(item_type, DocumentGraph)
     g = cls(item_type=item_type)
     g.build()
     g.validate()

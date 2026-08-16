@@ -37,9 +37,21 @@ describe('onboarding step progress is announced', () => {
   it('the announced title comes from the SAME source as the visible one', () => {
     // Single source, so the spoken step name cannot drift from the heading. If a title is ever
     // hardcoded back onto a StepRow, this and nameFieldLabelled both fail.
+    //
+    // The count is DERIVED from `ORDER`, not frozen: when OU-3 added the `try` step this rail
+    // said "all three rows read from TITLES" and would have gone red for a fourth row that was
+    // correctly sourced — a frozen count turns "every row" into "exactly N rows" and makes
+    // adding a compliant step look like a regression. Deriving it strengthens the claim: it now
+    // fails if ANY declared step's row hardcodes its title, at any number of steps.
     const src = onboarding()
     expect(src).toMatch(/const TITLES: Record<StepId, string>/)
-    expect((src.match(/title=\{TITLES\.\w+\}/g) || []).length, 'all three rows read from TITLES').toBe(3)
+    const steps = (src.match(/const ORDER: StepId\[\] = \[([^\]]*)\]/)?.[1] ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean)
+    expect(steps.length, 'ORDER must declare the steps').toBeGreaterThan(1)
+    expect(
+      (src.match(/title=\{TITLES\.\w+\}/g) || []).length,
+      `all ${steps.length} rows in ORDER must read from TITLES`,
+    ).toBe(steps.length)
   })
 
   it('the live region is visually hidden, not visible chrome', () => {

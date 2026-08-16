@@ -12,7 +12,12 @@ from pathlib import Path
 from personalclaw import __version__ as _pc_version
 from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import config_dir
+from personalclaw.config.loader import (
+    config_dir,
+    credential_backend,
+    credential_backend_warning,
+    env_path,
+)
 from personalclaw.dashboard.origin import (
     auth_is_off,
     is_local_bind,
@@ -112,6 +117,25 @@ def _doctor_paths() -> None:
     ]
     for label, path in paths:
         print(f"{label}\t{path}")
+
+
+def _doctor_credentials() -> list[str]:
+    """Print which credential store is holding the secrets; return any issues (SH-1).
+
+    Reports the RESOLVED backend, never the requested one. That distinction is the
+    reason this line exists: an install that asks for a keychain on a box with no OS
+    secret service keeps its credentials in ``.env`` at 0600, and echoing the request
+    would tell that operator their secrets are somewhere they are not.
+    """
+    if credential_backend() == "keychain":
+        print("  credentials: 🔐 OS keychain (keyring)")
+    else:
+        print(f"  credentials: 🔐 .env 0600 — {env_path()}")
+    warning = credential_backend_warning()
+    if not warning:
+        return []
+    print(f"               ⚠️  {warning}")
+    return ["credential backend: keychain requested but unavailable"]
 
 
 def _doctor() -> None:
@@ -224,6 +248,9 @@ def _doctor() -> None:
     except Exception:
         print("  chat model:  (unresolved)")
     print(f"  approval:    {cfg.agent.approval_mode}")
+
+    issues.extend(_doctor_credentials())
+
     _host: str = ""
     _port: int | None = None
     try:

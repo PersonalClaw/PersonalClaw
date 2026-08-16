@@ -30,6 +30,10 @@ from typing import Any
 # One source of truth for "touches a credential/secret path" (IMDS, ~/.aws, …).
 from personalclaw.history import _SENSITIVE_TOOL_PATTERNS
 
+# Artifact-signature state carried on every report (C2). signing.py imports nothing
+# from here, so this is a one-way edge.
+from personalclaw.signing import SignatureInfo
+
 # ── Verdict + report ────────────────────────────────────────────────────────
 
 
@@ -80,12 +84,21 @@ class Finding:
 @dataclass
 class ScanReport:
     """The gate's output. ``verdict`` is the decision input; ``findings`` is the
-    evidence the install UX surfaces ("community skill — 2 warnings")."""
+    evidence the install UX surfaces ("community skill — 2 warnings").
+
+    ``signature`` is SECURITY-HARDENING contract C2 — the artifact-signature state of
+    the bundle this report describes (``signed`` / ``unsigned`` / ``invalid`` + signer).
+    It is set by the install gate that verified the staged tree, NOT by the scanner: the
+    scanner is content inspection, signing is provenance, and conflating them would let
+    a signed bundle's verdict be read as authenticity or vice-versa. Its default is
+    ``unsigned``, which is the honest answer for a report produced by a path that never
+    looked (skill installs today) — never a claimed-but-unchecked ``signed``."""
 
     verdict: Verdict = Verdict.CLEAN
     findings: list[Finding] = field(default_factory=list)
     surfaces_scanned: list[str] = field(default_factory=list)
     tier: TrustTier = TrustTier.COMMUNITY
+    signature: SignatureInfo = field(default_factory=SignatureInfo)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +106,7 @@ class ScanReport:
             "tier": self.tier.value,
             "findings": [f.to_dict() for f in self.findings],
             "surfaces_scanned": list(self.surfaces_scanned),
+            "signature": self.signature.to_dict(),
         }
 
     @property

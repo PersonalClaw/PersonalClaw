@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
+import { armCueAudio } from '../design/soundCues'
 import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -8,6 +9,7 @@ import { IncidentBanner } from './IncidentBanner'
 import { ChatPage } from '../pages/ChatPage'
 import { useIdentity } from './identity'
 import { Onboarding } from './Onboarding'
+import { peekOnboardingExit, clearOnboardingExit } from './onboarding/exitTo'
 import { useHashRoute } from './useHashRoute'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
@@ -19,8 +21,10 @@ import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
+import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
 import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
+import { LoadingStatus } from '../ui/ListScaffold'
 import { useCachedData } from '../lib/useCachedData'
 import { resolveAppIcon } from '../pages/apps/appIcon'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
@@ -86,8 +90,25 @@ const NAV: NavItem[] = [
 // (#/loop, #/loops/<id>, #/code/<id>, …) stay reachable.
 const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 'loop', 'loops', 'code', 'app'])
 
+/** The Suspense fallback for every code-split route, so it is what a user sees on EVERY
+ *  navigation whose chunk is not cached yet.
+ *
+ *  It used to be a bare spinning icon: no role, no name, no text. Measured on a cold load of
+ *  `#/terminal` — parent `flex h-full items-center justify-center` with `role=(none)`, the icon
+ *  with `aria-label=(none)`, and the only live region on the page the toast host's EMPTY
+ *  `sr-only` status. So the announcement was nothing, on every route.
+ *
+ *  Fixed the way the tree already does it (`ListSkeleton`): `role="status" aria-busy="true"` on
+ *  the region plus `LoadingStatus`, whose sr-only text is what actually gets announced — an
+ *  `aria-label` on a live region is a NAME, not an announcement, which is the trap
+ *  `LoadingStatus`' own doc records. Nothing visible changes. */
 function PageFallback() {
-  return <div className="flex h-full items-center justify-center"><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
+  return (
+    <div role="status" aria-busy="true" className="flex h-full items-center justify-center">
+      <LoadingStatus />
+      <Loader2 size={22} className="animate-spin text-on-surface-low" />
+    </div>
+  )
 }
 
 function renderPage(active: string, r: RouteProps) {
@@ -146,6 +167,12 @@ function AppInner() {
   // `sub` on the chat route (excluding the new/history list routes).
   const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' ? sub : ''
   useApprovalToasts(activeChatSession)
+  // Sound cues need their AudioContext built inside a real user gesture, and the
+  // three cue points (turn settled, approval requested, error toast) are none of
+  // them. So the shell arms a one-shot primer here and the next click/keypress
+  // builds the single context. Does nothing while the toggle is off (Settings →
+  // Design → Personality), which is the default.
+  useEffect(() => { armCueAudio() }, [])
   const { onboarded, loaded } = useIdentity()
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
   useEffect(() => { localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? '1' : '0') }, [navCollapsed])
@@ -283,10 +310,25 @@ function AppInner() {
 
   // Onboarding is a real route (#/onboarding), full-screen, no NavRail. A guard
   // redirects TO it when there's no name and AWAY from it once onboarded.
+  //
+  // The exit branch honours a destination the flow asked for: a try-one card's
+  // outcome link and its failure path's Settings deep-link both need to LEAVE the flow
+  // and land somewhere specific. They cannot navigate there themselves — the `!onboarded`
+  // branch above would pull them straight back, and navigating after committing the name
+  // races this effect. So the flow hands the destination over and this one navigation
+  // resolves it. Absent (the ordinary finish), the dashboard default is unchanged.
+  //
+  // `peek` never consumes, because THIS EFFECT IS RE-ENTRANT: `navigate` sets `location.hash`
+  // and `route` only catches up on the browser's async `hashchange`, so the exit branch can run
+  // again with a stale `route === 'onboarding'`. A consuming read made the second run resolve to
+  // the default and overwrite the first run's correct hash — measured live, landing on
+  // `#/dashboard` instead of `#/settings/providers`. Peeking makes every run resolve identically;
+  // the destination is dropped in the third branch, once the route has provably left onboarding.
   useEffect(() => {
     if (!loaded) return
     if (!onboarded && route !== 'onboarding') navigate('onboarding')
-    else if (onboarded && route === 'onboarding') navigate('dashboard')
+    else if (onboarded && route === 'onboarding') navigate(peekOnboardingExit() || 'dashboard')
+    else if (onboarded) clearOnboardingExit()
   }, [loaded, onboarded, route, navigate])
 
   // Persist the embed flag at mount-time so in-page navigation (which strips the
@@ -446,6 +488,11 @@ function AppInner() {
         </ErrorBoundary>
       </main>
       <CommandPalette commands={commands} />
+      {/* The active personality's decorative shell element.
+          Renders NOTHING for the default identity and for every standard scheme;
+          under a personality that declares one it mounts an aria-hidden,
+          pointer-events-none overlay from the closed SHELL_ELEMENTS registry. */}
+      <PersonalityShellElement />
       <Toaster />
       <DialogHost />
       {/* Self-update step progression (WS `update_progress`) — shell-level so the

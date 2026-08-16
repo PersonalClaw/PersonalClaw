@@ -144,6 +144,44 @@ async def favicon(request: web.Request) -> web.StreamResponse:
     raise web.HTTPNotFound()
 
 
+def _dist_root_file(name: str, content_type: str) -> web.StreamResponse:
+    """Serve a dist-ROOT file with an explicit content type.
+
+    Two things here are load-bearing for the PWA (MOBILE-COMPANION T3.1):
+
+    * **The content type is stated, never guessed.** ``.webmanifest`` is absent from
+      Python's ``mimetypes`` table on a stock install, so ``FileResponse`` would send
+      ``application/octet-stream`` and the browser would discard the manifest.
+    * **A missing file returns a 404 *response*, it does not raise.** ``spa_fallback``
+      converts a raised ``HTTPNotFound`` into ``index.html``, and HTML served for
+      ``/sw.js`` fails registration on a MIME check while HTML served for the manifest
+      fails to parse — both silently, with the app still looking fine. Returning the
+      status directly bypasses that middleware entirely.
+    """
+    path = _DIST_DIR / name
+    if path.is_file():
+        return web.FileResponse(path, headers={"Content-Type": content_type})
+    return web.Response(status=404, text=f"{name} not built", content_type="text/plain")
+
+
+async def manifest_webmanifest(request: web.Request) -> web.StreamResponse:
+    """Serve /manifest.webmanifest — the PWA manifest index.html declares.
+
+    Stays behind session auth (it is not in ``token_auth._BYPASS_*``), which is why
+    index.html declares the link with ``crossorigin="use-credentials"``.
+    """
+    return _dist_root_file("manifest.webmanifest", "application/manifest+json")
+
+
+async def service_worker(request: web.Request) -> web.StreamResponse:
+    """Serve /sw.js — the service worker, from the dist ROOT.
+
+    The path is the scope: a worker served from ``/assets/`` could only control
+    ``/assets/``, so this one must stay at the origin root to control the SPA.
+    """
+    return _dist_root_file("sw.js", "text/javascript")
+
+
 # ── STT (Speech-to-Text) ──
 
 
@@ -638,6 +676,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # reads them per turn, so a change takes effect on the next message with no restart.
     "memory.push_context": {"type": "bool"},
     "memory.push_min_confidence": {"type": "float", "min": 0.0, "max": 1.0},
+    # The topology block and the holder axis. Both
+    # runtime-editable: the block is read per new session and the axis per write, so a
+    # change takes effect without a restart. Turning the axis OFF stops NEW attribution
+    # and stops rendering it; already-attributed rows keep their holder, so flipping it
+    # back on does not need a backfill.
+    "memory.graph_topology_in_context": {"type": "bool"},
+    "memory.holder_attribution": {"type": "bool"},
     "feedback.enabled": {"type": "bool"},
     "feedback.retire_threshold": {"type": "float", "min": 0.1, "max": 0.9},
     "feedback.min_n": {"type": "int", "min": 3, "max": 50},

@@ -176,6 +176,8 @@ async def api_memory_settings(request: web.Request) -> web.Response:
             "graph_enabled": cfg.memory.graph_enabled,
             "push_context": cfg.memory.push_context,
             "push_min_confidence": cfg.memory.push_min_confidence,
+            "graph_topology_in_context": cfg.memory.graph_topology_in_context,
+            "holder_attribution": cfg.memory.holder_attribution,
         }
     )
 

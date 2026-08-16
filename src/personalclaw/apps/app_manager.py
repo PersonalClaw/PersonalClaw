@@ -45,6 +45,7 @@ from personalclaw.apps.manager import (
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.atomic_write import atomic_write
 from personalclaw.sel import sel
+from personalclaw.signing import SignatureInfo, SignatureState, verify_bundle
 from personalclaw.supply_chain import ScanReport, TrustTier, Verdict, default_scanner
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,28 @@ def _tier_for_origin(origin: str) -> TrustTier:
         "local": TrustTier.COMMUNITY,
         "external": TrustTier.COMMUNITY,
     }.get(origin, TrustTier.COMMUNITY)
+
+
+def _signature_gate(staged: Path, origin: str) -> tuple[SignatureInfo, TrustTier]:
+    """Verify the STAGED bundle's signature and derive the trust tier from it (SH-3).
+
+    Runs before the content scan and long before the commit, so the answer is known for
+    the exact bytes that will land: the staged tree is the one the commit step moves into
+    place, and nothing re-fetches in between.
+
+    * ``invalid`` → the caller REFUSES (terminal, ``confirm`` does not override).
+    * ``signed`` by an in-tree key → tier is raised to ``official`` when the origin would
+      otherwise be ``community``. A verified maintainer signature is exactly the
+      provenance ``official`` already means for the curated registry. It never *lowers*
+      an origin's tier: ``builtin`` stays ``builtin``, and an unsigned bundle keeps the
+      tier its origin earned — signing only ever adds trust it can prove.
+    * ``unsigned`` → unchanged. Community-tier installable, per C2's graduated trust.
+    """
+    info = verify_bundle(staged)
+    tier = _tier_for_origin(origin)
+    if info.state is SignatureState.SIGNED and tier is TrustTier.COMMUNITY:
+        tier = TrustTier.OFFICIAL
+    return info, tier
 
 
 def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
@@ -451,9 +474,25 @@ def install(
         # 2. Re-validate the staged manifest (source-of-truth is the staged copy).
         manifest = _load_staged_manifest(staged)
 
-        # 3. Scan the staged content — the gate.
-        tier = _tier_for_origin(origin)
+        # 3. Verify the signature BEFORE the scan and before anything is committed
+        # (SH-3). An invalid signature is terminal: `confirm` does not override it,
+        # because "someone tampered with a signed artifact" is not a risk the user is in
+        # a position to accept. Unsigned is not invalid — it installs at community tier.
+        signature, tier = _signature_gate(staged, origin)
+        if signature.is_invalid:
+            _audit(
+                "install", "refused", name, caller=caller, error=f"signature: {signature.reason}"
+            )
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=ScanReport(tier=tier, signature=signature),
+                error=f"install refused: invalid signature — {signature.reason}",
+            )
+
+        # 4. Scan the staged content — the gate.
         report = default_scanner.scan(staged, tier)
+        report.signature = signature
         if report.verdict is Verdict.DANGEROUS:
             _audit("install", "refused", name, caller=caller, error="scan: dangerous")
             return InstallResult(
@@ -472,7 +511,7 @@ def install(
                 error="install needs consent: scanner raised warnings",
             )
 
-        # 3.5 Platform gate (P21 Gap B). An app that must be installed on the user's
+        # 4.5 Platform gate (P21 Gap B). An app that must be installed on the user's
         # local machine (installMode="client") or that doesn't support THIS server's OS
         # can't be server-installed here — short-circuit to a client-install result
         # (the copy-paste one-liner) WITHOUT committing anything to the live tree. The
@@ -506,7 +545,8 @@ def install(
                 ),
             )
 
-        # 4. Commit: move staged → live app dir.
+        # 5. Commit: move staged → live app dir. These are the exact bytes the signature
+        # covered and the scanner read — nothing re-fetches between the gate and here.
         dest = app_dir(name)
         if dest.exists():
             _audit("install", "error", name, caller=caller, error="already installed")
@@ -648,8 +688,22 @@ def update(
                 scan=None,
                 error=f"manifest name {manifest.name!r} ≠ target {name!r}",
             )
+        # Verify the new content's signature before the scan and before the swap — an
+        # update is a fresh fetch of mutable content, so it re-passes the FULL install
+        # gate. Skipping it here would make "update" the way around signing.
+        signature, tier = _signature_gate(staged, origin)
+        if signature.is_invalid:
+            _audit("update", "refused", name, caller=caller, error=f"signature: {signature.reason}")
+            return InstallResult(
+                ok=False,
+                name=name,
+                scan=ScanReport(tier=tier, signature=signature),
+                error=f"update refused: invalid signature — {signature.reason}",
+            )
+
         # Scan the new content (fresh fetch → re-scan; same gate as install).
-        report = default_scanner.scan(staged, _tier_for_origin(origin))
+        report = default_scanner.scan(staged, tier)
+        report.signature = signature
         if report.verdict is Verdict.DANGEROUS:
             _audit("update", "refused", name, caller=caller, error="scan: dangerous")
             return InstallResult(

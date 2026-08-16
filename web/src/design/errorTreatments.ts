@@ -68,10 +68,17 @@ export const ERROR_TREATMENTS: Record<ErrorTreatmentId, ErrorTreatment> = {
 /** The treatment for an id, or `null` for `undefined` and for an id that no
  *  longer exists. Total and non-throwing on purpose: this is called while an
  *  error surface is already rendering, and a throw there replaces one broken page
- *  with a blank app. */
+ *  with a blank app.
+ *
+ *  `Object.hasOwn`, not `map[id] ?? null`: a plain index reads the PROTOTYPE CHAIN,
+ *  so `getErrorTreatment('constructor')` used to return the `Object` constructor
+ *  instead of `null` — and `treatmentPaint` then threw `Cannot read properties of
+ *  undefined (reading 'bg')`, on the one render path this function's own contract
+ *  says must never throw. Found while closing the same hole in `getShellElement`
+ *  (PT-3); the two registries now resolve identically. */
 export function getErrorTreatment(id: string | undefined): ErrorTreatment | null {
-  if (!id) return null
-  return (ERROR_TREATMENTS as Record<string, ErrorTreatment>)[id] ?? null
+  if (!id || !Object.hasOwn(ERROR_TREATMENTS, id)) return null
+  return ERROR_TREATMENTS[id as ErrorTreatmentId]
 }
 
 /** The inline colour declarations for a treatment — `null` when there is none, so

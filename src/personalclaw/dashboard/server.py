@@ -378,6 +378,15 @@ async def start_dashboard(
     # Page routes
     app.router.add_get("/", handlers.index)
     app.router.add_get("/claw.svg", handlers.favicon)
+    # PWA. Both live at the origin ROOT by necessity, not
+    # convention: `/sw.js` because a service worker's scope is its path (served from
+    # `/assets/` it could only control `/assets/`), and the manifest because
+    # `start_url`/`scope` are resolved relative to it. Both remain session-gated —
+    # they are NOT in token_auth's bypass sets — so only the authenticated owner can
+    # install the companion; index.html declares the manifest link with
+    # `crossorigin="use-credentials"` so the browser sends the cookie.
+    app.router.add_get("/manifest.webmanifest", handlers.manifest_webmanifest)
+    app.router.add_get("/sw.js", handlers.service_worker)
 
     # Owner login. `/login`, `/api/auth/login` and
     # `/api/auth/status` are token-auth EXEMPT — they are how a remote browser obtains a
@@ -1481,6 +1490,18 @@ async def start_dashboard(
         # fallbacks instead of Google Sans Flex/Code (incl. the code editor's mono).
         if (_DIST_DIR / "fonts").is_dir():
             app.router.add_static("/fonts", _DIST_DIR / "fonts", show_index=False)
+        # PWA app icons the manifest declares at stable, unhashed paths (they are
+        # referenced from JSON, so they cannot carry a content hash). Also listed in
+        # spa_fallback's exclusions below: a missing icon must 404, because HTML
+        # returned for an icon URL makes the manifest entry invalid and the install
+        # prompt then just never appears.
+        if (_DIST_DIR / "icons").is_dir():
+            app.router.add_static(
+                "/icons",
+                _DIST_DIR / "icons",
+                show_index=False,
+                append_version=False,  # stable URLs — the manifest names them literally
+            )
         # Vendor shims for the app import map (react, react-dom, react/jsx-runtime)
         if (_DIST_DIR / "vendor").is_dir():
             app.router.add_static(
@@ -1549,8 +1570,11 @@ async def start_dashboard(
         try:
             return await handler(request)  # type: ignore[operator]
         except web.HTTPNotFound:
+            # `/icons/` is excluded for the PWA: a manifest icon that resolves to
+            # index.html is an invalid icon, and the only symptom is an install
+            # prompt that never appears. A 404 is diagnosable; HTML is not.
             if request.method == "GET" and not request.path.startswith(
-                ("/api/", "/assets/", "/sprites/", "/vendor/")
+                ("/api/", "/assets/", "/icons/", "/sprites/", "/vendor/")
             ):
                 return await handlers.index(request)
             raise
@@ -1829,13 +1853,21 @@ async def start_dashboard(
     try:
         from personalclaw.knowledge.source_engine import SourceEngine
         from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+        from personalclaw.knowledge_providers.feed_source import FeedSourceProvider
         from personalclaw.knowledge_providers.registry import register_provider
+        from personalclaw.knowledge_providers.web_source import WebSourceProvider
 
         # Watched local directories are a CORE source kind, so the
         # observer is registered here rather than through an app: without this the engine
         # would enrol no provider for a `watched-dir` source and every dir source the user
         # created would sit permanently unpolled.
         register_provider(DirSourceProvider(state.knowledge_store))
+        # Watched feeds are core for the same reason — a `watched-feed` source with no
+        # enrolled provider is an inert row, so the provider ships registered or not at all.
+        register_provider(FeedSourceProvider(state.knowledge_store))
+        # Watched pages — the five-detector kind. Same reasoning: a `watched-page` row
+        # with no enrolled provider would be a source the user created and nothing polls.
+        register_provider(WebSourceProvider(state.knowledge_store))
         state._source_engine = SourceEngine(  # prevent GC
             state.knowledge_store,
             state.knowledge_ingest_queue(),

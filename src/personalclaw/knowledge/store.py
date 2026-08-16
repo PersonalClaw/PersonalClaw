@@ -5,6 +5,7 @@ import logging
 import pathlib
 from collections import defaultdict
 from datetime import datetime
+from typing import Any, Callable
 from uuid import uuid4
 
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
@@ -428,6 +429,35 @@ class KnowledgeStore:
                 PRIMARY KEY (item_id, entity_id)
             );
 
+            -- Reading annotations (KNOWLEDGE-LIBRARY S3, T3.1). The plan left this an
+            -- open question — "annotations as `mentions` vs a dedicated `annotations`
+            -- table — default: reuse `mentions`; promote to its own table only if
+            -- reading-notes need richer structure (revisit in S3)" — and S3 is where it
+            -- gets answered: its own table. `mentions` is (item_id, entity_id) keyed, so
+            -- storing a highlight there would require MINTING AN ENTITY per highlighted
+            -- sentence, which would put reading debris into the entity graph, the
+            -- `/entities` surfaces and orphan-pruning. A highlight is also not an
+            -- entity↔item edge: it needs a re-anchoring locator (`quote` + which
+            -- `occurrence` of it) that `mentions.context` cannot express.
+            --
+            -- Anchoring is by TEXT, not character offset: the reader renders markdown, so
+            -- offsets into the raw source do not survive the transform. `occurrence` is
+            -- the 0-based index of this quote among identical strings in the rendered
+            -- article, which is what makes two highlights of the same repeated sentence
+            -- distinct rows. An edited body may orphan an anchor — the row survives and
+            -- still lists, it just stops re-marking, which is the honest failure.
+            -- ON DELETE CASCADE: deleting the item takes its highlights with it.
+            CREATE TABLE IF NOT EXISTS annotations (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                quote TEXT NOT NULL,
+                occurrence INTEGER NOT NULL DEFAULT 0,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_annotations_item ON annotations(item_id);
+
             -- Extracted-content pool (knowledge node-graph engine, #30). Each row is
             -- one node's output for an item — the drillable per-item bundle the
             -- ingestion DAG produces (transcript, video-text, pdf-table, …). Many
@@ -792,6 +822,14 @@ class KnowledgeStore:
             self.db.execute("ALTER TABLE items ADD COLUMN source_id TEXT")
         if "guid" not in item_cols:
             self.db.execute("ALTER TABLE items ADD COLUMN guid TEXT")
+        src_cols = {r[1] for r in self.db.execute("PRAGMA table_info(sources)").fetchall()}
+        if src_cols and "last_escalations" not in src_cols:
+            # Added after `sources` shipped, so it is a guarded ALTER rather than a DDL edit
+            # (knowledge.db has no schema-version counter — same idempotence discipline as the
+            # item columns above). The CREATE below carries it for a fresh database.
+            self.db.execute(
+                "ALTER TABLE sources ADD COLUMN last_escalations TEXT NOT NULL DEFAULT '[]'"
+            )
         self.db.executescript("""
             -- A WatchedSource: user-library configuration (§1.2), not harness state, so it
             -- lives here in knowledge.db beside the items it produces. `spec`/`budget` are
@@ -814,6 +852,10 @@ class KnowledgeStore:
                 last_new_count INTEGER DEFAULT 0,
                 health_status TEXT DEFAULT 'ok',
                 last_error_summary TEXT DEFAULT '',
+                -- The tiers the last poll had to climb, or was refused (WATCHED-SOURCES
+                -- §2.3): a render escalation is the expensive one, and an escalation nobody
+                -- can see is indistinguishable from a cheap poll. JSON array of strings.
+                last_escalations TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -849,6 +891,14 @@ class KnowledgeStore:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_guid
                 ON items(source_id, guid)
                 WHERE source_id IS NOT NULL AND guid IS NOT NULL;
+
+            -- The cross-source merge lookup (§3.3). NOT unique: two different sources
+            -- legitimately hold the same canonical URL for a moment (the merge collapses
+            -- them), and native/imported bookmarks may share a URL with a source item.
+            -- Partial, so the index only carries rows a source wrote.
+            CREATE INDEX IF NOT EXISTS idx_items_source_url
+                ON items(url)
+                WHERE source_id IS NOT NULL;
         """)
         self.db.commit()
 
@@ -902,6 +952,12 @@ class KnowledgeStore:
                 d[key] = json.loads(val) if val else {}
             except (TypeError, ValueError):
                 d[key] = {}
+        raw_esc = d.get("last_escalations")
+        try:
+            parsed = json.loads(raw_esc) if raw_esc else []
+        except (TypeError, ValueError):
+            parsed = []
+        d["last_escalations"] = [str(x) for x in parsed] if isinstance(parsed, list) else []
         d["enabled"] = bool(d.get("enabled"))
         return d
 
@@ -915,6 +971,50 @@ class KnowledgeStore:
             sql += " WHERE enabled = 1"
         sql += " ORDER BY created_at"
         return [self._serialize_source(r) for r in self.db.execute(sql).fetchall()]
+
+    #: The `sources` columns a user may edit after creation, and how each is coerced on the
+    #: way in. Deliberately a CLOSED map rather than "whatever keys the caller sent": the
+    #: same row carries the engine's own rollups (`health_status`, `last_escalations`,
+    #: `last_poll_at`, the cursor's twin), and a generic setter would let an edit path
+    #: overwrite a poll's verdict with whatever a client believed it to be.
+    #:
+    #: `provider`/`kind` are NOT here on purpose. They decide which provider polls the row
+    #: and therefore what its `spec` even means, so changing them in place would silently
+    #: reinterpret a validated spec against a different validator — that is a new source,
+    #: not an edit.
+    _EDITABLE_SOURCE_FIELDS: dict[str, Callable[[Any], Any]] = {
+        "name": str,
+        "enabled": lambda v: 1 if v else 0,
+        "enrichment": str,
+        "poll_interval_secs": int,
+        "item_type": str,
+        "spec": lambda v: json.dumps(v or {}),
+        "budget": lambda v: json.dumps(v or {}),
+    }
+
+    def update_source(self, source_id: str, **fields: Any) -> dict | None:
+        """Patch a WatchedSource's user-owned fields; return the updated row (None if gone).
+
+        Partial by construction — an absent key is untouched, so a caller flipping
+        ``budget.allow_render`` cannot blank a name it never sent. Raises ``KeyError`` on a
+        field outside :data:`_EDITABLE_SOURCE_FIELDS` rather than ignoring it: an edit that
+        silently does nothing is the shape of bug where a UI reports success and the row
+        never moved.
+        """
+        unknown = sorted(set(fields) - set(self._EDITABLE_SOURCE_FIELDS))
+        if unknown:
+            raise KeyError(f"not an editable source field: {', '.join(unknown)}")
+        if self.get_source(source_id) is None:
+            return None
+        if fields:
+            cols = ", ".join(f"{k} = ?" for k in fields)
+            vals = [self._EDITABLE_SOURCE_FIELDS[k](v) for k, v in fields.items()]
+            self.db.execute(
+                f"UPDATE sources SET {cols}, updated_at = ? WHERE id = ?",
+                (*vals, datetime.now().isoformat(), source_id),
+            )
+            self.db.commit()
+        return self.get_source(source_id)
 
     def get_source_cursor(self, source_id: str) -> str:
         """The opaque cursor last persisted for a source (empty string if never polled)."""
@@ -932,6 +1032,7 @@ class KnowledgeStore:
         health_status: str = "ok",
         error_summary: str = "",
         next_poll_at: str = "",
+        escalations: list[str] | None = None,
     ) -> None:
         """Persist the poll's outcome: the new cursor + the source's runtime rollups.
 
@@ -940,7 +1041,13 @@ class KnowledgeStore:
         so a crash the instant before this call re-yields the same items next poll and the
         UNIQUE gate drops them — exactly-once persist on top of at-least-once poll (§3.2).
         The cursor upsert + rollup update share one txn so the engine's view of a source
-        never shows a fresh cursor against stale rollups."""
+        never shows a fresh cursor against stale rollups.
+
+        ``escalations`` are the tiers this poll had to climb (§2.3), OVERWRITTEN per poll
+        rather than appended: they describe the last poll's cost, and an ever-growing list on
+        a row the UI reads would be a log in a rollup column. Recorded on the success path too
+        — an escalation that only surfaced on failure would make the expensive-but-working
+        case the invisible one."""
         now = datetime.now().isoformat()
         self.db.execute("BEGIN")
         try:
@@ -952,13 +1059,15 @@ class KnowledgeStore:
             )
             self.db.execute(
                 "UPDATE sources SET last_poll_at = ?, next_poll_at = ?, last_new_count = ?, "
-                "health_status = ?, last_error_summary = ?, updated_at = ? WHERE id = ?",
+                "health_status = ?, last_error_summary = ?, last_escalations = ?, "
+                "updated_at = ? WHERE id = ?",
                 (
                     now,
                     next_poll_at or None,
                     int(new_count),
                     health_status,
                     error_summary,
+                    json.dumps([str(e) for e in (escalations or [])]),
                     now,
                     source_id,
                 ),
@@ -1033,12 +1142,16 @@ class KnowledgeStore:
         tag_names = _clean_tag_names(tags)
         word_count = len((content or "").split())
         extra = extra or {}
+        is_source_item = bool(source_id and guid)
         # Canonicalize a bookmark's URL at the storage boundary so dedup is consistent
         # regardless of caller (HTTP handler, agent tool, provider) and tracking-param /
-        # trailing-slash variants of the same page collapse to one item.
-        if item_type == "bookmark" and url:
+        # trailing-slash variants of the same page collapse to one item. EVERY source item
+        # is canonicalized too, whatever its item_type: the cross-source merge key
+        # is this same canonical form, so normalizing here is what lets
+        # `find_item_by_merge_key` be one indexed equality instead of a full scan that
+        # re-canonicalizes every candidate row.
+        if url and (item_type == "bookmark" or is_source_item):
             url = normalize_url(url)
-        is_source_item = bool(source_id and guid)
         self.db.execute("BEGIN")
         try:
             if is_source_item:
@@ -1114,6 +1227,82 @@ class KnowledgeStore:
             "SELECT * FROM items WHERE source_id = ? AND guid = ?", (source_id, guid)
         ).fetchone()
         return self._serialize_item(row) if row else None
+
+    def mark_source_seen(self, source_id: str, guid: str) -> bool:
+        """Record that *source_id* has now seen *guid*, writing NO item (§3.3).
+
+        The other half of the cross-source merge: when a second feed carries a story the
+        library already holds, no item is written — but that source must still remember the
+        sighting, or every subsequent poll would re-offer it and re-run the merge forever
+        (the storm the seen-set exists to stop, arriving through the one path that skips
+        ``create_typed_item``'s folded-in gate). Returns True when this was a first sighting.
+        """
+        if not (source_id and guid):
+            return False
+        cur = self.db.execute(
+            "INSERT OR IGNORE INTO source_seen (source_id, guid, first_seen_at) "
+            "VALUES (?, ?, ?)",
+            (source_id, guid, datetime.now().isoformat()),
+        )
+        self.db.commit()
+        return cur.rowcount > 0
+
+    def find_item_by_merge_key(self, merge_key: str, *, exclude_source_id: str = "") -> dict | None:
+        """The existing SOURCE item whose canonical URL is *merge_key* (§3.3 cross-feed dedupe).
+
+        Scoped to rows a source wrote (``source_id IS NOT NULL``) — a hand-saved bookmark
+        that happens to share a URL is the user's own item and must not silently acquire
+        feed attributions. ``exclude_source_id`` keeps a source from merging against
+        itself: within one source, identity is the guid the source itself asserted, and two
+        of its rows sharing a URL means the source called them different items.
+
+        Oldest-first, so the FIRST source to carry a story owns the item and every later
+        feed becomes an attribution on it. That ordering is what makes the outcome
+        independent of which source happened to poll first inside one cycle.
+        """
+        if not merge_key:
+            # An item with no derivable cross-source identity. Never a wildcard match: see
+            # ``source_identity.merge_key`` — empty means "keep both", not "match anything".
+            return None
+        row = self.db.execute(
+            "SELECT * FROM items WHERE url = ? AND source_id IS NOT NULL "
+            "AND (? = '' OR source_id != ?) ORDER BY created_at, id LIMIT 1",
+            (merge_key, exclude_source_id or "", exclude_source_id or ""),
+        ).fetchone()
+        return self._serialize_item(row) if row else None
+
+    def record_also_seen_in(self, item_id: str, *labels: str) -> bool:
+        """Add cross-source attributions to an existing item's metadata (§3.3, SC#3).
+
+        ``file_metadata['also_seen_in']`` is a list of strings, the same shape as the
+        provider-facing :attr:`~personalclaw.knowledge_providers.base.SourceItem.also_seen_in`
+        field, so an engine-derived attribution and a provider-declared one are one
+        vocabulary rather than two shapes a reader has to branch on.
+
+        The write is ADDITIVE and idempotent: a story seen in three feeds names all three,
+        and re-merging the same source is a no-op. Replacing the list instead of appending
+        is the failure mode SC#3 is written against — an item that names only the feed it
+        arrived in FIRST is indistinguishable from one whose second sighting was silently
+        dropped, which is precisely the duplicate-vs-merge distinction the criterion tests.
+        Returns True when the item's attributions changed.
+        """
+        item = self.get_item(item_id)
+        if not item:
+            return False
+        wanted = [str(x).strip() for x in labels if str(x).strip()]
+        if not wanted:
+            return False
+        meta = item.get("file_metadata")
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        current = meta.get("also_seen_in")
+        seen = [str(x) for x in current if str(x).strip()] if isinstance(current, list) else []
+        added = [lbl for lbl in wanted if lbl not in seen]
+        if not added:
+            return False
+        meta["also_seen_in"] = seen + added
+        self.update_item(item_id, file_metadata=meta)
+        self.db.commit()
+        return True
 
     def archive_source_item(self, item_id: str, *, deleted_at: str = "") -> bool:
         """Archive a source item whose upstream copy is gone, stamping when (SC#5).
@@ -1269,7 +1458,7 @@ class KnowledgeStore:
             if self.db.execute("SELECT 1 FROM items WHERE id = ?", (iid,)).fetchone() is None:
                 raise ValueError(f"no such item {iid!r}")
 
-        moved = {"collections": 0, "tags": 0, "mentions": 0}
+        moved = {"collections": 0, "tags": 0, "mentions": 0, "annotations": 0}
         self.db.execute("BEGIN")
         try:
             # Collections: drop the pairs the survivor already has, then redirect the rest.
@@ -1302,6 +1491,17 @@ class KnowledgeStore:
                 "UPDATE mentions SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
             )
             moved["mentions"] = cur.rowcount or 0
+
+            # Reading highlights follow the same rule as the rest of the curation: a merge
+            # must not silently lose passages the user marked on the copy that loses. No
+            # de-dup pass is needed — `annotations` is surrogate-keyed, so there is no
+            # composite PK for a redirect to violate. The anchor may no longer resolve
+            # against the survivor's body; the row still lists, which is why anchoring
+            # failure is designed to degrade to "listed but not marked".
+            cur = self.db.execute(
+                "UPDATE annotations SET item_id = ? WHERE item_id = ?", (keep_id, merge_id)
+            )
+            moved["annotations"] = cur.rowcount or 0
 
             # Relations discovered FROM the merged item now belong to the survivor, so the
             # graph edge keeps a live provenance link instead of dangling.
@@ -2605,6 +2805,68 @@ class KnowledgeStore:
             return False
         self.update_item(item_id, touch=False, favorited=1 if value else 0)
         return True
+
+    # ── Reading annotations ──────────────────────────────────────────────────
+
+    #: A highlight longer than this is a mis-drag (or a select-all), not a passage worth
+    #: keeping, and storing the whole article as its own annotation is worse than
+    #: refusing. Roughly two long paragraphs.
+    MAX_ANNOTATION_QUOTE = 2000
+
+    def add_annotation(
+        self, item_id: str, quote: str, *, occurrence: int = 0, note: str = ""
+    ) -> dict | None:
+        """Persist one reading highlight against an item. Returns the row, or None if
+        the item does not exist.
+
+        Like read-state and favorites this is a NON-TOUCHING write: highlighting a
+        passage is reading, not editing, so it must not reorder a recency-sorted
+        library. Nothing here writes `items.updated_at`.
+        """
+        quote = (quote or "").strip()
+        if not quote:
+            raise ValueError("a highlight needs a quote")
+        if len(quote) > self.MAX_ANNOTATION_QUOTE:
+            raise ValueError(
+                f"quote is {len(quote)} chars; the limit is {self.MAX_ANNOTATION_QUOTE}"
+            )
+        if occurrence < 0:
+            raise ValueError("occurrence must be >= 0")
+        if not self.db.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone():
+            return None
+        row_id = str(uuid4())
+        now = datetime.now().isoformat()
+        self.db.execute(
+            "INSERT INTO annotations (id, item_id, quote, occurrence, note, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (row_id, item_id, quote, int(occurrence), (note or "").strip(), now),
+        )
+        self.db.commit()
+        return {
+            "id": row_id,
+            "item_id": item_id,
+            "quote": quote,
+            "occurrence": int(occurrence),
+            "note": (note or "").strip(),
+            "created_at": now,
+        }
+
+    def list_annotations(self, item_id: str) -> list[dict]:
+        """This item's highlights, oldest first — reading order, which for a document
+        read top-to-bottom is also roughly document order, and is stable under
+        re-render in a way a similarity or recency sort is not."""
+        rows = self.db.execute(
+            "SELECT id, item_id, quote, occurrence, note, created_at FROM annotations "
+            "WHERE item_id = ? ORDER BY created_at ASC, id ASC",
+            (item_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_annotation(self, annotation_id: str) -> bool:
+        """Remove one highlight. False when it was already gone."""
+        cur = self.db.execute("DELETE FROM annotations WHERE id = ?", (annotation_id,))
+        self.db.commit()
+        return bool(cur.rowcount)
 
     # ── Bulk curation ────────────────────────────────────────────────────────
 
