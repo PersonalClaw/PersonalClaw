@@ -1,6 +1,6 @@
 import { type AutonomyLadder, type AutonomyType } from '../lib/api'
 import { rungMeta, rungReason } from '../lib/rungs'
-import { accentChip } from '../design/accent'
+import { toneChipSkin } from '../design/accent'
 
 /** How much an automation may do on its own, as a chip (AUTONOMY-GUARDRAILS §6.1).
  *
@@ -16,18 +16,14 @@ import { accentChip } from '../design/accent'
  *  automation runs unattended at the exact moment the kill switch has stopped it. */
 export function RungChip({ type, ladder = null }: { type: AutonomyType; ladder?: AutonomyLadder | null }) {
   const meta = rungMeta(type.resolved_rung, ladder)
-  // The accent-chip failure cycle 146 measured, reached through a REGISTRY tone instead of a literal
-  // token. `--color-primary` as ink over a 14% tint of ITSELF is **3.97:1** in light against a 4.5
-  // floor — measured live on `#/triggers`, 7 chips desktop / 6 phone, and it is the 14% row of that
-  // cycle's own table. Only the `autonomous` rung is coral (`lib/rungs.ts`); the other three tones
-  // measure 4.99-7.46 in light and keep the tint, which is why this is a one-tone remap and not a
-  // sweep. `accentChip` is the pair the system already ships for an accent-tinted surface
-  // (`primary-container` + `on-primary-container`, 13.1:1 light / 10.43:1 dark, guaranteed for all 12
-  // schemes by `schemeContrast`) — and being a solid fill it is also ground-independent, where the
-  // tint's contrast depended on whatever surface the chip happened to land on.
-  const skin = meta.tone === 'var(--color-primary)'
-    ? accentChip
-    : { background: `color-mix(in srgb, ${meta.tone} 14%, transparent)`, color: meta.tone }
+  // `toneChipSkin`, not a tint of the tone itself: `--color-primary` as ink over a 14% tint of ITSELF
+  // measured **3.97:1** in light against a 4.5 floor — live on `#/triggers`, 7 chips desktop / 6 at
+  // 390px, and exactly the 14% row of cycle 146's table. Only the `autonomous` rung is coral
+  // (`lib/rungs.ts`); the other three tones measure 4.99-7.46 and keep the tint, so the helper remaps
+  // one tone rather than sweeping the registry. It is shared with the notification kind chip, which is
+  // why the rule lives in `design/accent` instead of being re-decided here — see
+  // `design/accentChipTone.test.tsx` for the measurement and the rest of the family's worklist.
+  const skin = toneChipSkin(meta.tone, 14)
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-[0.6875rem]"

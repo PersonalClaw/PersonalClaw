@@ -36,3 +36,35 @@ export const mutedChip = {
   background: 'var(--color-surface-high)',
   color: 'var(--color-on-surface-var)',
 } as const
+
+/** A chip whose colour comes from a META REGISTRY rather than being written at the call site —
+ *  `{ background: color-mix(<tone> N%), color: <tone> }`, the THIRD spelling of the accent-chip
+ *  defect (`accentChipTone.test.tsx`).
+ *
+ *  Neither of `accentChip.test.ts`'s sweeps can see that spelling: one matches a literal
+ *  `var(--color-primary)` in a style object, the other the `bg-primary/N text-primary` class pair, and
+ *  an interpolated tone puts no accent token in the source at all. The fix is per-registry, because
+ *  whether `<tone>` reaches coral depends on the registry behind it — so this is the one rule those
+ *  sites share:
+ *
+ *    tone is `--color-primary`  → the opaque container pair, 13.1:1 light / 10.43:1 dark
+ *    anything else              → keep the tint, at the caller's own strength
+ *
+ *  Only coral needs it. Measured as ink over a tint of ITSELF, every other tone clears AA
+ *  (`on-surface-low` 7.46 · `on-surface-var` 4.99 · `info` 5.13 · `ok`/`warn`/`danger` 4.54-4.71 at
+ *  14-16%), and none has a `<tone>-container` sibling to pair with — routing them through the coral
+ *  container would be a redesign, which is the same call cycle 146 made when it left 47 semantic
+ *  sites alone.
+ *
+ *  `strength` stays a parameter rather than being unified: the adopters ship 14% and 16% and those
+ *  percentages only apply to tones that already pass, so collapsing them would repaint passing chips
+ *  for no accessibility reason. The coral branch has no strength to drift, which is the half cycle
+ *  146 cared about.
+ *
+ *  🪤 NOT for a tinted tile behind an ICON (`toneChipBg`'s other two consumers) — non-text carries a
+ *  3:1 floor it already clears at every strength, so moving those would repaint five surfaces for
+ *  nothing. This is for a chip with a LABEL. */
+export function toneChipSkin(tone: string, strength = 14): { background: string; color: string } {
+  if (tone === 'var(--color-primary)') return { ...accentChip }
+  return { background: `color-mix(in srgb, ${tone} ${strength}%, transparent)`, color: tone }
+}
