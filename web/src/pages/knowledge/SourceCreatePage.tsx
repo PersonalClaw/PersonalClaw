@@ -216,7 +216,15 @@ function SourceForm({ kind, onBack, onClose, onCreated }: {
                 <div className="flex flex-wrap gap-x-l gap-y-2 rounded-md bg-surface-container px-m py-2">
                   {(kind.detectors ?? []).map((d) => (
                     <label key={d} className="inline-flex items-center gap-2 text-on-surface text-[0.8125rem]">
-                      <Checkbox ariaLabel={`Run the ${d.replace(/_/g, ' ')} detector`} checked={spec.detectors.includes(d)}
+                      {/* The name keeps the raw key, NOT `d.replace(/_/g, ' ')`. The visible label is
+                          the key itself in mono (below), so de-underscoring it here produced an
+                          accessible name that no longer CONTAINED the visible text — measured 5 of 5
+                          detectors failing WCAG 2.5.3 Label in Name: visible "wordpress_api" vs name
+                          "Run the wordpress api detector". A voice-control user reading the label off
+                          the screen and saying "wordpress_api" matched nothing. `ui/forms`' own
+                          precedence rule already says a competing name is worse than none; keeping the
+                          key inside the sentence satisfies 2.5.3 and still explains what ticking does. */}
+                      <Checkbox ariaLabel={`Run the ${d} detector`} checked={spec.detectors.includes(d)}
                         onChange={(on) => { set('detectors', on ? [...spec.detectors, d] : spec.detectors.filter((x) => x !== d)); setPreview(null) }} />
                       <span className="font-mono">{d}</span>
                     </label>

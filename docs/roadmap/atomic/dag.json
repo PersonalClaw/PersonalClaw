@@ -275,7 +275,8 @@
           "deps": [
             "MGAV-1",
             "MGAV-2"
-          ]
+          ],
+          "pr": 1432
         },
         {
           "id": "MGAV-6",
@@ -5225,7 +5226,8 @@
           "done_when": "An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9)",
           "deps": [
             "WS-2"
-          ]
+          ],
+          "pr": 1432
         },
         {
           "id": "WS-7",
