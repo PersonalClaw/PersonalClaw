@@ -495,3 +495,104 @@ Where each piece plugs into the pluggable-provider architecture (recon: provider
   durability-inventory / resilience-degraded / agent-reference / spawn-ceiling / dag-derived +
   the three local-model suites) 280 passed · `web` 275 files, 2745 tests, typecheck clean. Six
   mutations run; the one that reded nothing exposed a weak test (see Finding 1).
+- 2026-08-16 — **PARTIAL (LMMV-6 / Session 5a — Subscription-credential model providers). The
+  whole core mechanism + contract landed and tested; the ONE reference app is a
+  PersonalClawApps deliverable and is NOT shipped. Atom deliberately left `todo`.**
+
+  **What landed.** `llm/subscription_credentials.py` is the new seam: a declarative
+  `SubscriptionSource` (`id`, `login_hint`, `credential_files`, `token_path`,
+  `expires_at_path`, `expires_at_unit`), a process registry
+  (`register_subscription_source`, last-wins, empty by default), a `SubscriptionAuth`
+  result and two readers — `resolve_subscription_credential()` and
+  `subscription_source_status()` (the `(available, reason)` shape). `BrandedProviderSpec`
+  gains `credential_source: str` (round-trips through `to_dict`/`from_dict`, still
+  hashable), and `_factory`'s credential order is now the documented five hops:
+  `entry.credential` → `options.api_key` → **subscription-source resolver** →
+  `spec.api_key_env` → anon placeholder. `providers/loader.py` `load_availability()`
+  DERIVES the probe: when an app module exports no `availability()`, one is built from the
+  `credential_source` its registered spec declares (read through the new
+  `spec_credential_source()`, the same narrow core-facing reader shape as
+  `spec_pricing()`), so a not-signed-in CLI greys the bundle out in the extensions list
+  with the app's own reason. An explicit hook still wins.
+
+  **Four judgment calls worth naming, because this reads someone else's credential store.**
+  1. **Independent `if`s, not an `elif` chain.** A source that is merely not signed in must
+     fall THROUGH to `spec.api_key_env` and then the placeholder. An `elif` would strand an
+     app that declares both.
+  2. **The resolver sits BELOW both explicit choices, permanently.** `credential_source` is
+     not a second way to set an API key: a resolver that outranked `entry.credential` or
+     `options.api_key` would silently override a key the user chose. There is a test per
+     hop for exactly that reason.
+  3. **No refresh, ever — a DEVIATION from §8's wording.** §8 says the adapter reads the
+     CLI's store "refreshing via the CLI where the format demands it". Refreshing writes to
+     a store PersonalClaw does not own, so it is dropped: an expired token is reported as
+     not-signed-in with the app's login hint and the user re-runs their own CLI's login.
+     Read-only is proven twice — structurally (the module contains no write-shaped call at
+     all; the detector is checked for vacuity against `config/loader.py`, which does write)
+     and behaviourally (bytes, mode, size and `st_mtime_ns` identical after a resolve, and
+     no sidecar file appears — asserted on the signed-in, expired AND malformed paths).
+  4. **A parse error is never "authenticated".** A truncated, empty, garbage, wrong-shape or
+     `null`-branch store is not-signed-in with a reason. The malformed arm reports a FIXED
+     sentence rather than the parser's message, so no fragment of a credential can ride out
+     inside an error string — the test asserts the token, its first 12 chars, its last 12
+     and the key name are all absent from the reason.
+
+  **Core ships ZERO vendor rows (provider boundary).** §8's example is a specific agent CLI,
+  but core does not learn that any CLI exists, where it keeps its token, or what its login
+  verb is called. The APP declares the whole `SubscriptionSource` and owns the `login_hint`
+  wording — the same discipline `llm/acp_agent.py` already follows with the
+  bundle-declared `login_command` ("the vendor knows its own auth verb; the core never
+  names it"). `SubscriptionSource` + `register_subscription_source` are re-exported from
+  `sdk/provider_helpers.py` and are the only app-facing half.
+
+  **DISCOVERY — an adjacent leak fixed in the same lines.** `_factory` popped the two
+  api-key spellings with a short-circuit `or`, so an entry carrying BOTH `api_key` and
+  `apiKey` left `apiKey` in `options` → `extra_options` → the SDK call kwargs
+  ("unexpected keyword argument"). That is the exact bug class the module docstring already
+  warns about for `base_url`/`endpoint`. Both spellings are now popped unconditionally;
+  `snake_case` still wins. Regression test included.
+
+  **WHY THE ATOM STAYS `todo` — the reference app is cross-repo and therefore unshipped.**
+  `git ls-files apps/` = 0 in this repo: app bundles live in the separate PersonalClawApps
+  repository, so the "ONE reference model-provider app ships (PersonalClawApps)" clause of
+  the `done_when` cannot be satisfied from here, and no local `apps/` tree was invented to
+  fake it. Consequence stated plainly: **until one app registers a `SubscriptionSource`,
+  this mechanism is production-INERT** — the registry is empty, no spec declares a
+  `credential_source`, and the derived availability probe never fires. Flipping the atom on
+  the core half alone would hide that. The app also could not have been written first: the
+  SDK exports it needs do not exist until this change lands.
+
+  **The reference app's exact contract (for the PersonalClawApps follow-up).** One directory,
+  two files, no new core work:
+
+  * `app.json` — `name` (kebab-case), `version`, `displayName`, `description`, and a
+    `provider` block: `type: "model"`, `implementation: "provider:create_provider"`,
+    `providerType: "<the branded type the spec registers>"` (this field is what
+    `load_availability` reads to find the spec — omitting it silently disables the derived
+    probe), `capabilities`, and NO settings-schema api-key field (there is no key to ask
+    for). Permissions: the minimum; the app itself needs no credential permission because
+    core does the reading.
+  * `provider.py` — import ONLY from `personalclaw.sdk.*`; call
+    `register_subscription_source(SubscriptionSource(id=…, login_hint="sign in with `<verb>`
+    first", credential_files=("~/…",), token_path=(…), expires_at_path=(…),
+    expires_at_unit="ms"))` and then `register_branded_app(BrandedProviderSpec(type=…,
+    protocol=…, default_base_url=…, default_model=…, credential_source="<that id>",
+    api_key_env=""  # deliberately empty: subscription auth only))`, exposing the returned
+    `create_provider` / `create_catalog`. No `availability()` hook is needed. Ship
+    `test_provider.py`, `README.md`, `LICENSE` per the app-creation guide.
+
+  Validation of the app half is the normal loop: add the app dir as a local Store source,
+  install it, and confirm Settings › Providers greys the card out with the login sentence
+  while the CLI is signed out, then binds and RUNs a completion once it is signed in — with
+  no API key anywhere. Sessions/models/catalogs need nothing new: they flow through the
+  ordinary branded-app path, and no agent runtime is involved.
+
+  **Gates:** `make lint` clean (black/isort/flake8 + mypy 881 source files) ·
+  `tests/test_subscription_credentials.py` **46 passed** (new) ·
+  `test_provider_helpers.py` + `test_routing_rates.py` + `test_prompt_cache_marker.py` +
+  `test_sampling_best_of_n.py` + `test_workflows_surfacing_channels.py` 245 passed ·
+  `inert-surface-baseline.json` byte-identical to a fresh render with NO regeneration (the
+  two new SDK exports are consumed through the SDK facade by the new tests, which is the
+  ratchet's "add the missing reader", not a blessed higher number) · `make test` full suite
+  green. Eight falsifying mutations were run against the live line and every one reded a
+  named test — none vacuous.
