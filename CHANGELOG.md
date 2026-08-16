@@ -10,6 +10,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Moving between pages now crossfades instead of cutting.** Clicking a nav item — or going
+  back and forward in your browser — fades the old page into the new one on the same curve the
+  rest of the app moves on, so navigating feels continuous rather than like a hard cut. It is
+  purely cosmetic and deliberately cannot get in the way: the address bar and the page itself
+  change immediately whether the animation runs, fails, or is not supported by your browser at
+  all, so nothing is ever waiting on a fade. If your system asks for reduced motion there is no
+  fade at all, just the instant swap. Opening a detail panel, switching a tab, typing in a search
+  box and following a redirect all stay instant on purpose — those are refinements, not
+  navigation, and fading the page under them would fight what you were doing.
 - **Optional sound cues, off until you turn them on.** Settings → Design → Personality has a new
   switch that gives you a brief tone when a turn finishes, when a tool approval needs you, and when
   something fails — nothing else. It ships **off**, and even switched on it stays quiet while the tab

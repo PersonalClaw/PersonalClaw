@@ -210,12 +210,57 @@ export function exprHeavy(threshold = 0.5): boolean {
   return runtime.expressiveness >= threshold
 }
 
-/** Run a DOM update inside a View Transition when the platform supports it,
- *  else run it synchronously (graceful fallback). Guards
- *  `document.startViewTransition` per §9. Honors reduced-motion (skips the
- *  transition) via the caller passing `reduce`. */
-export function viewTransition(update: () => void, reduce = false): void {
-  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown }
-  if (reduce || typeof doc.startViewTransition !== 'function') { update(); return }
-  doc.startViewTransition(update)
+/** Run a DOM update inside a View Transition when the platform supports it, else
+ *  run it synchronously (progressive enhancement, §9).
+ *
+ *  **`update` is never gated on the transition — it runs exactly once on every
+ *  path.** That is the whole contract, because callers pass their *state* change in
+ *  here: a transition that swallowed or delayed it would turn decoration into a lost
+ *  navigation. The three paths that would otherwise drop it:
+ *   1. **No API** — jsdom, and any browser without View Transitions: run it directly.
+ *      Note which layer actually carries survival here: the `catch` below would
+ *      recover this case too (calling `undefined` throws a `TypeError`), so the
+ *      `typeof` guard is a FAST PATH and a statement of intent, not the safety net.
+ *      It is here so a third of browsers don't drive normal control flow through an
+ *      exception on every navigation.
+ *   2. **A throwing `startViewTransition`** — a detached document, an implementation
+ *      that refuses: recovered in the `catch`, hence the run-once latch (the throw
+ *      may have come *after* the callback was invoked). An error thrown by `update`
+ *      itself is re-raised, never recovered — see the comment on the `catch`.
+ *   3. **An animation that never settles** — the returned transition object is
+ *      deliberately dropped. Awaiting `.finished`/`.ready` before the update is
+ *      exactly the bug this function exists to make unwritable, so this function
+ *      is not `async` and returns `void`.
+ *  The one mode not defended is an implementation that never invokes the callback at
+ *  all; the spec requires it to run even when the transition is *skipped* (hidden
+ *  document, a second transition starting), so a timer to second-guess that would be
+ *  a shim guarding nothing.
+ *
+ *  Reduced motion is gated HERE and nowhere else, read at CALL time via
+ *  `prefersReducedMotion()` — the reduced-motion answer is "no transition at all",
+ *  the instant swap. There is deliberately no `reduce` parameter: a caller could
+ *  forget it, or pass `false` and quietly overrule the user's OS setting. */
+export function viewTransition(update: () => void): void {
+  // `lib.dom` types this as always present, which is a lie on any browser without View
+  // Transitions — hence the `| undefined` and the runtime check rather than a bare call.
+  const start = document.startViewTransition as Document['startViewTransition'] | undefined
+  if (prefersReducedMotion() || typeof start !== 'function') { update(); return }
+  let ran = false
+  let updateFailed = false
+  const once = () => {
+    if (ran) return
+    ran = true
+    try { update() } catch (err) { updateFailed = true; throw err }
+  }
+  try {
+    start.call(document, once)
+  } catch (err) {
+    // Two very different throws surface at the same place, and conflating them is a
+    // real defect: `update` failing (a render error travelling out through the
+    // callback) must reach the caller, or a broken page goes silently blank. Only a
+    // refusal to START the transition is recovered here — and the latch makes that
+    // recovery a no-op when the implementation had already invoked the callback.
+    if (updateFailed) throw err
+    once()
+  }
 }
