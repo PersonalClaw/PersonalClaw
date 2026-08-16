@@ -15,10 +15,11 @@ import { NavRail } from './NavRail'
 // `inert` removes focusability, pointer events and the a11y tree together, which is exactly the
 // "closed drawer" semantics.
 //
-// ⚠️ React 18 has no typed `inert` prop and forwards unknown attributes as STRINGS — and
-// `inert="false"` is STILL inert, because the attribute's mere presence applies. So it must be
-// `''` when closed and OMITTED when open. A boolean would trap focus in the OPEN drawer, which
-// is a worse bug than the one being fixed. These two tests pin both directions.
+// ⚠️ `inert="false"` is STILL inert, because the attribute's mere presence applies. So it must be
+// present when closed and ABSENT when open, never present-and-false, or focus is trapped in the
+// OPEN drawer, which is a worse bug than the one being fixed. React 19 types `inert` as a boolean
+// and omits the attribute when false, which is what makes the plain prop safe. Both directions
+// are pinned below because the omission is the load-bearing half.
 
 const ITEMS = [
   { id: 'dashboard', label: 'Home', icon: Home },
