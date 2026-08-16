@@ -3728,6 +3728,15 @@ class GatewayOrchestrator:
 
         ensure_governance_boot()
 
+        # ── KEYSTONE AUDIT for desktop computer use (DESKTOP-COMPUTER-USE §3 floor 1) ──
+        # Resolves the out-of-band enable file ONCE, here, so the posture the whole process
+        # runs under is fixed before anything can dispatch and is recorded to the SEL. It
+        # does NOT abort: unlike governance, "off" is a normal (and the default) state, so a
+        # missing or malformed keystone is a refusal at the tool, not a dead gateway.
+        from personalclaw.computer_use.enable_state import ensure_computer_use_boot
+
+        ensure_computer_use_boot()
+
         # Raise FD limit — each ACP agent session uses ~6 FDs (3 pipes)
         # plus MCP server subprocesses. Default macOS limit (256) is too low.
         import resource

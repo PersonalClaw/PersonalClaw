@@ -161,3 +161,94 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   DOM). The accessibility-tree / element-index approach is adopted over screenshot-and-coordinate
   because it is safer (no pointer motion), more reliable (survives theme/layout shifts), and its
   safety model (keystone enable, element-default, target allowlist) is proven sound.
+
+- [2026-08-15][DCU-1] DONE: keystone out-of-band enable-state shipped as
+  `src/personalclaw/computer_use/enable_state.py`, built on `guardrails/ceiling.py`'s trust model
+  instead of a second one. The enable document lives at
+  `$PERSONALCLAW_HOME/governance/computer_use.enable.json` — deliberately the directory the
+  governance ceiling already owns, so the keystone and the ceiling share ONE trust root and ONE
+  sensitive-path denylist entry (`security.py` needed no change) — and is overridable to an absolute
+  path by `PERSONALCLAW_COMPUTER_USE_ENABLE_FILE` so an operator can put it on a root-owned `0444`
+  file outside the agent's home. Required content: exactly `{"version": 1, "enabled": true}`.
+  DISCOVERY: a touch-a-marker file is unsafe here, and it is measurable — as a marker, an empty file
+  and a half-flushed write both ARM the machine; as a document with a required positive shape both
+  fail closed. Those two cases are now named rows in the fail-closed corpus rather than a claim.
+  Fourteen malformed shapes resolve to OFF (non-JSON, wrong root type, unknown version, unknown key,
+  `"true"`, `1`, `false`, missing flag); `enabled` is compared with `is True`, never for truthiness.
+  An unenforced key is REFUSED rather than ignored, on the ceiling's reasoning: `{"enabled": true,
+  "only_apps": ["Mail"]}` means *on, narrowed*, so honouring the flag while dropping the scope would
+  grant strictly more than was asked. Read once and cached, so neither a tamper nor a legitimate
+  enable widens the running process — arming costs a restart the operator performs and can see.
+  `require_enabled(tool)` raises `ComputerUseDisabled` carrying a typed `AgentError`
+  (`ERR_COMPUTER_USE_DISABLED`) whose FIX names the resolved path, the exact bytes, the restart and
+  the env override; never a falsy return, because a no-op reads to a model as "the click landed".
+
+- [2026-08-15][DCU-1] DISCOVERY: ⚠️ **the computer-use tool population is EMPTY on `main`, so the
+  done_when's "every computer-use tool refuses" cannot be exercised over real tools yet.** Verified:
+  there was no `computer_use` package at all before this atom; `DCU-4` owns the tool surface, the
+  stdio shim and the in-gateway dispatch chain, and `DCU-3` the macOS driver. A test that literally
+  iterated the tool set would therefore have passed over nothing. What is armed vs exercised, stated
+  plainly: **exercised today** — resolution + fail-closed corpus, the refusal message and its
+  WHAT/WHY/FIX shape (through a fixture tool that calls the real guard), the no-config-field and
+  no-write-surface proofs, the caching property, and the boot SEL audit. **Armed but unexercised
+  until `DCU-4`** — the clause "every computer-use tool", and the atom scope's "first check in the
+  dispatch chain" (there is no dispatch chain to be first in). The arming is two rails plus an
+  explicit vacuity marker: rail A asserts by AST that every module-level `computer_*` function under
+  `computer_use/` calls the guard as its FIRST statement, proven to detect rather than to match
+  nothing (the scanner is run against an unguarded twin and against a guard-placed-after-the-work
+  variant, and flags both); rail B pins every public function/class in the package, closing rail A's
+  stated naming gap so a dispatch surface that abandons the `computer_*` convention still trips
+  something; and `test_the_computer_use_tool_population_is_currently_empty` states the size is 0 out
+  loud and reds the moment `DCU-4` adds the first tool. Measured on a synthetic future tool: an
+  unguarded `computer_*` tool reds 3 tests; a correctly guarded one satisfies rail A and reds only
+  the two census tests (so the ratchet is a gate, not "any new function reds"); a non-`computer_*`
+  dispatch surface escapes rail A and is caught by rail B.
+
+- [2026-08-15][DCU-1] DEVIATION: added a live call site the atom's file list does not name —
+  `gateway.py::GatewayOrchestrator.run` calls `ensure_computer_use_boot()` immediately after
+  `ensure_governance_boot()`, resolving the keystone once and SEL-auditing source + digest + outcome
+  per run. Reason: without it this atom would ship an inert module, which this repo treats as a
+  defect, and the alternative (inventing a dispatch chain to have a caller) is worse — `DCU-4` owns
+  that chain. The boot hook is real work today: it fixes the process posture before any service
+  exists and is the tamper evidence the precedent (`ceiling.ensure_governance_boot`) exists to
+  provide. Unlike governance it NEVER aborts: "no bound" would be a widening, whereas OFF is the
+  normal and default state, so a typo in an operator's JSON must not take the gateway down.
+  Second, smaller deviation: `ERR_COMPUTER_USE_DISABLED` is registered in `errors.ERROR_CODES`,
+  following that module's documented contract ("new failure paths add a code") rather than the
+  ceiling's practice — its `ERR_GOVERNANCE_*` codes are raised without being registered.
+
+- [2026-08-15][DCU-1] DISCOVERY (falsification found a real defect, not a test gap): 8 mutations
+  were run and every one reded the intended rail — none reded nothing. `is_enabled() -> True`
+  unconditionally: **20 tests red**, including `test_the_fixture_tool_refuses_when_the_keystone_is_
+  absent` with `Failed: DID NOT RAISE ComputerUseDisabled`. That number is only 20 because the first
+  version was wrong: `require_enabled` read `state.enabled` directly, bypassing `is_enabled()`, so
+  the same mutation left EVERY refusal test green and reded 18 unrelated assertions instead. Two
+  independent readers of one flag is exactly how one ends up answering differently from the other,
+  so `require_enabled` now reads the decision through `is_enabled()` — the one check the plan names.
+  Fail-open on a parse error (the `JSONDecodeError` branch returning `enabled=True`): 4 red,
+  `AssertionError: '' armed the keystone`. An unguarded future `computer_*` tool: 3 red. A
+  `computer_use.enabled` entry in `_EDITABLE_CONFIG`: 1 red. Removing the gateway boot call: 1 red.
+  A second shipped module naming the env var: 1 red (`... the out-of-band property is gone:
+  ['computer_use/enable_state.py', 'dashboard/handlers/core.py']`). Dropping
+  `.personalclaw/governance` from the sensitive-path denylist: 2 red (so that rail is not vacuous).
+  A `write_text` inside the keystone module itself: 2 red.
+
+- [2026-08-15][DCU-1] Gate: `make lint` clean (black 1679 files, isort, flake8, mypy 866 sources, no
+  issues) · `tests/test_computer_use_enable_state.py` 42 passed · repo-wide rails 129 passed
+  (`test_inert_surface_baseline`, `test_portability`, `test_durability_inventory`,
+  `test_config_baseline`, `test_resilience_degraded_lint`, `test_api_manifest_drift`,
+  `test_error_codes_append_only`, `test_roadmap_dag_derived`) · security-adjacent 397 passed, 9
+  xfailed (`tests/security/`, `test_guardrails_ceiling`, `test_security*`, `test_gateway`). The
+  real-home rail reported `~/.personalclaw` unchanged on every run. The inert-surface baseline was
+  NOT regenerated and did not need to be: this atom adds no config key, enum member, trigger kind,
+  `_EDITABLE_CONFIG` entry or SDK export. No CHANGELOG entry — there is no user-reachable capability
+  to announce (no computer-use tool exists to enable, and the only observable change on a default
+  install is one boot-time SEL row), so the reasoning is recorded here instead per the atom's
+  instruction. DISCOVERY (pre-existing, NOT fixed here — one concern per commit): `governance/` is
+  neither claimed nor ignored by the durability inventory, so `audit_home()` would report it
+  unclaimed if an operator ever creates it. Measured: `is_ignored('governance')` is False,
+  `claim_for('governance')` is None, and no INVENTORY entry is nested under it. It does not red today
+  because the directory does not exist on a default install and no test creates one. It arrived with
+  the ceiling, not with this atom, and the correct fix is an *ignore* entry (operator-owned
+  out-of-band state must not be snapshot-restored — restoring it could re-arm a machine), which
+  belongs to whoever owns that inventory row.
