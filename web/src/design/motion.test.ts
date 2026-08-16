@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import * as motion from './motion'
 import {
   dragElastic, dragSpring, instant, listItemEnter, overlayEnter, physics,
-  prefersReducedMotion, swipeDismiss,
+  prefersReducedMotion, swipeDismiss, viewTransition,
 } from './motion'
 import { runtime } from './runtime'
 import { TOKENS } from './tokenRegistry'
@@ -218,6 +218,104 @@ describe('gesture helpers', () => {
     setReducedMotion(true)
     expect(swipeDismiss(9999, 0)).toEqual({ dismiss: true, transition: instant })
     expect(swipeDismiss(0, 0)).toEqual({ dismiss: false, transition: instant })
+  })
+})
+
+// ── viewTransition — the "cosmetic only" contract (atom FM-5) ───────────────
+// This wrapper carries somebody else's STATE change through an animation (the hash
+// router passes its route commit), so exactly one property matters: the update must
+// survive every way a transition can fail. If it doesn't, a decoration becomes a lost
+// navigation. jsdom implements no View Transitions API, so each failure mode is
+// installed by hand below — the absent case is jsdom's own default.
+describe('viewTransition', () => {
+  type Svt = (cb: () => void) => unknown
+  /** Promises that never settle — the "animation hangs forever" shape. If anything in
+   *  `viewTransition` awaited the transition, the update would never be applied. */
+  const NEVER = new Promise<void>(() => {})
+  const hangingTransition = { ready: NEVER, finished: NEVER, updateCallbackDone: NEVER, skipTransition: () => {} }
+
+  function install(impl: Svt | undefined): void {
+    if (impl) Object.defineProperty(document, 'startViewTransition', { configurable: true, writable: true, value: impl })
+    else Reflect.deleteProperty(document, 'startViewTransition')
+  }
+
+  afterEach(() => { install(undefined) })
+
+  it('runs the update directly when the platform has no View Transitions API', () => {
+    // Firefox before 141, Safari before 18, every jsdom — and the case that makes this
+    // a progressive enhancement rather than a requirement.
+    expect(document.startViewTransition).toBeUndefined()
+    let ran = 0
+    viewTransition(() => { ran += 1 })
+    expect(ran).toBe(1)
+  })
+
+  it('runs the update through the transition when the platform supports it', () => {
+    const seen: string[] = []
+    install((cb) => { seen.push('started'); cb(); return hangingTransition })
+    viewTransition(() => { seen.push('updated') })
+    expect(seen).toEqual(['started', 'updated'])
+  })
+
+  it('runs the update even when startViewTransition THROWS', () => {
+    // A detached document, or an implementation refusing a nested call. Without the
+    // catch this update is dropped on the floor and the navigation is simply lost.
+    install(() => { throw new Error('no transition for you') })
+    let ran = 0
+    viewTransition(() => { ran += 1 })
+    expect(ran).toBe(1)
+  })
+
+  it('runs the update EXACTLY once when the API invokes the callback and then throws', () => {
+    // The recovery above must not double-apply: a second commit of the same route is
+    // a wasted render at best, and a re-entrant one at worst.
+    install((cb) => { cb(); throw new Error('threw after invoking') })
+    let ran = 0
+    viewTransition(() => { ran += 1 })
+    expect(ran).toBe(1)
+  })
+
+  it('re-raises an error thrown by the UPDATE instead of recovering from it', () => {
+    // Found by falsification: the `catch` that recovers a refused transition sits on the
+    // same path as a render error travelling out through the callback. Recovering that
+    // one too would swallow it and leave a silently blank page — so the two throws must
+    // stay distinguishable, and the update must not be retried after it failed.
+    install((cb) => { cb(); return hangingTransition })
+    let ran = 0
+    expect(() => viewTransition(() => { ran += 1; throw new Error('render blew up') }))
+      .toThrow('render blew up')
+    expect(ran).toBe(1)
+  })
+
+  it('never awaits the animation — a transition that never settles still applies the update', () => {
+    // `finished`/`ready` never resolve here. The update is asserted SYNCHRONOUSLY after
+    // the call returns, which is only true if nothing was awaited on the way.
+    install((cb) => { cb(); return hangingTransition })
+    let ran = false
+    viewTransition(() => { ran = true })
+    expect(ran).toBe(true)
+  })
+
+  it('does not start a transition under reduced motion, and still applies the update', () => {
+    // "Crossfade or none" resolves to NONE — the instant swap. The gate lives in this
+    // function alone, read at call time, so no call site can forget it or overrule it.
+    setReducedMotion(true)
+    const started = vi.fn((cb: () => void) => { cb(); return hangingTransition })
+    install(started)
+    let ran = 0
+    viewTransition(() => { ran += 1 })
+    expect(started).not.toHaveBeenCalled()
+    expect(ran).toBe(1)
+  })
+
+  it('reads reduced motion at CALL time, not once at import', () => {
+    const started = vi.fn((cb: () => void) => { cb(); return hangingTransition })
+    install(started)
+    viewTransition(() => {})
+    expect(started).toHaveBeenCalledTimes(1)
+    setReducedMotion(true)
+    viewTransition(() => {})
+    expect(started).toHaveBeenCalledTimes(1)  // still 1 — the second call was gated
   })
 })
 

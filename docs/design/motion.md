@@ -151,7 +151,50 @@ it.
 
 ---
 
-## 6. Adding a Motion token
+## 6. Route transitions
+
+Navigating between pages crossfades, and no page opts in. The hash router wraps the one
+commit that changes the route in `viewTransition()`, so a nav click and browser
+back/forward both animate through the same seam.
+
+There is one rule, and it is the only thing to remember if you ever touch this:
+
+> **A view transition may never gate a state change.** Never `await` one before
+> committing, and never put the URL write inside it.
+
+`viewTransition(update)` runs `update` **exactly once on every path** — no API (a third
+of browsers, plus jsdom), a `startViewTransition` that throws, and an animation that
+never settles (the transition object is dropped, never awaited). Get this wrong and a
+cosmetic nicety becomes a lost navigation on the browsers you don't test in. The
+function is deliberately not `async` and returns `void` so the bug is hard to write.
+
+```tsx
+// WRONG — a hung or unsupported transition now eats the navigation
+await document.startViewTransition(() => setRoute(next)).finished
+// RIGHT — the URL is already written; the commit cannot be lost
+viewTransition(() => { flushSync(() => setRoute(next)) })
+```
+
+Two details worth knowing before you reuse it:
+
+- **`flushSync` is required, not defensive.** The browser captures the "after" frame as
+  soon as the callback returns, and React 18 commits a plain `setState` later on the
+  scheduler — without the flush both snapshots are the *old* frame and the crossfade
+  animates nothing.
+- **Reduced motion is gated inside `viewTransition`, at call time.** It takes no `reduce`
+  argument, so no call site can forget it or overrule the user's OS setting. The reduced
+  answer is *no transition at all* — the instant swap.
+
+What deliberately does **not** animate: query-only changes (opening a detail panel,
+a tab, a filter, a search keystroke) and `replace` navigations, which are URL
+*corrections* rather than something the user navigated to. Fading the whole page under
+an opening panel — or once per keystroke — is the "motion that fights the task" the
+budget exists to prevent. The curve and duration live in `tokens.css` under
+`::view-transition-old/new(root)`; that rule is taste, and the JS is the mechanism.
+
+---
+
+## 7. Adding a Motion token
 
 A motion value the user should be able to tune goes in three places, or it is broken in a way
 tests will catch:
