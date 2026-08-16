@@ -5785,7 +5785,8 @@
           "done_when": "Lighthouse installability passes with manifest (claw-mark icons, standalone, start_url #/companion) and sw.ts precaching app-shell only; API responses are never served from cache (verified with offline toggle).",
           "deps": [
             "MC-3"
-          ]
+          ],
+          "pr": 1429
         },
         {
           "id": "MC-5",
@@ -6468,7 +6469,8 @@
           "status": "done",
           "scope": "Session 2 \u2014 Signed manifests + registry trust / T2.1, T2.2, V2; Design S2; Contracts C2; owner task 2 (generate signing key)",
           "done_when": "signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state",
-          "deps": []
+          "deps": [],
+          "pr": 1429
         },
         {
           "id": "SH-4",
