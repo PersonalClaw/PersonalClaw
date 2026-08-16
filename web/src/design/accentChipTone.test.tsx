@@ -217,6 +217,39 @@ describe('toneChipSkin is the one rule the tone-registry chips share', () => {
       .not.toMatch(/color-mix\(in srgb, \$\{(?:km|mm)\.tone\}/)
   })
 
+  it('the prompt SOURCE pills go through it too — the default source is coral', () => {
+    // Cycle 177, the fourth adopter. `sourceTone` is a FUNCTION, not a `tone:` field, which is why a
+    // registry grep for `tone: 'var(--color-primary)'` missed it entirely — and it returns coral for
+    // `user`/undefined, i.e. the DEFAULT. In this validation home that is 47 of 47 prompts, so the
+    // failing state was every prompt on the surface, measured at **3.85:1** (12px) in light.
+    for (const rel of ['pages/prompts/PromptDetail.tsx', 'pages/prompts/SnippetDetail.tsx']) {
+      const code = read(rel)
+      expect(code, `${rel} source pill`).toMatch(/style=\{toneChipSkin\(sourceTone\(\w+\.source\), 16\)\}/)
+      expect(code, `${rel} must keep no raw tint of the tone`)
+        .not.toMatch(/color-mix\(in srgb, \$\{sourceTone\(/)
+    }
+  })
+
+  it('the prompt tone function still returns coral for the default source', () => {
+    // THE VACUITY FLOOR for this adopter. If `sourceTone` stopped returning coral for `user` the
+    // remap would be dead code that still reads as an enforced rule; if a SECOND source became coral
+    // the "only the default" claim above would quietly stop being true.
+    const meta = read('pages/prompts/promptMeta.ts')
+    expect(meta).toMatch(/if \(!source \|\| source === 'user'\) return 'var\(--color-primary\)'/)
+    const coralReturns = [...meta.matchAll(/return 'var\(--color-primary\)'/g)]
+    expect(coralReturns, 'exactly one coral branch in sourceTone').toHaveLength(1)
+  })
+
+  it('the icon-only and accent-BAR uses of the same tone are untouched', () => {
+    // `PromptsListPage` spends `sourceTone` on a square icon tile, two SidePanel icons and a
+    // `ListRow accent=` bar. All non-text (3:1 floor, or not text at all), so migrating them would
+    // repaint the list for no accessibility reason — the same distinction as `toneChipBg`'s tiles.
+    const list = read('pages/prompts/PromptsListPage.tsx')
+    expect(list, 'the square icon tile keeps its plain tint')
+      .toMatch(/size-10 items-center justify-center rounded-lg" style=\{\{ background: `color-mix\(in srgb, \$\{sourceTone\(r\.source\)\} 16%, transparent\)` \}\}/)
+    expect(list).toMatch(/accent=\{sourceTone\(r\.source\)\}/)
+  })
+
   it('the schedule registry still has exactly the two coral tones this covers', () => {
     // THE VACUITY FLOOR for the third adopter. `cron` (kind) and `agent` (mode) are the coral pair;
     // if a third became coral the measurement above would stop describing the surface, and if one
