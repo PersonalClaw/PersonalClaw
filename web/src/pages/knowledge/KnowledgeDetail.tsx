@@ -363,8 +363,17 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       {err && <FieldError>{err}</FieldError>}
 
       {/* Metadata row: provider/size/shape/words/age on the left, the live ingestion
-          status DAG floated to the right of the same row. */}
-      <div className="flex shrink-0 items-start gap-x-m gap-y-1">
+          status DAG floated to the right of the same row — dropping onto its OWN line
+          once the two no longer fit side by side.
+          `flex-wrap` is what makes that drop possible, and it is also what makes the
+          `gap-y-1` here mean anything: a row that cannot wrap has no second line to
+          space, so before this the vertical gap was inert. Without it the strip (which
+          must keep its intrinsic width to stay legible) had nowhere to go and pushed the
+          row past the viewport — measured 422px of content in a 390px phone viewport,
+          and because the document itself does not scroll horizontally, those 32px were
+          CLIPPED rather than reachable: the last ingestion stage was invisible on a
+          phone. */}
+      <div className="flex flex-wrap shrink-0 items-start gap-x-m gap-y-1">
         <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low text-[0.8125rem] min-w-0">
           {full.provider && full.provider !== 'native' && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{full.provider}</span>}
           {full.mime_type && <span className="font-mono text-[0.75rem]">{full.mime_type}</span>}
@@ -377,7 +386,12 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           {full.word_count != null && full.word_count > 0 && <span>{full.word_count} words</span>}
           {full.updated_at && <span title="Last updated">{relTime(full.updated_at)}</span>}
         </div>
-        <div className="ml-auto shrink-0">
+        {/* `min-w-0`, not `shrink-0`: the strip is itself a `flex-wrap` row of stages, so
+            given a narrower box it wraps its own stages instead of overflowing. `shrink-0`
+            pinned it to max-content (measured 394px), which is 4px wider than a 390px phone
+            viewport — so even alone on a wrapped line it still could not fit, and its own
+            wrapping never got a chance to engage. `ml-auto` still right-aligns it. */}
+        <div className="ml-auto min-w-0">
           <ProcessingStrip status={procStatus} nodePhases={nodePhases} error={full.processing_error} graph={ingestGraph} onRetry={generateInsights} retrying={genning} />
         </div>
       </div>
