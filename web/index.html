@@ -6,6 +6,21 @@
     <title>PersonalClaw</title>
     <link rel="icon" type="image/svg+xml" href="/claw.svg" />
     <link rel="preload" href="/fonts/dm-sans.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- PWA installability (MOBILE-COMPANION T3.1). `crossorigin="use-credentials"`
+         is load-bearing, not decoration: a manifest is fetched anonymously by
+         default, and this origin requires the pc_token_<port> session cookie, so
+         without it the fetch 403s and the install prompt silently never appears.
+         The PWA files stay behind auth deliberately — `/manifest.webmanifest`,
+         `/sw.js` and `/icons/*` are NOT in token_auth's bypass sets, so only the
+         authenticated owner can install the companion. -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+    <meta name="theme-color" content="#0f0f0f" />
+    <!-- iOS Safari honours only the apple-prefixed flag for standalone display;
+         Chromium warns unless the standard name is present too. Both are live. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   </head>
   <body>
     <div id="root"></div>

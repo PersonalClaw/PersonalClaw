@@ -52,6 +52,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   refused outright and cannot be clicked through, because a tampered artifact isn't a risk you're in
   a position to accept. Maintainers sign with `scripts/sign_app.py`; the scheme, the rejected
   alternatives and the workflow are in `docs/security/signing.md`.
+- **You can install the phone companion to your home screen.** PersonalClaw now ships a web-app
+  manifest and a service worker, so the approvals companion opens from a home-screen icon as its own
+  full-screen app instead of a browser tab, and its shell still loads when the connection drops. What
+  it will never do is show you stale data: API responses are never written to, or served from, the
+  offline cache — so an approval you see on the phone is one that is genuinely still waiting, not a
+  copy of one that already timed out. Installing requires reaching your gateway over `localhost` or an
+  https tunnel, because browsers only run service workers in a secure context; over a plain-http LAN
+  address the dashboard works exactly as before and says why installing is unavailable.
 
 - **A voice is now a thing you own, not a dropdown value.** Voice profiles hold a name, the
   engine that renders them, a reference clip, a pinned seed and a spoken-consent record, and you

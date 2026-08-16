@@ -23,5 +23,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  // src/sw.ts runs in a ServiceWorkerGlobalScope and is checked by tsconfig.sw.json
+  // instead: the `webworker` and `dom` libs redeclare `self`/`location`/`fetch` and
+  // cannot share one program. `npm run typecheck` runs both.
+  "include": ["src"],
+  "exclude": ["src/sw.ts"]
 }
