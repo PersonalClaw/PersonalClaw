@@ -35,20 +35,35 @@ class PassthroughGraph(PipelineGraph):
 
 
 class BookmarkGraph(PipelineGraph):
-    """bookmark → scrape the URL → its text (one logical doc). User-pasted content
-    passes through unchanged (no fetch)."""
+    """bookmark → scrape the URL (or fetch-and-cache a paper) → slice. User-pasted
+    content passes through unchanged (no fetch).
+
+    The slicer is a leaf here for the same reason as in :class:`DocumentGraph`: a bookmark
+    to an arXiv paper is a document, and the whole point of §5 is that the same
+    deterministic cut applies however the bytes arrived.
+    """
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="bookmark_scrape", backend="web"))
+        self.add(NodeSpec(node_type="document_slice", backend="native"))
+        self.edge("bookmark_scrape", "document_slice")
 
 
 class DocumentGraph(PipelineGraph):
-    """pdf/document/sheet/slides → read file text (pure-python) → consolidate."""
+    """pdf/document/sheet/slides → read file text (pure-python) → consolidate, ‖ slice.
+
+    ``document_slice`` (WATCHED-SOURCES §5) hangs off the reader as a LEAF and deliberately
+    does NOT feed ``consolidate``: consolidate header-concats every upstream it has, so
+    routing the slices through it would append three derived views of the document to the
+    document itself — tripling the consolidated text the insights/embed stages read.
+    """
 
     def build(self) -> None:
         self.add(NodeSpec(node_type="document_read", backend="native"))
         self.add(NodeSpec(node_type="consolidate", backend="concat"))
+        self.add(NodeSpec(node_type="document_slice", backend="native"))
         self.edge("document_read", "consolidate")
+        self.edge("document_read", "document_slice")
 
 
 class ImageGraph(PipelineGraph):

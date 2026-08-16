@@ -696,3 +696,116 @@ Trigger-side work (`web_watch` wiring, morning-digest template install, triage d
   This atom is what makes watched sources reachable, so the entry covers the whole capability —
   web/feed/folder sources, the paste-URL preview, the raw no-AI mode and the health/remediation
   surface — not just the UI.
+- [WS-6] DONE: **§5 fetch-and-slice — sniff, sha256 cache, cascaded detection, purpose-cut slices,
+  deterministic references.** `knowledge/slicing.py` is the whole primitive and contains **zero model
+  calls**; thresholds live in ONE `# ══ THRESHOLDS ══` block per §5's paperloom drift lesson, and each
+  is falsified by monkeypatching it and re-measuring the OUTCOME, so a constant the code does not
+  actually read cannot pass.
+  **Layout reading stays in `readers.py` so the cascade stays pure.** `_read_pdf` answers "what does
+  this say"; the new `read_pdf_structure` answers "how is it laid out" (per-page text, per-line max
+  glyph size, bookmark titles) from the SAME guarded `pdfplumber` import — the brief said not to add a
+  second PDF path and that is the right call for a stronger reason than duplication: a second guarded
+  import is a second place for the PDF path to be present-or-absent, and callers would then have to
+  know which one degraded. Consequence: `slicing.py` never imports pdfplumber and `slice_structure` is
+  a pure function of a plain dataclass, so the cascade is tested with no PDF at all as well as
+  end-to-end on a real generated one. Outline entries carry TITLES, not destinations — resolving a PDF
+  destination goes through named-destination indirection real papers get wrong, whereas a title can
+  simply be LOCATED in the extracted text, which is the offset the caller needs anyway.
+  **Two ordering decisions carry the detection, and both are now falsifiable.** Tiers 1+2 are unioned
+  and resolved by `(offset, strategy rank, title)`, so a heading found by the outline AND the font tier
+  is ONE section attributed to the outline — the document declaring its own structure beats a
+  typographic inference. Tier 3 (header regex) fires only when the union is EMPTY and proposes only
+  headings it can NAME: a fallback that guessed at structure would be worse than one section spanning
+  the whole document, because a wrong span silently truncates what an enrichment node reads. Body size
+  is the CHAR-WEIGHTED mode with ties broken to the smaller size — line-counted, a paper with many
+  short headings and few long body lines elects a heading size as "body" and then finds no headings at
+  all (asserted directly).
+  **Determinism is asserted across PROCESSES, not just twice in one.** Two in-process runs share a
+  string-hash seed, so a detector that iterated a set of titles would produce the same order twice and
+  pass an in-process double-run test. The suite runs detection in three children under
+  `PYTHONHASHSEED` 0/1/524287 and compares a digest, which is the only assertion that can observe
+  hash-order dependence.
+  **Slices are merged RANGES, not concatenations, and they require detected structure.** Range-merging
+  is why a body section overlapping a kept page cannot be emitted twice (a duplicated method section is
+  a doubled token bill for whoever reads the slice). `brief` is clamped into `[BRIEF_MIN_FRACTION,
+  BRIEF_MAX_FRACTION]` and the floor rounds UP — a truncating floor lands below the fraction it claims
+  to guarantee, which is not a floor. §5's kept-pages floor is **pre-bibliography** by construction:
+  the last pages of a paper ARE its references, so a naive last-2 floor would re-import exactly what
+  `body` strips. **DEVIATION (recorded):** a document with no section the cascade could NAME gets NO
+  slices at all. §5 defines `meta` as "the first pages", which fired on every plain `.txt` in the
+  library — where it is byte-identical to the content — so the gate is what keeps the primitive about
+  papers. And `full` is §5's fourth role, retrievable via `slice_for` but never a persisted row: it
+  equals the item's own `content` column, so a row would double every paper's storage to repeat
+  something already stored.
+  **The reference cascade is ordered by TRUST and the order is load-bearing.** arXiv id → DOI → fuzzy
+  title (sliding window ≥ `TITLE_MATCH_RATIO` against titles already keyed from THIS bibliography — the
+  deterministic replacement for asking a model "same paper?") → author+year proximity. A fixture entry
+  carries BOTH an arXiv id and a DOI precisely so the order can fail; it must key as arXiv, the
+  identifier this codebase can re-fetch via `sniff_source`. An entry satisfying none of the four tiers
+  is COUNTED as unkeyed and never given an invented key: a fabricated key is worse than an admitted gap
+  because KNOWLEDGE-SYNTHESIS's later linking pass would treat it as real. §5 stops at extraction — a
+  stored record is `{key, tier, title, year}` with no resolved target.
+  **The cache is two levels, and that is not redundancy.** Originals are content-addressed
+  (`sha256-<hex>.pdf`, so two refs to identical bytes share one file) plus a `ref-<hash>.json` pointer
+  recording which digest a normalized reference resolved to. Content-addressing ALONE cannot serve a
+  re-ingest — computing the hash needs the bytes we are trying not to fetch — so the pointer is what
+  makes the zero-network clause achievable at all. Both live in a `sources/` subdirectory of the
+  existing `knowledge_files_dir()`: §5's "no new cache root" holds and the durability inventory's
+  `workspace/knowledge/files` tree entry already claims it (no inventory change needed, verified). The
+  cached original's extension comes from the **content** sniff (`%PDF-`), not the URL or the server's
+  content-type, so a DOI resolving to a publisher HTML page is not stored as `.pdf` and handed to the
+  PDF reader.
+  **Wiring: `document_slice` is a graph LEAF in both DocumentGraph and BookmarkGraph.** Feeding
+  `consolidate` would header-concat three derived views onto the document itself, tripling the text the
+  insights/embed stages read (asserted). `NodeOutput.pool_rows` is the engine's new multi-row
+  mechanism: one node is one STEP, but a step whose product is a SET of role-sized views needs rows
+  named by the node (`slice:brief`, not `document_slice`), and three graph nodes would each re-run the
+  same detection — giving one deterministic cascade three chances to disagree with itself.
+  **Two defects found by the falsification pass, not by review.** (1) `pre_bib_pages[-0:]` is the WHOLE
+  list, so `KEEP_LAST_PAGES = 0` turned the floor maximally ON instead of off; a zero keep-count now has
+  to be spelled out. (2) `_consolidated_text` — the retroactive-intent LLM path — concatenates an item's
+  ENTIRE extracted-content pool, so slice rows would have sent every paper through a model two or three
+  times. It now skips them via `is_slice_row`, which is why that helper is public. Falsifying that fix
+  reds with `assert 3 == 1` on the document's own text.
+  **Falsification (8 mutations on live lines; two rounds, because the first found weak tests).** Cache
+  always misses → `AssertionError: network reached for https://arxiv.org/pdf/2103.00020 — the sha256
+  cache did not serve it` plus `assert 'unreachable' == 'done'` through the pipeline. `PERSISTED_SLICES
+  = ()` → `assert ('slice:brief' in ['bookmark_scrape'])`. DOI checked before arXiv → `assert 'doi' ==
+  'arxiv'`. Kept-pages floor removed → the abstract vanishes from `body`. Bibliography never located →
+  `AssertionError: references must be stripped from body`. Slicer wired into `consolidate` → the extra
+  `Edge(from_node='document_slice', to_node='consolidate')`. Pool consumer stops excluding slices →
+  `assert 3 == 1`.
+  **TWO MUTATIONS REDED NOTHING on the first round, and both were real gaps, not noise.** (a) Removing
+  the candidate `.sort()` left every test green: both fixtures had only ONE tier contributing, in
+  document order already, so the sort was a no-op on them and nothing exercised the property it exists
+  for. Added `test_the_unioned_tiers_are_ordered_by_offset_not_by_tier` — an outline naming two sections
+  with a font-only heading BETWEEN them, so concatenation order ≠ document order — which now reds with
+  `At index 1 diff: 'Conclusion' != '2 Method'`. (b) The pipeline re-ingest test passed with the cache
+  disabled, and the reason is a behavioural fact worth recording: `BookmarkScrapeNode`'s pre-existing
+  "user content wins" short-circuit fires on the text the FIRST ingest stored, so a regenerate never
+  reaches the fetch at all and the cache was not what made it network-free. Re-scoped into two honest
+  tests — `test_saving_the_same_paper_twice_opens_no_socket_the_second_time` (a SECOND item, same URL,
+  empty content → genuinely served from the cache, and it reds under the mutation) and
+  `test_re_ingesting_one_fetched_paper_reuses_its_stored_text_and_re_slices_it`, which documents that
+  the regenerate path re-slices FLATTENED text (no font tier; the header tier carries detection) and
+  still rebuilds — replaces, not appends — its slices.
+  **Corrections to the briefing recon, stated plainly because it can be wrong.** (1) `pdfplumber` is
+  NOT optional here — it is a declared CORE dependency (`pyproject.toml`) and
+  `test_knowledge.py::test_pdf_reader_dependency_present` asserts it must be present, so the brief's
+  "your tests must not depend on it being installed" is inverted for this repo; `reportlab` is core too
+  (owner ruling, `test_documents.py`), which is what allows real generated-PDF fixtures instead of
+  stubs. The design still keeps the cascade pdfplumber-free, for the independent reason above. (2) The
+  brief said "WS-9 shipped the Sources UI"; `WS-9` is still `todo` and WS-4's own log records that
+  `store.create_source` has zero non-test callers. The CHANGELOG entry is warranted anyway, via
+  surfaces that DO exist: uploading a PDF to the Knowledge Library, and saving an arXiv/DOI/`.pdf` URL
+  as a bookmark — which previously ran the HTML scraper over PDF bytes and stored the noise.
+  **Gates:** `make lint` clean (black/isort/flake8, mypy 872 files); `tests/test_knowledge_slicing.py`
+  = 56; the new-surface rails (`test_inert_surface_baseline`, `test_portability`,
+  `test_durability_inventory`, `test_config_baseline`, `test_resilience_degraded_lint`,
+  `test_agent_reference`, `test_roadmap_dag_derived`) = 123 passed with the inert baseline NOT
+  regenerated (no new config key, enum member, trigger kind, editable-config entry or SDK export — the
+  slice vocabulary is module string constants for exactly that reason); affected suites
+  (`test_knowledge_pipeline`, `test_knowledge`, `test_documents`, `test_knowledge_typed_items`,
+  `test_feed_source`, `test_dir_source`, `test_web_source`, `test_source_engine`) = 430 passed. Full
+  suite **20473 passed, 30 skipped, 12 xfailed, 0 failed**. No config field added, so no
+  `test_config_baseline` regeneration. No `web/` change → no FE gate.

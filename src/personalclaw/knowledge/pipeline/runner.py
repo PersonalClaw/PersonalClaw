@@ -144,6 +144,17 @@ async def ingest_item(
                 text=out.text,
                 metadata=out.metadata,
             )
+        # …then the extra self-named rows (a node whose product is a SET of outputs —
+        # the fetch-and-slice brief/body/meta cut). Same item, no child rows anywhere:
+        # slices are role-sized VIEWS of one document, not chunks.
+        for row in result.pool_rows():
+            store.add_extracted_content(
+                item_id,
+                row.node_type,
+                backend=row.backend,
+                text=row.text,
+                metadata=row.metadata,
+            )
 
         # Persist structural metadata from non-pooled media nodes onto the item:
         # exif → file_metadata (width/height/format/…); thumbnail → thumbnail_path.
@@ -404,7 +415,10 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
     # that the detail metadata strip + the agent's knowledge_get ("N pages") read off
     # file_metadata. Persist it (keeping only the shape keys; the text already pooled),
     # else every document shows no page count despite the reader having extracted it.
-    doc = result.outputs.get("document_read")
+    # `bookmark_scrape` is read here too: a paper fetched from an arXiv/DOI/PDF URL has no
+    # `document_read` node (it is a bookmark), so without this a FETCHED paper would report
+    # no page count while an uploaded one does — the same document, two answers.
+    doc = result.outputs.get("document_read") or result.outputs.get("bookmark_scrape")
     if doc is not None and getattr(doc, "success", False) and getattr(doc, "metadata", None):
         shape = {
             k: v
@@ -424,6 +438,25 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
             _fm = fields.get("file_metadata") or (item or {}).get("file_metadata") or {}
             merged = dict(_fm) if isinstance(_fm, dict) else {}
             merged.update(shape)
+            fields["file_metadata"] = merged
+
+    # Fetch-and-slice (WATCHED-SOURCES §5) → the document's detected sections and its
+    # extracted references onto the item. The SLICES are pool rows; these are the
+    # structural findings ABOUT the document, which belong on the item the same way
+    # page_count does. Reference LINKING is deliberately not here — §5 extracts and
+    # stores, and KNOWLEDGE-SYNTHESIS's relate-on-persist step resolves.
+    sliced = result.outputs.get("document_slice")
+    if (
+        sliced is not None
+        and getattr(sliced, "success", False)
+        and (getattr(sliced, "metadata", None) or {}).get("sliced")
+    ):
+        keep = ("sections", "section_strategies", "references", "references_unkeyed")
+        found = {k: v for k, v in sliced.metadata.items() if k in keep}
+        if found:
+            _fm = fields.get("file_metadata") or (item or {}).get("file_metadata") or {}
+            merged = dict(_fm) if isinstance(_fm, dict) else {}
+            merged.update(found)
             fields["file_metadata"] = merged
 
     # Bookmark scrape → derived link-card title/description onto the item.

@@ -5220,7 +5220,7 @@
         {
           "id": "WS-6",
           "title": "Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a75 Fetch-and-Slice (am.1): knowledge/slicing.py source-sniffing, cascaded section detection (thresholds in one constants block), purpose-cut slices as extracted_contents rows, sha256 source cache under knowledge_files_dir(), deterministic reference extraction; consumed by Document graph + chat file-drop + deep-research template; \u00a711 step 4",
           "done_when": "An arXiv PDF ingests: sections detected deterministically, slice:brief/body/meta rows persist in extracted_contents on the ONE item (no chunking), references extracted by the cascade, and re-ingest is served from the sha256 cache with zero network (SC#9)",
           "deps": [
@@ -7939,11 +7939,6 @@
         "plan": "WF2WOR"
       },
       {
-        "id": "WS-6",
-        "title": "Fetch-and-slice ingestion primitive (arXiv/DOI/PDF sniff, section detection, slices, sha256 cache, references)",
-        "plan": "WS"
-      },
-      {
         "id": "WS-7",
         "title": "Streams: SourceItemIngested/SourcePollCompleted/SourceQueryMatched events + saved queries + digest handoff",
         "plan": "WS"
@@ -10078,9 +10073,9 @@
         "code": "WS",
         "plan": "WATCHED-SOURCES",
         "total_atoms": 9,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
